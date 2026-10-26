@@ -209,14 +209,32 @@ fn repair_refusal(
                 // matches the agent card's readiness line so both surfaces
                 // read the same way.
                 let missing = eligibility.readiness.missing_evidence.join("; ");
-                if missing.is_empty() {
-                    (RefusalKind::RouteNotReady, label.to_string())
+                let mut label = if missing.is_empty() {
+                    label.to_string()
                 } else {
-                    (
-                        RefusalKind::RouteNotReady,
-                        format!("{label} (missing evidence: {missing})"),
-                    )
+                    format!("{label} (missing evidence: {missing})")
+                };
+                // #10622: a Rust predicate boundary whose only missing fact
+                // is the boundary discriminator has a concrete manual route —
+                // the predicate stub derives the boundary input from the
+                // changed comparison and writes a fill-in skeleton. Name it
+                // instead of leaving the reader at the jargon dead end; when
+                // anything else is also missing the stub alone would not
+                // ready the route, so the bare label stays. The seam
+                // inventory this gate reads is Rust-only, so the kind check
+                // is also the language check.
+                if eligibility.readiness.missing_evidence.len() == 1
+                    && eligibility.readiness.missing_evidence[0]
+                        .starts_with("producer-owned missing discriminator fact: boundary_value")
+                    && entry.seam.kind() == crate::analysis::seams::SeamKind::PredicateBoundary
+                {
+                    let file = crate::analysis::stable_path_text(entry.seam.file());
+                    label.push_str(&format!(
+                        ": write the boundary test by hand — `ripr agent stub --at {file}:{} --kind predicate` derives the boundary input from the changed comparison; fill the todo!() values, then rerun `ripr repair`",
+                        entry.seam.display_line()
+                    ));
                 }
+                (RefusalKind::RouteNotReady, label)
             } else {
                 (RefusalKind::Other, label.to_string())
             }
@@ -1633,6 +1651,59 @@ pub(crate) mod tests {
             "{}",
             refused.reason
         );
+        Ok(())
+    }
+
+    /// #10622: a predicate boundary whose only missing evidence is the
+    /// boundary discriminator names the concrete manual route — the
+    /// predicate stub derives the boundary input from the changed
+    /// comparison — instead of leaving the reader at the jargon dead end.
+    /// A seam that also misses a safe test target keeps the bare label:
+    /// the stub alone would not ready that route.
+    #[test]
+    fn boundary_only_not_ready_names_the_stub_route() -> Result<(), String> {
+        use crate::analysis::seams::SeamGripClass;
+        let config = crate::config::RiprConfig::default();
+        let policy = AgentBriefPolicy::from_config(&config);
+        let root = Path::new("/repo");
+
+        let targeted = crate::analysis::test_grip_evidence::RelatedTestGrip {
+            test_name: "it_works".to_string(),
+            file: std::path::PathBuf::from("src/lib.rs"),
+            line: 14,
+            test_target: Some(
+                crate::analysis::test_grip_evidence::TestTargetEvidence::fixture(
+                    "it_works",
+                    std::path::Path::new("src/lib.rs"),
+                    14,
+                ),
+            ),
+            oracle_kind: crate::domain::OracleKind::RelationalCheck,
+            oracle_strength: crate::domain::OracleStrength::Weak,
+            evidence_summary: "relational assertion".to_string(),
+            relation_reason: crate::domain::RelationReason::DirectOwnerCall,
+            relation_confidence: crate::analysis::test_grip_evidence::RelationConfidence::High,
+        };
+        let boundary_only = gate_entry(SeamGripClass::WeaklyGripped, vec![targeted]);
+        let refusal = repair_start_refusal_for_entry(root, &boundary_only, policy)
+            .ok_or("a boundary-only not-ready seam must be refused")?;
+        assert!(
+            refusal
+                .reason
+                .contains("ripr agent stub --at src/pricing.rs:88 --kind predicate")
+                && refusal.reason.contains("fill the todo!() values")
+                && refusal.reason.contains("then rerun `ripr repair`"),
+            "{}",
+            refusal.reason
+        );
+
+        // Control: a seam that also misses a safe test target names no stub
+        // route, because the skeleton alone would not ready that route.
+        let also_missing_target =
+            gate_entry(SeamGripClass::WeaklyGripped, vec![weak_related_test()]);
+        let bare = repair_start_refusal_for_entry(root, &also_missing_target, policy)
+            .ok_or("a target-missing not-ready seam must be refused")?;
+        assert!(!bare.reason.contains("--kind predicate"), "{}", bare.reason);
         Ok(())
     }
 
