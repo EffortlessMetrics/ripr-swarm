@@ -435,7 +435,7 @@ This order is the existing behavior and is normative:
   test through `request.param` (#9619, `py-fixtures-fee-boundary`): its
   only decorator is the fixture decorator with keyword `params=` (a list
   or tuple whose rows are scalar literals or tuples of scalar literals)
-  and at most a literal `ids=` list of strings; the def takes exactly
+  and at most a literal `ids=` list of strings, one per row; the def takes exactly
   `request` and its body is an optional docstring and
   `return request.param`; the fixture's file binds its name once and the
   scope rules above hold (without the owner-module import rule: tuple and
@@ -1452,7 +1452,7 @@ and the test is `tests/test_subject.py`, which imports each owner from
     `py-fixtures-fee-boundary`). Rows `(50, 5), (200, 0)` read
     `weakly_exposed`, as the decorated form does. Named, list,
     `pytest.param`, starred or non-literal rows, empty params, callable
-    `ids=`, `scope=`, `autouse=`, a positional decorator argument, a
+    or short `ids=`, `scope=`, `autouse=`, a positional decorator argument, a
     transformed `request.param`, an extra fixture statement or parameter,
     a second decorator or definition; an unpack of the wrong arity, a
     starred, nested, attribute, chained or subscripted unpack, an unpack

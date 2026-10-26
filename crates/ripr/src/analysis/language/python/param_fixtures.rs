@@ -22,7 +22,8 @@
 //! Only shapes whose generated values are statically certain are read:
 //!
 //! - the fixture's only decorator is `@pytest.fixture(params=<rows>)` with at
-//!   most a literal `ids=` list of strings; no `scope=`, `autouse=`, `name=`;
+//!   most a literal `ids=` list of strings, one per row; no `scope=`,
+//!   `autouse=` or `name=`;
 //! - the fixture takes exactly `request` and its body is an optional docstring
 //!   and `return request.param`;
 //! - every row is a scalar literal or a tuple of scalar literals. A list row
@@ -81,11 +82,12 @@ pub(super) fn literal_params(
         return None;
     }
     let mut params = None;
+    let mut ids = None;
     for keyword in &call.keywords {
         match keyword.arg.as_ref().map(|arg| arg.as_str()) {
             Some("params") => params = Some(&keyword.value),
             // Ids only name the generated tests; a callable could run code.
-            Some("ids") if literal_strings(&keyword.value) => {}
+            Some("ids") => ids = Some(literal_strings(&keyword.value)?),
             _ => return None,
         }
     }
@@ -94,6 +96,10 @@ pub(super) fn literal_params(
         Expr::Tuple(tuple) => &tuple.elts,
         _ => return None,
     };
+    // An id list of another length is a collection error: no case runs.
+    if ids.is_some_and(|count| count != rows.len()) {
+        return None;
+    }
     let args = &function.args;
     let [request] = args.args.as_slice() else {
         return None;
@@ -149,12 +155,14 @@ fn is_string(expr: &Expr) -> bool {
     matches!(expr, Expr::Constant(constant) if matches!(constant.value, Constant::Str(_)))
 }
 
-fn literal_strings(expr: &Expr) -> bool {
-    match expr {
-        Expr::List(list) => list.elts.iter().all(is_string),
-        Expr::Tuple(tuple) => tuple.elts.iter().all(is_string),
-        _ => false,
-    }
+/// The length of a list or tuple of string literals.
+fn literal_strings(expr: &Expr) -> Option<usize> {
+    let elements = match expr {
+        Expr::List(list) => &list.elts,
+        Expr::Tuple(tuple) => &tuple.elts,
+        _ => return None,
+    };
+    elements.iter().all(is_string).then_some(elements.len())
 }
 
 /// Rewrite each test that unpacks an isolated literal-params fixture into

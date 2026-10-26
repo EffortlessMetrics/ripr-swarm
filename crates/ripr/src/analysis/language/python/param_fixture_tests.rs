@@ -122,6 +122,11 @@ fn a_fixture_shape_that_is_not_literal_rows_keeps_the_limit() -> Result<(), Stri
         ("empty params", rows, "params=[]"),
         ("callable ids", rows, "params=[(99, 5), (100, 0)], ids=str"),
         (
+            "short ids",
+            rows,
+            "params=[(99, 5), (100, 0)], ids=[\"below\"]",
+        ),
+        (
             "scope",
             rows,
             "params=[(99, 5), (100, 0)], scope=\"module\"",
