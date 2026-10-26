@@ -1,0 +1,22 @@
+# Registers the Python changed-dataclass-default credit tests (#9619) under the
+# Python preview static-facts spec that documents the alignment reason.
+[[extend]]
+id = "RIPR-SPEC-0028"
+tests = [
+  "crates/ripr/src/analysis/language/python/dataclass_default_tests.rs::a_test_that_omits_the_field_notices_the_new_default",
+  "crates/ripr/src/analysis/language/python/dataclass_default_tests.rs::a_test_that_passes_the_field_never_reads_the_default",
+  "crates/ripr/src/analysis/language/python/dataclass_default_tests.rs::an_assertion_the_edit_does_not_move_is_not_credited",
+  "crates/ripr/src/analysis/language/python/dataclass_default_tests.rs::a_small_default_change_that_rounds_to_the_same_result_is_not_credited",
+  "crates/ripr/src/analysis/language/python/dataclass_default_tests.rs::the_required_fields_must_be_supplied",
+  "crates/ripr/src/analysis/language/python/dataclass_default_tests.rs::a_test_that_could_change_or_swallow_the_call_is_not_credited",
+  "crates/ripr/src/analysis/language/python/dataclass_default_tests.rs::a_class_that_is_not_a_plain_dataclass_is_not_credited",
+  "crates/ripr/src/analysis/language/python/dataclass_default_tests.rs::a_method_outside_the_closed_arithmetic_is_not_credited",
+  "crates/ripr/src/analysis/language/python/dataclass_default_tests.rs::a_method_that_may_not_be_the_plain_one_is_not_credited",
+  "crates/ripr/src/analysis/language/python/dataclass_default_tests.rs::an_edit_that_is_not_a_lone_numeric_default_replacement_is_not_credited",
+  "crates/ripr/src/analysis/language/python/dataclass_default_tests.rs::the_default_of_a_field_the_method_does_not_read_is_not_credited",
+  "crates/ripr/src/analysis/language/python/dataclass_default_tests.rs::an_earlier_defaulted_field_does_not_hide_the_omission",
+  "crates/ripr/src/analysis/language/python/dataclass_default_tests.rs::a_field_marker_that_is_not_a_stored_default_is_not_credited",
+  "crates/ripr/src/analysis/language/python/dataclass_default.rs::tests::the_evaluator_follows_python_float_and_round_semantics",
+  "crates/ripr/src/analysis/language/python/dataclass_default.rs::tests::the_evaluator_refuses_anything_outside_the_closed_grammar",
+  "crates/ripr/src/analysis/language/python/dataclass_default.rs::tests::literals_are_plain_decimal_numbers",
+]

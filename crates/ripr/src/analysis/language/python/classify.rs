@@ -6,6 +6,7 @@ use super::assertion_selection::{
 };
 use super::boundary::{BoundaryActivation, python_boundary_evidence};
 use super::caplog_text::{PythonLogVerdict, python_log_evidence};
+use super::dataclass_default::{DATACLASS_LIMIT_EVIDENCE, changed_dataclass_default_credit};
 use super::discriminators::python_missing_discriminators;
 use super::guard_activation;
 use super::message_pin;
@@ -460,6 +461,36 @@ pub(super) fn classify_change_for_owner_with_value_origins(
         },
         None => alignment,
     };
+    // A changed numeric default of a plain `@dataclass` field, observed by a
+    // test that omits the field (#9619).
+    let dataclass_default = (module_value.is_empty() && type_guard.is_none())
+        .then(|| {
+            changed_dataclass_default_credit(
+                owner,
+                old_line_text,
+                line_text,
+                line,
+                no_behavior.sole_line_replacement,
+                owner_source.unwrap_or(""),
+                &related_candidates,
+            )
+        })
+        .flatten();
+    let alignment = match &dataclass_default {
+        Some(credit) => SinkAlignment {
+            changed_sink: alignment.changed_sink,
+            observed_sink: Some(credit.assertion.text.clone()),
+            oracle_alignment: "direct".to_string(),
+            alignment_reason: "strong_oracle_observes_changed_dataclass_default".to_string(),
+            credited: Some(CreditedAssertion {
+                test_name: credit.test.name.clone(),
+                test_file: credit.test.file.clone(),
+                text: credit.assertion.text.clone(),
+                kind: OracleKind::ExactValue,
+            }),
+        },
+        None => alignment,
+    };
     let log_evidence = python_log_evidence(
         old_line_text,
         line_text,
@@ -480,6 +511,8 @@ pub(super) fn classify_change_for_owner_with_value_origins(
     )
     // A pinned lambda body edit is read by the module-value credit.
     .filter(|limit| module_value.is_empty() || limit.evidence != LAMBDA_LIMIT_EVIDENCE)
+    // The decorator limit a credited plain `@dataclass` default edit answers.
+    .filter(|limit| dataclass_default.is_none() || limit.evidence != DATACLASS_LIMIT_EVIDENCE)
     .or_else(|| {
         module_object_rebind_limit(
             line_text,
@@ -543,6 +576,11 @@ pub(super) fn classify_change_for_owner_with_value_origins(
         .chain(mock_pins_changed_call.then(|| OracleStrength::Strong.rank()))
         .chain((!module_value.is_empty()).then(|| OracleStrength::Strong.rank()))
         .chain(type_guard.is_some().then(|| OracleStrength::Strong.rank()))
+        .chain(
+            dataclass_default
+                .is_some()
+                .then(|| OracleStrength::Strong.rank()),
+        )
         .max()
         .unwrap_or(0);
     let strongest_kind = alignment

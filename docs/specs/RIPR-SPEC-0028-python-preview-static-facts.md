@@ -744,6 +744,27 @@ read-out: the boolean the classifier uses is derived from the surfaced
   match keep the `dynamic_dispatch` abstention. The builtin-attribute list is
   a finite catalogue of the Python 3.14 literal types, not a general claim
   about Python semantics (#9619, #9421).
+  `strong_oracle_observes_changed_dataclass_default` (`direct`) credits an
+  edit that replaces one numeric literal default of a field in a plain
+  `@dataclass` (the bare decorator imported from `dataclasses`, never rebound
+  or mentioned elsewhere in the file; `class C:` with no base; only annotated
+  fields with numeric or `field(default_factory=..)` defaults and undecorated
+  methods in the body, none of them `__init__`, `__post_init__`, `__new__` or
+  an attribute hook) when the file's diff is that one line. The credited test
+  is a plain, undecorated function whose only statement is
+  `assert C(<numeric literals>).<method>() == <numeric literal>`, with `C`
+  imported from the owner's module, that supplies every required field and
+  omits the edited one. The method is a single `return` over `+ - * /`,
+  numeric literals, `self.<field>` and `round(..)`; RIPR evaluates it under the
+  old and the new default with Python's integer, float and ties-to-even
+  `round` semantics and credits the assertion only when it holds under the old
+  default and fails under the new one. An explicit or keyword rate, a
+  `frozen`/`init`/`kw_only` option, a base class, a generated-method hook, a
+  method outside the closed arithmetic, a second definition of the name, a
+  test with a decorator, parameter, `try`, `with` or second statement, or a
+  default change that rounds to the same result keeps the
+  `decorator_indirection` abstention. Evaluation is static: a test module that
+  rebinds the class name is not visible to it (#9619).
   `strong_oracle_observes_changed_effect_channel` (`direct`) credits a
   changed write (`print`, a file write, a call on a passed collaborator, or
   a `self` field) whose strong oracle compares the channel that write
