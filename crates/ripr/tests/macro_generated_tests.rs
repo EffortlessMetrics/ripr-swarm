@@ -281,6 +281,31 @@ fn a_scope_keyword_supplied_by_a_row_token_adds_no_test() -> Result<(), String> 
 }
 
 #[test]
+fn a_local_binding_in_an_arrow_row_adds_no_test() -> Result<(), String> {
+    // A `let` or `static` named like the owner makes the generated assertion
+    // call the local callable, never the changed `gate`.
+    for (label, body) in [
+        (
+            "a let closure",
+            "    macro_rules! gate_cases {\n        ($($name:ident => ($input:expr, $want:expr))*) => {\n            $( #[test] fn $name() { let gate = |_: u32| true; assert_eq!(gate($input), $want); } )*\n        };\n    }\n\n    gate_cases! { ten_is_open => (10, true) }\n",
+        ),
+        (
+            "a static supplied by a tt",
+            "    type G = fn(u32) -> bool;\n    macro_rules! gate_cases {\n        ($($kind:tt $name:ident => ($input:expr, $want:expr))*) => {\n            $( $kind gate: G = |_| true; #[test] fn $name() { assert_eq!(gate($input), $want); } )*\n        };\n    }\n\n    gate_cases! { static ten_is_open => (10, true) }\n",
+        ),
+    ] {
+        let predicate = TempRepo::create(body)?.predicate()?;
+        assert!(predicate.related_tests.is_empty(), "{label}: {predicate:?}");
+        assert_ne!(
+            state(&predicate.ripr.reach.state),
+            "Yes",
+            "{label}: {predicate:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn an_uninvoked_generator_adds_no_test() -> Result<(), String> {
     let uninvoked = TempRepo::create(GENERATOR)?.predicate()?;
     assert!(uninvoked.related_tests.is_empty(), "{uninvoked:?}");

@@ -960,34 +960,40 @@ fn match_rows(
     (!rows.is_empty()).then_some(rows)
 }
 
-/// Whether one substituted row declares a module, a `use` or more than one `fn`.
+/// Words that can bring another callable named like the changed owner into
+/// scope: a module, an import, a binding, an item or a second function.
+const SCOPE_WORDS: &[&str] = &[
+    "mod",
+    "use",
+    "let",
+    "static",
+    "const",
+    "type",
+    "struct",
+    "enum",
+    "trait",
+    "impl",
+    "extern",
+    "macro_rules",
+];
+
+/// Whether one substituted row declares a scope word or more than one `fn`.
 fn text_defines_nested_scope(text: &str) -> bool {
     let mut functions = 0;
     for word in text.split(|c: char| !(c.is_alphanumeric() || c == '_')) {
-        match word {
-            "mod" | "use" => return true,
-            "fn" => functions += 1,
-            _ => {}
+        if SCOPE_WORDS.contains(&word) {
+            return true;
+        }
+        if word == "fn" {
+            functions += 1;
         }
     }
     functions > 1
 }
 
-/// Whether a transcriber body declares a module, a `use` or more than one `fn`.
+/// Whether a transcriber body declares a scope word or more than one `fn`.
 fn defines_nested_scope(body: &ast::TokenTree) -> bool {
-    let mut functions = 0;
-    for token in body
-        .syntax()
-        .descendants_with_tokens()
-        .filter_map(|element| element.into_token())
-    {
-        match token.kind() {
-            SyntaxKind::MOD_KW | SyntaxKind::USE_KW => return true,
-            SyntaxKind::FN_KW => functions += 1,
-            _ => {}
-        }
-    }
-    functions > 1
+    text_defines_nested_scope(&body.syntax().text().to_string())
 }
 
 /// A transcriber that is exactly one separator-free repetition
@@ -1442,6 +1448,14 @@ mod tests {
                 "use decoy::gate; #[test] fn $name() { assert_eq!(gate($v), $w); }",
             ),
             (
+                "a let binding in the body",
+                "#[test] fn $name() { let gate = |_: u32| true; assert_eq!(gate($v), $w); }",
+            ),
+            (
+                "a static in the body",
+                "static gate: fn(u32) -> bool = |_| true; #[test] fn $name() { assert_eq!(gate($v), $w); }",
+            ),
+            (
                 "a second fn in the body",
                 "fn gate(_: u32) -> bool { true } #[test] fn $name() { assert_eq!(gate($v), $w); }",
             ),
@@ -1481,9 +1495,17 @@ mod tests {
             .is_empty(),
             "a module supplied by a tt"
         );
+        assert!(
+            expand_local_test_macros(&supplied(
+                "$k gate: fn(u32) -> bool = |_| true; #[test] fn $name() { assert_eq!(gate($v), $w); }",
+                "static a => (1, 2)"
+            ))
+            .is_empty(),
+            "a static supplied by a tt"
+        );
         assert_eq!(
             expand_local_test_macros(&supplied(
-                "#[test] fn $name() { let _ = stringify!($k); assert_eq!(gate($v), $w); }",
+                "#[test] fn $name() { assert!(!stringify!($k).is_empty()); assert_eq!(gate($v), $w); }",
                 "x a => (1, 2)"
             ))
             .len(),
