@@ -19200,7 +19200,20 @@ tests = [
   "crates/ripr/tests/bool_truth_table_infection.rs::rows_that_cannot_tell_the_connectives_apart_stay_unknown",
   "crates/ripr/tests/bool_truth_table_infection.rs::a_single_row_stays_unknown",
   "crates/ripr/tests/bool_truth_table_infection.rs::another_caller_of_the_owner_stays_unknown",
-  "crates/ripr/tests/bool_truth_table_infection.rs::rows_fed_through_a_table_stay_unknown",
+  "crates/ripr/tests/bool_truth_table_infection.rs::rows_fed_through_a_table_are_the_same_rows_as_direct_calls",
+  "crates/ripr/tests/bool_truth_table_infection.rs::a_table_that_can_skip_a_row_stays_unknown",
+  "crates/ripr/tests/bool_truth_table_infection.rs::a_table_row_that_cannot_fail_stays_unknown",
+  "crates/ripr/tests/bool_truth_table_infection.rs::a_table_with_a_computed_cell_stays_unknown",
+  "crates/ripr/tests/bool_truth_table_infection.rs::a_table_with_a_short_row_stays_unknown",
+  "crates/ripr/tests/bool_truth_table_infection.rs::a_table_of_one_row_stays_unknown",
+  "crates/ripr/tests/bool_truth_table_infection.rs::a_property_loop_over_inputs_stays_unknown",
+  "crates/ripr/tests/bool_truth_table_infection.rs::a_shadowed_assert_eq_hides_table_rows",
+  "crates/ripr/tests/bool_truth_table_infection.rs::a_shadowed_assert_eq_hides_direct_rows",
+  "crates/ripr/tests/bool_truth_table_infection.rs::a_table_assertion_with_a_plain_message_still_reads_the_rows",
+  "crates/ripr/tests/bool_truth_table_infection.rs::a_table_assertion_with_a_message_argument_stays_unknown",
+  "crates/ripr/tests/bool_truth_table_infection.rs::a_table_name_that_is_rebound_stays_unknown",
+  "crates/ripr/tests/bool_truth_table_infection.rs::a_let_ahead_of_an_inline_table_stays_unknown",
+  "crates/ripr/tests/bool_truth_table_infection.rs::code_after_the_table_loop_stays_unknown",
   "crates/ripr/tests/bool_truth_table_infection.rs::a_body_with_a_leading_statement_stays_unknown",
   "crates/ripr/tests/bool_truth_table_infection.rs::exercised_rows_complete_the_returned_tail_and_read_exposed",
   "crates/ripr/tests/bool_truth_table_infection.rs::a_loop_fed_argument_never_completes_the_returned_tail",
@@ -19211,10 +19224,13 @@ tests = [
 ]
 fixtures = [
   "fixtures/rust-verdict-corpus/cases/grid-bool-exact.json",
+  "fixtures/rust-verdict-corpus/cases/grid-bool-table.json",
 ]
 code = [
   "crates/ripr/src/analysis/classify/infection.rs",
   "crates/ripr/src/analysis/classify/owner_pin/short_circuit.rs",
+  "crates/ripr/src/analysis/classifier/evidence.rs",
+  "crates/ripr/src/analysis/classify/activation.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0353-boolean-truth-table-infection.md",
