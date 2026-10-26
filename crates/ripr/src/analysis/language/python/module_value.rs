@@ -333,15 +333,25 @@ impl ForeignWrites {
             .and_then(|stem| stem.to_str())
             .unwrap_or_default();
         self.unknown
-            || self.attributes.iter().any(|attribute| {
-                attribute == name || attribute == "*" || CODE_SLOTS.contains(&attribute.as_str())
-            })
+            || self
+                .attributes
+                .iter()
+                .any(|attribute| attribute == name || attribute == "*")
             || self.dynamic_words.iter().any(|word| word == name)
             || (!stem.is_empty() && self.dynamic_words.iter().any(|word| word == stem))
     }
 }
 
 impl ForeignWrites {
+    /// Whether some workspace file assigns a function's code slots, which can
+    /// replace any reader without rebinding its name (#10626). Checked where a
+    /// reader is evaluated, not for plain names such as `version_info`.
+    pub(super) fn may_replace_reader_code(&self) -> bool {
+        self.attributes
+            .iter()
+            .any(|attribute| CODE_SLOTS.contains(&attribute.as_str()))
+    }
+
     /// Whether another file may change the contents of the dict-literal
     /// constant `name` of the module at `module_file` in place, or alias it.
     pub(super) fn may_mutate_table(&self, name: &str, module_file: &Path) -> bool {
@@ -577,6 +587,7 @@ fn credits<'a>(
         if !new_facts.bound_once(&owner.name)
             || !old_facts.bound_once(&owner.name)
             || module_owner.foreign_writes.may_rebind(&owner.name, file)
+            || module_owner.foreign_writes.may_replace_reader_code()
         {
             continue;
         }
