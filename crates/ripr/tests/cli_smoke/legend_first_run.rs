@@ -106,3 +106,17 @@ fn a_forced_first_legend_counts_and_a_run_without_a_digest_does_not() -> TestRes
     assert!(next.contains(POINTER) && !next.contains(LEGEND), "{next}");
     Ok(())
 }
+
+#[test]
+fn a_directory_at_the_marker_path_is_not_proof_the_legend_was_shown() -> TestResult {
+    let project = workspace("legend-marker-dir")?;
+    let marker = project.join("target/ripr/legend-seen");
+    fs::create_dir_all(&marker)?;
+    for _ in 0..2 {
+        let out = check(&project, &[])?;
+        assert!(out.contains(LEGEND), "{out}");
+        assert!(!out.contains(POINTER), "{out}");
+    }
+    assert!(marker.is_dir());
+    Ok(())
+}

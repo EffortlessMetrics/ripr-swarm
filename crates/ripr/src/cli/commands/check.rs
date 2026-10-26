@@ -1951,7 +1951,9 @@ fn check_inner(
     let legend_marker = matches!(format, OutputFormat::Human)
         .then(|| human_legend_marker(&limited_check_input.root))
         .flatten();
-    let legend_seen = legend_marker.as_ref().is_some_and(|marker| marker.exists());
+    let legend_seen = legend_marker
+        .as_ref()
+        .is_some_and(|marker| marker.is_file());
     if legend_seen && !legend_requested {
         config.reports.human_legend = crate::config::HumanLegend::Pointer;
     }
