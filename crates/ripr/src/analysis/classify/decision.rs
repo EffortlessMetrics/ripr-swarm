@@ -236,6 +236,28 @@ pub(in crate::analysis) fn recommended_next_step(
     owner_assertion_shaped: bool,
     stop_reasons: &[StopReason],
 ) -> Option<String> {
+    recommended_next_step_with_boundary(probe, class, owner_assertion_shaped, stop_reasons, false)
+}
+
+/// Next-step guidance when the caller knows whether a related test already
+/// supplies the changed boundary input (infection `yes`, #10622). For a weak
+/// predicate that means the input exists and only the oracle is weak, so the
+/// "add boundary tests" template would be misleading. Guidance only: repair
+/// eligibility is decided elsewhere.
+pub(in crate::analysis) fn recommended_next_step_with_boundary(
+    probe: &Probe,
+    class: &ExposureClass,
+    owner_assertion_shaped: bool,
+    stop_reasons: &[StopReason],
+    boundary_input_observed: bool,
+) -> Option<String> {
+    if boundary_input_observed
+        && !owner_assertion_shaped
+        && *class == ExposureClass::WeaklyExposed
+        && matches!(probe.family, ProbeFamily::Predicate)
+    {
+        return Some(BOUNDARY_OBSERVED_WEAK_ORACLE_NEXT_STEP.to_string());
+    }
     // RIPR-SPEC-0133: an assertion-shaped owner is the oracle, not the code
     // under test, so the standard code-under-test advice is incoherent for it.
     // The exposure class is unchanged; only the guidance is reframed.
@@ -457,6 +479,8 @@ fn uncertainty_next_step(
     step
 }
 
+const BOUNDARY_OBSERVED_WEAK_ORACLE_NEXT_STEP: &str = "A related test already reaches the boundary input; strengthen its assertion to compare the exact returned value (for example assert_eq!) so the old and changed behavior differ.";
+
 fn weakly_exposed_guidance_for_family(family: &ProbeFamily) -> &'static str {
     match family {
         ProbeFamily::Predicate => {
@@ -594,6 +618,49 @@ mod tests {
         assert_eq!(
             match_arm.as_deref(),
             Some("Strengthen the related assertion so it discriminates the changed behavior.")
+        );
+    }
+
+    #[test]
+    fn boundary_observed_weak_predicate_guidance_targets_the_oracle() {
+        let predicate = probe(ProbeFamily::Predicate, "qty > 10");
+        let observed = recommended_next_step_with_boundary(
+            &predicate,
+            &ExposureClass::WeaklyExposed,
+            false,
+            &[],
+            true,
+        );
+        assert_eq!(
+            observed.as_deref(),
+            Some(BOUNDARY_OBSERVED_WEAK_ORACLE_NEXT_STEP)
+        );
+        // Discriminating negative: boundary input not observed keeps the
+        // boundary-test template.
+        let unobserved = recommended_next_step_with_boundary(
+            &predicate,
+            &ExposureClass::WeaklyExposed,
+            false,
+            &[],
+            false,
+        );
+        assert_eq!(
+            unobserved.as_deref(),
+            Some(
+                "Add boundary tests for below, equal, and above the changed threshold with exact assertions."
+            )
+        );
+        // The observed-boundary wording is specific to weak predicates.
+        let other_family = recommended_next_step_with_boundary(
+            &probe(ProbeFamily::ReturnValue, "value + 1"),
+            &ExposureClass::WeaklyExposed,
+            false,
+            &[],
+            true,
+        );
+        assert_ne!(
+            other_family.as_deref(),
+            Some(BOUNDARY_OBSERVED_WEAK_ORACLE_NEXT_STEP)
         );
     }
 

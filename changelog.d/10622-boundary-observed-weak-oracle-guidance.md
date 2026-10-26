@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Fixed misleading next-step and repair-refusal text for a weak predicate whose related test already reaches the changed boundary input. `ripr check` now says the test reaches the boundary input and its assertion should compare the exact returned value, instead of asking for new below/equal/above boundary tests, and the "no repair start offered" line says the assertion is the weak part. Guidance only: repair eligibility is unchanged (#10622).

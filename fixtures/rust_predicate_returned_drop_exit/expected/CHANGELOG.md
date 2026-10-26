@@ -191,3 +191,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_predicate_returned_drop_exit (16)
+
+Reason:
+RIPR-SPEC-0122: #10622 observed-boundary weak-oracle next step and advisory
+
+Command:
+`cargo xtask goldens bless rust_predicate_returned_drop_exit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

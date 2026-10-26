@@ -299,3 +299,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — split_test_boundary_oracle (26)
+
+Reason:
+RIPR-SPEC-0122: #10622 observed-boundary weak-oracle next step and advisory
+
+Command:
+`cargo xtask goldens bless split_test_boundary_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

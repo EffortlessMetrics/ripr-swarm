@@ -227,6 +227,16 @@ fn repair_refusal(
         .map(|reason| (RefusalKind::Other, reason))
 }
 
+/// The prefix the producer-owned readiness list puts before a missing
+/// discriminator kind (`analysis/repair_route.rs`).
+const PRODUCER_DISCRIMINATOR_PREFIX: &str = "producer-owned missing discriminator fact: ";
+
+/// Whether a readiness missing-evidence item is the boundary-value
+/// discriminator the producer could not find.
+pub(super) fn is_boundary_value_discriminator(item: &str) -> bool {
+    item.strip_prefix(PRODUCER_DISCRIMINATOR_PREFIX) == Some("boundary_value")
+}
+
 fn ineligibility_label(reason: RepairPacketIneligibility) -> &'static str {
     // Sentence-style labels: these render directly in "none repair-eligible
     // (...)" lists and refusal notes, so an internal-enum spelling reads as a
@@ -972,6 +982,9 @@ pub(crate) fn check_repair_route(
             reason,
             kind,
             missing,
+            // #10622: a related test already reaching the boundary input
+            // makes the weak oracle, not the input, the remaining work.
+            boundary_input_observed: finding.boundary_input_observed_with_weak_oracle(),
         });
     }
     if static_limited {

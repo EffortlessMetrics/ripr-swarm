@@ -42,7 +42,7 @@ Weakness
   - No strong discriminator was detected
 
 Next step
-  Add boundary tests for below, equal, and above the changed threshold with exact assertions
+  A related test already reaches the boundary input; strengthen its assertion to compare the exact returned value (for example assert_eq!) so the old and changed behavior differ
 Drill in:
   ripr explain --root <cwd>/fixtures/rust_predicate_returned_drop_exit/input --diff <cwd>/fixtures/rust_predicate_returned_drop_exit/diff.patch --mode fast probe:src_lib.rs:predicate:bca747dd
   ripr context --root <cwd>/fixtures/rust_predicate_returned_drop_exit/input --diff <cwd>/fixtures/rust_predicate_returned_drop_exit/diff.patch --mode fast --at probe:src_lib.rs:predicate:bca747dd

@@ -811,6 +811,16 @@ pub const ORACLE_ALIGNMENT_VALUES: [&str; 5] = [
 ];
 
 impl Finding {
+    /// A weak predicate finding whose related tests already supply the changed
+    /// boundary input (infection `yes`): the remaining gap is the oracle, not
+    /// the input (#10622). Static evidence only.
+    pub(crate) fn boundary_input_observed_with_weak_oracle(&self) -> bool {
+        self.class == ExposureClass::WeaklyExposed
+            && self.probe.family == ProbeFamily::Predicate
+            && self.ripr.infect.state == crate::domain::StageState::Yes
+            && self.ripr.infect.summary == crate::domain::BOUNDARY_INPUT_OBSERVED_SUMMARY
+    }
+
     /// Related tests that supplied an oracle row or a refusal, skipping tests
     /// listed only as examined misses (see [`RelatedTest::is_examined_only`]).
     /// Gates that predate #5344 asked whether this set was empty.

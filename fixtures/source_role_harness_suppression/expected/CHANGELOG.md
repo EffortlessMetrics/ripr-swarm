@@ -493,3 +493,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — source_role_harness_suppression (33)
+
+Reason:
+RIPR-SPEC-0122: #10622 observed-boundary weak-oracle next step and advisory
+
+Command:
+`cargo xtask goldens bless source_role_harness_suppression --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

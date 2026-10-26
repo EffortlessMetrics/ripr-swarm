@@ -39,7 +39,7 @@ Weakness
   - Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact oracle do not establish that discriminator
 
 Next step
-  Add boundary tests for below, equal, and above the changed threshold with exact assertions
+  A related test already reaches the boundary input; strengthen its assertion to compare the exact returned value (for example assert_eq!) so the old and changed behavior differ
 Drill in:
   ripr explain --root <cwd>/fixtures/predicate_pairing_compound_assigned_binding/input --diff <cwd>/fixtures/predicate_pairing_compound_assigned_binding/diff.patch --mode fast probe:src_lib.rs:predicate:6d1d88e6
   ripr context --root <cwd>/fixtures/predicate_pairing_compound_assigned_binding/input --diff <cwd>/fixtures/predicate_pairing_compound_assigned_binding/diff.patch --mode fast --at probe:src_lib.rs:predicate:6d1d88e6

@@ -207,3 +207,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — predicate_pairing_newline_split_reassigned_binding (17)
+
+Reason:
+RIPR-SPEC-0122: #10622 observed-boundary weak-oracle next step and advisory
+
+Command:
+`cargo xtask goldens bless predicate_pairing_newline_split_reassigned_binding --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
