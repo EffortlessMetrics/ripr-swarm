@@ -318,8 +318,13 @@ pub(super) fn type_scope_is_clear(
 ) -> bool {
     let raw_impl_type = format!("r#{impl_type}");
     let owner_scope = OwnerScope::new(owner.name.as_str(), owner.start_line, &owner.file);
-    !(test_module_shadows_type(test, source, impl_type, owner_scope.in_file(&test.file))
-        || file_renames_to(source, impl_type)
+    !(test_module_shadows_type(
+        test,
+        source,
+        impl_type,
+        owner_scope.in_file(&test.file),
+        index,
+    ) || file_renames_to(source, impl_type)
         || file_renames_to(source, raw_impl_type.as_str())
         || parent_chain_shadows_type(test, impl_type, owner_scope, index))
 }

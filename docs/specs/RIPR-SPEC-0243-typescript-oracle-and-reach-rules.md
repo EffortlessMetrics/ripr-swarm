@@ -235,6 +235,19 @@ change. An unguarded related test decides the finding as before. The finding and
 outcome name `typescript_conditional_registration` with the guard and its line.
 A constant condition keeps its existing reading.
 
+**Rule 21. A test registered in a loop over data static analysis cannot enumerate is reached, never credited (#10501).**
+A `test` / `it` call (or a `describe` holding them) inside a `for...of`,
+`for...in` or `.forEach` callback whose iterable is not a known non-empty
+literal (a file listing, a parameter, a call result) is indexed for reach under
+the loop head as its guard (`for (... of data)`, `data.forEach(...)`; a nesting
+`if` joins with `&&`). The loop may run zero times or many, with titles and
+counts unknown, so the test keeps no assertion, its admission stays unresolved,
+and the finding reads as under Rule 20: `static_unknown` when every
+oracle-eligible related test is guarded, otherwise decided by the unguarded
+tests. A loop over a known non-empty literal keeps its expansion (Rule 13). A
+loop variable or callback parameter named `test`, `it` or `describe` is not
+descended. The dropped-registration disclosure no longer fires for these shapes.
+
 **Rule 12. A named function passed as the callback is the test body
 (2026-10-20).** `test("title", name)` runs the function `name`, so its body
 supplies the test's assertions and owner calls, as an inline callback would.
@@ -1071,7 +1084,8 @@ or `static_unknown`, never `exposed`):
    conditional expression, or a second call keeps the old reading.
 3. The decorator is applied as a bare `@D` (or an import alias of it) on
    an ordinary instance method that is the only decorator on that method,
-   in a class whose methods the owner relation can name. A decorator
+   in a class whose methods the owner relation can name, including
+   `export default class Name` (#10314). A decorator
    factory (`@D(3)`), a stacked decorator, a class, property, accessor or
    parameter decorator, a static method, and a decorator that also assigns
    `descriptor.get`, `descriptor.set` or `descriptor.writable` keep the old
@@ -1084,7 +1098,10 @@ or `static_unknown`, never `exposed`):
    result, so the same exactness rules as a direct return-value owner apply.
    The asserted call must be on a receiver of the decorated class
    (`new Ledger().add(...)`, or `x.add(...)` with `const x = new Ledger(...)`
-   in the test): an assertion on another class's same-named method sees
+   in the test), spelled with any constructor name the test legitimately
+   has for it: the class name in the same file, a named-import alias
+   (`import { Ledger as Book }`), or a default import's local name; a name
+   the test body or an enclosing scope rebinds constructs something else: an assertion on another class's same-named method sees
    nothing of the decorator; a callback parameter that reuses the receiver's
    name (`(l: Other) => ...`, `l => ...`) is a different binding and refuses.
    On the return line only decorated-method tests lend reach: an ordinary
@@ -1122,6 +1139,17 @@ of rule 5 still apply (the specifier must resolve to the owner module, the
 imported name must be the owner's name, a shadow or a mock blocks it), and a
 member read off a function export (rule 19) is a property of the function, not
 the owner.
+
+A member picked off a `const` namespace binding is the same import (#10447):
+after `const lib = require("<module>")`, `const f = lib.f`, `const f = lib["f"]`
+and `const { f } = lib` record source `<module>`, imported `f`. The namespace
+must be a `const` declared earlier; a `let`/`var` namespace, an alias of the
+namespace (`const again = lib`), a call on the member, an optional chain and a
+deeper member record nothing. A namespace whose members the file may replace
+(`lib.f = stub`, `lib["f"] = stub`, `delete lib.f`, or any use of `lib` beyond
+reading a member or destructuring it, such as `Object.assign(lib, stubs)`,
+`const alias = lib` or `{ lib }`) no longer holds the module's export
+there, so members read off it record nothing.
 
 Two bindings this rule and the destructured form share are refused (#10401).
 A test file that binds its own `require` at top level (`const require = ...`,
@@ -1696,6 +1724,13 @@ keys); do not take the next number.
     owner: `broad_error` / weak.
 
 ## Test Mapping
+
+- #10314 (decorated-method reach, constructor spellings): `crates/ripr/src/analysis/language/typescript/tests/decorated_reach_tests.rs`
+  pins `aliased_constructor_import_credits_the_return_edit` (a named-import alias
+  such as `import { Ledger as Book }`) and
+  `default_exported_class_credits_the_return_edit_under_any_local_name` (an
+  `export default class` imported under any local name), beside the existing
+  shadowed-or-replaced-receiver control that keeps a rebound name uncredited.
 
 - #9683 (rule 11, empty table): `tests/table_loop_tests.rs` pins that an empty
   `const` table holds no assertions and a `let` table does not. Corpus row
