@@ -290,6 +290,11 @@ fn given_a_parametrize_the_literal_parser_gives_up_on_then_the_argname_is_still_
         "@pytest.mark.parametrize('out', [pytest.param('abc', marks=pytest.mark.skip)])",
         "@pytest.mark.parametrize('out', ['abc'], indirect=False)",
         "@pytest.mark.parametrize('out', ['abc'], indirect=['other'])",
+        // An `indirect=` value the read cannot settle makes no edge either
+        // way (RIPR-SPEC-0028); the fixture limit still counts it (#10685).
+        "IND = True\n\n\n@pytest.mark.parametrize('out', ['abc'], indirect=IND)",
+        "IND = False\n\n\n@pytest.mark.parametrize('out', ['abc'], indirect=IND)",
+        "NAME = 'out'\n\n\n@pytest.mark.parametrize('out', ['abc'], indirect=[NAME])",
         "@pytest.mark.parametrize('out, other', [('a', 'b')])",
         "@pytest.mark.parametrize(('out', 'other'), [('a', 'b')])",
         "@pytest.mark.parametrize(['other', 'out'], [('a', 'b')])",
@@ -312,9 +317,6 @@ fn given_indirect_routing_the_argname_to_its_fixture_then_the_fixture_is_resolve
         "@pytest.mark.parametrize('out', ['abc'], indirect=True)",
         "@pytest.mark.parametrize('out', VALUES, indirect=['out'])",
         "@pytest.mark.parametrize('out', VALUES, indirect=('other', 'out'))",
-        // A value the read cannot settle may route the name (#10685).
-        "@pytest.mark.parametrize('out', ['abc'], indirect=IND)",
-        "@pytest.mark.parametrize('out', ['abc'], indirect=[NAME])",
     ] {
         let test = with_decorator(decorator);
         assert_eq!(

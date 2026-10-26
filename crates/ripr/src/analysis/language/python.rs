@@ -432,6 +432,10 @@ struct PythonTest {
     /// Argnames a pytest parametrize decorator supplies directly (not routed
     /// to a fixture by `indirect=`); never resolved as fixtures (#4563).
     direct_parametrized: Vec<String>,
+    /// The `direct_parametrized` names whose `indirect=` value the read
+    /// cannot settle: not resolved as fixtures, but still counted toward the
+    /// fixture limit (#10685).
+    unsettled_indirect: Vec<String>,
     /// Literal `@pytest.mark.parametrize` cases, when statically certain (#4559).
     parametrize: Option<parametrize::PythonParametrizeCases>,
     /// Parameters Hypothesis `@given(...)` supplies (#6601); never fixtures.

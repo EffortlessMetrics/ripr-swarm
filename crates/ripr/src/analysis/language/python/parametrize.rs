@@ -103,14 +103,26 @@ pub(super) fn parametrize_cases(
     (any && !product.is_empty()).then_some(PythonParametrizeCases { cases: product })
 }
 
-/// Argnames a pytest parametrize decorator supplies directly to the test,
-/// read syntactically and independent of the literal-cases parser (which
-/// gives up on variable argvalues, `pytest.param(marks=...)`, large products
-/// and any `indirect=`). An argname is excluded when `indirect=` may route it
-/// to its fixture ([`indirect_routes`]): the name is then resolved as a
-/// fixture and counts toward the fixture limit.
-pub(super) fn direct_argnames(decorators: &[Expr]) -> Vec<String> {
-    let mut direct = Vec::new();
+/// How a parametrize argname reaches the test, read from `indirect=`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Routing {
+    /// pytest passes the value to the test (no `indirect=`, literal `False`
+    /// or `None`, or a literal string list that omits the name).
+    Direct,
+    /// Literal `True` or a literal string list naming it: the value goes to
+    /// the fixture of that name.
+    Routed,
+    /// A value the read cannot settle (`indirect=IND`, a computed list, a
+    /// non-boolean constant): either may happen (#10685).
+    Unsettled,
+}
+
+/// Each argname of the test's pytest parametrize decorators with its
+/// routing, read syntactically and independent of the literal-cases parser
+/// (which gives up on variable argvalues, `pytest.param(marks=...)`, large
+/// products and any `indirect=`).
+fn argname_routings(decorators: &[Expr]) -> Vec<(String, Routing)> {
+    let mut found = Vec::new();
     for decorator in decorators {
         let Expr::Call(call) = decorator else {
             continue;
@@ -131,31 +143,50 @@ pub(super) fn direct_argnames(decorators: &[Expr]) -> Vec<String> {
             continue;
         };
         for name in names {
-            if !indirect.is_some_and(|value| indirect_routes(value, &name)) {
-                direct.push(name);
-            }
+            let routing = indirect.map_or(Routing::Direct, |value| indirect_routing(value, &name));
+            found.push((name, routing));
         }
     }
-    direct
+    found
 }
 
-/// Whether an `indirect=` value may route `name` to its fixture. Only
-/// literal `False`/`None` and a literal list of strings that omits the name
-/// leave it direct; any value read cannot settle (`indirect=IND`, a computed
-/// list) may route it, so the name stays a fixture the test cannot be
-/// credited through (#10685).
-fn indirect_routes(value: &Expr, name: &str) -> bool {
-    let listed = |elements: &[Expr]| {
-        string_elements(elements).is_none_or(|names| names.iter().any(|listed| listed == name))
+/// Argnames not definitely routed to a fixture. They are never resolved as
+/// fixtures, so a fixture of the same name makes no `fixture_owner_call`
+/// edge unless `indirect=` literally routes to it (RIPR-SPEC-0028).
+pub(super) fn direct_argnames(decorators: &[Expr]) -> Vec<String> {
+    argname_routings(decorators)
+        .into_iter()
+        .filter(|(_, routing)| *routing != Routing::Routed)
+        .map(|(name, _)| name)
+        .collect()
+}
+
+/// Argnames whose `indirect=` value the read cannot settle. pytest may pass
+/// them through a fixture that changes the value, so they still count
+/// toward `unresolved_pytest_fixture` (RIPR-SPEC-0238 L8, #10685).
+pub(super) fn unsettled_indirect_argnames(decorators: &[Expr]) -> Vec<String> {
+    argname_routings(decorators)
+        .into_iter()
+        .filter(|(_, routing)| *routing == Routing::Unsettled)
+        .map(|(name, _)| name)
+        .collect()
+}
+
+fn indirect_routing(value: &Expr, name: &str) -> Routing {
+    let listed = |elements: &[Expr]| match string_elements(elements) {
+        Some(names) if names.iter().any(|listed| listed == name) => Routing::Routed,
+        Some(_) => Routing::Direct,
+        None => Routing::Unsettled,
     };
     match value {
-        Expr::Constant(constant) => !matches!(
-            constant.value,
-            ast::Constant::Bool(false) | ast::Constant::None
-        ),
+        Expr::Constant(constant) => match constant.value {
+            ast::Constant::Bool(true) => Routing::Routed,
+            ast::Constant::Bool(false) | ast::Constant::None => Routing::Direct,
+            _ => Routing::Unsettled,
+        },
         Expr::List(list) => listed(&list.elts),
         Expr::Tuple(tuple) => listed(&tuple.elts),
-        _ => true,
+        _ => Routing::Unsettled,
     }
 }
 
