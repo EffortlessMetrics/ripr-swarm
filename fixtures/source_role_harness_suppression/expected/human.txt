@@ -20,8 +20,7 @@ Start here:
     the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact
     oracle do not establish that discriminator
   Related test (1 of 2 matched rows): tests/contract.rs:19 contract_journey
-  Next step: A related test already reaches the boundary input; strengthen its assertion to compare
-    the exact returned value (for example assert_eq!) so the old and changed behavior differ
+  Next step: Add boundary tests for below, equal, and above the changed threshold with exact assertions
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;

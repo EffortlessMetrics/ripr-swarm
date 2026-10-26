@@ -391,6 +391,40 @@ mod tests {
             Some(crate::domain::ASSERTION_SHAPED_WEAKLY_EXPOSED_NEXT_STEP.to_string());
         assert!(!assertion_shaped.boundary_input_observed_with_weak_oracle());
 
+        // Pairing limitation (exact oracle elsewhere, not paired with the
+        // boundary call, e.g. split_test_boundary_oracle).
+        let mut pairing = positive.clone();
+        pairing.ripr.reveal.discriminate.summary = "Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call (same_test_pairing_missing)".to_string();
+        assert!(!pairing.boundary_input_observed_with_weak_oracle());
+
+        // Unverified observation (rust_predicate_returned_drop_exit).
+        let mut unverified = positive.clone();
+        unverified.ripr.reveal.discriminate.summary =
+            "Discriminator unconfirmed: a non-plain Drop may exit while unwinding (observation_unverified)"
+                .to_string();
+        assert!(!unverified.boundary_input_observed_with_weak_oracle());
+
+        // A strong or medium oracle credited on any related row.
+        for strength in [OracleStrength::Strong, OracleStrength::Medium] {
+            let mut credited = positive.clone();
+            let mut row = related("elsewhere");
+            row.oracle_strength = strength;
+            credited.related_tests.push(row);
+            assert!(!credited.boundary_input_observed_with_weak_oracle());
+        }
+
+        // Refused/unknown oracle rows only: no genuinely weak credited oracle
+        // (predicate_boundary_oracle_refused keeps the boundary call in `if false`).
+        let mut refused = positive.clone();
+        refused.related_tests[0].oracle_strength = OracleStrength::None;
+        refused.related_tests[0].oracle_kind = OracleKind::Unknown;
+        assert!(!refused.boundary_input_observed_with_weak_oracle());
+
+        // A stop reason that means the call may not run.
+        let mut stopped = positive.clone();
+        stopped.stop_reasons = vec![crate::domain::StopReason::NoChangedRustLine];
+        assert!(!stopped.boundary_input_observed_with_weak_oracle());
+
         let mut no_step = positive;
         no_step.recommended_next_step = None;
         assert!(!no_step.boundary_input_observed_with_weak_oracle());
@@ -403,6 +437,16 @@ mod tests {
                 Confidence::Medium,
                 crate::domain::BOUNDARY_INPUT_OBSERVED_SUMMARY,
             );
+            self.ripr.reveal.discriminate = StageEvidence::new(
+                StageState::Weak,
+                Confidence::High,
+                "Only relational oracle found; it may not discriminate the changed value exactly",
+            );
+            let mut weak = related("boundary");
+            weak.oracle_kind = OracleKind::RelationalCheck;
+            weak.oracle_strength = OracleStrength::Weak;
+            self.related_tests = vec![weak];
+            self.stop_reasons = Vec::new();
             self.recommended_next_step =
                 Some(crate::domain::BOUNDARY_OBSERVED_WEAK_ORACLE_NEXT_STEP.to_string());
         }

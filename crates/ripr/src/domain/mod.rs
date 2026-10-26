@@ -131,6 +131,7 @@ pub use repair_card::{
 // Internal formatting convention, not library API: `lib.rs` re-exports
 // `pub mod domain`, so this stays crate-private.
 pub(crate) use probe::MISSING_DISCRIMINATOR_VALUE_PREFIX;
+pub(crate) use probe::boundary_input_observed_with_weak_oracle;
 pub use summary::{LanguageFileCount, Summary};
 pub use support::{ProbeId, SourceLocation, SymbolId};
 pub use test_evidence_summary::{TestEvidenceEntry, TestEvidenceSummary};

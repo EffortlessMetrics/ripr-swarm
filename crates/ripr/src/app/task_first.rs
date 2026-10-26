@@ -227,14 +227,11 @@ fn repair_refusal(
         .map(|reason| (RefusalKind::Other, reason))
 }
 
-/// The prefix the producer-owned readiness list puts before a missing
-/// discriminator kind (`analysis/repair_route.rs`).
-const PRODUCER_DISCRIMINATOR_PREFIX: &str = "producer-owned missing discriminator fact: ";
-
 /// Whether a readiness missing-evidence item is the boundary-value
-/// discriminator the producer could not find.
+/// discriminator the producer could not find. Recognised through the
+/// producer's own format (`analysis/repair_route.rs`), not by parsing text here.
 pub(super) fn is_boundary_value_discriminator(item: &str) -> bool {
-    item.strip_prefix(PRODUCER_DISCRIMINATOR_PREFIX) == Some("boundary_value")
+    crate::analysis::repair_route::is_boundary_value_discriminator_evidence(item)
 }
 
 fn ineligibility_label(reason: RepairPacketIneligibility) -> &'static str {

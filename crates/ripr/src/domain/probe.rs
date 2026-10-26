@@ -810,6 +810,42 @@ pub const ORACLE_ALIGNMENT_VALUES: [&str; 5] = [
     "unknown",
 ];
 
+/// The one gate for "a related test already reaches the boundary input and
+/// only its oracle is weak" (#10622), shared by the Next-step producer and the
+/// check advisory. It holds only when the finding's own evidence is a genuinely
+/// weak credited oracle on the boundary test: infection detected the boundary
+/// input, the discriminator stage is weak because the strongest oracle found is
+/// weak (not a pairing, refusal or unverified-observation limitation), no
+/// related row credits a strong or medium oracle (an exact assertion that is
+/// not paired with the boundary call is a different gap), and no stop reason
+/// says the call may not run.
+pub(crate) fn boundary_input_observed_with_weak_oracle(
+    class: &ExposureClass,
+    family: &ProbeFamily,
+    infect: &crate::domain::StageEvidence,
+    discriminate: &crate::domain::StageEvidence,
+    related_tests: &[RelatedTest],
+    stop_reasons: &[StopReason],
+) -> bool {
+    *class == ExposureClass::WeaklyExposed
+        && *family == ProbeFamily::Predicate
+        && infect.state == crate::domain::StageState::Yes
+        && infect.summary == crate::domain::BOUNDARY_INPUT_OBSERVED_SUMMARY
+        && discriminate.state == crate::domain::StageState::Weak
+        && discriminate.summary.starts_with("Only ")
+        && discriminate.summary.contains(" oracle found")
+        && stop_reasons.is_empty()
+        && related_tests
+            .iter()
+            .any(|test| test.oracle_strength == crate::domain::OracleStrength::Weak)
+        && !related_tests.iter().any(|test| {
+            matches!(
+                test.oracle_strength,
+                crate::domain::OracleStrength::Strong | crate::domain::OracleStrength::Medium
+            )
+        })
+}
+
 impl Finding {
     /// A weak predicate finding whose related tests already supply the changed
     /// boundary input (infection `yes`): the remaining gap is the oracle, not
@@ -819,12 +855,15 @@ impl Finding {
     /// assertion-helper Next step) or an earlier Next-step branch never
     /// qualifies.
     pub(crate) fn boundary_input_observed_with_weak_oracle(&self) -> bool {
-        self.class == ExposureClass::WeaklyExposed
-            && self.probe.family == ProbeFamily::Predicate
-            && self.ripr.infect.state == crate::domain::StageState::Yes
-            && self.ripr.infect.summary == crate::domain::BOUNDARY_INPUT_OBSERVED_SUMMARY
-            && self.recommended_next_step.as_deref()
-                == Some(crate::domain::BOUNDARY_OBSERVED_WEAK_ORACLE_NEXT_STEP)
+        boundary_input_observed_with_weak_oracle(
+            &self.class,
+            &self.probe.family,
+            &self.ripr.infect,
+            &self.ripr.reveal.discriminate,
+            &self.related_tests,
+            &self.stop_reasons,
+        ) && self.recommended_next_step.as_deref()
+            == Some(crate::domain::BOUNDARY_OBSERVED_WEAK_ORACLE_NEXT_STEP)
     }
 
     /// Related tests that supplied an oracle row or a refusal, skipping tests

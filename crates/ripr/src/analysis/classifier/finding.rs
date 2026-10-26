@@ -219,8 +219,14 @@ pub(in crate::analysis) fn build_finding_with_origins(
             &stop_reasons,
             // #10622: infection `yes` means a related test already supplies
             // the changed boundary input; only the oracle is weak.
-            evidence.infect.state == StageState::Yes
-                && evidence.infect.summary == BOUNDARY_INPUT_OBSERVED_SUMMARY,
+            boundary_input_observed_with_weak_oracle(
+                &class,
+                &context.probe.family,
+                &evidence.infect,
+                &evidence.discriminate,
+                &related_tests,
+                &stop_reasons,
+            ),
         )
     };
     let invalid_propagation_witness = evidence.propagation_witness().is_some_and(|diagnostic| {
