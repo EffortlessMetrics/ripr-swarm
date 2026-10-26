@@ -3675,23 +3675,8 @@ fn missing_field_value_discriminator(
     // { sku, .. })`) is observed whole by an `assert_eq!` on that whole
     // collection, read after the owner call directly or through a getter
     // whose body returns the field (RIPR-SPEC-0228 Decision 2).
-    let pushed_into = owner_fn.and_then(|owner| {
-        let impl_type = super::builder_override::OwnerCall::from_symbol(&owner.id.0)
-            .and_then(|call| call.impl_type());
-        super::propagation_witness::pushed_literal_collection_path(
-            owner.body.as_str(),
-            owner.start_line,
-            probe.location.line,
-            &probe.expression,
-            &|method| {
-                impl_type.and_then(|impl_type| {
-                    super::builder_override::inherent_method_body(index, impl_type, method)
-                        .map(str::to_string)
-                })
-            },
-        )
-        .map(|path| (owner, path))
-    });
+    let pushed_into = owner_fn
+        .and_then(|owner| pushed_literal_path(owner, probe, index).map(|path| (owner, path)));
     let pushed_literal_observed = |test: &TestSummary, assertion: &OracleFact| {
         pushed_into.as_ref().is_some_and(|(owner, path)| {
             pushed_collection_compared_whole(owner, path, test, assertion, index)
@@ -3843,6 +3828,30 @@ pub(in crate::analysis) fn assigned_field_of(
     )
 }
 
+/// #7131: the field collection path (`lines` for `self.lines.push(Line {
+/// sku: .. })`) the owner pushes the probe's literal onto, if the placement
+/// is one `pushed_literal_collection_path` accepts.
+pub(in crate::analysis) fn pushed_literal_path(
+    owner: &FunctionSummary,
+    probe: &Probe,
+    index: &crate::analysis::rust_index::RustIndex,
+) -> Option<String> {
+    let impl_type = super::builder_override::OwnerCall::from_symbol(&owner.id.0)
+        .and_then(|call| call.impl_type());
+    super::propagation_witness::pushed_literal_collection_path(
+        owner.body.as_str(),
+        owner.start_line,
+        probe.location.line,
+        &probe.expression,
+        &|method| {
+            impl_type.and_then(|impl_type| {
+                super::builder_override::inherent_method_body(index, impl_type, method)
+                    .map(str::to_string)
+            })
+        },
+    )
+}
+
 /// #7131: whether `assertion` compares the whole field collection `path`
 /// that `owner` pushes onto, read from the binding the test called `owner`
 /// on, after that call and with nothing between that may write through the
@@ -3852,7 +3861,7 @@ pub(in crate::analysis) fn assigned_field_of(
 /// (`binding_untouched_after_owner_call`), since another value built through
 /// the owner, or a snapshot, may carry the same changed value into the other
 /// operand.
-fn pushed_collection_compared_whole(
+pub(in crate::analysis) fn pushed_collection_compared_whole(
     owner: &FunctionSummary,
     path: &str,
     test: &TestSummary,

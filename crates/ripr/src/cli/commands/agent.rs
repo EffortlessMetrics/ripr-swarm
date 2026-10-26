@@ -1088,13 +1088,29 @@ pub(in crate::cli) fn run_agent_status(options: AgentStatusOptions) -> Result<()
     // commands. Passing the workflow directory there rendered
     // `--root ./target/ripr/workflow`, a command that cannot run (#3893).
     // A non-default `--out` is refused rather than silently ignored until
-    // the inspected paths can follow it.
+    // the inspected paths can follow it. The comparison is lexical, not raw
+    // `PathBuf` equality: `--out ./target/ripr/workflow` names exactly the
+    // accepted directory and must not fail on its `./` spelling (#10542).
     if let Some(dir) = &options.out_dir {
         let requested = resolve_agent_start_out_dir(&options.root, dir);
         let default_dir = options.root.join("target/ripr/workflow");
-        if requested != default_dir {
+        if crate::agent::loop_commands::lexically_clean(&requested)
+            != crate::agent::loop_commands::lexically_clean(&default_dir)
+        {
             return Err(format!(
                 "agent status --out {} is not supported: agent status reads the workflow artifacts under {}",
+                dir.display(),
+                default_dir.display()
+            ));
+        }
+        // Lexical equality is unsound when a `..` follows a symlink: the
+        // filesystem resolves `..` after the symlink target, not after the
+        // spelled component, so the accepted spelling can name a different
+        // real directory than the default (#10624 review). Refuse unless
+        // lexical resolution provably matches filesystem resolution.
+        if crate::agent::loop_commands::parent_dir_follows_symlink(&requested) {
+            return Err(format!(
+                "agent status --out {} is not supported: a symlink before `..` resolves to a different directory than its spelling; agent status reads the workflow artifacts under {}",
                 dir.display(),
                 default_dir.display()
             ));
