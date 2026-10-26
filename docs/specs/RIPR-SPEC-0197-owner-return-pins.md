@@ -919,6 +919,12 @@ wrong credits.
    veto an outer value. Unread direct patterns, declaration-only bindings,
    let-else and attributed lets refuse this proof instead of silently keeping
    a parameter's earlier type.
+   The constructed field must have the owner's direct statement-list context.
+   A nested block, closure or match arm can replace a value at that sink;
+   those contexts refuse this operand proof, including genuinely primitive
+   nested constructions, rather than borrowing outer primitive evidence.
+   Direct-body return, let and call wrappers introduce no additional binding
+   scope and remain eligible. This is not general lexical value resolution.
    An annotation or cast uses only the lexical scopes enclosing its parsed
    type occurrence. A binding inside a disjoint block or unused closure cannot
    rebind that type; direct items in an applicable scope remain hoisted even

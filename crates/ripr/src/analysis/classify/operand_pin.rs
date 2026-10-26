@@ -67,7 +67,7 @@ pub(in crate::analysis) fn operand_only_pin(
     let (field, left, right) = binary_field_initializer(expression)?;
     let owner_name = owner.name.as_str();
     let owner_body = owner.body.as_str();
-    if !primitive_binding::context_is_closed(owner, index)
+    if !primitive_binding::context_is_closed(owner, index, expression)
         || !operand_established_primitive(left, owner_body, outer_imports, index, owner)
         || !operand_established_primitive(right, owner_body, outer_imports, index, owner)
     {

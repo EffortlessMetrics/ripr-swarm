@@ -3,4 +3,6 @@
   whitespace around their binary operator changes, while primitive-looking
   type bindings keep observed overloaded-operator effects credited and
   disjoint block bindings and established standard derives preserve the
-  primitive discriminator without trusting custom expansion (#7077).
+  primitive discriminator without trusting custom expansion. Nested record
+  constructions refuse outer primitive evidence until their sink-local
+  bindings are established (#7077).

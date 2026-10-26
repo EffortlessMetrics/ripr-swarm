@@ -62,12 +62,12 @@ fn function(owner: &FunctionSummary, index: &RustIndex) -> Option<ast::Fn> {
     (matches.len() == 1).then(|| matches.remove(0))
 }
 
+pub(super) type LetBinding = (String, String, Option<String>, usize);
+
 /// Read only the owner's direct body lets. A nested function, closure or
 /// disjoint block cannot establish or veto the value used by its owner.
 /// Refuse unread direct bindings instead of silently retaining a parameter's
 /// primitive evidence across a destructured or attributed rebind.
-pub(super) type LetBinding = (String, String, Option<String>, usize);
-
 pub(super) fn direct_let_bindings(
     owner: &FunctionSummary,
     index: &RustIndex,
@@ -247,12 +247,54 @@ fn closed_scope(scope: &SyntaxNode, derives: bool) -> bool {
     })
 }
 
-pub(super) fn context_is_closed(owner: &FunctionSummary, index: &RustIndex) -> bool {
+/// Direct-body bindings cannot settle a field inside another binding scope.
+fn field_in_owner_body(function: &ast::Fn, expression: &str) -> bool {
+    let Some(body) = function.body().and_then(|body| body.stmt_list()) else {
+        return false;
+    };
+    let fields = function
+        .syntax()
+        .descendants()
+        .filter_map(ast::RecordExprField::cast)
+        .filter(|field| {
+            field
+                .syntax()
+                .text()
+                .to_string()
+                .trim()
+                .trim_end_matches(',')
+                .trim()
+                == expression.trim().trim_end_matches(',').trim()
+        })
+        .collect::<Vec<_>>();
+    let [field] = fields.as_slice() else {
+        return false;
+    };
+    for scope in field.syntax().ancestors() {
+        if scope == *body.syntax() {
+            return true;
+        }
+        if matches!(
+            scope.kind(),
+            SyntaxKind::STMT_LIST | SyntaxKind::CLOSURE_EXPR | SyntaxKind::MATCH_ARM
+        ) {
+            return false;
+        }
+    }
+    false
+}
+
+pub(super) fn context_is_closed(
+    owner: &FunctionSummary,
+    index: &RustIndex,
+    expression: &str,
+) -> bool {
     let derives = derives_have_root_context(owner, index);
     function(owner, index).is_some_and(|function| {
-        context_scopes(&function)
-            .iter()
-            .all(|scope| closed_scope(scope, derives))
+        field_in_owner_body(&function, expression)
+            && context_scopes(&function)
+                .iter()
+                .all(|scope| closed_scope(scope, derives))
     })
 }
 

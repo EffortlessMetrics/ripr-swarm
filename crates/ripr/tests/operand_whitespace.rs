@@ -301,7 +301,8 @@ fn primitive_type_aliases_do_not_hide_observed_operator_effects() -> Result<(), 
     .into_iter()
     .map(str::to_string)
     .chain(disjoint_operator_sources())
-    .chain(unread_rebinding_sources());
+    .chain(unread_rebinding_sources())
+    .chain(sink_shadow_sources());
     let mut findings = Vec::new();
     for (case, source) in sources.enumerate() {
         assert_binding_class(&source, ExposureClass::Exposed)?;
@@ -378,6 +379,53 @@ fn unread_rebinding_sources() -> Vec<String> {
     ]
     .into_iter()
     .map(|rebind| source.replace("    Quote {", &format!("    {rebind}\n    Quote {{")))
+    .collect()
+}
+
+#[test]
+fn sink_local_bindings_cannot_borrow_outer_primitive_evidence() -> Result<(), String> {
+    assert_sink_shadow(0)
+}
+
+#[test]
+fn sink_closure_bindings_cannot_borrow_outer_primitive_evidence() -> Result<(), String> {
+    assert_sink_shadow(1)
+}
+
+#[test]
+fn sink_match_bindings_cannot_borrow_outer_primitive_evidence() -> Result<(), String> {
+    assert_sink_shadow(2)
+}
+
+fn assert_sink_shadow(case: usize) -> Result<(), String> {
+    let sources = sink_shadow_sources();
+    let source = sources
+        .get(case)
+        .ok_or_else(|| format!("missing sink-shadow fixture {case}"))?;
+    assert_binding_class(source, ExposureClass::Exposed)
+}
+
+fn sink_shadow_sources() -> Vec<String> {
+    let source = include_str!("fixtures/operand_whitespace/module_param_alias.rs")
+        .replace("shipping: u64)", "shipping: i64)")
+        .replace("quote(3_000, 3, Shipping)", "quote(3_000, 3, 0)");
+    [
+        ("{ let shipping = Shipping;\n    Quote {", "    }\n    }"),
+        (
+            "let build = |shipping: Shipping| Quote {",
+            "    };\n    build(Shipping)",
+        ),
+        ("match Shipping { shipping => Quote {", "    },\n    }"),
+    ]
+    .into_iter()
+    .map(|(open, close)| {
+        source
+            .replace("    Quote {", &format!("    {open}"))
+            .replace(
+                "    }\n}\n\n#[cfg(test)]",
+                &format!("{close}\n}}\n\n#[cfg(test)]"),
+            )
+    })
     .collect()
 }
 
