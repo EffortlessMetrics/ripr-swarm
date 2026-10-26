@@ -309,6 +309,11 @@ extraction notice. This disclosure rule does not expand test extraction or
 oracle credit. Computed aliases, mutable aliases and unresolved flows retain
 the conservative notice.
 
+Runner values escaping through throws, iterable values, tagged substitutions
+or computed member reads cannot establish dormancy. Evaluated inline ordinary
+function constructors and tags retain body registration notices; their parameter
+shadows and uncalled function values remain separate from runner registrations.
+
 ### Assertion collection
 
 - Only the test callback's own statement list is walked, through blocks,

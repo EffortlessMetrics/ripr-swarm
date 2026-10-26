@@ -1483,7 +1483,8 @@ fn skipped_suite_bindings_retain_thrown_runner_mutation() {
     assert!(tests.is_empty(), "{tests:?}");
     let gap = detect_partial_test_extraction(file, source, &tests);
     assert!(
-        gap.as_ref().is_some_and(|gap| gap.snippet.starts_with("it('live'")),
+        gap.as_ref()
+            .is_some_and(|gap| gap.snippet.starts_with("it('live'")),
         "{source}: {gap:?}"
     );
 }
@@ -1496,7 +1497,81 @@ fn skipped_suite_bindings_retain_evaluated_constructor_body() {
     assert!(tests.is_empty(), "{tests:?}");
     let gap = detect_partial_test_extraction(file, source, &tests);
     assert!(
-        gap.as_ref().is_some_and(|gap| gap.snippet.starts_with("it('live'")),
+        gap.as_ref()
+            .is_some_and(|gap| gap.snippet.starts_with("it('live'")),
+        "{source}: {gap:?}"
+    );
+}
+
+#[test]
+fn skipped_suite_bindings_retain_opaque_runner_escapes() {
+    let file = Path::new("test/binding.test.ts");
+    for prelude in [
+        "import * as runner from 'mocha'; const d = runner['describe']; d.skip = custom;",
+        "customize`${describe}`;",
+        "for (const d of [describe]) { d.skip = custom; }",
+        "async function customizeRunner() { const d = await describe; d.skip = custom; }",
+        "function* transfer() { yield describe; }",
+    ] {
+        let source =
+            format!("{prelude} describe.skip('runs', () => {{ it('live', () => {{}}); }});");
+        let parsed_allocator = Allocator::default();
+        let parsed = Parser::new(&parsed_allocator, &source, source_type_for(file)).parse();
+        assert!(parsed.errors.is_empty(), "{source}: {:?}", parsed.errors);
+        let tests = extract_tests(file, &source);
+        assert!(tests.is_empty(), "{source}: {tests:?}");
+        let gap = detect_partial_test_extraction(file, &source, &tests);
+        assert!(
+            gap.as_ref()
+                .is_some_and(|gap| gap.snippet.starts_with("it('live'")),
+            "{source}: {gap:?}"
+        );
+    }
+}
+
+#[test]
+fn skipped_suite_bindings_keep_invocation_shadows_and_dormant_values_separate() {
+    let file = Path::new("test/binding.test.ts");
+    for expression in [
+        "new (function (it) { it('helper', () => {}); })(custom)",
+        "((it) => { it('helper', () => {}); })(custom)",
+        "(function (it) { it('helper', () => {}); })`title`",
+        "new (function () { function dormant() { it('dormant', () => {}); } })()",
+        "new (async function () { it('unconstructible', () => {}); })()",
+        "(function* () { it('dormant', () => {}); })`title`",
+    ] {
+        let source =
+            format!("describe.skip({expression}, () => {{ it('dormant', () => {{}}); }});");
+        let tests = extract_tests(file, &source);
+        assert!(tests.is_empty(), "{source}: {tests:?}");
+        assert!(
+            detect_partial_test_extraction(file, &source, &tests).is_none(),
+            "{source}"
+        );
+    }
+    for expression in [
+        "new (function () { it('live', () => {}); })()",
+        "(function () { it('live', () => {}); })`title`",
+        "(() => { it('live', () => {}); })`title`",
+    ] {
+        let source =
+            format!("describe.skip({expression}, () => {{ it('dormant', () => {{}}); }});");
+        let tests = extract_tests(file, &source);
+        assert!(tests.is_empty(), "{source}: {tests:?}");
+        let gap = detect_partial_test_extraction(file, &source, &tests);
+        assert!(
+            gap.as_ref()
+                .is_some_and(|gap| gap.snippet.starts_with("it('live'")),
+            "{source}: {gap:?}"
+        );
+    }
+    let source = "try { throw custom; } catch (d) { d.skip = custom; } for (const d of [custom]) { d.skip = custom; } describe.skip('off', () => { it('dormant', () => {}); }); register(() => { it('live', () => {}); });";
+    let tests = extract_tests(file, source);
+    assert!(tests.is_empty(), "{tests:?}");
+    let gap = detect_partial_test_extraction(file, source, &tests);
+    assert!(
+        gap.as_ref()
+            .is_some_and(|gap| gap.snippet.starts_with("it('live'")),
         "{source}: {gap:?}"
     );
 }

@@ -4921,22 +4921,15 @@ impl UnextractedTestFinder<'_> {
                 }
                 self.visit_call_with_arguments(call, true, true);
                 if self.gap.is_none() {
-                    match runtime_expression(&call.callee) {
-                        Expression::ArrowFunctionExpression(arrow) => {
-                            self.visit_empty_table_invoked_statements(&arrow.body.statements);
-                        }
-                        Expression::FunctionExpression(function) if !function.generator => {
-                            if let Some(body) = &function.body {
-                                self.visit_empty_table_invoked_statements(&body.statements);
-                            }
-                        }
-                        _ => {}
-                    }
+                    self.visit_empty_table_invoked_value(&call.callee, false);
                 }
             }
             Expression::NewExpression(call) => {
                 self.visit_empty_table_evaluated_expression(&call.callee);
                 self.visit_evaluated_arguments(&call.arguments);
+                if self.gap.is_none() {
+                    self.visit_empty_table_invoked_value(&call.callee, true);
+                }
             }
             Expression::AssignmentExpression(assignment) => {
                 self.visit_empty_table_evaluated_expression(&assignment.right)
@@ -4951,6 +4944,9 @@ impl UnextractedTestFinder<'_> {
                 self.visit_empty_table_evaluated_expression(&tagged.tag);
                 for value in &tagged.quasi.expressions {
                     self.visit_empty_table_evaluated_expression(value);
+                }
+                if self.gap.is_none() {
+                    self.visit_empty_table_invoked_value(&tagged.tag, false);
                 }
             }
             Expression::YieldExpression(yielded) => {
@@ -4993,6 +4989,28 @@ impl UnextractedTestFinder<'_> {
                 self.visit_empty_table_evaluated_expression(&binary.right);
             }
             expression => self.visit_expression(expression, false),
+        }
+    }
+
+    /// Inline calls and tags execute ordinary function bodies. Constructors
+    /// additionally exclude arrows and async functions, which cannot be `new`ed.
+    fn visit_empty_table_invoked_value(&mut self, expression: &Expression<'_>, constructor: bool) {
+        match runtime_expression(expression) {
+            Expression::ArrowFunctionExpression(arrow) if !constructor => {
+                self.with_parameters(&arrow.params, |finder| {
+                    finder.visit_empty_table_invoked_statements(&arrow.body.statements);
+                });
+            }
+            Expression::FunctionExpression(function)
+                if !function.generator && (!constructor || !function.r#async) =>
+            {
+                if let Some(body) = &function.body {
+                    self.with_parameters(&function.params, |finder| {
+                        finder.visit_empty_table_invoked_statements(&body.statements);
+                    });
+                }
+            }
+            _ => {}
         }
     }
 

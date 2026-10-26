@@ -373,6 +373,12 @@ impl DeclarationBindings {
                     self.escape_value(value);
                 }
             }
+            Expression::ComputedMemberExpression(member) => {
+                // An unresolved property can still carry a runner method.
+                self.escape_value(&member.object);
+                self.escape_value(&member.expression);
+            }
+            Expression::AwaitExpression(awaited) => self.escape_value(&awaited.argument),
             _ => {}
         }
     }
@@ -470,7 +476,10 @@ impl<'a> Visit<'a> for DeclarationBindings {
                 }
             }
             AstKind::ForStatement(statement) => self.push(statement.span, &[]),
-            AstKind::ForOfStatement(statement) => self.push(statement.span, &[]),
+            AstKind::ForOfStatement(statement) => {
+                self.push(statement.span, &[]);
+                self.escape_value(&statement.right);
+            }
             AstKind::ForInStatement(statement) => self.push(statement.span, &[]),
             AstKind::SwitchStatement(statement) => {
                 self.push(statement.span, &[]);
@@ -553,6 +562,17 @@ impl<'a> Visit<'a> for DeclarationBindings {
             AstKind::AssignmentTargetWithDefault(target) => self.escape_value(&target.init),
             AstKind::CallExpression(call) => self.escape_arguments(&call.arguments),
             AstKind::NewExpression(call) => self.escape_arguments(&call.arguments),
+            AstKind::TaggedTemplateExpression(tagged) => {
+                for value in &tagged.quasi.expressions {
+                    self.escape_value(value);
+                }
+            }
+            AstKind::ThrowStatement(thrown) => self.escape_value(&thrown.argument),
+            AstKind::YieldExpression(yielded) => {
+                if let Some(value) = &yielded.argument {
+                    self.escape_value(value);
+                }
+            }
             AstKind::ReturnStatement(returned) => {
                 if let Some(value) = &returned.argument {
                     self.escape_value(value);
