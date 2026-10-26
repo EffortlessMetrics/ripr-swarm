@@ -304,21 +304,33 @@ fn diverging_call_in_test_code(root: &SyntaxNode, whole_file: bool) -> bool {
             })
         })
     };
-    root.descendants().any(|node| {
-        let diverges = if let Some(call) = ast::CallExpr::cast(node.clone()) {
-            call.expr()
-                .and_then(|callee| match callee {
-                    ast::Expr::PathExpr(path) => path.path()?.segment()?.name_ref(),
-                    _ => None,
-                })
-                .is_some_and(|name| name.text() == "exit" || name.text() == "abort")
-        } else if let Some(call) = ast::MethodCallExpr::cast(node.clone()) {
-            call.name_ref().is_some_and(|name| name.text() == "exec")
-        } else {
-            false
-        };
-        diverges && (whole_file || test_only(&node))
-    })
+    // Tokens, not call nodes: an assertion macro's arguments are a token
+    // tree (`assert_eq!(total(std::process::exit(0)).ok(), None)`) that the
+    // syntax tree does not parse into calls.
+    let next_is_call = |token: &ra_ap_syntax::SyntaxToken| {
+        std::iter::successors(token.next_token(), |t| t.next_token())
+            .find(|next| !next.kind().is_trivia())
+            .is_some_and(|next| next.kind() == SyntaxKind::L_PAREN)
+    };
+    let after_dot = |token: &ra_ap_syntax::SyntaxToken| {
+        std::iter::successors(token.prev_token(), |t| t.prev_token())
+            .find(|previous| !previous.kind().is_trivia())
+            .is_some_and(|previous| previous.kind() == SyntaxKind::DOT)
+    };
+    root.descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| token.kind() == SyntaxKind::IDENT)
+        .any(|token| {
+            let diverges = match token.text() {
+                "exit" | "abort" => next_is_call(&token),
+                "exec" => after_dot(&token) && next_is_call(&token),
+                _ => false,
+            };
+            diverges
+                && token
+                    .parent()
+                    .is_some_and(|parent| whole_file || test_only(&parent))
+        })
 }
 
 /// The only function of this name anywhere in the file.

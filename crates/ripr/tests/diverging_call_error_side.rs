@@ -28,6 +28,13 @@ fn diverging_calls_before_an_err_side_assertion_never_credit_exposed() -> Result
             true,
         ),
         (
+            "exit_directly_inside_the_assertion_arguments",
+            "",
+            "",
+            "assert_eq!(total(std::process::exit(0)).ok(), None);",
+            false,
+        ),
+        (
             "check_helper_control",
             "",
             "fn check(s: &str, want: Option<u32>) {\n        assert_eq!(total(s).ok(), want);\n    }\n",
