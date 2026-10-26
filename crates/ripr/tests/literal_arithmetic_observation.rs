@@ -56,6 +56,11 @@ impl TempRepo {
             std::process::id(),
             SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ));
+        std::fs::create_dir(&root)
+            .map_err(|error| format!("create root directory failed: {error}"))?;
+        // The guard owns the root before any file is written, so a failed
+        // setup step still removes the partial directory on drop.
+        let repo = Self { root: root.clone() };
         let write = |path: &str, text: &str| -> Result<(), String> {
             let full = root.join(path);
             if let Some(parent) = full.parent() {
@@ -83,7 +88,7 @@ impl TempRepo {
             &PANEL_TEST.replace("EXPECTED", expected),
         )?;
         write("diff.patch", patch)?;
-        Ok(Self { root })
+        Ok(repo)
     }
 
     fn findings(&self) -> Result<Vec<Finding>, String> {
