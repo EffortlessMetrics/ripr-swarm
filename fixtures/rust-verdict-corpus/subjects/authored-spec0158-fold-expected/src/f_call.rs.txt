@@ -1,0 +1,23 @@
+pub fn tier_call(qty: u32) -> u32 {
+    if 10 <= qty {
+        5
+    } else {
+        0
+    }
+}
+
+fn widen(value: u32) -> u32 {
+    value + 5
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_widened_base_is_fourteen_f_call() {
+        let base = 9;
+        assert_eq!(tier_call(widen(base) + 1), 5);
+        assert_eq!(tier_call(widen(base)), 5);
+    }
+}

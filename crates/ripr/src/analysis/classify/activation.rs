@@ -6064,7 +6064,14 @@ pub(in crate::analysis) fn owner_argument_values(
 /// The argument is the literal only when nothing computes around it.
 fn owner_row_argument_values(test: &TestSummary, argument: &str, text_cells: bool) -> Vec<String> {
     let values = owner_argument_values_in(test, argument, text_cells);
-    if values.is_empty() || passes_literals_through(strip_literal_wrappers(argument), 0) {
+    if values.is_empty() {
+        // RIPR-SPEC-0158: arithmetic over the test's own literal bindings
+        // is the number it computes (`score(base + 1)` after `let base = 9`).
+        return super::argument_fold::folded_argument(&test.body, argument)
+            .into_iter()
+            .collect();
+    }
+    if passes_literals_through(strip_literal_wrappers(argument), 0) {
         values
     } else {
         Vec::new()
@@ -9594,8 +9601,8 @@ assert_eq!(input.amount, 100);"#
     #[test]
     fn given_computed_argument_for_compared_parameter_then_boundary_is_unresolved_not_missing() {
         // #6672: `score(base + 1)` with `let base = 9` is 10, the boundary.
-        // ripr cannot read it, so it must not report `amount == 10` as
-        // missing from the remaining `score(base)` row.
+        // Arithmetic over the test's own literal bindings is read (RIPR-SPEC-0158
+        // example 21), so both rows are definite inputs and nothing is missing.
         let owner = function("pub fn score(amount: u32) -> bool {\n    10 <= amount\n}");
         let test = test_with_body_calls(
             "let base = 9;\nassert!(score(base + 1));\nassert!(!score(base));",
@@ -9608,6 +9615,26 @@ assert_eq!(input.amount, 100);"#
             &owner,
             &probe(ProbeFamily::Predicate, "10 <= amount"),
             &[&test],
+        );
+        assert!(gathered.activation.missing_discriminators.is_empty());
+        assert_eq!(gathered.unresolved_boundary, None);
+        let mut values = owner_input_values(&gathered.activation);
+        values.sort();
+        assert_eq!(values, vec!["10", "9"]);
+
+        // An operand the fold cannot read keeps the argument computed: the
+        // bare `score(base)` row stays, the boundary is unresolved, not missing.
+        let unread = test_with_body_calls(
+            "let base = 9;\nassert!(score(base + 1u32));\nassert!(!score(base));",
+            &[
+                (11, "assert!(score(base + 1u32));"),
+                (12, "assert!(!score(base));"),
+            ],
+        );
+        let gathered = boundary_input(
+            &owner,
+            &probe(ProbeFamily::Predicate, "10 <= amount"),
+            &[&unread],
         );
 
         assert!(gathered.activation.missing_discriminators.is_empty());
