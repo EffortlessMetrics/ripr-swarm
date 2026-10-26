@@ -189,6 +189,11 @@ pub(in crate::analysis) fn current_path_witness_with(
                     && !opaque_path_text(&probe.expression)
                     && !opaque_path_text(&sink.text)
                     || unchanged_closure_tail(probe, sink)
+                    // RIPR-SPEC-0360: the update binds to the returned local
+                    // by name; a `.await` in its term is a dot the path
+                    // identity above would read as a qualified path.
+                    || (accumulates_into_returned_local(probe, sink)
+                        && !opaque_path_text(&probe.expression))
                     // #7063: the payload-carrying source and its
                     // variant-named sink share no path identity.
                     || constructs_its_error_on_its_line(probe, sink, declared_error_variant)))
