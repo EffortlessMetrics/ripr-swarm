@@ -204,11 +204,14 @@ partial reads and zero visible threads are not clean review. A valid later findi
 can block merge despite an earlier clean pass. Preserve unaffected evidence while
 refreshing materially changed review/proof dimensions.
 
-After landing, reconcile the actual issue/parent acceptance. No routine full
-post-merge CI replay; the intended independent main-health cadence requires both
-at least one hour and ten merges. Incident, deep and release proof retain their
-own purposes and authority. Do not skip the currently enforced path or weaken
-proof to claim the timing/cost target.
+After landing, reconcile the actual issue/parent acceptance. Under #4984, the
+former one-hour-and-ten-merges automatic main-health target is superseded by the
+selected merge-queue-only qualification direction in [merge flow](docs/MERGE_FLOW.md).
+Retain earlier observations with their original subjects and scope; they do not
+authorize routine full post-merge CI replay. Current installed qualification
+obligations remain binding until verified cutover; this instruction does not
+disable any workflow. Incident, deep and release proof retain their own named
+purposes and authority. Do not weaken proof to claim the timing/cost target.
 
 ## Product Contract
 
