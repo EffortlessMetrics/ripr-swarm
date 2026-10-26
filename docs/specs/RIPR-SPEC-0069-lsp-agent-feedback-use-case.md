@@ -161,6 +161,22 @@ named limitations. The same typed witness is projected into diagnostic data,
 hover, context packets, and copy-context actions without renderer-specific
 derivation.
 
+The typed witness must round-trip through its own JSON representation,
+including when `limitations` is empty and omitted. An absent `limitations`
+field decodes as an empty array; explicit `null` or a malformed array is
+rejected. Optional facts retain present values, including empty strings and
+zero confidence. On `DiagnosticWitness`, `DiagnosticFixSite`, and
+`DiagnosticConfidence`, absent or `null` optional fields decode as unavailable
+and serialize as omitted fields. Nested fact types keep their existing JSON
+representation; the reader does not invent missing evidence.
+This compatibility is tested inside the complete context packet produced by
+the public renderer. Unknown optional witness properties must not prevent
+reading known evidence, but the typed witness does not retain them for
+reserialization. Forwarders must keep the opaque JSON document to retain
+extensions. Unknown limitation kinds retain their producer-supplied kind and
+detail strings. The existing envelope shape is a compatibility control; its
+null-witness documentation correction remains owned separately by #5082.
+
 The server also emits the versioned `ripr/analysisStatus` notification and
 returns the same `analysis_status` object from `ripr.collectWorkspaceStatus`.
 Its stable fields are:

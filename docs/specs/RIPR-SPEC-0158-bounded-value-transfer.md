@@ -19,6 +19,13 @@ exercised boundary from a missing one.
 - One typed value-transfer interface
   (`analysis/classify/value_transfer.rs`) evaluates a single-line `let`
   initializer over one related-test call row's exact input literals.
+- An owner-call argument is an input row's literal only when nothing computes
+  around it (#10484): the literal itself, behind `&`, `.to_string()`,
+  `.to_owned()`, `.into()` or `String::from(..)`, or inside a constructor,
+  variant, tuple, array or `vec![..]`. A literal inside a call, method call,
+  generic call or macro (`std::env::var("WHO").unwrap_or_default()`,
+  `make_name("Bob")`) is that call's operand, so the call contributes no row and
+  a boundary that depends on it reads as the result of a call.
 - The value lattice is typed (`Str`, `Char`, `Bool`, `Index`, option
   forms, `CharSeq`); every exact result carries per-step provenance
   (operation family, receiver/argument rendering, chain depth) and the
