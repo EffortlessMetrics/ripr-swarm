@@ -54,7 +54,9 @@ Adopt option 3 from the alternatives above, narrowly.
   fallback when the helper is missing or fails to start, so a packaging mistake
   degrades to today's behavior rather than to no probe.
 - The existing Job-contract tests in `lsp_compatibility.test.ts` gate the
-  switch: the helper must satisfy them unchanged.
+  switch: the helper must satisfy them unchanged. The qualification lane must
+  bind each probe invocation to the selected helper artifact, and a run that
+  fell back to the wrapper is not native proof (see Consequences).
 
 ## Consequences
 
@@ -78,6 +80,18 @@ Adopt option 3 from the alternatives above, narrowly.
   close and descendant cleanup are proved by the existing Job-contract tests in
   `lsp_compatibility.test.ts`, which the helper must satisfy unchanged; reusing
   the current timing step supplies neither proof.
+- Native containment proof is bound to the helper, and the fallback is
+  qualified separately. The future lane must record the executed helper's path
+  and content identity for every probe and must not credit a fallback run as
+  native proof. Validation handoff:
+  - Positive: the packaged helper handles `--version` and `lsp --stdio`, with
+    its executed identity retained, including the Windows `.cmd` and
+    `useShell=true` fixtures.
+  - Negative: with the helper removed, and separately with it made unstartable,
+    the product falls back to today's wrapper behavior, while native
+    qualification fails or reports not established.
+  - The target-start-failure and nonzero-target controls stay typed target
+    outcomes, distinct from a helper launch failure.
 - A new dependency and the repository's first `unsafe` exception, which is the
   reason this is an ADR and not a PR.
 - Per-platform VSIX packaging and a Windows-qualified build and test lane for
