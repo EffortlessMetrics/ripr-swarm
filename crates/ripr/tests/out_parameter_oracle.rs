@@ -1012,3 +1012,52 @@ fn nonempty_literal_writers_keep_out_parameter_credit() -> Result<(), String> {
     }
     Ok(())
 }
+
+/// The owner-wide allowlist refuses a named sibling even when the probe
+/// selects a literal write. Compare the passed local with a route-disabled
+/// unrelated local so another matching route cannot masquerade as credit.
+#[test]
+fn a_named_sibling_refuses_owner_wide_credit_for_a_literal_probe() -> Result<(), String> {
+    let passed = format!("{BUILD}        assert_eq!(s, \"+570\");");
+    let disabled = "        let mut s = String::new();\n        let mut t = String::new();\n        OffsetFormat.format(&mut s, 570);\n        t.push_str(\"+570\");\n        assert_eq!(t, \"+570\");";
+    let binding = "        let payload = String::new();";
+    let sibling = "        out.push_str(&payload);";
+    let tail = "        out.push_str(\"570\");";
+    let pin = |finding: &Value, expression: &str, class: &str, discriminator: &str| {
+        assert_eq!(finding["probe"]["family"], "call_deletion", "{finding}");
+        assert_eq!(finding["probe"]["expression"], expression, "{finding}");
+        assert_eq!(finding["classification"], class, "{finding}");
+        assert_eq!(
+            finding["ripr"]["discriminate"]["state"], discriminator,
+            "{finding}"
+        );
+    };
+    let plain = owner_with(&[NEW, tail]);
+    let positive = finding_custom(&plain, OLD, NEW, &passed)?;
+    pin(&positive, "out.push('+')", "exposed", "yes");
+    let plain_disabled = finding_custom(&plain, OLD, NEW, disabled)?;
+    pin(&plain_disabled, "out.push('+')", "weakly_exposed", "weak");
+    for lines in [
+        vec![binding, sibling, NEW, tail],
+        vec![binding, NEW, sibling, tail],
+    ] {
+        let owner = owner_with(&lines);
+        let selected = finding_custom(&owner, OLD, NEW, &passed)?;
+        let route_disabled = finding_custom(&owner, OLD, NEW, disabled)?;
+        pin(&selected, "out.push('+')", "weakly_exposed", "weak");
+        pin(&route_disabled, "out.push('+')", "weakly_exposed", "weak");
+        assert_eq!(selected["classification"], route_disabled["classification"]);
+        assert_eq!(
+            selected["ripr"]["discriminate"],
+            route_disabled["ripr"]["discriminate"]
+        );
+        let changed_named = finding_custom(&owner, "        // old", sibling, &passed)?;
+        pin(
+            &changed_named,
+            "out.push_str(&payload)",
+            "weakly_exposed",
+            "weak",
+        );
+    }
+    Ok(())
+}

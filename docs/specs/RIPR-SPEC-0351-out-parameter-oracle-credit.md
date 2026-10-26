@@ -121,6 +121,11 @@ assertion reads the call's out-parameter; it grants no strength or reach.
   are refused (#10058). The helper has no local value model, so named
   nonempty values also refuse. This does not resolve data-dependent
   `format!`/`write!` arguments or width padding on a user `Display`.
+- This refusal applies to the whole owner: a named argument on an earlier
+  or later sibling write also refuses this helper for a literal-valued
+  changed write. Literal/format preservation applies only within an
+  otherwise admitted owner. Other matching routes retain their own
+  admission rules.
 - Writes must be straight-line top-level statements with no `return`,
   `break`, `continue` or non-trailing `?` before the last one, and the changed
   expression must itself be such a write with no branch, loop, closure or
