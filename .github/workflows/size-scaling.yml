@@ -57,8 +57,13 @@ jobs:
       - name: Build the release binary
         run: cargo build --release --locked -p ripr
 
+      # A run terminated at the timeout or cancelled by the concurrency group never
+      # reaches the command's own cleanup, and rust-cache saves target/ on
+      # failure, so reclaim earlier runs' pid-scoped workspaces first.
       - name: Measure size scaling
-        run: cargo xtask size-scaling --binary target/release/ripr --base-kib 512
+        run: |
+          rm -rf target/ripr/size-scaling
+          cargo xtask size-scaling --binary target/release/ripr --base-kib 512
 
       - name: Upload size-scaling report
         if: always()
