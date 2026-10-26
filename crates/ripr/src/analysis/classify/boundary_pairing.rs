@@ -65,6 +65,7 @@ pub(in crate::analysis) fn wrapper_return_boundary_pinned(
     assertion: &OracleFact,
     chain: &HelperChain,
     activation: &ActivationEvidence,
+    test: &TestSummary,
 ) -> bool {
     let Some(hop) = chain.hops.last() else {
         return false;
@@ -82,7 +83,7 @@ pub(in crate::analysis) fn wrapper_return_boundary_pinned(
         && assertion.strength == OracleStrength::Strong
         && whole_call
         && chain_forwards_owner_result(&owner.name, chain)
-        && assertion_names_one_entry_call(owner, name, assertion, None)
+        && assertion_names_one_entry_call(owner, name, assertion, Some(test))
         && assertion_observes_boundary_entry_call(owner, name, assertion, activation)
 }
 

@@ -49,7 +49,7 @@ pub(super) fn folded_argument(test_body: &str, argument: &str) -> Option<String>
         if value.is_empty() || !value.chars().all(|ch| ch.is_ascii_digit()) {
             return None;
         }
-        if !bound_exactly_once(test_body, token) {
+        if !bound_once_before_use(test_body, token, text) {
             return None;
         }
         inputs.insert(token.to_string(), value);
@@ -68,12 +68,14 @@ pub(super) fn folded_argument(test_body: &str, argument: &str) -> Option<String>
     }
 }
 
-/// Whether `name` is bound by exactly one pattern in the test body and never
-/// assigned: the `let` itself. A `for` pattern, a closure parameter, an
+/// Whether `name` is bound by exactly one pattern in the test body, never
+/// assigned, and that binding ends before the first place `argument` is
+/// written: the `let` itself. A `for` pattern, a closure parameter, an
 /// `if let` or a match arm that reuses the name is a second binding that may
-/// shadow the `let` at the call. A body that does not parse counts as
-/// rebinding.
-fn bound_exactly_once(test_body: &str, name: &str) -> bool {
+/// shadow the `let` at the call, and a `let` that follows the call cannot be
+/// the value the call saw (a same-named item may). A body that does not parse
+/// counts as rebinding.
+fn bound_once_before_use(test_body: &str, name: &str, argument: &str) -> bool {
     let wrapped;
     let source =
         if test_body.trim_start().starts_with("fn ") || test_body.trim_start().starts_with("#[") {
@@ -85,13 +87,13 @@ fn bound_exactly_once(test_body: &str, name: &str) -> bool {
     let Some(parse) = parse_clean_source_file(source) else {
         return false;
     };
-    let mut patterns = 0usize;
+    let mut patterns = Vec::new();
     for node in parse.tree().syntax().descendants() {
         if ast::IdentPat::cast(node.clone())
             .and_then(|pattern| pattern.name())
             .is_some_and(|bound| bound.text() == name)
         {
-            patterns += 1;
+            patterns.push(usize::from(node.text_range().end()));
         }
         if ast::BinExpr::cast(node).is_some_and(|expr| {
             matches!(expr.op_kind(), Some(ast::BinaryOp::Assignment { .. }))
@@ -102,7 +104,13 @@ fn bound_exactly_once(test_body: &str, name: &str) -> bool {
             return false;
         }
     }
-    patterns == 1
+    let [declared_end] = patterns[..] else {
+        return false;
+    };
+    source
+        .match_indices(argument)
+        .next()
+        .is_some_and(|(at, _)| at >= declared_end)
 }
 
 #[cfg(test)]
@@ -115,18 +123,24 @@ mod tests {
 
     #[test]
     fn arithmetic_over_a_single_literal_binding_folds() {
-        let body = "fn t() {\n    let base = 9;\n    assert!(score(base + 1));\n}";
-        assert_eq!(fold(body, "base + 1").as_deref(), Some("10"));
-        assert_eq!(fold(body, "base * 2").as_deref(), Some("18"));
-        assert_eq!(fold(body, "(base + 1) * 2").as_deref(), Some("20"));
-        assert_eq!(fold(body, "base-1").as_deref(), Some("8"));
-        assert_eq!(fold(body, "2 + 3"), None, "literals alone name no binding");
-        assert_eq!(fold(body, "base + 2 * 3").as_deref(), Some("15"));
+        let calls = "score(base + 1); score(base * 2); score((base + 1) * 2); score(base-1); score(2 + 3); score(base + 2 * 3);";
+        let body = format!("fn t() {{\n    let base = 9;\n    {calls}\n}}");
+        assert_eq!(fold(&body, "base + 1").as_deref(), Some("10"));
+        assert_eq!(fold(&body, "base * 2").as_deref(), Some("18"));
+        assert_eq!(fold(&body, "(base + 1) * 2").as_deref(), Some("20"));
+        assert_eq!(fold(&body, "base-1").as_deref(), Some("8"));
+        assert_eq!(fold(&body, "2 + 3"), None, "literals alone name no binding");
+        assert_eq!(fold(&body, "base + 2 * 3").as_deref(), Some("15"));
+        assert_eq!(
+            fold(&body, "base + 7"),
+            None,
+            "an argument the body never writes"
+        );
     }
 
     #[test]
     fn two_bindings_fold_together() {
-        let body = "fn t() {\n    let width = 4;\n    let height = 5;\n    let _ = score(width * height);\n}";
+        let body = "fn t() {\n    let width = 4;\n    let height = 5;\n    let _ = score(width * height); let _ = score(width * width);\n}";
         assert_eq!(fold(body, "width * height").as_deref(), Some("20"));
         assert_eq!(fold(body, "width * width").as_deref(), Some("16"));
     }
@@ -144,6 +158,8 @@ mod tests {
         assert_eq!(fold(closure, "base + 1"), None);
         let pattern = "fn t() {\n    let base = 9;\n    if let Some(base) = lookup() {\n        score(base + 1);\n    }\n}";
         assert_eq!(fold(pattern, "base + 1"), None);
+        let later = "fn t() {\n    assert!(score(base + 1));\n    let base = 9;\n}";
+        assert_eq!(fold(later, "base + 1"), None, "the let follows the call");
         let assigned = "fn t() {\n    let base = 9;\n    base = 3;\n    score(base + 1);\n}";
         assert_eq!(fold(assigned, "base + 1"), None);
     }

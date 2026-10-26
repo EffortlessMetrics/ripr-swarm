@@ -29,8 +29,9 @@ exercised boundary from a missing one.
   Arithmetic over the test's own literal bindings is the number it computes, so
   it is a row (`score(base + 1)` after `let base = 9;`): the argument is only
   decimal literals and at least one binding, `+ - * / %` and parentheses, and every binding
-  is declared by exactly one pattern in the test body (the `let`), is not
-  `mut`, is never assigned, and has a plain decimal initializer (a suffixed,
+  is declared by exactly one pattern in the test body (the `let`), which
+  ends before the first place the argument is written, is not `mut`, is never
+  assigned, and has a plain decimal initializer (a suffixed,
   separated, signed, fractional, text or computed initializer is not read).
   The shared evaluator folds it and fails closed on a leading sign, overflow,
   underflow, division by zero or a value at or above `i32::MAX`. A call,
