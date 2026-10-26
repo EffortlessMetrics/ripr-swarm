@@ -17503,6 +17503,8 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/conditional_assertion_tests.rs::ts_assertion_inside_unreachable_catch_is_withheld",
   "crates/ripr/src/analysis/language/typescript/tests/registration_binding_tests.rs::registration_bindings_keep_imported_and_global_controls",
   "crates/ripr/src/analysis/language/typescript/tests/registration_binding_tests.rs::registration_picked_off_a_require_namespace_is_a_known_runner",
+  "crates/ripr/src/analysis/language/typescript/tests/registration_binding_tests.rs::a_namespace_spelled_like_its_picked_export_still_registers_the_renamed_local",
+  "crates/ripr/src/analysis/language/typescript/tests/registration_binding_tests.rs::a_namespace_pick_registers_only_calls_after_its_declaration",
   "crates/ripr/src/analysis/language/typescript/tests/registration_binding_tests.rs::registration_picked_off_an_unproven_require_namespace_stays_unrelated",
   "crates/ripr/src/analysis/language/typescript/tests/registration_binding_tests.rs::registration_bindings_reject_local_noop_callbacks",
   "crates/ripr/src/analysis/language/typescript/tests/registration_binding_tests.rs::registration_bindings_preserve_unrelated_valid_evidence",

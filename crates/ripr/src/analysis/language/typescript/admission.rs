@@ -550,12 +550,22 @@ fn verified_extended_registrations(
 /// (`const runner = require('node:test'); const test = runner.test;`, also
 /// `const { test } = runner`) (#10477). Each declaration is extracted alone, so
 /// the namespace binding it reads is not in view there; this pass carries it
-/// across declarations. The pick only counts when the namespace is a single
-/// top-level declaration whose every other use in the file is one of the
-/// qualifying picks, so `runner.test = stub`, `runner = other`, a direct
-/// `runner.test(...)` call or an escaped `runner` refuse every pick, and the
-/// picked local is never written. The usual runner-source and shadowing gates
-/// still decide whether the resulting import is a known registration.
+/// across declarations. Anything ambiguous records nothing:
+///
+/// * the namespace has exactly one top-level declaration, every other use of it
+///   is a `const` pick declared after it (a forward pick, a write, a direct
+///   call, an alias, an escape, a tagged or interpolated use refuse all picks);
+/// * `.default`, computed, nested, defaulted and rest picks are not read, nor
+///   is a member that is not an active registration root (`xit`, `xdescribe`);
+/// * the picked local is declared before any use, is never written (wrapped
+///   targets, member assignment, update, compound and loop targets included),
+///   and is only ever called, optionally through a member chain;
+/// * a file that can reach a name without spelling it (`eval`, `with`, an
+///   identifier escape such as `\u0072unner`) hides uses from the text scan,
+///   so it reads nothing.
+///
+/// The usual runner-source and shadowing gates still decide whether the
+/// resulting import is a known registration.
 fn verified_namespace_member_registrations(
     program: &oxc_ast::ast::Program<'_>,
     context: &TypeScriptAdmissionContext,
@@ -580,31 +590,40 @@ fn verified_namespace_member_registrations(
     }
     let mut result = Vec::new();
     for namespace in namespaces {
-        let mut allowed = Vec::new();
-        let mut declared = 0usize;
-        // (member, local, declarator span) per qualifying pick.
-        let mut picks: Vec<(String, String, oxc_span::Span)> = Vec::new();
-        let mut declared_at = None;
+        // The one declaration of the namespace.
+        let mut declarations = Vec::new();
         for statement in &program.body {
             let Statement::VariableDeclaration(declaration) = statement else {
                 continue;
             };
-            if declaration.declare {
-                continue;
-            }
             for declarator in &declaration.declarations {
                 if let BindingPattern::BindingIdentifier(id) = &declarator.id
                     && id.name.as_str() == namespace.local
                 {
-                    declared += 1;
-                    declared_at = Some(declarator.span.start);
-                    allowed.push(id.span.start as usize..id.span.end as usize);
+                    declarations.push((declarator.span.start, id.span));
                 }
             }
-            if declaration.kind != oxc_ast::ast::VariableDeclarationKind::Const {
+        }
+        let [(declared_at, declared_id)] = declarations.as_slice() else {
+            continue;
+        };
+        let mut allowed = vec![declared_id.start as usize..declared_id.end as usize];
+        // (member, local, declarator span) per qualifying pick.
+        let mut picks: Vec<(String, String, oxc_span::Span)> = Vec::new();
+        for statement in &program.body {
+            let Statement::VariableDeclaration(declaration) = statement else {
+                continue;
+            };
+            if declaration.declare
+                || declaration.kind != oxc_ast::ast::VariableDeclarationKind::Const
+            {
                 continue;
             }
             for declarator in &declaration.declarations {
+                // A pick before the namespace exists reads it in its dead zone.
+                if declarator.span.start <= *declared_at {
+                    continue;
+                }
                 let Some(init) = declarator
                     .init
                     .as_ref()
@@ -616,7 +635,7 @@ fn verified_namespace_member_registrations(
                     (
                         BindingPattern::BindingIdentifier(local),
                         Expression::StaticMemberExpression(member),
-                    ) if !member.optional => {
+                    ) if !member.optional && active_runner_member(member.property.name.as_str()) => {
                         let Expression::Identifier(receiver) = member.object.get_inner_expression()
                         else {
                             continue;
@@ -634,6 +653,7 @@ fn verified_namespace_member_registrations(
                         if receiver.name.as_str() == namespace.local && pattern.rest.is_none() =>
                     {
                         let mut group = Vec::new();
+                        let mut key_spans: Vec<std::ops::Range<usize>> = Vec::new();
                         for property in &pattern.properties {
                             let (
                                 PropertyKey::StaticIdentifier(key),
@@ -643,7 +663,7 @@ fn verified_namespace_member_registrations(
                                 group.clear();
                                 break;
                             };
-                            if property.computed {
+                            if property.computed || !active_runner_member(key.name.as_str()) {
                                 group.clear();
                                 break;
                             }
@@ -652,9 +672,13 @@ fn verified_namespace_member_registrations(
                                 local.name.to_string(),
                                 declarator.span,
                             ));
+                            // The key names an export; it is not a use of the
+                            // namespace even when the namespace is spelled alike.
+                            key_spans.push(key.span.start as usize..key.span.end as usize);
                         }
                         if !group.is_empty() {
                             allowed.push(receiver.span.start as usize..receiver.span.end as usize);
+                            allowed.append(&mut key_spans);
                             picks.extend(group);
                         }
                     }
@@ -662,26 +686,13 @@ fn verified_namespace_member_registrations(
                 }
             }
         }
-        // Exactly one declaration of the namespace, before each pick.
-        let Some(declared_at) = declared_at.filter(|_| declared == 1) else {
-            continue;
-        };
         if !super::tests_extract::identifier_occurrences(&code, &namespace.local)
             .all(|at| allowed.iter().any(|range| range.contains(&at)))
         {
             continue;
         }
         for (member, local, span) in picks {
-            if span.start < declared_at || local == namespace.local {
-                continue;
-            }
-            // Exclude only this declarator's initializing write.
-            let outside = format!(
-                "{}{}",
-                &code[..span.start as usize],
-                &code[span.end as usize..]
-            );
-            if super::tests_extract::identifier_written_in(&outside, &local) {
+            if local == namespace.local || !picked_local_is_only_called(&code, &local, span) {
                 continue;
             }
             result.push(TypeScriptImport {
@@ -693,6 +704,62 @@ fn verified_namespace_member_registrations(
         }
     }
     result
+}
+
+/// A runner member a pick may rename. The extraction guards judge the local
+/// spelling, so a renamed inactive member (`runner.xit`, `{ xdescribe: describe }`)
+/// would read as an active registration; those, `default` and every name that
+/// is not a registration root are not picked.
+fn active_runner_member(name: &str) -> bool {
+    (TEST_ROOTS.contains(&name) || DESCRIBE_ROOTS.contains(&name)) && !name.starts_with('x')
+}
+
+/// A picked local is trustworthy as a runner only when its declarator comes
+/// first, nothing writes it (strictly: wrapped, update, compound, loop and
+/// destructuring targets, or an assignment to one of its members), and every
+/// other use calls it, optionally through a member chain (`test.only(...)`).
+/// A bare value use could hand it to code that replaces it, so it refuses.
+fn picked_local_is_only_called(code: &str, local: &str, declarator: oxc_span::Span) -> bool {
+    let (start, end) = (declarator.start as usize, declarator.end as usize);
+    let outside = format!("{}{}", &code[..start], &code[end..]);
+    if super::tests_extract::identifier_written_in(&outside, local)
+        || super::tests_extract::identifier_written_strictly(&outside, local)
+    {
+        return false;
+    }
+    super::tests_extract::identifier_occurrences(code, local)
+        .filter(|at| !(start..end).contains(at))
+        .all(|at| {
+            // Declared before any use.
+            if at < end {
+                return false;
+            }
+            let before = code[..at].trim_end();
+            if before.ends_with("delete") || before.ends_with("typeof") {
+                return false;
+            }
+            let mut rest = &code[at + local.len()..];
+            // A member chain: `.only`, `.skip`, `?.x`, `["x"]` (bracket bodies are masked).
+            loop {
+                let trimmed = rest.trim_start();
+                let Some(after_dot) = trimmed
+                    .strip_prefix("?.")
+                    .or_else(|| trimmed.strip_prefix('.'))
+                else {
+                    rest = trimmed;
+                    break;
+                };
+                let name_len = after_dot
+                    .find(|ch: char| !(ch.is_alphanumeric() || ch == '_' || ch == '$'))
+                    .unwrap_or(after_dot.len());
+                if name_len == 0 {
+                    return false;
+                }
+                rest = &after_dot[name_len..];
+            }
+            // Called, and the call is not itself an assignment target.
+            rest.starts_with('(')
+        })
 }
 
 /// Visible spellings of top-level re-exports (`export { x } from './y'`),

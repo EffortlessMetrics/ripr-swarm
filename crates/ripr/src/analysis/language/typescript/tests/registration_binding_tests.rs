@@ -89,6 +89,21 @@ fn registration_picked_off_a_require_namespace_is_a_known_runner() -> Result<(),
     Ok(())
 }
 
+/// #10477: the namespace may be spelled like the export it picks, and the
+/// registration then goes through the renamed local only.
+#[test]
+fn a_namespace_spelled_like_its_picked_export_still_registers_the_renamed_local()
+-> Result<(), String> {
+    let source = format!(
+        "const test = require('node:test'); const {{ test: it }} = test;\n{}",
+        TEST.replacen("test(", "it(", 1)
+    );
+    let finding = registration_finding("registration-namespace-keyname", &source)?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{source}");
+    assert_eq!(finding.related_tests.len(), 1, "{finding:?}");
+    Ok(())
+}
+
 /// #10477 negatives: a non-runner module, a namespace that is written, escaped
 /// or rebound, and a `let` namespace never make the picked local a runner.
 #[test]
@@ -102,6 +117,40 @@ fn registration_picked_off_an_unproven_require_namespace_stays_unrelated() -> Re
         "const runner = require('node:test'); const runner2 = runner; const test = runner2.test;",
         "const runner = require('node:test'); const test = runner?.test;",
         "const runner = require('node:test'); const { test = () => {} } = runner;",
+        // `.default` is not a native CommonJS export (rule 22): no pick, any spelling.
+        "const runner = require('node:test'); const test = runner.default;",
+        "const runner = require('node:test'); const { default: test } = runner;",
+        "const runner = require('node:test'); const test = runner['default'];",
+        "const runner = require('node:test'); const { 'default': test } = runner;",
+        "const runner = require('node:test'); const { ['default']: test } = runner;",
+        // Nested patterns and members that are not runner exports.
+        "const runner = require('node:test'); const { a: { test } } = runner;",
+        "const runner = require('node:test'); const test = runner.mock;",
+        "const runner = require('node:test'); const test = runner.test.skip;",
+        // The namespace is used in a way the text scan cannot bound.
+        "const runner = require('node:test'); const test = runner.test; runner`x`;",
+        "const runner = require('node:test'); const test = runner.test; `${runner}`;",
+        "const runner = require('node:test'); const test = runner.test; \\u0072unner.mock = () => {};",
+        "const runner = require('node:test'); const test = runner.test; void typeof runner;",
+        "const runner = require('node:test'); const test = runner.test; eval('runner.mock = 1');",
+        "import runner from 'node:test'; const test = runner.test;",
+        // A forward pick reads the namespace in its dead zone.
+        "const early = runner.test; const runner = require('node:test'); const test = runner.test;",
+        "const early = runner.test; const runner = require('node:test'), test = runner.test;",
+        // Every write to the picked local, wrapped or not, withdraws the pick.
+        "const runner = require('node:test'); const test = runner.test; (test) = () => {};",
+        "const runner = require('node:test'); const test = runner.test; (test as any) = () => {};",
+        "const runner = require('node:test'); const test = runner.test; [test] = [() => {}];",
+        "const runner = require('node:test'); const test = runner.test; ({ a: test } = { a: () => {} });",
+        "const runner = require('node:test'); const test = runner.test; test++;",
+        "const runner = require('node:test'); const test = runner.test; test += 1;",
+        "const runner = require('node:test'); const test = runner.test; for (test of []) {}",
+        // Replacing, deleting or escaping the picked local's members or value.
+        "const runner = require('node:test'); const test = runner.test; test.only = () => {};",
+        "const runner = require('node:test'); const test = runner.test; test.x = 1;",
+        "const runner = require('node:test'); const test = runner.test; delete test.only;",
+        "const runner = require('node:test'); const test = runner.test; Object.assign(test, {});",
+        "const runner = require('node:test'); const test = runner.test; const copy = test;",
     ] {
         let source = format!("{prelude}\n{TEST}");
         assert_eq!(
@@ -110,6 +159,26 @@ fn registration_picked_off_an_unproven_require_namespace_stays_unrelated() -> Re
             "{source}"
         );
     }
+    Ok(())
+}
+
+/// #10477: a registration that runs before the pick declares its local reads a
+/// dead binding, so it earns nothing; a modifier call after the pick still does.
+#[test]
+fn a_namespace_pick_registers_only_calls_after_its_declaration() -> Result<(), String> {
+    let before = format!("const runner = require('node:test');\n{TEST}\nconst test = runner.test;");
+    assert_eq!(
+        registration_finding("registration-namespace-order", &before)?.class,
+        ExposureClass::NoStaticPath,
+        "{before}"
+    );
+    let modifier = format!(
+        "const runner = require('node:test'); const test = runner.test;\n{}",
+        TEST.replacen("test(", "test.only(", 1)
+    );
+    let finding = registration_finding("registration-namespace-modifier", &modifier)?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{modifier}");
+    assert_eq!(finding.related_tests.len(), 1, "{finding:?}");
     Ok(())
 }
 
