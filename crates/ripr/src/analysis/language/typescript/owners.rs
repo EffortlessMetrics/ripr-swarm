@@ -2224,6 +2224,21 @@ fn member_mutations(statements: &[Statement<'_>]) -> std::collections::HashSet<S
             oxc_ast_visit::walk::walk_call_expression(self, call);
         }
 
+        // A member used as a template tag is invoked with the namespace as
+        // `this`, exactly like a call (#10464 review).
+        fn visit_tagged_template_expression(
+            &mut self,
+            tagged: &oxc_ast::ast::TaggedTemplateExpression<'a>,
+        ) {
+            if matches!(
+                tagged.tag.get_inner_expression(),
+                Expression::StaticMemberExpression(_) | Expression::ComputedMemberExpression(_)
+            ) {
+                self.mutated.extend(root(&tagged.tag));
+            }
+            oxc_ast_visit::walk::walk_tagged_template_expression(self, tagged);
+        }
+
         fn visit_identifier_reference(&mut self, id: &oxc_ast::ast::IdentifierReference<'a>) {
             *self.refs.entry(id.name.to_string()).or_default() += 1;
         }

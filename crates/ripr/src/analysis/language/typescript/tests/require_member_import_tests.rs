@@ -504,6 +504,45 @@ fn a_call_through_a_namespace_member_taints_the_namespace() {
 }
 
 #[test]
+fn a_tagged_template_through_a_namespace_member_taints_the_namespace() {
+    // A member tag is invoked with the namespace as `this`, like a call.
+    for source in [
+        "const lib = require('./lib');\nlib.install`replace`;\nconst s = lib.f;\n",
+        "const lib = require('./lib');\nlib['install']`replace`;\nconst s = lib.f;\n",
+        "const lib = require('./lib');\nlib.install`replace`;\nconst { f: s } = lib;\n",
+    ] {
+        assert!(
+            !imports_of(source)
+                .iter()
+                .any(|import| !import.3 && import.0 == "./lib"),
+            "{source}"
+        );
+    }
+    // A free-function tag over a member value is a passive read.
+    assert!(
+        imports_of("const lib = require('./lib');\ntag`x${lib.g}`;\nconst s = lib.f;\n")
+            .iter()
+            .any(|import| !import.3 && import.1.as_deref() == Some("f")),
+    );
+}
+
+#[test]
+fn a_replaced_export_through_a_tagged_receiver_is_not_credited() -> Result<(), String> {
+    for (name, setup) in [
+        ("static", "lib.install`replace`;"),
+        ("computed", "lib['install']`replace`;"),
+    ] {
+        let class = class_for(
+            &format!("ns-receiver-tag-{name}"),
+            &format!("const lib = require('../src/lib');\n{setup}\nconst s = lib.stringify;"),
+            "s({ a: 1 })",
+        )?;
+        assert_eq!(class, ExposureClass::NoStaticPath, "{name}");
+    }
+    Ok(())
+}
+
+#[test]
 fn a_replaced_export_through_a_receiver_call_is_not_credited() -> Result<(), String> {
     let class = class_for(
         "ns-receiver-call",
