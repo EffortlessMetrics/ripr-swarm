@@ -29,8 +29,8 @@ use super::sink_alignment::{
     CreditedAssertion, SinkAlignment, classify_sink_alignment_with_old, enclosing_literal_pair,
 };
 use super::static_limits::{
-    heuristic_only_relation_limit, implicit_dunder_dispatch_limit, module_object_rebind_limit,
-    static_limit_for_focused_change, unpinned_equality_dunder_limit,
+    LAMBDA_LIMIT_EVIDENCE, heuristic_only_relation_limit, implicit_dunder_dispatch_limit,
+    module_object_rebind_limit, static_limit_for_focused_change, unpinned_equality_dunder_limit,
 };
 use super::table_rows::python_unvaried_table_operand;
 use super::term_activation::python_inactive_term_evidence;
@@ -449,6 +449,8 @@ pub(super) fn classify_change_for_owner_with_value_origins(
         owner_source.unwrap_or(""),
         &related_candidates,
     )
+    // A pinned lambda body edit is read by the module-value credit.
+    .filter(|limit| module_value.is_empty() || limit.evidence != LAMBDA_LIMIT_EVIDENCE)
     .or_else(|| {
         module_object_rebind_limit(
             line_text,

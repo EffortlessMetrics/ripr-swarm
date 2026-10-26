@@ -763,9 +763,9 @@ id = "RIPR-SPEC-0108"
 reason = "the meta-gate's own pass/fail messages over charter fixtures; the Rust rows it guards are measured through their owning specs (#9872)"
 
 # Rust bounded value-propagation limitation
-[[unmeasured]]
+[[spec]]
 id = "RIPR-SPEC-0150"
-reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+scope = "in"
 
 # Rust producer-owned source role
 [[unmeasured]]
@@ -778,9 +778,9 @@ id = "RIPR-SPEC-0154"
 reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
 
 # Changed-binding → predicate-operand relation
-[[unmeasured]]
+[[spec]]
 id = "RIPR-SPEC-0157"
-reason = "acceptance examples are prose, not numbered; corpus cases cite the spec without an example number"
+scope = "in"
 
 # Bounded value transfer from exact test inputs
 [[spec]]
@@ -994,3 +994,8 @@ reason = "an abstain-when-another-caller-exists negative; pinned by crates/ripr/
 # and a fixed row leaves this list and cannot silently return. Adding an entry
 # is a reviewed edit that names the owner; the fix belongs in the case, the
 # spec or the analyzer, never in an exclusion.
+
+[[spec]]
+id = "RIPR-SPEC-0348"
+scope = "out"
+reason = "probe-seeding hygiene for pure Rust reformats; not an exposure-verdict example a corpus case labels"
