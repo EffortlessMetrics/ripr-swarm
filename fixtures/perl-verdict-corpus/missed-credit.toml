@@ -74,11 +74,11 @@ reason = "Tests discriminate the change but ripr abstains; accepted baseline car
 
 [[entry]]
 case = "perl-testexception-class-then-message"
-reason = "Tests discriminate the change but ripr abstains: the pinned producer writes zero-based lines, so the finding stays unresolved_subject (#3221, #6586). Delete this entry when the row credits."
+reason = "Tests discriminate the change but ripr abstains for two independent reasons: the pinned producer writes zero-based lines (the packet's coordinate is one line above the changed line, #3221, #6586), and the packet is partial with only a file_proximity relation aimed at the Forms::Error package, no change-linked owner or oracle witness, so packet_to_findings_with_currentness returns static_unknown regardless of coordinates (#8352). Delete this entry only after the row actually credits; a line fix alone is not shown to be sufficient."
 
 [[entry]]
 case = "perl-testexception-eval-like-dollar-at"
-reason = "Tests discriminate the change but ripr abstains: the pinned producer writes zero-based lines, so the finding stays unresolved_subject (#3221, #6586). Delete this entry when the row credits."
+reason = "Tests discriminate the change but ripr abstains for two independent reasons: the pinned producer writes zero-based lines (the packet's coordinate is one line above the changed line, #3221, #6586), and the packet is partial with only a file_proximity relation aimed at the Forms::Error package, no change-linked owner or oracle witness, so packet_to_findings_with_currentness returns static_unknown regardless of coordinates (#8352). Delete this entry only after the row actually credits; a line fix alone is not shown to be sufficient."
 
 [[entry]]
 case = "perl-testexception-freeze-class"

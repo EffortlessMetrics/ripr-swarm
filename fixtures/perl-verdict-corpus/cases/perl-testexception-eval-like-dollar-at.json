@@ -28,7 +28,7 @@
         "mutated_line": "die \"zero \" . \"not allowed\\n\" if $n == 1;",
         "outcome": "tests_failed",
         "failing_test": "t/forms.t: zero is refused",
-        "equivalence_review": "not equivalent: zero no longer dies"
+        "equivalence_review": "not equivalent: with the guard moved to $n == 1, zero still throws, but through `10 / $n` as 'Illegal division by zero', which does not match qr/zero not allowed/, so the 'zero is refused' assertion fails"
       }
     ]
   },
