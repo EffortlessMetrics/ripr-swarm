@@ -759,8 +759,7 @@ impl ReExportIndex {
             };
             return source_module == &owner_module && original_name == &owner.name;
         }
-        let Some(mocked_modules) = self.mocked_module_names(test, alias_map, workspace_root)
-        else {
+        let Some(mocked_modules) = self.mocked_module_names(test, alias_map, workspace_root) else {
             return false;
         };
         let mocked = |module: &str| mock_names_module(test, &mocked_modules, module);
@@ -798,12 +797,7 @@ impl ReExportIndex {
             test.mocks_in_file
                 .iter()
                 .filter_map(|source| {
-                    normalized_relative_import_module(
-                        &test.file,
-                        source,
-                        alias_map,
-                        workspace_root,
-                    )
+                    normalized_relative_import_module(&test.file, source, alias_map, workspace_root)
                 })
                 .map(|module| self.canonical_module(&module))
                 .collect(),
@@ -941,7 +935,13 @@ impl ReExportIndex {
                             alias_map,
                             workspace_root,
                         )?;
-                        self.resolve_namespace_export(&module, imported, 0, &mut Vec::new(), &mocked)
+                        self.resolve_namespace_export(
+                            &module,
+                            imported,
+                            0,
+                            &mut Vec::new(),
+                            &mocked,
+                        )
                     });
                 match namespace_target {
                     Some(target) if !mocked(&target) => {
@@ -969,11 +969,12 @@ pub(crate) const NAMESPACE_REEXPORT_IMPORTED: &str = "*";
 /// A relative specifier from `test_file` to the normalized module path
 /// `module`, in the form `normalized_relative_import_module` resolves back.
 fn relative_module_specifier(test_file: &Path, module: &str) -> String {
-    let test_dir: Vec<String> = normalized_path(test_file.parent().unwrap_or_else(|| Path::new("")))
-        .split('/')
-        .filter(|part| !part.is_empty() && *part != ".")
-        .map(ToString::to_string)
-        .collect();
+    let test_dir: Vec<String> =
+        normalized_path(test_file.parent().unwrap_or_else(|| Path::new("")))
+            .split('/')
+            .filter(|part| !part.is_empty() && *part != ".")
+            .map(ToString::to_string)
+            .collect();
     let target: Vec<&str> = module.split('/').filter(|part| !part.is_empty()).collect();
     let common = test_dir
         .iter()

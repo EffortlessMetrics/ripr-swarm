@@ -179,12 +179,12 @@ pub(crate) use assertion_selection::{
     TypeScriptAssertionSelection, row_projection_move, select_family_relevant_assertion,
 };
 pub(crate) use boolean_pin_guard::*;
-pub(crate) use close_to_guard::*;
 pub(crate) use boundary_input::*;
 pub(crate) use bounded_read::*;
 pub(crate) use bun_bridge::*;
 pub(crate) use class_entries::*;
 pub(crate) use classifier::*;
+pub(crate) use close_to_guard::*;
 pub(crate) use committed_snapshot::*;
 pub(crate) use comparison_edit_guard::*;
 pub(crate) use custom_matcher_guard::*;

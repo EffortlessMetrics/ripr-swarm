@@ -87,7 +87,10 @@ fn a_change_inside_the_tolerance_is_not_pinned() -> Result<(), String> {
         1
     );
     assert_eq!(
-        credits("close-old-fails", "  expect(cmToIn(100)).toBeCloseTo(39.99);")?,
+        credits(
+            "close-old-fails",
+            "  expect(cmToIn(100)).toBeCloseTo(39.99);"
+        )?,
         0
     );
     // A change smaller than 0.005 on the asserted input does not fail.
@@ -108,15 +111,21 @@ fn a_change_inside_the_tolerance_is_not_pinned() -> Result<(), String> {
 #[test]
 fn an_explicit_precision_a_negation_or_a_wrapped_call_earns_nothing() -> Result<(), String> {
     for (label, body) in [
-        (
-            "digits",
-            "  expect(cmToIn(2.54)).toBeCloseTo(1, 3);",
-        ),
+        ("digits", "  expect(cmToIn(2.54)).toBeCloseTo(1, 3);"),
         ("negated", "  expect(cmToIn(2.54)).not.toBeCloseTo(1);"),
         ("wrapped", "  expect(cmToIn(2.54) + 1).toBeCloseTo(2);"),
-        ("variable", "  const out = 1;\n  expect(cmToIn(2.54)).toBeCloseTo(out);"),
-        ("non-literal argument", "  const cm = 2.54;\n  expect(cmToIn(cm)).toBeCloseTo(1);"),
-        ("other matcher", "  expect(cmToIn(2.54)).toBeGreaterThan(0);"),
+        (
+            "variable",
+            "  const out = 1;\n  expect(cmToIn(2.54)).toBeCloseTo(out);",
+        ),
+        (
+            "non-literal argument",
+            "  const cm = 2.54;\n  expect(cmToIn(cm)).toBeCloseTo(1);",
+        ),
+        (
+            "other matcher",
+            "  expect(cmToIn(2.54)).toBeGreaterThan(0);",
+        ),
     ] {
         assert_eq!(credits(label, body)?, 0, "{label}");
     }
@@ -128,7 +137,8 @@ fn a_shadowed_owner_or_a_multi_line_change_earns_nothing() -> Result<(), String>
     let shadowed = "  const cmToIn = (cm: number) => cm;\n  expect(cmToIn(2.54)).toBeCloseTo(1);";
     assert_eq!(credits("shadow", shadowed)?, 0);
     // A parameter rebound before the changed return could change what it reads.
-    let rebinding = "export function cmToIn(cm: number): number {\n  cm = cm + 1;\n  return cm / 2.5;\n}\n";
+    let rebinding =
+        "export function cmToIn(cm: number): number {\n  cm = cm + 1;\n  return cm / 2.5;\n}\n";
     assert_eq!(
         close_to_credits(
             "rebind",

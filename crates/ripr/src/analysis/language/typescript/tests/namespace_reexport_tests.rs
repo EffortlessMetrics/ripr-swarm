@@ -219,7 +219,10 @@ fn an_ambiguous_or_cyclic_chain_is_not_followed() -> Result<(), String> {
 fn a_type_only_namespace_export_binds_no_value() -> Result<(), String> {
     let files = [
         ("src/units.ts", UNITS),
-        ("src/barrel.ts", "export type * as units from \"./units\";\n"),
+        (
+            "src/barrel.ts",
+            "export type * as units from \"./units\";\n",
+        ),
     ];
     assert_not_credited(
         &related_through_namespace(&files, &test_source(CALL))?,

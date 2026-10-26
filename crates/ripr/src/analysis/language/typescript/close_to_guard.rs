@@ -100,7 +100,12 @@ pub(crate) fn ts_close_to_pin_facts(
                 .iter()
                 .all(|argument| is_scalar_literal(argument.trim()))
                 || !observes_imported_owner_result(
-                    test, assertion, owner, &receivers, bare_is_owner, &aliases,
+                    test,
+                    assertion,
+                    owner,
+                    &receivers,
+                    bare_is_owner,
+                    &aliases,
                 )
             {
                 continue;
