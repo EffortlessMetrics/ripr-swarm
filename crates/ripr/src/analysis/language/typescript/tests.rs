@@ -15854,6 +15854,43 @@ fn expected_side_is_live_withholds_a_changed_if_in_a_nested_function() {
     );
 }
 
+/// #10776 control: an `} else if` head is not held to the withholding rule.
+/// Its pair is read by the scan as before, so a live pin still folds to
+/// `Some(true)` and the dead pin to `Some(false)` through the normal path.
+#[test]
+fn expected_side_is_live_leaves_an_else_if_head_to_the_scan() {
+    let owner = TypeScriptOwner {
+        source_text: Some(
+            concat!(
+                "export function f(s: number): number {\n",
+                "    if (s < 0) {\n",
+                "        return -1;\n",
+                "    } else if (s === 404) {\n",
+                "        return 1;\n",
+                "    } else {\n",
+                "        return 2;\n",
+                "    }\n",
+                "}",
+            )
+            .to_string(),
+        ),
+        params: vec!["s".to_string()],
+        ..boundary_witness_owner()
+    };
+    assert_eq!(
+        expected_side_is_live(
+            &owner,
+            "    } else if (s === 404) {",
+            "s",
+            "404",
+            &["404".to_string()],
+            "1",
+        ),
+        None,
+        "the previous behavior for an else-if head is kept"
+    );
+}
+
 /// #10776 control: a changed ternary is not an `if` statement. It has no
 /// branch pair to read, and its credit stands as before (`None`).
 #[test]
