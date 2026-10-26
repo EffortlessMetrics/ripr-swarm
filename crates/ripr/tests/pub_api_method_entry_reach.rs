@@ -652,3 +652,11 @@ fn an_attribute_cannot_replace_the_test_receiver_bindings() -> Result<(), String
     let tests = api_tests(&LITERAL_RECEIVER.replace("#[test]", "#[test]\n#[external::rewrite]"));
     assert_unrelated(&TempRepo::create(LIB, &tests)?)
 }
+
+#[test]
+fn a_grouped_self_import_does_not_borrow_a_test_only_data_declaration() -> Result<(), String> {
+    let lib =
+        format!("{LIB}\n#[cfg(test)]\npub struct Extra;\npub use external::Extra::{{self}};\n");
+    let tests = format!("use verreq::Extra;\n{}", api_tests(LITERAL_RECEIVER));
+    assert_unrelated(&TempRepo::create(&lib, &tests)?)
+}

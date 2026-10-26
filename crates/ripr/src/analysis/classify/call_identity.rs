@@ -1168,7 +1168,14 @@ fn entry_attributes_preserve_items(source: &ra_ap_syntax::SyntaxNode) -> bool {
 /// rewriting attribute or another declaration/import can select a trait there.
 fn entry_data_declaration_is_unambiguous(node: &ra_ap_syntax::SyntaxNode) -> bool {
     use ra_ap_syntax::{AstNode, ast, ast::HasName};
-    if !crate::analysis::syntax::supported_targeted_item_context(node) {
+    if !crate::analysis::syntax::supported_targeted_item_context(node)
+        || node.ancestors().any(|ancestor| {
+            ancestor
+                .children()
+                .filter_map(ast::Attr::cast)
+                .any(|attr| matches!(attr.simple_name().as_deref(), Some("cfg" | "cfg_attr")))
+        })
+    {
         return false;
     }
     let Some(name) = ast::AnyHasName::cast(node.clone()).and_then(|item| item.name()) else {
@@ -1199,11 +1206,15 @@ fn entry_data_declaration_is_unambiguous(node: &ra_ap_syntax::SyntaxNode) -> boo
         let Some(tree) = item.use_tree() else {
             return false;
         };
-        let imports = super::reveal::flattened_use_paths(&format!("use {};", tree.syntax().text()));
+        let tree = tree.syntax().text().to_string();
+        if !tree.is_ascii() {
+            return false;
+        }
+        let imports = super::reveal::flattened_use_paths(&format!("use {tree};"));
         !imports.is_empty()
             && imports.iter().all(|import| {
                 let last = import.path.rsplit("::").next().unwrap_or("");
-                last != "*"
+                !matches!(last, "*" | "self")
                     && import
                         .alias
                         .as_deref()
