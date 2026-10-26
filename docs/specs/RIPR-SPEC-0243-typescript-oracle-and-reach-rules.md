@@ -1701,6 +1701,13 @@ keys); do not take the next number.
 
 ## Test Mapping
 
+- #10314 (decorated-method reach, constructor spellings): `crates/ripr/src/analysis/language/typescript/tests/decorated_reach_tests.rs`
+  pins `aliased_constructor_import_credits_the_return_edit` (a named-import alias
+  such as `import { Ledger as Book }`) and
+  `default_exported_class_credits_the_return_edit_under_any_local_name` (an
+  `export default class` imported under any local name), beside the existing
+  shadowed-or-replaced-receiver control that keeps a rebound name uncredited.
+
 - #9683 (rule 11, empty table): `tests/table_loop_tests.rs` pins that an empty
   `const` table holds no assertions and a `let` table does not. Corpus row
   `ts-trap-empty-table` moves from credited to gap.
