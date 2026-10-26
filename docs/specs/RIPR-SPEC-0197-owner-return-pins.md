@@ -918,9 +918,7 @@ wrong credits.
    nested functions, disjoint blocks and unused closures cannot establish or
    veto an outer value. Unread direct patterns, declaration-only bindings,
    let-else and attributed lets refuse this proof instead of silently keeping
-   a parameter's earlier type. Generic lookup stops at a module boundary, so
-   a nested module's primitive import does not capture an outer function's
-   generic parameter.
+   a parameter's earlier type.
    An annotation or cast uses only the lexical scopes enclosing its parsed
    type occurrence. A binding inside a disjoint block or unused closure cannot
    rebind that type; direct items in an applicable scope remain hoisted even

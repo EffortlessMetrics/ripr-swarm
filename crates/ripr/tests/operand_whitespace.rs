@@ -395,12 +395,19 @@ fn disjoint_value_bindings_do_not_veto_outer_primitive_evidence() -> Result<(), 
 }
 
 #[test]
-fn a_nested_modules_primitive_callee_does_not_capture_outer_generics() -> Result<(), String> {
+fn unrelated_generics_preserve_callee_identity_boundaries() -> Result<(), String> {
     let primitive = include_str!("fixtures/operand_callee_identity/primitive_control.rs");
+    assert_binding_class(
+        &format!("fn unrelated<u64>() {{}}\n{primitive}"),
+        ExposureClass::WeaklyExposed,
+    )?;
     let source = format!(
-        "fn unrelated<u64>() {{ mod local {{ use core::primitive::u64; fn shipping_cents(_: u64) -> u64 {{ 0 }} }} }}\n{primitive}"
+        "fn unrelated<u64>() {{\n    mod local {{\n        use core::primitive::u64;\n        fn shipping_cents(_: u64) -> u64 {{ 0 }}\n    }}\n}}\n{primitive}"
     );
-    assert_binding_class(&source, ExposureClass::WeaklyExposed)
+    // The index classifies the nested declaration as local. Retain the
+    // established refusal for any same-named non-free callee; its return
+    // cannot supply free-call authority.
+    assert_binding_class(&source, ExposureClass::Exposed)
 }
 
 #[test]

@@ -276,30 +276,21 @@ pub(super) fn type_is_primitive(
     };
     // Fn/impl/trait type parameters bind the type namespace. Const generics
     // and value parameters of the same name do not.
-    if function
-        .syntax()
-        .ancestors()
-        .take_while(|ancestor| {
-            // A nested module establishes its own item namespace; an outer
-            // function's generics cannot bind a primitive imported inside it.
-            !ast::Module::can_cast(ancestor.kind())
-        })
-        .any(|ancestor| {
-            ancestor
-                .children()
-                .filter_map(ast::GenericParamList::cast)
-                .any(|list| {
-                    list.syntax()
-                        .children()
-                        .filter_map(ast::TypeParam::cast)
-                        .any(|parameter| {
-                            parameter
-                                .name()
-                                .is_some_and(|name| same_name(name.text(), ty))
-                        })
-                })
-        })
-    {
+    if function.syntax().ancestors().any(|ancestor| {
+        ancestor
+            .children()
+            .filter_map(ast::GenericParamList::cast)
+            .any(|list| {
+                list.syntax()
+                    .children()
+                    .filter_map(ast::TypeParam::cast)
+                    .any(|parameter| {
+                        parameter
+                            .name()
+                            .is_some_and(|name| same_name(name.text(), ty))
+                    })
+            })
+    }) {
         return false;
     }
     let scopes = enclosing_scopes(&site);
