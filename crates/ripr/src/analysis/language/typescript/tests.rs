@@ -16945,14 +16945,89 @@ fn owner_extraction_gap_discloses_arrow_function_class_field() -> Result<(), Str
 }
 
 #[test]
-fn owner_extraction_gap_discloses_private_method() -> Result<(), String> {
+fn owner_extraction_gap_discloses_string_literal_method_key() -> Result<(), String> {
     assert_owner_extraction_gap_disclosed(
-        "owner-gap-private",
+        "owner-gap-string-key",
         "src/ledger.ts",
-        "export class Ledger {\n  #adjust(amount: number): number {\n    if (amount >= 50) {\n      return amount - 5;\n    }\n    return amount;\n  }\n\n  entry(amount: number): number {\n    return this.#adjust(amount);\n  }\n}\n",
+        "export class Ledger {\n  'adjust'(amount: number): number {\n    if (amount >= 50) {\n      return amount - 5;\n    }\n    return amount;\n  }\n}\n",
         (3, "    if (amount >= 50) {"),
         "class method with unsupported key",
     )
+}
+
+/// #10440: a changed line inside a `#private` method used to read as a partial
+/// extraction with no finding. It is now an owner, and because no test can
+/// name it the finding is `static_unknown`, never the confident
+/// `no_static_path` and never credited through a public caller's assertion.
+#[test]
+fn changed_private_method_is_an_unknown_finding_not_partial_silence() -> Result<(), String> {
+    let src = "export class Ledger {\n  #adjust(amount: number): number {\n    if (amount >= 50) {\n      return amount - 5;\n    }\n    return amount;\n  }\n\n  entry(amount: number): number {\n    return this.#adjust(amount);\n  }\n}\n";
+    let test = "import { Ledger } from '../src/ledger';\n\ntest('entry adjusts large amounts', () => {\n  expect(new Ledger().entry(60)).toBe(55);\n});\n";
+    for (label, with_test) in [
+        ("private-no-test", false),
+        ("private-public-caller-test", true),
+    ] {
+        let root = ts_unique_tempdir(label)?;
+        ts_write_file(&root.join("src/ledger.ts"), src)?;
+        if with_test {
+            ts_write_file(&root.join("tests/ledger.test.ts"), test)?;
+        }
+        let result = TypeScriptAdapter.analyze_diff(
+            &ts_analysis_options(root),
+            &OraclePolicy::default(),
+            &[changed_with_lines(
+                "src/ledger.ts",
+                &[(3, "    if (amount >= 50) {")],
+            )],
+        )?;
+        assert_eq!(result.findings.len(), 1, "{label}: {:?}", result.findings);
+        let finding = &result.findings[0];
+        assert!(
+            matches!(finding.class, ExposureClass::StaticUnknown),
+            "{label}: {:?}",
+            finding.class
+        );
+        let joined = finding.evidence.join("\n");
+        assert!(joined.contains("owner: #adjust"), "{label}: {joined}");
+        assert!(
+            !result.limitations.iter().any(|limitation| limitation
+                .bounded_detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("typescript_owner_extraction_partial"))),
+            "{label}: {:?}",
+            result.limitations
+        );
+        let summary = finding.ripr.reveal.discriminate.summary.as_str();
+        assert!(
+            summary.contains("`#private` class member"),
+            "{label}: {summary}"
+        );
+    }
+    Ok(())
+}
+
+/// Control for the private-member arm: a public method of the same class and
+/// the same shape keeps its ordinary verdict.
+#[test]
+fn changed_public_method_keeps_its_ordinary_verdict_beside_a_private_one() -> Result<(), String> {
+    let src = "export class Ledger {\n  adjust(amount: number): number {\n    if (amount >= 50) {\n      return amount - 5;\n    }\n    return amount;\n  }\n}\n";
+    let root = ts_unique_tempdir("public-method-control")?;
+    ts_write_file(&root.join("src/ledger.ts"), src)?;
+    let result = TypeScriptAdapter.analyze_diff(
+        &ts_analysis_options(root),
+        &OraclePolicy::default(),
+        &[changed_with_lines(
+            "src/ledger.ts",
+            &[(3, "    if (amount >= 50) {")],
+        )],
+    )?;
+    assert_eq!(result.findings.len(), 1, "{:?}", result.findings);
+    assert!(
+        matches!(result.findings[0].class, ExposureClass::NoStaticPath),
+        "{:?}",
+        result.findings[0].class
+    );
+    Ok(())
 }
 
 #[test]

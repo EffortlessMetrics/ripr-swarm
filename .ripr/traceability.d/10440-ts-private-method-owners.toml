@@ -1,0 +1,8 @@
+# Registers the #private class method owner tests (#10440) under RIPR-SPEC-0243.
+[[extend]]
+id = "RIPR-SPEC-0243"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/tests.rs::changed_private_method_is_an_unknown_finding_not_partial_silence",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::changed_public_method_keeps_its_ordinary_verdict_beside_a_private_one",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::owner_extraction_gap_discloses_string_literal_method_key",
+]

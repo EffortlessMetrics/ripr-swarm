@@ -1237,7 +1237,7 @@ pub(crate) fn owner_from_method(
     if method.computed {
         return None;
     }
-    let name = property_key_name(&method.key)?;
+    let name = method_key_name(&method.key)?;
     let (arity, params) = parameter_facts(&method.value.params);
     Some(TypeScriptOwner {
         name,
@@ -1275,6 +1275,22 @@ pub(crate) fn binding_identifier_name<'a>(pattern: &'a BindingPattern<'a>) -> Op
         BindingPattern::BindingIdentifier(identifier) => Some(identifier.name.as_str()),
         _ => None,
     }
+}
+
+/// A class method's owner name: a plain identifier, or a `#private` name kept
+/// with its `#` so it can never collide with a public member of the same name
+/// and cannot match a test's `receiver.name(` needle (#10440).
+fn method_key_name(key: &PropertyKey<'_>) -> Option<String> {
+    match key {
+        PropertyKey::PrivateIdentifier(identifier) => Some(format!("#{}", identifier.name)),
+        _ => property_key_name(key),
+    }
+}
+
+/// `true` for an owner extracted from a `#private` class member. Tests cannot
+/// name it, so reach is established only through a public caller (#10440).
+pub(crate) fn is_private_member_owner(owner: &TypeScriptOwner) -> bool {
+    owner.name.starts_with('#')
 }
 
 pub(crate) fn property_key_name(key: &PropertyKey<'_>) -> Option<String> {
@@ -2056,10 +2072,10 @@ fn collect_class_element_shapes(
             ClassElement::StaticBlock(block) => ("class static block", block.span),
             ClassElement::AccessorProperty(accessor) => ("accessor auto-accessor", accessor.span),
             ClassElement::MethodDefinition(method) => {
-                // `#private`, string-literal, numeric, and computed keys are
-                // all skipped by `property_key_name`; changed lines inside
-                // them are silent today (#4104-A F2b).
-                if property_key_name(&method.key).is_some() {
+                // String-literal, numeric, and computed keys are skipped by
+                // `method_key_name`; changed lines inside them are silent
+                // today (#4104-A F2b). `#private` names are owners (#10440).
+                if method_key_name(&method.key).is_some() {
                     continue;
                 }
                 ("class method with unsupported key", method.span)
