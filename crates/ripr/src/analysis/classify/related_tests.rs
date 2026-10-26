@@ -24,7 +24,6 @@ use crate::domain::{Probe, RelationConfidence, RelationReason};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-mod drop_dispatch;
 mod equality_dispatch;
 mod implicit_dispatch;
 mod iterator_dispatch;

@@ -754,31 +754,26 @@ the type (`Index<&str>` beside `Index<usize>`) leaves every site unattributed,
 as for operators. An unconfirmed credit stays withheld; an assertion-free test
 stays a real `weakly_exposed` gap.
 
-`Drop` and `Iterator::next` are related the same narrow way (#10553); the
-relation alone credits nothing. The observed value (a counter behind a shared cell, a collected
-vector) shares no token with the changed line, so crediting the relation would
-read `weakly_exposed` on a test that pins the effect (#9567). A test relates to
-a `drop` only when it drops an owned value of the impl's type before an
-assertion (`drop(x)`, `mem::drop(x)`, or a statement-position block that binds
-one in a `let` and uses it only as a receiver) and no workspace file naming the
-type spells `forget`, `ManuallyDrop` or `leak`. A test relates to `next` only
-when a `for` loop or a consuming adaptor (`collect`, `sum`, `product`, `count`,
-`last`, `fold`, `reduce`, `for_each`, `any`, `all`, `find`, `position`, `nth`)
-drives an owned value of the impl's type; a lazy adaptor, an inherent method of
-the same name, a redeclared type, or a macro that may add an impl relates
-nothing. The site must sit at the test body's top level (not in a closure, a
-nested `fn`, a branch or a loop body, a brace-less closure, or a statement
-disabled by an attribute such as `#[cfg(any())]`, which may never run; an
-earlier `return`, `?` or `panic!` is not tracked, as for operators), a method call on the value in a scope block (`g.stash()`, std's `into`) relates
-nothing unless a method of the type proves it borrows `&self`, an attribute in
-the block may remove the binding, a `fn drop`, `mod mem` or renaming `use` in
-the file may shadow the standard `drop`, an assertion must be an assertion
-macro after the drop (not an identifier containing `assert`), and an adaptor the iterator impl itself overrides
-(`fn count(self)` inside `impl Iterator`) does not run `next`. A related test with an exact assertion leaves the finding
-`static_unknown` unless the sibling-effect oracle confirms that the assertion
-reads a cell the iterator or guard writes (`Counter { sink: state.clone() }` then
-`assert_eq!(state.get(), 1)`), which credits it; a collected or returned value
-has no such carrier yet, and confirming one is the remaining work of #10553.
+`Iterator::next` is related the same narrow way (#10553); the relation alone
+credits nothing. A test relates to `next` only when a `for` loop or a consuming
+adaptor (`collect`, `sum`, `product`, `count`, `last`, `fold`, `reduce`,
+`for_each`, `any`, `all`, `find`, `position`, `nth`) drives an owned value of
+the impl's type. A lazy adaptor, an inherent method of the same name, an
+adaptor the iterator impl itself overrides (`fn count(self)` inside
+`impl Iterator`), a redeclared type, or a macro that may add an impl relates
+nothing, and so does a site that may never run: one not at the test body's top
+level (a closure, a nested `fn`, a branch or a loop body), a brace-less
+closure, or a statement disabled by an attribute such as `#[cfg(any())]`. An
+earlier `return`, `?` or `panic!` is not tracked, as for operators. A related
+test with an exact assertion leaves the finding `static_unknown` unless the
+sibling-effect oracle confirms that the assertion reads a cell the iterator
+writes (`Counter { sink: state.clone() }` then `assert_eq!(state.get(), 1)`),
+which credits it. A collected or returned value has no such carrier yet.
+
+`Drop::drop` is not related yet. The observed value (a counter behind a shared
+cell) shares no token with the changed line, and relating a scope end lifts
+reach so that the ordinary oracle credits a guard whose counter the assertion
+does not read (#9567). Drop waits for the carrier check of #10553 part 2.
 
 Corpus effect: `shape-op-add-impl` moves from `limited` to `credited`, its
 ideal verdict.
