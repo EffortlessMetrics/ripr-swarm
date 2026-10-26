@@ -1233,3 +1233,258 @@ mod operator {
     );
     Ok(())
 }
+
+const INDEX_IMPL: &str = "impl Index<usize> for Money {
+    type Output = i64;
+    fn index(&self, _at: usize) -> &i64 {
+        &self.0
+    }
+}
+";
+
+/// `Money` implements `Index` only: the owner is `index`, reached by reads.
+const INDEX: Case = Case {
+    label: "index",
+    trait_name: "Index<usize>",
+    method: "index",
+    signature: "type Output = i64;\n    fn index(&self, _at: usize) -> &i64",
+    old_line: "        &self.0",
+    new_line: "        &(self.0)",
+    extra_items: "",
+    sibling: "",
+    test_body: "let m = Money(7);\n        assert_eq!(m[0], 7);",
+};
+
+/// `Money` implements both: the owner is `index_mut`, reached by writes.
+const INDEX_MUT: Case = Case {
+    label: "index_mut",
+    trait_name: "IndexMut<usize>",
+    method: "index_mut",
+    signature: "fn index_mut(&mut self, _at: usize) -> &mut i64",
+    old_line: "        &mut self.0",
+    new_line: "        &mut (self.0)",
+    extra_items: INDEX_IMPL,
+    sibling: "",
+    test_body: "let mut m = Money(1);\n        m[0] = 5;\n        assert_eq!(m.0, 5);",
+};
+
+/// `a[i]` reads through `Index` and writes through `IndexMut`; a site is
+/// credited to the one trait it runs, and a projection (`a[i].x`) that may
+/// borrow either way is credited to neither.
+#[test]
+fn an_index_site_reaches_the_trait_it_runs() -> Result<(), String> {
+    let reads = [
+        "let m = Money(7);\n        assert_eq!(m[0], 7);",
+        "let m = Money(7);\n        let x = &m[0];\n        assert_eq!(*x, 7);",
+    ];
+    let writes = [
+        "let mut m = Money(1);\n        m[0] = 5;\n        assert_eq!(m.0, 5);",
+        "let mut m = Money(1);\n        m[0] += 2;\n        assert_eq!(m.0, 3);",
+        "let mut m = Money(1);\n        let r = &mut m[0];\n        *r = 9;\n        assert_eq!(m.0, 9);",
+    ];
+    let mut failures = Vec::new();
+    for body in reads {
+        let credited = direct_tests(&with_body(INDEX, "index_read", body))?;
+        if credited != ["operator_under_test"] {
+            failures.push(format!("index read not credited to index: {body:?}"));
+        }
+        let wrong = direct_tests(&with_body(INDEX_MUT, "index_mut_read", body))?;
+        if !wrong.is_empty() {
+            failures.push(format!("index read credited to index_mut: {body:?}"));
+        }
+    }
+    for body in writes {
+        let credited = direct_tests(&with_body(INDEX_MUT, "index_mut_write", body))?;
+        if credited != ["operator_under_test"] {
+            failures.push(format!("index write not credited to index_mut: {body:?}"));
+        }
+        let wrong = direct_tests(&with_body(INDEX, "index_write", body))?;
+        if !wrong.is_empty() {
+            failures.push(format!("index write credited to index: {body:?}"));
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n"))
+    }
+}
+
+/// An index site whose receiver is not established as `Money`, whose trait is
+/// ambiguous, or which runs no impl, is credited to nothing.
+#[test]
+fn index_sites_that_do_not_run_the_impl_stay_unrelated() -> Result<(), String> {
+    let other_type = "
+struct Other(i64);
+impl Index<usize> for Other {
+    type Output = i64;
+    fn index(&self, _at: usize) -> &i64 {
+        &self.0
+    }
+}
+";
+    let second_impl = "
+impl Index<&str> for Money {
+    type Output = i64;
+    fn index(&self, _name: &str) -> &i64 {
+        &self.0
+    }
+}
+";
+    let shadowed = "
+mod other {
+    pub struct Money(pub i64);
+}
+";
+    let cases: [(&str, Case); 14] = [
+        (
+            "another type's impl",
+            Case {
+                extra_items: other_type,
+                test_body: "let o = Other(3);\n        assert_eq!(o[0], 3);",
+                ..INDEX
+            },
+        ),
+        (
+            "a vec of the type",
+            with_body(
+                INDEX,
+                "vec_of_money",
+                "let v = vec![Money(1)];\n        assert_eq!(v[0].0, 1);",
+            ),
+        ),
+        (
+            "an untyped array",
+            with_body(
+                INDEX,
+                "untyped_array",
+                "let m = Money(1);\n        let arr = [1, 2];\n        assert_eq!(arr[0] + m.0, 2);",
+            ),
+        ),
+        (
+            "a field receiver",
+            with_body(
+                INDEX,
+                "field_receiver",
+                "let holder = Holder { money: Money(1) };\n        assert_eq!(holder.money[0], 1);",
+            ),
+        ),
+        (
+            "a helper's return value",
+            with_body(INDEX, "helper_return", "assert_eq!(make()[0], 1);"),
+        ),
+        (
+            "a second impl of the trait for the type",
+            Case {
+                extra_items: second_impl,
+                ..INDEX
+            },
+        ),
+        (
+            "stringify",
+            with_body(
+                INDEX,
+                "stringified",
+                "let m = Money(1);\n        assert_eq!(stringify!(m[0]), \"m[0]\");",
+            ),
+        ),
+        (
+            "a read whose value is discarded",
+            with_body(
+                INDEX,
+                "discarded",
+                "let m = Money(1);\n        let _ = m[0];",
+            ),
+        ),
+        (
+            "a slice pattern",
+            with_body(
+                INDEX,
+                "slice_pattern",
+                "let m = Money(1);\n        let [a, b] = [m.0, 2];\n        assert_eq!(a + b, 3);",
+            ),
+        ),
+        (
+            "an array type",
+            with_body(
+                INDEX,
+                "array_type",
+                "let m = Money(1);\n        let grid: [i64; 2] = [m.0, 2];\n        assert_eq!(grid.len(), 2);",
+            ),
+        ),
+        (
+            "a projected read that may borrow mutably",
+            with_body(
+                INDEX,
+                "projected",
+                "let mut m = Money(1);\n        assert_eq!(m[0].abs(), 1);",
+            ),
+        ),
+        (
+            "a chained index",
+            with_body(
+                INDEX,
+                "chained",
+                "let m = Money(1);\n        assert_eq!(m[0][1], 1);",
+            ),
+        ),
+        (
+            "a type the test redeclares",
+            Case {
+                test_body: "struct Money(i64);\n        let m = Money(1);\n        assert_eq!(m.0, 1);\n        let _ = m;",
+                ..INDEX
+            },
+        ),
+        (
+            "a same-named type from another module",
+            Case {
+                extra_items: shadowed,
+                test_body: "let m = other::Money(1);\n        assert_eq!(m[0], 1);",
+                ..INDEX
+            },
+        ),
+    ];
+    let mut failures = Vec::new();
+    for (what, case) in &cases {
+        let direct = direct_tests(case)?;
+        if !direct.is_empty() {
+            failures.push(format!("{what}: credited {direct:?}"));
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n"))
+    }
+}
+
+/// Crediting an index site says the impl runs, not that an assertion notices
+/// a wrong result, so an unconfirmed credit is withheld, never an actionable
+/// `weakly_exposed`.
+#[test]
+fn an_unconfirmed_index_credit_is_withheld() -> Result<(), String> {
+    let changed = Case {
+        new_line: "        &self.0.min(0)",
+        ..INDEX
+    };
+    // The changed line's finding is the one whose infection is read; the
+    // other finding comes from the unchanged signature lines.
+    let on_changed_line = |case: &Case| -> Result<Finding, String> {
+        findings_of(case)?
+            .into_iter()
+            .find(|finding| finding.ripr.infect.state == ripr::domain::StageState::Yes)
+            .ok_or_else(|| format!("{}: no finding with a read infection", case.label))
+    };
+    let withheld = on_changed_line(&changed)?;
+    assert_eq!(withheld.class, ExposureClass::StaticUnknown);
+    let limit = withheld.static_limit_kind.map(|kind| kind.as_str());
+    assert_eq!(limit, Some("rust_implicit_call_unresolved"));
+
+    // A test with no exact assertion is a real gap whatever runs the owner.
+    let weak = Case {
+        test_body: "let m = Money(7);\n        let x = m[0];\n        assert!(x > 0);",
+        ..changed
+    };
+    assert_eq!(on_changed_line(&weak)?.class, ExposureClass::WeaklyExposed);
+    Ok(())
+}
