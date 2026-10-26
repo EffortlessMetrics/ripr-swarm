@@ -94,6 +94,15 @@ fn ts_limitations_preserves_zero_and_utf8_byte_boundary_contract() -> Result<(),
         let source = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/typescript_static_limit_taxonomy");
         let fixture = root.join("fixture");
+        // Any record may lead the budget's priority selection. Keep the
+        // byte/character discriminator in every eligible source path.
+        let unicode_paths = |text: &str| {
+            ["decorated", "dispatch", "proxy", "label"]
+                .into_iter()
+                .fold(text.to_string(), |text, stem| {
+                    text.replace(&format!("src/{stem}"), &format!("src/é測🙂_{stem}"))
+                })
+        };
         for relative in [
             "ripr.toml",
             "src/decorated.tsx",
@@ -105,23 +114,20 @@ fn ts_limitations_preserves_zero_and_utf8_byte_boundary_contract() -> Result<(),
             "tests/proxy.test.js",
             "tests/label.test.jsx",
         ] {
-            let destination = fixture.join(relative.replace("src/decorated", "src/a_écran測🙂"));
+            let destination = fixture.join(unicode_paths(relative));
             std::fs::create_dir_all(destination.parent().ok_or("fixture parent missing")?)
                 .map_err(|error| error.to_string())?;
             let text = std::fs::read_to_string(source.join("input").join(relative))
                 .map_err(|error| error.to_string())?;
-            std::fs::write(
-                destination,
-                text.replace("src/decorated", "src/a_écran測🙂"),
-            )
-            .map_err(|error| error.to_string())?;
+            std::fs::write(destination, unicode_paths(&text)).map_err(|error| error.to_string())?;
         }
         let diff = root.join("change.diff");
         std::fs::write(
             &diff,
-            std::fs::read_to_string(source.join("diff.patch"))
-                .map_err(|error| error.to_string())?
-                .replace("src/decorated", "src/a_écran測🙂"),
+            unicode_paths(
+                &std::fs::read_to_string(source.join("diff.patch"))
+                    .map_err(|error| error.to_string())?,
+            ),
         )
         .map_err(|error| error.to_string())?;
         let check = |budget: &str| -> Result<String, String> {
@@ -150,20 +156,42 @@ fn ts_limitations_preserves_zero_and_utf8_byte_boundary_contract() -> Result<(),
         let full_raw = check("0")?;
         let full: Value = serde_json::from_str(&full_raw).map_err(|error| error.to_string())?;
         assert_eq!(full["findings"].as_array().map(Vec::len), Some(4));
+        let mut full_by_id = std::collections::BTreeMap::new();
+        for finding in full["findings"].as_array().ok_or("missing full findings")? {
+            let id = finding["id"].as_str().ok_or("missing full finding id")?;
+            assert!(
+                full_by_id.insert(id, finding).is_none(),
+                "duplicate full id"
+            );
+        }
         let marker = "  \"findings\": [\n";
         let start = full_raw.find(marker).ok_or("missing findings array")? + marker.len();
         let rest = &full_raw[start..];
-        let first_end = rest
-            .find("\n    },\n    {")
-            .ok_or("missing record boundary")?
-            + "\n    }".len();
-        let first_raw = &rest[..first_end];
+        // Bounded output selects by priority before emitting in file order;
+        // its first retained record need not lead the full document (#10094).
+        let first_selection_raw = check("1")?;
+        let first_selection: Value =
+            serde_json::from_str(&first_selection_raw).map_err(|error| error.to_string())?;
+        assert_eq!(
+            first_selection["findings"].as_array().map(Vec::len),
+            Some(1)
+        );
+        let first_start = first_selection_raw
+            .find(marker)
+            .ok_or("missing selected findings array")?
+            + marker.len();
+        let first_end = first_selection_raw[first_start..]
+            .find("\n  ]")
+            .ok_or("missing selected findings end")?;
+        let first_raw = &first_selection_raw[first_start..first_start + first_end];
         let first: Value = serde_json::from_str(first_raw).map_err(|error| error.to_string())?;
         assert_eq!(
-            first, full["findings"][0],
-            "boundary must isolate a complete first finding"
+            first, first_selection["findings"][0],
+            "boundary must isolate a complete selected finding"
         );
-        assert!(first_raw.contains("a_écran測🙂"));
+        let first_id = first["id"].as_str().ok_or("missing selected id")?;
+        assert_eq!(full_by_id.get(first_id).copied(), Some(&first));
+        assert!(first_raw.contains("é測🙂"));
         assert!(
             first_raw.len() > first_raw.chars().count(),
             "fixture must distinguish UTF-8 bytes from characters"
@@ -194,6 +222,8 @@ fn ts_limitations_preserves_zero_and_utf8_byte_boundary_contract() -> Result<(),
         for (name, budget, rendered, limits, bounded) in cases {
             let raw = if budget == 0 {
                 full_raw.clone()
+            } else if budget == 1 {
+                first_selection_raw.clone()
             } else {
                 check(&budget.to_string())?
             };
@@ -234,10 +264,25 @@ fn ts_limitations_preserves_zero_and_utf8_byte_boundary_contract() -> Result<(),
                     "{name}"
                 );
             }
-            assert_eq!(
-                input["findings"][0], full["findings"][0],
-                "{name}: a complete UTF-8 record survives"
-            );
+            let mut retained_ids = std::collections::BTreeSet::new();
+            for finding in input["findings"]
+                .as_array()
+                .ok_or("missing retained findings")?
+            {
+                let id = finding["id"].as_str().ok_or("missing retained id")?;
+                assert!(retained_ids.insert(id), "{name}: duplicate retained id");
+                assert_eq!(
+                    full_by_id.get(id).copied(),
+                    Some(finding),
+                    "{name}: the complete selected record must survive unchanged"
+                );
+                assert!(
+                    finding["probe"]["file"]
+                        .as_str()
+                        .is_some_and(|file| file.contains("é測🙂")),
+                    "{name}: every selection must exercise a UTF-8 source path"
+                );
+            }
             let (report, markdown) = report(&root, name, &input)?;
             assert_counts_and_disclosure(name, &report, &markdown, rendered, limits, bounded)?;
             println!(
@@ -284,13 +329,24 @@ fn ts_limitations_preserves_zero_and_utf8_byte_boundary_contract() -> Result<(),
             "zero control must exceed the documented default byte budget"
         );
         let payload = &large_raw[start..start + payload_bytes];
-        let penultimate_bytes = payload
-            .rfind("\n    },\n    {")
-            .ok_or("missing penultimate record boundary")?
-            + "\n    }".len();
+        let mut largest_record_bytes = 0;
+        let mut records = 0;
+        for (index, raw) in payload.split_inclusive("\n    },\n").enumerate() {
+            let raw = raw.strip_suffix(",\n").unwrap_or(raw);
+            let record: Value = serde_json::from_str(raw).map_err(|error| error.to_string())?;
+            assert_eq!(record, large["findings"][index], "complete record boundary");
+            largest_record_bytes = largest_record_bytes.max(raw.len());
+            records += 1;
+        }
+        assert_eq!(records, 184);
+        // Removing the largest possible final record gives a lower bound
+        // independent of priority or emission order, including separators.
+        let minimum_before_last = payload_bytes
+            .checked_sub(largest_record_bytes + 2)
+            .ok_or("missing multiple complete records")?;
         assert!(
-            penultimate_bytes > 1_000_000,
-            "the default cap must be crossed before the last record, otherwise record-atomic overflow could retain the full set"
+            minimum_before_last > 1_000_000,
+            "the default cap must be crossed before the last record in any order, otherwise record-atomic overflow could retain the full set"
         );
         assert_eq!(
             large["analysis_outcome"]["analysis_complete"], true,
@@ -307,7 +363,7 @@ fn ts_limitations_preserves_zero_and_utf8_byte_boundary_contract() -> Result<(),
             false,
         )?;
         println!(
-            "ZERO above-default: payload_bytes={payload_bytes} penultimate_bytes={penultimate_bytes} rendered=184/184"
+            "ZERO above-default: payload_bytes={payload_bytes} minimum_before_last={minimum_before_last} rendered=184/184"
         );
         Ok(())
     })();
