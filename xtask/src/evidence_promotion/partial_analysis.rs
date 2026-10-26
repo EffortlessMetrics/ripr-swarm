@@ -172,7 +172,7 @@ mod tests {
                     .find(|item| item["type"] == "expected_partial_analysis")
             })
             .ok_or_else(|| "typed partial assertion missing".to_string())?;
-        assert!(super::parse("nested", 0, assertion).is_ok());
+        super::parse("nested", 0, assertion)?;
         for field in [
             "limitation_kind",
             "producer_stage",
@@ -185,10 +185,9 @@ mod tests {
                 .as_object_mut()
                 .ok_or_else(|| "assertion is not an object".to_string())?
                 .remove(field);
-            assert!(
-                super::parse("nested", 0, &missing).is_err(),
-                "missing {field} accepted"
-            );
+            if super::parse("nested", 0, &missing).is_ok() {
+                return Err(format!("missing {field} accepted"));
+            }
         }
         Ok(())
     }
