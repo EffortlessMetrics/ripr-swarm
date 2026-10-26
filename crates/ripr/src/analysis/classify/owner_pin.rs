@@ -3834,9 +3834,22 @@ impl OwnerReturnPin {
         // #7063: beside an early error-variant gate the test may compare
         // `owner(..).unwrap_err()` (or `.expect_err("..")`) with the bare
         // variant; that reads as comparing the call with `Err(..)` of it.
+        // Beside a changed `Ok(..)`/`Some(..)` constructor whose other exits
+        // build only `Err`/`None`, `owner(..).unwrap()` equals the literal only
+        // when the call is `Ok(literal)`/`Some(literal)`: any other exit panics
+        // the unwrap. The exits are read by spelling, so an owner file that
+        // binds the wrapper name as a value (`const Ok`, `fn Some`) refuses.
         let unwrap_wrapper = match &self.path {
             ReturnPathGate::WholeValueField(gate) => gate.wrapper,
             ReturnPathGate::ErrVariant { .. } => Some("Err"),
+            ReturnPathGate::Head(head @ ("Ok" | "Some"))
+            | ReturnPathGate::EarlyHead(head @ ("Ok" | "Some")) => {
+                let owner_binds_wrapper = index
+                    .files()
+                    .get(&self.owner_file)
+                    .is_none_or(|facts| source_binds_value_name(&facts.source, head));
+                (!owner_binds_wrapper).then_some(*head)
+            }
             _ => None,
         };
         let unwrap_read: fn(&str) -> Option<&str> =
@@ -4021,7 +4034,11 @@ impl OwnerReturnPin {
                                 self.path,
                                 ReturnPathGate::WholeValueField(_)
                                     | ReturnPathGate::ErrVariant { .. }
-                            ) =>
+                            ) || (unwrap_wrapper.is_some()
+                                && matches!(
+                                    self.path,
+                                    ReturnPathGate::Head(_) | ReturnPathGate::EarlyHead(_)
+                                )) =>
                         {
                             let bound_whole = |at: usize| {
                                 let initializer =
