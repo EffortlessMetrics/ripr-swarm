@@ -1581,3 +1581,44 @@ fn skipped_suite_bindings_keep_invocation_shadows_and_dormant_values_separate() 
         "{source}: {gap:?}"
     );
 }
+
+#[test]
+fn skipped_suite_bindings_keep_loop_catch_and_switch_rebindings_local() {
+    let file = Path::new("test/binding.test.ts");
+    for body in [
+        "for (const it of [globalThis.it]) { it('live', () => {}); }",
+        "for (let it = globalThis.it; flag;) { it('live', () => {}); break; }",
+        "for (const key in values) { const it = globalThis.it; it('live', () => {}); }",
+        "try { throw globalThis.it; } catch (it) { it('live', () => {}); }",
+        "switch (1) { case 1: const it = globalThis.it; case 2: it('live', () => {}); }",
+    ] {
+        let source = format!("register(function (it) {{ {body} }});");
+        let tests = extract_tests(file, &source);
+        assert!(tests.is_empty(), "{source}: {tests:?}");
+        let gap = detect_partial_test_extraction(file, &source, &tests);
+        assert!(
+            gap.as_ref()
+                .is_some_and(|gap| gap.snippet.starts_with("it('live'")),
+            "{source}: {gap:?}"
+        );
+    }
+    for body in [
+        "for (const it of [globalThis.it]) {}",
+        "for (let it = globalThis.it; flag;) { break; }",
+        "for (const it in values) {}",
+        "try { throw globalThis.it; } catch (it) {}",
+        "switch (1) { case 1: const it = globalThis.it; }",
+    ] {
+        let source = format!(
+            "register(function (it) {{ {body} it('helper', () => {{}}); }}); register(() => {{ it('live', () => {{}}); }});"
+        );
+        let tests = extract_tests(file, &source);
+        assert!(tests.is_empty(), "{source}: {tests:?}");
+        let gap = detect_partial_test_extraction(file, &source, &tests);
+        assert!(
+            gap.as_ref()
+                .is_some_and(|gap| gap.snippet.starts_with("it('live'")),
+            "{source}: {gap:?}"
+        );
+    }
+}

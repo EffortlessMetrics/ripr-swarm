@@ -17497,6 +17497,7 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::skipped_suite_bindings_retain_evaluated_constructor_body",
   "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::skipped_suite_bindings_retain_opaque_runner_escapes",
   "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::skipped_suite_bindings_keep_invocation_shadows_and_dormant_values_separate",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::skipped_suite_bindings_keep_loop_catch_and_switch_rebindings_local",
   "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::skipped_suite_bindings_keep_deep_mutation_and_nested_evaluation_notices",
   "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::skipped_suite_bindings_follow_imports_and_immutable_aliases",
   "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::skipped_suite_bindings_keep_unrelated_and_shadowed_notices",

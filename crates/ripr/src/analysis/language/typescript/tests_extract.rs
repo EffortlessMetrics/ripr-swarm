@@ -4574,6 +4574,10 @@ impl UnextractedTestFinder<'_> {
             &mut rebound,
             self.admission.block_functions_are_lexical,
         );
+        self.with_rebound_names(&rebound, visit);
+    }
+
+    fn with_rebound_names(&mut self, rebound: &[String], visit: impl FnOnce(&mut Self)) {
         let outer = (!rebound.is_empty()).then(|| {
             let outer = self.shadowed.clone();
             self.shadowed.retain(|name| !rebound.contains(name));
@@ -4607,17 +4611,39 @@ impl UnextractedTestFinder<'_> {
             }
             Statement::DoWhileStatement(do_while) => self.visit_statement(&do_while.body),
             Statement::WhileStatement(while_stmt) => self.visit_statement(&while_stmt.body),
-            Statement::ForStatement(for_stmt) => self.visit_statement(&for_stmt.body),
-            Statement::ForInStatement(for_in) => self.visit_statement(&for_in.body),
-            Statement::ForOfStatement(for_of) => self.visit_statement(&for_of.body),
+            Statement::ForStatement(for_stmt) => {
+                let rebound = match &for_stmt.init {
+                    Some(oxc_ast::ast::ForStatementInit::VariableDeclaration(declaration)) => {
+                        declaration_binding_names(declaration)
+                    }
+                    _ => Vec::new(),
+                };
+                self.with_rebound_names(&rebound, |finder| finder.visit_statement(&for_stmt.body));
+            }
+            Statement::ForInStatement(for_in) => {
+                self.visit_loop_binding_body(&for_in.left, &for_in.body);
+            }
+            Statement::ForOfStatement(for_of) => {
+                self.visit_loop_binding_body(&for_of.left, &for_of.body);
+            }
             Statement::LabeledStatement(labeled) => self.visit_statement(&labeled.body),
             Statement::SwitchStatement(switch_stmt) => {
+                let mut rebound = Vec::new();
                 for case in &switch_stmt.cases {
-                    self.visit_statements(&case.consequent);
-                    if self.gap.is_some() {
-                        return;
-                    }
+                    collect_registration_scope_names(
+                        &case.consequent,
+                        &mut rebound,
+                        self.admission.block_functions_are_lexical,
+                    );
                 }
+                self.with_rebound_names(&rebound, |finder| {
+                    for case in &switch_stmt.cases {
+                        finder.visit_statements(&case.consequent);
+                        if finder.gap.is_some() {
+                            break;
+                        }
+                    }
+                });
             }
             Statement::TryStatement(try_stmt) => {
                 self.visit_statements(&try_stmt.block.body);
@@ -4625,7 +4651,15 @@ impl UnextractedTestFinder<'_> {
                     && !super::oracle::try_catch_is_unreachable(try_stmt)
                     && let Some(handler) = &try_stmt.handler
                 {
-                    self.visit_statements(&handler.body.body);
+                    let rebound: Vec<String> = handler
+                        .param
+                        .iter()
+                        .flat_map(|param| param.pattern.get_binding_identifiers())
+                        .map(|id| id.name.to_string())
+                        .collect();
+                    self.with_rebound_names(&rebound, |finder| {
+                        finder.visit_statements(&handler.body.body);
+                    });
                 }
                 if self.gap.is_none()
                     && let Some(finalizer) = &try_stmt.finalizer
@@ -4671,6 +4705,20 @@ impl UnextractedTestFinder<'_> {
             }
             _ => {}
         }
+    }
+
+    fn visit_loop_binding_body(
+        &mut self,
+        left: &oxc_ast::ast::ForStatementLeft<'_>,
+        body: &Statement<'_>,
+    ) {
+        let rebound = match left {
+            oxc_ast::ast::ForStatementLeft::VariableDeclaration(declaration) => {
+                declaration_binding_names(declaration)
+            }
+            _ => Vec::new(),
+        };
+        self.with_rebound_names(&rebound, |finder| finder.visit_statement(body));
     }
 
     fn visit_function(&mut self, func: &Function<'_>) {
