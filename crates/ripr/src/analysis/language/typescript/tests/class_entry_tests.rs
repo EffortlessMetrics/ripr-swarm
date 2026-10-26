@@ -195,6 +195,12 @@ fn an_instance_assignment_shadows_the_method() -> Result<(), String> {
         "  seal(): void {\n    Object.defineProperty(this, '_collect', { value: () => [] });\n  }\n\n  add(value: string): this {",
     );
     assert!(entry_names(&defined, "_collect").is_empty());
+    // Deleting from an instance removes only an own property, so the
+    // prototype method still runs.
+    let instance_deleted = format!(
+        "{HELPER_SPY_TEST_HEAD}  delete program._collect;\n  program.add('a');\n  expect(program.items).toEqual(['a']);\n}});\n"
+    );
+    assert_entry_related("instance-deleted", COMMAND, &instance_deleted)?;
     // A comparison is not an assignment.
     let compared = COMMAND.replace(
         "  add(value: string): this {",
@@ -524,7 +530,6 @@ fn a_test_that_replaces_the_helper_does_not_run_the_real_code() -> Result<(), St
             "prototype-assigned",
             "  Command.prototype._collect = jest.fn();\n",
         ),
-        ("deleted", "  delete program._collect;\n"),
         (
             "prototype-deleted",
             "  delete Command.prototype._collect;\n",
@@ -544,6 +549,12 @@ fn a_test_that_replaces_the_helper_does_not_run_the_real_code() -> Result<(), St
         "{HELPER_SPY_TEST_HEAD}  jest.spyOn(Command.prototype, '_collect');\n  program.add('a');\n  expect(program.items).toEqual(['a']);\n}});\n"
     );
     assert_entry_related("call-through-spy", COMMAND, &through)?;
+    // Deleting from an instance removes only an own property, so the
+    // prototype method still runs.
+    let instance_deleted = format!(
+        "{HELPER_SPY_TEST_HEAD}  delete program._collect;\n  program.add('a');\n  expect(program.items).toEqual(['a']);\n}});\n"
+    );
+    assert_entry_related("instance-deleted", COMMAND, &instance_deleted)?;
     // A comparison is not an assignment.
     let compared = format!(
         "{HELPER_SPY_TEST_HEAD}  const same = program._collect === undefined;\n  program.add('a');\n  expect(program.items).toEqual(['a']);\n}});\n"
@@ -575,4 +586,39 @@ fn a_default_parameter_with_an_arrow_type_does_not_make_a_method_a_generator() {
         "  add(value: string, done: () => void = () => {}, scale = 2 * 3): this {",
     );
     assert_eq!(entry_names(&source, "_collect"), ["add"]);
+}
+
+#[test]
+fn only_the_first_argument_of_a_synchronous_callback_method_runs() {
+    // `map`'s second argument is `thisArg`, a stored value, and a later
+    // argument of the other methods is not the callback either.
+    for (label, line) in [
+        (
+            "this-arg",
+            "    [value].map((item) => item, () => this._collect(value, this.items));",
+        ),
+        (
+            "second-argument-of-reduce",
+            "    [value].reduce(() => 0, () => this._collect(value, this.items));",
+        ),
+    ] {
+        assert!(
+            entry_names(&with_call(line), "_collect").is_empty(),
+            "{label}"
+        );
+    }
+}
+
+#[test]
+fn a_parameter_default_of_an_unused_function_does_not_run() {
+    // The default runs only when the function is called.
+    let source = with_call(
+        "    const later = function (seed = this._collect(value, this.items)) {\n      return seed;\n    };",
+    );
+    assert!(entry_names(&source, "_collect").is_empty());
+    // A real call beside it still counts.
+    let beside = with_call(
+        "    const later = function (seed = this._collect(value, this.items)) {\n      return seed;\n    };\n    this.items = this._collect(value, this.items);",
+    );
+    assert_eq!(entry_names(&beside, "_collect"), ["add"]);
 }

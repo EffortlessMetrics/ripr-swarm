@@ -244,7 +244,7 @@ fn is_plain_method(source: &str) -> bool {
     true
 }
 
-/// Blank the body of every nested `function` after the method header. A nested
+/// Blank every nested `function` (parameters and body) after the method header. A nested
 /// function binds its own `this`, so what it calls says nothing about the
 /// method. Returns `false` when a function cannot be isolated: `function` in
 /// the header, generic parameters, or anything but `{` after the parameters.
@@ -276,7 +276,9 @@ fn blank_function_bodies(code: &mut String, body_start: usize) -> bool {
             return false;
         }
         let brace = code.len() - tail.len();
-        ranges.push(brace..balanced_end(code, brace, '{', '}'));
+        // The parameter defaults run only when the function is called, so the
+        // whole function is blanked, keyword and parameters included.
+        ranges.push(index..balanced_end(code, brace, '{', '}'));
     }
     blank_ranges(code, ranges);
     true
@@ -385,7 +387,7 @@ fn blank_unexecuted_arrows(code: &mut String) {
         {
             head = rest.trim_end();
         }
-        if head.ends_with(['(', ',']) && callback_runs_synchronously(head) {
+        if head.ends_with('(') && callback_runs_synchronously(head) {
             continue;
         }
         let after = arrow + 2;
@@ -419,9 +421,9 @@ const SYNC_CALLBACK_METHODS: [&str; 14] = [
     "toSorted",
 ];
 
-/// `true` when `head` (the code before an arrow, ending in `(` or `,`) sits in
-/// the argument list of a call to one of [`SYNC_CALLBACK_METHODS`] on a
-/// receiver. An array element, a parenthesized operand, a stored callback and a
+/// `true` when `head` (the code before an arrow, ending in `(`) puts the arrow
+/// first in the argument list of a call to one of [`SYNC_CALLBACK_METHODS`] on a
+/// receiver; a later argument (`map`'s `thisArg`) is a stored value. An array element, a parenthesized operand, a stored callback and a
 /// deferred callee (`setTimeout`, `on`, `subscribe`, `then`) do not qualify.
 fn callback_runs_synchronously(head: &str) -> bool {
     let mut depth = 0usize;
@@ -606,8 +608,8 @@ fn rebinds_this_member(source: &str, name: &str) -> bool {
         || source.contains("setPrototypeOf(this")
 }
 
-/// `true` when `text` assigns, deletes or defines a member called `name` on any
-/// receiver (`program._collect = fn`, `Command.prototype._collect = fn`,
+/// `true` when `text` assigns, deletes from a prototype, or defines a member
+/// called `name` on any receiver (`program._collect = fn`, `Command.prototype._collect = fn`,
 /// `Object.defineProperty(program, '_collect', ...)`), so a call to it may run
 /// the replacement and not the class method.
 pub(crate) fn assigns_member_named(text: &str, name: &str) -> bool {
@@ -628,7 +630,7 @@ pub(crate) fn assigns_member_named(text: &str, name: &str) -> bool {
         let plain = rest.starts_with('=') && !rest.starts_with("==") && !rest.starts_with("=>");
         plain
             || COMPOUND.iter().any(|op| rest.starts_with(op))
-            || deletes_expression_ending_at(text, idx)
+            || deletes_prototype_member_at(text, idx)
     });
     assigned
         || ["defineProperty(", "defineProperties("].iter().any(|call| {
@@ -642,9 +644,11 @@ pub(crate) fn assigns_member_named(text: &str, name: &str) -> bool {
         })
 }
 
-/// `true` when the member expression that ends just before byte `dot` (the
-/// receiver chain `program` or `Command.prototype`) is the operand of `delete`.
-fn deletes_expression_ending_at(text: &str, dot: usize) -> bool {
+/// `true` when the member expression that ends just before byte `dot` is the
+/// operand of `delete` and names a prototype (`delete Command.prototype.x`).
+/// `delete instance.x` removes only an own property, so a prototype method
+/// stays callable and the instance form is not a replacement.
+fn deletes_prototype_member_at(text: &str, dot: usize) -> bool {
     let chain: usize = text[..dot]
         .chars()
         .rev()
@@ -652,4 +656,5 @@ fn deletes_expression_ending_at(text: &str, dot: usize) -> bool {
         .map(char::len_utf8)
         .sum();
     text[..dot - chain].trim_end().ends_with("delete")
+        && text[dot - chain..dot].ends_with(".prototype")
 }
