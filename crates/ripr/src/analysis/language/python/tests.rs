@@ -11055,5 +11055,86 @@ fn comprehension_boundary_values_retain_each_test_file() -> Result<(), String> {
     ];
     assert_eq!(classify(&["tests/a.py", "tests/b.py"])?, expected);
     assert_eq!(classify(&["tests/b.py", "tests/a.py"])?, expected);
+
+#[test]
+fn caplog_snapshot_same_line_list_mutation_abstains() -> Result<(), String> {
+    let test = captured_records_test(
+        "msgs = caplog.messages\n    msgs[0] = \"low balance: 5\"; assert \"low balance: 5\" in msgs",
+    );
+    assert_eq!(
+        classify_log_text_edit(
+            AUDIT_OWNER,
+            "log.warning(\"balance low: %s\", balance)",
+            &test
+        )?,
+        (
+            ExposureClass::StaticUnknown,
+            Some(StaticLimitKind::UnsupportedSyntax)
+        )
+    );
+    Ok(())
+}
+
+#[test]
+fn caplog_snapshot_same_line_text_rebinding_abstains() -> Result<(), String> {
+    let test = captured_records_test(
+        "msgs = caplog.text\n    msgs = \"low balance: 5\"; assert \"low balance: 5\" in msgs",
+    );
+    assert_eq!(
+        classify_log_text_edit(
+            AUDIT_OWNER,
+            "log.warning(\"balance low: %s\", balance)",
+            &test
+        )?,
+        (
+            ExposureClass::StaticUnknown,
+            Some(StaticLimitKind::UnsupportedSyntax)
+        )
+    );
+    Ok(())
+}
+
+#[test]
+fn caplog_snapshot_binding_after_assertion_abstains() -> Result<(), String> {
+    for read in ["messages", "text"] {
+        let test = captured_records_test(&format!(
+            "assert \"low balance: 5\" in msgs\n    msgs = caplog.{read}",
+        ));
+        assert_eq!(
+            classify_log_text_edit(
+                AUDIT_OWNER,
+                "log.warning(\"balance low: %s\", balance)",
+                &test
+            )?,
+            (
+                ExposureClass::StaticUnknown,
+                Some(StaticLimitKind::UnsupportedSyntax)
+            ),
+            "{read}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn caplog_snapshot_stores_in_assertions_abstain() -> Result<(), String> {
+    for tail in [
+        "assert (msgs := [\"low balance: 5\"]) and \"low balance: 5\" in msgs",
+        "assert f'{(msgs := [\"low balance: 5\"])}' != \"\" and \"low balance: 5\" in msgs",
+    ] {
+        let test = captured_records_test(&format!("msgs = caplog.messages\n    {tail}"));
+        assert_eq!(
+            classify_log_text_edit(
+                AUDIT_OWNER,
+                "log.warning(\"balance low: %s\", balance)",
+                &test
+            )?,
+            (
+                ExposureClass::StaticUnknown,
+                Some(StaticLimitKind::UnsupportedSyntax)
+            ),
+            "{tail}"
+        );
+    }
     Ok(())
 }
