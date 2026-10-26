@@ -53,6 +53,13 @@ The adapter may observe project marker filenames, but it does not parse
 `pyproject.toml` build metadata, install requirements, read virtualenv contents,
 read generated stubs, or consume runtime test output.
 
+Diff mode reads the workspace under a file-count cap
+(`RIPR_PYTHON_MAX_WORKSPACE_FILES`) and byte budgets. The count cap refuses only
+unchanged context: changed `.py` files are always kept, the rest of the cap is
+filled from the sorted remainder, and any refusal is a named
+`diff_scope_oversized` limitation that says changed files were kept. The byte
+budgets still apply to changed files and disclose their own refusals.
+
 ## Owner Facts
 
 Owners the adapter must recognise:
