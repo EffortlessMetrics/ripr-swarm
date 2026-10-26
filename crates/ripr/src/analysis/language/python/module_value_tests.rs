@@ -1165,6 +1165,13 @@ fn dict_literals_outside_the_modelled_shape_are_not_credited() -> Check {
         &silver_test("assert price(True) == 10"),
         int_keys,
     )?);
+    let subscripted = format!("{int_keys}\n\n\ndef price(tier):\n    return RATES[tier]\n");
+    assert_not_credited(&classify_table(
+        &subscripted,
+        &[],
+        &silver_test("assert price(True) == 10"),
+        int_keys,
+    )?);
     // A multi-line literal changes on an entry line, not a statement.
     let multiline = "RATES = {\n    \"silver\": 6,\n}";
     assert_not_credited(&classify_table(
