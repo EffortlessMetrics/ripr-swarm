@@ -3850,6 +3850,9 @@ pub(in crate::analysis) fn pushed_literal_path(
             })
         },
     )
+    // A hand-written `PartialEq` may ignore the pushed field, so the whole
+    // collection equality that confirms it is not evidence for it.
+    .filter(|_| !super::custom_eq::pushed_element_may_compare_leniently(owner, probe, index))
 }
 
 /// #7131: whether `assertion` compares the whole field collection `path`
