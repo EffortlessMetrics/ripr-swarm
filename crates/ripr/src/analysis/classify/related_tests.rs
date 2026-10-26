@@ -1435,7 +1435,7 @@ fn find_related_tests_with_candidates<'a>(
                 .as_ref()
                 .is_none_or(|prefix| normalize_path(&test.file).starts_with(prefix))
             && method_entry_hops.iter().any(|entry| {
-                method_entry_uses_plain_receiver(test, &entry.self_type)
+                method_entry_uses_plain_receiver(test, &entry.self_type, index)
                     && entry.identity.binds_inherent_entry_type(test, index)
                     && method_call_resolves_to_impl(
                         test,
@@ -4496,7 +4496,74 @@ fn matching_open(bytes: &[u8], close: usize, open_byte: u8, close_byte: u8) -> O
 /// This new reach route accepts literal/annotated receivers only. The shared
 /// legacy reader also accepts conventionally named constructors and UFCS by
 /// their final type segment; neither establishes this entry's type identity.
-fn method_entry_uses_plain_receiver(test: &TestSummary, self_type: &str) -> bool {
+fn method_entry_uses_plain_receiver(
+    test: &TestSummary,
+    self_type: &str,
+    index: &RustIndex,
+) -> bool {
+    use ra_ap_syntax::{AstNode, SyntaxKind, ast, ast::HasName};
+    if super::helper_transfer::body_has_unresolved_macro_bindings(&test.body, index) {
+        return false;
+    }
+    let wrapped = format!("fn __ripr_entry() {{\n{}\n}}\n", test.body);
+    let Some(parsed) = crate::analysis::syntax::parse_clean_source_file(&wrapped) else {
+        return false;
+    };
+    let Some(statements) = parsed
+        .tree()
+        .syntax()
+        .children()
+        .find_map(ast::Fn::cast)
+        .and_then(|function| function.body())
+        .and_then(|body| body.stmt_list())
+    else {
+        return false;
+    };
+    // The legacy receiver reader is not a lexical-scope resolver. Accept only
+    // distinct plain top-level let bindings, with no nested binding patterns.
+    // Read tokens too: assertion macro arguments can hide patterns from AST
+    // descendants, but they must not lend a different receiver's type.
+    let mut bindings = BTreeSet::new();
+    let mut lets = 0;
+    for binding in statements
+        .syntax()
+        .descendants()
+        .filter_map(ast::LetStmt::cast)
+    {
+        if binding.syntax().parent().as_ref() != Some(statements.syntax()) {
+            return false;
+        }
+        let Some(ast::Pat::IdentPat(pattern)) = binding.pat() else {
+            return false;
+        };
+        let Some(name) = pattern.name() else {
+            return false;
+        };
+        if pattern.pat().is_some() || !bindings.insert(name.text().to_string()) {
+            return false;
+        }
+        lets += 1;
+    }
+    let mut let_tokens = 0;
+    for token in statements
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+    {
+        if token.kind() == SyntaxKind::LET_KW {
+            let_tokens += 1;
+        }
+        if matches!(
+            token.kind(),
+            SyntaxKind::FOR_KW | SyntaxKind::MATCH_KW | SyntaxKind::FN_KW | SyntaxKind::ASYNC_KW
+        ) || matches!(token.text(), "|" | "||")
+        {
+            return false;
+        }
+    }
+    if lets != let_tokens {
+        return false;
+    }
     let body = mask_comments_and_strings(&test.body);
     body.match_indices(self_type).all(|(at, _)| {
         let before = body[..at].trim_end();

@@ -1081,8 +1081,9 @@ pub(super) fn inherent_entry_type_identity(
         if !facts.source.contains(self_ty) {
             continue;
         }
-        let parsed = crate::analysis::syntax::parse_clean_source_file(&facts.source)?;
-        for node in parsed.tree().syntax().descendants() {
+        let snapshot = index.source_syntax.get(index, file)?;
+        let tree = snapshot.tree()?;
+        for node in tree.syntax().descendants() {
             let Some(name) = ast::AnyHasName::cast(node.clone()).and_then(|item| item.name())
             else {
                 continue;

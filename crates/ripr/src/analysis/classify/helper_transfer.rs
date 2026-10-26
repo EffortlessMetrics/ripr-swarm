@@ -2588,6 +2588,12 @@ fn transparent_macro_name_rebound(caller_body: &str, index: &RustIndex) -> bool 
         })
 }
 
+/// Unknown expansions can introduce bindings as well as control flow. The
+/// new identity-only entry routes share the forwarding macro authority.
+pub(super) fn body_has_unresolved_macro_bindings(body: &str, index: &RustIndex) -> bool {
+    caller_invokes_opaque_macro(body, transparent_macro_name_rebound(body, index))
+}
+
 /// Whether `body` invokes a macro whose expansion is not known to hold no
 /// `return` (#10284). Only a bare [`TRANSPARENT_STD_MACROS`] name, with no
 /// rebinding anywhere in the index, is transparent. A path-qualified macro

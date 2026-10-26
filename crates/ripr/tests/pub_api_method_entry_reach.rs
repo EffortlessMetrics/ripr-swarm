@@ -449,3 +449,52 @@ fn a_nested_test_module_keeps_its_explicit_owner_import() -> Result<(), String> 
     assert_no_exposed(&findings);
     Ok(())
 }
+
+#[test]
+fn an_inner_receiver_binding_does_not_type_an_outer_namesake() -> Result<(), String> {
+    let tests = api_tests(
+        "#[test]\nfn outer_receiver() {\n    let req = make_foreign();\n    { let req: VersionReq = make_own(); let _ = req; }\n    assert!(req.matches(&Version { major: 5 }));\n}\n",
+    );
+    assert_unrelated(&TempRepo::create(LIB, &tests)?)
+}
+
+#[test]
+fn a_closure_receiver_does_not_borrow_an_outer_type() -> Result<(), String> {
+    let tests = api_tests(
+        "#[test]\nfn closure_receiver() {\n    let req: VersionReq = make_own();\n    let checks = foreign_values().map(|req| req.matches(&Version { major: 5 })).collect::<Vec<_>>();\n    assert!(checks[0]);\n}\n",
+    );
+    assert_unrelated(&TempRepo::create(LIB, &tests)?)
+}
+
+#[test]
+fn a_statement_macro_cannot_inject_a_qualified_hop_binding() -> Result<(), String> {
+    let lib = LIB.replace(
+        "        eval::matches_req",
+        "        other_crate::bind_eval!();\n        eval::matches_req",
+    );
+    assert_unrelated(&TempRepo::create(&lib, &api_tests(LITERAL_RECEIVER))?)
+}
+
+#[test]
+fn a_statement_macro_cannot_inject_the_receiver_type() -> Result<(), String> {
+    let tests = api_tests(
+        &LITERAL_RECEIVER.replace("    let req", "    other_crate::bind_type!();\n    let req"),
+    );
+    assert_unrelated(&TempRepo::create(LIB, &tests)?)
+}
+
+#[test]
+fn a_later_binding_does_not_type_an_earlier_receiver_call() -> Result<(), String> {
+    let tests = api_tests(
+        "#[test]\nfn earlier_receiver() {\n    let req = make_foreign();\n    assert!(req.matches(&Version { major: 5 }));\n    let req: VersionReq = make_own();\n}\n",
+    );
+    assert_unrelated(&TempRepo::create(LIB, &tests)?)
+}
+
+#[test]
+fn a_macro_argument_closure_does_not_borrow_an_outer_receiver_type() -> Result<(), String> {
+    let tests = api_tests(
+        "#[test]\nfn hidden_closure() {\n    let req: VersionReq = make_own();\n    assert!((|req| req.matches(&Version { major: 5 }))(make_foreign()));\n}\n",
+    );
+    assert_unrelated(&TempRepo::create(LIB, &tests)?)
+}

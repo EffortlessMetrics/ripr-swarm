@@ -487,6 +487,9 @@ root-package library declaration path and the test's import must be established;
 foreign unrenamed imports, sibling namesakes, aliases, generic self types and
 unreadable or generated bindings decline. Qualified type references and
 constructor calls in the test decline even beside a genuine unused import.
+Receiver bindings must be distinct plain top-level `let` bindings; nested,
+closure, destructuring and later shadow bindings remain unestablished. Unknown
+statement macros decline through the shared helper-transfer macro authority.
 This bounded route intentionally does not infer factory return types or re-export
 chains. Non-ASCII qualified helper paths decline without slicing inside UTF-8.
 
