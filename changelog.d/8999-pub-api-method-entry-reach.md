@@ -9,5 +9,5 @@
   type (a struct literal or a `let` annotated with the type); a
   factory without an annotation, a `str::matches`, a second method of the same
   name, foreign or renamed imports, sibling type namesakes, constructor calls,
-  qualified associated calls and rebound module names stay unrelated. The finding
-  reads `infection_unknown`, never `exposed` (#8999).
+  qualified associated calls and rebound module names stay unrelated. Findings stay below
+  `exposed`; the version-requirement example reads `infection_unknown` (#8999).

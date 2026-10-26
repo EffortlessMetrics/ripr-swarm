@@ -528,3 +528,27 @@ fn stringified_qualified_helper_tokens_do_not_establish_reach() -> Result<(), St
     let lib = LIB.replace("        eval::matches_req(&self.comparators, version)", "        let _text = stringify!(eval::matches_req(&self.comparators, version));\n        false");
     assert_unrelated(&TempRepo::create(&lib, &api_tests(LITERAL_RECEIVER))?)
 }
+
+#[test]
+fn a_unicode_receiver_does_not_borrow_an_ascii_suffix_binding() -> Result<(), String> {
+    let tests = api_tests(
+        "#[test]\nfn unicode_receiver() {\n    let req: VersionReq = make_own();\n    let óreq = make_foreign();\n    assert!(óreq.matches(&Version { major: 5 }));\n}\n",
+    );
+    assert_unrelated(&TempRepo::create(LIB, &tests)?)
+}
+
+#[test]
+fn a_field_receiver_does_not_borrow_a_local_namesake() -> Result<(), String> {
+    let tests = api_tests(
+        "#[test]\nfn field_receiver() {\n    let req: VersionReq = make_own();\n    let holder = make_holder();\n    assert!(holder.req.matches(&Version { major: 5 }));\n}\n",
+    );
+    assert_unrelated(&TempRepo::create(LIB, &tests)?)
+}
+
+#[test]
+fn a_qualified_value_receiver_does_not_borrow_a_local_namesake() -> Result<(), String> {
+    let tests = api_tests(
+        "#[test]\nfn qualified_receiver() {\n    let req: VersionReq = make_own();\n    assert!(foreign::req.matches(&Version { major: 5 }));\n}\n",
+    );
+    assert_unrelated(&TempRepo::create(LIB, &tests)?)
+}

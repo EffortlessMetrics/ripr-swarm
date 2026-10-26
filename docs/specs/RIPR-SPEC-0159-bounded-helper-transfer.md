@@ -487,7 +487,8 @@ root-package library declaration path and the test's import must be established;
 foreign unrenamed imports, sibling namesakes, aliases, generic self types and
 unreadable or generated bindings decline. Qualified type references and
 constructor calls in the test decline even beside a genuine unused import.
-Receiver bindings must be distinct plain top-level `let` bindings; nested,
+Method sites must use a plain ASCII receiver name bound by a distinct top-level
+`let`; field/path suffixes, inline/parenthesized receivers, non-ASCII identifiers, nested,
 closure, destructuring and later shadow bindings remain unestablished. The receiver route permits only unrebound bare standard assertion and `vec!`
 macros; pattern macros and stringified tokens establish no reach. Qualified-hop
 callers with any macro invocation decline. These checks share the helper-transfer
@@ -496,8 +497,8 @@ This bounded route intentionally does not infer factory return types or re-expor
 chains. Non-ASCII qualified helper paths decline without slicing inside UTF-8.
 
 This is reach only. The helper's result is not shown to be forwarded to the
-test's assertion, so the finding reads `infection_unknown` with
-`helper_result_not_forwarded`, never `exposed`. Named limit: the route does not
+test's assertion, so findings remain below `exposed`; the version-requirement
+example reads `infection_unknown` with `helper_result_not_forwarded`. Named limit: the route does not
 look at how a hop uses the callee; a call inside a loop, a branch or a `match`
 arm still reads as reached because the chain records one call site and no
 control-flow condition. That is acceptable only because the route credits

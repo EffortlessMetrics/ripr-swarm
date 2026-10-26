@@ -1435,7 +1435,7 @@ fn find_related_tests_with_candidates<'a>(
                 .as_ref()
                 .is_none_or(|prefix| normalize_path(&test.file).starts_with(prefix))
             && method_entry_hops.iter().any(|entry| {
-                method_entry_uses_plain_receiver(test, &entry.self_type, index)
+                method_entry_uses_plain_receiver(test, &entry.caller.name, &entry.self_type, index)
                     && entry.identity.binds_inherent_entry_type(test, index)
                     && method_call_resolves_to_impl(
                         test,
@@ -4498,6 +4498,7 @@ fn matching_open(bytes: &[u8], close: usize, open_byte: u8, close_byte: u8) -> O
 /// their final type segment; neither establishes this entry's type identity.
 fn method_entry_uses_plain_receiver(
     test: &TestSummary,
+    method: &str,
     self_type: &str,
     index: &RustIndex,
 ) -> bool {
@@ -4546,11 +4547,38 @@ fn method_entry_uses_plain_receiver(
         lets += 1;
     }
     let mut let_tokens = 0;
-    for token in statements
+    let tokens: Vec<_> = statements
         .syntax()
         .descendants_with_tokens()
         .filter_map(|element| element.into_token())
-    {
+        .filter(|token| !matches!(token.kind(), SyntaxKind::WHITESPACE | SyntaxKind::COMMENT))
+        .collect();
+    let mut has_method_site = false;
+    for (at, token) in tokens.iter().enumerate() {
+        if token.kind() == SyntaxKind::IDENT && !token.text().is_ascii() {
+            return false;
+        }
+        if token.kind() == SyntaxKind::IDENT
+            && token.text().trim_start_matches("r#") == method
+            && tokens
+                .get(at + 1)
+                .is_some_and(|next| next.kind() == SyntaxKind::L_PAREN)
+        {
+            let Some(receiver_at) = at.checked_sub(2) else {
+                return false;
+            };
+            let receiver = &tokens[receiver_at];
+            if tokens[at - 1].kind() != SyntaxKind::DOT
+                || receiver.kind() != SyntaxKind::IDENT
+                || !bindings.contains(receiver.text().trim_start_matches("r#"))
+                || receiver_at.checked_sub(1).is_some_and(|before| {
+                    matches!(tokens[before].kind(), SyntaxKind::DOT | SyntaxKind::COLON2)
+                })
+            {
+                return false;
+            }
+            has_method_site = true;
+        }
         if token.kind() == SyntaxKind::LET_KW {
             let_tokens += 1;
         }
@@ -4562,7 +4590,7 @@ fn method_entry_uses_plain_receiver(
             return false;
         }
     }
-    if lets != let_tokens {
+    if lets != let_tokens || !has_method_site {
         return false;
     }
     let body = mask_comments_and_strings(&test.body);
