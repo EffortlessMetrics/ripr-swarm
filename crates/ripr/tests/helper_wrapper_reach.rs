@@ -251,6 +251,109 @@ fn boolean_return_twin_keeps_unobserved_wrapper_results_unconfirmed() -> Result<
     Ok(())
 }
 
+// #10284: neither twin borrows the wrapper's pins when the wrapper binds
+// the helper's name or runs a macro that may return first. Only a bare
+// standard assertion/format macro with no rebinding stays transparent;
+// logging and path-qualified macros withhold credit from both twins.
+const EPRINTLN: &str = "macro_rules! éprintln { ($q:expr) => { if $q == 10 { return 5; } }; }\n";
+const DEP_PRINTLN: &str = "use crate as dep;\n#[macro_export]\nmacro_rules! println { ($q:expr) => { if $q == 10 { return 5; } }; }";
+
+#[test]
+fn shadowed_or_macro_guarded_wrappers_confirm_neither_twin() -> Result<(), String> {
+    for wrapper in [
+        "    let is_bulk = |_q: u32| true;\n    if is_bulk(qty) { 5 } else { 0 }",
+        "    bail_at_ten!(qty);\n    if is_bulk(qty) { 5 } else { 0 }",
+        // #10351 review: U+200E is Rust whitespace, so the bang still invokes.
+        "    bail_at_ten!\u{200E}(qty);\n    if is_bulk(qty) { 5 } else { 0 }",
+    ] {
+        let source = bulk_source(wrapper, BOUNDARY_TESTS);
+        for finding in [
+            predicate_finding(&source, BULK_DIFF)?,
+            family_finding(&source, BULK_DIFF, "return_value")?,
+        ] {
+            assert_ne!(finding["classification"], "exposed", "{wrapper}\n{finding}");
+        }
+    }
+    // #10351 review: a crate-local macro may share a logging name and return
+    // before the helper runs, so `qty > 10` would still pass both pins.
+    for name in ["warn", "error", "debug", "info"] {
+        let source = format!(
+            "macro_rules! {name} {{ ($q:expr) => {{ if $q == 10 {{ return 5; }} }}; }}\n\n{}",
+            bulk_source(
+                &format!("    {name}!(qty);\n    if is_bulk(qty) {{ 5 }} else {{ 0 }}"),
+                BOUNDARY_TESTS,
+            )
+        );
+        let diff = BULK_DIFF.replace("@@ -1,3 +1,3 @@", "@@ -3,3 +3,3 @@");
+        for finding in [
+            predicate_finding(&source, &diff)?,
+            family_finding(&source, &diff, "return_value")?,
+        ] {
+            assert_eq!(finding["probe"]["line"], 4, "{name}\n{finding}");
+            assert_ne!(finding["classification"], "exposed", "{name}\n{finding}");
+        }
+    }
+    // #10351 review: a crate alias routes a qualified logging path to an
+    // exported user macro, and a local `println!` shadows the standard one.
+    for (prelude, call) in [
+        (
+            "use crate as tracing;\n#[macro_export]\nmacro_rules! info { ($q:expr) => { if $q == 10 { return 5; } }; }",
+            "tracing::info!(qty);",
+        ),
+        (
+            "macro_rules! println { ($q:expr) => { if $q == 10 { return 5; } }; }\n",
+            "println!(qty);",
+        ),
+        // Equivalent spellings of one qualified path to an exported macro.
+        (DEP_PRINTLN, "dep::println!(qty);"),
+        (DEP_PRINTLN, "dep :: println!(qty);"),
+        (DEP_PRINTLN, "dep /* routed */ :: r#println ! (qty);"),
+        // A distinct user macro whose name only ends in `println`; it binds
+        // no standard name, so only the tokenizer can refuse it.
+        (EPRINTLN, "éprintln!(qty);"),
+        (EPRINTLN, "r#éprintln!(qty);"),
+    ] {
+        let source = format!(
+            "{prelude}\n{}",
+            bulk_source(
+                &format!("    {call}\n    if is_bulk(qty) {{ 5 }} else {{ 0 }}"),
+                BOUNDARY_TESTS,
+            )
+        );
+        let first = source
+            .lines()
+            .position(|line| line.contains("10 <= qty"))
+            .ok_or("probe")?;
+        let diff = BULK_DIFF.replace("@@ -1,3 +1,3 @@", &format!("@@ -{0},3 +{0},3 @@", first));
+        for finding in [
+            predicate_finding(&source, &diff)?,
+            family_finding(&source, &diff, "return_value")?,
+        ] {
+            assert_eq!(finding["probe"]["line"], first + 1, "{call}\n{finding}");
+            assert_ne!(finding["classification"], "exposed", "{call}\n{finding}");
+        }
+    }
+    // Positive controls: the standard `println!`, unshadowed and in its raw
+    // spelling, stays transparent.
+    for call in ["println!(\"{qty}\");", "r#println!(\"{qty}\");"] {
+        let logged = bulk_source(
+            &format!("    {call}\n    if is_bulk(qty) {{ 5 }} else {{ 0 }}"),
+            BOUNDARY_TESTS,
+        );
+        assert_eq!(
+            predicate_finding(&logged, BULK_DIFF)?["classification"],
+            "exposed",
+            "{call}"
+        );
+        assert_eq!(
+            family_finding(&logged, BULK_DIFF, "return_value")?["classification"],
+            "exposed",
+            "{call}"
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn boolean_return_twin_does_not_borrow_other_calls_or_short_circuit_gates() -> Result<(), String> {
     let split = bulk_source(FORWARDING, "        let _ = order_discount(10);");
@@ -598,8 +701,17 @@ fn buried_scalar_in_a_wrapper_argument_does_not_pair() -> Result<(), String> {
                 "{pin}: {finding}"
             );
         } else {
+            // #10484: the call-built `max(10, 50)` is no longer read as the
+            // literal `10`, so the boundary stays a missing discriminator
+            // (weak infection) instead of being paired and then refused.
+            assert_eq!(
+                finding["classification"], "weakly_exposed",
+                "{pin}: {finding}"
+            );
             assert!(
-                discriminate_summary(&finding).contains("same_test_pairing_missing"),
+                finding["ripr"]["infect"]["summary"].as_str().is_some_and(
+                    |summary| summary.contains("equality-boundary discriminator is missing")
+                ),
                 "{pin}: {finding}"
             );
         }

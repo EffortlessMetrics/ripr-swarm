@@ -26,15 +26,17 @@
 use super::bool_oracle::count_bindings;
 use super::module_constants::{
     ModuleBindingFacts, PythonModuleConstant, assigned_attributes, mentions_identifier,
-    module_literal_constants,
+    module_literal_constants, module_table_binding_at,
 };
 use super::related_tests::{
     import_source_module_matches_owner, owner_module_callees, submodule_receivers,
 };
 use super::source_facts::parse_module_result;
 use super::source_utils::{SourceText, is_test_file};
+use super::table_reads::{dict_literal_names, unsafe_table_uses};
 use super::{PythonAssertion, PythonOwner, PythonTest, expr_full_name};
 use crate::domain::OwnerKind;
+use rayon::prelude::*;
 use rustpython_parser::ast::{self, Expr, Mod, Stmt};
 use std::path::Path;
 
@@ -61,6 +63,13 @@ const DYNAMIC_WRITERS: [&str; 10] = [
 pub(super) struct ForeignWrites {
     attributes: Vec<String>,
     dynamic_words: Vec<String>,
+    /// Dict-literal module constants some other file may mutate or alias.
+    table_unsafe: Vec<String>,
+    /// Every word of the files that can reach a module's objects reflectively.
+    reflective_words: Vec<String>,
+    /// Some other file is reflective and imports modules, so it may reach a
+    /// table through an alias or re-export no word of it names.
+    reflective_imports: bool,
     /// A workspace file could not be read or the scan hit its bound, so the
     /// absence of a write is unknown.
     unknown: bool,
@@ -68,6 +77,9 @@ pub(super) struct ForeignWrites {
 
 /// Most distinct words retained in the workspace reference index.
 const MAX_WORKSPACE_WORDS: usize = 200_000;
+/// Sources parsed per parallel batch before the batch is folded, so a tripped
+/// [`MAX_WORKSPACE_WORDS`] cap stops parsing within one batch.
+const FOREIGN_PARSE_BATCH_FILES: usize = 256;
 
 /// Spellings that can hide an imported module's name from the word index.
 const DYNAMIC_LOADERS: [&str; 13] = [
@@ -86,6 +98,27 @@ const DYNAMIC_LOADERS: [&str; 13] = [
     "__dict__",
 ];
 
+/// Spellings that reach a module's objects without writing their names.
+const REFLECTIVE_SPELLINGS: [&str; 15] = [
+    "getattr",
+    "dir",
+    "getmembers",
+    "locals",
+    "__globals__",
+    "attrgetter",
+    "__getattribute__",
+    "eval",
+    "compile",
+    "inspect",
+    "gc",
+    // Replacing a reader's code or defaults changes what it returns without
+    // rebinding its name.
+    "__code__",
+    "__defaults__",
+    "__kwdefaults__",
+    "__closure__",
+];
+
 /// What each workspace source contributes to [`ForeignWrites`], parsed and
 /// tokenized once so a diff that changes many Python files does not repeat
 /// the whole-workspace work per file (#10125).
@@ -101,6 +134,8 @@ pub(super) struct ForeignIndex<'a> {
 
 // Parses the foreign index has done on this thread, so a test can pin that
 // the workspace is parsed once per run and not once per changed file (#10125).
+// It counts files folded into the index on the calling thread; the parses
+// themselves run on rayon workers (#10441).
 #[cfg(test)]
 thread_local! {
     pub(super) static FOREIGN_PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -112,6 +147,14 @@ struct IndexedSource<'a> {
     assigned: Option<Vec<String>>,
     /// Holds a dynamic writer, or does not parse: every word is a possible write.
     dynamic_words: Option<Vec<&'a str>>,
+    /// Dict-literal constants (of any workspace module) this file mentions
+    /// other than as an import or a pure read (#9619).
+    table_unsafe: Vec<String>,
+    /// Holds a reflective spelling: every word is a possible table access.
+    reflective_words: Option<Vec<&'a str>>,
+    /// The reflective file also imports, so the module it reflects over may
+    /// be another file's re-export.
+    reflective_imports: bool,
 }
 
 impl<'a> ForeignIndex<'a> {
@@ -122,40 +165,79 @@ impl<'a> ForeignIndex<'a> {
         let mut files = Vec::new();
         let mut references = std::collections::BTreeMap::new();
         let mut hidden_import = false;
-        for (file, source) in sources {
-            hidden_import |= DYNAMIC_LOADERS
-                .iter()
-                .any(|loader| mentions_identifier(source, loader))
-                || source.contains("sys.modules")
-                || (file.file_name().is_some_and(|name| name == "__init__.py")
-                    && mentions_identifier(source, "__all__"));
-            for word in source_words(source) {
-                let first = references.entry(word).or_insert(Some(file));
-                if first.is_some_and(|first| first != file) {
-                    *first = None;
-                }
-                if references.len() > MAX_WORKSPACE_WORDS {
-                    return Self {
-                        files: Vec::new(),
-                        references: std::collections::BTreeMap::new(),
-                        hidden_import,
-                        unknown: true,
-                    };
-                }
-            }
-            #[cfg(test)]
-            FOREIGN_PARSES.with(|parses| parses.set(parses.get() + 1));
-            let assigned = assigned_attributes(source);
-            let dynamic = assigned.is_none()
-                || DYNAMIC_WRITERS
+        // Parsing each source dominates the index on large workspaces, so each
+        // batch is parsed in parallel and then folded sequentially in input
+        // order: word ownership and the word cap behave as before, and a
+        // tripped word cap stops parsing within one batch (#10441).
+        let sources: Vec<(&'a Path, &'a str)> = sources.collect();
+        let tables: std::collections::BTreeSet<String> = sources
+            .iter()
+            .flat_map(|(_, source)| dict_literal_names(source))
+            .collect();
+        let token = crate::analysis::cancellation::current_token();
+        for batch in sources.chunks(FOREIGN_PARSE_BATCH_FILES) {
+            let parsed: Vec<Option<Vec<String>>> = batch
+                .par_iter()
+                .map(|(_, source)| {
+                    crate::analysis::cancellation::with_optional_token(token.as_ref(), || {
+                        assigned_attributes(source)
+                    })
+                })
+                .collect();
+            for (&(file, source), assigned) in batch.iter().zip(parsed) {
+                hidden_import |= DYNAMIC_LOADERS
                     .iter()
-                    .any(|writer| mentions_identifier(source, writer))
-                || source.contains("sys.modules");
-            files.push(IndexedSource {
-                file,
-                assigned,
-                dynamic_words: dynamic.then(|| source_words(source).collect()),
-            });
+                    .any(|loader| mentions_identifier(source, loader))
+                    || source.contains("sys.modules")
+                    || (file.file_name().is_some_and(|name| name == "__init__.py")
+                        && mentions_identifier(source, "__all__"));
+                for word in source_words(source) {
+                    let first = references.entry(word).or_insert(Some(file));
+                    if first.is_some_and(|first| first != file) {
+                        *first = None;
+                    }
+                    if references.len() > MAX_WORKSPACE_WORDS {
+                        return Self {
+                            files: Vec::new(),
+                            references: std::collections::BTreeMap::new(),
+                            hidden_import,
+                            unknown: true,
+                        };
+                    }
+                }
+                #[cfg(test)]
+                FOREIGN_PARSES.with(|parses| parses.set(parses.get() + 1));
+                let dynamic = assigned.is_none()
+                    || DYNAMIC_WRITERS
+                        .iter()
+                        .any(|writer| mentions_identifier(source, writer))
+                    || source.contains("sys.modules");
+                let table_unsafe = if tables.is_empty()
+                    || !source_words(source).any(|word| tables.contains(word))
+                {
+                    Vec::new()
+                } else {
+                    unsafe_table_uses(source, &|word| tables.contains(word), None)
+                        .into_iter()
+                        .collect()
+                };
+                // Reflection reaches a module's dict without naming it, or
+                // with a name built at runtime (`getattr(module, n)`,
+                // `dir(module)`, `inspect.getmembers`, `locals()`,
+                // `fn.__globals__`).
+                let reflective = !tables.is_empty()
+                    && REFLECTIVE_SPELLINGS
+                        .iter()
+                        .any(|spelling| mentions_identifier(source, spelling));
+                files.push(IndexedSource {
+                    file,
+                    assigned,
+                    dynamic_words: dynamic.then(|| source_words(source).collect()),
+                    table_unsafe,
+                    reflective_words: reflective.then(|| source_words(source).collect()),
+                    reflective_imports: reflective && mentions_identifier(source, "import"),
+                });
+            }
         }
         Self {
             files,
@@ -176,8 +258,16 @@ impl<'a> ForeignIndex<'a> {
         }
         let mut attributes = std::collections::BTreeSet::new();
         let mut words = std::collections::BTreeSet::new();
+        let mut table_unsafe = std::collections::BTreeSet::new();
+        let mut reflective_words = std::collections::BTreeSet::new();
+        let mut reflective_imports = false;
         let mut unparsed = Vec::new();
         for indexed in self.files.iter().filter(|indexed| indexed.file != own) {
+            table_unsafe.extend(indexed.table_unsafe.iter().cloned());
+            reflective_imports |= indexed.reflective_imports;
+            if let Some(reflective) = &indexed.reflective_words {
+                reflective_words.extend(reflective.iter().map(|word| word.to_string()));
+            }
             match &indexed.assigned {
                 Some(assigned) => attributes.extend(assigned.iter().cloned()),
                 None => unparsed.push(indexed.file),
@@ -208,6 +298,9 @@ impl<'a> ForeignIndex<'a> {
         ForeignWrites {
             attributes: attributes.into_iter().collect(),
             dynamic_words: words.into_iter().collect(),
+            table_unsafe: table_unsafe.into_iter().collect(),
+            reflective_words: reflective_words.into_iter().collect(),
+            reflective_imports,
             unknown,
         }
     }
@@ -245,6 +338,27 @@ impl ForeignWrites {
     }
 }
 
+impl ForeignWrites {
+    /// Whether another file may change the contents of the dict-literal
+    /// constant `name` of the module at `module_file` in place, or alias it.
+    pub(super) fn may_mutate_table(&self, name: &str, module_file: &Path) -> bool {
+        let stem = module_file
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or_default();
+        self.may_rebind(name, module_file)
+            || self.reflective_imports
+            || self
+                .table_unsafe
+                .iter()
+                .any(|unsafe_use| unsafe_use == name)
+            || self
+                .reflective_words
+                .iter()
+                .any(|word| word == name || (!stem.is_empty() && word == stem))
+    }
+}
+
 fn source_words(source: &str) -> impl Iterator<Item = &str> {
     source
         .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
@@ -269,6 +383,9 @@ enum Value {
     Int(i128),
     Bool(bool),
     Str(String),
+    /// A dict literal of `str` or `int` keys, each once, to scalar values
+    /// (#9619). Only a module function reads it, through `.get` or a subscript.
+    Table(Vec<(Value, Value)>),
 }
 
 impl Value {
@@ -277,6 +394,7 @@ impl Value {
             Self::Int(value) => *value != 0,
             Self::Bool(value) => *value,
             Self::Str(value) => !value.is_empty(),
+            Self::Table(entries) => !entries.is_empty(),
         }
     }
 
@@ -284,7 +402,7 @@ impl Value {
         match self {
             Self::Int(value) => Some(*value),
             Self::Bool(value) => Some(i128::from(*value)),
-            Self::Str(_) => None,
+            Self::Str(_) | Self::Table(_) => None,
         }
     }
 
@@ -294,7 +412,28 @@ impl Value {
             Self::Bool(true) => "True".to_string(),
             Self::Bool(false) => "False".to_string(),
             Self::Str(value) => format!("{value:?}"),
+            Self::Table(entries) => {
+                let entries: Vec<String> = entries
+                    .iter()
+                    .map(|(key, value)| format!("{}: {}", key.render(), value.render()))
+                    .collect();
+                format!("{{{}}}", entries.join(", "))
+            }
         }
+    }
+
+    /// The value a dict maps `key` to. A `bool` key is not looked up: Python
+    /// hashes `True` as `1`.
+    fn lookup(&self, key: &Value) -> Option<&Value> {
+        let Self::Table(entries) = self else {
+            return None;
+        };
+        if !matches!(key, Value::Int(_) | Value::Str(_)) {
+            return None;
+        }
+        entries
+            .iter()
+            .find_map(|(candidate, value)| (candidate == key).then_some(value))
     }
 }
 
@@ -352,20 +491,53 @@ fn credits<'a>(
         old_line_text,
         new_source,
     } = *edit;
+    if let Some((name, parameters, new_body)) = lambda_line(line_text) {
+        return lambda_credits(
+            edit,
+            (&name, &parameters, &new_body),
+            module_owner,
+            all_tests,
+        );
+    }
     let (name, new_value) = constant_line(line_text)?;
     let (old_name, old_value) = constant_line(old_line_text?)?;
     if name != old_name || old_value == new_value {
+        return None;
+    }
+    // A dict literal is read in place by module functions only, and nothing
+    // may change its contents (#9619).
+    let table = matches!(new_value, Value::Table(_));
+    if table != matches!(old_value, Value::Table(_)) {
         return None;
     }
     // The new module, with the changed line the one constant binding.
     let Mod::Module(new_module) = parse_module_result(file, new_source).ok()? else {
         return None;
     };
-    literal_constant(new_source, &new_module.body, &name, line)?;
+    if table {
+        table_constant(new_source, &new_module.body, &name, line)?;
+    } else {
+        literal_constant(new_source, &new_module.body, &name, line)?;
+    }
     // Another workspace file (production code, a conftest, a helper module)
     // that writes the attribute or patches the module can rebind it for every
     // test.
     if module_owner.foreign_writes.may_rebind(&name, file) {
+        return None;
+    }
+    // The owner reaching its own table reflectively (`getattr(self_module,
+    // "RATES")`) is invisible to the token scan, which skips string contents.
+    if table
+        && REFLECTIVE_SPELLINGS
+            .iter()
+            .any(|spelling| mentions_identifier(new_source, spelling))
+    {
+        return None;
+    }
+    if table
+        && (module_owner.foreign_writes.may_mutate_table(&name, file)
+            || !unsafe_table_uses(new_source, &|word| word == name, Some(line)).is_empty())
+    {
         return None;
     }
     // Another test file writing the attribute can rebind it for every test.
@@ -380,7 +552,11 @@ fn credits<'a>(
     let Mod::Module(old_module) = parse_module_result(file, &old_source).ok()? else {
         return None;
     };
-    literal_constant(&old_source, &old_module.body, &name, line)?;
+    if table {
+        table_constant(&old_source, &old_module.body, &name, line)?;
+    } else {
+        literal_constant(&old_source, &old_module.body, &name, line)?;
+    }
 
     let new_facts = ModuleBindingFacts::of(new_source, &new_module.body);
     let old_facts = ModuleBindingFacts::of(&old_source, &old_module.body);
@@ -420,7 +596,12 @@ fn credits<'a>(
         {
             continue;
         }
-        let constant_spellings = constant_spellings(test, module_owner, &name);
+        // A test never reads a table directly: only module functions do.
+        let constant_spellings = if table {
+            Vec::new()
+        } else {
+            constant_spellings(test, module_owner, &name)
+        };
         for assertion in &test.assertions {
             let Some(expression) = assertion_expression(assertion) else {
                 continue;
@@ -494,6 +675,185 @@ fn credits<'a>(
         }
     }
     Some(out)
+}
+
+/// The credits for a body-only edit of a top-level `NAME = lambda ...`
+/// binding: an assertion that holds with the old body and fails with the new
+/// one when the test calls the lambda with literal arguments.
+fn lambda_credits<'a>(
+    edit: &ModuleEdit<'_>,
+    (name, parameters, new_body): (&str, &[String], &Expr),
+    module_owner: &PythonOwner,
+    all_tests: &'a [PythonTest],
+) -> Option<Vec<ModuleValueCredit<'a>>> {
+    let ModuleEdit {
+        file,
+        line,
+        old_line_text,
+        new_source,
+        ..
+    } = *edit;
+    let old_line_text = old_line_text?;
+    let (old_name, old_parameters, old_body) = lambda_line(old_line_text)?;
+    // The binding header (target and any annotation) is evaluated at import,
+    // so a changed one is not a body-only edit.
+    if old_name != name
+        || old_parameters != parameters
+        || binding_header(old_line_text) != binding_header(edit.line_text)
+    {
+        return None;
+    }
+    // Another workspace file or test file that writes the attribute or patches
+    // the module can rebind the name for every test.
+    if module_owner.foreign_writes.may_rebind(name, file)
+        || all_tests.iter().any(|test| {
+            test.constant_rebinding
+                .attributes
+                .contains(&name.to_string())
+        })
+    {
+        return None;
+    }
+    // The name is bound once, by this line, in both the new and the old module.
+    let old_source = with_line_replaced(new_source, line, old_line_text)?;
+    for source in [new_source, old_source.as_str()] {
+        let Mod::Module(module) = parse_module_result(file, source).ok()? else {
+            return None;
+        };
+        if !ModuleBindingFacts::of(source, &module.body).bound_once(name) {
+            return None;
+        }
+    }
+    let (old_reader, new_reader) = (
+        Reader {
+            parameters: parameters.to_vec(),
+            expression: old_body,
+        },
+        Reader {
+            parameters: parameters.to_vec(),
+            expression: new_body.clone(),
+        },
+    );
+    // `owner_module_callees` reads function owners, not the module owner.
+    let mut callee = module_owner.clone();
+    callee.owner_kind = Some(OwnerKind::Function);
+    callee.name = name.to_string();
+    callee.qualified_name = name.to_string();
+    let unused = Value::Bool(false);
+
+    let mut out = Vec::new();
+    for test in all_tests {
+        if super::test_activation::activation_control(test).is_some()
+            || test.constant_rebinding.edited_in_diff
+            || test.constant_rebinding.assigns_attribute(name)
+        {
+            continue;
+        }
+        let spellings = reader_spellings(test, &callee);
+        if spellings.is_empty() {
+            continue;
+        }
+        for assertion in &test.assertions {
+            let Some(expression) = assertion_expression(assertion) else {
+                continue;
+            };
+            if !straight_line_assertion(test, assertion) {
+                continue;
+            }
+            let Some(preceding) = test
+                .assertions
+                .iter()
+                .filter(|prior| prior.line < assertion.line)
+                .map(assertion_expression)
+                .collect::<Option<Vec<_>>>()
+            else {
+                continue;
+            };
+            if flips(
+                &expression,
+                "",
+                (&unused, &unused),
+                &[],
+                &spellings,
+                (Some(&old_reader), Some(&new_reader)),
+                &preceding,
+            ) {
+                out.push(ModuleValueCredit {
+                    test,
+                    assertion,
+                    constant: name.to_string(),
+                    old: lambda_rendering(old_line_text),
+                    new: lambda_rendering(edit.line_text),
+                    reader: Some(name.to_string()),
+                });
+                break;
+            }
+        }
+    }
+    Some(out)
+}
+
+/// `NAME = lambda a, b: body` on one line: the name, its positional-only
+/// parameters (no defaults, `*args` or keywords) and the body.
+fn lambda_line(text: &str) -> Option<(String, Vec<String>, Expr)> {
+    let Mod::Module(module) = parse_module_result(Path::new("line.py"), text.trim_end()).ok()?
+    else {
+        return None;
+    };
+    let [stmt] = module.body.as_slice() else {
+        return None;
+    };
+    let (target, value) = match stmt {
+        Stmt::Assign(assign) => match assign.targets.as_slice() {
+            [target] => (target, assign.value.as_ref()),
+            _ => return None,
+        },
+        Stmt::AnnAssign(assign) if assign.simple => {
+            (assign.target.as_ref(), assign.value.as_deref()?)
+        }
+        _ => return None,
+    };
+    let (Expr::Name(name), Expr::Lambda(lambda)) = (target, value) else {
+        return None;
+    };
+    let args = &lambda.args;
+    if args.vararg.is_some()
+        || args.kwarg.is_some()
+        || !args.kwonlyargs.is_empty()
+        || args
+            .posonlyargs
+            .iter()
+            .chain(args.args.iter())
+            .any(|arg| arg.default.is_some())
+    {
+        return None;
+    }
+    let parameters = args
+        .posonlyargs
+        .iter()
+        .chain(args.args.iter())
+        .map(|arg| arg.def.arg.to_string())
+        .collect();
+    Some((
+        name.id.to_string(),
+        parameters,
+        lambda.body.as_ref().clone(),
+    ))
+}
+
+/// The text before the `=` of a one-line binding: its target and annotation.
+fn binding_header(line: &str) -> &str {
+    line.split_once('=')
+        .map_or(line, |(header, _)| header)
+        .trim()
+}
+
+/// The lambda expression of an edited line, for the evidence text.
+fn lambda_rendering(line: &str) -> String {
+    line.split_once('=')
+        .map_or(line, |(_, value)| value)
+        .trim()
+        .to_string()
 }
 
 fn credit<'a>(
@@ -573,7 +933,31 @@ fn constant_line(text: &str) -> Option<(String, Value)> {
         reader_spellings: &[],
         reader: None,
     };
+    if let Expr::Dict(dict) = value {
+        return Some((name.id.to_string(), table_of(dict, &empty)?));
+    }
     Some((name.id.to_string(), evaluate(value, &empty)?))
+}
+
+/// A dict literal of unique `str` or `int` keys and scalar values.
+fn table_of(dict: &ast::ExprDict, scope: &Scope<'_>) -> Option<Value> {
+    const MAX_ENTRIES: usize = 1024;
+    if dict.keys.len() > MAX_ENTRIES {
+        return None;
+    }
+    let mut entries: Vec<(Value, Value)> = Vec::new();
+    for (key, value) in dict.keys.iter().zip(&dict.values) {
+        let key = evaluate(key.as_ref()?, scope)?;
+        let value = evaluate(value, scope)?;
+        if !matches!(key, Value::Int(_) | Value::Str(_))
+            || matches!(value, Value::Table(_))
+            || entries.iter().any(|(seen, _)| *seen == key)
+        {
+            return None;
+        }
+        entries.push((key, value));
+    }
+    Some(Value::Table(entries))
 }
 
 fn literal_constant(
@@ -586,6 +970,11 @@ fn literal_constant(
     module_literal_constants(&text, body)
         .into_iter()
         .find(|constant| constant.name == name && constant.line == line)
+}
+
+fn table_constant(source: &str, body: &[Stmt], name: &str, line: usize) -> Option<()> {
+    let text = SourceText::new(source);
+    module_table_binding_at(&text, body, name, line).then_some(())
 }
 
 /// `source` with the 1-indexed `line` replaced by one line of `replacement`.
@@ -691,6 +1080,15 @@ fn collect_names(expr: &Expr, out: &mut Vec<String>) {
             op.comparators
                 .iter()
                 .for_each(|value| collect_names(value, out));
+        }
+        Expr::Attribute(attribute) => collect_names(&attribute.value, out),
+        Expr::Subscript(subscript) => {
+            collect_names(&subscript.value, out);
+            collect_names(&subscript.slice, out);
+        }
+        Expr::Call(call) => {
+            collect_names(&call.func, out);
+            call.args.iter().for_each(|value| collect_names(value, out));
         }
         _ => {}
     }
@@ -952,6 +1350,47 @@ fn evaluate(expr: &Expr, scope: &Scope<'_>) -> Option<Value> {
                 reader: None,
             };
             evaluate(&reader.expression, &inner)
+        }
+        // A dict constant read inside a module function (#9619): `NAME[key]`.
+        // A missing key raises, which decides nothing.
+        Expr::Subscript(subscript) if scope.parameters.is_some() => {
+            let table = evaluate(&subscript.value, scope)?;
+            let key = evaluate(&subscript.slice, scope)?;
+            table.lookup(&key).cloned()
+        }
+        // `NAME.get(key)` and `NAME.get(key, default)`. The default is
+        // evaluated whether or not the key is present, as Python does.
+        Expr::Call(call) if scope.parameters.is_some() => {
+            let Expr::Attribute(attribute) = call.func.as_ref() else {
+                return None;
+            };
+            if attribute.attr.as_str() != "get" || !call.keywords.is_empty() {
+                return None;
+            }
+            let table = evaluate(&attribute.value, scope)?;
+            // `.get` on a scalar raises AttributeError: undecided, not absent.
+            if !matches!(table, Value::Table(_)) {
+                return None;
+            }
+            let (key, default) = match call.args.as_slice() {
+                [key] => (key, None),
+                [key, default] => (key, Some(default)),
+                _ => return None,
+            };
+            let key = evaluate(key, scope)?;
+            // An unsupported key type (`True` hashes as `1`) is unknown, not
+            // absent: it must not fall through to the default.
+            if !matches!(key, Value::Int(_) | Value::Str(_)) {
+                return None;
+            }
+            let fallback = match default {
+                Some(default) => Some(evaluate(default, scope)?),
+                None => None,
+            };
+            match table.lookup(&key) {
+                Some(value) => Some(value.clone()),
+                None => fallback,
+            }
         }
         _ => None,
     }

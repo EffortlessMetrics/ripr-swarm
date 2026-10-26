@@ -124,11 +124,23 @@ compound and takes the same gate rather than reading as a plain macro path.
 More generally an effect oracle is ungated only when its text starts with an
 `assert_eq!` / `assert!` invocation; any other leading shape (`matches!(..) && { A }`,
 `!true && { A }`, `cfg!(..).then(|| { A })`) is compound and gated by the
-assertion macro in its tail. A root `loop` with no `break` and a root
-`std::process::exit` / `abort` call end the test like an earlier `return`, for every
-family that reads this admission. Not covered: `process::exit` reached through a
-`use` alias, and a boolean `assert!` / `debug_assert!` in a dead context still
-credits a `return_value` finding (#10389).
+assertion macro in its tail. A root `loop` or `while true` that no `break` leaves, and a
+root `std::process::exit` / `abort` call, end the test like an earlier `return`, for every
+family that reads this admission. A `break` leaves the root loop only when it belongs to
+it: an inner loop's unlabeled `break`, one in a closure or async block, or a labeled
+`break` naming an inner loop or block does not. The process exit may be spelled in full
+(`std::process::exit`), through an imported module under any name (`use std::process;`,
+`use std::process as quit;`) or as an imported leaf (`use std::process::exit;`); a
+file-wide `use` is read, so an over-match only withholds credit. A boolean `assert!` /
+`debug_assert!` takes the same admission for `return_value`, `match_arm`, `side_effect` and `call_deletion`, so one in a dead
+context (after `return`, in an uncalled `fn` or closure, `if false`, `loop {}`,
+`cfg!(any())`) no longer credits (#10389). The one exception is an operand that
+nests only a known pure comparison macro (`approx_eq!` from `float_cmp`;
+`relative_eq!`, `abs_diff_eq!`, `ulps_eq!` from `approx`), imported by name, in a
+plain `#[test]` whose function has no other refusal: ripr does not expand
+third-party macros, so that nesting alone keeps the `return_value` credit. Any other
+nested macro, a local `macro_rules!` of that name, or an operand holding an exit
+token withholds it.
 
 Residual fail-open contexts. The admission is a syntactic reading, not a control
 flow proof. These contexts still credit a plain `assert_eq!` / `assert!` as
@@ -136,13 +148,11 @@ flow proof. These contexts still credit a plain `assert_eq!` / `assert!` as
 review of #8934; tracked with #8983 unless a separate issue says
 otherwise):
 
-- An infinite outer loop hidden by a nested exit: `loop { for _ in 0..1 { break; } }`
-  or `loop { let _c = || { loop { break; } }; }` before the assertion. Root
-  divergence detection treats any descendant `break` as an exit of the root loop.
-  The return family credits these too.
-- A non-root `{ std::process::exit(0); }` block, `while true {}`, and
-  `use std::process::exit; exit(0);` before the assertion. Only the `use` alias
-  is named above; the other two are equally undetected.
+- A non-root divergence before the assertion, such as `{ std::process::exit(0); }`
+  or `if true { loop {} }`. Only the body's own statement list is read.
+- A `loop` whose only `break` sits behind a condition that never holds
+  (`loop { if false { break; } }`): any `break` that belongs to the loop counts as
+  an exit.
 
 Reachable-oracle preservation (#8927, review of #8934). A `std::` / `core::`
 qualified `assert!` is admitted exactly like a qualified `assert_eq!`: the root
@@ -368,6 +378,15 @@ wrong credits.
    one compared operand is a complete call of the owner's name with nothing
    chained after it, and the other operand does not mention the owner's
    name (`assert_eq!(f(4), f(2) + f(2))` compares the owner with itself).
+   A function of the test's own file whose body names the owner, directly or
+   through another such function, computes its value from the owner: an
+   expected operand that calls it, or names a `let` or constant whose
+   initializer does, is the owner's own value and withholds the pin
+   (`fn expected() -> i32 { f(4) }` with `assert_eq!(f(4), expected())`,
+   #7714). Helpers are free, non-test `fn`s matched by name, so a same-named
+   free `fn` withholds the pin; methods, sibling tests, helpers in other
+   files and owner imports renamed with `as` are not followed. A helper that
+   never reaches the owner keeps the pin.
    An `unsafe { .. }` block whose only content is that complete call (no
    statement, nothing chained after the call or the block; comments around
    the call are ignored) is the call:
@@ -1371,6 +1390,33 @@ the shared call-identity rule (RIPR-SPEC-0172, "Same-package call identity"):
 `fahrenheit::snap`, or calls a bare `snap` that nothing in scope binds, pins
 neither. A rival in another package, or one whose container is unknown,
 still refuses the pin outright.
+
+### Unwrapped `Ok`/`Some` pins (#9619)
+
+Beside a changed `Ok(..)` or `Some(..)` tail whose other exits build only
+`Err(..)` or `None` (the `Head`/`EarlyHead` exit gate), a test may compare
+`owner(..).unwrap()` or `owner(..).expect("..")` with the bare value, directly
+or through a local bound once from that call, as RIPR-SPEC-0225 decision 6
+already allows beside a whole-value field. The comparison reads as
+`assert_eq!(owner(..), Ok(value))` (`Some(value)`): a passing test cannot have
+taken any other exit, because the unwrap panics on `Err`/`None`.
+
+1. The wrapper is the changed constructor itself. A changed early
+   `return Err(..)` (`Head("Err")`) takes only `unwrap_err` (#7063).
+2. The owner's file must not bind the wrapper name (`Ok` or `Some`) or its
+   opposite (`Err` or `None`) as a value, since the exit reasoning is by
+   spelling and a rebound name could build the same payload through another
+   exit, or an opposite exit that returns the pinned value would pass the
+   unwrap without reaching the changed tail. The file is refused for this reading
+   only, so direct `Ok(value)` pins keep their existing admission.
+3. A bound local follows RIPR-SPEC-0225 rule 1: a plain name bound once by an
+   immutable `let` and mentioned only by that `let` and the pinned comparison.
+   A `mut` binding, a second binding, a method call or argument use, or an
+   initializer around the unwrap (`.unwrap_or(..)`, `.ok()`) does not pin.
+4. Every existing expected-operand gate applies to the synthesized `Ok(value)`:
+   a value computed from the owner, a test helper reaching the owner, or a
+   written file refuses. `assert_ne!`, a different owner and a discarded
+   unwrap do not pin.
 
 ### Bool-owner pins
 
@@ -2444,6 +2490,12 @@ assertions. This repair shares the existing callback without that larger migrati
    receiver does not confirm a change to the default.
 
 ## Test Mapping
+
+- Unwrapped `Ok`/`Some` pins (#9619):
+  `crates/ripr/tests/unwrapped_ok_owner_pin.rs` (direct, reversed, `expect`,
+  bound and `Option` positives; `mut`, shadowing, method use, owner-derived
+  expected value, `unwrap_or`, `unwrap_err`, `assert_ne!`, other owner,
+  discarded unwrap and wrapper- or opposite-exit-binding negatives).
 
 - Closure-callback helper facts (#9981): the `closure_callback_*` controls in
   `crates/ripr/src/analysis/facts/test_helpers/tests.rs` (direct, generic

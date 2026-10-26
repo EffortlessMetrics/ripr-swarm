@@ -1715,12 +1715,14 @@ fn run_pipeline_for_diff_text_with_language_config(
         eprintln!("{message}");
     }
 
+    // Rename metadata can register a binary file without any text hunks.
+    // That path must retain the same non-text refusal as an unrenamed blob.
     if !diff_text.trim().is_empty()
-        && changed_files.is_empty()
+        && ((changed_files.is_empty() && renamed_file_count == 0)
+            || has_only_non_text_changes(diff_text))
         && own_artifact_files.is_empty()
         && deleted_file_count == 0
         && submodule_file_count == 0
-        && renamed_file_count == 0
         && limitations.len() == supplied_evidence_limitations
     {
         // The schema token stays `malformed_diff` (a new limitation kind is a
@@ -2083,6 +2085,9 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
     // outcomes as the public `language_runs`, which stays the
     // non-success-only projection.
     let mut repo_language_aggregate = LanguageAggregate::new_repo();
+    // The shared TypeScript adapter serves both ids; merge its result once
+    // per family while recording an outcome per label (#10013).
+    let mut typescript_family_merged = false;
     for language in languages {
         cancellation::checkpoint()?;
         // Non-abort contract (see the diff loop above): preview-language
@@ -2137,9 +2142,26 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
                 let outcome = LanguageAnalysisOutcomeV1::from_repo_result(*language, &result, None);
                 language_runs.extend(outcome.compat_run());
                 repo_language_aggregate.record(outcome);
-                value_origins.extend(result.value_origins);
-                findings.extend(result.findings);
-                files_by_language.push((*language, result.production_files));
+                let repeat_typescript_pass =
+                    matches!(language, LanguageId::TypeScript | LanguageId::JavaScript)
+                        && std::mem::replace(&mut typescript_family_merged, true);
+                if !repeat_typescript_pass {
+                    value_origins.extend(result.value_origins);
+                    findings.extend(result.findings);
+                    // The shared adapter's file total covers the whole
+                    // TS/JS family. With both ids selected it is attributed
+                    // to `typescript` whatever the id order, so the summary
+                    // does not depend on which id ran first; a single-id run
+                    // keeps its own label (#10013).
+                    let both_typescript_ids = languages.contains(&LanguageId::TypeScript)
+                        && languages.contains(&LanguageId::JavaScript);
+                    let family_label = if both_typescript_ids {
+                        LanguageId::TypeScript
+                    } else {
+                        *language
+                    };
+                    files_by_language.push((family_label, result.production_files));
+                }
             }
             Err(reason) => {
                 let status = perl_run_status_for_err(&reason);
@@ -5608,6 +5630,82 @@ mod tests {
             "{:?}",
             analysis.language_runs
         );
+        Ok(())
+    }
+
+    /// #10013: both TypeScript-family ids run the shared repo adapter, but its
+    /// findings and file counts are retained once, as in a single-id run, and
+    /// do not depend on which id is listed first.
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn repo_pipeline_both_typescript_ids_retain_findings_once() -> Result<(), String> {
+        let files = [
+            (
+                "src/price.ts",
+                "export function price(amount: number): number {\n  return amount > 10 ? 1 : 2;\n}\n",
+            ),
+            (
+                "src/price.test.ts",
+                "import { price } from './price';\ntest('p', () => { expect(price(20)).toBe(1); });\n",
+            ),
+            (
+                "src/tax.js",
+                "export function tax(amount) {\n  return amount > 5 ? 1 : 2;\n}\n",
+            ),
+            (
+                "src/tax.test.js",
+                "import { tax } from './tax';\ntest('t', () => { expect(tax(9)).toBe(1); });\n",
+            ),
+        ];
+        let ts = [LanguageId::TypeScript];
+        let js = [LanguageId::JavaScript];
+        let (single, _) = run_repo_aggregate("repo-ts-single", &files, &ts)?;
+        let (single_js, _) = run_repo_aggregate("repo-js-single", &files, &js)?;
+        let (both, both_aggregate) = run_repo_aggregate(
+            "repo-ts-both",
+            &files,
+            &[LanguageId::TypeScript, LanguageId::JavaScript],
+        )?;
+        let (reversed, reversed_aggregate) = run_repo_aggregate(
+            "repo-ts-reversed",
+            &files,
+            &[LanguageId::JavaScript, LanguageId::TypeScript],
+        )?;
+        assert!(!single.findings.is_empty(), "fixture must yield findings");
+        let files_in = |run: &AnalysisResult| run.summary.changed_files_by_language.clone();
+        // Fixture construction: the family really spans a .ts and a .js file.
+        assert_eq!(single.findings, single_js.findings);
+        assert!(
+            single.findings.iter().any(|finding| finding
+                .probe
+                .location
+                .file
+                .to_string_lossy()
+                .ends_with(".js")),
+            "fixture must yield a JavaScript-file finding"
+        );
+        // Single-id runs keep their own label.
+        assert_eq!(files_in(&single)[0].language, "typescript");
+        assert_eq!(files_in(&single_js)[0].language, "javascript");
+        // Both id orders retain the single run's findings once and attribute
+        // the family total to one canonical label, identically.
+        assert_eq!(both.findings, single.findings, "both: finding vector");
+        assert_eq!(reversed.findings, both.findings, "cross-order findings");
+        assert_eq!(files_in(&reversed), files_in(&both), "cross-order files");
+        assert_eq!(files_in(&both)[0].language, "typescript");
+        assert_eq!(
+            files_in(&both)[0].files,
+            files_in(&single)[0].files,
+            "family total"
+        );
+        for (label, run, aggregate) in [
+            ("both", &both, &both_aggregate),
+            ("reversed", &reversed, &reversed_aggregate),
+        ] {
+            assert_eq!(run.summary.findings, single.summary.findings, "{label}");
+            assert!(aggregate.outcomes.contains_key("typescript"), "{label}");
+            assert!(aggregate.outcomes.contains_key("javascript"), "{label}");
+        }
         Ok(())
     }
 

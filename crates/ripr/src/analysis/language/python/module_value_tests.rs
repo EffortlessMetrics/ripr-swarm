@@ -1003,3 +1003,784 @@ fn one_workspace_index_gives_each_changed_file_its_own_foreign_view() {
         );
     }
 }
+
+// A dict-literal constant read by a module function (#9619).
+
+const TABLE_OLD: &str = "RATES = {\"gold\": 10, \"silver\": 5}";
+const TABLE_NEW: &str = "RATES = {\"gold\": 10, \"silver\": 6}";
+
+fn table_source(first_line: &str, tail: &str) -> String {
+    format!("{first_line}\n\n\ndef price(tier):\n    return RATES.get(tier, 0)\n{tail}")
+}
+
+fn silver_test(assertion: &str) -> String {
+    format!("from hostile.settings import price\n\n\ndef test_it():\n    {assertion}\n")
+}
+
+fn classify_table(
+    source: &str,
+    others: &[(&str, &str)],
+    test_source: &str,
+    new: &str,
+) -> Result<Finding, String> {
+    classify_table_edit(source, others, test_source, TABLE_OLD, new)
+}
+
+fn classify_table_edit(
+    source: &str,
+    others: &[(&str, &str)],
+    test_source: &str,
+    old: &str,
+    new: &str,
+) -> Result<Finding, String> {
+    let own = Path::new("hostile/settings.py");
+    let mut owners = owners_of(source);
+    let mut tests = tests_of(&[("tests/test_settings.py", test_source)]);
+    let foreign = super::module_value::ForeignWrites::scan(
+        own,
+        others
+            .iter()
+            .map(|(file, source)| (Path::new(file), *source))
+            .chain([
+                (own, source),
+                (Path::new("tests/test_settings.py"), test_source),
+            ]),
+        false,
+    );
+    for owner in owners.iter_mut().filter(|owner| owner.is_module_owner()) {
+        owner.foreign_writes = foreign.clone();
+    }
+    super::bool_oracle::credit_bare_bool_asserts(&mut tests, &owners, |path| {
+        if path == own {
+            Some(source)
+        } else {
+            (path == Path::new("tests/test_settings.py")).then_some(test_source)
+        }
+    });
+    classify_change_with_context(
+        own,
+        1,
+        new,
+        Some(old),
+        &owners,
+        &tests,
+        PythonNoBehaviorContext {
+            sole_line_replacement: true,
+            ..PythonNoBehaviorContext::default()
+        },
+        Some(source),
+    )
+    .ok_or_else(|| "the edit must yield a finding".to_string())
+}
+
+fn assert_not_credited(finding: &Finding) {
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    assert!(
+        !finding
+            .evidence
+            .iter()
+            .any(|line| line.contains("module_value_call")),
+        "{:?}",
+        finding.evidence
+    );
+}
+
+#[test]
+fn a_dict_constant_read_through_a_function_is_credited_for_the_pinned_key() -> Check {
+    let source = table_source(TABLE_NEW, "");
+    let finding = classify_table(
+        &source,
+        &[],
+        &silver_test("assert price(\"silver\") == 5"),
+        TABLE_NEW,
+    )?;
+    assert_credited(&finding);
+    assert!(
+        finding
+            .evidence
+            .iter()
+            .any(|line| line.starts_with("module_value_read: `RATES` {\"gold\": 10, \"silver\": 5} -> {\"gold\": 10, \"silver\": 6} through `price`")),
+        "{:?}",
+        finding.evidence
+    );
+    // Subscript reads decide the same way.
+    let subscripted = format!("{TABLE_NEW}\n\n\ndef price(tier):\n    return RATES[tier]\n");
+    assert_credited(&classify_table(
+        &subscripted,
+        &[],
+        &silver_test("assert price(\"silver\") == 5"),
+        TABLE_NEW,
+    )?);
+    Ok(())
+}
+
+#[test]
+fn a_dict_edit_no_assertion_distinguishes_is_not_credited() -> Check {
+    let source = table_source(TABLE_NEW, "");
+    // The test pins the key the edit left alone.
+    assert_not_credited(&classify_table(
+        &source,
+        &[],
+        &silver_test("assert price(\"gold\") == 10"),
+        TABLE_NEW,
+    )?);
+    // A key the table lacks falls to the default both before and after.
+    assert_not_credited(&classify_table(
+        &source,
+        &[],
+        &silver_test("assert price(\"bronze\") == 0"),
+        TABLE_NEW,
+    )?);
+    // A missing key raises, which decides nothing.
+    let subscripted = format!("{TABLE_NEW}\n\n\ndef price(tier):\n    return RATES[tier]\n");
+    assert_not_credited(&classify_table(
+        &subscripted,
+        &[],
+        &silver_test("assert price(\"bronze\") == 0"),
+        TABLE_NEW,
+    )?);
+    Ok(())
+}
+
+#[test]
+fn a_test_reading_the_table_itself_is_not_credited() -> Check {
+    let source = table_source(TABLE_NEW, "");
+    assert_not_credited(&classify_table(
+        &source,
+        &[],
+        "from hostile.settings import RATES\n\n\ndef test_it():\n    assert RATES[\"silver\"] == 5\n",
+        TABLE_NEW,
+    )?);
+    Ok(())
+}
+
+#[test]
+fn dict_literals_outside_the_modelled_shape_are_not_credited() -> Check {
+    let test = silver_test("assert price(\"silver\") == 5");
+    for line in [
+        // A computed value, a duplicate key, a spread, a bool key, a float.
+        "RATES = {\"gold\": 10, \"silver\": rate()}",
+        "RATES = {\"gold\": 10, \"silver\": 6, \"silver\": 5}",
+        "RATES = {**BASE, \"silver\": 6}",
+        "RATES = {True: 10, \"silver\": 6}",
+        "RATES = {\"gold\": 10, \"silver\": 6.0}",
+    ] {
+        assert_not_credited(&classify_table(&table_source(line, ""), &[], &test, line)?);
+    }
+    // A bool lookup key is Python's `1`: left undecided.
+    let int_keys = "RATES = {1: 10, 2: 6}";
+    assert_not_credited(&classify_table(
+        &table_source(int_keys, ""),
+        &[],
+        &silver_test("assert price(True) == 10"),
+        int_keys,
+    )?);
+    let subscripted = format!("{int_keys}\n\n\ndef price(tier):\n    return RATES[tier]\n");
+    assert_not_credited(&classify_table(
+        &subscripted,
+        &[],
+        &silver_test("assert price(True) == 10"),
+        int_keys,
+    )?);
+    // A multi-line literal changes on an entry line, not a statement.
+    let multiline = "RATES = {\n    \"silver\": 6,\n}";
+    assert_not_credited(&classify_table(
+        &table_source(multiline, ""),
+        &[],
+        &test,
+        "    \"silver\": 6,",
+    )?);
+    Ok(())
+}
+
+#[test]
+fn a_dict_mutated_in_the_module_is_not_credited() -> Check {
+    let test = silver_test("assert price(\"silver\") == 5");
+    for tail in [
+        "\n\ndef tune():\n    RATES[\"silver\"] = 5\n",
+        "\n\ndef tune():\n    RATES.update(silver=5)\n",
+        "\n\ndef tune():\n    RATES.setdefault(\"bronze\", 1)\n",
+        "\n\ndef tune():\n    RATES.pop(\"silver\")\n",
+        "\n\ndef tune():\n    del RATES[\"silver\"]\n",
+        "\n\ndef tune():\n    alias = RATES\n    alias[\"silver\"] = 5\n",
+        "\n\ndef tune(extra):\n    RATES |= extra\n",
+        "\n\nRATES[\"silver\"] = 5\n",
+        "\n\nimport sys\n\ngetattr(sys.modules[__name__], \"RATES\")[\"silver\"] = 5\n",
+        "\n\nfrom hostile import settings as self_module\n\ngetattr(self_module, \"RATES\")[\"silver\"] = 5\n",
+        "\n\nRATES = {\"silver\": 5}\n",
+    ] {
+        assert_not_credited(&classify_table(
+            &table_source(TABLE_NEW, tail),
+            &[],
+            &test,
+            TABLE_NEW,
+        )?);
+    }
+    Ok(())
+}
+
+#[test]
+fn a_dict_mutated_or_aliased_elsewhere_is_not_credited() -> Check {
+    let source = table_source(TABLE_NEW, "");
+    let test = silver_test("assert price(\"silver\") == 5");
+    for other in [
+        "from hostile.settings import RATES\n\nRATES[\"silver\"] = 5\n",
+        "from hostile.settings import RATES\n\nRATES.update(silver=5)\n",
+        "from hostile.settings import RATES; RATES[\"silver\"] = 5\n",
+        "from hostile.settings import RATES\nx = f\"\"\"\n{RATES.clear()}\n\"\"\"\n",
+        "from hostile import settings\n\nfor n in dir(settings):\n    v = getattr(settings, n)\n    isinstance(v, dict) and v.clear()\n",
+        "import inspect\nfrom hostile import settings\n\nfor _, v in inspect.getmembers(settings):\n    getattr(v, \"clear\", print)()\n",
+        "from hostile.settings import *\n\nfor v in list(locals().values()):\n    getattr(v, \"clear\", print)()\n",
+        "import operator\nfrom hostile import settings\n\noperator.attrgetter(\"RA\" + \"TES\")(settings).clear()\n",
+        "from hostile import settings\n\nsettings.price.__globals__[\"RATES\"].clear()\n",
+        // Definitions before the mutation must not hide it from the scan.
+        "from hostile.settings import RATES\n\n\ndef f():\n    return 1\n\n\nclass Box:\n    pass\n\n\nRATES[\"silver\"] = 5\n",
+        "from hostile.settings import RATES as table\n",
+        "import hostile.settings as settings\n\nsettings.RATES[\"silver\"] = 5\n",
+        "import hostile.settings as settings\n\nalias = settings.RATES\n",
+        "import hostile.settings as settings\n\nstate = getattr(settings, \"RATES\")\nstate.clear()\n",
+        "from hostile import settings\n\nprint(f\"{settings.RATES.clear()}\")\n",
+    ] {
+        assert_not_credited(&classify_table(
+            &source,
+            &[("hostile/other.py", other)],
+            &test,
+            TABLE_NEW,
+        )?);
+    }
+    // A test file may not mutate it either.
+    assert_not_credited(&classify_table(
+        &source,
+        &[],
+        "from hostile.settings import RATES, price\n\n\ndef test_it():\n    RATES[\"silver\"] = 5\n    assert price(\"silver\") == 5\n",
+        TABLE_NEW,
+    )?);
+    Ok(())
+}
+
+#[test]
+fn pure_reads_and_re_exports_elsewhere_keep_the_credit() -> Check {
+    let source = table_source(TABLE_NEW, "");
+    let test = silver_test("assert price(\"silver\") == 5");
+    for other in [
+        "from hostile.settings import RATES, price\n\n__all__ = [\"RATES\", \"price\"]\n",
+        "import hostile.settings as settings\n\nGOLD = settings.RATES.get(\"gold\")\n",
+        "from hostile.settings import RATES\n\n\ndef gold():\n    return RATES[\"gold\"]\n",
+    ] {
+        assert_credited(&classify_table(
+            &source,
+            &[("hostile/other.py", other)],
+            &test,
+            TABLE_NEW,
+        )?);
+    }
+    Ok(())
+}
+
+#[test]
+fn a_bool_key_is_unknown_not_absent_for_get_fallbacks() -> Check {
+    // `True` selects integer key 1, so the assertion holds under both tables;
+    // the changed fallback must not be read as the answer.
+    let old = "RATES = {1: 5, 2: 5}";
+    let new = "RATES = {1: 5, 2: 6}";
+    let source = format!("{new}\n\n\ndef price(tier):\n    return RATES.get(tier, RATES[2])\n");
+    assert_not_credited(&classify_table_edit(
+        &source,
+        &[],
+        &silver_test("assert price(True) == 5"),
+        old,
+        new,
+    )?);
+    // Controls: a present integer key is unaffected by the edit, and a
+    // genuinely missing key reads the changed fallback.
+    assert_not_credited(&classify_table_edit(
+        &source,
+        &[],
+        &silver_test("assert price(1) == 5"),
+        old,
+        new,
+    )?);
+    assert_credited(&classify_table_edit(
+        &source,
+        &[],
+        &silver_test("assert price(3) == 5"),
+        old,
+        new,
+    )?);
+    Ok(())
+}
+
+#[test]
+fn get_on_a_scalar_receiver_is_unknown_not_the_default() -> Check {
+    // `5.get(...)` raises AttributeError in Python; the default is never read.
+    let old = "RATES = {\"gold\": 10, \"silver\": 5}";
+    let new = "RATES = {\"gold\": 10, \"silver\": 6}";
+    let source = format!(
+        "{new}\n\n\ndef price(tier):\n    return tier.get(\"silver\", RATES[\"silver\"])\n"
+    );
+    assert_not_credited(&classify_table_edit(
+        &source,
+        &[],
+        &silver_test("assert price(5) == 5"),
+        old,
+        new,
+    )?);
+    Ok(())
+}
+
+#[test]
+fn a_parenthesized_dict_is_guarded_like_a_plain_one() -> Check {
+    let old = "RATES = ({\"gold\": 10, \"silver\": 5})";
+    let new = "RATES = ({\"gold\": 10, \"silver\": 6})";
+    let source = table_source(new, "");
+    let test = silver_test("assert price(\"silver\") == 5");
+    let store = "from hostile.settings import RATES\n\nRATES[\"silver\"] = 5\n";
+    assert_not_credited(&classify_table_edit(
+        &source,
+        &[("hostile/other.py", store)],
+        &test,
+        old,
+        new,
+    )?);
+    // The same edit with no foreign write keeps its credit.
+    assert_credited(&classify_table_edit(&source, &[], &test, old, new)?);
+    Ok(())
+}
+
+#[test]
+fn foreign_index_keeps_writes_and_word_cap_across_parse_batches() {
+    // #10441: sources are parsed in parallel batches. Writes from any batch
+    // reach every other file's view, and the word cap still makes the whole
+    // view unknown wherever in the input it trips.
+    let mut owned: Vec<(String, String)> = vec![("m.py".to_string(), "LIMIT = 10\n".to_string())];
+    for index in 1..600 {
+        owned.push((
+            format!("pad{index:03}.py"),
+            format!("PAD{index} = {index}\n"),
+        ));
+    }
+    owned[400].1 = "import m\nm.LIMIT = 1\n".to_string();
+    owned[550].1 = "setattr(target, 'OTHER', 1)\nOTHER\n".to_string();
+    let sources: Vec<(&Path, &str)> = owned
+        .iter()
+        .map(|(file, source)| (Path::new(file.as_str()), source.as_str()))
+        .collect();
+    let index = super::module_value::ForeignIndex::build(sources.iter().copied(), false);
+    let module = Path::new("m.py");
+    let view = index.excluding(module);
+    assert!(
+        view.may_rebind("LIMIT", module),
+        "a second-batch attribute write reaches the first-batch module"
+    );
+    assert!(
+        view.may_rebind("OTHER", module),
+        "a third-batch dynamic writer's words reach the first-batch module"
+    );
+    assert!(
+        !view.may_rebind("UNSEEN", module),
+        "control: a name no file writes stays stable"
+    );
+    assert!(
+        !index
+            .excluding(Path::new(owned[400].0.as_str()))
+            .may_rebind("LIMIT", module),
+        "the writing file's own view excludes its write"
+    );
+
+    let flood: String = (0..200_001).map(|word| format!("w{word}\n")).collect();
+    let mut capped = sources.clone();
+    capped[300] = (Path::new("flood.py"), flood.as_str());
+    let capped_index = super::module_value::ForeignIndex::build(capped.iter().copied(), false);
+    assert!(
+        capped_index.excluding(module).may_rebind("UNSEEN", module),
+        "a word cap tripped in a later batch leaves the absence of writes unknown"
+    );
+}
+
+// A body-only edit of a top-level `NAME = lambda ...` binding (#9619).
+
+const LAMBDA_OLD: &str = "triple = lambda x: x * 3";
+const LAMBDA_NEW: &str = "triple = lambda x: x * 4";
+const LAMBDA_TEST: &str =
+    "from hostile.settings import triple\n\n\ndef test_it():\n    assert triple(4) == 12\n";
+
+fn lambda_test(body: &str) -> String {
+    format!("from hostile.settings import triple\n\n\ndef test_it():\n{body}\n")
+}
+
+/// Classify a one-line edit of `source` (new text at line 1) against the test
+/// and any other workspace files, with the workspace's foreign-write scan.
+fn classify_lambda(
+    source: &str,
+    new: &str,
+    old: &str,
+    others: &[(&str, &str)],
+    test_source: &str,
+) -> Result<Finding, String> {
+    let mut owners = owners_of(source);
+    let mut tests = tests_of(&[("tests/test_settings.py", test_source)]);
+    let own = Path::new("hostile/settings.py");
+    let foreign = super::module_value::ForeignWrites::scan(
+        own,
+        others
+            .iter()
+            .map(|(file, text)| (Path::new(file), *text))
+            .chain([
+                (own, source),
+                (Path::new("tests/test_settings.py"), test_source),
+            ]),
+        false,
+    );
+    for owner in owners.iter_mut().filter(|owner| owner.is_module_owner()) {
+        owner.foreign_writes = foreign.clone();
+    }
+    super::bool_oracle::credit_bare_bool_asserts(&mut tests, &owners, |path| {
+        if path == own {
+            Some(source)
+        } else if path == Path::new("tests/test_settings.py") {
+            Some(test_source)
+        } else {
+            others
+                .iter()
+                .find(|(file, _)| Path::new(file) == path)
+                .map(|(_, text)| *text)
+        }
+    });
+    classify_change_with_context(
+        own,
+        1,
+        new,
+        Some(old),
+        &owners,
+        &tests,
+        PythonNoBehaviorContext {
+            sole_line_replacement: true,
+            ..PythonNoBehaviorContext::default()
+        },
+        Some(source),
+    )
+    .ok_or_else(|| "the edit must yield a finding".to_string())
+}
+
+fn lambda_source(line: &str) -> String {
+    format!("{line}\n")
+}
+
+fn assert_lambda_withheld(finding: &Finding, label: &str) {
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "{label}: {finding:?}"
+    );
+    assert!(
+        !finding
+            .evidence
+            .iter()
+            .any(|line| line.starts_with("related_test_relation: module_value_call")),
+        "{label}: {:?}",
+        finding.evidence
+    );
+}
+
+#[test]
+fn a_lambda_body_edit_no_assertion_distinguishes_is_not_credited() -> Check {
+    for body in [
+        // 0 * 3 and 0 * 4 agree.
+        "    assert triple(0) == 0",
+        // Fails before the edit, so it is not an oracle that the edit broke.
+        "    assert triple(4) == 13",
+        // Holds under both bodies.
+        "    assert triple(4) > 0",
+    ] {
+        let finding = classify_lambda(
+            &lambda_source(LAMBDA_NEW),
+            LAMBDA_NEW,
+            LAMBDA_OLD,
+            &[],
+            &lambda_test(body),
+        )?;
+        assert_lambda_withheld(&finding, body);
+    }
+    Ok(())
+}
+
+#[test]
+fn a_lambda_edit_that_is_not_a_body_only_change_is_not_credited() -> Check {
+    for (label, new, old) in [
+        (
+            "parameter renamed",
+            "triple = lambda y: y * 4",
+            "triple = lambda x: x * 3",
+        ),
+        (
+            "arity changed",
+            "triple = lambda x: x * 4",
+            "triple = lambda x, y: x * 3",
+        ),
+        (
+            "default added",
+            "triple = lambda x=1: x * 4",
+            "triple = lambda x: x * 3",
+        ),
+        (
+            "vararg added",
+            "triple = lambda *x: 4",
+            "triple = lambda *x: 3",
+        ),
+        (
+            "name changed",
+            "other = lambda x: x * 4",
+            "triple = lambda x: x * 3",
+        ),
+        ("was not a lambda", "triple = lambda x: x * 4", "triple = 3"),
+        (
+            "annotation changed (the old one may not import)",
+            "triple: int = lambda x: x * 4",
+            "triple: MissingType = lambda x: x * 3",
+        ),
+        (
+            "annotation added",
+            "triple: int = lambda x: x * 4",
+            "triple = lambda x: x * 3",
+        ),
+    ] {
+        let finding = classify_lambda(&lambda_source(new), new, old, &[], LAMBDA_TEST)?;
+        assert_lambda_withheld(&finding, label);
+    }
+    Ok(())
+}
+
+#[test]
+fn a_lambda_body_outside_the_evaluator_is_not_credited() -> Check {
+    for (label, new, old) in [
+        (
+            "call",
+            "triple = lambda x: abs(x) * 4",
+            "triple = lambda x: abs(x) * 3",
+        ),
+        (
+            "attribute",
+            "triple = lambda x: x.real * 4",
+            "triple = lambda x: x.real * 3",
+        ),
+        (
+            "subscript",
+            "triple = lambda x: x[0] * 4",
+            "triple = lambda x: x[0] * 3",
+        ),
+        (
+            "global name",
+            "triple = lambda x: x * K",
+            "triple = lambda x: x * 3",
+        ),
+        (
+            "float",
+            "triple = lambda x: x * 4.0",
+            "triple = lambda x: x * 3.0",
+        ),
+        (
+            "nested lambda",
+            "triple = lambda x: (lambda y: y * 4)(x)",
+            "triple = lambda x: (lambda y: y * 3)(x)",
+        ),
+    ] {
+        let finding = classify_lambda(&lambda_source(new), new, old, &[], LAMBDA_TEST)?;
+        assert_lambda_withheld(&finding, label);
+    }
+    Ok(())
+}
+
+#[test]
+fn a_lambda_bound_twice_or_conditionally_is_not_credited() -> Check {
+    for (label, source) in [
+        (
+            "rebound later",
+            "triple = lambda x: x * 4\ntriple = print\n",
+        ),
+        (
+            "rebound by def",
+            "triple = lambda x: x * 4\n\n\ndef triple(x):\n    return 0\n",
+        ),
+        ("augmented", "triple = lambda x: x * 4\ntriple += 1\n"),
+        (
+            "loop target",
+            "triple = lambda x: x * 4\nfor triple in []:\n    pass\n",
+        ),
+        (
+            "global write",
+            "triple = lambda x: x * 4\n\n\ndef patch():\n    global triple\n    triple = print\n",
+        ),
+    ] {
+        let finding = classify_lambda(source, LAMBDA_NEW, LAMBDA_OLD, &[], LAMBDA_TEST)?;
+        assert_lambda_withheld(&finding, label);
+    }
+    Ok(())
+}
+
+#[test]
+fn another_file_that_rewrites_the_lambda_withholds_the_credit() -> Check {
+    for (label, file) in [
+        (
+            "attribute write",
+            (
+                "app/main.py",
+                "from hostile import settings\n\nsettings.triple = print\n",
+            ),
+        ),
+        (
+            "setattr",
+            (
+                "app/main.py",
+                "from hostile import settings\n\nsetattr(settings, 'triple', print)\n",
+            ),
+        ),
+        (
+            "autouse monkeypatch",
+            (
+                "tests/conftest.py",
+                "import pytest\n\n\n@pytest.fixture(autouse=True)\ndef off(monkeypatch):\n    monkeypatch.setattr('hostile.settings.triple', print)\n",
+            ),
+        ),
+        (
+            "reload",
+            (
+                "app/reloader.py",
+                "import importlib\nfrom hostile import settings\n\nimportlib.reload(settings)\n",
+            ),
+        ),
+    ] {
+        let finding = classify_lambda(
+            &lambda_source(LAMBDA_NEW),
+            LAMBDA_NEW,
+            LAMBDA_OLD,
+            &[file],
+            LAMBDA_TEST,
+        )?;
+        assert_lambda_withheld(&finding, label);
+    }
+    Ok(())
+}
+
+#[test]
+fn a_test_that_shadows_or_may_skip_the_lambda_is_not_credited() -> Check {
+    for (label, test) in [
+        (
+            "local rebind",
+            "from hostile.settings import triple\n\n\ndef test_it():\n    triple = lambda x: x * 3\n    assert triple(4) == 12\n".to_string(),
+        ),
+        (
+            "parameter",
+            "from hostile.settings import triple\n\n\ndef test_it(triple):\n    assert triple(4) == 12\n".to_string(),
+        ),
+        (
+            "other module",
+            "from other.settings import triple\n\n\ndef test_it():\n    assert triple(4) == 12\n".to_string(),
+        ),
+        (
+            "patched in the test",
+            "from unittest.mock import patch\nfrom hostile.settings import triple\n\n\ndef test_it():\n    with patch('hostile.settings.triple', print):\n        assert triple(4) == 12\n".to_string(),
+        ),
+        ("guarded", lambda_test("    if flag:\n        assert triple(4) == 12")),
+        ("after return", lambda_test("    return\n    assert triple(4) == 12")),
+        ("non-literal argument", lambda_test("    n = 4\n    assert triple(n) == 12")),
+        ("keyword call", lambda_test("    assert triple(x=4) == 12")),
+        ("wrong arity", lambda_test("    assert triple(4, 1) == 12")),
+    ] {
+        let finding = classify_lambda(
+            &lambda_source(LAMBDA_NEW),
+            LAMBDA_NEW,
+            LAMBDA_OLD,
+            &[],
+            &test,
+        )?;
+        assert_lambda_withheld(&finding, label);
+    }
+    Ok(())
+}
+
+#[test]
+fn a_pinned_lambda_body_edit_is_credited() -> Check {
+    for body in [
+        "    assert triple(4) == 12",
+        "    assert triple(2) == 6\n    assert triple(0) == 0",
+        "    assert 12 == triple(4)",
+        "    assert triple(1) < 4",
+    ] {
+        let finding = classify_lambda(
+            &lambda_source(LAMBDA_NEW),
+            LAMBDA_NEW,
+            LAMBDA_OLD,
+            &[],
+            &lambda_test(body),
+        )?;
+        assert_credited(&finding);
+    }
+    // Read through the module path and an alias.
+    for test in [
+        "from hostile import settings\n\n\ndef test_it():\n    assert settings.triple(4) == 12\n",
+        "from hostile.settings import triple as t3\n\n\ndef test_it():\n    assert t3(4) == 12\n",
+    ] {
+        let finding = classify_lambda(
+            &lambda_source(LAMBDA_NEW),
+            LAMBDA_NEW,
+            LAMBDA_OLD,
+            &[],
+            test,
+        )?;
+        assert_credited(&finding);
+    }
+    Ok(())
+}
+
+#[test]
+fn a_reflective_store_through_a_reexported_module_withholds_credit() -> Check {
+    let source = table_source(TABLE_NEW, "");
+    let test = silver_test("assert price(\"silver\") == 5");
+    let bridge = ("hostile/bridge.py", "from hostile import settings as hub\n");
+    // The owner is named only in the bridge and `getattr` only in the store.
+    let reflective = (
+        "hostile/touch.py",
+        "from hostile.bridge import hub\n\ngetattr(hub, \"RA\" + \"TES\")[\"silver\"] = 5\n",
+    );
+    assert_not_credited(&classify_table(
+        &source,
+        &[bridge, reflective],
+        &test,
+        TABLE_NEW,
+    )?);
+    // Control: the same re-export with no reflective access keeps the credit.
+    let plain = (
+        "hostile/touch.py",
+        "from hostile.bridge import hub  # noqa: F401\n",
+    );
+    assert_credited(&classify_table(
+        &source,
+        &[bridge, plain],
+        &test,
+        TABLE_NEW,
+    )?);
+    Ok(())
+}
+
+#[test]
+fn replacing_the_readers_code_withholds_credit() -> Check {
+    let source = table_source(TABLE_NEW, "");
+    for replacement in [
+        "price.__code__ = frozen.__code__",
+        "price.__defaults__ = (1,)",
+        "price.__kwdefaults__ = {}",
+    ] {
+        let test = format!(
+            "from hostile.settings import price\n\n\ndef frozen(tier):\n    return 5\n\n\n{replacement}\n\n\ndef test_it():\n    assert price(\"silver\") == 5\n"
+        );
+        assert_not_credited(&classify_table(&source, &[], &test, TABLE_NEW)?);
+    }
+    // Control: the same test without the replacement keeps the credit.
+    assert_credited(&classify_table(
+        &source,
+        &[],
+        &silver_test("assert price(\"silver\") == 5"),
+        TABLE_NEW,
+    )?);
+    Ok(())
+}
