@@ -1005,6 +1005,26 @@ mutant calibrates the rule; ripr reports only the static shape.
     example advertises no verification command, because pytest has no node
     for the synthetic test (`py-idioms-doctest-separator` credited,
     `py-idioms-doctest-short-input` stays a gap, #9619).
+27. **An assertion helper called through a re-raising wrapper is the
+    helper's assertion.** A top-level test statement
+    `wrapper(lambda: helper(args))` reads as `helper(args)` when `wrapper`
+    is a def of the test's own module that is the module's only binding of
+    its name, is not imported or rebound in the test, and has one plain
+    parameter `fn` and a body of exactly one `try`. The `try` body is one
+    statement, `fn()` or `return fn()`; there is no `else` or `finally`; and
+    every handler is a bare `raise` alone, because a call before it could
+    skip or exit (`pytest.skip()`, `sys.exit(0)`) and a path that returns or
+    falls off the end swallows. A module with a star import reads no
+    wrapper, since the import may rebind its name. The lambda takes no
+    parameters, is the only argument, and its body is one call. A wrapper
+    that swallows any exception (including after a partial re-raise, a
+    conditional re-raise or a `finally` that returns), re-raises a different
+    exception, never calls its parameter, takes more parameters, or is
+    decorated, async, imported or bound twice is not read, and the call
+    keeps its reading (`py-trap-wrapped-through` credited;
+    `py-trap-wrapped-swallow`, `py-trap-wrapped-partial`,
+    `py-trap-wrapped-conditional` and `py-trap-wrapped-finally` stay
+    non-credited, #9619).
 
 ### Verdict ladder
 
@@ -1175,9 +1195,11 @@ rejected alternative. Any can be reversed later without touching the rest.
     wrapper that re-raises, while its twin `py-trap-wrapped-swallow` hands
     the same lambda to a wrapper that swallows the failure. Telling them
     apart needs a rule that reads the wrapper's handlers, and a misread
-    credits a pin the runner never sees. Both rows keep ideal `credited`
-    and accepted `limited`, and stay in `missed-credit.toml` with this
-    Decision as the reason. The twins `py-trap-platform-guarded` and
+    credits a pin the runner never sees. Both rows kept ideal `credited`
+    and accepted `limited`, and stayed in `missed-credit.toml` with this
+    Decision as the reason. Rule 27 (2026-10-26, #9619) later took the
+    bounded wrapper rule this Decision named as its revisit, so only the
+    platform-guard half stays limited by design. The twins `py-trap-platform-guarded` and
     `py-trap-wrapped-swallow` already hold the negatives: each is a
     `not_discriminated` row that must stay `gap` or `limited`. Rejected:
     credit by guard polarity, because that reads the host platform.
@@ -1523,6 +1545,16 @@ and the test is `tests/test_subject.py`, which imports each owner from
   `a_module_that_binds_len_is_not_read`,
   `an_escape_in_the_docstring_source_drops_it`,
   `a_trailing_comment_on_the_example_line_does_not_hide_the_comparison`.
+- Existing: `crates/ripr/src/analysis/language/python/helper_assertions_tests.rs`
+  `given_a_reraising_wrapper_when_it_runs_a_helper_lambda_then_the_helper_call_is_the_assertion`,
+  `given_a_wrapper_that_can_swallow_when_it_runs_a_helper_lambda_then_nothing_resolves`,
+  `given_a_reraising_wrapper_when_the_call_is_not_a_bare_helper_lambda_then_nothing_resolves`,
+  `given_a_wrapper_name_the_test_rebinds_or_imports_when_called_then_nothing_resolves`,
+  `given_a_reraising_wrapper_around_an_unresolvable_helper_when_called_then_nothing_resolves`.
+- Existing: corpus rows `py-trap-wrapped-swallow`, `py-trap-wrapped-partial`,
+  `py-trap-wrapped-conditional` and `py-trap-wrapped-finally` (`cargo xtask
+  verdict-corpus check --language python`): rule 27's runtime-verified
+  swallowing negatives, which must never credit.
 - Existing: corpus rows `py-trap-platform-guarded` and
   `py-trap-wrapped-swallow` (`cargo xtask verdict-corpus check --language
   python`): Decision 17's negatives, which must never credit.
@@ -1655,6 +1687,8 @@ and the test is `tests/test_subject.py`, which imports each owner from
 - `crates/ripr/src/analysis/language/python/doctest_tests.rs` and
   `doctest_eval.rs`: rule 26, collection detection, example reading and the
   evaluator gate.
+- `crates/ripr/src/analysis/language/python/helper_assertions.rs`: rule 27,
+  the re-raising wrapper read beside the single-assert helper read.
 - `crates/ripr/src/analysis/language/python/oracles.rs`: assertion table,
   rules 1 to 3, 12, 14 and 15, and each assertion's gate text (rules 4
   and 13).

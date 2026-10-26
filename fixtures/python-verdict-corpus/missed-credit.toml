@@ -69,9 +69,5 @@ case = "py-trap-platform-matched"
 reason = "Limited by design (RIPR-SPEC-0238 Decision 17, #9619): crediting would read the host platform or a callback wrapper, and the paired trap row must not credit. Delete this entry when a bounded rule credits the row."
 
 [[entry]]
-case = "py-trap-wrapped-through"
-reason = "Limited by design (RIPR-SPEC-0238 Decision 17, #9619): crediting would read the host platform or a callback wrapper, and the paired trap row must not credit. Delete this entry when a bounded rule credits the row."
-
-[[entry]]
 case = "unnum-0028-ex3-decorator-indirection"
 reason = "Abstains by design (RIPR-SPEC-0028 example 3): a decorator that may wrap the call is not credited although the test catches the change."
