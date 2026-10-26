@@ -110,6 +110,9 @@ all are required:
   whatever the test passes in, so an exact pin sees it. A changed argument
   (`self.0 * 2`) can leave the output equal for the one value the test chose, so
   it keeps its prior verdict.
+  A changed placeholder (`{}` to `{:?}` or `{0}`) is an argument edit in
+  disguise, so the ordered `{..}` groups inside the literals must match as well
+  (#9836).
 
 A `format!` or `{}` side, a computed expected string, a weaker assertion such as
 `ends_with`, and `Debug` owners are not read here and keep their prior verdict.

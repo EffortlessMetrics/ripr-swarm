@@ -312,7 +312,10 @@ fn to_string_dispatch_at(masked: &str, at: usize, self_type: &str) -> bool {
 /// Whether the changed expression differs from its prior text only inside
 /// string literals. A literal fragment of a `write!` is written whatever the
 /// test passes in, so an exact pin sees it; a changed argument may leave the
-/// output equal for the one value the test chose (`self.0 * 2` at `0`).
+/// output equal for the one value the test chose (`self.0 * 2` at `0`). A
+/// changed placeholder (`{}` to `{:?}`, `{0}`) is an argument edit in
+/// disguise: the same value may print the same, so the ordered `{..}` groups
+/// inside the literals must match too (#9836).
 pub(in crate::analysis) fn changes_only_string_literals(
     before: Option<&str>,
     after: Option<&str>,
@@ -320,30 +323,90 @@ pub(in crate::analysis) fn changes_only_string_literals(
     let (Some(before), Some(after)) = (before, after) else {
         return false;
     };
-    let outside = |text: &str| {
-        let mut kept = String::new();
-        let mut in_string = false;
-        let mut escaped = false;
-        for c in text.chars() {
-            if in_string {
-                if escaped {
-                    escaped = false;
-                } else if c == '\\' {
-                    escaped = true;
-                } else if c == '"' {
-                    in_string = false;
-                    kept.push('"');
-                }
-            } else {
-                kept.push(c);
-                in_string = c == '"';
-            }
-        }
-        (kept, in_string)
+    let (Some((kept_before, placeholders_before)), Some((kept_after, placeholders_after))) =
+        (outside_strings(before), outside_strings(after))
+    else {
+        return false;
     };
-    let (kept_before, open_before) = outside(before);
-    let (kept_after, open_after) = outside(after);
-    !open_before && !open_after && kept_before == kept_after && before != after
+    kept_before == kept_after && placeholders_before == placeholders_after && before != after
+}
+
+/// The text outside string literals and the ordered `{..}` placeholder groups
+/// inside them, with `{{` and `}}` read as escapes. `None` for an unterminated
+/// literal or a lone brace, which ripr cannot read as format text.
+fn outside_strings(text: &str) -> Option<(String, Vec<String>)> {
+    let mut kept = String::new();
+    let mut placeholders = Vec::new();
+    let mut literal = String::new();
+    let mut in_string = false;
+    let mut escaped = false;
+    for c in text.chars() {
+        if in_string {
+            if escaped {
+                escaped = false;
+                literal.push(c);
+            } else if c == '\\' {
+                escaped = true;
+                literal.push(c);
+            } else if c == '"' {
+                in_string = false;
+                kept.push('"');
+                placeholders.extend(format_placeholders(&literal)?);
+                literal.clear();
+            } else {
+                literal.push(c);
+            }
+        } else {
+            kept.push(c);
+            in_string = c == '"';
+        }
+    }
+    (!in_string).then_some((kept, placeholders))
+}
+
+/// The `{..}` groups of a format string in order, `{{` / `}}` being escapes.
+/// `None` for a brace that opens no group or closes none.
+fn format_placeholders(literal: &str) -> Option<Vec<String>> {
+    let mut groups = Vec::new();
+    let mut chars = literal.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '{' if chars.peek() == Some(&'{') => {
+                chars.next();
+            }
+            '{' => {
+                let mut group = String::from("{");
+                loop {
+                    let next = chars.next()?;
+                    group.push(next);
+                    if next == '}' {
+                        break;
+                    }
+                }
+                groups.push(group);
+            }
+            '}' if chars.peek() == Some(&'}') => {
+                chars.next();
+            }
+            '}' => return None,
+            // `\u{b0}` is an escape, not a placeholder.
+            '\\' if chars.peek() == Some(&'u') => {
+                chars.next();
+                if chars.peek() == Some(&'{') {
+                    for next in chars.by_ref() {
+                        if next == '}' {
+                            break;
+                        }
+                    }
+                }
+            }
+            '\\' => {
+                chars.next();
+            }
+            _ => {}
+        }
+    }
+    Some(groups)
 }
 
 /// RIPR-SPEC-0297: `assert_eq!(value.to_string(), "literal")` pins the whole
@@ -1517,6 +1580,30 @@ mod tests {
             "write!(f, \"{}C\", self.0)",
             "write!(f, \"{}F\", self.1)"
         ));
+        // A changed placeholder is an argument edit in disguise (#9836): the
+        // same value may print the same under `{}`, `{:?}` and `{0}`.
+        assert!(!same(
+            "write!(f, \"{}\u{b0}C\", self.0)",
+            "write!(f, \"{:?}\u{b0}C\", self.0)"
+        ));
+        assert!(!same(
+            "write!(f, \"{}\u{b0}C\", self.0)",
+            "write!(f, \"{0}\u{b0}C\", self.0)"
+        ));
+        // An added or removed group, and an escape traded for a group.
+        assert!(!same("write!(f, \"C\")", "write!(f, \"{}C\", self.0)"));
+        assert!(!same("write!(f, \"{{}}\")", "write!(f, \"{}\", self.0)"));
+        // Text beside identical groups, and an edit inside an escape, stay text.
+        assert!(same(
+            "write!(f, \"{} C\", self.0)",
+            "write!(f, \"{} F\", self.0)"
+        ));
+        assert!(same(
+            "write!(f, \"{{{}}}\", self.0)",
+            "write!(f, \"[{}]\", self.0)"
+        ));
+        // A lone brace is not format text ripr reads.
+        assert!(!same("write!(f, \"a}\")", "write!(f, \"b}\")"));
         // Nothing changed, or no prior text.
         assert!(!same("write!(f, \"x\")", "write!(f, \"x\")"));
         assert!(!super::changes_only_string_literals(
