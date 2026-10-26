@@ -193,6 +193,10 @@ pub(crate) fn collect_callback_assertions(
         receiver_named_once: receiver.is_some_and(|name| {
             identifier_occurrences(statements_text(statements, source), name) == 1
         }),
+        receiver_only_called: receiver.is_some_and(|name| {
+            let text = statements_text(statements, source);
+            identifier_occurrences(text, name) == receiver_method_call_occurrences(text, name)
+        }),
         table_consts: &table_consts,
     };
     let mut out = Vec::new();
@@ -330,6 +334,7 @@ pub(crate) fn statements_collect_assertion_probe(
         literal_consts: &[],
         match_object_consts: &[],
         receiver_named_once: false,
+        receiver_only_called: false,
         table_consts: &[],
     };
     let mut probe = Vec::new();
@@ -363,6 +368,9 @@ pub(crate) struct AssertionContext<'a> {
     /// body, so the one call that settles the test is the one a credited
     /// callback holds (RIPR-SPEC-0246 rule 9).
     receiver_named_once: bool,
+    /// Whether every mention of the receiver is a `receiver.method(...)` call,
+    /// so nothing shadows it or replaces one of its matchers.
+    receiver_only_called: bool,
     /// The test body's top-level literal table `const`s a `for...of` loop may
     /// read (RIPR-SPEC-0243 rule 11). Empty inside a nested statement.
     table_consts: &'a [TableConst],
@@ -379,6 +387,7 @@ impl<'a> AssertionContext<'a> {
             literal_consts: &[],
             match_object_consts: &[],
             receiver_named_once: self.receiver_named_once,
+            receiver_only_called: self.receiver_only_called,
             table_consts: &[],
         }
     }
@@ -403,9 +412,14 @@ fn assertion_from_expression_any(
                 .flatten()
         })
         .or_else(|| {
-            context
-                .receiver
-                .and_then(|r| ava_assertion_from_expression(expr, source, r))
+            context.receiver.and_then(|r| {
+                ava_assertion_from_expression(
+                    expr,
+                    source,
+                    r,
+                    context.bindings.ava_runner && context.receiver_only_called,
+                )
+            })
         })
         .or_else(|| {
             context
@@ -925,6 +939,7 @@ fn collect_nested_callback_assertions(
                 literal_consts: &literal_consts,
                 match_object_consts: &match_object_consts,
                 receiver_named_once: false,
+                receiver_only_called: false,
                 table_consts: &table_consts,
             };
             collect_expect_assertions_from_statement_vec(statements, source, &subtest, out);
@@ -1051,6 +1066,28 @@ fn identifier_occurrences(text: &str, name: &str) -> usize {
         .filter(|(at, _)| {
             !text[..*at].chars().next_back().is_some_and(is_word)
                 && !text[at + name.len()..].chars().next().is_some_and(is_word)
+        })
+        .count()
+}
+
+/// Mentions of `name` written as `name.method(`, the only way an AVA matcher
+/// is called.
+fn receiver_method_call_occurrences(text: &str, name: &str) -> usize {
+    let is_word = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
+    text.match_indices(name)
+        .filter(|(at, _)| {
+            let before = text[..*at].chars().next_back();
+            let rest = &text[at + name.len()..];
+            if before.is_some_and(is_word) || rest.chars().next().is_some_and(is_word) {
+                return false;
+            }
+            let Some(after_dot) = rest.strip_prefix('.') else {
+                return false;
+            };
+            let method_len = after_dot
+                .find(|c: char| !is_word(c))
+                .unwrap_or(after_dot.len());
+            method_len > 0 && after_dot[method_len..].starts_with('(')
         })
         .count()
 }
@@ -1335,6 +1372,35 @@ pub(crate) fn expect_assertion_from_expression(
     })
 }
 
+/// `t.throws` takes a plain function and `t.throwsAsync` an async one (or a
+/// promise, which this reading leaves broad): any other first argument may not
+/// throw the error the expectation describes.
+fn ava_thrower_matches(thrower: &Argument<'_>, asynchronous: bool) -> bool {
+    match thrower {
+        Argument::ArrowFunctionExpression(arrow) => arrow.r#async == asynchronous,
+        Argument::FunctionExpression(function) => {
+            function.r#async == asynchronous && !function.generator
+        }
+        _ => false,
+    }
+}
+
+/// AVA's expectation object holds exactly one property, a plain `message`
+/// (`instanceOf`, `is`, `name`, `code` and `any` are other contracts).
+fn ava_message_only(expectation: &Argument<'_>) -> bool {
+    let Argument::ObjectExpression(object) = expectation else {
+        return false;
+    };
+    matches!(
+        object.properties.as_slice(),
+        [ObjectPropertyKind::ObjectProperty(property)]
+            if !property.computed
+                && !property.shorthand
+                && !property.method
+                && property.key.static_name().as_deref() == Some("message")
+    )
+}
+
 /// Match an AVA / `node:test`-style assertion `<receiver>.method(actual, expected?)`
 /// where `receiver` is the test callback's first parameter (the `t` in
 /// `test('name', t => { t.is(...) })`). Requiring the exact receiver identifier
@@ -1344,6 +1410,7 @@ pub(crate) fn ava_assertion_from_expression(
     expr: &Expression<'_>,
     source: &SourceText<'_>,
     receiver: &str,
+    ava_runner: bool,
 ) -> Option<TypeScriptAssertion> {
     let expr = match expr {
         Expression::AwaitExpression(await_expr) => &await_expr.argument,
@@ -1389,12 +1456,20 @@ pub(crate) fn ava_assertion_from_expression(
     // credits: AVA's other expectation fields (`instanceOf`, `is`) are
     // non-literal and fail the all-literal gate, and `notThrows*` keep their
     // broad reading.
+    // Only a test registered through AVA's own `test` import: tape and uvu
+    // give `t.throws` a different expectation contract.
     let error_payload = match method {
-        "throws" | "throwsAsync" => call
+        "throws" | "throwsAsync" if ava_runner => call
             .arguments
             .get(1)
-            .filter(|arg| matches!(arg, Argument::ObjectExpression(_)))
-            .and_then(|arg| node_assert_error_payload(method == "throwsAsync", arg, source))
+            .zip(call.arguments.first())
+            .filter(|(_, thrower)| ava_thrower_matches(thrower, method == "throwsAsync"))
+            .and_then(|(arg, _)| node_assert_error_payload(method == "throwsAsync", arg, source))
+            .filter(|_| {
+                call.arguments
+                    .get(1)
+                    .is_some_and(|arg| ava_message_only(arg))
+            })
             .map(|payload| TypeScriptErrorPayload {
                 kind: if method == "throwsAsync" {
                     TypeScriptErrorPayloadKind::AvaThrowsAsyncObject
@@ -1499,6 +1574,12 @@ pub(crate) struct TypeScriptAssertionBindings {
     /// `node_test_locals`; set only by `for_registration`, so any other
     /// path reads no context assert.
     node_test_runner: bool,
+    /// Identifiers bound to AVA's `test` (`import test from "ava"`), whose
+    /// `t.throws` expectation object is AVA's (RIPR-SPEC-0243 rule 10).
+    ava_tests: Vec<String>,
+    /// Whether the test being read was registered through one of
+    /// `ava_tests`; set only by `for_registration`.
+    ava_runner: bool,
     /// Custom matchers the file registers with `expect.extend` that pass
     /// only on strict equality (RIPR-SPEC-0262).
     strict_matchers: Vec<String>,
@@ -1614,6 +1695,9 @@ impl TypeScriptAssertionBindings {
         if module == "node:test" && matches!(imported, Some("default" | "test" | "it")) {
             self.node_test_locals.push(local.clone());
         }
+        if module == "ava" && matches!(imported, Some("default" | "test")) {
+            self.ava_tests.push(local.clone());
+        }
         if module == "@playwright/test" && imported == Some("test") && !namespace {
             self.playwright_tests.push(local.clone());
         }
@@ -1705,6 +1789,13 @@ impl TypeScriptAssertionBindings {
                 .cloned()
                 .collect(),
             node_test_runner: self.node_test_runner,
+            ava_tests: self
+                .ava_tests
+                .iter()
+                .filter(|local| !is_shadowed(local))
+                .cloned()
+                .collect(),
+            ava_runner: self.ava_runner,
             strict_matchers: self.strict_matchers.clone(),
         }
     }
@@ -1717,6 +1808,8 @@ impl TypeScriptAssertionBindings {
         let mut bindings = self.clone();
         bindings.node_test_runner =
             callee_root.is_some_and(|root| self.node_test_locals.iter().any(|local| local == root));
+        bindings.ava_runner =
+            callee_root.is_some_and(|root| self.ava_tests.iter().any(|local| local == root));
         bindings
     }
 
@@ -2158,14 +2251,21 @@ fn node_assert_error_payload(
     let Argument::ObjectExpression(object) = arg else {
         return None;
     };
-    let has_message = object.properties.iter().any(|property| match property {
-        ObjectPropertyKind::ObjectProperty(property) => {
-            property.key.static_name().as_deref() == Some("message")
-                && matches!(property.value, Expression::StringLiteral(_))
-        }
-        ObjectPropertyKind::SpreadProperty(_) => false,
-    });
-    if !has_message {
+    // A duplicate `message` key keeps the last value in JavaScript while the
+    // guard reads the first, so exactly one string `message` is required.
+    let messages: Vec<bool> = object
+        .properties
+        .iter()
+        .filter_map(|property| match property {
+            ObjectPropertyKind::ObjectProperty(property)
+                if property.key.static_name().as_deref() == Some("message") =>
+            {
+                Some(matches!(property.value, Expression::StringLiteral(_)))
+            }
+            _ => None,
+        })
+        .collect();
+    if messages != [true] {
         return None;
     }
     let expected = safe_error_object_payload_text(arg, source)?;

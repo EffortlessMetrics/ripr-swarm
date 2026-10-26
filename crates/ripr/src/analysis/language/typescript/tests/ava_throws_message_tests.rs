@@ -13,13 +13,20 @@ const ADDED: (usize, &str) = (3, "    throw new Error(\"blank\");");
 const REMOVED: &str = "    throw new Error(\"empty\");";
 
 fn test_source(call: &str) -> String {
+    test_source_importing("import test from \"ava\";", call)
+}
+
+fn test_source_importing(runner_import: &str, call: &str) -> String {
     format!(
-        "import test from \"ava\";\nimport {{ parse }} from \"../src/lib\";\n\ntest(\"parse\", async t => {{\n  {call};\n}});\n"
+        "{runner_import}\nimport {{ parse }} from \"../src/lib\";\n\ntest(\"parse\", async t => {{\n  {call};\n}});\n"
     )
 }
 
 fn only_assertion(label: &str, call: &str) -> Result<TypeScriptAssertion, String> {
-    let test = test_source(call);
+    only_assertion_in(label, test_source(call))
+}
+
+fn only_assertion_in(label: &str, test: String) -> Result<TypeScriptAssertion, String> {
     let tests = extract_tests(Path::new("tests/parse.test.ts"), &test);
     let [parsed] = tests.as_slice() else {
         return Err(format!("{label}: expected one test, got {tests:?}"));
@@ -148,6 +155,14 @@ fn other_ava_error_expectations_stay_broad() -> Result<(), String> {
             "t.throws(() => parse(\"\"), { message: \"blank\", instanceOf: TypeError })",
         ),
         (
+            "duplicate-message",
+            "t.throws(() => parse(\"\"), { message: \"blank\", message: \"x\" })",
+        ),
+        (
+            "duplicate-message-string-key",
+            "t.throws(() => parse(\"\"), { message: \"blank\", \"message\": \"x\" })",
+        ),
+        (
             "not-throws",
             "t.notThrows(() => parse(\"\"), { message: \"blank\" })",
         ),
@@ -159,6 +174,160 @@ fn other_ava_error_expectations_stay_broad() -> Result<(), String> {
         let assertion = only_assertion(label, call)?;
         assert_eq!(assertion.oracle_kind, OracleKind::BroadError, "{label}");
         assert!(assertion.error_payload.is_none(), "{label}");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_message_object_outside_an_ava_test_stays_broad() -> Result<(), String> {
+    // tape and uvu give `t.throws` a different expectation contract, and a
+    // file with no runner import registers nothing: only AVA's own `test`
+    // import credits the object.
+    let call = "t.throws(() => parse(\"\"), { message: \"blank\" })";
+    for (label, runner_import) in [
+        ("tape", "import test from \"tape\";"),
+        ("uvu", "import { test } from \"uvu\";"),
+        ("ava-type-only", "import type test from \"ava\";"),
+    ] {
+        let assertion = only_assertion_in(label, test_source_importing(runner_import, call))?;
+        assert_eq!(assertion.oracle_kind, OracleKind::BroadError, "{label}");
+        assert!(assertion.error_payload.is_none(), "{label}");
+    }
+    // A file with no runner import registers no test, so nothing credits.
+    let unregistered = test_source_importing("const test = globalThis.test;", call);
+    assert!(
+        extract_tests(Path::new("tests/parse.test.ts"), &unregistered).is_empty(),
+        "an unimported `test` must register nothing"
+    );
+    // The positive control: AVA's own import, and the named `test` export.
+    for (label, runner_import) in [
+        ("ava-default", "import test from \"ava\";"),
+        ("ava-named", "import { test } from \"ava\";"),
+    ] {
+        let assertion = only_assertion_in(label, test_source_importing(runner_import, call))?;
+        assert_eq!(
+            assertion.oracle_kind,
+            OracleKind::ExactErrorVariant,
+            "{label}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn an_ava_expectation_with_any_other_property_stays_broad() -> Result<(), String> {
+    for (label, props) in [
+        ("extra-foo", "message: \"blank\", foo: 1"),
+        (
+            "instance-of-string",
+            "message: \"blank\", instanceOf: \"Error\"",
+        ),
+        ("is-null", "message: \"blank\", is: null"),
+        ("name-number", "message: \"blank\", name: 123"),
+        ("name-string", "message: \"blank\", name: \"TypeError\""),
+        ("computed-key", "[\"message\"]: \"blank\""),
+        ("shorthand", "message"),
+        ("method", "message() { return \"blank\"; }"),
+        ("empty", ""),
+    ] {
+        let call = format!("t.throws(() => parse(\"\"), {{ {props} }})");
+        let assertion = only_assertion(label, &call)?;
+        assert_eq!(assertion.oracle_kind, OracleKind::BroadError, "{label}");
+        assert!(assertion.error_payload.is_none(), "{label}");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_shadowed_or_replaced_ava_receiver_stays_broad() -> Result<(), String> {
+    let throws = "t.throws(() => parse(\"\"), { message: \"blank\" })";
+    for (label, call) in [
+        (
+            "shadowed",
+            format!("const t = {{ throws: () => {{}} }};\n  {throws}"),
+        ),
+        ("replaced", format!("t.throws = () => {{}};\n  {throws}")),
+    ] {
+        let assertion = only_assertion(label, &call)?;
+        assert_eq!(assertion.oracle_kind, OracleKind::BroadError, "{label}");
+        assert!(assertion.error_payload.is_none(), "{label}");
+    }
+    Ok(())
+}
+
+#[test]
+fn an_ava_thrower_must_match_the_matcher() -> Result<(), String> {
+    let message = "{ message: \"blank\" }";
+    for (label, call, credited) in [
+        (
+            "sync-arrow",
+            format!("t.throws(() => parse(\"\"), {message})"),
+            true,
+        ),
+        (
+            "sync-function",
+            format!("t.throws(function () {{ parse(\"\"); }}, {message})"),
+            true,
+        ),
+        (
+            "async-throws-async",
+            format!("await t.throwsAsync(async () => parse(\"\"), {message})"),
+            true,
+        ),
+        (
+            "async-with-throws",
+            format!("t.throws(async () => parse(\"\"), {message})"),
+            false,
+        ),
+        (
+            "generator",
+            format!("t.throws(function* () {{ parse(\"\"); }}, {message})"),
+            false,
+        ),
+        (
+            "promise-argument",
+            format!("await t.throwsAsync(parse(\"\"), {message})"),
+            false,
+        ),
+        (
+            "sync-with-throws-async",
+            format!("await t.throwsAsync(() => parse(\"\"), {message})"),
+            false,
+        ),
+        (
+            "resolved-error",
+            format!("await t.throwsAsync(Promise.resolve(new Error(\"blank\")), {message})"),
+            false,
+        ),
+    ] {
+        let assertion = only_assertion(label, &call)?;
+        let expected = if credited {
+            OracleKind::ExactErrorVariant
+        } else {
+            OracleKind::BroadError
+        };
+        assert_eq!(assertion.oracle_kind, expected, "{label}");
+    }
+    Ok(())
+}
+
+#[test]
+fn an_ava_duplicate_message_stays_broad_in_javascript() -> Result<(), String> {
+    for (label, props) in [
+        ("duplicate", "message: \"blank\", message: \"x\""),
+        ("string-key", "message: \"blank\", \"message\": \"x\""),
+    ] {
+        let test = format!(
+            "import test from \"ava\";\nimport {{ parse }} from \"../src/lib\";\n\ntest(\"parse\", t => {{\n  t.throws(() => parse(\"\"), {{ {props} }});\n}});\n"
+        );
+        let tests = extract_tests(Path::new("tests/parse.test.js"), &test);
+        let [parsed] = tests.as_slice() else {
+            return Err(format!("{label}: expected one test, got {tests:?}"));
+        };
+        let [assertion] = parsed.assertions.as_slice() else {
+            return Err(format!("{label}: expected one assertion"));
+        };
+        assert_eq!(assertion.oracle_kind, OracleKind::BroadError, "{label}");
     }
     Ok(())
 }
