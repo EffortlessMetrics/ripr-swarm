@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- The strict hosted Clippy gate is green again on main: the `#[path]` mirror that compiles ripr's `agent::loop_commands` inside xtask carries a reviewed `dead_code` allowance for helpers consumed only by ripr proper, and the `Expect`/`Route` imports in `termination_qualification/controls.rs` are `#[cfg(unix)]`-gated since only the unix-only instrument controls use them; the same repair re-blesses the single drifted verdict-corpus row (spec0228) that #10620's case-file edit left stale (#10624).
