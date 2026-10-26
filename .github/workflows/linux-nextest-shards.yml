@@ -1,12 +1,16 @@
 name: Linux Nextest Shards
 
-# Manual trial of the required Rust test step split into four nextest partitions
-# (#10341). The required run spends ~21 minutes in one `cargo nextest run
-# --workspace --profile ci` on a 4-core hosted runner; this runs the same tests as
-# four `--partition count:N/4` jobs so the wall-clock of a sharded form can be
-# measured before the required workflow changes. It is advisory evidence only: it
-# does not replace the required gates, is not wired to pull_request events, and
-# never restores a cache it could save over the required run's.
+# Manual trial of building the workspace test binaries once and running the four
+# nextest partitions from that archive (#10507 follow-up). The hosted required
+# route (`rust-test-shards.yml`) makes every shard rebuild the same ripr and xtask
+# test binaries: of a ~14 minute shard, ~5.7 minutes is test execution and the rest
+# is that build, which rust-cache cannot remove because it never caches workspace
+# crates. This trial builds once with `cargo nextest archive`, then runs
+# `--partition count:N/4` from the archive on four runners and reports each phase's
+# seconds, so the wall-clock and runner minutes of the shared-build form can be
+# compared with the required route's before it replaces anything. It is advisory
+# evidence only: it does not replace the required gates, is not wired to
+# pull_request events, and never saves a cache over the required run's.
 on:
   workflow_dispatch:
 
@@ -18,14 +22,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  linux-shard:
-    name: linux-shard-${{ matrix.shard }}
+  archive:
+    name: archive
     runs-on: ubuntu-latest
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2, 3, 4]
+    timeout-minutes: 45
     steps:
       # Full history, like the required test step: base-resolving tests refuse on
       # a shallow clone (#10344).
@@ -46,7 +46,56 @@ jobs:
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          shared-key: ripr-swarm-rust-small-${{ runner.os }}
+          shared-key: ripr-swarm-rust-shards-${{ runner.os }}
+          save-if: false
+
+      - name: Build the test archive
+        run: |
+          t0=$(date +%s)
+          cargo nextest archive --workspace --profile ci --archive-file nextest-archive.tar.zst
+          t1=$(date +%s)
+          size=$(stat -c %s nextest-archive.tar.zst)
+          { echo "### Archive"; echo "build seconds: $((t1 - t0)); archive bytes: $size"; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the archive
+        uses: actions/upload-artifact@v7
+        with:
+          name: nextest-archive
+          path: nextest-archive.tar.zst
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+
+  linux-shard:
+    name: linux-shard-${{ matrix.shard }}
+    needs: archive
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.95
+        with:
+          toolchain: 1.95.0
+          components: llvm-tools-preview
+
+      - name: Install CI tools
+        uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+        with:
+          tool: nextest
+
+      # Restore only: the policy tests spawn cargo themselves and want the
+      # registry and dependency builds; the workspace binaries come from the archive.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: ripr-swarm-rust-shards-${{ runner.os }}
           save-if: false
 
       - name: Prepare locked owner-return fixture dependencies
@@ -54,35 +103,29 @@ jobs:
           cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml
           cargo fetch --locked --manifest-path fixtures/owner_return_pin_json_real_literal/input/Cargo.toml
 
-      # The policy tests spawn `cargo test --no-run -p xtask` themselves; warming
-      # it here keeps that build out of the measured test time, as the required
-      # run's policy preflight does.
-      - name: Warm the cargo builds the policy tests spawn
-        timeout-minutes: 20
-        run: cargo xtask check-covered-by
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: nextest-archive
 
-      # Build and run are timed apart: the required step's 1287 s includes its own
-      # ~336 s nextest build, so only build plus run is comparable to it. The shard
-      # also lists its own partition (and shard 1 the full workspace) so the
-      # partition-check job can prove the shards are a disjoint cover.
-      - name: Run workspace tests (shard ${{ matrix.shard }} of 4)
+      # No separate warm step: the policy tests that spawn `cargo test --no-run -p
+      # xtask` pay that build inside their own test time, which is the cost this
+      # trial exists to measure. The whole step's seconds are reported.
+      - name: Run workspace tests from the archive (shard ${{ matrix.shard }} of 4)
         timeout-minutes: 40
         run: |
           mkdir -p target/nextest/ci
+          archive=(--archive-file nextest-archive.tar.zst --workspace-remap "$PWD" --profile ci)
+          cargo nextest list "${archive[@]}" --partition count:${{ matrix.shard }}/4 --color never --message-format oneline 2> /dev/null | sort > target/nextest/ci/list-${{ matrix.shard }}.txt
+          [ "${{ matrix.shard }}" = 1 ] && cargo nextest list "${archive[@]}" --color never --message-format oneline 2> /dev/null | sort > target/nextest/ci/list-all.txt
           t0=$(date +%s)
-          cargo nextest run --workspace --profile ci --no-run
-          t1=$(date +%s)
-          cargo nextest list --workspace --partition count:${{ matrix.shard }}/4 --message-format oneline 2> /dev/null | sort > target/nextest/ci/list-${{ matrix.shard }}.txt
-          [ "${{ matrix.shard }}" = 1 ] && cargo nextest list --workspace --message-format oneline 2> /dev/null | sort > target/nextest/ci/list-all.txt
-          t2=$(date +%s)
           set +e
-          cargo nextest run --workspace --profile ci --no-fail-fast --partition count:${{ matrix.shard }}/4
+          cargo nextest run "${archive[@]}" --no-fail-fast --partition count:${{ matrix.shard }}/4
           status=$?
           set -e
-          t3=$(date +%s)
+          t1=$(date +%s)
           tests=$(grep -Eo '<testsuites [^>]*tests="[0-9]+"' target/nextest/ci/junit.xml | grep -Eo 'tests="[0-9]+"' | grep -Eo '[0-9]+' || echo 0)
           printf '%s\n' "$status" > target/nextest/ci/shard-${{ matrix.shard }}.status
-          { echo "### Shard ${{ matrix.shard }} of 4"; echo "nextest exit status: $status"; echo "tests in junit: $tests"; echo "build seconds: $((t1 - t0)); list seconds: $((t2 - t1)); run seconds: $((t3 - t2)); build plus run: $((t3 - t0 - (t2 - t1)))"; } >> "$GITHUB_STEP_SUMMARY"
+          { echo "### Shard ${{ matrix.shard }} of 4"; echo "nextest exit status: $status"; echo "tests in junit: $tests"; echo "run seconds: $((t1 - t0))"; } >> "$GITHUB_STEP_SUMMARY"
           exit "$status"
 
       - name: Upload shard results
