@@ -368,6 +368,22 @@ mod tests {
         positive.infect_for_boundary_test();
         assert!(positive.boundary_input_observed_with_weak_oracle());
 
+        // The shared gate itself (not just the Finding wrapper) rejects another
+        // class or family.
+        let gate = |class: &ExposureClass, family: &ProbeFamily| {
+            crate::domain::probe::boundary_input_observed_with_weak_oracle(
+                class,
+                family,
+                &positive.ripr.infect,
+                &positive.ripr.reveal.discriminate,
+                &positive.related_tests,
+                &positive.stop_reasons,
+            )
+        };
+        assert!(gate(&positive.class, &positive.probe.family));
+        assert!(!gate(&ExposureClass::NoStaticPath, &positive.probe.family));
+        assert!(!gate(&positive.class, &ProbeFamily::ReturnValue));
+
         let mut other_class = positive.clone();
         other_class.class = ExposureClass::ReachableUnrevealed;
         assert!(!other_class.boundary_input_observed_with_weak_oracle());

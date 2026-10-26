@@ -527,9 +527,10 @@ finding is a weakly exposed predicate whose infection stage detected a related
 test input at the changed boundary, whose own credited oracle is a weak one
 (the discriminator stage reports only a weak oracle, no related row credits a
 strong or medium oracle, and no stop reason applies), and which carries the
-matching "strengthen its assertion" Next step, the missing boundary-value item
-is replaced by a sentence saying that test already reaches the boundary input
-and only its assertion is weak; a pairing, refused or unverified-observation
+matching boundary-observed Next step, the missing boundary-value item is
+replaced by a sentence saying a related test already reaches the changed
+boundary input but ripr grades its assertion as a weak check (true for a loose
+check and for an exact comparison written in a form ripr grades relational); a pairing, refused or unverified-observation
 limitation keeps the generic wording, #10622), and sends the reader
 to the Next step above and the `ripr check` rerun, carrying the refusal kind
 and missing list as typed fields rather than parsing the reason text (the

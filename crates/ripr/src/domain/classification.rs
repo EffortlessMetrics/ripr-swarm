@@ -36,7 +36,7 @@ assertions, or exercise it indirectly through the code it checks.";
 
 /// Weak predicate whose related test already supplies the changed boundary
 /// input (#10622); the advisory keys off this exact Next step.
-pub(crate) const BOUNDARY_OBSERVED_WEAK_ORACLE_NEXT_STEP: &str = "A related test already reaches the boundary input; strengthen its assertion to compare the exact returned value (for example assert_eq!) so the old and changed behavior differ.";
+pub(crate) const BOUNDARY_OBSERVED_WEAK_ORACLE_NEXT_STEP: &str = "A related test already reaches the boundary input, but ripr grades its assertion as a weak check; write it as an exact-value assertion ripr can credit, for example assert_eq!(result, expected), so the old and changed behavior differ.";
 
 pub(crate) const ASSERTION_SHAPED_WEAKLY_EXPOSED_NEXT_STEP: &str = "The changed owner is an assertion helper (its body is dominated by assert*/expect calls and nothing \
 outside tests calls it), so exact-equality advice for code under test may not apply — boolean invariants \

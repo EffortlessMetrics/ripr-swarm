@@ -176,8 +176,8 @@ impl RepairRouteRefusal {
                     };
                     format!(
                         "no repair start offered: a related test already reaches the changed \
-                         boundary input, but its assertion does not compare the exact changed \
-                         value, so ripr cannot build a repair packet for this finding yet.{also} \
+                         boundary input, but ripr grades its assertion as a weak check, so ripr \
+                         cannot build a repair packet for this finding yet.{also} \
                          Follow the Next step above, then rerun `ripr check`"
                     )
                 } else if missing.is_empty() {
@@ -686,8 +686,8 @@ mod tests {
         assert_eq!(
             observed,
             "no repair start offered: a related test already reaches the changed boundary \
-             input, but its assertion does not compare the exact changed value, so ripr \
-             cannot build a repair packet for this finding yet. It is also still missing: \
+             input, but ripr grades its assertion as a weak check, so ripr cannot build a \
+             repair packet for this finding yet. It is also still missing: \
              safe test target. Follow the Next step above, then rerun `ripr check`"
         );
         assert!(
