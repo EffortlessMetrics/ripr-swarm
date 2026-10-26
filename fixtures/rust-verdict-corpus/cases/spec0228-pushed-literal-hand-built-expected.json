@@ -42,7 +42,7 @@
   },
   "reasoning": "add_records_the_line_p_built fills expected.lines with the literal line and compares it with order.lines after order.add, so a changed sku fails the equality; expected never called add. Both mutants record a different sku and fail the test.",
   "labeling_observation": {
-    "ripr_commit": "c400d47b81",
+    "ripr_commit": "74c75ee253",
     "full_checkout_verdict": "credited",
     "full_checkout_classifications": [
       "exposed"

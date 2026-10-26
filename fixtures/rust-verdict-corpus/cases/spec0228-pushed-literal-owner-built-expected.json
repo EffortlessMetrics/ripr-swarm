@@ -41,7 +41,7 @@
   },
   "reasoning": "add_row_records_the_line_p_owner builds expected through the same add_row call, so the equality compares the owner with itself and a changed sku passes; ripr must keep the gap.",
   "labeling_observation": {
-    "ripr_commit": "c400d47b81",
+    "ripr_commit": "74c75ee253",
     "full_checkout_verdict": "gap",
     "full_checkout_classifications": [
       "exposed",
