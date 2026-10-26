@@ -980,9 +980,60 @@ const SCOPE_WORDS: &[&str] = &[
     "match",
 ];
 
+/// Standard macros that expand to an expression and bind no name.
+const NON_BINDING_MACROS: &[&str] = &[
+    "assert",
+    "assert_eq",
+    "assert_ne",
+    "debug_assert",
+    "debug_assert_eq",
+    "debug_assert_ne",
+    "matches",
+    "vec",
+    "format",
+    "stringify",
+    "concat",
+    "panic",
+    "unreachable",
+    "todo",
+    "unimplemented",
+    "dbg",
+];
+
+/// Whether the text invokes a macro that is not a known non-binding standard
+/// one. A macro defined in another module or file can expand to a `fn` or
+/// `let` that never appears in the row text, so any other `name!` is refused.
+fn text_invokes_unknown_macro(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        if !(bytes[index].is_ascii_alphanumeric() || bytes[index] == b'_') {
+            index += 1;
+            continue;
+        }
+        let start = index;
+        while index < bytes.len() && (bytes[index].is_ascii_alphanumeric() || bytes[index] == b'_')
+        {
+            index += 1;
+        }
+        let mut after = index;
+        while after < bytes.len() && bytes[after].is_ascii_whitespace() {
+            after += 1;
+        }
+        let bang = bytes.get(after) == Some(&b'!') && bytes.get(after + 1) != Some(&b'=');
+        if bang && !NON_BINDING_MACROS.contains(&&text[start..index]) {
+            return true;
+        }
+    }
+    false
+}
+
 /// Whether one substituted row declares a scope word or more than one `fn`.
 fn text_defines_nested_scope(text: &str) -> bool {
     if text.contains('|') {
+        return true;
+    }
+    if text_invokes_unknown_macro(text) {
         return true;
     }
     let mut functions = 0;
@@ -1466,12 +1517,24 @@ mod tests {
                 "#[test] fn $name() { assert_eq!((|gate: fn(u32) -> bool| gate($v))(|_| true), $w); }",
             ),
             (
+                "an if let pattern in the body",
+                "#[test] fn $name() { if let Some(gate) = Some(|_: u32| true) { assert_eq!(gate($v), $w); } }",
+            ),
+            (
+                "a while let pattern in the body",
+                "#[test] fn $name() { while let Some(gate) = Some(|_: u32| true) { assert_eq!(gate($v), $w); break; } }",
+            ),
+            (
                 "a for pattern in the body",
                 "#[test] fn $name() { for gate in [|_: u32| true] { assert_eq!(gate($v), $w); } }",
             ),
             (
                 "a match pattern in the body",
                 "#[test] fn $name() { match 0 { gate => assert_eq!(gate($v), $w) } }",
+            ),
+            (
+                "a macro from another module in the body",
+                "shadow!(); #[test] fn $name() { assert_eq!(gate($v), $w); }",
             ),
             (
                 "a second fn in the body",
@@ -1512,6 +1575,14 @@ mod tests {
             ))
             .is_empty(),
             "a module supplied by a tt"
+        );
+        assert!(
+            expand_local_test_macros(&supplied(
+                "#[test] fn $name() { $k!(); assert_eq!(gate($v), $w); }",
+                "shadow a => (1, 2)"
+            ))
+            .is_empty(),
+            "a macro name supplied by a tt"
         );
         assert!(
             expand_local_test_macros(&supplied(

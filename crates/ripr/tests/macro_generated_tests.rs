@@ -310,6 +310,17 @@ fn a_local_binding_in_an_arrow_row_adds_no_test() -> Result<(), String> {
 }
 
 #[test]
+fn a_macro_from_another_module_in_an_arrow_row_adds_no_test() -> Result<(), String> {
+    // `shadow!` is defined outside this file and may expand to a block-local
+    // `fn gate`, so the row text alone cannot show which `gate` is called.
+    let body = "    macro_rules! gate_cases {\n        ($($name:ident => ($input:expr, $want:expr))*) => {\n            $( #[test] fn $name() { shadow!(); assert_eq!(gate($input), $want); } )*\n        };\n    }\n\n    gate_cases! { ten_is_open => (10, true) }\n";
+    let predicate = TempRepo::create(body)?.predicate()?;
+    assert!(predicate.related_tests.is_empty(), "{predicate:?}");
+    assert_ne!(state(&predicate.ripr.reach.state), "Yes", "{predicate:?}");
+    Ok(())
+}
+
+#[test]
 fn an_uninvoked_generator_adds_no_test() -> Result<(), String> {
     let uninvoked = TempRepo::create(GENERATOR)?.predicate()?;
     assert!(uninvoked.related_tests.is_empty(), "{uninvoked:?}");
