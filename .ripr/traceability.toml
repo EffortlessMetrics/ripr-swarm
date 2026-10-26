@@ -17948,6 +17948,9 @@ id = "RIPR-SPEC-0241"
 name = "check --json refusal envelope"
 spec = "docs/specs/RIPR-SPEC-0241-check-json-refusal-envelope.md"
 tests = [
+  "crates/ripr/tests/cli_smoke/check_budget_refusals.rs::check_budget_flag_and_environment_reach_analysis_timeout",
+  "crates/ripr/src/cli/commands/check_argv_refusal_tests.rs",
+  "crates/ripr/tests/cli_smoke.rs::check_rejects_invalid_check_timeout_flag_and_env",
   "crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_empty_and_ordinary_patches_keep_successful_selection",
   "crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_parser_refusals_cannot_become_empty_or_fallback_successes",
   "crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_base_uses_the_same_parser_refusal_before_inventory",

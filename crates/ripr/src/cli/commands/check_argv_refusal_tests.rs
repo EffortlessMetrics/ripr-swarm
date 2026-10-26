@@ -12,7 +12,8 @@ struct TempRoot(PathBuf);
 
 impl TempRoot {
     fn new(label: &str) -> Result<Self, String> {
-        let root = unique_command_test_dir(label);
+        let guard = Self(unique_command_test_dir(label));
+        let root = &guard.0;
         std::fs::create_dir_all(root.join("src")).map_err(|err| err.to_string())?;
         std::fs::write(
             root.join("Cargo.toml"),
@@ -21,7 +22,7 @@ impl TempRoot {
         .map_err(|err| err.to_string())?;
         std::fs::write(root.join("src/lib.rs"), "pub fn one() -> u8 { 1 }\n")
             .map_err(|err| err.to_string())?;
-        Ok(Self(root))
+        Ok(guard)
     }
 
     fn arg(&self) -> String {
@@ -178,6 +179,8 @@ fn committed_refuses_repo_scoped_formats_and_gap_ledger_after_config_load() -> R
 #[test]
 fn path_and_exclude_are_refused_where_they_would_claim_an_unapplied_bound() -> Result<(), String> {
     let root = TempRoot::new("scope-refusals")?;
+    let saved_arg = root.0.join("saved.json").to_string_lossy().into_owned();
+    let ledger_arg = root.0.join("ledger.json").to_string_lossy().into_owned();
     for flag in ["--path", "--exclude"] {
         let error = refusal(
             &root,
@@ -192,8 +195,8 @@ fn path_and_exclude_are_refused_where_they_would_claim_an_unapplied_bound() -> R
             ));
         }
         for sink in [
-            ["--write-artifact", "saved.json"],
-            ["--gap-ledger", "ledger.json"],
+            ["--write-artifact", saved_arg.as_str()],
+            ["--gap-ledger", ledger_arg.as_str()],
         ] {
             let error = refusal(&root, &[flag, "src/lib.rs", sink[0], sink[1]])?;
             if !(error.starts_with(
@@ -334,7 +337,7 @@ fn gap_ledger_is_limited_to_badge_formats_and_names_unreadable_ledgers() -> Resu
             "repo-badge-shields",
         ],
     )?;
-    if error.is_empty() || error == want {
+    if !error.starts_with("invalid JSON: ") {
         return Err(format!(
             "a malformed ledger needs its own message, got {error:?}"
         ));
@@ -536,8 +539,7 @@ fn invalid_mode_and_format_values_are_refused_before_analysis() -> Result<(), St
 }
 
 #[test]
-fn machine_formats_get_a_parseable_refusal_document_and_human_formats_stay_prose()
--> Result<(), String> {
+fn machine_formats_pin_refusal_identity_and_human_formats_stay_prose() -> Result<(), String> {
     let input = CheckInput {
         root: PathBuf::from("."),
         ..CheckInput::default()
@@ -555,13 +557,75 @@ fn machine_formats_get_a_parseable_refusal_document_and_human_formats_stay_prose
             return Err(format!("{format:?} must carry a refusal document"));
         };
         let document = document?;
-        if document.trim().is_empty() {
-            return Err(format!("{format:?} refusal document must not be empty"));
+        if matches!(format, OutputFormat::Github) {
+            assert_eq!(
+                document,
+                "::error title=ripr refusal::run refused: run_status=repository_root_unusable; repair_route=analysis/repository-root; synthetic refusal\n"
+            );
+            continue;
         }
-        if !matches!(format, OutputFormat::Github)
-            && serde_json::from_str::<serde_json::Value>(&document).is_err()
-        {
-            return Err(format!("{format:?} refusal must be JSON, got {document}"));
+        let value: serde_json::Value =
+            serde_json::from_str(&document).map_err(|err| format!("{format:?}: {err}"))?;
+        match format {
+            OutputFormat::Json => {
+                for pointer in [
+                    "/analysis_scope/run_status",
+                    "/analysis_scope/basis",
+                    "/analysis_scope/limitation",
+                    "/run_limitations/0/category",
+                ] {
+                    assert_eq!(
+                        value.pointer(pointer),
+                        Some(&serde_json::json!("repository_root_unusable")),
+                        "{format:?} {pointer}"
+                    );
+                }
+                assert_eq!(
+                    value["analysis_scope"]["repair_route"],
+                    "analysis/repository-root"
+                );
+                assert_eq!(value["analysis_scope"]["downstream_consumable"], false);
+                assert_eq!(value["findings"], serde_json::json!([]));
+            }
+            OutputFormat::Sarif => {
+                let run = &value["runs"][0];
+                let invocation = &run["invocations"][0];
+                let notice = &invocation["toolConfigurationNotifications"][0];
+                assert_eq!(value["version"], "2.1.0");
+                assert_eq!(notice["properties"]["identity"], "repository_root_unusable");
+                assert_eq!(
+                    notice["properties"]["repair_route"],
+                    "analysis/repository-root"
+                );
+                assert_eq!(invocation["executionSuccessful"], false);
+                assert_eq!(run["properties"]["run_status"], "refused");
+                assert_eq!(run["results"], serde_json::json!([]));
+            }
+            OutputFormat::BadgeJson => {
+                assert_eq!(value["message"], "refused: repository_root_unusable");
+                assert_eq!(value["status"], "warn");
+                assert_eq!(value["color"], "lightgrey");
+            }
+            OutputFormat::RepoExposureJson | OutputFormat::AgentSeamPacketsJson => {
+                assert_eq!(value["run_status"], "refused");
+                assert_eq!(
+                    value["limitations"][0]["category"],
+                    "repository_root_unusable"
+                );
+                assert_eq!(
+                    value["limitations"][0]["repair_route"],
+                    "analysis/repository-root"
+                );
+                if matches!(format, OutputFormat::RepoExposureJson) {
+                    assert_eq!(value["seams"], serde_json::json!([]));
+                    assert_eq!(value["metrics"]["seams_total"], 0);
+                } else {
+                    assert_eq!(value["packets"], serde_json::json!([]));
+                    assert_eq!(value["packets_total"], 0);
+                    assert!(value.get("next").is_none());
+                }
+            }
+            _ => return Err(format!("unexpected machine format {format:?}")),
         }
     }
     for format in [OutputFormat::Human, OutputFormat::HumanFull] {
