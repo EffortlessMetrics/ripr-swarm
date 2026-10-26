@@ -1,4 +1,4 @@
-<!-- section: Fixed -->
+<!-- section: Internal / CI -->
 - `cargo xtask repo-exposure-latency-report` now compares cache-served output
   with a cold recomputation for each format (a private `RIPR_CACHE_DIR`: cold
   run, then a run that must show a cache hit). `output_parity` is `pass`,
@@ -9,9 +9,6 @@
   `{path, stage, error}` rows (`classified_seam_store`,
   `corpus_fingerprint_store`, at most 32 plus `store_failures_dropped`) in the
   opt-in latency trace and the latency report, and block `pass` (#9633).
-- A cache read through a path component that is a file is a cache miss instead
-  of also being counted as `corrupt_ignored`; the failed write remains the one
-  reported store failure (#9633).
 - The latency report no longer trusts any stderr line that starts with a
   receipt prefix: receipts must carry a per-run token passed in
   `RIPR_REPO_EXPOSURE_LATENCY_RECEIPT_TOKEN`; forged lines are ignored (#9633).
