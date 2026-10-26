@@ -1103,7 +1103,7 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
             scope.iterables.push(Vec::new());
             let inherited_strict = scope.admission.block_functions_are_lexical;
             scope.admission.block_functions_are_lexical |= statement_callback_is_strict(stmt);
-            collect_tests_from_statements(body, file, source, mocks, imports, scope, tests);
+            collect_tests_from_statements(body, file, source, imports, scope, tests);
             scope.admission.block_functions_are_lexical = inherited_strict;
             scope.iterables.pop();
             scope.levels.pop();
