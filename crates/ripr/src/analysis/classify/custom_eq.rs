@@ -72,6 +72,12 @@ pub(super) fn pushed_element_may_compare_leniently(
 fn pushed_literal_type_names(owner: &FunctionSummary, probe: &Probe) -> Option<Vec<String>> {
     let masked = mask_comments_and_strings(owner.body.as_str());
     let probe_line = probe.location.line.checked_sub(owner.start_line)?;
+    literal_type_names_at(&masked, probe_line)
+}
+
+/// [`pushed_literal_type_names`] over the masked owner body, with the probe on
+/// zero-based line `probe_line`.
+fn literal_type_names_at(masked: &str, probe_line: usize) -> Option<Vec<String>> {
     let lines: Vec<&str> = masked.lines().collect();
     let upto = probe_line.min(lines.len().checked_sub(1)?);
     let (line_index, call_end) = (0..=upto).rev().find_map(|at| {
@@ -88,7 +94,7 @@ fn pushed_literal_type_names(owner: &FunctionSummary, probe: &Probe) -> Option<V
         return None;
     }
     let segments: Vec<&str> = path.split("::").filter(|part| !part.is_empty()).collect();
-    if segments.iter().any(|segment| *segment == "Self") {
+    if segments.contains(&"Self") {
         return None;
     }
     let tail = segments.len().saturating_sub(2);
@@ -190,6 +196,28 @@ mod tests {
         assert_eq!(item_body(source, "Unit"), Some(""));
         assert_eq!(item_body(source, "Lin"), None);
         assert_eq!(item_body(source, "Missing"), None);
+    }
+
+    #[test]
+    fn literal_type_names_follow_the_enclosing_push() {
+        let names = |body: &str, line: usize| literal_type_names_at(body, line);
+        let plain = "fn add(&mut self) {\n    self.lines.push(Line { sku: s, qty });\n}";
+        assert_eq!(names(plain, 1), Some(vec!["Line".to_string()]));
+        let split = "fn add(&mut self) {\n    self.lines.push(Line {\n        sku: s,\n    });\n}";
+        assert_eq!(names(split, 2), Some(vec!["Line".to_string()]));
+        let variant = "fn add(&mut self) {\n    self.log.push(Event::Shipped { sku: s });\n}";
+        assert_eq!(
+            names(variant, 1),
+            Some(vec!["Event".to_string(), "Shipped".to_string()])
+        );
+        // `Self`, a call or a binding is not a literal the scan can resolve.
+        for body in [
+            "fn add(&mut self) {\n    self.lines.push(Self { sku: s });\n}",
+            "fn add(&mut self) {\n    self.lines.push(make(s));\n}",
+            "fn add(&mut self) {\n    let l = Line { sku: s };\n}",
+        ] {
+            assert_eq!(names(body, 1), None, "{body}");
+        }
     }
 
     #[test]
