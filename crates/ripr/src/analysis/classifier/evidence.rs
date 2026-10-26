@@ -656,6 +656,7 @@ impl ClassifiedProbeEvidence {
         // (#6778). Keep this owner walk local to the probe; unused proximity
         // gates still do not build the graph.
         let owner_reach = std::cell::OnceCell::new();
+        let pushed_path = std::cell::OnceCell::<Option<String>>::new();
         let owner_locals = context
             .owner_fn
             .map(owner_local_binding_names)
@@ -950,18 +951,23 @@ impl ClassifiedProbeEvidence {
                         })
                 },
                 pushed_literal_observed: &|test, assertion| {
+                    // The path depends only on the owner and probe, so it is
+                    // computed once per probe, not per test and assertion.
                     context.owner_fn.is_some_and(|owner| {
-                        pushed_literal_path(owner, context.probe, context.index).is_some_and(
-                            |path| {
+                        pushed_path
+                            .get_or_init(|| {
+                                pushed_literal_path(owner, context.probe, context.index)
+                            })
+                            .as_deref()
+                            .is_some_and(|path| {
                                 pushed_collection_compared_whole(
                                     owner,
-                                    &path,
+                                    path,
                                     test,
                                     assertion,
                                     context.index,
                                 )
-                            },
-                        )
+                            })
                     })
                 },
                 out_parameter_read: &|test, assertion| {
