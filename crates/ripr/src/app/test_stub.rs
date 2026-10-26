@@ -1523,10 +1523,9 @@ mod tests {
             })
         );
         for junk in ["src/lib.rs", "src/lib.rs:x", ":3", "src/lib.rs:0"] {
-            let message = match TestStubSelector::parse_at(junk) {
-                Ok(selector) => panic!("{junk}: expected a refusal, got {selector:?}"),
-                Err(message) => message,
-            };
+            let error = TestStubSelector::parse_at(junk).err();
+            assert!(error.is_some(), "{junk}: expected a refusal, got Ok");
+            let message = error.unwrap_or_default();
             assert!(message.contains("FILE:LINE"), "{junk}: {message}");
             assert!(
                 message.contains(&format!("{junk:?}")),
