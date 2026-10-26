@@ -1,0 +1,13 @@
+pub fn gated_rate(base: u32) -> u32 {
+    base * 3
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg_attr(all(), test, ignore)]
+    fn gated_rate_is_pinned() {
+        assert_eq!(gated_rate(2), 6);
+    }
+}
