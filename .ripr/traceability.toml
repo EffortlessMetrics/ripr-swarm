@@ -16821,6 +16821,8 @@ tests = [
   "crates/ripr/src/analysis/language/python/fixtures_tests.rs::given_a_fixture_renamed_to_caplog_then_the_logged_text_abstains",
   "crates/ripr/src/analysis/language/python/fixtures_tests.rs::given_a_fixture_declared_through_an_aliased_pytest_import_then_it_is_recorded",
   "crates/ripr/src/analysis/language/python/fixtures_tests.rs::given_an_aliased_fixture_overriding_caplog_then_the_logged_text_abstains",
+  "crates/ripr/src/analysis/language/python/fixtures_tests.rs::given_an_alias_rebound_by_a_later_import_then_it_is_not_a_fixture_decorator",
+  "crates/ripr/src/analysis/language/python/fixtures_tests.rs::given_an_alias_rebound_by_an_assignment_or_def_then_it_is_not_a_fixture_decorator",
   "crates/ripr/src/analysis/language/python/fixtures_tests.rs::given_a_replaced_or_unrelated_caplog_rename_then_the_builtin_caplog_is_still_credited",
   "crates/ripr/src/analysis/language/python/fixtures_tests.rs::given_the_builtin_caplog_then_the_logged_text_is_credited",
   "crates/ripr/src/analysis/language/python/fixtures_tests.rs::given_a_conftest_or_module_caplog_fixture_then_the_logged_text_abstains",

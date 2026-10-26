@@ -212,10 +212,28 @@ fn imported_comparison_macros(source: &str) -> BTreeSet<&'static str> {
                 if whole_word_offsets(tree, name).is_empty() {
                     continue;
                 }
-                let clean = !gated
-                    && tree.trim_start().starts_with(&format!("{krate}::"))
-                    && !tree.contains('*')
-                    && !tree.contains(" as ");
+                // The name must be a direct item of the crate's path: `krate::name`
+                // or one entry of `krate::{.., name, ..}`.
+                let direct = tree
+                    .trim()
+                    .strip_prefix(&format!("{krate}::"))
+                    .is_some_and(|rest| {
+                        let rest = rest.trim();
+                        // A nested group (`{inner::{x, name}}`) is not a direct
+                        // item list, so it is refused rather than split.
+                        rest.strip_prefix('{')
+                            .and_then(|group| group.strip_suffix('}'))
+                            .map_or(vec![rest], |group| {
+                                if group.contains(['{', '}']) {
+                                    Vec::new()
+                                } else {
+                                    group.split(',').collect()
+                                }
+                            })
+                            .iter()
+                            .any(|item| item.trim() == *name)
+                    });
+                let clean = !gated && direct && !tree.contains('*') && !tree.contains(" as ");
                 if !clean {
                     return false;
                 }
@@ -5881,7 +5899,20 @@ fn return_path_gate_from(
     // with the changed text (`Ok("a")` is not `Ok("b")`).
     let masked_changed = collapse_whitespace(&mask_comments_and_strings(changed));
     let tail_is_changed = [after_semicolon, after_brace].into_iter().any(|start| {
-        let tail = collapse_whitespace(&inner_text[start..]);
+        // A comment after the tail (`1 + x // assert_eq!(..)`) is masked to
+        // blanks, so the code ends where the masked tail does; reading the
+        // unmasked rest would compare the comment with the changed text.
+        // Masking also blanks string and char literals, so the code ends at
+        // the masked end only when a real comment starts there.
+        let masked_end = start + inner[start..].trim_end().len();
+        let rest = inner_text[masked_end..].trim_start();
+        let comment_follows = rest.starts_with("//") || rest.starts_with("/*");
+        let code_end = if comment_follows {
+            masked_end
+        } else {
+            inner_text.len()
+        };
+        let tail = collapse_whitespace(&inner_text[start..code_end]);
         (tail == changed
             || (collapse_whitespace(&inner[start..]) == masked_changed && tail.ends_with(changed)))
             && spans_changed_line(start, inner_text.len())

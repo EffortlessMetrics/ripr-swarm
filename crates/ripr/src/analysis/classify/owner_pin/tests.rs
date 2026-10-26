@@ -12915,3 +12915,14 @@ fn comparison_macro_imports_are_gated_only_by_their_own_attributes() {
         "use float_cmp::approx_eq;\nfn f() {\nuse other::approx_eq;\n}\n"
     ));
 }
+
+#[test]
+fn comparison_macro_imports_must_name_the_macro_as_a_direct_item_of_its_crate() {
+    let imported = |source: &str| imported_comparison_macros(source).contains("approx_eq");
+    assert!(imported("use float_cmp::approx_eq;\n"));
+    assert!(imported("use float_cmp::{ApproxEq, approx_eq};\n"));
+    assert!(!imported("use float_cmp::other::approx_eq;\n"));
+    assert!(!imported("use float_cmp::approx_eq::other;\n"));
+    assert!(!imported("use float_cmp::{inner::approx_eq};\n"));
+    assert!(!imported("use float_cmp::{inner::{x, approx_eq, y}};\n"));
+}
