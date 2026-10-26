@@ -35,10 +35,10 @@
   },
   "reasoning": "`Pool::grow` hands `self.try_grow(wanted)` back unchanged, and the test pins `pool.grow(4)` to `Ok(false)`, the boundary row. 1 of 1 listed mutants fails cargo test; the extra mutant `wanted < 4`, run by hand, fails it too. Spec cells: RIPR-SPEC-0159, RIPR-SPEC-0114.",
   "labeling_observation": {
-    "ripr_commit": "c8af153",
-    "full_checkout_verdict": "limited",
+    "ripr_commit": "2492dde",
+    "full_checkout_verdict": "credited",
     "full_checkout_classifications": [
-      "no_static_path"
+      "exposed"
     ],
     "excerpt_parity": "matched"
   },

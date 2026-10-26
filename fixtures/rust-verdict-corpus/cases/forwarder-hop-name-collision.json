@@ -34,7 +34,7 @@
   },
   "reasoning": "The test calls `fin.fold(4)`, a method of `Fin`, and nothing calls `Wing`. The bare name `fold` is also the forwarder of the changed owner, so a name-only reading would pair the test with the owner; it must not. 0 of 1 listed mutants fails cargo test; the extra mutant `wanted < 4`, run by hand, passes it too. Spec cells: RIPR-SPEC-0159.",
   "labeling_observation": {
-    "ripr_commit": "c8af153",
+    "ripr_commit": "2492dde",
     "full_checkout_verdict": "limited",
     "full_checkout_classifications": [
       "no_static_path"

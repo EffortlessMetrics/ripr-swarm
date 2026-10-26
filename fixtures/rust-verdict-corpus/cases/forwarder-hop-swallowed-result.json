@@ -34,10 +34,10 @@
   },
   "reasoning": "`Lane::merge` calls the owner and returns true whatever it answered. The test reaches the owner through the forwarder at the boundary row but its assertions only see the constant, so ripr must not credit them. 0 of 1 listed mutants fails cargo test; the extra mutant `wanted < 4`, run by hand, passes it too. Spec cells: RIPR-SPEC-0159.",
   "labeling_observation": {
-    "ripr_commit": "c8af153",
+    "ripr_commit": "2492dde",
     "full_checkout_verdict": "limited",
     "full_checkout_classifications": [
-      "no_static_path"
+      "propagation_unknown"
     ],
     "excerpt_parity": "matched"
   },
