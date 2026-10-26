@@ -494,7 +494,30 @@ the old default and fails with the new one. For this read the evaluator adds flo
 and the unshadowed one-argument builtin `round`.
 An explicit value for the field, a field default that is `field(...)` or
 computed, a method outside the evaluator, a rebound class or field, or a test
-that shadows, writes or may skip the construction keeps `decorator_indirection`. A function defined under a
+that shadows, writes or may skip the construction keeps `decorator_indirection`. An operator swap among `+`, `-` and `*` in the single `return` of an
+undecorated module function that calls an imported workspace function (#9619)
+is read without following the import: the line moves only the operator, so
+the call returns the same whole number `X` before and after. The call is a bare
+name that resolves to exactly one undecorated module-level function, bound once
+and rewritten nowhere, over parameters and literals, and the other operand is
+an expression over parameters and integer literals. A straight-line
+`assert owner(<literals>) == <integer>` of a test that names the owner through
+an import it does not rebind fixes `X` through the old operator (taking the
+assertion to hold before the diff, as for any passing test), and is the oracle
+when the new operator over that `X` gives another value; only then is the
+`missing_import_graph` limit lifted. An assertion both operators satisfy, a
+non-literal, keyword or short call, a second call, a division, a changed
+operand, side or argument, a decorated, unresolved, ambiguous or rebound
+callee or owner, a patched owner, any workspace file reachable from the owner's
+or the callee's module through imports that defines `__add__`, `__sub__`,
+`__mul__` or a reflected form (its result need not be the pinned number), or a
+test that rebinds, writes or may skip keeps `missing_import_graph`. The
+guarantee is bounded: the pass does not prove the call returns an ordinary
+integer. An exact integer assertion is taken to describe the returned value,
+and the abstention covers only arithmetic defined in reachable workspace
+files. A third-party or dynamically built type with its own `+`, `-` or `*` is
+not visible to this scan, and a pinned number it produced may not behave as the
+algebra assumes. A function defined under a
 decided module-level `if sys.version_info >= (3, 0):` condition (the only
 decided shapes are Python 2/3 version tuples, with `sys` the single plain
 import) is an ordinary function owner when its name has no other live

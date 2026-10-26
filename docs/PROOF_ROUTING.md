@@ -127,6 +127,28 @@ and detector or route failures cannot silently produce a green result.
 The historical commit receipts are P17 `05fd3ef0` and P18
 `73b58f50`.
 
+### Retained preflight evidence in PR summaries
+
+`pr-summary` reads the existing schema-`0.1` local preflight receipt and keeps
+its recorded head, base and command outcomes visible. For the same head, it
+compares command arguments with the current route's deduplicated required
+commands. A missing command is unproven; a recorded `not_run` is distinct from
+a command failure. An empty-range receipt cannot supply a passing result for
+a nonempty current route. Malformed, duplicate or inconsistent command records
+cannot supply current command coverage.
+
+Changing the route does not erase earlier command results. The summary names
+newly missing obligations and retains the original aggregate, even when a
+failure belongs to a command the current route no longer selects. A different
+head retains the original outcomes with current applicability unestablished:
+assess material changes before carrying evidence forward or refreshing affected
+proof. The reader neither executes commands nor requires a full replay.
+
+This is a comparison of recorded command coverage, not authentication of the
+executed checkout, tool or configuration, and not qualification of a composed
+merge candidate. The producer's identity and retention limits remain unchanged;
+the existing receipt has no run/attempt identity to infer or manufacture.
+
 ## Initial proof-pack shape
 
 The landed manifest covers these packs. Paths and commands are pinned in
