@@ -70,7 +70,7 @@ Options:
   --timeout-ms MS   Maximum analysis budget before writing a partial summary. Defaults to
                     30000; when the default passes, the same run continues for up to
                     240000 more. An explicit value is a hard limit.
-  --format FORMAT   human or json. Defaults to human. json writes the same
+  --format FORMAT   human (default) or json. `--format json` writes the same
                     pilot-summary.json document to stdout and suppresses the
                     human terminal; packet files are still written.
   --quiet           Suppress analysis progress and heartbeats on stderr. Does not
