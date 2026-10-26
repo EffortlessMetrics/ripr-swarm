@@ -92,13 +92,13 @@ entry instead.
 Before editing or resuming, follow the root's
 [Start or resume a session](../../AGENTS.md#start-or-resume-a-session)
 instructions and the applicable repository skill. For a selected claim or
-existing PR, use [deliver-pr](../../.agents/skills/deliver-pr/SKILL.md) and its
+existing PR, use [`deliver-pr`](../../.agents/skills/deliver-pr/SKILL.md) and its
 [continuation handoff](../../.agents/skills/deliver-pr/SKILL.md#continuation-handoff).
-Those procedures own premise checks and current work selection; this historical
+These procedures own premise checks and current work selection; this historical
 protocol does not add a separate startup gate or live-work manifest.
 
 Verify inherited plans against current source and native issue/PR evidence.
-Preserve the existing candidate owner, valid proof and surviving user limits,
+Preserve the existing candidate owner, valid proof, and surviving user limits,
 then resume at the earliest missing judgment. Correct a stale premise and
 continue within the authorized scope; a stale brief alone does not require the
 owner to restate recoverable context. Surface a genuinely missing authority or

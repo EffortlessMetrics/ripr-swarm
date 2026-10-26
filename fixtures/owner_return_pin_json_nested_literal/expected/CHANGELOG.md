@@ -157,3 +157,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — owner_return_pin_json_nested_literal (14)
+
+Reason:
+RIPR-SPEC-0158: observed argument facts no longer present call/macro/block-built values as literals
+
+Command:
+`cargo xtask goldens bless owner_return_pin_json_nested_literal --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
