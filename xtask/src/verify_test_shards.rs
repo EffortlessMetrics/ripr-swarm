@@ -326,15 +326,6 @@ fn find_files(dir: &Path, name: &str, found: &mut Vec<PathBuf>) {
     }
 }
 
-fn context_value<'a>(context: &'a str, key: &str) -> Option<&'a str> {
-    context
-        .lines()
-        .filter_map(|line| line.split_once('='))
-        .filter(|(name, _)| *name == key)
-        .map(|(_, value)| value.trim())
-        .next_back()
-}
-
 const PARTITION_KEYS: [&str; 8] = [
     "repository=",
     "checkout_sha=",
@@ -483,6 +474,32 @@ fn check_context(
     tag: &str,
     problems: &mut Vec<String>,
 ) {
+    // Check the original receipt before environment_of removes partition keys.
+    // Every scalar assignment is a singleton, including extension keys and
+    // identical duplicates. Tool-version prose and verbose colon metadata are
+    // not assignments; values may themselves contain '='.
+    let mut values = BTreeMap::new();
+    for (name, value) in context.lines().filter_map(|line| line.split_once('=')) {
+        let key = name.trim();
+        if !key.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
+            || !key
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        {
+            continue;
+        }
+        if name != key {
+            problems.push(format!("{tag}: run-context key `{name}` is not canonical"));
+        }
+        if values.insert(key, value.trim()).is_some() {
+            problems.push(format!("{tag}: run-context has duplicate key `{key}`"));
+        }
+    }
+    if values.contains_key("shards") {
+        problems.push(format!(
+            "{tag}: run-context key `shards` is reserved for the combined receipt"
+        ));
+    }
     let command = format!(
         "cargo nextest run --workspace --profile ci --partition count:{shard}/{}",
         options.shards
@@ -498,7 +515,7 @@ fn check_context(
         ("nextest_exit", "0".to_string()),
     ];
     for (key, want) in expected {
-        match context_value(context, key) {
+        match values.get(key).copied() {
             Some(got) if got == want => {}
             Some(got) => problems.push(format!(
                 "{tag}: run-context {key} is `{got}`, expected `{want}`"

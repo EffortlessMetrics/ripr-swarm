@@ -7,6 +7,68 @@ fn check(xml: &str) -> Result<(u64, String), Vec<String>> {
 const CASE: &str = "<testcase classname=\"bin\" name=\"one\"/>";
 
 #[test]
+fn context_assignments_are_singletons_even_when_values_agree() -> Result<(), String> {
+    let options = Options {
+        dir: PathBuf::new(),
+        artifact: "control".to_string(),
+        attempt: "1".to_string(),
+        repository: "o/r".to_string(),
+        sha: "a".repeat(40),
+        run_id: "7".to_string(),
+        shards: 4,
+        out: PathBuf::new(),
+    };
+    let valid = format!(
+        "repository=o/r\ncheckout_sha={}\nrun_id=7\nrun_attempt=1\nprofile=ci\nshard=2/4\ncommand=cargo nextest run --workspace --profile ci --partition count:2/4\nnextest_exit=0\n",
+        options.sha
+    );
+    let problems = |text: &str| {
+        let mut problems = Vec::new();
+        check_context(text, &options, 2, "control", &mut problems);
+        problems
+    };
+    assert!(problems(&valid).is_empty());
+    assert!(
+        problems(&format!("{valid}shards=4/4 verified\n"))
+            .iter()
+            .any(|why| why.contains("`shards` is reserved"))
+    );
+    // Value text may contain '=', while verbose version metadata uses ':' and
+    // can repeat across tools. Neither changes scalar key cardinality.
+    assert!(
+        problems(&format!(
+            "{valid}extension_key=left=right\nrelease: 1.95\nrelease: 1.95\ncargo version detail=one\ncargo version detail=two\n"
+        ))
+        .is_empty()
+    );
+    for line in valid.lines().chain(["extension_key=left=right"]) {
+        let (key, _) = line
+            .split_once('=')
+            .ok_or_else(|| format!("assignment fixture has no delimiter: {line}"))?;
+        let seed = if key == "extension_key" {
+            format!("{valid}{line}\n")
+        } else {
+            valid.clone()
+        };
+        for duplicate in [line.to_string(), format!("{key}=wrong"), format!(" {line}")] {
+            for text in [
+                format!("{duplicate}\n{seed}"),
+                format!("{seed}{duplicate}\n"),
+            ] {
+                let found = problems(&text);
+                assert!(
+                    found
+                        .iter()
+                        .any(|why| why.contains(&format!("duplicate key `{key}`"))),
+                    "duplicate {key} was not rejected: {text}: {found:?}"
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn suite_extraction_uses_validated_xml_boundaries() -> Result<(), String> {
     let suite = format!(
         "<testsuite\n tests='1' name='bin' note='a > b'><properties><property name='a' value='b'/></properties>{CASE}<system-out><![CDATA[<testsuite fake> & </testsuites>]]></system-out></testsuite>"
