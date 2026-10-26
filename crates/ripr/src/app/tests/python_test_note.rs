@@ -68,12 +68,12 @@ fn temp_root(name: &str) -> Result<PathBuf, String> {
 /// JSON run (LSP refreshes and automation) never pays for it.
 #[test]
 fn python_tests_are_discovered_only_for_human_output() -> Result<(), String> {
-    let root = temp_root("format")?;
+    let root = temp_root("format space 雪 % #[x]")?;
     let write = |rel: &str, text: &str| {
         std::fs::write(root.join(rel), text).map_err(|err| format!("write {rel}: {err}"))
     };
     write("src/lib.rs", "pub fn f(x: i32) -> bool { x >= 1 }\n")?;
-    write("tests/test_f.py", "def test_f():\n    pass\n")?;
+    write("tests/test_é.py", "def test_f():\n    pass\n")?;
     write(
         "example.diff",
         "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,1 +1,1 @@\n-pub fn f(x: i32) -> bool { x > 1 }\n+pub fn f(x: i32) -> bool { x >= 1 }\n",
@@ -99,7 +99,7 @@ fn python_tests_are_discovered_only_for_human_output() -> Result<(), String> {
         .unlinked_python_tests
         .ok_or_else(|| "human output must record the Python tests".to_string())?;
     assert_eq!(python.count, 1);
-    assert_eq!(python.example, PathBuf::from("tests/test_f.py"));
+    assert_eq!(python.example, PathBuf::from("tests/test_é.py"));
     let python = Some(python);
     assert_eq!(
         run(OutputFormat::HumanFull)?.unlinked_python_tests,
@@ -111,6 +111,18 @@ fn python_tests_are_discovered_only_for_human_output() -> Result<(), String> {
         None,
         "machine output must skip the walk"
     );
+    for format in [OutputFormat::Human, OutputFormat::HumanFull] {
+        let output = run(format)?;
+        let rendered = crate::app::render_check(&output, &format)?;
+        let note = rendered.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(note.contains("for example tests/test_é.py"), "{rendered}");
+        assert!(
+            !note.contains("for example tests/test_e\u{301}.py"),
+            "{rendered}"
+        );
+        assert!(!note.contains(r"for example tests\test_é.py"), "{rendered}");
+    }
+    std::fs::remove_dir_all(root).map_err(|err| format!("remove root: {err}"))?;
     Ok(())
 }
 
@@ -118,10 +130,10 @@ fn python_tests_are_discovered_only_for_human_output() -> Result<(), String> {
 #[test]
 fn python_test_note_preserves_literal_backslashes_on_unix() -> Result<(), Box<dyn std::error::Error>>
 {
-    let root = temp_root("literal-backslash")?;
-    let literal = r"tests/test_a\b.py";
-    let slash = "tests/test_a/b.py";
-    std::fs::create_dir_all(root.join("tests/test_a"))?;
+    let root = temp_root(r"literal\backslash space 雪 % #[x]")?;
+    let literal = r"tests/test_é\b.py";
+    let slash = "tests/test_é/b.py";
+    std::fs::create_dir_all(root.join("tests/test_é"))?;
     std::fs::write(root.join(literal), "def test_literal():\n    pass\n")?;
     std::fs::write(root.join(slash), "def helper():\n    pass\n")?;
     assert_ne!(
