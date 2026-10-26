@@ -216,7 +216,9 @@ mock expectations, and custom `assert_*` helpers.
     results retain the veto; admitted calls are complete discarded expressions.
     Constructor arguments can replace inspection methods, so they retain the veto. Arbitrary
     receivers do not qualify by an `assert` prefix or constructor suffix. Defaults and annotations are executable expressions,
-    and formatted strings are never inert docstrings. Everything else keeps the credit withheld: any other
+    and all formatted strings retain the veto because their executable expressions
+    are hidden from this token scan. Non-ASCII identifiers also retain the veto:
+    this scan does not implement Python's NFKC identifier normalization. Everything else keeps the credit withheld: any other
     patch-like call or reference or alias (`patch*`, `setattr`, `delattr`,
     `monkeypatch.context()`, `mocker.spy`, `swap = ..`, `partial(..)`,
     `yield from [swap := ..]`), any string outside a docstring that contains

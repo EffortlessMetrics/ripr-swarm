@@ -11,6 +11,8 @@ fn constructor_and_call_results_cannot_escape_mock_tracking() {
         "    use(mock.Mock())\n",
         "    handle = mock.Mock()\n    other = handle()\n    other.side_effect = change_default\n    other()\n",
         "    handle = mock.Mock()\n    f\"{(other := handle())}\"\n    other.side_effect = change_default\n    other()\n",
+        "    handle = mock.Mock()\n    f\"{(other := ｈａｎｄｌｅ())}\"\n    other.side_effect = change_default\n    other()\n",
+        "    handle = mock.Mock()\n    ｈａｎｄｌｅ.side_effect = change_default\n    ｈａｎｄｌｅ()\n",
         "    class Holder:\n        handle = mock.Mock()\n    Holder.handle.side_effect = change_default\n    Holder.handle()\n",
     ] {
         // Use a different helper parameter so the assigned-child control cannot
@@ -139,12 +141,17 @@ fn default_parameters_are_not_pytest_fixture_bindings() {
 fn explicitly_supplied_test_parameters_are_not_fixture_bindings() {
     let owner = "def is_adult(age, threshold=18) -> bool:\n    return age >= threshold\n";
     let prelude = "class Local:\n    def setenv(self, *args):\n        is_adult.__defaults__ = (0,)\ndef test_setup(monkeypatch):\n    monkeypatch.setenv('A', 'B')\n";
-    let tests = tests_with(prelude, "", "    test_setup(Local())\n");
-    assert_eq!(
-        credited_strengths(owner, &tests).last(),
-        Some(&OracleStrength::Smoke),
-        "{tests}"
-    );
+    for body in [
+        "    test_setup(Local())\n",
+        "    f\"{test_setup(Local())}\"\n",
+    ] {
+        let tests = tests_with(prelude, "", body);
+        assert_eq!(
+            credited_strengths(owner, &tests).last(),
+            Some(&OracleStrength::Smoke),
+            "{tests}"
+        );
+    }
 }
 
 #[test]

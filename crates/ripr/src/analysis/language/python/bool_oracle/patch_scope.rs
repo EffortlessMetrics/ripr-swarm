@@ -114,18 +114,20 @@ pub(super) fn may_patch_names(source: &str, names: &[&str], module: &[Stmt]) -> 
     let mock_receivers = bindings.mock_receivers();
     for (index, token) in tokens.iter().enumerate() {
         match token {
+            // CPython normalizes identifiers with NFKC; this lexer preserves
+            // their spelling. Refuse unsupported identity instead of borrowing
+            // the ASCII import/receiver proof for a different token spelling.
+            Tok::Name { name } if !name.is_ascii() => return true,
             Tok::Name { name } if INDIRECT_NAMES.contains(&name.as_str()) => return true,
             Tok::String { value, kind, .. } => {
-                let docstring = !kind.is_any_fstring()
-                    && is_statement_start(&tokens, index)
+                // Their expressions are hidden inside a string token, including
+                // fixture calls and normalized references to tracked receivers.
+                if kind.is_any_fstring() {
+                    return true;
+                }
+                let docstring = is_statement_start(&tokens, index)
                     && matches!(tokens.get(index + 1), None | Some(Tok::Newline));
-                // A formatted string hides its expressions from the token stream.
-                if !docstring
-                    && (string_names_patcher(value)
-                        || (kind.is_any_fstring()
-                            && (names.iter().any(|name| value.contains(name))
-                                || mock_receivers.iter().any(|name| value.contains(name)))))
-                {
+                if !docstring && string_names_patcher(value) {
                     return true;
                 }
             }

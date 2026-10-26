@@ -21,8 +21,8 @@
     },
     {
       "type": "expected_oracle",
-      "kind": "smoke_only",
-      "strength": "smoke"
+      "kind": "mock_expectation",
+      "strength": "medium"
     }
   ]
 }

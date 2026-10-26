@@ -18,6 +18,9 @@ The changed comparison is analyzed.
 One `weakly_exposed` finding. The apparent inspection/environment operation
 has no authenticated receiver contract, so the bare assertion remains smoke.
 
+The separate mock inspection retains its existing `mock_expectation` /
+`medium` oracle; the bare boolean assertion contributes no exact pin.
+
 ## Must Not
 
 Promote the assertion to an exact pin. Native Python passes this test even
