@@ -4550,6 +4550,21 @@ impl UnextractedTestFinder<'_> {
     }
 
     fn visit_statements(&mut self, statements: &[Statement<'_>]) {
+        self.with_statement_bindings(statements, |finder| {
+            for stmt in statements {
+                if finder.gap.is_some() {
+                    break;
+                }
+                finder.visit_statement(stmt);
+            }
+        });
+    }
+
+    fn with_statement_bindings(
+        &mut self,
+        statements: &[Statement<'_>],
+        visit: impl FnOnce(&mut Self),
+    ) {
         // A declaration in this block can rebind a parameter's name to
         // something else (`const test = runner`). Fail closed: the name no
         // longer counts as a parameter inside this block.
@@ -4560,12 +4575,7 @@ impl UnextractedTestFinder<'_> {
             self.shadowed.retain(|name| !rebound.contains(name));
             outer
         });
-        for stmt in statements {
-            if self.gap.is_some() {
-                break;
-            }
-            self.visit_statement(stmt);
-        }
+        visit(self);
         if let Some(outer) = outer {
             self.shadowed = outer;
         }
@@ -5016,6 +5026,12 @@ impl UnextractedTestFinder<'_> {
 
     /// Returning or storing a function value in an IIFE still leaves it dormant.
     fn visit_empty_table_invoked_statements(&mut self, statements: &[Statement<'_>]) {
+        self.with_statement_bindings(statements, |finder| {
+            finder.visit_empty_table_invoked_statements_in_scope(statements);
+        });
+    }
+
+    fn visit_empty_table_invoked_statements_in_scope(&mut self, statements: &[Statement<'_>]) {
         for statement in statements {
             if self.gap.is_some() {
                 return;

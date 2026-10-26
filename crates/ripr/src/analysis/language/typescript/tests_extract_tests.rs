@@ -1539,6 +1539,9 @@ fn skipped_suite_bindings_keep_invocation_shadows_and_dormant_values_separate() 
         "new (function () { function dormant() { it('dormant', () => {}); } })()",
         "new (async function () { it('unconstructible', () => {}); })()",
         "(function* () { it('dormant', () => {}); })`title`",
+        "new (function (it) { { const it = globalThis.it; } it('helper', () => {}); })(custom)",
+        "((it) => { { const it = globalThis.it; } it('helper', () => {}); })(custom)",
+        "(function (it) { { const it = globalThis.it; } it('helper', () => {}); })`title`",
     ] {
         let source =
             format!("describe.skip({expression}, () => {{ it('dormant', () => {{}}); }});");
@@ -1553,6 +1556,9 @@ fn skipped_suite_bindings_keep_invocation_shadows_and_dormant_values_separate() 
         "new (function () { it('live', () => {}); })()",
         "(function () { it('live', () => {}); })`title`",
         "(() => { it('live', () => {}); })`title`",
+        "new (function (it) { { const it = globalThis.it; it('live', () => {}); } })(custom)",
+        "((it) => { { const it = globalThis.it; it('live', () => {}); } })(custom)",
+        "(function (it) { { const it = globalThis.it; it('live', () => {}); } })`title`",
     ] {
         let source =
             format!("describe.skip({expression}, () => {{ it('dormant', () => {{}}); }});");
