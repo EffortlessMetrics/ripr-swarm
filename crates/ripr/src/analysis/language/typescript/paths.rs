@@ -17,6 +17,11 @@ pub(crate) struct SourceText<'a> {
 }
 
 impl<'a> SourceText<'a> {
+    /// The text the offsets index.
+    pub(crate) fn text(&self) -> &'a str {
+        self.text
+    }
+
     pub(crate) fn new(text: &'a str) -> Self {
         let newline_offsets = text
             .bytes()
