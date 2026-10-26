@@ -1,0 +1,22 @@
+{
+  "case_id": "spec0228-pushed-literal-derived-eq-beside-handwritten",
+  "subject_id": "authored-spec0228-customeq-expected",
+  "origin": "authored",
+  "anchor": "src/c_derived.rs:23",
+  "behavior_family": "field_construction",
+  "test_shape": "owner_call_then_assert_eq_whole_collection_against_hand_built_collection",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 3,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

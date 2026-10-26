@@ -7,6 +7,7 @@ mod caller_loop_selector;
 mod changed_span;
 mod const_readers;
 mod context;
+mod custom_eq;
 mod decision;
 mod diff_touched;
 mod effect_carrier;
