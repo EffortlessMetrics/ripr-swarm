@@ -1,0 +1,10 @@
+# Registers the traceability-fragment tests under the authority map, the spec
+# that names `.ripr/traceability.toml` as a source of truth. Each PR adds a file
+# like this one instead of appending to the shared arrays in traceability.toml.
+[[extend]]
+id = "RIPR-SPEC-0130"
+tests = [
+  "xtask/src/tests.rs::traceability_fragments_extend_a_behavior_and_register_a_new_one",
+  "xtask/src/tests.rs::traceability_fragment_extend_without_a_behavior_or_with_a_name_is_a_violation",
+  "xtask/src/tests.rs::scorecard_traceability_hash_changes_when_only_a_fragment_changes",
+]

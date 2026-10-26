@@ -53,6 +53,7 @@ use super::seam_classification::ClassifiedSeam;
 #[cfg(test)]
 use super::seam_classification::SeamGripClassCounts;
 use super::seam_inventory::{SeamLimitSource, repo_exposure_seam_limit};
+use super::syntax::RustModuleTreeScan;
 use super::test_grip_evidence::RelatedTestGrip;
 use super::test_grip_evidence::shared_grips::SharedGrips;
 use crate::config::{
@@ -60,7 +61,7 @@ use crate::config::{
     TYPESCRIPT_SOURCE_DIR_MARKERS, source_dir_contains_detectable_python,
     source_dir_contains_detectable_typescript,
 };
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
@@ -90,6 +91,7 @@ cache_layers! {
     CompactClassifiedSeamsSharded => "repo-compact-classified-seams-sharded",
     CorpusFingerprint => "repo-corpus-fingerprint",
     FileFacts => "repo-file-facts",
+    ModuleTreeScans => "repo-module-tree-scans",
     ScopedClassifiedSeams => "repo-scoped-classified-seams",
     // Test-only producer: `RepoSeamCountCache` is constructed only under
     // `#[cfg(test)]`. It stays registered so `cache clear` still removes
@@ -148,6 +150,7 @@ pub(crate) fn production_entry_dirs(base: &Path) -> Vec<(PathBuf, bool)> {
     );
     dirs.push(RepoCorpusFingerprintCache::at_base(base).entry_dir());
     dirs.push(RepoFileFactCache::at_base(base).entry_dir());
+    dirs.push(RepoModuleTreeScanCache::at_base(base).entry_dir());
     dirs.push(RepoScopedInventoryCache::at_base(base).entry_dir());
     dirs
 }
@@ -499,7 +502,35 @@ pub(crate) struct CachedSeamLimitInfo {
 /// (#9440). Old entries keep it weakly exposed.
 /// `1.97`: effect-family assertions share execution admission (#8927). Old
 /// entries credit an assertion that provably never runs.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.97";
+/// `1.98`: safe typed function-pointer calls retain reach and can pin a
+/// scalar owner return (RIPR-SPEC-0115/0197, #9478). Old entries lack the pin.
+/// `1.99`: a one-line `else if` ladder tail flows its first arm to the
+/// returned value (#9630). Old entries keep the unknown propagation.
+/// `1.100`: arms that return the first arm's value leave the first condition
+/// without a returned-value sink (#9843). Old entries keep the exposed verdict.
+/// `1.101`: a same-file `macro_rules!` test table indexes one generated test
+/// per row (#6925). Old entries read the table's owner as unreached.
+/// `1.102`: the same equal-arm sink limit reads a rustfmt-layout branch
+/// chain (#10134). Old entries keep the exposed verdict.
+/// `1.103`: a `macro_rules!` test table whose generator is defined in another
+/// file (`#[macro_use] mod`, or a parent module) indexes its tests (#6925).
+/// Old entries read the table's owner as unreached.
+/// `1.104`: a returned zero-initialized loop accumulator's update is a
+/// `return_value` change credited by a literal non-empty nonzero pin
+/// (RIPR-SPEC-0360, #6485). Old entries keep it `static_unknown`.
+/// `1.105`: the generator may also be a `#[macro_export]` macro named by
+/// `use crate::name;` (#10298). Old entries read the owner as unreached.
+/// `1.106`: a returned loop accumulator pinned through a constant-row table
+/// is credited by a row that walks a non-empty literal input and pins a
+/// nonzero total; a table that separates nothing or cannot be read is
+/// withheld (RIPR-SPEC-0360, #6485). Old entries read it as a gap.
+/// `1.107`: a top-level `crate::name!` call to a `#[macro_export]` test
+/// generator registers its tests like the imported ones (#10298).
+/// `1.108`: a literal-row `#[test_case]` body counts as running once per row,
+/// and an arrow-form `#[test_case(x => y)]` carries the named generated-
+/// assertion limit (RIPR-SPEC-0120, #10190). Old entries read the test as
+/// unidentified.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.108";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -643,7 +674,19 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.97";
 /// `0.102`: same local-macro wrapper limit as full `1.95`.
 /// `0.103`: same pinned-shape limit as full `1.96` (#9440).
 /// `0.104`: same effect-assertion execution admission as full `1.97` (#8927).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.104";
+/// `0.105`: same typed function-pointer pins as full `1.98` (#9478).
+/// `0.106`: same one-line ladder tail as full `1.99`.
+/// `0.107`: same equal-arm sink limit as full `1.100`.
+/// `0.108`: same macro table tests as full `1.101`.
+/// `0.109`: same multi-line equal-arm sink limit as full `1.102`.
+/// `0.110`: same cross-file macro table tests as full `1.103`.
+/// `0.111`: same loop-accumulator update as full `1.104` (#6485).
+/// `0.112`: same exported-macro table tests as full `1.105`.
+/// `0.113`: same table-driven loop-accumulator pin as full `1.106` (#6485).
+/// `0.114`: same `crate::name!` generator registration as full `1.107` (#10298).
+/// `0.115`: same `#[test_case]` row and generated-assertion limit as full
+/// `1.108` (#10190).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.115";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -789,7 +832,19 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.104";
 /// `0.102`: same local-macro wrapper limit as full `1.95`.
 /// `0.103`: same pinned-shape limit as full `1.96` (#9440).
 /// `0.104`: same effect-assertion execution admission as full `1.97` (#8927).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.104";
+/// `0.105`: same typed function-pointer pins as full `1.98` (#9478).
+/// `0.106`: same one-line ladder tail as full `1.99`.
+/// `0.107`: same equal-arm sink limit as full `1.100`.
+/// `0.108`: same macro table tests as full `1.101`.
+/// `0.109`: same multi-line equal-arm sink limit as full `1.102`.
+/// `0.110`: same cross-file macro table tests as full `1.103`.
+/// `0.111`: same loop-accumulator update as full `1.104` (#6485).
+/// `0.112`: same exported-macro table tests as full `1.105`.
+/// `0.113`: same table-driven loop-accumulator pin as full `1.106` (#6485).
+/// `0.114`: same `crate::name!` generator registration as full `1.107` (#10298).
+/// `0.115`: same `#[test_case]` row and generated-assertion limit as full
+/// `1.108` (#10190).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.115";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -974,7 +1029,8 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// alias (#8388); `1.43` candidates omit it.
 /// `1.45`: oracle facts drop statements that never run (RIPR-SPEC-0231
 /// rule 8, #7638); `1.44` facts still credit them.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.45";
+/// `1.46`: call facts retain safe typed function-pointer aliases (#9478).
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.46";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -1880,6 +1936,145 @@ impl RepoCorpusFingerprintCache {
     }
 }
 
+/// Schema generation of the persisted module-tree scan bundle.
+pub(crate) const MODULE_TREE_SCAN_CACHE_SCHEMA_VERSION: &str = "0.1";
+
+/// Most scans one bundle keeps. A workspace holds a few thousand Rust files;
+/// the bound stops a long-lived cache directory from growing with every
+/// edit it ever saw.
+pub(crate) const MODULE_TREE_SCAN_CACHE_MAX_ENTRIES: usize = 50_000;
+
+/// Key a module-tree scan is stored under: the file-fact cache's content
+/// hash plus the byte length of the exact text scanned (#9794).
+pub(crate) fn module_tree_scan_key(text: &str) -> String {
+    format!("{}-{}", hash_bytes(text.as_bytes()), text.len())
+}
+
+/// On-disk bundle of module-tree scans, one per distinct source text. A scan
+/// is a pure function of its text, so entries are valid for any workspace
+/// and are keyed by content alone.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct ModuleTreeScanEnvelope {
+    #[serde(default, skip_serializing)]
+    payload_digest: Option<String>,
+    module_tree_scan_cache_schema_version: String,
+    analyzer_version: String,
+    scans: BTreeMap<String, RustModuleTreeScan>,
+}
+
+impl ModuleTreeScanEnvelope {
+    fn expected_digest(&self) -> Result<String, String> {
+        semantic_body_digest("ripr-cache:ModuleTreeScanEnvelope:v1", self)
+    }
+    fn validate_integrity(&self) -> Result<(), String> {
+        let expected = self.expected_digest()?;
+        if self.payload_digest.as_deref() == Some(expected.as_str()) {
+            Ok(())
+        } else {
+            Err("missing or mismatching semantic payload digest".to_owned())
+        }
+    }
+}
+
+/// Persists the module-graph walk's per-file scans between runs so a warm
+/// check skips the parse that produced them. Layout:
+///
+/// ```text
+/// {cache_base}/repo-module-tree-scans/{schema_version}/scans.json
+/// ```
+///
+/// Every failure (untrusted base, unreadable, corrupt, other build) reads as
+/// an empty bundle and the walk scans from source exactly as before.
+pub(crate) struct RepoModuleTreeScanCache {
+    dir: PathBuf,
+    base: PathBuf,
+}
+
+impl RepoModuleTreeScanCache {
+    pub(crate) fn at(workspace_root: &Path) -> Self {
+        let dir = cache_layer_dir(workspace_root, CacheLayer::ModuleTreeScans)
+            .join(MODULE_TREE_SCAN_CACHE_SCHEMA_VERSION);
+        let base = dir
+            .ancestors()
+            .nth(2)
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| dir.clone());
+        Self { dir, base }
+    }
+
+    /// Construct at an already resolved cache `base` (doctor's probe list).
+    fn at_base(base: &Path) -> Self {
+        Self {
+            dir: base
+                .join(CacheLayer::ModuleTreeScans.name())
+                .join(MODULE_TREE_SCAN_CACHE_SCHEMA_VERSION),
+            base: base.to_path_buf(),
+        }
+    }
+
+    /// The entry directory this cache writes into; `store` creates no
+    /// subdirectory, hence `false`.
+    pub(crate) fn entry_dir(&self) -> (PathBuf, bool) {
+        (self.dir.clone(), false)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn at_dir(dir: PathBuf) -> Self {
+        Self {
+            base: dir.clone(),
+            dir,
+        }
+    }
+
+    fn entry_path(&self) -> PathBuf {
+        self.dir.join("scans.json")
+    }
+
+    /// The stored scans, or none when the bundle is absent, unusable, from
+    /// another build or fails its integrity check.
+    pub(crate) fn load(&self) -> BTreeMap<String, RustModuleTreeScan> {
+        if cache_dir_not_a_directory_reason(&self.base)
+            .or_else(|| cache_base_untrusted_reason(&self.base))
+            .is_some()
+        {
+            return BTreeMap::new();
+        }
+        let Ok(bytes) = std::fs::read(self.entry_path()) else {
+            return BTreeMap::new();
+        };
+        let Ok(envelope) = serde_json::from_slice::<ModuleTreeScanEnvelope>(&bytes) else {
+            return BTreeMap::new();
+        };
+        if envelope.module_tree_scan_cache_schema_version != MODULE_TREE_SCAN_CACHE_SCHEMA_VERSION
+            || envelope.analyzer_version != crate::build_identity::cache_identity()
+            || envelope.validate_integrity().is_err()
+        {
+            return BTreeMap::new();
+        }
+        envelope.scans
+    }
+
+    /// Replaces the bundle with `scans`, atomically.
+    pub(crate) fn store(&self, scans: &BTreeMap<String, RustModuleTreeScan>) -> Result<(), String> {
+        if let Some(reason) = cache_dir_not_a_directory_reason(&self.base)
+            .or_else(|| cache_base_untrusted_reason(&self.base))
+        {
+            return Err(reason);
+        }
+        std::fs::create_dir_all(&self.dir)
+            .map_err(|err| format!("create module tree scan cache dir failed: {err}"))?;
+        let envelope = ModuleTreeScanEnvelope {
+            payload_digest: None,
+            module_tree_scan_cache_schema_version: MODULE_TREE_SCAN_CACHE_SCHEMA_VERSION
+                .to_string(),
+            analyzer_version: crate::build_identity::cache_identity().to_string(),
+            scans: scans.clone(),
+        };
+        let bytes = encode_integrity_body(&envelope, envelope.expected_digest()?)?;
+        crate::atomic_file::write_cache(&self.entry_path(), &bytes, "module tree scan cache")
+    }
+}
+
 /// Crate-private cache I/O surface. Holds the directory the cache lives
 /// in but not in-memory state; safe to construct cheaply per call.
 pub(crate) struct RepoSeamFactCache {
@@ -2337,13 +2532,18 @@ pub(crate) struct FileFactCacheStats {
     pub(crate) store_failures_dropped: usize,
 }
 
-/// Pipeline stage at which a file-fact store failed. Assigned at the exact
-/// `?` site inside `store_file_facts`, never parsed back out of a message.
+/// Pipeline stage at which a cache store failed. The first three are assigned
+/// at the exact `?` site inside `store_file_facts`, never parsed back out of a
+/// message. The last two name the other best-effort store families whose
+/// failures were previously only a stderr sentence (#9633): they carry the
+/// family as the stage because those stores report one opaque reason.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum FileFactStoreStage {
     CreateDir,
     Encode,
     Write,
+    ClassifiedSeamStore,
+    CorpusFingerprintStore,
 }
 
 impl FileFactStoreStage {
@@ -2352,9 +2552,17 @@ impl FileFactStoreStage {
             FileFactStoreStage::CreateDir => "create_dir",
             FileFactStoreStage::Encode => "encode",
             FileFactStoreStage::Write => "write",
+            FileFactStoreStage::ClassifiedSeamStore => "classified_seam_store",
+            FileFactStoreStage::CorpusFingerprintStore => "corpus_fingerprint_store",
         }
     }
 }
+
+/// Row identity for a classified-seam store failure: the cache family
+/// directory (relative to the cache root), never an absolute path.
+pub(crate) const CLASSIFIED_SEAM_STORE_FAILURE_PATH: &str = "repo-seam-facts";
+/// Row identity for a corpus-fingerprint store failure.
+pub(crate) const CORPUS_FINGERPRINT_STORE_FAILURE_PATH: &str = "repo-corpus-fingerprint";
 
 /// Typed file-fact store failure. Renders as the bare message so every
 /// existing `?` and `format!("{err}")` call site keeps working through the
@@ -2582,6 +2790,15 @@ impl RepoFileFactCache {
         let bytes = match std::fs::read(&path) {
             Ok(bytes) => bytes,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => return CacheLoad::Miss,
+            // A path component that is a file is a missing entry, not a
+            // corrupt one: nothing was read, and the store that follows fails
+            // for the same reason and is reported once as a store failure
+            // row. Counting it here too made one cause two anonymous
+            // counters (#9633, audit F-C4-4). Windows already reports this
+            // as `NotFound`.
+            Err(err) if err.kind() == std::io::ErrorKind::NotADirectory => {
+                return CacheLoad::Miss;
+            }
             Err(err) => {
                 return corrupt_entry(&path, format!("read failed: {err}"));
             }
@@ -4468,6 +4685,7 @@ mod tests {
         let compact = RepoSeamFactCache::at_compact_classified(root);
         let corpus = RepoCorpusFingerprintCache::at(root);
         let files = RepoFileFactCache::at(root);
+        let scans = RepoModuleTreeScanCache::at(root);
         let counts = RepoSeamCountCache::at(root);
         let scoped = RepoScopedInventoryCache::at(root);
         let produced = [
@@ -4477,6 +4695,7 @@ mod tests {
             &compact.sharded_dir,
             &corpus.dir,
             &files.dir,
+            &scans.dir,
             &counts.dir,
             &scoped.dir,
         ];
@@ -4640,7 +4859,8 @@ mod tests {
         // 1.41 -> 1.42: macro-body binding candidates (#5991).
         // 1.43 -> 1.44: `extern crate x as std` binding candidates (#8388).
         // 1.44 -> 1.45: never-executed oracle statements dropped (#7638).
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.45");
+        // 1.45 -> 1.46: typed function-pointer alias facts (#9478).
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.46");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -4763,7 +4983,17 @@ mod tests {
         // 1.94 -> 1.95: local macro wrapper beside a proximity oracle (RIPR-SPEC-0120, #7089).
         // 1.95 -> 1.96: pinned-shape limit (RIPR-SPEC-0240, #9440).
         // 1.96 -> 1.97: effect assertions require execution admission (#8927).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.97");
+        // 1.97 -> 1.98: typed function-pointer owner pins (#9478).
+        // 1.98 -> 1.99: one-line `else if` ladder tail (#9630).
+        // 1.99 -> 1.100: equal-valued arms leave the first condition without a sink (#9843).
+        // 1.100 -> 1.101: macro_rules! test tables index one test per row (#6925).
+        // 1.101 -> 1.102: equal-valued arms of a rustfmt-layout chain (#10134).
+        // 1.102 -> 1.103: cross-file macro_rules! test tables (#6925).
+        // 1.103 -> 1.104: loop-accumulator update credit (#6485).
+        // 1.104 -> 1.105: exported macro tables named by path (#10298).
+        // 1.104 -> 1.106: table-driven loop-accumulator pin (#6485).
+        // 1.106 -> 1.108: literal-row `#[test_case]` bodies (#10190); 1.107 is #10298's.
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.108");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -4849,8 +5079,18 @@ mod tests {
         // 0.101 -> 0.102: same local-macro wrapper limit as full 1.95.
         // 0.102 -> 0.103: same pinned-shape limit as full 1.96.
         // 0.103 -> 0.104: same effect assertion admission as full 1.97 (#8927).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.104");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.104");
+        // 0.104 -> 0.105: same typed function-pointer pins as full 1.98.
+        // 0.105 -> 0.106: same one-line ladder tail as full 1.99.
+        // 0.106 -> 0.107: same equal-arm sink limit as full 1.100.
+        // 0.107 -> 0.108: same macro table tests as full 1.101 (#6925).
+        // 0.108 -> 0.109: same multi-line equal-arm sink limit as full 1.102.
+        // 0.109 -> 0.110: same cross-file macro tables as full 1.103 (#6925).
+        // 0.110 -> 0.111: same loop-accumulator update as full 1.104 (#6485).
+        // 0.111 -> 0.112: same exported macro tables as full 1.105 (#10298).
+        // 0.111 -> 0.113: same table-driven loop-accumulator pin as full 1.106.
+        // 0.113 -> 0.115: same `#[test_case]` transition as the outer cache.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.115");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.115");
     }
 
     #[test]
@@ -8543,6 +8783,35 @@ mod tests {
         Ok(())
     }
 
+    /// #9633 (audit F-C4-4): a file where the entry directory should be is a
+    /// missing entry for the read, not corrupt data; the failed write is the
+    /// one reported store failure.
+    #[test]
+    fn read_through_file_component_is_miss_and_write_is_the_store_failure() -> Result<(), String> {
+        let dir = isolated_dir("read-through-file");
+        ignore_remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).map_err(|err| format!("fixture setup failed: {err}"))?;
+        let blocker = dir.join("blocker");
+        std::fs::write(&blocker, b"not a directory")
+            .map_err(|err| format!("fixture setup failed: {err}"))?;
+        let cache = RepoFileFactCache::at_dir(blocker.join("entries"));
+        let key = RepoFileFactCacheKey::new(Path::new("src/lib.rs"), b"fn main() {}");
+        match cache.load_file_facts(&key) {
+            CacheLoad::Miss => {}
+            CacheLoad::CorruptIgnored { reason } => {
+                return Err(format!("read through a file counted as corrupt: {reason}"));
+            }
+            CacheLoad::Hit(_) => return Err("unexpected hit".to_string()),
+        }
+        let error = match cache.store_file_facts(&key, &FileFacts::default()) {
+            Ok(()) => return Err("store under a file path should fail".to_string()),
+            Err(error) => error,
+        };
+        assert_eq!(error.stage, FileFactStoreStage::CreateDir);
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
     #[test]
     fn store_failure_rows_bound_overflow_with_count() {
         let mut stats = FileFactCacheStats::default();
@@ -8570,6 +8839,14 @@ mod tests {
         assert_eq!(FileFactStoreStage::CreateDir.as_str(), "create_dir");
         assert_eq!(FileFactStoreStage::Encode.as_str(), "encode");
         assert_eq!(FileFactStoreStage::Write.as_str(), "write");
+        assert_eq!(
+            FileFactStoreStage::ClassifiedSeamStore.as_str(),
+            "classified_seam_store"
+        );
+        assert_eq!(
+            FileFactStoreStage::CorpusFingerprintStore.as_str(),
+            "corpus_fingerprint_store"
+        );
     }
 
     #[test]
@@ -8638,6 +8915,65 @@ mod tests {
             .map(|d| d.as_nanos())
             .unwrap_or(0);
         format!("{}-{:x}", std::process::id(), nanos)
+    }
+
+    // ---- module-tree scan bundle (#9794) ----------------------------------
+
+    fn sample_module_tree_scans() -> BTreeMap<String, RustModuleTreeScan> {
+        let text = "mod a;\n";
+        let scan = crate::analysis::syntax::rust_module_tree_scan(text);
+        BTreeMap::from([(module_tree_scan_key(text), scan)])
+    }
+
+    #[test]
+    fn module_tree_scan_bundle_round_trips_and_keys_by_exact_content() -> Result<(), String> {
+        let dir = isolated_dir("module-tree-scans-round-trip");
+        ignore_remove_dir_all(&dir);
+        let cache = RepoModuleTreeScanCache::at_dir(dir.clone());
+        assert!(cache.load().is_empty(), "a cold bundle reads as empty");
+        let scans = sample_module_tree_scans();
+        cache.store(&scans)?;
+        assert_eq!(cache.load(), scans);
+        let stored = module_tree_scan_key("mod a;\n");
+        assert!(cache.load().contains_key(&stored));
+        assert!(!cache.load().contains_key(&module_tree_scan_key("mod b;\n")));
+        assert_ne!(
+            module_tree_scan_key("mod a;\n"),
+            module_tree_scan_key("mod a;\n\n"),
+            "length is part of the key"
+        );
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn module_tree_scan_bundle_that_fails_its_digest_or_build_reads_as_empty() -> Result<(), String>
+    {
+        let dir = isolated_dir("module-tree-scans-tampered");
+        ignore_remove_dir_all(&dir);
+        let cache = RepoModuleTreeScanCache::at_dir(dir.clone());
+        cache.store(&sample_module_tree_scans())?;
+        let path = cache.entry_path();
+        let original = std::fs::read_to_string(&path).map_err(|error| error.to_string())?;
+
+        let edited = original.replace("\"name\": \"a\"", "\"name\": \"forged\"");
+        assert_ne!(edited, original, "control: the edit applied");
+        std::fs::write(&path, &edited).map_err(|error| error.to_string())?;
+        assert!(cache.load().is_empty(), "edited body fails its digest");
+
+        let other_build =
+            original.replace(crate::build_identity::cache_identity(), "some-other-build");
+        assert_ne!(other_build, original, "control: the identity applied");
+        std::fs::write(&path, other_build).map_err(|error| error.to_string())?;
+        assert!(
+            cache.load().is_empty(),
+            "another build's bundle is not served"
+        );
+
+        std::fs::write(&path, b"{not json").map_err(|error| error.to_string())?;
+        assert!(cache.load().is_empty(), "undecodable bundle reads as empty");
+        ignore_remove_dir_all(&dir);
+        Ok(())
     }
 
     // ---- cache envelope + limit_info round-trip tests (Slice B) -----------
@@ -9807,6 +10143,7 @@ mod generation_transition_tests {
             (compact.sharded_dir.clone(), true),
             (RepoCorpusFingerprintCache::at(root).dir, false),
             (RepoFileFactCache::at(root).dir, false),
+            (RepoModuleTreeScanCache::at(root).dir, false),
             (RepoScopedInventoryCache::at(root).dir, false),
         ];
         assert_eq!(production_entry_dirs(&cache_base_dir(root)), expected);
@@ -9818,6 +10155,7 @@ mod generation_transition_tests {
         constructed.extend(compact.entry_dirs());
         constructed.push(RepoCorpusFingerprintCache::at(root).entry_dir());
         constructed.push(RepoFileFactCache::at(root).entry_dir());
+        constructed.push(RepoModuleTreeScanCache::at(root).entry_dir());
         constructed.push(RepoScopedInventoryCache::at(root).entry_dir());
         assert_eq!(constructed, expected);
     }

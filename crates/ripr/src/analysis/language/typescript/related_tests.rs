@@ -2,7 +2,7 @@
 
 use super::tsconfig::{TsAliasMap, TsOutDirMap, load_out_dir_map};
 use super::*;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 // ── Re-export index ───────────────────────────────────────────────────────────
 
@@ -141,8 +141,6 @@ impl ReExportIndex {
         alias_map: Option<&TsAliasMap>,
         is_test: impl Fn(&Path) -> bool,
     ) -> Self {
-        use oxc_parser::Parser;
-
         let mut entries: HashMap<(String, String), (String, String)> = HashMap::new();
         let mut star_edges: HashSet<(String, String)> = HashSet::new();
         let mut local_exports: HashMap<String, HashSet<String>> = HashMap::new();
@@ -172,27 +170,16 @@ impl ReExportIndex {
             let Some(source) = sources.get(relative) else {
                 continue;
             };
-            // Parse on the guarded large-stack worker (#4101): the recursive
-            // oxc parser must not run on the caller's stack, and an
-            // over-budget source is skipped exactly like a parse error.
-            let worker_root = workspace_root.to_path_buf();
-            let worker_alias = alias_map.cloned();
-            let Ok(file_facts) = parse_on_worker(
-                relative.as_path(),
+            // Per-file facts come from the content-keyed combined cache
+            // (#10071, #10063): a re-save with one edited file re-parses only
+            // that file instead of every non-test source in the workspace.
+            // Facts depend on the workspace root and the tsconfig alias map,
+            // both carried by the cache key.
+            let Some(file_facts) = super::extraction_cache::export_facts_cached(
+                relative,
                 source.as_str(),
-                move |relative, source, allocator| {
-                    let ret = Parser::new(allocator, source, source_type_for(relative)).parse();
-                    if !ret.errors.is_empty() {
-                        return ModuleExportFacts::default();
-                    }
-                    module_export_facts(
-                        relative,
-                        &ret.program.body,
-                        source,
-                        worker_alias.as_ref(),
-                        worker_root.as_path(),
-                    )
-                },
+                workspace_root,
+                alias_map,
             ) else {
                 continue;
             };
@@ -259,7 +246,7 @@ impl ReExportIndex {
         // Owner.imports also carries synthetic re-export records for call
         // discovery. A re-export creates no local binding, so only the
         // actual-only imports collected from this module can anchor a root.
-        let imports = if normalized_path(file) == normalized_path(&test.file) {
+        let imports: &[TypeScriptImport] = if normalized_path(file) == normalized_path(&test.file) {
             &test.imports_in_file
         } else {
             self.enum_imports.get(&module)?
@@ -331,7 +318,7 @@ impl ReExportIndex {
             return None;
         };
         let unstable_roots: Vec<String> = if normalized_path(file) == normalized_path(&test.file) {
-            test.unstable_member_roots_in_file.clone()
+            test.unstable_member_roots_in_file.to_vec()
         } else {
             self.unstable_enum_roots
                 .iter()
@@ -502,6 +489,44 @@ impl ReExportIndex {
             }
         }
         names
+    }
+
+    /// Map each declaration name to every exported name that resolves to it
+    /// through the bounded re-export graph (#10028). An owner named `foo` can
+    /// be imported — and thus credited — through any export name whose chain
+    /// lands on a `foo` declaration, so the relation index widens an owner's
+    /// name candidates with these aliases. Keyed by name only: owners sharing
+    /// a declaration name receive the union of their exposure aliases, which
+    /// is sound because the index is a pre-filter and every identity guard
+    /// still runs on each candidate.
+    pub(crate) fn exposed_names_by_owner(&self) -> HashMap<String, HashSet<String>> {
+        let mut candidates: HashSet<(String, String)> = HashSet::new();
+        for (module, names) in &self.local_exports {
+            for name in names {
+                candidates.insert((module.clone(), name.clone()));
+            }
+        }
+        for (module, exported) in self.entries.keys() {
+            candidates.insert((module.clone(), exported.clone()));
+        }
+        // A star edge forwards every named export of its source; enumerate
+        // those (already bounded by MAX_REEXPORT_HOPS) so a barrel-only
+        // export still reaches its declaration.
+        for (module, source) in &self.star_edges {
+            for name in self.enum_exported_names(source) {
+                candidates.insert((module.clone(), name.to_string()));
+            }
+        }
+        let mut exposed: HashMap<String, HashSet<String>> = HashMap::new();
+        for (module, name) in candidates {
+            let mut stack = Vec::new();
+            if let ExportResolution::Found(_, local_name) =
+                self.resolve_export(&module, &name, 0, &mut stack, &|_| false)
+            {
+                exposed.entry(local_name).or_default().insert(name);
+            }
+        }
+        exposed
     }
 
     /// Resolve a normalized module specifier path to the workspace module it
@@ -762,17 +787,67 @@ impl ReExportIndex {
 }
 
 /// Export facts of one parsed module, collected on the parse worker.
-#[derive(Debug, Default)]
-struct ModuleExportFacts {
-    entries: Vec<((String, String), (String, String))>,
-    star_edges: Vec<(String, String)>,
-    local_exports: Vec<String>,
-    enum_bindings: Vec<(String, Vec<String>)>,
-    enum_imports: Vec<TypeScriptImport>,
-    unstable_enum_roots: Vec<String>,
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub(crate) struct ModuleExportFacts {
+    pub(crate) entries: Vec<((String, String), (String, String))>,
+    pub(crate) star_edges: Vec<(String, String)>,
+    pub(crate) local_exports: Vec<String>,
+    pub(crate) enum_bindings: Vec<(String, Vec<String>)>,
+    pub(crate) enum_imports: Vec<TypeScriptImport>,
+    pub(crate) unstable_enum_roots: Vec<String>,
 }
 
-fn module_export_facts(
+impl ModuleExportFacts {
+    /// Approximate retained bytes, for the export-facts cache bound.
+    pub(crate) fn approx_bytes(&self) -> usize {
+        type StringPair = (String, String);
+        let string_pair_bytes = |pairs: &Vec<(StringPair, StringPair)>| {
+            pairs
+                .iter()
+                .map(|((a, b), (c, d))| a.len() + b.len() + c.len() + d.len())
+                .sum::<usize>()
+        };
+        let tuple_bytes = |pairs: &Vec<(String, String)>| {
+            pairs.iter().map(|(a, b)| a.len() + b.len()).sum::<usize>()
+        };
+        string_pair_bytes(&self.entries)
+            .saturating_add(tuple_bytes(&self.star_edges))
+            .saturating_add(
+                self.local_exports
+                    .iter()
+                    .map(|name| name.len())
+                    .sum::<usize>(),
+            )
+            .saturating_add(
+                self.enum_bindings
+                    .iter()
+                    .map(|(name, members)| {
+                        name.len().saturating_add(
+                            members.iter().map(|member| member.len() + 1).sum::<usize>(),
+                        )
+                    })
+                    .sum::<usize>(),
+            )
+            .saturating_add(
+                self.enum_imports
+                    .iter()
+                    .map(|import| {
+                        import.source.len()
+                            + import.local.len()
+                            + import.imported.as_ref().map_or(0, |name| name.len())
+                    })
+                    .sum::<usize>(),
+            )
+            .saturating_add(
+                self.unstable_enum_roots
+                    .iter()
+                    .map(|name| name.len())
+                    .sum::<usize>(),
+            )
+    }
+}
+
+pub(crate) fn module_export_facts(
     relative: &Path,
     body: &oxc_allocator::Vec<'_, Statement<'_>>,
     source: &str,
@@ -1087,12 +1162,21 @@ pub(crate) fn same_package_root(
 ///
 /// `alias_map` enables tsconfig.json path alias resolution for non-relative
 /// specifiers.  Pass `None` when `resolve_tsconfig_paths` is `false` (explicit opt-out).
+///
+/// `relation_index` pre-filters pass 1 to the tests that can possibly relate
+/// to the owner (body-name, import-shape, or re-export-exposure keys;
+/// #10028). Every identity guard still runs on each survivor, so this is a
+/// scan restriction, not a semantic change; the module-entry and heuristic
+/// fallback passes only run when pass 1 found nothing and keep their
+/// previous scans.  Pass `&RelationIndex::empty()` (test-only) to preserve
+/// the unindexed full scan.
 pub(crate) fn related_test_candidates<'a>(
     owner: &TypeScriptOwner,
     all_tests: &'a [TypeScriptTest],
     workspace_root: Option<&Path>,
     reexport_index: &ReExportIndex,
     alias_map: Option<&TsAliasMap>,
+    relation_index: &RelationIndex,
 ) -> Vec<TypeScriptRelatedCandidate<'a>> {
     let package_scope = workspace_root.map(|root| OwnerPackageScope::new(&owner.file, root));
     let in_owner_package = |test: &&TypeScriptTest| {
@@ -1100,8 +1184,9 @@ pub(crate) fn related_test_candidates<'a>(
             .as_ref()
             .is_none_or(|scope| scope.contains(&test.file))
     };
-    let mut candidates: Vec<TypeScriptRelatedCandidate<'a>> = all_tests
-        .iter()
+    let mut candidates: Vec<TypeScriptRelatedCandidate<'a>> = relation_index
+        .candidates(owner, all_tests)
+        .into_iter()
         .filter_map(|test| {
             owner_call_relation(test, owner, reexport_index, alias_map, workspace_root)
                 .map(|relation| related_candidate(test, relation, owner, alias_map, workspace_root))
@@ -1110,19 +1195,23 @@ pub(crate) fn related_test_candidates<'a>(
     // Same-module entry reach is admitted only when no test calls the owner
     // itself, so a direct relation's oracle alone decides exposure.
     if candidates.is_empty() && !owner.module_entries.is_empty() {
-        candidates = all_tests
+        // Each entry's stand-in owner has its own name/import keys; union the
+        // indexed candidates so a name-less entry test is still reachable
+        // without rescanning the whole corpus.
+        let entry_indices: BTreeSet<u32> = owner
+            .module_entries
             .iter()
-            .filter(in_owner_package)
-            .filter(|test| {
-                module_entry_relation(test, owner, reexport_index, alias_map, workspace_root)
+            .flat_map(|entry| {
+                relation_index.candidate_indices(&module_entry_owner(owner, entry), all_tests.len())
             })
-            .map(|test| {
-                related_candidate(
-                    test,
-                    TypeScriptRelationKind::ModuleEntryCall,
-                    owner,
-                    alias_map,
-                    workspace_root,
+            .collect();
+        candidates = entry_indices
+            .into_iter()
+            .map(|index| &all_tests[index as usize])
+            .filter(|test| in_owner_package(test))
+            .filter_map(|test| {
+                module_entry_relation(test, owner, reexport_index, alias_map, workspace_root).map(
+                    |relation| related_candidate(test, relation, owner, alias_map, workspace_root),
                 )
             })
             .collect();
@@ -1327,10 +1416,15 @@ fn module_entry_relation(
     reexport_index: &ReExportIndex,
     alias_map: Option<&TsAliasMap>,
     workspace_root: Option<&Path>,
-) -> bool {
-    owner.module_entries.iter().any(|entry| {
+) -> Option<TypeScriptRelationKind> {
+    // A test that reaches the owner through any ordinary entry keeps the weak
+    // `ModuleEntryCall` reading; `DecoratedMethodCall` holds only when every
+    // entry the test reaches is a decorated method.
+    let mut decorated = false;
+    let mut ordinary = false;
+    for entry in &owner.module_entries {
         let entry_owner = module_entry_owner(owner, entry);
-        owner_call_relation(
+        if owner_call_relation(
             test,
             &entry_owner,
             reexport_index,
@@ -1338,7 +1432,19 @@ fn module_entry_relation(
             workspace_root,
         )
         .is_some_and(TypeScriptRelationKind::uses_oracle)
-    })
+        {
+            if entry.decorated.is_some() {
+                decorated = true;
+            } else {
+                ordinary = true;
+            }
+        }
+    }
+    match (ordinary, decorated) {
+        (true, _) => Some(TypeScriptRelationKind::ModuleEntryCall),
+        (false, true) => Some(TypeScriptRelationKind::DecoratedMethodCall),
+        (false, false) => None,
+    }
 }
 
 /// The owner as a test of `entry` sees it: same module, the entry's exported
@@ -1347,6 +1453,23 @@ pub(crate) fn module_entry_owner(
     owner: &TypeScriptOwner,
     entry: &TypeScriptModuleEntry,
 ) -> TypeScriptOwner {
+    if let Some(decorated) = entry.decorated.as_ref() {
+        // A method the decorator wraps: a test reaches it through a receiver
+        // the test constructs, like any instance method of that class.
+        return TypeScriptOwner {
+            name: entry.name.clone(),
+            owner_kind: OwnerKind::Method,
+            class_name: Some(decorated.class_name.clone()),
+            exported_as_default: false,
+            default_object_member: false,
+            method_kind: TypeScriptMethodKind::Ordinary,
+            module_entries: Vec::new(),
+            params: Vec::new(),
+            arity: None,
+            source_text: None,
+            ..owner.clone()
+        };
+    }
     if let Some(method_kind) = entry.class_member {
         // A sibling method of the owner's own class: a test reaches it
         // through a receiver the test constructs, like any instance method.
@@ -1527,7 +1650,7 @@ pub(crate) fn receiver_owner_call_relation(
     // A receiver built in the enclosing scope (`const cart = new Cart()` in a
     // `describe`, `cart = new Cart()` in a `beforeEach`) is the object the
     // body calls, unless the body declares or reassigns that name itself.
-    for binding in &test.scope_bindings {
+    for binding in test.scope_bindings.iter() {
         if binding
             .constructed_by
             .as_ref()
@@ -1558,6 +1681,46 @@ pub(crate) fn receiver_owner_call_relation(
     false
 }
 
+/// The receivers the test authenticates for a method owner: locals built from
+/// the owner's class (`const svc = new Svc()`, in the body or an enclosing
+/// scope) for an instance method, the class names for a static one. A member
+/// call through any other receiver is another binding.
+pub(crate) fn owner_method_receiver_names(
+    test: &TypeScriptTest,
+    owner: &TypeScriptOwner,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> Vec<String> {
+    match owner.owner_kind {
+        OwnerKind::ClassMethod => {
+            class_names_for_class_method_owner(test, owner, alias_map, workspace_root)
+        }
+        OwnerKind::Method => {
+            let constructor_names =
+                constructor_names_for_method_owner(test, owner, alias_map, workspace_root);
+            let mut receivers =
+                receiver_names_for_constructor_calls(&test.body_text, &constructor_names);
+            for binding in test.scope_bindings.iter() {
+                if binding
+                    .constructed_by
+                    .as_ref()
+                    .is_some_and(|constructor| constructor_names.contains(constructor))
+                    && !local_identifier_declared_in_test_body(&test.body_text, &binding.name)
+                    && !super::tests_extract::identifier_written_in(&test.body_text, &binding.name)
+                {
+                    push_unique_string(&mut receivers, binding.name.clone());
+                }
+            }
+            // An inline `new Cls().method()` is authenticated by its class.
+            for constructor in &constructor_names {
+                push_unique_string(&mut receivers, format!("new {constructor}"));
+            }
+            receivers
+        }
+        _ => Vec::new(),
+    }
+}
+
 pub(crate) fn class_method_owner_call_relation(
     test: &TypeScriptTest,
     owner: &TypeScriptOwner,
@@ -1582,7 +1745,7 @@ pub(crate) fn class_method_owner_call_relation(
 /// scope (a `describe` body or parameter, a loop header, a hook write, a
 /// test callback parameter) rebinds `name` for this test, so a call through
 /// `name` reaches that binding rather than an import or owner of the name.
-fn enclosing_scope_shadows(test: &TypeScriptTest, name: &str) -> bool {
+pub(crate) fn enclosing_scope_shadows(test: &TypeScriptTest, name: &str) -> bool {
     test.scope_bindings
         .iter()
         .any(|binding| binding.name == name && !binding.file_level)
@@ -2678,8 +2841,14 @@ pub(crate) fn find_related_tests(
     reexport_index: &ReExportIndex,
     alias_map: Option<&TsAliasMap>,
 ) -> Vec<RelatedTest> {
-    let candidates =
-        related_test_candidates(owner, all_tests, workspace_root, reexport_index, alias_map);
+    let candidates = related_test_candidates(
+        owner,
+        all_tests,
+        workspace_root,
+        reexport_index,
+        alias_map,
+        &RelationIndex::empty(),
+    );
     related_tests_for_candidates(&candidates, None)
 }
 
@@ -2728,6 +2897,8 @@ pub(crate) fn related_tests_for_candidates(
                 relation_reason,
                 relation_confidence,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             }
         })
         .collect()
@@ -2873,6 +3044,7 @@ fn ts_relation_to_domain(
         // The test calls a same-module export that calls the owner: the
         // TypeScript form of a production helper that delegates to the owner.
         TypeScriptRelationKind::ModuleEntryCall => RelationReason::HelperOwnerCall,
+        TypeScriptRelationKind::DecoratedMethodCall => RelationReason::HelperOwnerCall,
         // Heuristic relations: no strong domain mapping — emit None to preserve
         // the existing behaviour for these lower-confidence relation kinds.
         TypeScriptRelationKind::ModuleValueUse
@@ -2888,7 +3060,8 @@ fn ts_relation_to_domain(
         | TypeScriptRelationKind::ClassMethodCall => RelationConfidence::High,
         TypeScriptRelationKind::ImportedOwnerCall
         | TypeScriptRelationKind::ReExportChainFollowed
-        | TypeScriptRelationKind::ModuleEntryCall => RelationConfidence::Medium,
+        | TypeScriptRelationKind::ModuleEntryCall
+        | TypeScriptRelationKind::DecoratedMethodCall => RelationConfidence::Medium,
         TypeScriptRelationKind::ModuleValueUse
         | TypeScriptRelationKind::SameFileProximity
         | TypeScriptRelationKind::DescribeName
@@ -2910,16 +3083,19 @@ fn heuristic_relation_allowed(
 pub(crate) fn contains_call_name(body_text: &str, call_name: &str) -> bool {
     // `name(` and the TypeScript optional-call form `name?.(...)` are the same
     // call of the same binding (#4103 under-credit: the `?.` form was
-    // invisible to every call arm).
-    [format!("{call_name}("), format!("{call_name}?.(")]
-        .iter()
-        .any(|needle| {
-            body_text.match_indices(needle.as_str()).any(|(idx, _)| {
-                has_call_boundary(body_text, idx)
-                    && !line_prefix_looks_like_comment_or_string(body_text, idx)
-                    && !inside_block_comment(body_text, idx)
-            })
-        })
+    // invisible to every call arm). One scan over `call_name` occurrences —
+    // the old two-needle form formatted two Strings per call, which dominates
+    // helper-owner callee resolution on large modules (#10087). Occurrences
+    // the non-overlapping scan skips are always preceded by an identifier
+    // char (a border of `call_name` itself), and `has_call_boundary` rejects
+    // exactly those.
+    body_text.match_indices(call_name).any(|(idx, _)| {
+        let rest = &body_text[idx + call_name.len()..];
+        (rest.starts_with('(') || rest.starts_with("?.("))
+            && has_call_boundary(body_text, idx)
+            && !line_prefix_looks_like_comment_or_string(body_text, idx)
+            && !inside_block_comment(body_text, idx)
+    })
 }
 
 fn has_call_boundary(body_text: &str, idx: usize) -> bool {

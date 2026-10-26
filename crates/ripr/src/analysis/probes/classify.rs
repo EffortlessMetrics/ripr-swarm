@@ -39,6 +39,9 @@ pub(super) fn added_header_bound_lines(
 /// or parse leaves the existing lexical/unknown evidence intact.
 pub(super) struct RemovedTypeBounds {
     pub lines: Vec<bool>,
+    /// Removed struct or enum-variant field declarations (#9183), admitted on
+    /// the reconstructed old syntax. Only set when `old_index` is available.
+    pub field_declarations: Vec<bool>,
     pub old_index: Option<RustIndex>,
 }
 
@@ -65,6 +68,7 @@ pub(super) fn removed_type_bounds(
 ) -> RemovedTypeBounds {
     let unavailable = || RemovedTypeBounds {
         lines: vec![false; changed.removed_lines.len()],
+        field_declarations: vec![false; changed.removed_lines.len()],
         old_index: None,
     };
     if changed.removed_lines.is_empty() {
@@ -74,7 +78,12 @@ pub(super) fn removed_type_bounds(
         return unavailable();
     };
     let lines = declarations::type_bound_lines(source, &changed.removed_lines);
-    if !lines.iter().any(|bound| *bound) {
+    let field_declarations = declarations::field_declaration_lines(source, &changed.removed_lines);
+    if !lines
+        .iter()
+        .chain(&field_declarations)
+        .any(|admitted| *admitted)
+    {
         return unavailable();
     }
     let Ok(facts) = RaRustSyntaxAdapter.summarize_file(&changed.path, source) else {
@@ -93,6 +102,7 @@ pub(super) fn removed_type_bounds(
     }
     RemovedTypeBounds {
         lines,
+        field_declarations,
         old_index: Some(old_index),
     }
 }
@@ -771,10 +781,16 @@ pub(crate) fn is_item_header(text: &str) -> bool {
         return false;
     }
     // A one-line `impl` body holding a `fn` is not a header. A type header's
-    // `fn` is a fn-pointer bound (`T: Fn(fn(u8))`) and stays a header.
+    // `fn` is a fn-pointer bound (`T: Fn(fn(u8))`) and stays a header. A line
+    // opening with `impl` that holds no body brace or `;` is the first line
+    // of a rustfmt-wrapped header (`impl<T, const N: usize> Drop`) and also
+    // declares only: its generic bounds are not fields or calls.
+    // A const-generic block, a macro or an array-length call in the header
+    // (`impl Foo<[u8; width()]>`) is an expression that can call code, so it
+    // keeps its call probe exactly as for the other item headers below.
     if word_after("impl")
         && !text.contains("fn ")
-        && (text.ends_with('{') || text.contains(" where"))
+        && !generics_hold_expression(text.strip_prefix("impl").unwrap_or(text))
     {
         return true;
     }
@@ -888,6 +904,10 @@ mod tests {
             "unsafe\timpl Tr for K where [u8; 4]: Copy {",
             "unsafe impl Send for K {",
             "impl<T: Iterator<Item = u32>> Tr for K<T> {",
+            // A rustfmt-wrapped header's first line opens no body yet.
+            "impl<T: Debug> Tr for K<T>",
+            "impl<Item, const N: usize> Drop",
+            "unsafe impl<#[cfg_attr(feature = \"x\", may_dangle)] T> Drop",
             // #9170: type declaration headers with generic bounds.
             "enum Operator<P1, P2, Q: Ord + Copy> {",
             "pub(crate) struct Wrapper<T: Clone + Send> {",
@@ -917,9 +937,11 @@ mod tests {
             "where T: Debug,",
             "impl Tr for K where Self: Sized;",
             "impl_len += 1",
-            // A multi-line header's generic bound stays probed as
-            // `static_unknown` (`inline_impl_bound_added_stays_unknown`).
-            "impl<T: Debug> Tr for K<T>",
+            "impl<T: Debug> Tr for K<T>; let x = 1",
+            "impl Foo<[u8; width()]>",
+            "impl Foo<{ width() }> for K",
+            "impl Foo<m!()> for K",
+            "impl<const N: usize> K { Foo { a: 1 } }",
             "impl K { const A: u32 = 1; }",
             "impl K where Self: Sized { const A: u32 = 1; }",
             "impl K where Self: Sized { Foo { a: 1 } }",

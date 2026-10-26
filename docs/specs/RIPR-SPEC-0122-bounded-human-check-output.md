@@ -156,6 +156,10 @@ When the hidden identity list exceeds its 20-finding window, its remainder
 line names `--format json with RIPR_CHECK_FINDINGS_BYTES=0` for every identity.
 Default check JSON has its own findings-array byte budget; the explicit
 opt-out recovers the full finding set without changing either display cap.
+When that JSON budget engages, it keeps the highest-priority findings
+(candidate-current first, then the strongest gap classes) rather than a
+file-order prefix, and its `limited_findings_bound` message names the dropped
+counts per class and file (#10093).
 
 When a selected finding exists, the digest includes file and line, static
 exposure class, changed behavior, first missing discriminator when known,
@@ -176,19 +180,23 @@ decisive stages behind a remainder count (#4324):
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
       unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;
+      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;
+      candidate line = changed line ripr considers for probes
 ```
 
-The seven-line legend immediately follows the compact line, once for the selected
+The ten-line legend immediately follows the compact line, once for the selected
 digest, including an exposed finding when selected. It explains static evidence,
 not execution or test adequacy. `weak` means partial evidence across the stages,
 and `no` means evidence was not found, never that a behavior is impossible.
-The final two lines define the words the `Summary:` count line prints (probe,
+The `Summary terms` lines define the words the `Summary:` count line prints (probe,
 exposed, weak, unrevealed, no path) in the same static vocabulary (#9244 item 4);
-the `unknown` count is already defined by the `States` line (`unknown/opaque =
-analysis limited`). They claim no runtime mutation outcome.
+its last three lines also define `finding`, `unsuppressed`, the `unknown`
+bucket, `base-side` and the Counts line's `candidate line` (#9244 item 4
+leftovers). They claim no runtime mutation outcome.
 No legend renders when there is no selected digest (empty, all-suppressed,
 base-side-only, or unresolved-currentness-only findings). The legend adds a fixed
-seven lines; it does not expand the per-stage detail window. Full human and
+ten lines; it does not expand the per-stage detail window. Full human and
 machine formats retain their existing contracts. This addresses item 1 and #9244
 item 4 only; the shared class vocabulary and per-class discoverability in items 2
 and 3 are unchanged.
@@ -502,8 +510,25 @@ omission instead of leaving it silent (#8729): when the producer-owned gate
 computes a refusal — no canonical gap to bind, an unreadable authority, a
 seam-limit-truncated candidate set, zero or several binding seams, or an
 ineligible seam — the drill-down prints one advisory line of the shape
-`no repair start offered: <state>; run \`ripr repair <item> --root <root>\`
-for the full gate's answer`. A static-limited finding never gets the runnable
+`no repair start offered: <state>; <recovery>`. Where the gate can
+still answer, the recovery is ``run `ripr repair <item> --root <root>` for the
+full gate's answer``. A refusal whose gate answer would only repeat it names
+its own recovery instead (#9244): a finding with no canonical gap says there
+is no seam to start a repair from and sends the reader to the Next step above
+(it makes no claim about missing discriminators, which other languages can
+name without a Rust canonical gap); an unreadable config names `ripr.toml` and
+the `ripr check` rerun; a finding no seam binds to says ripr found no seam in
+its file to bind it to and sends the reader to the Next step above; several binding seams say `ripr repair` needs the ID of
+the chosen seam without promising a listing; a repair route that is not ready
+says ripr cannot build a repair packet for the finding yet, lists the
+producer-owned missing evidence (or says the static evidence is not complete
+enough to name a safe test target when the list is empty), and sends the reader
+to the Next step above and the `ripr check` rerun, carrying the refusal kind
+and missing list as typed fields rather than parsing the reason text (the
+shared `repair route not ready` label that `ripr repair`, `ripr continue` and
+the MCP detail print is unchanged); other ineligible refusals keep their
+reason and gate pointer; a classification failure says the
+gate may print the underlying error. A static-limited finding never gets the runnable
 repair line (its limitation guidance is authoritative on the same screen),
 but a refusal the pipeline did compute is still named there, so "the gate
 refused this seam" cannot read as "analysis could not decide". A run with no
@@ -613,10 +638,20 @@ string and as the bare token. All require the producer's `missing proof`
 expression to print unchanged in the human Evidence row.
 
 
-This item does not rewrite the Python Weakness section text (python
-`classify.rs`, rendered through `weakness_lines`), the LSP hover, pilot output
-or the agent packet routes. Those, with the python `classify.rs:686` and
-`classify.rs:691` reason texts, are tracked in #9929.
+The human Weakness list (`weakness_lines`, shown by `human-full`) applies the
+same anchored rewrite to the structured `missing` entries, so the Python
+adapter's reason text prints without the producer marker while the JSON
+`missing` strings keep it (#9929). The digest's "Missing discriminator" line
+prints the raw `missing` text truncated at 180 characters and is not rewritten;
+the marker sits past that window for the current producer forms. This item does
+not rewrite pilot output or the agent packet routes, which remain tracked in
+#9929.
+
+The LSP hover (finding hover, line hover and classified-seam hover) is prose for
+a person and applies the same anchored rewrite to its stage lines, the
+discriminator line's related-oracle summary, its Weakness list, and the seam
+hover's Strong/Weak evidence lists and missing-discriminator reasons; the
+structured finding and JSON keep the machine value (#9929).
 
 ### Next step for an unmapped infection input (#9244)
 
@@ -708,6 +743,10 @@ not a head-only row and prints no note.
 - `crates/ripr/src/output/human.rs::tests::human_evidence_spells_the_unconfirmed_observation_in_words`
 - `crates/ripr/src/output/human.rs::tests::plain_observation_wording_handles_each_producer_form`
 - `crates/ripr/src/output/human.rs::tests::shared_evidence_rows_spell_the_unconfirmed_observation_in_words`
+- `crates/ripr/src/output/human.rs::tests::weakness_list_drops_producer_marker_but_keeps_embedded_token_and_json`
+- `crates/ripr/src/lsp/tests.rs::finding_hover_spells_the_unconfirmed_observation_in_words`
+- `crates/ripr/src/lsp/tests.rs::finding_hover_with_named_missing_discriminator_spells_markers_in_words`
+- `crates/ripr/src/lsp/hover.rs::seam_hover_tests::seam_hover_spells_the_unconfirmed_observation_in_words`
 - `crates/ripr/src/output/human.rs::tests::plain_wording_leaves_backticked_source_literals_alone`
 - `crates/ripr/src/output/human.rs::tests::plain_observation_wording_never_modifies_embedded_source_text`
 - `crates/ripr/tests/observation_wording_python_literals.rs::single_backtick_before_the_token_prints_as_written`

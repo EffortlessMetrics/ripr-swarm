@@ -186,6 +186,23 @@ Test discovery:
   `describe` names, the placeholder `<computed title, line N>`, and the line
   of the registration. A string literal or a substitution-free template keeps
   its text.
+- a registration the extractor drops makes the analysis partial
+  (`typescript_test_extraction_partial`) only when a test in that file can be
+  related to the diff. The test index is workspace-wide, so the disclosure is
+  consulted only when a finding was classified against it, and then only for a
+  dropped-registration file whose local import closure reaches a changed file
+  or contains the name of a changed file's owner. The closure follows relative
+  imports, `export ... from`, `require`, `import()` and `mock` calls (also
+  spelled with whitespace or comments before the parenthesis), resolving
+  `./x.js` to `x.ts`. Anything the scan cannot follow keeps the disclosure: an
+  unresolved relative import, a computed `import()` / `require()`,
+  `import.meta.glob` / `require.context` / `createRequire`, a bare specifier a
+  tsconfig path, workspace package or the root package name could resolve, a
+  `~`, `#`, `$`, `/` or `@/` specifier, a `baseUrl`, `rootDirs`, a relative
+  `extends`, a package-level `paths`, any bundler, transpiler or test-runner
+  config that declares an alias or module directory, a Rust change related
+  through the Bun bridge, and a closure over 400 files. The conditional
+  assertion credit and owner-extraction disclosures keep their own scopes.
 - top-level `expect(...)` calls when paired with a `test`/`it` block
 - exported test files matched by configured patterns (default:
   `*.test.ts`, `*.test.tsx`, `*.spec.ts`, `*.spec.tsx`, and the
@@ -457,6 +474,12 @@ boundary without changing the guards (#4104 E):
   in the owner, the changed line compares them as whole sides, and it runs on
   every call. No value is claimed; the call's own arguments at `<i>` and
   `<j>` decide whether it hits the boundary.
+- **One-line guard boundary** (#10463): `if (<a> <op> <b>) <statement>;` (also
+  `else if` and `while`) reads its condition as the predicate boundary exactly
+  as the braced form does, but only when the condition is one comparison of two
+  simple operands. A compound (`&&`, `||`) or arithmetic condition stays
+  unparsed, and a line whose condition equals the removed line's condition
+  (an edit to the statement) is not a predicate boundary change.
 
 When the adapter cannot classify, it emits one of the `static_limit_kind`
 values defined in RIPR-SPEC-0026:
@@ -519,91 +542,91 @@ can show:
 
 ## Acceptance Examples
 
-Function with boundary gap:
+1. Function with boundary gap:
 
-```ts
-export function applyDiscount(amount: number, threshold: number) {
-  if (amount >= threshold) {
-    return amount * 0.9;
-  }
-  return amount;
-}
-```
+   ```ts
+   export function applyDiscount(amount: number, threshold: number) {
+     if (amount >= threshold) {
+       return amount * 0.9;
+     }
+     return amount;
+   }
+   ```
 
-Existing tests:
+   Existing tests:
 
-```ts
-test('discount applies above threshold', () => {
-  expect(applyDiscount(100, 50)).toBe(90);
-});
+   ```ts
+   test('discount applies above threshold', () => {
+     expect(applyDiscount(100, 50)).toBe(90);
+   });
 
-test('no discount below threshold', () => {
-  expect(applyDiscount(10, 50)).toBe(10);
-});
-```
+   test('no discount below threshold', () => {
+     expect(applyDiscount(10, 50)).toBe(10);
+   });
+   ```
 
-Expected static evidence:
+   Expected static evidence:
 
-- owner: `applyDiscount` (`function`)
-- predicate probe: `amount >= threshold`
-- oracle: `exact-value` via `.toBe(90)` and `.toBe(10)`
-- missing discriminator: `amount === threshold`
-- finding emits `language = "typescript"`,
-  `language_status = "preview"`, `owner_kind = "function"`
+   - owner: `applyDiscount` (`function`)
+   - predicate probe: `amount >= threshold`
+   - oracle: `exact-value` via `.toBe(90)` and `.toBe(10)`
+   - missing discriminator: `amount === threshold`
+   - finding emits `language = "typescript"`,
+     `language_status = "preview"`, `owner_kind = "function"`
 
-Snapshot oracle:
+2. Snapshot oracle:
 
-```ts
-test('renders header', () => {
-  expect(render(<Header user="ada"/>)).toMatchSnapshot();
-});
-```
+   ```ts
+   test('renders header', () => {
+     expect(render(<Header user="ada"/>)).toMatchSnapshot();
+   });
+   ```
 
-Expected static evidence:
+   Expected static evidence:
 
-- oracle: `snapshot` (medium)
-- finding stays `weakly_exposed` and names
-  `typescript_snapshot_discriminator_unresolved`
+   - oracle: `snapshot` (medium)
+   - finding stays `weakly_exposed` and names
+     `typescript_snapshot_discriminator_unresolved`
 
-Dynamic dispatch limit:
+3. Dynamic dispatch limit:
 
-```ts
-function dispatch(actions: Record<string, () => void>, key: string) {
-  actions[key]();
-}
-```
+   ```ts
+   function dispatch(actions: Record<string, () => void>, key: string) {
+     actions[key]();
+   }
+   ```
 
-Expected static evidence:
+   Expected static evidence:
 
-- probe emits `static_limit_kind = "dynamic_dispatch"`; finding stays
-  conservative.
+   - probe emits `static_limit_kind = "dynamic_dispatch"`; finding stays
+     conservative.
 
-Untested sibling owner in a tested module:
+4. Untested sibling owner in a tested module:
 
-```ts
-// src/pricing.ts
-export function discountedTotal(amount: number) { /* tested */ }
-export function loyaltyPrice(amount: number, years: number) {
-  if (years >= 5) {
-    return amount - Math.floor(amount / 20);
-  }
-  return amount;
-}
+   ```ts
+   // src/pricing.ts
+   export function discountedTotal(amount: number) { /* tested */ }
+   export function loyaltyPrice(amount: number, years: number) {
+     if (years >= 5) {
+       return amount - Math.floor(amount / 20);
+     }
+     return amount;
+   }
 
-// test/pricing.test.ts â€” never references loyaltyPrice
-import { discountedTotal } from "../src/pricing";
-it("no discount below threshold", () => {
-  expect(discountedTotal(5000)).toBe(5000);
-});
-```
+   // test/pricing.test.ts â€” never references loyaltyPrice
+   import { discountedTotal } from "../src/pricing";
+   it("no discount below threshold", () => {
+     expect(discountedTotal(5000)).toBe(5000);
+   });
+   ```
 
-Expected static evidence:
+   Expected static evidence:
 
-- changed `loyaltyPrice` lines classify `no_static_path` with
-  `reach no: 0 related test(s) found for owner \`loyaltyPrice\``;
-- no related test is listed, and the missing line names the absent
-  reference (`No test references \`loyaltyPrice(\``);
-- the same file still relates both tests to `discountedTotal`, which they call.
+   - changed `loyaltyPrice` lines classify `no_static_path` with
+     `reach no: 0 related test(s) found for owner \`loyaltyPrice\``;
+   - no related test is listed, and the missing line names the absent
+     reference (`No test references \`loyaltyPrice(\``);
+   - the same file still relates both tests to `discountedTotal`, which they call.
 
 ## Test Mapping
 

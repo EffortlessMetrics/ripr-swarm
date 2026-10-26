@@ -170,6 +170,107 @@ fn forwarding_wrapper_relates_and_pairs_its_boundary_pin() -> Result<(), String>
     Ok(())
 }
 
+// #9849: the private bool's whole return is the same observed boundary as
+// its predicate twin; the wrapper's distinct literal branches preserve it.
+#[test]
+fn boolean_return_twin_is_pinned_by_a_forwarding_wrapper() -> Result<(), String> {
+    for tests in [
+        BOUNDARY_TESTS,
+        "        assert_eq!(5, order_discount(10));\n        assert_eq!(0, order_discount(9));",
+    ] {
+        let finding = family_finding(&bulk_source(FORWARDING, tests), BULK_DIFF, "return_value")?;
+        assert_eq!(finding["probe"]["expression"], "10 <= qty", "{finding}");
+        assert_eq!(finding["ripr"]["propagate"]["state"], "yes", "{finding}");
+        assert_eq!(finding["classification"], "exposed", "{finding}");
+    }
+    Ok(())
+}
+
+#[test]
+fn boolean_return_twin_keeps_unobserved_wrapper_results_unconfirmed() -> Result<(), String> {
+    for (wrapper, tests) in [
+        (FORWARDING, "        assert_eq!(order_discount(10) * 0, 0);"),
+        (FORWARDING, "        assert_eq!(order_discount(10) % 5, 0);"),
+        (
+            FORWARDING,
+            "        let expected = order_discount(10);\n        assert_eq!(order_discount(10), expected);",
+        ),
+        (FORWARDING, "        assert_ne!(order_discount(10), 99);"),
+        (
+            FORWARDING,
+            "        assert_eq!(order_discount(12), 5);\n        assert_eq!(order_discount(3), 0);",
+        ),
+        (
+            FORWARDING,
+            "        let _ = order_discount(10);\n        assert_eq!(order_discount(12), 5);",
+        ),
+        (
+            FORWARDING,
+            "        if false { assert_eq!(order_discount(10), 5); }",
+        ),
+        (
+            FORWARDING,
+            "        let _ = order_discount(10);\n        let order_discount = |_: u32| 5;\n        assert_eq!(order_discount(10), 5);",
+        ),
+        (
+            "    let _ = is_bulk(qty);\n    5",
+            "        assert_eq!(order_discount(10), 5);",
+        ),
+        (
+            "    let _ = is_bulk(qty);\n    if qty >= 10 { 5 } else { 0 }",
+            BOUNDARY_TESTS,
+        ),
+        // #10284: a wrapper-local binding shadows the helper, and a macro
+        // statement may return before the forwarded call.
+        (
+            "    let is_bulk = |_q: u32| true;\n    if is_bulk(qty) { 5 } else { 0 }",
+            BOUNDARY_TESTS,
+        ),
+        (
+            "    early!(qty);\n    if is_bulk(qty) { 5 } else { 0 }",
+            BOUNDARY_TESTS,
+        ),
+        (
+            "    if is_bulk(qty) { qty / 2 } else { 5 }",
+            "        assert_eq!(order_discount(10), 5);\n        assert_eq!(order_discount(9), 5);",
+        ),
+    ] {
+        let finding = family_finding(&bulk_source(wrapper, tests), BULK_DIFF, "return_value")?;
+        // The refusal must come from the guard, not from a lost relation.
+        assert_eq!(
+            relation_of(&finding, "ten_items_earn_the_bulk_discount"),
+            Some("helper_owner_call"),
+            "{wrapper}\n{tests}\n{finding}"
+        );
+        assert_ne!(
+            finding["classification"], "exposed",
+            "{wrapper}\n{tests}\n{finding}"
+        );
+        assert_ne!(finding["ripr"]["discriminate"]["state"], "yes", "{finding}");
+    }
+    Ok(())
+}
+
+#[test]
+fn boolean_return_twin_does_not_borrow_other_calls_or_short_circuit_gates() -> Result<(), String> {
+    let split = bulk_source(FORWARDING, "        let _ = order_discount(10);");
+    let split = split.replace(
+        "fn quota_is_two_hundred() {",
+        "fn quota_is_two_hundred() { assert_eq!(order_discount(12), 5);",
+    );
+    let finding = family_finding(&split, BULK_DIFF, "return_value")?;
+    assert_ne!(finding["classification"], "exposed", "{finding}");
+
+    let source = bulk_source(FORWARDING, "        assert_eq!(order_discount(10), 5);")
+        .replace("10 <= qty", "(10 <= qty) || true");
+    let diff = BULK_DIFF
+        .replace("qty >= 10", "(qty >= 10) || true")
+        .replace("10 <= qty", "(10 <= qty) || true");
+    let finding = family_finding(&source, &diff, "return_value")?;
+    assert_ne!(finding["classification"], "exposed", "{finding}");
+    Ok(())
+}
+
 #[test]
 fn wrapper_tests_that_miss_the_boundary_still_report_the_gap() -> Result<(), String> {
     let tests =
@@ -1195,6 +1296,42 @@ fn unindexed_same_named_test_module_fn_is_caught_by_shadow_fallback() -> Result<
     Ok(())
 }
 
+// #9329: the bytesize shape. The owner has two direct callers (the method a
+// test helper reaches and a `Display::fmt` no test calls), the helper asserts
+// the method's result unchanged, and the boundary row arrives as a
+// const-constructor receiver.
+fn bytesize_source(helper_body: &str) -> String {
+    format!(
+        "pub const KB: u64 = 1_000;\npub const KIB: u64 = 1_024;\n\n#[derive(Clone, Copy)]\npub struct ByteSize(pub u64);\n\nimpl ByteSize {{\n    pub const fn kib(size: u64) -> Self {{\n        ByteSize(size * KIB)\n    }}\n\n    pub fn to_string_as(&self, si_unit: bool) -> String {{\n        to_string(self.0, si_unit)\n    }}\n}}\n\nimpl std::fmt::Display for ByteSize {{\n    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {{\n        f.pad(&to_string(self.0, false))\n    }}\n}}\n\npub fn to_string(bytes: u64, si_prefix: bool) -> String {{\n    let unit = if si_prefix {{ KIB }} else {{ KB }};\n    if bytes <= unit {{\n        format!(\"{{}} B\", bytes)\n    }} else {{\n        format!(\"{{}} big\", bytes / unit)\n    }}\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    fn assert_to_string(expected: &str, b: ByteSize, si: bool) {{\n        {helper_body}\n    }}\n\n    #[test]\n    fn test_to_string() {{\n        assert_to_string(\"215 B\", ByteSize(215), true);\n        assert_to_string(\"1 big\", ByteSize::kib(1), true);\n        assert_to_string(\"1 big\", ByteSize::kib(1), false);\n    }}\n}}\n"
+    )
+}
+
+const BYTESIZE_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -24,3 +24,3 @@ pub fn to_string(bytes: u64, si_prefix: bool) -> String {\n     let unit = if si_prefix { KIB } else { KB };\n-    if bytes < unit {\n+    if bytes <= unit {\n         format!(\"{} B\", bytes)\n";
+
+#[test]
+fn bytesize_shape_asserting_the_method_result_is_exposed() -> Result<(), String> {
+    let source = bytesize_source("assert_eq!(expected.to_string(), b.to_string_as(si));");
+    let finding = predicate_finding(&source, BYTESIZE_DIFF)?;
+    assert_eq!(finding["classification"], "exposed", "{finding}");
+    assert_eq!(
+        relation_of(&finding, "test_to_string"),
+        Some("helper_owner_call"),
+        "{finding}"
+    );
+    Ok(())
+}
+
+#[test]
+fn bytesize_shape_not_observing_the_method_result_is_not_exposed() -> Result<(), String> {
+    for helper in [
+        "b.to_string_as(si);\n        assert!(!expected.is_empty());",
+        "let shown = b.to_string_as(si);\n        assert_eq!(expected.to_string(), shown);",
+    ] {
+        let finding = predicate_finding(&bytesize_source(helper), BYTESIZE_DIFF)?;
+        assert_ne!(finding["classification"], "exposed", "{helper}: {finding}");
+    }
+    Ok(())
+}
 const WIDE_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n fn wide_x(input: &str) -> bool {\n-    input.len() > 3\n+    3 < input.len()\n }\n";
 
 /// RIPR-SPEC-0159 example 9 (#9889): the private helper `wide_x` is reached

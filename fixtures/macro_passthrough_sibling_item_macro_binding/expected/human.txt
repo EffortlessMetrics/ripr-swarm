@@ -1,0 +1,55 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/macro_passthrough_sibling_item_macro_binding/input
+
+Summary: 2 probes (0 exposed, 0 weak, 0 unrevealed, 2 no path); 2 of 2 findings unsuppressed
+
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
+
+Start here:
+  State: limited by static analysis
+  Safe next action: review the unresolved static path and existing tests before treating this as repair-ready
+  File: ./src/lib.rs:2
+  Static exposure: no path (severity: warning, confidence 0.48)
+  Why no path: no related test was found that reaches this change
+  Canonical gap: gap:rust:src/lib.rs:gate:predicate_boundary:predicate:input==10
+  Changed behavior: input >= 10
+  Missing discriminator: No detected boundary input for the changed predicate
+  Next step: ripr found no static test path to this change — this is not a coverage assessment. A
+    test may already exercise it through macros, helper-call chains, or integration tests that
+    ripr's static model does not yet trace. If none does, add a co-located test that reaches and
+    observes the changed behavior so a discriminator exists
+  Evidence: reach no · infection unknown · propagation yes · observation no · discriminator no
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
+      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;
+      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;
+      candidate line = changed line ripr considers for probes
+    - reach no: No static test path found for the changed owner
+    - infection unknown: No tests were found, so activation/infection cannot be estimated
+    - 4 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root <cwd>/fixtures/macro_passthrough_sibling_item_macro_binding/input --diff <cwd>/fixtures/macro_passthrough_sibling_item_macro_binding/diff.patch --mode fast probe:src_lib.rs:predicate:fa1d51d0
+  ripr context --root <cwd>/fixtures/macro_passthrough_sibling_item_macro_binding/input --diff <cwd>/fixtures/macro_passthrough_sibling_item_macro_binding/diff.patch --mode fast --at probe:src_lib.rs:predicate:fa1d51d0
+Write a test for it:
+  ripr agent stub --root <cwd>/fixtures/macro_passthrough_sibling_item_macro_binding/input --at src/lib.rs:2 --kind predicate
+
+Hidden:
+  1 lower-priority finding(s) omitted from default human output.
+    - ./src/lib.rs:2 (no path)
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json
+
+
+Note: ripr found no static test path for any of the 2 changed expression(s) in this diff. Scope
+  analyzed: 1 changed Rust file(s), 2 changed expression(s), and 0 statically linked related
+  test(s). This is not a coverage assessment. A test may already exercise these changes through
+  macros, helper-call chains, or integration tests that ripr's static model does not yet trace; if
+  none does, add co-located tests that observe the changed behavior.

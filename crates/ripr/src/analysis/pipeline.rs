@@ -1162,6 +1162,7 @@ fn run_pipeline_for_diff_text_with_language_config(
         .collect::<Vec<_>>();
 
     let mut findings: Vec<Finding> = Vec::new();
+    let mut value_origins = crate::value_origins::ValueOrigins::default();
     let mut rust_diagnostic_origins =
         crate::analysis::diagnostic_origin::RustDiagnosticOrigins::default();
     let mut rust_consumed_sources =
@@ -1252,6 +1253,7 @@ fn run_pipeline_for_diff_text_with_language_config(
         harness_projections.extend(result.harness_projections);
         rust_diagnostic_origins = result.rust_diagnostic_origins;
         rust_consumed_sources = result.rust_consumed_sources;
+        value_origins.extend(result.value_origins);
         findings.extend(result.findings);
         rust_changed_files += result.changed_files;
         candidate_line_count += result.candidate_line_count;
@@ -1305,6 +1307,12 @@ fn run_pipeline_for_diff_text_with_language_config(
     // (#5421). They say nothing about whether the diff parsed, so the
     // malformed-diff check below must not treat them as an explanation.
     let mut supplied_evidence_limitations = 0usize;
+    // The TypeScript adapter serves both the `typescript` and `javascript`
+    // ids and returns the same result for either (#10013). Its per-label
+    // outcomes are recorded on every pass, but findings, limitations and
+    // counts are merged once per adapter family so enabling both ids does not
+    // retain each finding twice.
+    let mut typescript_family_merged = false;
     for language in languages {
         cancellation::checkpoint()?;
         // Non-abort contract (Campaign 31 PR 10, #1403): a preview-language
@@ -1335,9 +1343,14 @@ fn run_pipeline_for_diff_text_with_language_config(
         match attempted {
             Ok(result) => {
                 cancellation::checkpoint()?;
-                candidate_line_count += result
-                    .candidate_line_count
-                    .max(candidate_lines_from_findings(&result.findings));
+                let repeat_typescript_pass =
+                    matches!(language, LanguageId::TypeScript | LanguageId::JavaScript)
+                        && std::mem::replace(&mut typescript_family_merged, true);
+                if !repeat_typescript_pass {
+                    candidate_line_count += result
+                        .candidate_line_count
+                        .max(candidate_lines_from_findings(&result.findings));
+                }
                 let produced_findings = !result.findings.is_empty();
                 // A preview adapter indexes its whole language across the
                 // workspace even when the diff touches none of it. Its
@@ -1375,6 +1388,10 @@ fn run_pipeline_for_diff_text_with_language_config(
                     &routed_outcome_labels(preview_changed_files),
                     &scope_label,
                 ));
+                if repeat_typescript_pass {
+                    continue;
+                }
+                value_origins.extend(result.value_origins);
                 findings.extend(result.findings);
                 if reads_only_supplied_evidence {
                     supplied_evidence_limitations += result.limitations.len();
@@ -1645,7 +1662,7 @@ fn run_pipeline_for_diff_text_with_language_config(
     if !own_artifact_files.is_empty() {
         eprintln!(
             "{}",
-            ripr_artifact_disclosure(&artifact_roots, &own_artifact_files)
+            ripr_artifact_disclosure(&options.root, &artifact_roots, &own_artifact_files)
         );
     }
 
@@ -1891,9 +1908,27 @@ fn run_pipeline_for_diff_text_with_language_config(
     // a contradiction is an accounting bug for tests and debug builds to
     // surface, never an analysis failure.
     debug_assert!(
-        diff_language_aggregate.validate().is_ok(),
+        super::language_outcome::reconcile(
+            &diff_language_aggregate,
+            languages,
+            &findings,
+            analysis_outcome.as_ref()
+        )
+        .is_ok(),
         "{:?}",
-        diff_language_aggregate.validate()
+        super::language_outcome::reconcile(
+            &diff_language_aggregate,
+            languages,
+            &findings,
+            analysis_outcome.as_ref()
+        )
+    );
+    let language_view =
+        super::language_outcome::LanguageCompletenessView::from_aggregate(&diff_language_aggregate);
+    debug_assert!(
+        language_view.reconcile_public_runs(&language_runs).is_ok(),
+        "{:?}",
+        language_view.reconcile_public_runs(&language_runs)
     );
     #[cfg(test)]
     if let Ok(mut aggregates) = DIFF_AGGREGATES.lock() {
@@ -1901,6 +1936,7 @@ fn run_pipeline_for_diff_text_with_language_config(
     }
 
     Ok(AnalysisResult {
+        value_origins,
         harness_projections,
         analysis_outcome,
         summary: summary_result,
@@ -1917,6 +1953,7 @@ fn run_pipeline_for_diff_text_with_language_config(
         ignored_source_paths: Vec::new(),
         rust_diagnostic_origins,
         rust_consumed_sources,
+        language_view: Some(language_view),
     })
 }
 
@@ -2029,6 +2066,7 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
     language_config: &crate::config::LanguagesConfig,
 ) -> Result<AnalysisResult, String> {
     let mut findings: Vec<Finding> = Vec::new();
+    let mut value_origins = crate::value_origins::ValueOrigins::default();
     let mut rust_diagnostic_origins =
         crate::analysis::diagnostic_origin::RustDiagnosticOrigins::default();
     let mut rust_consumed_sources =
@@ -2070,6 +2108,7 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
             rust_harness_projections = result.harness_projections;
             rust_diagnostic_origins = result.rust_diagnostic_origins;
             rust_consumed_sources = result.rust_consumed_sources;
+            value_origins.extend(result.value_origins);
             findings.extend(result.findings);
             rust_production_files += result.production_files;
             files_by_language.push((LanguageId::Rust, result.production_files));
@@ -2098,6 +2137,7 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
                 let outcome = LanguageAnalysisOutcomeV1::from_repo_result(*language, &result, None);
                 language_runs.extend(outcome.compat_run());
                 repo_language_aggregate.record(outcome);
+                value_origins.extend(result.value_origins);
                 findings.extend(result.findings);
                 files_by_language.push((*language, result.production_files));
             }
@@ -2135,9 +2175,17 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
     let repo_language_aggregate = repo_language_aggregate.finish();
     // Internal invariant check; never changes what a release build reports.
     debug_assert!(
-        repo_language_aggregate.validate().is_ok(),
+        super::language_outcome::reconcile(&repo_language_aggregate, languages, &findings, None)
+            .is_ok(),
         "{:?}",
-        repo_language_aggregate.validate()
+        super::language_outcome::reconcile(&repo_language_aggregate, languages, &findings, None)
+    );
+    let language_view =
+        super::language_outcome::LanguageCompletenessView::from_aggregate(&repo_language_aggregate);
+    debug_assert!(
+        language_view.reconcile_public_runs(&language_runs).is_ok(),
+        "{:?}",
+        language_view.reconcile_public_runs(&language_runs)
     );
     #[cfg(test)]
     if let Ok(mut aggregates) = REPO_AGGREGATES.lock() {
@@ -2152,6 +2200,7 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
     }
 
     Ok(AnalysisResult {
+        value_origins,
         harness_projections: rust_harness_projections,
         analysis_outcome: None,
         summary: summary_result,
@@ -2168,6 +2217,7 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
         ignored_source_paths: Vec::new(),
         rust_diagnostic_origins,
         rust_consumed_sources,
+        language_view: Some(language_view),
     })
 }
 
@@ -2501,6 +2551,7 @@ fn bounded_path_listing(paths: &[String]) -> String {
 /// Python repo whose template `.gitignore` does not cover Rust-conventional
 /// `target/`.
 fn ripr_artifact_disclosure(
+    workspace_root: &std::path::Path,
     artifact_roots: &[PathBuf],
     own_artifact_files: &[diff::ChangedFile],
 ) -> String {
@@ -2536,9 +2587,19 @@ fn ripr_artifact_disclosure(
     } else {
         &matched_roots
     };
+    // A Cargo project's repair preflight needs the whole build directory
+    // `target/` ignored (a child-only rule is insufficient), so the default
+    // `target/ripr` root is advised as `/target/` there (#9006).
+    let cargo_project = workspace_root.join("Cargo.toml").is_file();
     let entries = advice_roots
         .iter()
-        .map(|root| diff::artifact_root_gitignore_entry(root))
+        .map(|root| {
+            if cargo_project && diff::artifact_root_pathspec(root) == "target/ripr" {
+                "/target/".to_string()
+            } else {
+                diff::artifact_root_gitignore_entry(root)
+            }
+        })
         .collect::<Vec<_>>()
         .join(", ");
     format!(
@@ -2767,6 +2828,7 @@ fn rebase_finding_paths_to_repository(
             |relative| repository_root.join(relative),
         )
     };
+    result.value_origins.rebase(rebase);
     for finding in &mut result.findings {
         finding.probe.location.file = rebase(&finding.probe.location.file);
     }
@@ -3170,7 +3232,11 @@ mod tests {
     fn ripr_artifact_disclosure_escapes_gitignore_metacharacters() {
         let files = [changed_file("build/cache*/nested/a.json")];
         let roots = vec![PathBuf::from("build/cache*")];
-        let message = ripr_artifact_disclosure(&roots, &files);
+        let message = ripr_artifact_disclosure(
+            std::path::Path::new("no-such-workspace-root"),
+            &roots,
+            &files,
+        );
         assert!(message.contains(r"Add /build/cache\*/ to"), "{message}");
     }
 
@@ -3414,7 +3480,11 @@ mod tests {
             changed_file("target/ripr/pilot/pilot-summary.md"),
             changed_file("target/ripr/cache/repo-seam-facts/1.61/abc.json"),
         ];
-        let message = ripr_artifact_disclosure(&[PathBuf::from("target").join("ripr")], &files);
+        let message = ripr_artifact_disclosure(
+            std::path::Path::new("no-such-workspace-root"),
+            &[PathBuf::from("target").join("ripr")],
+            &files,
+        );
         assert!(message.contains("2 ripr artifact file(s)"), "{message}");
         assert!(
             message.contains("target/ripr/pilot/pilot-summary.md"),
@@ -3424,13 +3494,39 @@ mod tests {
     }
 
     #[test]
+    fn ripr_artifact_disclosure_advises_the_whole_target_dir_for_a_cargo_project()
+    -> Result<(), String> {
+        let dir =
+            std::env::temp_dir().join(format!("ripr-disclosure-cargo-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+        std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n")
+            .map_err(|error| error.to_string())?;
+        let files = [changed_file("target/ripr/pilot/pilot-summary.md")];
+        let roots = [PathBuf::from("target").join("ripr")];
+        let cargo = ripr_artifact_disclosure(&dir, &roots, &files);
+        assert!(cargo.contains("Add /target/ to"), "{cargo}");
+        assert!(!cargo.contains("/target/ripr/ to"), "{cargo}");
+        // Without a Cargo.toml the literal root is still advised.
+        let plain = dir.join("plain");
+        std::fs::create_dir_all(&plain).map_err(|error| error.to_string())?;
+        let other = ripr_artifact_disclosure(&plain, &roots, &files);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(other.contains("Add /target/ripr/ to"), "{other}");
+        Ok(())
+    }
+
+    #[test]
     fn ripr_artifact_disclosure_advice_follows_relocated_roots() {
         // PR #8901 review (devin #7): when the intake excluded a relocated
         // cache, the recovery must name the relocated layer entries, not the
         // stale `/target/ripr/` rule that covers none of them.
         let files = [changed_file(".ripr-cache/repo-seam-facts/1.61/abc.json")];
         let roots = vec![PathBuf::from(".ripr-cache").join("repo-seam-facts")];
-        let message = ripr_artifact_disclosure(&roots, &files);
+        let message = ripr_artifact_disclosure(
+            std::path::Path::new("no-such-workspace-root"),
+            &roots,
+            &files,
+        );
         assert!(
             message.contains("/.ripr-cache/repo-seam-facts/"),
             "{message}"
@@ -5851,7 +5947,16 @@ mod tests {
             single_aggregate.semantic_digest,
             both_aggregate.semantic_digest
         );
-        assert!(both.findings.len() >= single.findings.len());
+        // #10013: the retained findings, limitations and file counts are the
+        // single run's, not the adapter output appended once per id.
+        assert!(!single.findings.is_empty(), "fixture must yield findings");
+        assert_eq!(both.findings.len(), single.findings.len());
+        assert_eq!(both.findings.len(), summed(&both_aggregate));
+        assert_eq!(both.summary.findings, single.summary.findings);
+        assert_eq!(
+            both.summary.changed_files_by_language,
+            single.summary.changed_files_by_language
+        );
         Ok(())
     }
 

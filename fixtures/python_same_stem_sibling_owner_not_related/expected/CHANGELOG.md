@@ -363,3 +363,39 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_same_stem_sibling_owner_not_related (31)
+
+Reason:
+RIPR-SPEC-0224: Python related-test row gains missing_input when its own direct calls never reach the changed predicate boundary (#5491)
+
+Command:
+`cargo xtask goldens bless python_same_stem_sibling_owner_not_related --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_same_stem_sibling_owner_not_related (32)
+
+Reason:
+RIPR-SPEC-0122: digest missing-discriminator prose wraps instead of one_line clipping (#4323 parity); the ellipsized cut dropped the operative tail silently
+
+Command:
+`cargo xtask goldens bless python_same_stem_sibling_owner_not_related --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_same_stem_sibling_owner_not_related (33)
+
+Reason:
+RIPR-SPEC-0122: define finding, unsuppressed, unknown, base-side and candidate line in the evidence legend (#9244)
+
+Command:
+`cargo xtask goldens bless python_same_stem_sibling_owner_not_related --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -19,7 +19,10 @@ Start here:
   Static exposure: unknown (severity: note, confidence 0.20)
   Why unknown: the analysis could not determine a static exposure state
   Changed behavior: if not self.stop:
-  Analyzer limit: Static limit `dynamic_dispatch`: `numeric_range.__reversed__` is a dunder method Python invokes through operator or `with` syntax; related tests build `numeric_range` instances,…
+  Analyzer limit: Static limit `dynamic_dispatch`: `numeric_range.__reversed__` is a dunder method
+    Python invokes through operator or `with` syntax; related tests build `numeric_range` instances,
+    but the preview adapter does not bind the syntax to the instance or evaluate the assertion
+    against the dunder's result, so it does not grade this edit as a gap
   Related test: tests/test_nr.py:4 test_reversed_after_rebinding_the_receiver
   Evidence: reach weak · infection unknown · propagation unknown · observation weak · discriminator unknown
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
@@ -29,6 +32,9 @@ Start here:
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
       unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;
+      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;
+      candidate line = changed line ripr considers for probes
     - reach weak: 1 heuristic Python test link(s) found for owner `__reversed__`; relation is uncertain
     - infection unknown: Static limit `dynamic_dispatch` prevents a safe Python infection claim
     - 4 more detail line(s) in --format human-full
@@ -36,7 +42,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_protocol_entry_bracketed_rebind_no_exposed_credit/input --diff <cwd>/fixtures/python_protocol_entry_bracketed_rebind_no_exposed_credit/diff.patch --mode fast probe:src_nr.py:python_preview:852b3ff0
   ripr context --root <cwd>/fixtures/python_protocol_entry_bracketed_rebind_no_exposed_credit/input --diff <cwd>/fixtures/python_protocol_entry_bracketed_rebind_no_exposed_credit/diff.patch --mode fast --at probe:src_nr.py:python_preview:852b3ff0
-  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_nr.py:python_preview:852b3ff0 --root <cwd>/fixtures/python_protocol_entry_bracketed_rebind_no_exposed_credit/input` for the full gate's answer
+  no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full

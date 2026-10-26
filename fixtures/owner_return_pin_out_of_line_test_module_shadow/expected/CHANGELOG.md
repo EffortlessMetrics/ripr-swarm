@@ -181,3 +181,68 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — owner_return_pin_out_of_line_test_module_shadow (15)
+
+Reason:
+RIPR-SPEC-0108: a name-token relation no longer credits an oracle, and a name-token-only owner gets inspection-first guidance rather than assertion advice (#9169); regenerated over main's #9373/#9244 wording
+
+Command:
+`cargo xtask goldens bless owner_return_pin_out_of_line_test_module_shadow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — owner_return_pin_out_of_line_test_module_shadow (16)
+
+Reason:
+RIPR-SPEC-0108: regenerated after merging origin/main over the #9169 name-token demotion; wording from main's #9373/#9244 legend, no class change beyond #9169
+
+Command:
+`cargo xtask goldens bless owner_return_pin_out_of_line_test_module_shadow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — owner_return_pin_out_of_line_test_module_shadow (17)
+
+Reason:
+RIPR-SPEC-0224
+
+Command:
+`cargo xtask goldens bless owner_return_pin_out_of_line_test_module_shadow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — owner_return_pin_out_of_line_test_module_shadow (18)
+
+Reason:
+RIPR-SPEC-0122: state the missing evidence and the rerun for a not-ready repair route instead of routing back to the gate (#9244)
+
+Command:
+`cargo xtask goldens bless owner_return_pin_out_of_line_test_module_shadow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — owner_return_pin_out_of_line_test_module_shadow (19)
+
+Reason:
+RIPR-SPEC-0122: define finding, unsuppressed, unknown, base-side and candidate line in the evidence legend (#9244)
+
+Command:
+`cargo xtask goldens bless owner_return_pin_out_of_line_test_module_shadow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

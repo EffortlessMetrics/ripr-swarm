@@ -434,7 +434,10 @@ capability without failing installed-binary analysis. An additive
 `generated_workflow` advisory check appears when
 `.github/workflows/ripr.yml` installs ripr without a version (the 0.10
 template) or pins a version other than the running one; its `evidence` names
-the refresh command. The source-build profile
+the refresh command. When the root has a `.mcp.json`, an additive `mcp_config`
+check reports `pass` if its `ripr` server entry runs `ripr mcp --stdio` (what
+`ripr init --mcp` writes) and `advisory` otherwise, with `evidence` naming the
+problem; it never changes `status`, and no file means no check. The source-build profile
 fails on missing tools or rustc below RIPR's build MSRV. Missing cargo or rustc
 evidence names an install route (rustup or the OS package manager); a rustc
 below the build minimum still names `rustup update stable`. It reports its
@@ -460,7 +463,12 @@ PATH, symlinks resolved, or `null`), `path_ripr_is_cargo_build_output`,
 `warnings`. Cargo build output means a binary beside Cargo's `deps/` and
 `.fingerprint/` directories in a `target/<profile>/` directory. The warnings are
 advisory: they never change `status` or the exit code, because a workspace build
-on PATH is a legitimate development setup.
+on PATH is a legitimate development setup. One warning (#10347) fires when no
+`ripr` is on PATH and a project config (`.mcp.json`, `.vscode/mcp.json`,
+`.cursor/mcp.json`) defines a server that launches it by bare name (`mcpServers`
+for `.mcp.json` and Cursor, `servers` for VS Code; JSONC comments are not
+parsed, so such a file is skipped); the default human screen prints the
+same text as a `~` line.
 
 ### Language capabilities (`ripr capabilities --json`, schema `0.1`, #5531)
 
@@ -1344,7 +1352,7 @@ Envelope (`schema_version = "ripr-check-artifact-v1"`):
 
 ## Finding
 
-The `id` field is content-addressed: `probe:<sanitized_path>:<family>:<fp8>[.<n>]` where `<fp8>` is the first 8 hex chars of SHA-256 over `path\0family\0owner\0expression\0`. This means a suppression tracks the code, not the line — the same expression moved to a new line keeps its id (suppression follows it), while changed code at a spot gets a new id (stale suppression invalidates). The `line` field in the `probe` object still gives locality for display. For Rust expressions, formatting whitespace is collapsed outside literal contents, except that an actual line-comment terminator remains one LF; literal whitespace is part of the value. CRLF, trailing comment whitespace and following indentation normalize to that same boundary. Comment text otherwise remains part of the source identity. Older IDs that collapsed literal whitespace or a significant line-comment boundary become stale and must be reviewed rather than automatically retargeted (#8832). The existing fail-closed compatibility procedure applies: an unmatched selector remains unapplied with a visible warning; review the current finding before recording its current ID. An ambiguous old ID is never an alias for either new value. The fingerprint format and output schema are unchanged. The actual distinct-payload fp8 collision in #8838 remains a known violation of the material-input/order identity requirements, not a waiver of them.
+The `id` field is content-addressed: `probe:<sanitized_path>:<family>:<fp8>[.<n>]` where `<fp8>` is the first 8 hex chars of SHA-256 over `path\0family\0owner\0expression\0`. This means a suppression tracks the code, not the line — the same expression moved to a new line keeps its id (suppression follows it), while changed code at a spot gets a new id (stale suppression invalidates). The `line` field in the `probe` object still gives locality for display. For Rust expressions, formatting whitespace is collapsed outside literal contents, except that an actual line-comment terminator remains one LF; literal whitespace is part of the value. CRLF, trailing comment whitespace and following indentation normalize to that same boundary. Comment text otherwise remains part of the source identity. Older IDs that collapsed literal whitespace or a significant line-comment boundary become stale and must be reviewed rather than automatically retargeted (#8832). The existing fail-closed compatibility procedure applies: an unmatched selector remains unapplied with a visible warning; review the current finding before recording its current ID. An ambiguous old ID is never an alias for either new value. The fingerprint format and output schema are unchanged. When distinct expressions at one owner share an `<fp8>`, the `.<n>` suffix is assigned by a full-width digest of each payload, so the same pair gets the same two IDs in either diff order; repeated copies of one expression keep encounter-order suffixes (#8838). A single changed expression whose `<fp8>` equals that of a different earlier expression at the same owner (a 32-bit collision with no sibling in the run to disambiguate it) still keeps the shared ID; that remainder of #8838 is a known violation of the material-input identity requirement, not a waiver of it.
 
 A finding contains:
 
@@ -1480,6 +1488,25 @@ The evidence-first fields are additive in schema `0.2`:
   evidence-path prose therefore says `source ... value`; the separate admitted
   `ripr.observe` and `ripr.discriminate` stages retain their own meaning. Field
   names, typed values, provenance, ordering and caps are unchanged.
+- The shared activation value-fact sorter used by Rust activation/slice and
+  Python boundary/guard/term evidence treats the recorded file as part of fact
+  identity (#8935). Equal line, text, value and context from distinct files
+  remain separate, with deterministic ordering; exact duplicates within one
+  file collapse. Machine value objects still omit the file field, so distinct
+  source locations can produce identical serialized entries and increase
+  counts or consume capped slots. This does not change the line-keyed
+  `assertion_texts` limitation below or the separate test-grip sorter.
+- The Rust library `ValueFact` retains its original four public fields:
+  `line`, `text`, `value`, and `context`. File-aware classification uses an
+  internal located representation. `CheckOutput::source_value_files(finding)`
+  provides producer-recorded files in the same occurrence order as that
+  finding's complete source-value vector. Unknown individual files remain
+  `None`. The accessor returns `None` when no matching producer receipt exists,
+  the full probe or ordered value payload changed, or receipts conflict.
+  Unchanged clones can use the same receipt. Fresh human check and explain
+  rendering use this context; detached/deserialized four-field findings retain
+  honest bare-line rendering. Paths are never reconstructed from tokens,
+  coincident line numbers, or short finding IDs.
 - `identity.git_candidate_subject` (additive, no `schema_version` bump,
   #3278) appears in the `analysis_outcome.outcome.identity` object
   as a non-null object exactly when the run analyzed an immutable Git
@@ -1594,6 +1621,14 @@ The evidence-first fields are additive in schema `0.2`:
   examined row (one per matched assertion, one per test that supplied none).
   Rows listed only as `assertion_not_observing` take only window slots the
   oracle rows leave free, so the oracle rows and their order are unchanged.
+- `related_tests[].role` — (optional, additive, #5563) the row's decision
+  role, a controlled `related_test_role` value, independent of `miss`.
+  `examined_only` marks a row retained only to show an examined test whose
+  assertions matched nothing (RIPR-SPEC-0224); decision paths skip it.
+  `contributing` is the default and is omitted from output; an artifact
+  without the field reads every row as `contributing`. `miss` never changes
+  which decision paths consume a row, and the role is not runtime execution
+  evidence.
 - `oracle_kind` and `oracle_strength` summarize the strongest related oracle
   currently visible to the finding.
 - `suggested_next_action` mirrors `recommended_next_step` for action-oriented
@@ -2736,10 +2771,16 @@ suppression.
 
 `ripr check --format json` caps the rendered `findings` array at
 `RIPR_CHECK_FINDINGS_BYTES` emitted array bytes (payloads plus separators),
-default 1,000,000. Findings render in deterministic pipeline order; once the
-emitted bytes exceed the budget, the rest is disclosed rather than rendered.
-The first finding always renders, so a nonempty analysis never yields an empty
-prefix. Set the variable to `0` to remove the cap (unbounded); any positive
+default 1,000,000. When the budget engages (#10093), findings render in a
+deterministic priority order and the kept set is emitted in the unchanged
+pipeline order; the rest is disclosed rather than rendered. Priority is
+candidate-current before base-side or unresolved-currentness findings, then
+`reachable_unrevealed`, `weakly_exposed`, `no_static_path`, the unknown classes
+and `exposed` last, then a recommended next step, then the pipeline order as the
+tiebreak. Priority only chooses what renders; it never changes a class, count or
+currentness. A budget that does not engage emits every finding in pipeline
+order, byte-identical to before. The highest-priority finding always renders,
+so a nonempty analysis never yields an empty document. Set the variable to `0` to remove the cap (unbounded); any positive
 integer sets the budget explicitly. An unparseable value fails the run
 (fail-closed), naming the variable and the repair. Does not bump
 `schema_version` (additive optional member).
@@ -2752,12 +2793,16 @@ is never complete:
 - `basis` — always `"check_findings_byte_budget"`.
 - `downstream_consumable` — always `false`.
 - `message` — `rendered <R> of <T> findings within the findings-array byte
-  budget (...)`, naming the applied setting and the `=0` full-set repair.
+  budget (...)`, naming the applied setting and the `=0` full-set repair, the
+  keep-priority rule, and what was dropped: `omitted <N>: by class <class>=<n>,
+  ...; by file <file>=<n>, ...` (at most five files named, the rest counted as
+  `(+K more file(s))`, and a `base-side or unresolved-currentness` count when
+  any such finding was dropped).
 - `repair_route` — always `"output/check-findings-budget"`.
 
 When the budget engages, `analysis_outcome` also carries the additive
 members `document_complete: false`, `findings_rendered` and `findings_total`
-(#9010). They are emitted only when the findings array is a strict prefix;
+(#9010). They are emitted only when the findings array omits findings;
 unbounded runs and all existing goldens omit them. `analysis_complete` remains
 the analysis verdict derived from `outcome.kind` and no `outcome.kind` variant
 is added: the enum describes analysis, not the rendered document. The shared
@@ -2816,7 +2861,7 @@ Example (budget engaged after the first of 61 findings):
     "run_status": "limited_findings_bound",
     "basis": "check_findings_byte_budget",
     "downstream_consumable": false,
-    "message": "rendered 1 of 61 findings within the findings-array byte budget (RIPR_CHECK_FINDINGS_BYTES=1; raise it or set =0 for the full set)",
+    "message": "rendered 1 of 61 findings within the findings-array byte budget (RIPR_CHECK_FINDINGS_BYTES=1; raise it or set =0 for the full set); kept the highest-priority findings (candidate-current first, then reachable_unrevealed, weakly_exposed, no_static_path, the unknown classes, exposed last, then a recommended next step) in sort order; omitted 60: by class weakly_exposed=20, exposed=40; by file src/lib.rs=60",
     "repair_route": "output/check-findings-budget"
   }
 ]
@@ -2908,7 +2953,7 @@ fixtures/ts_static_limit and fixtures/typescript_mocked_module_limit).
 - `rust_debug_assertion_profile_unresolved` -- (RIPR-SPEC-0240, additive, #8051) A related, non-ignored test calls the owner directly and pins its result with a bare `debug_assert_eq!` that the owner-return pin admits under every gate it applies to `assert_eq!`. Debug assertions run under the default `cargo test` profile and are compiled out under `--release`, and ripr does not resolve which profile runs the tests, so the `weakly_exposed` or `reachable_unrevealed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`; this is a named limitation, not a missing-test, coverage, or repair claim, and never exposure credit.
 - `rust_call_fact_budget` -- (#8600, additive) A related test has a source line holding 256 distinct callees, the per-line call-fact budget, so further calls on that line may have been omitted (exactly 256 is treated as possibly truncated, not as proof a call was dropped). A negative claim that depends on the test's calls (`reachable_unrevealed` or `weakly_exposed`) is withheld as `static_unknown` with stop reason `gap_evidence_unresolved`; an already-unknown finding keeps its class, gains the named reason, and drops its call-derived absence lines, missing discriminators and next-step prescription. Saturation is read over every matched related test before the eight-row render cap, and a saturated test's `no_call_path`, `no_assertion`, `missing_input` and `assertion_not_observing` row misses read `observation_unconfirmed`. Findings with no related saturated test are unchanged, and the reason never raises a class. The `repo-exposure-json` and `repo-exposure-summary-json` seam readings apply the same decision to their stage evidence: a stage that read `no` or `weak` becomes `unknown`, the seam's missing boundary values are dropped, and the evidence record carries a `static_limitations[]` row whose `category` is `rust_call_fact_budget`, a `static_limitation` actionability and a `limitation` canonical item with no repair command; an already-unknown seam keeps its class and gains the reason. A named limitation, not a missing-test, coverage, or repair claim.
 - `rust_framework_oracle_unresolved` -- (RIPR-SPEC-0240, additive) A related test checks the owner through an environment variable it sets or removes, a mockall `returning` closure that reads its arguments, an expect-test `assert_debug_eq` literal, an insta snapshot whose redactions do not name the changed field, a literal pin on a receiver a test helper builds under a changed closure tail, or a field of a hand-written recording double the test passes as `&mut`. ripr does not evaluate that oracle, so a `weakly_exposed` or `reachable_unrevealed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`. Nothing is credited; this is a named limitation, not a coverage claim.
-- `rust_pinned_shape_unresolved` -- (RIPR-SPEC-0240, additive, #9440) A related, non-ignored test calls the owner directly and pins its whole result with an exact `assert_eq!`, but the changed code sits in a closure the call runs, a statement acting on the value the owner returns, or the `else` exit of a `let ... else`, none of which the owner-return pin reads. ripr does not resolve whether the pinned input runs the changed code, so the `weakly_exposed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`; this is a named limitation, not a missing-test, coverage, or repair claim, and never exposure credit.
+- `rust_pinned_shape_unresolved` -- (RIPR-SPEC-0240, additive, #9440) A related, non-ignored test calls the owner directly and pins its whole result with an exact `assert_eq!`, but the changed code sits in a closure the call runs, a statement acting on the value the owner returns, the `else` exit of a `let ... else`, or the update of a zero-initialized loop accumulator the owner returns whose pin ripr cannot read as a non-empty literal input with a nonzero total (RIPR-SPEC-0360), none of which the owner-return pin reads. ripr does not resolve whether the pinned input runs the changed code, so the `weakly_exposed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`; this is a named limitation, not a missing-test, coverage, or repair claim, and never exposure credit.
 - `rust_implicit_call_unresolved` -- (RIPR-SPEC-0240, additive, #9441) A test names the self type of a changed trait-impl method that the language calls from syntax (an operator trait, `Drop`, an iterator trait, `Deref`, `Index`, `PartialOrd`), or calls a same-named method on a receiver ripr does not type (`dyn Trait`, a second impl of the trait). ripr does not follow that call to the changed method, so a `weakly_exposed` or `reachable_unrevealed` gap whose reach rests on a shared file or name token is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`. Nothing is credited; this is a named limitation, not a coverage claim.
 - `rust_caller_loop_selector_unresolved` -- (RIPR-SPEC-0240, additive, #5503) The changed integer match arm is fed by a bounded `for` loop inside an `Iterator::next` whose selector range includes the arm, and a related test collects the iterator and compares the whole collection. ripr reads the range (with its file and line) but does not prove the loop runs for the test's input or that the arm's value reaches the compared items, so a `weakly_exposed` or `reachable_unrevealed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`. Nothing is credited; this is a named limitation, not a coverage claim.
 
@@ -3019,6 +3064,11 @@ while `call_effect` remains the fallback for other observable calls.
 - `missing_input`
 - `missing_exact_assertion`
 - `observation_unconfirmed`
+
+`related_test_role` values:
+
+- `contributing`
+- `examined_only`
 
 `next_action_class` values:
 
@@ -3645,10 +3695,10 @@ an operational error (exit `2`).
 
 ### Gap-Bound Repair Start
 
-For a TypeScript finding whose repair packet is complete, `ripr check` prints
-`ripr agent repair --gap-id <gap> --base <base> --phase before` as the start
-line (RIPR-SPEC-0311, #9103). The command re-runs the diff-scoped check against
-`--base`, requires the same shared packet validator to accept the finding, and
+For a TypeScript or Python finding whose repair packet is complete,
+`ripr check` prints `ripr agent repair --gap-id <gap> --base <base> --phase
+before` as the start line (RIPR-SPEC-0311, #9103; Python #10373). The command
+re-runs the diff-scoped check against `--base`, requires the same shared packet validator to accept the finding, and
 otherwise refuses with "the repair packet is not ready" and writes nothing.
 A refused start restores the shared workflow artifacts to the bytes they had
 before the invocation (removing only files it created). On
@@ -3667,8 +3717,10 @@ the edit cage. Absence from the after snapshot is never closure. An open or abse
 gap is a typed refusal (exit 3) recorded against the attempt's retry budget; it
 stays `awaiting_edit`. A compliant finish issues the gap-bound receipt below; the
 closure is also the `verify.bound_gap` of the `repair_after_result` envelope.
-Let-bound, imported and reach-barrier variants stay unrouted. Python keeps its
-terminal reason. The static result is exposure evidence only; it does not
+Let-bound, imported and reach-barrier TypeScript variants stay unrouted. A
+Python gap's seam routes (`ripr repair`, `agent repair --seam-id`) keep the
+Rust-only seam reason and point at this start; a Python finding whose record
+the validator refuses is offered no start. The static result is exposure evidence only; it does not
 claim a runtime mutation outcome.
 
 ### Gap-Bound Receipt
@@ -7755,15 +7807,27 @@ schemas.
 
 ```json
 {
-  "schema_version": "0.4",
+  "schema_version": "0.5",
   "tool": "ripr",
   "report": "repo-exposure-latency",
   "status": "warn",
   "output_parity": "not_checked",
+  "output_parity_checks": [
+    {
+      "format": "repo-exposure-json",
+      "status": "not_checked",
+      "reason": "served_run_timeout"
+    },
+    {
+      "format": "repo-exposure-md",
+      "status": "pass",
+      "reason": null
+    }
+  ],
   "status_reasons": [
     "repo-exposure-json: file_fact_cache_cache_phase_not_observed",
     "repo-exposure-md: file_fact_cache_cache_phase_not_observed",
-    "output_parity_not_checked"
+    "repo-exposure-json: output_parity_not_checked_served_run_timeout"
   ],
   "timeout_ms": 30000,
   "binary": "target/debug/ripr.exe",
@@ -7777,6 +7841,13 @@ schemas.
       "stderr_bytes": 152,
       "file_fact_cache": null,
       "file_fact_cache_limitation": "cache_phase_not_observed",
+      "cache_family_store": {
+        "schema_version": "0.1",
+        "store_errors": 0,
+        "store_failures": [],
+        "store_failures_dropped": 0
+      },
+      "cache_family_store_limitation": null,
       "resource_cost": {
         "schema_version": "0.1",
         "observer": "ripr_process_self",
@@ -7825,6 +7896,8 @@ schemas.
       "stderr_bytes": 138,
       "file_fact_cache": null,
       "file_fact_cache_limitation": "cache_phase_not_observed",
+      "cache_family_store": null,
+      "cache_family_store_limitation": "cache_family_store_not_observed",
       "resource_cost": null,
       "resource_cost_limitation": "resource_cost_receipt_not_observed",
       "trace": []
@@ -7840,24 +7913,70 @@ shape; the second run stands for any format that produced no receipt.
 
 Field contract:
 
-- `schema_version` - currently `"0.4"` for the diagnostic report. `0.3` adds
+- `schema_version` - currently `"0.5"` for the diagnostic report. `0.3` adds
   the analyzer's own `resource_cost` block; `0.4` adds `output_parity` and
-  `status_reasons` (#9503). No earlier field changed.
-- `status` - `fail` when a format exits unsuccessfully before timeout; `warn`
-  when a format times out, a later format is skipped after timeout, any run
-  has cache `store_errors` or `corrupt_ignored` entries, any run has no
-  observed cache receipt, or output parity is unchecked; otherwise `pass`.
-  Exit codes alone never earn `pass`. Output parity is currently always
-  unchecked, so today's reports are `warn` at best; `cargo xtask
-  release-readiness` carries that as a non-required `warn` and forwards
-  `status_reasons` into its detail.
-- `output_parity` - `not_checked`: this report runs each format once and does
-  not compare cache-served output with a cold recomputation, so until it does
-  `status` cannot be `pass`.
+  `status_reasons` (#9503); `0.5` makes `output_parity` a real comparison, adds
+  `output_parity_checks` and the per-run `cache_family_store` receipt (#9633).
+  No earlier field was removed.
+- `status` - `fail` when a format exits unsuccessfully before timeout or when
+  output parity found a `mismatch`; `warn` when a format times out, a later
+  format is skipped after timeout, any run has cache `store_errors` or
+  `corrupt_ignored` entries (file-fact or classified-seam / corpus-fingerprint),
+  any run has no observed cache receipt, or output parity is `not_checked`;
+  otherwise `pass`. Exit codes alone never earn `pass`. `pass` is reachable
+  only when every completed format has a `pass` parity check, both receipts
+  are observed and clean, and no format timed out or was skipped.
+- `output_parity` - `pass`, `mismatch`, `fail` or `not_checked`. The primary
+  runs themselves use a private empty cache per format
+  (`target/ripr/reports/repo-exposure-primary-cache/<fmt>`), so each computes
+  cold and emits its cache receipts; their durations are cold-cache durations.
+  For each format the primary run completed, the report runs
+  `ripr check --root . --format <fmt>`
+  twice against a private `RIPR_CACHE_DIR` under
+  `target/ripr/reports/repo-exposure-parity-cache/<fmt>`: first cold (empty
+  cache, so the output is computed), then served (the cache the cold run just
+  wrote). The served run must show a final `cache_load` trace status of `hit`
+  and the cold run must not, so equality is never claimed for a comparison
+  that did not actually exercise the cache. For JSON, the artifact envelope's
+  `generated_at` and `content_sha256` (stamped per run, the digest covering the
+  timestamp) are the only fields ignored; Markdown is compared byte for byte.
+  `pass` needs both expected formats (`repo-exposure-json` and
+  `repo-exposure-md`) present exactly once and every one `pass`; an omitted,
+  skipped or duplicated expected format blocks the aggregate `pass`
+  (`output_parity_not_checked_missing_format:<fmt>` or
+  `..._duplicate_format:<fmt>` in `status_reasons`). Empty output, or JSON that is not a
+  document with an `artifact` object, is `not_checked` (`output_unparseable`),
+  never a vacuous `pass`. Any `mismatch` makes the overall value `mismatch`,
+  and a served run that errors or exits nonzero after a passing cold run is
+  `fail` (`served_run_fail`, a real nonzero exit code); both make `status`
+  `fail`. A served-run timeout, a primary run that did not complete, or any
+  other unverified comparison is `not_checked`. The check compares one repository state
+  across cold and cache-served runs; it does not claim runtime mutation
+  outcomes or that the output is correct, only that the cache did not change it.
+- `output_parity_checks[]` - per format: `format`, `status` (`pass`,
+  `mismatch`, `fail`, `not_checked`) and `reason` (`null` for `pass`;
+  `served_output_differs_from_cold` for `mismatch`; `served_run_fail` for
+  `fail`; for `not_checked` one of
+  `primary_run_<status>`, `cold_run_error: <text>`, `cold_run_<status>`,
+  `cold_run_served_from_cache`, `served_run_error: <text>`,
+  `served_run_killed`, `served_run_timeout`,
+  `served_run_not_cache_hit`, `comparison_subject_moved` (the producer's own
+  subject receipt for the cold and served legs differ: source, config or
+  generated-disclosure movement, decided before outputs are compared),
+  `comparison_subject_unobserved`, `output_unparseable`) and `diagnostics`
+  (named store failures or receipt limitations from the two comparison legs'
+  own authenticated receipts, e.g. `served_cache_family_store_errors=1`).
 - `status_reasons` - the named, per-run reasons `status` is not `pass`
   (`<format>: file_fact_cache_store_errors=N`,
   `<format>: file_fact_cache_corrupt_ignored=N`,
-  `<format>: file_fact_cache_<limitation>`, `output_parity_not_checked`).
+  `<format>: file_fact_cache_<limitation>`,
+  `<format>: cache_family_store_errors=N`,
+  `<format>: <cache_family_store limitation>`,
+  `<format>: output_parity_mismatch`,
+  `<format>: output_parity_fail_<reason>`,
+  `<format>: output_parity_not_checked_<reason>`,
+  `<format>: parity_<cold|served>_<leg diagnostic>`, or
+  `output_parity_not_checked` when no check ran).
 - `timeout_ms` - timeout budget per repo-exposure format. Override with
   `RIPR_REPO_EXPOSURE_LATENCY_TIMEOUT_MS`.
 - `runs[].format` - `repo-exposure-json` or `repo-exposure-md`.
@@ -7884,6 +8003,33 @@ Field contract:
   file name has no portable spelling (not UTF-8, or a literal backslash in a
   Unix name); its counters still count. A cache hit that skips the file-fact phase
   does not fabricate zero counters.
+- `runs[].cache_family_store` - the bounded store outcome of the other two
+  best-effort cache families, the classified-seam store and the
+  corpus-fingerprint store (#9633): `store_errors`, up to 32
+  `{path, stage, error}` rows and `store_failures_dropped`, under the same
+  cap and `rows + dropped == store_errors` accounting as the file-fact
+  receipt. `stage` is `classified_seam_store` or `corpus_fingerprint_store`
+  and `path` is the cache family directory (`repo-seam-facts`,
+  `repo-corpus-fingerprint`), never an absolute path; a `null` path or a
+  file-fact stage is refused as an invalid receipt. A healthy run emits the
+  receipt with no rows (the row `error` is free text from the failing store
+  and may contain absolute paths), so an empty list is an observation and a missing
+  receipt is `cache_family_store_not_observed`. The analyzer's compact (badge)
+  classified path does not emit this receipt yet.
+- `runs[].cache_family_store_limitation` - `null` when the receipt is present;
+  otherwise `cache_family_store_not_observed`, `format_skipped`, or a
+  `malformed_`, `duplicate_`, `invalid_` or `untrusted_` receipt state.
+- Receipt authentication: the harness passes a fresh random token in
+  `RIPR_REPO_EXPOSURE_LATENCY_RECEIPT_TOKEN`; the analyzer then writes
+  `ripr_file_fact_cache_receipt`, `ripr_cache_family_store_receipt` and
+  `ripr_resource_cost_receipt` lines as `<prefix> token=<token> <json>`. A line
+  that starts with a receipt prefix but lacks the token (for example text
+  injected through a hostile file name echoed by a diagnostic) is ignored, and
+  when no authenticated receipt remains the limitation is `untrusted_*`. The
+  phase lines emitted through `trace_latency_phase` (which includes
+  `cache_load`) carry the token too, and the parity check accepts a
+  `cache_load` status only from a tokened line, in addition to comparing the
+  real outputs. The separate `index_phase` lines are not tokened.
 - `runs[].file_fact_cache_limitation` - `null` when the receipt is present;
   otherwise a named unavailable state, including skipped, missing, malformed,
   duplicate, or invalid cache receipts. Completed rows survive a later timeout.
@@ -14919,6 +15065,15 @@ Field contract:
   `not_run` and non-required until the version bump and clean release-prep tree
   make them safe to execute.
 - `checks[].command` - command or dry-run surface that produced the signal.
+  The `repo-exposure-latency` check is `pass` only when the latency report's
+  `status` is `pass` (its `output_parity` compared cache-served output with a
+  cold recomputation and found them equal). A report `output_parity` of
+  `mismatch` or `fail` is a required `fail`; so is a report whose per-format
+  `output_parity_checks[]` contradict its summary (a failing check under any
+  summary, or a summary `pass` without exactly one passing check per expected
+  format); any other non-pass report (unchecked parity,
+  cache store errors, timeouts) is a non-required `warn` whose details carry the
+  report's `output parity` and `status reason:` lines (#9633).
 - `checks[].summary` - short human-readable status.
 - `checks[].artifacts` - generated or inspected artifacts for the check.
 - `checks[].details` - optional bounded command output, missing fields, or
@@ -18506,7 +18661,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.97",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.108",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. This is the existing
@@ -19261,7 +19416,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "1.45",
+    "schema_version": "1.46",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,
@@ -19274,7 +19429,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.97",
+      "schema_version": "1.108",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",
@@ -19478,7 +19633,13 @@ content invalidations that caused this command to rebuild facts.
 when the file name has no portable spelling. Retained rows plus
 `cache.store_failures_dropped` equal `cache.store_errors`; a healthy run emits
 `[]` and `0`. The rows describe file-fact store failures only; results are
-recomputed, never served stale.
+recomputed, never served stale. A read through a path component that is a file
+(the entry directory is blocked) is a plain cache miss, not `corrupt_ignored`:
+the failed write that follows is the one reported store failure (#9633). The
+classified-seam and corpus-fingerprint store failures have `{path, stage,
+error}` rows (`stage` `classified_seam_store` or `corpus_fingerprint_store`) on
+the opt-in latency trace and in `cargo xtask repo-exposure-latency-report`,
+not in this receipt.
 `invalidation_status: "file_content_changed"` is emitted only when a prior
 same-path file-fact envelope is found under a different content key.
 Every targeted receipt also carries `cache.input_fingerprint`, an owned hash

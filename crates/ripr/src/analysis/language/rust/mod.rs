@@ -21,7 +21,9 @@ mod probe_shape;
 pub(crate) mod probes;
 
 pub(crate) use probe_shape::producer_gap_names_seam_shape;
-pub(crate) use probes::{changed_let_binding, mask_rust_comments_and_strings};
+pub(crate) use probes::{
+    changed_let_binding, mask_rust_char_literals, mask_rust_comments_and_strings,
+};
 
 use super::super::probes as analysis_probes;
 use super::super::{
@@ -1375,14 +1377,17 @@ fn needs_no_static_path_limit(finding: &Finding) -> bool {
         && finding.static_limit_kind.is_none()
 }
 
-/// Whether a `weakly_exposed` finding's only reach is proximity: every
+/// Whether a `weakly_exposed` or `reachable_unrevealed` finding's only reach is proximity: every
 /// related test shares the owner's file, module or a name token. With reach
 /// `weak`, the reach stage has already found no test calling the owner, so
 /// the weak reach rests on ripr not tracing a path, the same unresolved
 /// negative a `no_static_path` finding has, and a transitive or macro witness
 /// names the limit instead of a gap.
 fn needs_proximity_reach_limit(finding: &Finding) -> bool {
-    finding.class == ExposureClass::WeaklyExposed
+    matches!(
+        finding.class,
+        ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed
+    )
         && finding.static_limit_kind.is_none()
         && finding.ripr.reach.state == crate::domain::StageState::Weak
         && !finding.related_tests.is_empty()
@@ -1414,9 +1419,10 @@ fn apply_rust_no_static_path_limit(
     index: &RustIndex,
     property_macro_mentions: &oracles::PropertyMacroMentionIndex<'_>,
     transitive_reach: &classify::TransitiveReachIndex<'_>,
+    dependency_edges: Option<&classify::DependencyEdgeContext<'_>>,
 ) {
     if needs_proximity_reach_limit(finding) {
-        apply_rust_proximity_reach_limit(finding, probe, transitive_reach);
+        apply_rust_proximity_reach_limit(finding, probe, index, transitive_reach, dependency_edges);
         return;
     }
     if needs_mixed_macro_reach_limit(finding) {
@@ -1467,7 +1473,43 @@ fn apply_rust_no_static_path_limit(
         // specific witness (#8047).
         replace_witnessed_no_path_infection_summary(finding);
         apply_rust_transitive_reach_limit(finding, &owner_name, &witness);
+    } else if let Some(context) = dependency_edges
+        && let Some(owner) = probe
+            .owner
+            .as_ref()
+            .and_then(|id| index.functions().iter().find(|function| function.id == *id))
+        && let Some(witness) = classify::facade_reach_witness(index, context, owner)
+    {
+        // #9982: after every other witness, so a traced path is never
+        // displaced by this broader structural one.
+        replace_witnessed_no_path_infection_summary(finding);
+        apply_rust_facade_reach_limit(finding, &owner_name, &witness);
     }
+}
+
+/// #9982: the same named limitation a traced integration-test witness gets,
+/// for a facade crate whose re-export of the owner's crate ripr does not
+/// resolve. No reach credit, no related-test relation, no class change.
+fn apply_rust_facade_reach_limit(
+    finding: &mut Finding,
+    owner_name: &str,
+    witness: &classify::FacadeReachWitness,
+) {
+    finding.static_limit_kind = Some(classify::transitive_reach_limit_kind(&witness.test_file));
+    finding
+        .stop_reasons
+        .push(StopReason::TransitiveReachUnresolved);
+    finding
+        .evidence
+        .push(classify::RUST_FACADE_REACH_MESSAGE.to_string());
+    finding
+        .evidence
+        .push(classify::facade_reach_witness_pointer(witness));
+    finding
+        .evidence
+        .extend(classify::facade_reach_limitation_detail_lines(
+            witness, owner_name,
+        ));
 }
 
 /// RIPR-SPEC-0114/0117 for a proximity-only `weakly_exposed` finding: the
@@ -1476,12 +1518,42 @@ fn apply_rust_no_static_path_limit(
 fn apply_rust_proximity_reach_limit(
     finding: &mut Finding,
     probe: &Probe,
+    index: &RustIndex,
     transitive_reach: &classify::TransitiveReachIndex<'_>,
+    dependency_edges: Option<&classify::DependencyEdgeContext<'_>>,
 ) {
     let Some(owner_name) = owner_name_from_id(&probe.owner, &probe.location.file) else {
         return;
     };
-    if let Some(witness) = transitive_reach.transitive_witness(&owner_name) {
+    // A `reachable_unrevealed` finding names the limit only for a witness in
+    // a package that declares the owner's package as a dependency: a
+    // same-package chain keeps its inspect-first gap, and so does a witness
+    // whose package cannot be tied to the owner (unrelated, unattributable
+    // or defining its own function of the owner's name). A test that reaches
+    // the owner through a wrapper crate has no helper-transfer chain, so the
+    // name-token relation alone must not read as an actionable gap (#10127).
+    let cross_package_only = finding.class == ExposureClass::ReachableUnrevealed;
+    // The owner as the index spells it, the same form a witness's test file
+    // has (the probe's own path may carry the checkout root).
+    let owner = probe
+        .owner
+        .as_ref()
+        .and_then(|id| index.functions().iter().find(|function| function.id == *id));
+    let admits = |test_file: &Path, entry_symbol: &str| {
+        !cross_package_only
+            || owner.zip(dependency_edges).is_some_and(|(owner, context)| {
+                classify::declared_dependent_package_calls_owner(
+                    context,
+                    owner,
+                    test_file,
+                    entry_symbol,
+                )
+            })
+    };
+    if let Some(witness) = transitive_reach
+        .transitive_witness(&owner_name)
+        .filter(|witness| admits(&witness.test_file, &witness.entry_symbol))
+    {
         apply_rust_transitive_reach_limit(finding, &owner_name, &witness);
         unresolved_reach_next_step(
             finding,
@@ -1489,7 +1561,10 @@ fn apply_rust_proximity_reach_limit(
             &witness.entry_symbol,
             &owner_name,
         );
-    } else if let Some(witness) = transitive_reach.macro_reach_witness(&owner_name) {
+    } else if let Some(witness) = transitive_reach
+        .macro_reach_witness(&owner_name)
+        .filter(|witness| admits(&witness.test_file, &witness.entry_symbol))
+    {
         apply_rust_macro_reach_limit(finding, &owner_name, &witness);
         unresolved_reach_next_step(
             finding,
@@ -1497,7 +1572,10 @@ fn apply_rust_proximity_reach_limit(
             &witness.entry_symbol,
             &owner_name,
         );
-    } else if let Some(witness) = transitive_reach.deep_transitive_witness(&owner_name) {
+    } else if let Some(witness) = transitive_reach
+        .deep_transitive_witness(&owner_name)
+        .filter(|witness| admits(&witness.test_file, &witness.entry_symbol))
+    {
         apply_rust_transitive_reach_limit(finding, &owner_name, &witness);
         unresolved_reach_next_step(
             finding,
@@ -1976,6 +2054,7 @@ impl RustAdapter {
         // narrowing can apply, so non-narrowing paths pay nothing. A
         // `limited`/`unavailable` graph is disclosed, never silently treated
         // as a complete reach.
+        let mut scope_graph_limitation = None;
         let (dependent_package_roots, manifest_dir_prefixes) =
             if matches!(options.mode, AnalysisMode::Draft | AnalysisMode::Fast)
                 && options.include_unchanged_tests
@@ -2012,6 +2091,8 @@ impl RustAdapter {
                     if let Some(disclosure) = expansion.scope_disclosure() {
                         eprintln!("{disclosure}");
                     }
+                    // #10182: stderr is not a consumer; the report carries it.
+                    scope_graph_limitation = expansion.scope_limitation()?;
                     let manifest_dir_prefixes = expansion.manifest_dir_prefixes().to_vec();
                     let mut dependent_package_roots = expansion.into_dependent_package_roots();
                     dependent_package_roots
@@ -2232,6 +2313,7 @@ impl RustAdapter {
             .collect::<BTreeSet<_>>();
 
         let mut findings = Vec::new();
+        let value_origins = std::sync::Mutex::new(crate::value_origins::ValueOrigins::default());
         let mut parser_spans = BTreeMap::new();
         let mut changed_rust_files = 0usize;
         let mut candidate_lines = BTreeSet::new();
@@ -2298,6 +2380,7 @@ impl RustAdapter {
                     manifest_dir_prefixes: &manifest_dir_prefixes,
                     index: &index,
                     unindexed_manifests: &unindexed_manifests,
+                    root: &options.root,
                 });
 
         // #4722: a changed file the reference parser refused was indexed
@@ -2321,6 +2404,7 @@ impl RustAdapter {
         // loses its probe shapes and its tests, so the related-test search for
         // the changed code can miss evidence there. One aggregate limitation
         // keeps the run from reading complete by omission.
+        limitations.extend(scope_graph_limitation);
         limitations.extend(declined_unchanged_file_limitation(
             &index,
             analyzable_changed_files
@@ -2409,7 +2493,7 @@ impl RustAdapter {
                         committed_source::with_overlay(overlay.clone(), || {
                             graph_counter.run(|| {
                                 cancellation::checkpoint().ok()?;
-                                Some(classifier::classify_probe_with_candidate_index(
+                                Some(classifier::classify_probe_with_candidate_index_and_origins(
                                     &seeded.probe,
                                     &index,
                                     workspace_index_complete,
@@ -2417,6 +2501,7 @@ impl RustAdapter {
                                     &related_test_candidate_index,
                                     &transitive_reach,
                                     seeded.propagation_origin.as_ref(),
+                                    Some(&value_origins),
                                 ))
                             })
                         })
@@ -2470,6 +2555,7 @@ impl RustAdapter {
                 };
                 let probe = seeded.probe;
                 let binding_relation = seeded.binding_relation;
+                let binding_return = seeded.binding_return;
                 finding.language = Some(LanguageId::Rust);
                 // Producer-owned source currentness (#3280): resolved from the diff
                 // evidence that seeded the probe, before any limitation shaping.
@@ -2513,6 +2599,7 @@ impl RustAdapter {
                         &index,
                         &property_macro_mentions,
                         &transitive_reach,
+                        dependency_edges.as_ref(),
                     ),
                     dependent_scope::ReachIndex::Shared => {
                         if let Some(shared) = dependent_scope
@@ -2532,6 +2619,7 @@ impl RustAdapter {
                                 shared,
                                 mentions,
                                 reach,
+                                dependency_edges.as_ref(),
                             );
                         } else {
                             return Err("shared reach index reported but not held".to_string());
@@ -2548,6 +2636,7 @@ impl RustAdapter {
                             reach_index,
                             &reach_property_macro_mentions,
                             &classify::TransitiveReachIndex::new(reach_index),
+                            dependency_edges.as_ref(),
                         );
                     }
                     dependent_scope::ReachIndex::OverLimit { files, limit } => {
@@ -2560,6 +2649,7 @@ impl RustAdapter {
                             &index,
                             &property_macro_mentions,
                             &transitive_reach,
+                            dependency_edges.as_ref(),
                         );
                         let mixed = needs_mixed_macro_reach_limit(&finding);
                         if needs_no_static_path_limit(&finding) || mixed {
@@ -2596,6 +2686,10 @@ impl RustAdapter {
                     &probe,
                     &index,
                     binding_relation.as_ref(),
+                );
+                probes::attach_changed_binding_return_evidence(
+                    &mut finding,
+                    binding_return.as_ref(),
                 );
                 // #5268: the producer names the canonical gap identity from
                 // the changed-line evidence it already holds, after the
@@ -2646,6 +2740,7 @@ impl RustAdapter {
         );
 
         Ok(LanguageDiffResult {
+            value_origins: value_origins.into_inner().unwrap_or_default(),
             findings,
             harness_projections: super::super::harness_projection::projections_from_index(
                 &index,
@@ -3049,6 +3144,7 @@ impl RustAdapter {
         let transitive_reach = classify::TransitiveReachIndex::new(&index);
 
         let mut findings = Vec::new();
+        let value_origins = std::sync::Mutex::new(crate::value_origins::ValueOrigins::default());
         let mut parser_spans = BTreeMap::new();
 
         // #2972: one path-dependency edge context per repo pass. Repo mode
@@ -3065,6 +3161,7 @@ impl RustAdapter {
             manifest_dir_prefixes: &manifest_dir_prefixes,
             index: &index,
             unindexed_manifests: &unindexed_manifests,
+            root: &options.root,
         };
 
         for path in &production_files {
@@ -3077,7 +3174,7 @@ impl RustAdapter {
                         classify::RelatedTestCandidateIndex::new(&index)
                             .with_analysis_root(&options.root)
                     });
-                let mut finding = classifier::classify_probe_with_candidate_index(
+                let mut finding = classifier::classify_probe_with_candidate_index_and_origins(
                     &probe,
                     &index,
                     true,
@@ -3085,6 +3182,7 @@ impl RustAdapter {
                     related_test_candidate_index,
                     &transitive_reach,
                     None,
+                    Some(&value_origins),
                 );
                 finding.language = Some(LanguageId::Rust);
                 // Repo mode seeds probes from the current tree, so every
@@ -3100,6 +3198,7 @@ impl RustAdapter {
                     &index,
                     &property_macro_mentions,
                     &transitive_reach,
+                    Some(&dependency_edges),
                 );
                 classifier::withhold_proc_macro_no_path_as_unknown(&mut finding, &index);
                 apply_probe_and_oracle_limits(&mut finding, &probe, &index, None);
@@ -3128,6 +3227,7 @@ impl RustAdapter {
         );
 
         Ok(LanguageRepoResult {
+            value_origins: value_origins.into_inner().unwrap_or_default(),
             findings,
             harness_projections: super::super::harness_projection::projections_from_index(
                 &index,
@@ -9126,6 +9226,8 @@ fn absent_delimiter_boundary_returns_head() {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         }];
 
         let rust_owner = FunctionSummary {
@@ -9177,6 +9279,8 @@ fn absent_delimiter_boundary_returns_head() {
     }
 }
 
+#[cfg(test)]
+mod facade_reach_tests;
 #[cfg(test)]
 mod handwritten_files_tests;
 #[cfg(test)]

@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- Python verdict corpus: 6 `py-raises-*` cases on `authored-py-unittest-raises` covering RIPR-SPEC-0238 rules 13 and 14 (the callable form of `pytest.raises` / `assertRaises`, with and without `match=`; a bound exception compared by `.exception` or an `.args` index; a coarse length read that does not pin the message), labelled by real pytest runs; no false verdicts and no ceiling change (#9412).

@@ -1,0 +1,44 @@
+{
+  "case_id": "py-bands-spread-band",
+  "subject_id": "authored-py-pytest-bands",
+  "diff": "cases/py-bands-spread-band.diff",
+  "anchor": {
+    "file": "bands/core.py",
+    "line": 13
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "arithmetic_constant",
+  "test_shape": "pytest_approx_spread_band_absorbs_edit",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return x * 3 + 0.5",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the owner returns a different value (the spread carries rel=0.1, which admits the 0.5 difference)"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "RIPR-SPEC-0238 rule 21: the spread carries rel=0.1, which admits the 0.5 difference.",
+  "labeling_observation": {
+    "ripr_commit": "cee4169a",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

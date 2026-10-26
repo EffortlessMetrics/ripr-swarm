@@ -127,27 +127,78 @@ fn spawned(test_attrs: &str, body: &str) -> Result<Finding, String> {
 }
 
 #[test]
-fn an_exact_pin_through_a_spawned_closure_reads_as_a_shape_limit() -> Result<(), String> {
+fn an_exact_pin_through_a_spawned_closure_is_credited() -> Result<(), String> {
+    // RIPR-SPEC-0265 rule 4: the spawned closure runs once on every call and
+    // the join returns its value, so the pin observes the change.
     for body in [
         "assert_eq!(doubled(5), 10);",
         "assert_eq!(10, doubled(5));",
         "assert_eq!(doubled(5), 10, \"ten\");",
     ] {
         let finding = spawned("", body)?;
-        assert_eq!(finding.class, ExposureClass::StaticUnknown, "{body}");
-        assert_eq!(
-            limit(&finding),
-            Some("rust_pinned_shape_unresolved"),
-            "{body}"
-        );
-        assert!(
-            finding
-                .recommended_next_step
-                .as_deref()
-                .is_some_and(|step| step.contains("`pinned`") && step.contains("assert_eq!")),
-            "{body}: {:?}",
-            finding.recommended_next_step
-        );
+        assert_eq!(finding.class, ExposureClass::Exposed, "{body}");
+        assert_eq!(limit(&finding), None, "{body}");
+    }
+    Ok(())
+}
+
+/// An owner whose tail is `tail`, pinned by `assert_eq!(f(5), 10)`, with the
+/// tail's text changed from a transposed form.
+fn thread_tail(tail: &str, old: &str) -> Result<Finding, String> {
+    let owner = format!("pub fn doubled(x: u32) -> u32 {{\n{tail}\n}}");
+    finding(
+        &owner_with_test(&owner, "", "assert_eq!(doubled(5), 10);"),
+        2,
+        old,
+        tail,
+        ProbeFamily::ReturnValue,
+    )
+}
+
+#[test]
+fn a_spawned_closure_that_may_not_run_its_whole_body_keeps_the_withhold() -> Result<(), String> {
+    for (tail, old) in [
+        // A branch inside the closure: the pinned input decides which arm runs.
+        (
+            "    std::thread::spawn(move || if x > 0 { 2 * x } else { 0 }).join().unwrap()",
+            "    std::thread::spawn(move || if x > 0 { x * 2 } else { 0 }).join().unwrap()",
+        ),
+        // A short circuit inside the closure.
+        (
+            "    std::thread::spawn(move || x > 3 && x < 9).join().unwrap() as u32 * 2",
+            "    std::thread::spawn(move || x > 3 && x < 8).join().unwrap() as u32 * 2",
+        ),
+    ] {
+        let finding = thread_tail(tail, old)?;
+        assert_ne!(finding.class, ExposureClass::Exposed, "{tail}");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_thread_path_the_file_could_rebind_is_not_read() -> Result<(), String> {
+    let finding = thread_tail(
+        "    thread::spawn(move || 2 * x).join().unwrap()",
+        "    thread::spawn(move || x * 2).join().unwrap()",
+    )?;
+    assert_ne!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn a_join_that_does_not_return_the_value_is_not_read() -> Result<(), String> {
+    for (tail, old) in [
+        (
+            "    std::thread::spawn(move || 2 * x).join().unwrap_or(0)",
+            "    std::thread::spawn(move || x * 2).join().unwrap_or(0)",
+        ),
+        (
+            "    std::thread::spawn(move || 2 * x).join().unwrap() + 0",
+            "    std::thread::spawn(move || x * 2).join().unwrap() + 0",
+        ),
+    ] {
+        let finding = thread_tail(tail, old)?;
+        assert_ne!(finding.class, ExposureClass::Exposed, "{tail}");
     }
     Ok(())
 }
@@ -187,7 +238,12 @@ fn a_pin_that_is_not_exact_or_not_isolated_keeps_the_gap() -> Result<(), String>
 }
 
 #[test]
-fn a_returned_closure_the_test_applies_reads_as_a_shape_limit() -> Result<(), String> {
+fn an_applied_returned_closure_pin_is_no_longer_withheld() -> Result<(), String> {
+    // RIPR-SPEC-0265 rule 5 (#9490): the test applies the returned closure on
+    // distinct nonzero literals, so the owner pin reads it and the shape-limit
+    // rule must not withhold this shape. The shapes the credit still refuses
+    // (zero or repeated inputs, a closure that is never applied) stay
+    // controlled by `returned_closure_pin.rs`.
     let lib = owner_with_test(
         "pub fn make_adder(n: i32) -> impl Fn(i32) -> i32 {
     move |x| n + x
@@ -202,8 +258,8 @@ fn a_returned_closure_the_test_applies_reads_as_a_shape_limit() -> Result<(), St
         "    move |x| n + x",
         ProbeFamily::ReturnValue,
     )?;
-    assert_eq!(finding.class, ExposureClass::StaticUnknown);
-    assert_eq!(limit(&finding), Some("rust_pinned_shape_unresolved"));
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    assert_eq!(limit(&finding), None);
     Ok(())
 }
 
@@ -567,7 +623,7 @@ fn a_shadowed_or_reassigned_receiver_keeps_the_gap() -> Result<(), String> {
 fn a_closure_the_tail_never_calls_keeps_the_gap() -> Result<(), String> {
     let lib = owner_with_test(
         "pub fn seven(x: u32) -> u32 {
-    let _unused = || x + 1;
+    let _unused = || x > 1;
     7
 }",
         "",
@@ -576,8 +632,8 @@ fn a_closure_the_tail_never_calls_keeps_the_gap() -> Result<(), String> {
     keeps_gap(
         &lib,
         2,
-        "    let _unused = || x + 2;",
-        "    let _unused = || x + 1;",
+        "    let _unused = || x > 2;",
+        "    let _unused = || x > 1;",
         ProbeFamily::Predicate,
     )
 }

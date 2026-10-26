@@ -20,7 +20,9 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Canonical gap: gap:python:src/pack.py:pack:predicate_boundary:predicate:len_buffer<=limit
   Changed behavior: if len(buffer) <= limit:
-  Missing discriminator (1 of 2): A strong Python oracle reaches `pack`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add an…
+  Missing discriminator (1 of 2): A strong Python oracle reaches `pack`, but its assertion does not
+    observe the changed owner's output; static evidence cannot confirm the changed behavior is
+    discriminated. Add an assertion on the changed owner's output
   Related test: tests/test_pack.py:4 test_pack_returns_buffered_output (ripr could not confirm that this assertion observes the changed behavior)
   Suggested test file: tests/test_pack.py
   Suggested test: test_pack_returns_buffered_output
@@ -35,6 +37,9 @@ Start here:
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
       unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;
+      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;
+      candidate line = changed line ripr considers for probes
     - reach yes: 1 related Python test(s) found for owner `pack`
     - infection yes: Changed Python predicate can alter branch selection: `if len(buffer) <= limit:`
     - 6 more detail line(s) in --format human-full

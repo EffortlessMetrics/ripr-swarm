@@ -1609,26 +1609,22 @@ fn committed_typescript_corpus_is_valid_and_its_rows_agree_with_its_labels() -> 
         "fixtures/typescript-verdict-corpus/spec-coverage.toml"
     );
     assert!(
-        coverage.floor >= 109 && coverage.floor <= coverage.covered_examples,
+        coverage.locked_examples >= 109 && coverage.locked_examples <= coverage.covered_examples,
         "typescript ledger floor {} against {} covered",
-        coverage.floor,
+        coverage.locked_examples,
         coverage.covered_examples
     );
-    // Every RIPR-SPEC-0243 example has a case: 33 (#7099) through
-    // `jest-spec0243-ex33-two-files-one-mocked`, 30 through a non-literal
-    // `db`, 34 and 35 through edits that change the pinned message, 36
-    // through a Playwright `test.step` threshold move, 37 through
-    // `ts-grid-boundary-table`, and 38 through an interpolated message
-    // pinned by an anchored regex, and 39 through the second `expect.soft` term
-    // of a returned object literal, and 40 to 42 (#9497) through the skipped
-    // and unexercised-return cases.
+    // Every RIPR-SPEC-0243 example has a case. The example count is not
+    // pinned: a PR that adds an example would otherwise renumber against
+    // every concurrent one (#9859). A new example nobody cites shows up in
+    // `uncovered`, and a lost citation does the same.
     let spec = coverage
         .by_spec
         .iter()
         .find(|row| row.spec == "RIPR-SPEC-0243")
         .ok_or("RIPR-SPEC-0243 is not in scope in the typescript ledger")?;
-    assert_eq!(spec.in_scope_examples, 42);
-    assert_eq!(spec.uncovered, Vec::<usize>::new());
+    assert!(spec.in_scope_examples >= 42);
+    assert_eq!(spec.uncovered, Vec::<coverage::ExampleKey>::new());
     assert_eq!(spec.waived, 0);
     let corpus = load_corpus(&dir)?;
     assert!(
@@ -1712,9 +1708,9 @@ fn committed_python_corpus_is_valid_and_covers_each_test_library() -> Result<(),
     assert!(spec.uncovered.is_empty(), "uncovered: {:?}", spec.uncovered);
     assert_eq!(spec.waived, 0);
     assert!(
-        coverage.floor >= 40 && coverage.floor <= coverage.covered_examples,
+        coverage.locked_examples >= 40 && coverage.locked_examples <= coverage.covered_examples,
         "python ledger floor {} against {} covered",
-        coverage.floor,
+        coverage.locked_examples,
         coverage.covered_examples
     );
     for example in (1..=34).filter(|&n| n != 10) {

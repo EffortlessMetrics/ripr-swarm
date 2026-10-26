@@ -1,0 +1,85 @@
+# Golden Output Changes
+
+## Pending — module_reach_absolute_import_rebound (1)
+
+Reason:
+RIPR-SPEC-0159: #8999 absolute import honesty fixture
+
+Command:
+`cargo xtask goldens bless module_reach_absolute_import_rebound --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — module_reach_absolute_import_rebound (2)
+
+Reason:
+RIPR-SPEC-0159: #8999 raw-identifier alias rebinding replaces the extern-prelude absolute import
+
+Command:
+`cargo xtask goldens bless module_reach_absolute_import_rebound --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — module_reach_absolute_import_rebound (3)
+
+Reason:
+RIPR-SPEC-0122: re-bless human render drift after merging main; verdicts unchanged
+
+Command:
+`cargo xtask goldens bless module_reach_absolute_import_rebound --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — module_reach_absolute_import_rebound (4)
+
+Reason:
+Summary terms legend from main (#10004); RIPR-SPEC-0122
+
+Command:
+`cargo xtask goldens bless module_reach_absolute_import_rebound --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — module_reach_absolute_import_rebound (5)
+
+Reason:
+RIPR-SPEC-0122: name the no-canonical-gap recovery instead of routing back to the gate (#9244)
+
+Command:
+`cargo xtask goldens bless module_reach_absolute_import_rebound --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — module_reach_absolute_import_rebound (6)
+
+Reason:
+RIPR-SPEC-0122: state only that the finding has no canonical gap, without a discriminator claim (#9244)
+
+Command:
+`cargo xtask goldens bless module_reach_absolute_import_rebound --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — module_reach_absolute_import_rebound (7)
+
+Reason:
+RIPR-SPEC-0122: define finding, unsuppressed, unknown, base-side and candidate line in the evidence legend (#9244)
+
+Command:
+`cargo xtask goldens bless module_reach_absolute_import_rebound --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

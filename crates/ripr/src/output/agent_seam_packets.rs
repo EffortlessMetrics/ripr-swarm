@@ -807,27 +807,29 @@ pub(crate) fn render_agent_gap_record_packet_json_with_causal(
 /// [`validate_agent_gap_record_packet`] runs inside the builder and stays the
 /// only actionability authority, so a record that does not validate yields
 /// no packet. Static evidence only; the packet claims no runtime outcome.
-pub(crate) fn render_typescript_gap_repair_packet(
+pub(crate) fn render_gap_bound_repair_packet(
     gap_ledger_path: &str,
     record: &GapRecord,
 ) -> Result<String, String> {
-    if record.language != "typescript" {
-        return Err("gap-bound repair packets are rendered for TypeScript gaps only".to_string());
+    if !matches!(record.language.as_str(), "typescript" | "python") {
+        return Err(
+            "gap-bound repair packets are rendered for TypeScript and Python gaps only".to_string(),
+        );
     }
     let canonical = non_empty(&record.canonical_gap_id)
         .ok_or_else(|| "requires a canonical gap id".to_string())?;
     let rendered = render_agent_gap_record_packet_json(gap_ledger_path, record)?;
     let mut envelope: Value = serde_json::from_str(&rendered)
-        .map_err(|error| format!("decode TypeScript gap packet failed: {error}"))?;
+        .map_err(|error| format!("decode gap-bound packet failed: {error}"))?;
     let packet = envelope
         .get_mut("packets")
         .and_then(Value::as_array_mut)
         .and_then(|packets| packets.first_mut())
         .and_then(Value::as_object_mut)
-        .ok_or_else(|| "TypeScript gap packet envelope carries no packet".to_string())?;
+        .ok_or_else(|| "gap-bound packet envelope carries no packet".to_string())?;
     packet.insert("seam_id".to_string(), Value::String(canonical));
     let mut out = serde_json::to_string_pretty(&envelope)
-        .map_err(|error| format!("render TypeScript gap packet JSON failed: {error}"))?;
+        .map_err(|error| format!("render gap-bound packet JSON failed: {error}"))?;
     out.push('\n');
     Ok(out)
 }
@@ -3876,7 +3878,7 @@ mod tests {
     #[test]
     fn typescript_gap_repair_packet_names_the_canonical_gap_as_its_seam() -> Result<(), String> {
         let record = typescript_gap_record(true)?;
-        let rendered = render_typescript_gap_repair_packet("before.check-findings.json", &record)?;
+        let rendered = render_gap_bound_repair_packet("before.check-findings.json", &record)?;
         let value = serde_json::from_str::<serde_json::Value>(&rendered)
             .map_err(|error| format!("packet JSON should parse: {error}"))?;
         let packet = value["packets"]
@@ -3918,20 +3920,20 @@ mod tests {
     fn typescript_gap_repair_packet_stays_fail_closed() -> Result<(), String> {
         // The shared validator is the only authority: an ineligible record
         // yields no packet.
-        let refused = render_typescript_gap_repair_packet("p.json", &typescript_gap_record(false)?);
+        let refused = render_gap_bound_repair_packet("p.json", &typescript_gap_record(false)?);
         assert!(
             refused
                 .as_ref()
                 .is_err_and(|error| error.contains("not agent-packet eligible")),
             "{refused:?}"
         );
-        // A non-TypeScript record never renders through this entry.
+        // A record outside the gap-bound languages never renders through this entry.
         let rust = typed_gap_record()?;
-        let refused = render_typescript_gap_repair_packet("p.json", &rust);
+        let refused = render_gap_bound_repair_packet("p.json", &rust);
         assert!(
             refused
                 .as_ref()
-                .is_err_and(|error| error.contains("TypeScript gaps only")),
+                .is_err_and(|error| error.contains("TypeScript and Python gaps only")),
             "{refused:?}"
         );
         Ok(())
@@ -4103,13 +4105,15 @@ mod tests {
             propagate: stage(StageState::Yes),
             observe: stage(StageState::Yes),
             discriminate: stage(StageState::Yes),
-            observed_values: vec![ValueFact {
-                file: None,
-                line: 12,
-                text: "discounted_total(50, 100)".to_string(),
-                value: "50".to_string(),
-                context: ValueContext::FunctionArgument,
-            }],
+            observed_values: vec![
+                ValueFact {
+                    line: 12,
+                    text: "discounted_total(50, 100)".to_string(),
+                    value: "50".to_string(),
+                    context: ValueContext::FunctionArgument,
+                }
+                .into(),
+            ],
             missing_discriminators: vec![MissingDiscriminatorFact {
                 value: "discount_threshold (equality boundary)".to_string(),
                 reason: "observed values do not include the equality-boundary case".to_string(),

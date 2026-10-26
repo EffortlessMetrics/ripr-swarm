@@ -1397,6 +1397,14 @@ owner = "product-analysis"
 standalone_reason = "Registers each runnable fenced example in a Rust library's function docs as a test of its file, read from its own synthetic source: its exact assertion on the owner, called through the library's import name, pins the owner's return; ignored and non-running fences, crate-relative paths and method calls are refused."
 
 [[artifact]]
+id = "RIPR-SPEC-0319"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0319-classification-keyed-guidance.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Gives every named static limitation and stop reason one imperative next step, enforced by exhaustive matches, so no classified limitation reaches a reader as a diagnosis without direction."
+
+[[artifact]]
 id = "RIPR-SPEC-0305"
 kind = "spec"
 path = "docs/specs/RIPR-SPEC-0305-rust-mock-call-count-side-flip.md"
@@ -1874,3 +1882,27 @@ path = "docs/specs/RIPR-SPEC-0311-gap-bound-typescript-repair-start.md"
 status = "proposed"
 owner = "product-analysis"
 standalone_reason = "Issue #9103 records the gap-bound start contract: a TypeScript finding with a complete packet gets an agent repair --gap-id start accepted by the before phase, with fail-closed refusal, an additive manifest gap binding, and unrouted variants."
+
+[[artifact]]
+id = "RIPR-SPEC-0351"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0351-out-parameter-oracle-credit.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Issue #8999 records the out-parameter oracle contract: an assert_eq! on the very local a direct call of the changed method received as &mut, bound once and asserted after the call in the same test, is an oracle for that call, and every other shape fails closed."
+
+[[artifact]]
+id = "RIPR-SPEC-0353"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0353-boolean-truth-table-infection.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Issue #6488 records the bool truth-table infection contract: a pure all-bool && or || owner body is infected, and its returned tail completes the direct-return witness, only when the related tests call it directly with literal rows that tell the chain from the connective swap, both constants and any single negated operand; every other shape fails closed."
+
+[[artifact]]
+id = "RIPR-SPEC-0356"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0356-uncompiled-rust-files-contribute-no-tests.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Issue #8999 records the uncompiled-file contract: a Rust file that no Cargo target, manifest path, module declaration or include can compile contributes no related test and no lexical-fallback limitation, and any doubt keeps it indexed as before."
