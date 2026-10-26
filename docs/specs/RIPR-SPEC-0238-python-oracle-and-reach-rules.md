@@ -407,8 +407,10 @@ This order is the existing behavior and is normative:
 - L7: `property_based_test`: an eligible candidate with a `given` or
   `example` decorator and no strong assertion;
 - L8: `unresolved_pytest_fixture`: every eligible candidate is a
-  non-parametrized pytest test that calls the owner and uses a
-  non-auxiliary fixture in its body. A fixture is resolved, and does not
+  pytest test that calls the owner and uses a non-auxiliary fixture in its
+  body. A direct `@pytest.mark.parametrize` argname is a value pytest
+  supplies, not a fixture; a parametrize mark does not resolve the test's
+  other fixtures, and an `indirect=` argname is a fixture (#9619). A fixture is resolved, and does not
   count, when it hands a module-level test a fresh literal-built instance
   of a method owner's class (#9619, `py-fixtures-deposit`). The fixture
   is a single argument-free fixture decorator (`@pytest.fixture`,
@@ -429,6 +431,23 @@ This order is the existing behavior and is normative:
   `pytest_*` hook, has a fixture that walks the request (`getfixturevalue`,
   `fixturenames`, `funcargs`, `node`) or rebinds a name with `global`.
   The fixture parameter then counts as a receiver bound to the owner class.
+  A fixture is also resolved when its literal `params=` rows reach the
+  test through `request.param` (#9619, `py-fixtures-fee-boundary`): its
+  only decorator is the fixture decorator with keyword `params=` (a list
+  or tuple whose rows are scalar literals or tuples of scalar literals)
+  and at most a literal `ids=` list of strings, one per row; the def takes exactly
+  `request` and its body is an optional docstring and
+  `return request.param`; the fixture's file binds its name once and the
+  scope rules above hold (without the owner-module import rule: tuple and
+  scalar rows are immutable, so an imported fixture cannot change them).
+  The test is a module-level pytest test with no parametrize mark, no
+  Hypothesis inputs and no decorator other than a pytest mark; it takes
+  the fixture as a parameter without a default, and its first statement
+  after a docstring is `name = fixture` or `a, b = fixture` with distinct
+  names that are not parameters and every row of the target's arity. No
+  later statement names the fixture, rebinds a target name or defines a
+  nested scope. The test then reads as `@pytest.mark.parametrize` over the
+  target names with the rows as cases, and the unpack is not a rebinding.
   Any other shape keeps the limit; a third-party plugin fixture outside
   the workspace is not visible to this read;
 - L9: `opaque_custom_assertion_helper`: an eligible candidate has a
@@ -969,7 +988,8 @@ mutant calibrates the rule; ripr reports only the static shape.
     assumed; the command line CI uses is unknown. A docstring is read only
     when it belongs to an undecorated top-level `def` defined once, every
     example is one `>>>` call of a bare name with literal arguments, the
-    expected line is one `repr` of a string, integer or boolean, and no
+    expected line is one `repr` of a string, integer or boolean (a trailing
+    `#` comment on the `>>>` line is allowed and cannot hide the comparison), and no
     `# doctest:` directive, backslash (in the decoded docstring or its
     source), `...` or `<BLANKLINE>` appears; a module-level `__test__`, a
     star import or a binding of `len` disables the read. The example must exist
@@ -1128,6 +1148,43 @@ rejected alternative. Any can be reversed later without touching the rest.
     accepting the miss at the one input where it is the identity.
     Rejected: gate only a single wrapping call, because `max(n, 0)`,
     `n or 0` and nested wrappers return `n` unchanged just as often.
+16. **A decorator argument or decorator-factory loop edit is limited by
+    design.** Adopted (2026-10-26, #9619): an edit to a decorator's
+    argument (`@retry(3)` to `@retry(4)`) or to the loop inside the factory
+    it calls (`range(times)`) is judged by module state that persists across
+    calls (`flaky()` succeeds on the third attempt), and no bounded static
+    evaluator reads that soundly. The rows `py-shapes-decorator-retry-count`
+    and `py-shapes-decorator-loop-bound` keep ideal `credited` and accepted
+    `limited`, and stay in `missed-credit.toml` with this Decision as the
+    reason. The equivalent twins `py-shapes-decorator-retry-count-slack`
+    and `py-shapes-decorator-loop-bound-slack` make the same edits where
+    the pinned call cannot tell (`@retry(4)`, `range(times + 1)`), so
+    crediting by edit shape would read `exposed` on a test that passes on
+    the mutant; they must stay `gap` or `limited`. Rejected: credit any
+    test that calls a function decorated with the edited factory, because
+    the twins show that call does not discriminate. Revisit with a
+    fixture-backed state evaluator under its own spec, as Decision 9 of
+    RIPR-SPEC-0246 does for mocha hooks.
+17. **A test defined under a platform guard, or asserted inside a
+    callback wrapper, is limited by design.** Adopted (2026-10-26, #9619).
+    `py-trap-platform-matched` defines its test under
+    `if sys.platform != "win32"`, which holds where the corpus was labeled
+    and fails on Windows, where ripr also runs; a verdict that depends on
+    the host would differ between machines for the same diff.
+    `py-trap-wrapped-through` asserts inside a lambda handed to a local
+    wrapper that re-raises, while its twin `py-trap-wrapped-swallow` hands
+    the same lambda to a wrapper that swallows the failure. Telling them
+    apart needs a rule that reads the wrapper's handlers, and a misread
+    credits a pin the runner never sees. Both rows keep ideal `credited`
+    and accepted `limited`, and stay in `missed-credit.toml` with this
+    Decision as the reason. The twins `py-trap-platform-guarded` and
+    `py-trap-wrapped-swallow` already hold the negatives: each is a
+    `not_discriminated` row that must stay `gap` or `limited`. Rejected:
+    credit by guard polarity, because that reads the host platform.
+    Rejected: credit any lambda passed to a local helper, because the
+    swallowing twin is the same shape. Revisit with a bounded wrapper rule
+    (a test-file local whose every handler ends in a bare `raise`) under
+    its own spec, and a platform-independent reading of the guard.
 
 ## Required Evidence
 
@@ -1421,6 +1478,32 @@ and the test is `tests/test_subject.py`, which imports each owner from
     that binds it and a class-level test all keep `static_unknown`,
     `unresolved_pytest_fixture` (unchanged).
 
+42. Function `def handling_fee(amount): return 0 if amount >= 100 else 5`,
+    changed to `amount > 99`; conftest
+    `@pytest.fixture(params=[(99, 5), (100, 0)], ids=["below", "at"])` /
+    `def fee_case(request): return request.param`; test
+    `def test_fee(fee_case):` / `amount, fee = fee_case` /
+    `assert handling_fee(amount) == fee`: the same verdict as
+    `@pytest.mark.parametrize("amount, fee", [(99, 5), (100, 0)])` over
+    `assert handling_fee(amount) == fee` (`exposed`; today
+    `static_unknown`, `unresolved_pytest_fixture`; L8,
+    `py-fixtures-fee-boundary`). Rows `(50, 5), (200, 0)` read
+    `weakly_exposed`, as the decorated form does. Named, list,
+    `pytest.param`, starred or non-literal rows, empty params, callable
+    or short `ids=`, `scope=`, `autouse=`, a positional decorator argument, a
+    transformed `request.param`, an extra fixture statement or parameter,
+    a second decorator or definition; an unpack of the wrong arity, a
+    starred, nested, attribute, chained or subscripted unpack, an unpack
+    that is not first, a later rebinding or read of the fixture, a nested
+    scope, a duplicate name, a defaulted or shadowing parameter, a foreign
+    test decorator; a dependent fixture, a request walk,
+    `pytest_generate_tests`, a star import, a module import of the name and
+    a nearer conftest binding all keep `static_unknown`,
+    `unresolved_pytest_fixture`. A test that also carries its own
+    parametrize mark keeps only the mark's cases, and the fixture stays
+    unresolved: `static_unknown`, `unresolved_pytest_fixture` (today
+    `exposed`, a false credit for off-boundary rows).
+
 ## Test Mapping
 
 - Existing: `crates/ripr/src/analysis/language/python/doctest_gate_tests.rs`
@@ -1438,7 +1521,15 @@ and the test is `tests/test_subject.py`, which imports each owner from
   `attached_short_flags_and_cache_selectors_stop_the_read`,
   `a_positional_collection_target_in_addopts_stops_the_read`,
   `a_module_that_binds_len_is_not_read`,
-  `an_escape_in_the_docstring_source_drops_it`.
+  `an_escape_in_the_docstring_source_drops_it`,
+  `a_trailing_comment_on_the_example_line_does_not_hide_the_comparison`.
+- Existing: corpus rows `py-trap-platform-guarded` and
+  `py-trap-wrapped-swallow` (`cargo xtask verdict-corpus check --language
+  python`): Decision 17's negatives, which must never credit.
+- Existing: corpus rows `py-shapes-decorator-retry-count-slack` and
+  `py-shapes-decorator-loop-bound-slack` (`cargo xtask verdict-corpus
+  check --language python`): Decision 16's negatives, which must never
+  read `exposed`.
 - Existing: `crates/ripr/src/analysis/language/python/doctest_eval.rs`
   `floor_division_and_modulo_follow_the_divisor_sign`,
   `slices_normalize_indexes_like_python`,
@@ -1553,6 +1644,11 @@ and the test is `tests/test_subject.py`, which imports each owner from
   `crates/ripr/src/analysis/language/python/literal_fixture_tests.rs`
   pins the inlined control, the conftest and same-module fixture, and
   every negative shape and interference route of example 41.
+- L8's literal-params fixture and the parametrize-mark scope (#9619):
+  `crates/ripr/src/analysis/language/python/param_fixture_tests.rs` pins
+  the decorated control, the conftest, same-module and single-name forms,
+  the off-boundary parity and every negative shape of example 42;
+  `classify/tests.rs` `an_indirect_parametrize_argname_is_an_unresolved_fixture`.
 
 ## Implementation Mapping
 
@@ -1592,6 +1688,9 @@ and the test is `tests/test_subject.py`, which imports each owner from
 - `oracles.rs` (`is_property_compare`: idempotence and loop-variable identity
   checks, rule 25), pinned by `property_assertion_tests.rs` and the
   `py-grid-*-property` corpus cases.
+- `crates/ripr/src/analysis/language/python/param_fixtures.rs` (literal
+  `params=` rows and the unpack rewrite) with `fixtures.rs` (isolation) and
+  `static_limits.rs` (direct parametrize argnames): L8, example 42.
 
 ## Metrics
 

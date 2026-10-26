@@ -1,0 +1,14 @@
+# Registers the same-class entry fail-closed controls (#9942) under RIPR-SPEC-0243.
+[[extend]]
+id = "RIPR-SPEC-0243"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/class_entry_tests.rs::an_arrow_stored_rather_than_run_records_no_edge",
+  "crates/ripr/src/analysis/language/typescript/tests/class_entry_tests.rs::a_callback_a_callee_may_run_later_or_never_records_no_edge",
+  "crates/ripr/src/analysis/language/typescript/tests/class_entry_tests.rs::a_generator_entry_does_not_run_its_body_until_iterated",
+  "crates/ripr/src/analysis/language/typescript/tests/class_entry_tests.rs::an_unused_function_expression_does_not_drop_a_real_call",
+  "crates/ripr/src/analysis/language/typescript/tests/class_entry_tests.rs::a_test_that_replaces_the_helper_does_not_run_the_real_code",
+  "crates/ripr/src/analysis/language/typescript/tests/class_entry_tests.rs::a_second_class_with_the_same_name_does_not_lend_its_methods",
+  "crates/ripr/src/analysis/language/typescript/tests/class_entry_tests.rs::a_default_parameter_with_an_arrow_type_does_not_make_a_method_a_generator",
+  "crates/ripr/src/analysis/language/typescript/tests/class_entry_tests.rs::only_the_first_argument_of_a_synchronous_callback_method_runs",
+  "crates/ripr/src/analysis/language/typescript/tests/class_entry_tests.rs::a_parameter_default_of_an_unused_function_does_not_run",
+]

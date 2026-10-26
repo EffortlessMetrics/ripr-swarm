@@ -79,3 +79,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — owner_return_pin_pointer_glob_shadow (7)
+
+Reason:
+RIPR-SPEC-0122: plain-language repair-route refusal names the missing evidence without internal fact codes (#10644)
+
+Command:
+`cargo xtask goldens bless owner_return_pin_pointer_glob_shadow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

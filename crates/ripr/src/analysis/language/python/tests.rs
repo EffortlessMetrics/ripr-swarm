@@ -4553,6 +4553,7 @@ fn a_caplog_that_is_not_the_builtin_fixture_keeps_abstaining() -> Result<(), Str
                 body_text: "def caplog():\n    return Recorder()\n".to_string(),
                 imports: Vec::new(),
                 literal_construction: None,
+                literal_params: None,
                 isolated: false,
                 scope_imports: Vec::new(),
             });
@@ -8288,6 +8289,7 @@ fn classify_price_boundary_with_test_body_and_origins(
         PythonNoBehaviorContext::default(),
         None,
         &mut origins,
+        None,
     )
     .ok_or_else(|| "changed predicate should classify".to_string())?;
     Ok((finding, origins))
@@ -8327,6 +8329,7 @@ fn boundary_value_facts_preserve_identical_calls_from_two_files() -> Result<(), 
             PythonNoBehaviorContext::default(),
             None,
             &mut origins,
+            None,
         )
         .ok_or_else(|| "changed predicate should classify".to_string())?;
         let files = origins

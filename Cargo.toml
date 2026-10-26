@@ -199,3 +199,9 @@ opt-level = 2
 opt-level = 2
 [profile.dev.package.smol_str]
 opt-level = 2
+
+# Binary identity and cache integrity hash whole debug binaries (about 270 MB
+# for `ripr`); unoptimized SHA-256 spent about 5 s per hash in the sweep-refresh
+# tests, which stage and hash the binary once per subject.
+[profile.dev.package.sha2]
+opt-level = 3

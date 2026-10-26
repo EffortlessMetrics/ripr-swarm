@@ -15,7 +15,9 @@ use crate::agent::loop_commands::{bound_root, shell_arg};
 use crate::analysis::canonical_gap::{
     canonical_gap_identity, probe_id_names_seam, producer_gap_id_names_seam,
 };
-use crate::analysis::repair_route::{RepairPacketIneligibility, repair_packet_eligibility};
+use crate::analysis::repair_route::{
+    RepairPacketIneligibility, humanize_evidence, repair_packet_eligibility,
+};
 use crate::app::agent_brief::AgentBriefPolicy;
 use crate::app::agent_status::{AgentAttemptStatusReport, build_agent_attempt_status};
 use crate::app::repair_attempt::{
@@ -219,7 +221,16 @@ fn repair_refusal(
                 {
                     return (RefusalKind::RouteNotReady, format!("{label}: {guidance}"));
                 }
-                let missing = eligibility.readiness.missing_evidence.join("; ");
+                // #10644: the refusal reads on a human surface, so name each
+                // missing fact in plain words; the machine readiness strings
+                // behind it stay internal.
+                let missing = eligibility
+                    .readiness
+                    .missing_evidence
+                    .iter()
+                    .map(|evidence| humanize_evidence(evidence))
+                    .collect::<Vec<_>>()
+                    .join("; ");
                 let mut label = if missing.is_empty() {
                     label.to_string()
                 } else {
@@ -280,6 +291,13 @@ pub(crate) fn weak_oracle_guidance(entry: &crate::analysis::ClassifiedSeam) -> O
         test.line,
         test.test_name
     ))
+}
+
+/// Plain-language rendering of one route missing-evidence string for human
+/// screens (#10644). The readiness list behind it keeps the stable internal
+/// codes for machine consumers; this translation is render-boundary only.
+pub(super) fn humanize_route_evidence(evidence: &str) -> String {
+    humanize_evidence(evidence)
 }
 
 fn ineligibility_label(reason: RepairPacketIneligibility) -> &'static str {

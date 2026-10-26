@@ -76,6 +76,7 @@ mod doctest_tests;
 mod guard_activation;
 mod guard_credit;
 mod helper_inline;
+mod imported_call_operator;
 mod message_pin;
 mod module_value;
 mod type_guard;
@@ -95,6 +96,7 @@ mod module_constants;
 mod no_behavior;
 mod oracles;
 mod owners_tests;
+mod param_fixtures;
 mod parametrize;
 mod parse_budget;
 mod probe_shape;
@@ -467,6 +469,9 @@ struct PythonFixtureDef {
     /// The class the fixture returns a fresh literal-built instance of
     /// (`return Account(100)`), when that is its whole shape (#9619).
     literal_construction: Option<String>,
+    /// The literal `params=` rows a fixture returning `request.param` hands
+    /// the test, one run per row (#9619, `param_fixtures.rs`).
+    literal_params: Option<Vec<param_fixtures::FixtureParamRow>>,
     /// Set when attached: no other fixture or hook visible to the test names
     /// this fixture, so the test receives the instance exactly as built.
     isolated: bool,
@@ -972,6 +977,7 @@ impl PythonAdapter {
             &fixture_side_by_file,
             unreadable_conftest,
         );
+        param_fixtures::apply_literal_param_fixtures(&mut all_tests);
         fixtures::taint_admission_by_conftest(
             &mut all_tests,
             &implicit_conftests,
@@ -1159,6 +1165,7 @@ impl PythonAdapter {
 
         let mut findings: Vec<Finding> = Vec::new();
         let mut value_origins = crate::value_origins::ValueOrigins::default();
+        let mut related_memo = related_tests::RelatedCandidateMemo::default();
         let mut changed_count: usize = 0;
         for changed in python_changed_files {
             if absent_changed_paths.contains(&normalized_path(&changed.path)) {
@@ -1312,6 +1319,7 @@ impl PythonAdapter {
                         .get(&changed.path)
                         .map(String::as_str),
                     &mut value_origins,
+                    Some(&mut related_memo),
                 ) {
                     findings.push(finding);
                 }
@@ -1336,6 +1344,7 @@ impl PythonAdapter {
                 &all_tests,
                 &findings,
                 &mut value_origins,
+                &mut related_memo,
             );
             findings.extend(deleted);
         }
@@ -1422,6 +1431,9 @@ mod fixtures_tests;
 mod literal_fixture_tests;
 
 #[cfg(test)]
+mod param_fixture_tests;
+
+#[cfg(test)]
 mod dunder_entry_tests;
 
 #[cfg(test)]
@@ -1441,6 +1453,8 @@ mod literal_patch_tests;
 #[cfg(test)]
 mod helper_owner_call_tests;
 
+#[cfg(test)]
+mod imported_call_operator_tests;
 #[cfg(test)]
 mod module_value_tests;
 #[cfg(test)]

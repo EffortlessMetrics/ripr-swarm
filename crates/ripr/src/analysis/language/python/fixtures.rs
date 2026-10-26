@@ -70,6 +70,7 @@ pub(super) fn collect_fixture_defs(
                     body_text: text_for_range(source, range),
                     imports: test_imports(file, module_imports, body),
                     literal_construction: None,
+                    literal_params: None,
                     isolated: false,
                     scope_imports: Vec::new(),
                 });
@@ -83,6 +84,12 @@ pub(super) fn collect_fixture_defs(
             body_text: text_for_range(source, range),
             imports: test_imports(file, module_imports, body),
             literal_construction: literal_construction(stmt, statements, source, &aliases),
+            literal_params: super::param_fixtures::literal_params(
+                stmt,
+                statements,
+                source,
+                |name| is_fixture_decorator_name(name, &aliases),
+            ),
             isolated: false,
             scope_imports: Vec::new(),
         });
@@ -292,7 +299,7 @@ fn literal_construction(
 }
 
 /// A constant, or a signed numeric constant (`-1`).
-fn is_literal_argument(expr: &Expr) -> bool {
+pub(super) fn is_literal_argument(expr: &Expr) -> bool {
     match expr {
         Expr::Constant(_) => true,
         Expr::UnaryOp(op) if matches!(op.op, UnaryOp::USub | UnaryOp::UAdd) => matches!(
@@ -309,7 +316,7 @@ fn is_literal_argument(expr: &Expr) -> bool {
 /// (`if`, `try`, `for`, `with`, ...) or a bare expression counts as a binding
 /// whenever its text spells the name: it may define or rebind it, and this
 /// walk does not prove otherwise.
-fn module_binding_count(statements: &[Stmt], source: &str, name: &str) -> Option<usize> {
+pub(super) fn module_binding_count(statements: &[Stmt], source: &str, name: &str) -> Option<usize> {
     let mut count = 0;
     for stmt in statements {
         let mut bound = Vec::new();
@@ -513,7 +520,7 @@ pub(super) fn mark_isolated_fixture_defs(
     for test in tests {
         let test_file = test.file.clone();
         for def in &mut test.fixture_defs {
-            if def.literal_construction.is_none() {
+            if def.literal_construction.is_none() && def.literal_params.is_none() {
                 continue;
             }
             let key = (test_file.clone(), def.file.clone(), def.binding.clone());
@@ -623,7 +630,7 @@ pub(super) fn literal_owner_instance_fixture(
 /// Whether the test's signature takes `fixture` as a parameter pytest
 /// injects: a positional or keyword parameter without a default. pytest
 /// leaves `account=FakeAccount(100)` alone, so the default is what runs.
-fn injected_parameter(test: &PythonTest, fixture: &str) -> bool {
+pub(super) fn injected_parameter(test: &PythonTest, fixture: &str) -> bool {
     let Ok(Mod::Module(module)) = parse(&test.body_text, Mode::Module, "<python-test-signature>")
     else {
         return false;
