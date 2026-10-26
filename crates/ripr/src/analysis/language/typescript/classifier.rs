@@ -6773,7 +6773,12 @@ pub(crate) fn classify_resolved_owner(
         && !ladder_entry_unknown
         && !hook_owner_unknown
         && !loop_count_unknown;
+    // #10440: a `#private` owner's unknown is unmodeled reach through a public
+    // caller, not an assertion in an unresolved callback.
+    let private_reach_unknown =
+        matches!(class, ExposureClass::StaticUnknown) && private_member_unknown;
     let unresolved_callback_unknown = matches!(class, ExposureClass::StaticUnknown)
+        && !private_member_unknown
         && (ladder_unresolved_unknown || hook_owner_unknown);
     let entry_reach_unknown = matches!(class, ExposureClass::StaticUnknown) && ladder_entry_unknown;
     // Collect named TS-specific limitations (RIPR-SPEC-0085 §PR4 taxonomy).
@@ -7161,6 +7166,8 @@ pub(crate) fn classify_resolved_owner(
         },
         stop_reasons: if static_unknown_by_mock {
             vec![StopReason::StaticProbeUnknown]
+        } else if private_reach_unknown {
+            vec![StopReason::TransitiveReachUnresolved]
         } else if unresolved_callback_unknown || loop_count_unknown {
             vec![StopReason::GapEvidenceUnresolved]
         } else if entry_reach_unknown {

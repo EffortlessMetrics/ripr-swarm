@@ -16997,6 +16997,11 @@ fn changed_private_method_is_an_unknown_finding_not_partial_silence() -> Result<
             "{label}: {:?}",
             result.limitations
         );
+        assert_eq!(
+            finding.stop_reasons,
+            vec![StopReason::TransitiveReachUnresolved],
+            "{label}: a private owner's unknown is unmodeled reach, not an unresolved callback"
+        );
         let summary = finding.ripr.reveal.discriminate.summary.as_str();
         assert!(
             summary.contains("`#private` class member"),
