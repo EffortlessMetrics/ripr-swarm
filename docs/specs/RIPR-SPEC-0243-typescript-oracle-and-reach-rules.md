@@ -248,6 +248,15 @@ tests. A loop over a known non-empty literal keeps its expansion (Rule 13). A
 loop variable or callback parameter named `test`, `it` or `describe` is not
 descended. The dropped-registration disclosure no longer fires for these shapes.
 
+**Rule 22. A test inside `describe.skipIf(cond)` / `describe.runIf(cond)` is reached, never credited (#10629).**
+Vitest's conditional suite factories take a runtime condition static analysis
+does not evaluate. A `describe.skipIf(cond)('name', () => { ... })` or
+`describe.runIf(cond)(...)` is indexed for reach with the
+factory call as its guard (`describe.skipIf(!existsSync(dist))`; nested guards
+join with `&&`). Its tests keep no assertion, their admission stays
+unresolved, and findings read as under Rule 20. A non-literal title is named
+as for any suite; another root (`runner.skipIf`) is not descended.
+
 **Rule 12. A named function passed as the callback is the test body
 (2026-10-20).** `test("title", name)` runs the function `name`, so its body
 supplies the test's assertions and owner calls, as an inline callback would.
