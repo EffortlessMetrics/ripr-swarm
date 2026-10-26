@@ -192,19 +192,39 @@ pub(crate) fn python_workspace_file_limit() -> usize {
 
 /// Truncate an already-sorted discovered-file list to the walk cap.
 ///
-/// Returns the retained prefix and the number of refused files. Truncating
-/// the sorted list (rather than stopping the directory walk early) keeps the
-/// retained set deterministic: identical workspace content yields an
-/// identical analyzed set on every run.
+/// Files for which `is_changed` holds are always retained, even past the cap:
+/// they are the subject of the diff, so the cap may only cut context around
+/// them (#10461). The rest of the cap is filled from the sorted remainder.
+/// Returns the retained files in sorted order and the number of refused
+/// files. Truncating the sorted list (rather than stopping the directory walk
+/// early) keeps the retained set deterministic: identical workspace content
+/// and diff yield an identical analyzed set on every run.
 pub(crate) fn truncate_workspace_files(
     sorted_files: Vec<std::path::PathBuf>,
     max_files: usize,
+    is_changed: impl Fn(&Path) -> bool,
 ) -> (Vec<std::path::PathBuf>, usize) {
     if sorted_files.len() <= max_files {
         return (sorted_files, 0);
     }
-    let refused = sorted_files.len() - max_files;
-    (sorted_files.into_iter().take(max_files).collect(), refused)
+    let changed = sorted_files.iter().filter(|file| is_changed(file)).count();
+    let mut context_budget = max_files.saturating_sub(changed);
+    let total = sorted_files.len();
+    let kept: Vec<std::path::PathBuf> = sorted_files
+        .into_iter()
+        .filter(|file| {
+            if is_changed(file) {
+                return true;
+            }
+            if context_budget == 0 {
+                return false;
+            }
+            context_budget -= 1;
+            true
+        })
+        .collect();
+    let refused = total - kept.len();
+    (kept, refused)
 }
 
 /// Result of reading every retained workspace source under the caps.
@@ -681,17 +701,43 @@ mod tests {
         let files: Vec<PathBuf> = (0..5)
             .map(|index| PathBuf::from(format!("f{index}.py")))
             .collect();
-        let (kept, refused) = truncate_workspace_files(files.clone(), 3);
+        let unchanged = |_: &Path| false;
+        let (kept, refused) = truncate_workspace_files(files.clone(), 3, unchanged);
         assert_eq!(kept, files[..3], "sorted prefix is retained");
         assert_eq!(refused, 2, "refused count is disclosed");
 
-        let (kept, refused) = truncate_workspace_files(files.clone(), 5);
+        let (kept, refused) = truncate_workspace_files(files.clone(), 5, unchanged);
         assert_eq!(kept, files, "at-cap list is untouched");
         assert_eq!(refused, 0);
 
-        let (kept, refused) = truncate_workspace_files(Vec::new(), 3);
+        let (kept, refused) = truncate_workspace_files(Vec::new(), 3, unchanged);
         assert!(kept.is_empty());
         assert_eq!(refused, 0);
+    }
+
+    #[test]
+    fn truncate_workspace_files_always_keeps_changed_files() {
+        let files: Vec<PathBuf> = (0..5)
+            .map(|index| PathBuf::from(format!("f{index}.py")))
+            .collect();
+        let last = Path::new("f4.py");
+        let (kept, refused) = truncate_workspace_files(files.clone(), 3, |file| file == last);
+        assert_eq!(
+            kept,
+            vec![files[0].clone(), files[1].clone(), files[4].clone()],
+            "a late-sorting changed file displaces context, not itself"
+        );
+        assert_eq!(refused, 2, "refused count is disclosed");
+
+        let (kept, refused) = truncate_workspace_files(files.clone(), 1, |file| {
+            file == Path::new("f3.py") || file == last
+        });
+        assert_eq!(
+            kept,
+            vec![files[3].clone(), files[4].clone()],
+            "changed files are kept even when they alone exceed the cap"
+        );
+        assert_eq!(refused, 3);
     }
 
     #[test]

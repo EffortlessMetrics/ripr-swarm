@@ -1,0 +1,8 @@
+//! A cfg(test) include whose fragment holds the helper and the test.
+
+pub fn shifted_include(base: u32) -> u32 {
+    base + 5
+}
+
+#[cfg(test)]
+include!("l_include_fragment.rs");

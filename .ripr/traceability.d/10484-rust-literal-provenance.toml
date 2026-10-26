@@ -1,0 +1,8 @@
+# Registers the owner-argument literal provenance tests (#10484) under RIPR-SPEC-0158.
+[[extend]]
+id = "RIPR-SPEC-0158"
+tests = [
+  "crates/ripr/src/analysis/classify/activation.rs::a_literal_inside_a_call_chain_is_not_the_argument",
+  "crates/ripr/src/analysis/classify/activation.rs::a_literal_behind_a_value_preserving_wrapper_is_still_the_argument",
+  "crates/ripr/src/analysis/classify/activation.rs::visible_boundary_inputs_keep_their_gap_beside_call_built_inputs",
+]
