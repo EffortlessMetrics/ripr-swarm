@@ -2185,6 +2185,7 @@ fn replacing_the_readers_code_withholds_credit() -> Check {
         "price.__code__ = frozen.__code__",
         "price.__defaults__ = (1,)",
         "price.__kwdefaults__ = {}",
+        "price.__closure__ = ()",
     ] {
         let test = format!(
             "from hostile.settings import price\n\n\ndef frozen(tier):\n    return 5\n\n\n{replacement}\n\n\ndef test_it():\n    assert price(\"silver\") == 5\n"
@@ -2198,5 +2199,121 @@ fn replacing_the_readers_code_withholds_credit() -> Check {
         &silver_test("assert price(\"silver\") == 5"),
         TABLE_NEW,
     )?);
+    Ok(())
+}
+
+#[test]
+fn replacing_a_scalar_readers_code_withholds_credit() -> Check {
+    let source = "RATES = 6\n\n\ndef price(tier):\n    return RATES\n";
+    for replacement in [
+        "price.__code__ = frozen.__code__",
+        "price.__defaults__ = (1,)",
+        "price.__kwdefaults__ = {}",
+        "price.__closure__ = ()",
+    ] {
+        let test = format!(
+            "from hostile.settings import price\n\n\ndef frozen(tier):\n    return 5\n\n\n{replacement}\n\n\ndef test_it():\n    assert price(\"silver\") == 5\n"
+        );
+        assert_not_credited(&classify_table_edit(
+            source,
+            &[],
+            &test,
+            "RATES = 5",
+            "RATES = 6",
+        )?);
+    }
+    // Control: the same test without the replacement keeps the credit.
+    assert_credited(&classify_table_edit(
+        source,
+        &[],
+        &silver_test("assert price(\"silver\") == 5"),
+        "RATES = 5",
+        "RATES = 6",
+    )?);
+    Ok(())
+}
+
+#[test]
+fn a_code_slot_assignment_replaces_readers_but_does_not_rebind_plain_names() {
+    let own = Path::new("hostile/settings.py");
+    let other = Path::new("tests/test_helper.py");
+    let foreign = super::module_value::ForeignWrites::scan(
+        own,
+        [
+            (own, "LIMIT = 1\n"),
+            (other, "def f():\n    pass\n\nf.__code__ = f.__code__\n"),
+        ]
+        .into_iter(),
+        false,
+    );
+    assert!(foreign.may_replace_reader_code());
+    assert!(!foreign.may_rebind("version_info", Path::new("sys.py")));
+    assert!(!foreign.may_rebind("LIMIT", own));
+}
+
+#[test]
+fn reflection_only_withholds_credit_for_modules_it_can_reach() -> Check {
+    let source = table_source(TABLE_NEW, "");
+    let test = silver_test("assert price(\"silver\") == 5");
+    // Unconnected reflection over an unrelated module keeps the credit.
+    let unrelated = (
+        "hostile/util.py",
+        "import math\n\nPI = getattr(math, \"pi\")\n",
+    );
+    assert_credited(&classify_table(&source, &[unrelated], &test, TABLE_NEW)?);
+    // A reflective helper that a test imports next to the owner may be handed
+    // the module as an argument, so the component reaches the owner.
+    let helper = (
+        "hostile/util.py",
+        "def read(module, name):\n    return getattr(module, name)\n",
+    );
+    let connected = "import hostile.util\nfrom hostile.settings import price\n\n\ndef test_it():\n    assert price(\"silver\") == 5\n";
+    assert_not_credited(&classify_table(&source, &[helper], connected, TABLE_NEW)?);
+    // Loading a module by name makes the reachable set unknown.
+    let loader = (
+        "hostile/util.py",
+        "import importlib\n\nMODULE = getattr(importlib.import_module(\"x\"), \"y\")\n",
+    );
+    assert_not_credited(&classify_table(&source, &[loader], &test, TABLE_NEW)?);
+    Ok(())
+}
+
+#[test]
+fn multiline_imports_and_evaluated_code_withhold_credit() -> Check {
+    let source = table_source(TABLE_NEW, "");
+    let test = silver_test("assert price(\"silver\") == 5");
+    // The bridge names the owner only on the continuation line of a
+    // parenthesized import.
+    // Brackets inside a comment or a string do not end that statement early.
+    for bridge_source in [
+        "from hostile import (\n    settings as hub,\n)\n",
+        "from hostile import (  # )\n    settings as hub,\n)\n",
+        "MARKER = \")\"; from hostile import (\n    settings as hub,\n)\n",
+    ] {
+        let bridge = ("hostile/bridge.py", bridge_source);
+        let touch = (
+            "hostile/touch.py",
+            "from hostile.bridge import hub\n\ngetattr(hub, \"RA\" + \"TES\")[\"silver\"] = 5\n",
+        );
+        assert_not_credited(&classify_table(
+            &source,
+            &[bridge, touch],
+            &test,
+            TABLE_NEW,
+        )?);
+    }
+    // Evaluated code can import any module, whatever the file names.
+    for evaluated in [
+        "import math\n\nexec(input())\n",
+        "import math\n\neval(input())\n",
+        "import math\n\ncompile(input(), \"x\", \"exec\")\n",
+    ] {
+        assert_not_credited(&classify_table(
+            &source,
+            &[("hostile/util.py", evaluated)],
+            &test,
+            TABLE_NEW,
+        )?);
+    }
     Ok(())
 }

@@ -53,6 +53,13 @@ The adapter may observe project marker filenames, but it does not parse
 `pyproject.toml` build metadata, install requirements, read virtualenv contents,
 read generated stubs, or consume runtime test output.
 
+Diff mode reads the workspace under a file-count cap
+(`RIPR_PYTHON_MAX_WORKSPACE_FILES`) and byte budgets. The count cap refuses only
+unchanged context: changed `.py` files are always kept, the rest of the cap is
+filled from the sorted remainder, and any refusal is a named
+`diff_scope_oversized` limitation that says changed files were kept. The byte
+budgets still apply to changed files and disclose their own refusals.
+
 ## Owner Facts
 
 Owners the adapter must recognise:
@@ -516,6 +523,10 @@ multiline setup remains eligible. A generator test lends no executed-body credit
 Formatted strings remain uncertain in this bounded admission because their
 expressions can carry generator syntax. Statement identity uses the reported
 source assertion, independently of the boolean oracle's normalized gate text.
+A workspace assignment to a function's `__code__`, `__defaults__`, `__kwdefaults__` or
+`__closure__` can replace a reader without rebinding its name, so it withholds the module
+constant's credit for scalar and table constants alike (#10626).
+
 A one-line module-level dict literal of unique `str` or `int` keys and scalar
 values (#9619) is a constant of the same kind, read only by a module function
 through `NAME.get(key[, default])` or `NAME[key]`; a test reading the table
@@ -528,9 +539,12 @@ subscript, `update`/`setdefault`/`pop`, an alias, a renamed import, an
 f-string mention (multi-line included), a statement sharing a `;` line with an import, a lexing error, or a file using a reflective spelling (`getattr`, `dir`,
 `getmembers`, `locals`, `__globals__`, `attrgetter`, `eval`, `compile`, `inspect`, `gc`,
 `__code__`, `__defaults__`, `__kwdefaults__`, `__closure__`) that mentions the table or its
-module withholds credit. A reflective file that also imports modules withholds credit for every
-table, because the module it reflects over may be another file's re-export that no word of the
-file names. A definition after a `;` is discovered like one at the start of a line, so an explicit
+module withholds credit. A reflective file withholds credit for the tables of every module in its import
+component (files linked by an import word naming another file's stem or package `__init__.py`, in either
+direction, plus every `conftest.py` component; import statements are read across parenthesized and backslash continuations by the lexer, so a bracket in a comment or string does not end one), because the module it reflects over may be another
+file's re-export, or be handed to it as an argument, with no word of the file naming it. A reflective
+file that also loads modules by a runtime name (`importlib`, `__import__`, `sys.modules`, `eval`, `exec`, `compile`, ...) withholds
+credit for every table. Reflection over modules outside that component keeps the credit. A definition after a `;` is discovered like one at the start of a line, so an explicit
 line continuation cannot hide a table from the foreign-store scan.
 Preceding assertions must evaluate true under the same bounded old/new scope
 before a later assertion can supply the value-flip credit.
