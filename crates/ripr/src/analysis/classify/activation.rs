@@ -100,7 +100,11 @@ pub(in crate::analysis) fn activation_and_boundary_input(
         .iter()
         .flat_map(|test| match value_facts {
             Some(memo) => memo.facts_for(index, test, owner_fn),
-            None => value_facts_for_test(test, owner_fn),
+            None => value_facts_for_test(
+                test,
+                owner_fn,
+                super::argument_fold::FoldScope::of_test(test, index),
+            ),
         })
         .collect::<Vec<_>>();
     observed_values.extend(observed_discriminator_values(
@@ -189,13 +193,14 @@ impl TestValueFacts {
         test: &TestSummary,
         owner_fn: Option<&FunctionSummary>,
     ) -> Vec<ValueFact> {
+        let scope = super::argument_fold::FoldScope::of_test(test, index);
         let Some(key) = self.slot_key(index, test, owner_fn) else {
-            return value_facts_for_test(test, owner_fn);
+            return value_facts_for_test(test, owner_fn, scope);
         };
         if let Some(facts) = self.by_slot.borrow().get(&key) {
             return facts.clone();
         }
-        let facts = value_facts_for_test(test, owner_fn);
+        let facts = value_facts_for_test(test, owner_fn, scope);
         self.by_slot.borrow_mut().insert(key, facts.clone());
         facts
     }
@@ -254,7 +259,11 @@ fn path_value_context(path: &str) -> ValueContext {
     }
 }
 
-fn value_facts_for_test(test: &TestSummary, owner_fn: Option<&FunctionSummary>) -> Vec<ValueFact> {
+fn value_facts_for_test(
+    test: &TestSummary,
+    owner_fn: Option<&FunctionSummary>,
+    scope: super::argument_fold::FoldScope<'_>,
+) -> Vec<ValueFact> {
     let owner_name = owner_fn.map(|owner| owner.name.as_str()).unwrap_or("");
     let parameters = owner_fn.map(function_parameters).unwrap_or_default();
     let mut facts = Vec::new();
@@ -270,7 +279,7 @@ fn value_facts_for_test(test: &TestSummary, owner_fn: Option<&FunctionSummary>) 
             continue;
         };
         for (idx, argument) in arguments.iter().enumerate() {
-            for value in owner_row_argument_values(test, argument, false) {
+            for value in owner_row_argument_values(test, argument, false, scope) {
                 let value = parameters
                     .get(idx)
                     .map(|parameter| format!("{parameter} = {value}"))
@@ -2399,7 +2408,14 @@ fn missing_boundary_discriminator(
                 .flatten()
             })
             .or_else(|| {
-                call_built_input_reason(owner, &parameters, related_tests, compared, &call_values)
+                call_built_input_reason(
+                    owner,
+                    &parameters,
+                    related_tests,
+                    compared,
+                    &call_values,
+                    index,
+                )
             })
             .or_else(|| unreadable_spelled_line_reason(owner, related_tests, helper_chain));
         return None;
@@ -2688,6 +2704,7 @@ fn missing_boundary_discriminator(
         related_tests,
         [left_parameter.clone(), right_parameter.clone()],
         &call_values,
+        index,
     ) {
         *unresolved = Some(reason);
         return None;
@@ -3123,6 +3140,7 @@ fn call_built_input_reason(
     related_tests: &[&TestSummary],
     compared: [Option<String>; 2],
     call_values: &[Vec<ParameterValue>],
+    index: &crate::analysis::rust_index::RustIndex,
 ) -> Option<String> {
     let free_owner = is_free(owner);
     compared.into_iter().flatten().find_map(|parameter| {
@@ -3144,7 +3162,13 @@ fn call_built_input_reason(
                         crate::analysis::syntax::fn_signature::call_argument_facts(&contents)?;
                     let argument = arguments.get(position)?;
                     (argument.built_by_call
-                        && owner_row_argument_values(test, &argument.text, false).is_empty())
+                        && owner_row_argument_values(
+                            test,
+                            &argument.text,
+                            false,
+                            super::argument_fold::FoldScope::of_test(test, index),
+                        )
+                        .is_empty())
                         .then(|| {
                             format!(
                                 "a related test passes `{parameter}` the result of a call (`{}`), whose value ripr does not evaluate statically, so it cannot tell which side of the boundary that call reaches",
@@ -4426,6 +4450,10 @@ struct ReceiverParameters<'a> {
     value: Option<&'a ReceiverReader<'a>>,
     /// Read a string or char literal table cell as an exact input.
     text_cells: bool,
+    /// Where each test's file is read from for a `const` operand or a
+    /// nullary helper argument (RIPR-SPEC-0158); without it only the test's
+    /// own bindings fold.
+    index: Option<&'a crate::analysis::rust_index::RustIndex>,
 }
 
 type ReceiverReader<'a> = dyn Fn(&str) -> Option<String> + 'a;
@@ -4436,7 +4464,21 @@ impl<'a> ReceiverParameters<'a> {
             names: Vec::new(),
             value: None,
             text_cells: false,
+            index: None,
         }
+    }
+
+    fn reading_files_of(self, index: &'a crate::analysis::rust_index::RustIndex) -> Self {
+        Self {
+            index: Some(index),
+            ..self
+        }
+    }
+
+    fn fold_scope(&self, test: &TestSummary) -> super::argument_fold::FoldScope<'a> {
+        self.index.map_or_else(Default::default, |index| {
+            super::argument_fold::FoldScope::of_test(test, index)
+        })
     }
 
     fn reading_text_cells(text_cells: bool) -> Self {
@@ -4497,7 +4539,12 @@ fn owner_call_parameter_values_where(
                     if let Some(values) = receivers.cell(parameter, argument) {
                         return Some((parameter, values, argument.trim(), false));
                     }
-                    let values = owner_row_argument_values(test, argument, receivers.text_cells);
+                    let values = owner_row_argument_values(
+                        test,
+                        argument,
+                        receivers.text_cells,
+                        receivers.fold_scope(test),
+                    );
                     let table_column = !values.is_empty()
                         && crate::analysis::syntax::constant_table_column(
                             &test.body,
@@ -4620,7 +4667,7 @@ fn every_owner_call_reads_a_row(
                             &call.text,
                         )
                 },
-                &ReceiverParameters::reading_text_cells(true),
+                &ReceiverParameters::reading_text_cells(true).reading_files_of(index),
             )
             .is_empty()
         })
@@ -4655,7 +4702,7 @@ fn call_values_for_owner(
         |test, call| {
             super::call_identity::qualified_owner_calls_resolve(index, owner, test, &call.text)
         },
-        &ReceiverParameters::reading_text_cells(text_cells),
+        &ReceiverParameters::reading_text_cells(text_cells).reading_files_of(index),
     );
     if !direct.is_empty() {
         return direct;
@@ -5032,6 +5079,7 @@ fn chain_entry_rows(
         names: entry.receiver.iter().cloned().collect(),
         value: Some(&receiver_reader),
         text_cells: false,
+        index: Some(index),
     };
     owner_call_parameter_values_where(
         related_tests,
@@ -6062,12 +6110,17 @@ pub(in crate::analysis) fn owner_argument_values(
 /// literal inside a call chain is that call's operand, not the argument:
 /// `std::env::var("WHO").unwrap_or_default()` passes no `"WHO"` (#10484).
 /// The argument is the literal only when nothing computes around it.
-fn owner_row_argument_values(test: &TestSummary, argument: &str, text_cells: bool) -> Vec<String> {
+fn owner_row_argument_values(
+    test: &TestSummary,
+    argument: &str,
+    text_cells: bool,
+    scope: super::argument_fold::FoldScope<'_>,
+) -> Vec<String> {
     let values = owner_argument_values_in(test, argument, text_cells);
     if values.is_empty() {
         // RIPR-SPEC-0158: arithmetic over the test's own literal bindings
         // is the number it computes (`score(base + 1)` after `let base = 9`).
-        return super::argument_fold::folded_argument(&test.body, argument)
+        return super::argument_fold::folded_argument(&test.body, argument, scope)
             .into_iter()
             .collect();
     }
@@ -8328,7 +8381,11 @@ assert_eq!(input.amount, 100);"#
             let_bindings: Vec::new(),
         };
 
-        let facts = value_facts_for_test(&test, None);
+        let facts = value_facts_for_test(
+            &test,
+            None,
+            crate::analysis::classify::argument_fold::FoldScope::default(),
+        );
 
         assert!(
             facts
@@ -8372,7 +8429,11 @@ assert_eq!(input.amount, 100);"#
             let_bindings: Vec::new(),
         };
 
-        let facts = value_facts_for_test(&test, None);
+        let facts = value_facts_for_test(
+            &test,
+            None,
+            crate::analysis::classify::argument_fold::FoldScope::default(),
+        );
         let context_of = |value: &str| {
             facts
                 .iter()
@@ -8405,7 +8466,11 @@ assert_eq!(input.amount, 100);"#
             let_bindings: Vec::new(),
         };
 
-        let facts = value_facts_for_test(&test, Some(&owner));
+        let facts = value_facts_for_test(
+            &test,
+            Some(&owner),
+            crate::analysis::classify::argument_fold::FoldScope::default(),
+        );
         let values: Vec<&str> = facts.iter().map(|fact| fact.value.as_str()).collect();
 
         assert!(
@@ -8453,7 +8518,11 @@ assert_eq!(input.amount, 100);"#
             let_bindings: Vec::new(),
         };
 
-        let facts = value_facts_for_test(&test, Some(&owner));
+        let facts = value_facts_for_test(
+            &test,
+            Some(&owner),
+            crate::analysis::classify::argument_fold::FoldScope::default(),
+        );
 
         assert!(
             facts
@@ -8523,7 +8592,11 @@ assert_eq!(input.amount, 100);"#
                 for owner in owners {
                     assert_eq!(
                         memo.facts_for(&index, test, owner),
-                        value_facts_for_test(test, owner),
+                        value_facts_for_test(
+                            test,
+                            owner,
+                            crate::analysis::classify::argument_fold::FoldScope::default()
+                        ),
                         "round {round}: {} / {:?}",
                         test.name,
                         owner.map(|owner| owner.body.as_str())
@@ -8542,12 +8615,20 @@ assert_eq!(input.amount, 100);"#
         let detached = index.tests()[0].clone();
         assert_eq!(
             memo.facts_for(&index, &detached, owners[1]),
-            value_facts_for_test(&detached, owners[1])
+            value_facts_for_test(
+                &detached,
+                owners[1],
+                crate::analysis::classify::argument_fold::FoldScope::default()
+            )
         );
         let other_index = index.clone();
         assert_eq!(
             memo.facts_for(&other_index, other_index.tests().at(0), None),
-            value_facts_for_test(other_index.tests().at(0), None)
+            value_facts_for_test(
+                other_index.tests().at(0),
+                None,
+                crate::analysis::classify::argument_fold::FoldScope::default()
+            )
         );
         assert_eq!(memo.by_slot.borrow().len(), cached);
 
@@ -8564,7 +8645,11 @@ assert_eq!(input.amount, 100);"#
             for owner in reordered.functions() {
                 assert_eq!(
                     memo.facts_for(&reordered, test, Some(owner)),
-                    value_facts_for_test(test, Some(owner))
+                    value_facts_for_test(
+                        test,
+                        Some(owner),
+                        crate::analysis::classify::argument_fold::FoldScope::default()
+                    )
                 );
             }
         }
@@ -9563,7 +9648,13 @@ assert_eq!(input.amount, 100);"#
             r#"7.max(load(2))"#,
         ] {
             assert!(
-                owner_row_argument_values(&test, chain, false).is_empty(),
+                owner_row_argument_values(
+                    &test,
+                    chain,
+                    false,
+                    crate::analysis::classify::argument_fold::FoldScope::default()
+                )
+                .is_empty(),
                 "`{chain}` holds a literal inside a call and passes none"
             );
         }
@@ -9589,9 +9680,14 @@ assert_eq!(input.amount, 100);"#
             ("-5", "-5"),
         ] {
             assert_eq!(
-                owner_row_argument_values(&test, spelled, false)
-                    .first()
-                    .map(String::as_str),
+                owner_row_argument_values(
+                    &test,
+                    spelled,
+                    false,
+                    crate::analysis::classify::argument_fold::FoldScope::default()
+                )
+                .first()
+                .map(String::as_str),
                 Some(expected),
                 "`{spelled}` is the literal it spells"
             );
