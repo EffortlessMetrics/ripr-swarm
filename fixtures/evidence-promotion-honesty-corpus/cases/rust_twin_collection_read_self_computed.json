@@ -1,0 +1,20 @@
+{
+  "id": "rust_twin_collection_read_self_computed",
+  "language": "rust",
+  "tier": "pure",
+  "source_fixture": "fixtures/rust_twin_collection_read_self_computed",
+  "vector": "two_collections_that_both_ran_the_owner_cannot_credit_their_equality",
+  "probe_family": "side_effect",
+  "assertions": [
+    {
+      "type": "expected_class",
+      "class": "weakly_exposed"
+    },
+    {
+      "type": "must_not_promote"
+    },
+    {
+      "type": "must_not_report_clean"
+    }
+  ]
+}

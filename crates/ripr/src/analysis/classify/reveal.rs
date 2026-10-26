@@ -578,39 +578,55 @@ fn field_collection_observer_confirms(
         return false;
     }
     let plain_reads = assertion_field_collection_reads(&assertion.text, path, false, append_write);
-    assertion_field_collection_reads(&assertion.text, path, count_reads, append_write)
-        .into_iter()
-        .any(|read| {
-            // #8204: a count-only read of a map the owner inserts into
-            // cannot confirm deleting that insert when the test may
-            // already hold the inserted key: overwriting it leaves the
-            // count unchanged.
-            let count_only = !plain_reads.contains(&read);
-            !(count_only
-                && insert_key_index.is_some_and(|index| {
-                    insert_count_may_overwrite(
-                        test,
-                        owner,
-                        &read.binding,
-                        path,
-                        index,
-                        assertion.line,
-                    )
-                }))
-                && owner_call_reaches_read_unrewritten(
-                    test,
-                    &read.binding,
-                    owner.name(),
-                    assertion.line,
-                    read.getter.as_deref(),
-                    path,
-                )
-                && read.getter.as_deref().is_none_or(|getter| {
-                    owner
-                        .impl_type()
-                        .is_some_and(|impl_type| getter_reads_field(impl_type, getter, path))
-                })
-        })
+    let reads = assertion_field_collection_reads(&assertion.text, path, count_reads, append_write);
+    // #7135: `assert_eq!(c.items, d.items)` after both `c.add(..)` and
+    // `d.add(..)` compares two values the owner wrote, so a wrong owner
+    // moves both sides together. Two bindings that each ran the owner
+    // before the read observe nothing independent.
+    let mut owner_fed: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+    for read in &reads {
+        if owner_call_reaches_read_unrewritten(
+            test,
+            &read.binding,
+            owner.name(),
+            assertion.line,
+            read.getter.as_deref(),
+            path,
+        ) && read.getter.as_deref().is_none_or(|getter| {
+            owner
+                .impl_type()
+                .is_some_and(|impl_type| getter_reads_field(impl_type, getter, path))
+        }) {
+            owner_fed.insert(read.binding.as_str());
+        }
+    }
+    if owner_fed.len() > 1 {
+        return false;
+    }
+    reads.into_iter().any(|read| {
+        // #8204: a count-only read of a map the owner inserts into
+        // cannot confirm deleting that insert when the test may
+        // already hold the inserted key: overwriting it leaves the
+        // count unchanged.
+        let count_only = !plain_reads.contains(&read);
+        !(count_only
+            && insert_key_index.is_some_and(|index| {
+                insert_count_may_overwrite(test, owner, &read.binding, path, index, assertion.line)
+            }))
+            && owner_call_reaches_read_unrewritten(
+                test,
+                &read.binding,
+                owner.name(),
+                assertion.line,
+                read.getter.as_deref(),
+                path,
+            )
+            && read.getter.as_deref().is_none_or(|getter| {
+                owner
+                    .impl_type()
+                    .is_some_and(|impl_type| getter_reads_field(impl_type, getter, path))
+            })
+    })
 }
 
 /// #8204: whether the test may already hold, in `binding.path`, the key an
