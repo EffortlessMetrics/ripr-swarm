@@ -30,8 +30,6 @@ pub(crate) struct LoopAccumulator {
 pub(crate) struct CallTerm {
     /// The called function's bare name.
     pub(crate) callee: String,
-    /// The loop variable is passed as `*x` (true) or as `x` (false).
-    pub(crate) dereferences: bool,
     /// The update subtracts the term (`-=`, or `acc = acc - term`).
     pub(crate) subtracts: bool,
     /// An operator (`+ - * / %`) and integer literal applied to the call's
@@ -151,6 +149,20 @@ pub(crate) fn loop_accumulator(
             && node.parent().map(|parent| parent.kind()) != Some(SyntaxKind::FN)
             && node.parent().map(|parent| parent.kind()) != Some(SyntaxKind::FOR_EXPR)
         {
+            return None;
+        }
+    }
+    // The callee is named once, as the call target: a parameter or binding of
+    // the same name (`one: fn(u32) -> u32`) would shadow the function ripr
+    // evaluates.
+    if let Some(call) = &call_term {
+        let named = function
+            .syntax()
+            .descendants_with_tokens()
+            .filter_map(|element| element.into_token())
+            .filter(|token| token.kind() == SyntaxKind::IDENT && token.text() == call.callee)
+            .count();
+        if named != 1 {
             return None;
         }
     }
@@ -305,27 +317,24 @@ fn call_term(term: &ast::Expr, loop_variable: &str, subtracts: bool) -> Option<(
     if arguments.next().is_some() {
         return None;
     }
-    let dereferences = match &argument {
+    // `callee(x)` (a `for &x` walk) or `callee(*x)`; the callee's parameter is
+    // a built-in integer, so either spelling passes the element by value.
+    match &argument {
         ast::Expr::PathExpr(_) => {
             if path_ident(&argument).as_deref() != Some(loop_variable) {
                 return None;
             }
-            false
         }
         ast::Expr::PrefixExpr(prefix)
             if prefix.op_token().is_some_and(|op| op.text() == "*")
                 && prefix
                     .expr()
-                    .is_some_and(|inner| path_ident(&inner).as_deref() == Some(loop_variable)) =>
-        {
-            true
-        }
+                    .is_some_and(|inner| path_ident(&inner).as_deref() == Some(loop_variable)) => {}
         _ => return None,
-    };
+    }
     Some((
         CallTerm {
             callee,
-            dereferences,
             subtracts,
             scale,
         },
@@ -525,12 +534,13 @@ mod tests {
     #[test]
     fn a_call_on_the_loop_variable_is_the_call_term() {
         let call = |term: &str| accumulator(&SUM.replace("sum += w;", term)).and_then(|a| a.term);
-        let plain = call("sum += weigh(w);").expect("a call term");
-        assert_eq!(plain.callee, "weigh");
-        assert!(!plain.dereferences && !plain.subtracts && plain.scale.is_none());
-        let scaled = call("sum -= weigh(*w) * 3;").expect("a scaled call term");
-        assert!(scaled.dereferences && scaled.subtracts);
-        assert_eq!(scaled.scale, Some(('*', 3)));
+        assert!(
+            call("sum += weigh(w);")
+                .is_some_and(|t| t.callee == "weigh" && !t.subtracts && t.scale.is_none())
+        );
+        assert!(
+            call("sum -= weigh(*w) * 3;").is_some_and(|t| t.subtracts && t.scale == Some(('*', 3)))
+        );
         // A plain term carries none, and the owner's own name is not a callee.
         assert!(accumulator(SUM).is_some_and(|a| a.term.is_none()));
         assert!(call("sum += total(w);").is_none());

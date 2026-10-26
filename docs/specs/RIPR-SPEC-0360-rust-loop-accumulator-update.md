@@ -107,10 +107,13 @@ the walked parameter, the loop variable nor the owner itself. The call's
 value is read by evaluating the callee, never assumed, so the credit below
 applies only when ripr can read it:
 
-- exactly one function of that name exists in the workspace, in the owner's
-  file;
-- it has no generics, is not `unsafe` or `const`, takes one parameter and
-  returns the owner's built-in integer type of at most 64 bits, and its body
+- exactly one function of that name exists in the workspace, a free function
+  in the owner's file (an `impl` method of the same name is not it), and the
+  name appears in the owner once, as the call target (a parameter or binding
+  of that name would shadow the function);
+- it has no generics, is not `unsafe` or `const`, takes one plain identifier
+  parameter (no `mut`, `ref` or `self`) of the same built-in integer type it
+  returns, which is the owner's return type and at most 64 bits, and its body
   is one expression of that parameter, decimal integer literals, parentheses,
   unary `-` and `+ - * / %`, with every step in the type's range (a cast, a
   call, a statement or a second use of an unreadable name is not read).
@@ -145,10 +148,17 @@ folded exactly: the opposite sign, `|=`, `^=` and overwriting (`acc = term`,
 the last element), and, for a term with an operator, each other of
 `+ - * / %` in its place. `*= /= %= &=` stay zero from the zero start, which
 differs from a nonzero pin. A mutant that is the same function for every input
-(`* 1` and `/ 1`, `+ 0` and `- 0`) is equivalent, not a gap. A pin that is one
-element long, a run in which two neighbours coincide (`id(x) * 2` and
-`id(x) + 2` at `[2, 2]`, or `2 | 4` beside `2 + 4`) and a fold that does not
-give the pinned value keep their withheld verdict.
+(`* 1` and `/ 1`, `+ 0` and `- 0`) is equivalent, not a gap. A run in which a
+neighbour coincides with the written update (a one-element run of a `+=`,
+where overwriting gives the same value; `id(x) * 2` and `id(x) + 2` at
+`[2, 2]`; `2 | 4` beside `2 + 4`) and a fold that does not give the pinned
+value keep their withheld verdict.
+
+A call term is also never reported as a gap. Its value is a function ripr may
+not read, so a related direct-call test that does not credit it (a smoke call,
+a relational check, an unreadable pin) is withheld as `static_unknown` under
+`rust_pinned_shape_unresolved`; ripr cannot say the update's neighbours are
+distinguishable at all, as in `fn w(x: u32) -> u32 { 0 }`.
 
 Starting from zero, a nonzero total separates the update from its neighbours:
 a flipped sign gives the opposite total, a product, quotient, remainder and
@@ -191,6 +201,9 @@ exact pin (a smoke call, a relational check) keeps its gap.
   or one ripr cannot read (a computed or short row, a rebound name, a skip
   guard), is withheld as `rust_pinned_shape_unresolved`; ripr does not claim
   the gap through a loop.
+- Panic counts as a kill, as for the plain accumulator: the fold assumes
+  overflow checks, so a profile with `overflow-checks = false` can let a
+  wrapping mutant survive a pin.
 - A release build can wrap an unsigned `-=` back to the pinned value for a
   single large element; debug builds panic. ripr does not model overflow.
 - Only `+`/`-` updates qualify; `*=` from zero is constant zero.
@@ -237,9 +250,11 @@ exact pin (a smoke call, a relational check) keeps its gap.
    `^=` and every other neighbour give a different value.
 8. The same owner pinned on a run the callee does not fold to the expected
    value, on one element, or on a run where two neighbours coincide, with a
-   callee that has a statement body, a call, a cast, a different return type
-   or a second definition, is `static_unknown` under
-   `rust_pinned_shape_unresolved`, never `exposed` and never a gap.
+   callee that has a statement body, a call, a cast, a different return type,
+   generics, a `mut` parameter or a second definition, or a callee name that a
+   parameter shadows, is `static_unknown` (`rust_pinned_shape_unresolved`; an
+   `async` owner keeps its executor-helper limit), never `exposed` and never a
+   gap. A smoke call of a call term is `static_unknown`, never a gap.
 9. A call term outside the list above (a method, a path, a second argument, a
    computed argument, a non-literal or hexadecimal operand, a second operator)
    keeps its `static_unknown` probe.
@@ -265,7 +280,8 @@ exact pin (a smoke call, a relational check) keeps its gap.
   `pinned_run_sums_to_nonzero`, `pinned_run_accepts`.
 - `crates/ripr/src/analysis/classify/owner_pin/call_term_fold.rs`: the call
   term's callee evaluation and neighbour folds.
-- `crates/ripr/src/analysis/classify/pinned_shape.rs`: the withheld gap.
+- `crates/ripr/src/analysis/classify/pinned_shape.rs`: the withheld gap (and
+  the call term's no-gap rule).
 
 ## Metrics
 

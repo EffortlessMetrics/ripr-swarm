@@ -7,7 +7,12 @@ tests = [
   "crates/ripr/tests/loop_accumulator_call_term.rs::a_pin_that_the_callee_does_not_fold_to_is_not_credited",
   "crates/ripr/tests/loop_accumulator_call_term.rs::a_callee_ripr_cannot_evaluate_is_not_credited",
   "crates/ripr/tests/loop_accumulator_call_term.rs::a_term_operator_the_pin_cannot_tell_apart_is_not_credited",
+  "crates/ripr/tests/loop_accumulator_call_term.rs::a_parameter_that_shadows_the_callee_is_not_evaluated_as_the_function",
+  "crates/ripr/tests/loop_accumulator_call_term.rs::a_run_whose_bitwise_or_agrees_with_the_sum_is_not_credited",
+  "crates/ripr/tests/loop_accumulator_call_term.rs::a_smoke_call_never_reports_a_gap_for_a_callee_ripr_did_not_read",
+  "crates/ripr/tests/loop_accumulator_call_term.rs::a_callee_defined_twice_is_not_credited",
 ]
 code = [
   "crates/ripr/src/analysis/classify/owner_pin/call_term_fold.rs",
+  "crates/ripr/src/analysis/syntax/loop_accumulator.rs",
 ]

@@ -141,15 +141,27 @@ mod tests {{
         .lines()
         .enumerate()
         .find(|(_, text)| {
-            text.trim_start().starts_with("t +=") || text.trim_start().starts_with("t =")
+            ["t +=", "t -=", "t ="]
+                .iter()
+                .any(|prefix| text.trim_start().starts_with(prefix))
         })
         .ok_or_else(|| "premise: an update line".to_string())?;
     finding(&lib, at + 1, old, text, ProbeFamily::ReturnValue)
 }
 
+/// A pin ripr cannot read as separating the update is withheld as
+/// `static_unknown`: never credited and never called a gap. A sync owner reads
+/// `rust_pinned_shape_unresolved`; an `async` one keeps the executor-helper
+/// limit (`rust_framework_oracle_unresolved`) its pin already carried.
 fn require_not_credited(label: &str, found: &Finding) -> Result<(), String> {
-    if found.class == ExposureClass::Exposed {
-        return Err(format!("{label} must not be credited: {found:?}"));
+    let limit = found.static_limit_kind.map(|kind| kind.as_str());
+    if found.class != ExposureClass::StaticUnknown
+        || !matches!(
+            limit,
+            Some("rust_pinned_shape_unresolved" | "rust_framework_oracle_unresolved")
+        )
+    {
+        return Err(format!("{label} must be withheld, not credited: {found:?}"));
     }
     Ok(())
 }
@@ -223,12 +235,20 @@ fn a_callee_ripr_cannot_evaluate_is_not_credited() -> Result<(), String> {
             "async fn double(x: u32) -> u32 {\n    twice(x)\n}\nfn twice(x: u32) -> u32 {\n    x * 2\n}",
         ),
         (
+            "a generic callee",
+            "async fn double<T>(x: u32) -> u32 {\n    x * 2\n}",
+        ),
+        (
+            "a mutable parameter",
+            "async fn double(mut x: u32) -> u32 {\n    x * 2\n}",
+        ),
+        (
             "a cast",
             "async fn double(x: u32) -> u32 {\n    (x as u64 * 2) as u32\n}",
         ),
         (
             "a different return type",
-            "async fn double(x: u32) -> u64 {\n    x as u64 * 2\n}",
+            "async fn double(x: u32) -> u64 {\n    2\n}",
         ),
     ] {
         let owner = OWNER.replacen("async fn double(x: u32) -> u32 {\n    x * 2\n}", callee, 1);
@@ -375,6 +395,139 @@ index 1111111..2222222 100644
         found.probe.family == ProbeFamily::ReturnValue && found.probe.location.line == at
     }) {
         return Err("an async owner without a call term stays outside the shape".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn a_parameter_that_shadows_the_callee_is_not_evaluated_as_the_function() -> Result<(), String> {
+    // `one` the parameter hides `one` the function: the run [2, 0] folds to 2
+    // through the function but the closure the test passes returns [2, 0].
+    let owner = "fn one(x: u32) -> u32 {
+    x - x + 1
+}
+
+pub fn total(items: &[u32], one: fn(u32) -> u32) -> u32 {
+    let mut t = 0;
+    for x in items {
+        t += one(*x);
+    }
+    t
+}
+";
+    let lib = format!(
+        "{owner}
+#[cfg(test)]
+mod tests {{
+    use super::*;
+
+    #[test]
+    fn pinned() {{
+        assert_eq!(total(&[2, 0], |x| x), 2);
+    }}
+}}
+"
+    );
+    let at = lib
+        .lines()
+        .position(|text| text.trim_start().starts_with("t +="))
+        .map_or(0, |at| at + 1);
+    let diff = format!(
+        "diff --git a/src/lib.rs b/src/lib.rs
+index 1111111..2222222 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -{at},1 +{at},1 @@
+-        t = t + one(*x);
++        t += one(*x);
+"
+    );
+    let repo = TempRepo::create(&lib, &diff)?;
+    let output = check_workspace(CheckInput {
+        root: repo.root.clone(),
+        base: None,
+        diff_file: Some(repo.root.join("diff.patch")),
+        mode: Mode::Ready,
+        format: OutputFormat::Json,
+        include_unchanged_tests: true,
+        ..CheckInput::default()
+    })?;
+    if output
+        .findings
+        .iter()
+        .any(|found| found.class == ExposureClass::Exposed)
+    {
+        return Err(format!(
+            "a shadowed callee must not be credited: {:?}",
+            output.findings
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn a_subtracting_update_on_a_signed_owner_is_credited_and_one_element_may_be() -> Result<(), String>
+{
+    let owner = "fn double(x: i32) -> i32 {
+    x * 2
+}
+
+pub fn drained(xs: &[i32]) -> i32 {
+    let mut t = 0;
+    for x in xs {
+        t -= double(*x);
+    }
+    t
+}
+";
+    let found = update_finding(
+        owner,
+        "        t = t - double(*x);",
+        "assert_eq!(drained(&[1, 2, 3]), -12);",
+    )?;
+    assert_eq!(found.class, ExposureClass::Exposed, "{found:?}");
+    Ok(())
+}
+
+#[test]
+fn a_run_whose_bitwise_or_agrees_with_the_sum_is_not_credited() -> Result<(), String> {
+    // `2 | 4` and `2 + 4` are both 6, so `|=` survives a pin of 6.
+    let owner = "fn id(x: u32) -> u32 {
+    x
+}
+
+pub fn joined(xs: &[u32]) -> u32 {
+    let mut t = 0;
+    for x in xs {
+        t += id(*x);
+    }
+    t
+}
+";
+    let found = update_finding(
+        owner,
+        "        t = t + id(*x);",
+        "assert_eq!(joined(&[2, 4]), 6);",
+    )?;
+    require_not_credited("a run where |= agrees", &found)?;
+    let found = update_finding(
+        owner,
+        "        t = t + id(*x);",
+        "assert_eq!(joined(&[3, 4, 5]), 12);",
+    )?;
+    assert_eq!(found.class, ExposureClass::Exposed, "{found:?}");
+    Ok(())
+}
+
+#[test]
+fn a_smoke_call_never_reports_a_gap_for_a_callee_ripr_did_not_read() -> Result<(), String> {
+    let found = update_finding(
+        OWNER,
+        "        t += double(*x).await;",
+        "let _ = block_on(sum_doubled(&[1, 2, 3]));",
+    )?;
+    if found.class == ExposureClass::WeaklyExposed {
+        return Err(format!("an unread callee must not report a gap: {found:?}"));
     }
     Ok(())
 }

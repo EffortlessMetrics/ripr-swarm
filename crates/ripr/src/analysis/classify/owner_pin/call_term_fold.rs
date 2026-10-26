@@ -258,6 +258,11 @@ fn unique_callee(term: &CallTerm, owner_file: &Path, index: &RustIndex) -> Optio
     if named.next().is_some() || function.file != owner_file {
         return None;
     }
+    // A free function: a bare call never names an associated function, and an
+    // `impl` method of the same name says nothing about what the call reaches.
+    if function.id.0.contains("::impl ") {
+        return None;
+    }
     let parse = parse_clean_source_file(&function.body)?;
     let item = parse
         .tree()
