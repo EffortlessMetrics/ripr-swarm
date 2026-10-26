@@ -256,6 +256,67 @@ fn a_namespace_pick_never_renames_an_inactive_runner_member() -> Result<(), Stri
     Ok(())
 }
 
+/// #10646: one namespace with 50 picks keeps every verdict. The picks mix the
+/// member, destructured and `{ key: local }` spellings. The production path
+/// also asserts each verdict against the pre-#10646 cut-and-rescan reference
+/// under `cfg(test)`.
+const PICKS: usize = 50;
+
+fn pick_source(extra: &str) -> String {
+    let mut source = String::from("const runner = require('node:test');\n");
+    for index in 0..PICKS {
+        match index % 3 {
+            0 => source.push_str(&format!("const t{index} = runner.test;\n")),
+            1 => source.push_str(&format!("const {{ test: t{index} }} = runner;\n")),
+            _ => source.push_str(&format!("const {{ it: t{index} }} = runner;\n")),
+        }
+    }
+    source.push_str(extra);
+    for index in 0..PICKS {
+        source.push_str(&format!("t{index}('adds', () => {{}});\n"));
+    }
+    source
+}
+
+fn picked(source: &str) -> Vec<String> {
+    super::super::admission::namespace_pick_locals_for_test(source, Path::new("tests/sum.test.ts"))
+}
+
+#[test]
+fn fifty_namespace_picks_keep_every_verdict() {
+    let locals = picked(&pick_source(""));
+    let expected: Vec<String> = (0..PICKS).map(|index| format!("t{index}")).collect();
+    assert_eq!(locals, expected);
+}
+
+/// #10646: one written (or value-used) pick refuses alone; the other 49 stay.
+#[test]
+fn one_written_pick_among_fifty_refuses_alone() {
+    for written in [0, 17, 49] {
+        for extra in [
+            format!("t{written} = () => {{}};\n"),
+            format!("t{written}++;\n"),
+            format!("const copy = t{written};\n"),
+            format!("t{written}.only = 1;\n"),
+        ] {
+            let locals = picked(&pick_source(&extra));
+            let expected: Vec<String> = (0..PICKS)
+                .filter(|index| *index != written)
+                .map(|index| format!("t{index}"))
+                .collect();
+            assert_eq!(locals, expected, "{extra}");
+        }
+    }
+}
+
+/// Removal control: the same file without the extra statement admits all 50,
+/// so the refusal above comes from that one statement and not from the shape.
+#[test]
+fn removing_the_write_restores_the_pick() {
+    assert_eq!(picked(&pick_source("")).len(), PICKS);
+    assert_eq!(picked(&pick_source("t17.call(1);\n")).len(), PICKS);
+}
+
 #[test]
 fn registration_bindings_reject_local_noop_callbacks() -> Result<(), String> {
     for source in [
