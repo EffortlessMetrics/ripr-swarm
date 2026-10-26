@@ -1,0 +1,12 @@
+diff --git a/channels/core.py b/channels/core.py
+--- a/channels/core.py
++++ b/channels/core.py
+@@ -42,7 +42,7 @@
+ 
+ 
+ def notify_h(sender, n):
+-    sender.send(n)
++    sender.send(n + 1)
+ 
+ 
+ def say_i(name):

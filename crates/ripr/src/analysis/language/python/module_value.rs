@@ -99,6 +99,13 @@ pub(super) struct ForeignIndex<'a> {
     unknown: bool,
 }
 
+// Parses the foreign index has done on this thread, so a test can pin that
+// the workspace is parsed once per run and not once per changed file (#10125).
+#[cfg(test)]
+thread_local! {
+    pub(super) static FOREIGN_PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 struct IndexedSource<'a> {
     file: &'a Path,
     /// None when the file does not parse.
@@ -136,6 +143,8 @@ impl<'a> ForeignIndex<'a> {
                     };
                 }
             }
+            #[cfg(test)]
+            FOREIGN_PARSES.with(|parses| parses.set(parses.get() + 1));
             let assigned = assigned_attributes(source);
             let dynamic = assigned.is_none()
                 || DYNAMIC_WRITERS

@@ -524,7 +524,11 @@ def checkout(payload):
     let tests = extract_tests(
         Path::new("tests/test_checkout.py"),
         r#"
-def test_expired_coupon_response_smoke(client):
+from starlette.testclient import TestClient
+from app.checkout import api
+
+def test_expired_coupon_response_smoke():
+    client = TestClient(api)
     response = client.post("/checkout", json={"expired": True})
     assert response
 "#,
@@ -560,7 +564,11 @@ def checkout(payload):
     let tests = extract_tests(
         Path::new("tests/test_checkout.py"),
         r#"
-def test_expired_coupon_response_smoke(client):
+from starlette.testclient import TestClient
+from app.checkout import api
+
+def test_expired_coupon_response_smoke():
+    client = TestClient(api)
     response = client.post("/checkout", json={"expired": True})
     assert response
 "#,
@@ -603,7 +611,11 @@ def item(id):
     let tests = extract_tests(
         Path::new("tests/test_items.py"),
         r#"
-def test_item_response(client):
+from starlette.testclient import TestClient
+from app.items import api
+
+def test_item_response():
+    client = TestClient(api)
     response = client.get("/items/1")
     assert response.json()["ok"] == True
 "#,
@@ -688,7 +700,11 @@ def checkout(payload):
     let tests = extract_tests(
         Path::new("tests/test_checkout.py"),
         r#"
-def test_expired_coupon_response_smoke(client):
+from starlette.testclient import TestClient
+from app.checkout import api
+
+def test_expired_coupon_response_smoke():
+    client = TestClient(api)
     response = client.post("/checkout", json={"expired": True})
     assert response
 "#,
@@ -737,7 +753,11 @@ def checkout(payload):
     let tests = extract_tests(
         Path::new("tests/test_checkout.py"),
         r#"
-def test_expired_coupon_response_smoke(client):
+from starlette.testclient import TestClient
+from app.checkout import api
+
+def test_expired_coupon_response_smoke():
+    client = TestClient(api)
     response = client.post("/checkout", json={"expired": True})
     assert response
 "#,
@@ -2095,6 +2115,81 @@ fn analyze_diff_emits_finding_for_changed_python_file_on_disk() -> Result<(), St
     if finding.language_status != Some(LanguageStatus::Preview) {
         return Err("language status should be Preview".to_string());
     }
+    Ok(())
+}
+
+/// #10125: the workspace foreign-write index is built once per run. A rebuild
+/// per changed file would parse every workspace source again for each one.
+#[test]
+fn analyze_diff_parses_the_workspace_once_however_many_files_changed() -> Result<(), String> {
+    fn parses_for(changed_modules: usize) -> Result<(usize, usize), String> {
+        let root = unique_tempdir("analyze-diff-parse-once")?;
+        let mut changed_files = Vec::new();
+        for index in 0..3 {
+            let module = PathBuf::from(format!("settings{index}.py"));
+            write_file(&root.join(&module), &format!("LIMIT{index} = 12\n"))?;
+            write_file(
+                &root.join(format!("test_settings{index}.py")),
+                &format!(
+                    "from settings{index} import LIMIT{index}\n\n\ndef test_limit():\n    assert LIMIT{index} == 10\n"
+                ),
+            )?;
+            if index < changed_modules {
+                changed_files.push(ChangedFile {
+                    path: module,
+                    added_lines: vec![crate::analysis::diff::ChangedLine {
+                        line: 1,
+                        new_side_line: 1,
+                        text: format!("LIMIT{index} = 12"),
+                    }],
+                    removed_lines: vec![crate::analysis::diff::ChangedLine {
+                        line: 1,
+                        new_side_line: 1,
+                        text: format!("LIMIT{index} = 10"),
+                    }],
+                });
+            }
+        }
+        let options = AnalysisOptions {
+            root: root.clone(),
+            base: None,
+            diff_file: None,
+            mode: crate::analysis::AnalysisMode::Draft,
+            include_unchanged_tests: false,
+            resolve_tsconfig_paths: false,
+            perl_facts_path: None,
+            perl_producer_failure: None,
+            git_timeout: None,
+            git_candidate: None,
+            production_like_targets: Default::default(),
+            test_harnesses: Vec::new(),
+            resolved_subject_identity: None,
+            open_rust_index_paths: Default::default(),
+        };
+        super::module_value::FOREIGN_PARSES.with(|parses| parses.set(0));
+        let result = PythonAdapter.analyze_diff(&options, &OraclePolicy::default(), &changed_files);
+        let parses = super::module_value::FOREIGN_PARSES.with(std::cell::Cell::get);
+        let cleanup = std::fs::remove_dir_all(&root);
+        let result = result?;
+        cleanup.map_err(|err| format!("remove_dir_all({}): {err}", root.display()))?;
+        Ok((parses, result.findings.len()))
+    }
+
+    let (one_parses, one_findings) = parses_for(1)?;
+    let (three_parses, three_findings) = parses_for(3)?;
+    assert_eq!(one_findings, 1, "one changed constant is one finding");
+    assert_eq!(
+        three_findings, 3,
+        "three changed constants are three findings"
+    );
+    assert_eq!(
+        one_parses, 6,
+        "each of the six workspace sources is parsed once"
+    );
+    assert_eq!(
+        three_parses, one_parses,
+        "changing more files must not parse the workspace again"
+    );
     Ok(())
 }
 
@@ -4777,7 +4872,9 @@ fn route_relation_for(decorator: &str, call: &str) -> Result<bool, String> {
         .ok_or_else(|| "expected items owner".to_string())?;
     let tests = extract_tests(
         Path::new("tests/test_items.py"),
-        &format!("def test_items(client):\n    response = client.{call}\n    assert response\n"),
+        &format!(
+            "from starlette.testclient import TestClient\nfrom app.items import api\n\ndef test_items():\n    client = TestClient(api)\n    response = client.{call}\n    assert response\n"
+        ),
     );
     Ok(related_test_candidates(owner, &tests)
         .iter()
@@ -4865,7 +4962,7 @@ fn same_name_import_gate_keeps_independent_route_relation() -> Result<(), String
         .ok_or_else(|| "expected route owner".to_string())?;
     let tests = extract_tests(
         Path::new("tests/test_checkout.py"),
-        "from pkg.a import quote\n\ndef test_expired(client):\n    assert quote({}) == {}\n    response = client.post(\"/checkout\", json={})\n    assert response\n",
+        "from starlette.testclient import TestClient\nfrom app.checkout import api\nfrom pkg.a import quote\n\ndef test_expired():\n    client = TestClient(api)\n    assert quote({}) == {}\n    response = client.post(\"/checkout\", json={})\n    assert response\n",
     );
     let relation = related_test_candidates(owner, &tests)
         .first()

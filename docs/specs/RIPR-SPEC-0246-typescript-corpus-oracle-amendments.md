@@ -321,13 +321,59 @@ discriminates the change; that credit is deferred (Decision 9).
 
 **Rule 8. A counted-loop header change read only through a mock call count is
 unknown.** (Added 2026-10-22, #9496.) When the old and the new changed line are
-both counted `for (init; test; update)` headers that differ, and a related
-oracle-eligible test asserts a mock's call count (`callCount()` or
-`calls.length` in the observed expression), a ladder result of
-`weakly_exposed` with a strong oracle reads `static_unknown` with stop reason
-`gap_evidence_unresolved`. The predicate-boundary witness does not apply to a
-loop header, and the adapter does not model how many iterations the loop
-runs, so neither a gap nor a credit is established. `for...of`, `for...in`,
+both counted `for (init; test; update)` headers that differ (a leading label
+is skipped; whitespace beside brackets, commas and comparison operators is
+ignored; literal contents and `+`/`-` spacing are not, and a header holding a
+`/` is compared as written), and a related test that runs the owner asserts
+the call count of a mock whose flow the rule cannot rule out of the owner, a
+ladder result of `weakly_exposed` with a strong oracle reads `static_unknown`
+with stop reason `gap_evidence_unresolved`.
+
+*Counted mock.* Only an assertion counts: a count read in the observed or
+expected expression (`m.mock.callCount()`, `m.mock.calls.length`,
+`m.callCount`, `m.calledTwice`, `m.getCalls()`), a local that holds one
+(`const n = m.mock.callCount(); assert.equal(n, 2)`), a local that aliases
+`m.mock` (`const { calls } = m.mock`), or `expect(m).toHaveBeenCalledTimes(n)`.
+The mock is the root of the receiver (`other.m.mock.callCount()` counts
+`other`). A count that no assertion reads cannot fail the test and asserts
+nothing.
+
+*Unresolved flow.* Owner binding and mock flow are separate. The owner names
+come from `ts_owner_call_names`, plus a local whose declaration, assignment,
+function or class mentions one (`const r = owner`, `const go = (f) =>
+owner(f)`, `function go(f) { return owner(f); }`, `class H { go(f) {...} }`).
+For methods, only receivers the test builds from the owner's class count
+(`svc.retry`, or an inline `new Svc().retry`; a foreign `(new Other()).retry` is another binding, and a class that merely declares a method named like the owner does not mention it), and a same-named local cannot shadow the property (a bare `retry(fn)` is the method only when the test binds that name to it, `const retry = svc.retry.bind(svc)`). The mock
+and every local assigned from an expression that mentions it (declaration,
+assignment, destructuring, container, multi-line) are carriers, and a count
+read through a local built from plain references to the mock (`const spy =
+m`, `[m]`, `{ m }`) counts the mock too. The rule abstains when a statement
+that mentions the owner also mentions a carrier, when a call that received a
+carrier (including a callback body split across statements and its chained
+`.then(...)`) mentions the owner anywhere in its span, or when a carrier is
+used anywhere the rule cannot show is unrelated. The only unrelated uses are:
+a plain local binding with no call around the mock, a direct invocation
+(`m()`, but not inside a closure that is built to be handed on), a state read or configuration of the mock itself (`m.mock…`,
+`m.callCount`, `m.calledOnce`), `expect(m)`, an argument of a call on an
+observing receiver (`console`, `assert`, `expect`, `JSON`, `Math`, `t.assert`) or of
+`assert(...)`, `String(...)`, `setTimeout`/`setInterval`/`queueMicrotask`, an argument of a member that
+shares the owner's name on another receiver (`other.owner(m)`), and an
+argument of a body-local function that does not reach the owner. Every other
+callee is unresolved flow and abstains, so a call that may store or forward
+the mock (`h.push(m)`, `outer.mockImplementation(m)`, `reg.register(m)`)
+abstains. A member value (`owner(other.m)`), an object key (`{ m: x }`), a
+callback or function parameter, or a `const`/`let`/`var` declared inside the callback, that rebinds the name (`async (m = g) =>
+m()`) and text in a comment or string are not uses of the mock. A call count
+on a mock that never leaves its declaration and its count reads stays an
+actionable gap. The rule fires only when the ladder's oracle is strong, so
+`expect(m).toHaveBeenCalledTimes(n)` (a medium oracle) abstains only beside a
+strong assertion. An owner spelling the adapter does not link as a call
+(`owner<T>(m)`, `owner!(m)`, `(0, owner)(m)`, `owner.call(null, m)`) has only
+a heuristic relation (`ambiguous_related_test`) and never routes a repair
+packet. Multi-line `for (` headers, `while`, and chained labels are not read.
+The predicate-boundary witness does not apply to a loop header, and the
+adapter does not model how many iterations the loop runs, so neither a gap
+nor a credit is established. `for...of`, `for...in`,
 `while` and `if` changes are not read. Rule 8 only moves `weakly_exposed` to
 `static_unknown`; it credits nothing. The credit, which needs an iteration
 count model, is tracked in #9874.
@@ -359,6 +405,28 @@ fails against the changed code. An expectation equal to both or to neither
 is dead, as before. A test that still pins the unchanged value is a discriminator
 because RIPR-SPEC-0245 scores the diff as its own single mutant, and that
 test fails against it.
+
+**Rule 11. An edit to a ternary condition's comparison needs a tested input the
+two comparisons treat differently.** (Added 2026-10-22, #9437.) When the
+changed line is a return-value change and its removed and added text differ
+only in one `param <op> <number> ?` condition (`<op>` one of `===`, `!==`,
+`==`, `!=`, `<`, `<=`, `>`, `>=`; the operator, the literal, or both change; the
+comparison is the whole condition, so it follows `(`, `{`, `,`, `:`, `?`, a
+lone `=`, `return` or the start of the line, and ends at a single `?`, and it
+is code, not text inside a string or comment), the edit decides the result only
+for a value of `param` where the two comparisons disagree. The rule reads every
+observed owner call: each related test passes literal arguments, every owner
+parameter is never rebound or written (the rule 3 stability check), and the
+compared parameter's argument is a plain signed numeric literal. If any
+observed value separates the two comparisons, or any call cannot be read (a
+variable or expression argument, an omitted argument, a test file that feeds
+the owner another way), the ladder result stands. Otherwise an `exposed` ladder
+result reads `weakly_exposed`, and the missing line names a whole number where
+the comparisons differ. When the RIPR-SPEC-0243 rule 18 unexercised returned-
+expression arm demotes first, the ladder limitation carries this rule's
+condition and differing value instead of the generic changed-arm note; an
+argument only that arm's evaluator can read keeps the generic note. Rule 11
+runs after RIPR-SPEC-0248 rule 2 and removes credit only.
 
 ### Decisions
 
@@ -431,6 +499,13 @@ and the rejected alternative.
    getter identity, hook exclusivity, unconditional execution and JavaScript
    evaluator divergence. Rejected for now: crediting the reading test, which
    stays gated on a second real mocha-hook corpus row. Recorded on #9496.
+
+10. **Condition comparison (rule 11, 2026-10-22).** Adopted: demote only when
+    every observed argument is a numeric literal that both comparisons treat
+    alike; anything unreadable fails open. Limited to a bare `param <op> number`
+    condition so no other operand can change the answer. Rejected: also
+    reading predicate-family changes, whose boundary evidence the RIPR-SPEC-0027
+    witness already owns. Recorded on #9437.
 
 ## Required Evidence
 
@@ -529,6 +604,13 @@ and the rejected alternative.
     finding reads `exposed`. `.to.equal(500)`, equal to neither value, stays
     `weakly_exposed`.
 
+19. `return \`${n} item${n === 1 ? "" : "s"}\`` becomes `n <= 1`, tests
+    `expect(plural(1)).toBe("1 item")` and `expect(plural(3)).toBe("3 items")`:
+    `weakly_exposed`. Adding `expect(plural(0)).toBe("0 items")`: `exposed`.
+    An argument the RIPR-SPEC-0243 rule 18 evaluator cannot read (a variable,
+    a missing argument): `exposed`; one only that evaluator can read
+    (`1 + 1`) reads `weakly_exposed` with the generic unexercised-arm note.
+
 ## Test Mapping
 
 - `crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs`
@@ -549,6 +631,10 @@ and the rejected alternative.
 - `crates/ripr/src/analysis/language/typescript/tests/mocha_hook_owner_tests.rs`
   pins rule 7 (example 16); corpus case `mocha-before-hook-trimmed-name`
   pins the row.
+- `crates/ripr/src/analysis/language/typescript/tests/comparison_edit_tests.rs`
+  pins rule 11 (example 19): the reader's shapes and refusals and the
+  classifier verdicts; corpus case `shape-template-plural-boundary` pins the
+  row.
 
 ## Implementation Mapping
 
@@ -574,6 +660,9 @@ and the rejected alternative.
   `classifier.rs`: `ts_catch_arm_unreached` (rule 6).
 - `crates/ripr/src/analysis/language/typescript/loop_count_guard.rs`,
   `classifier.rs`: `ts_loop_count_unmodeled` (rule 8).
+- `crates/ripr/src/analysis/language/typescript/comparison_edit_guard.rs`,
+  `rounding_mode_guard.rs`: `observed_numeric_calls`; `classifier.rs`: the
+  rule 11 hook in `ts_apply_post_ladder_rules`.
 - `crates/ripr/src/analysis/language/typescript/table_rows.rs`:
   `callback_case_assertions`, shared with RIPR-SPEC-0243 rule 11.
 - `crates/ripr/src/analysis/language/typescript/literal_matcher_guard.rs`:

@@ -94,6 +94,12 @@ indexing. The existing run-receipt vocabulary is preserved: `status = failed`,
 `active_phase = language_facts`, `last_completed_phase = diff_discovery`, and a
 `limitations` entry with category `review_guidance_oversized` plus the repair
 route. No guidance JSON or Markdown is published by the refused dispatch.
+
+`language_facts` runs three passes in order: `corpus_admission`,
+`test_change_detection` and `owner_attribution`. The run receipt carries an
+optional `active_step` naming the pass in progress, so a `limited_timeout`
+receipt says which pass spent the budget. The field is absent when no pass is
+active and is cleared when the phase advances or the run completes (#1604).
 The xtask wrapper preserves the named category and incomplete/non-all-clear
 semantics, rather than turning refusal into clean guidance or a real gap. It
 matches the exact colon-terminated error tag line-wise (after removing an

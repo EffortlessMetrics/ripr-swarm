@@ -1,0 +1,8 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -16,3 +16,3 @@
+ pub fn fits_path(width: usize, limit: usize) -> bool {
+-    width <= limit
++    limit >= width
+ }

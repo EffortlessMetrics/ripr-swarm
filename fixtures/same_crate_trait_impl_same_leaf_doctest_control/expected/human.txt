@@ -29,6 +29,9 @@ Start here:
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
       unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;
+      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;
+      candidate line = changed line ripr considers for probes
     - reach no: No test is seen calling size_hint; tests share only its file or a name token: util/src/io/take.rs - limit (line 6)
     - infection unknown: Predicate compares `x` with `self.remaining`, and ripr can read no literal or same-file constant for either, so it cannot tell which side of the boundary a test…
     - 6 more detail line(s) in --format human-full
@@ -36,7 +39,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/same_crate_trait_impl_same_leaf_doctest_control/input --diff <cwd>/fixtures/same_crate_trait_impl_same_leaf_doctest_control/diff.patch --mode fast probe:util_src_stream_take.rs:predicate:7b453838
   ripr context --root <cwd>/fixtures/same_crate_trait_impl_same_leaf_doctest_control/input --diff <cwd>/fixtures/same_crate_trait_impl_same_leaf_doctest_control/diff.patch --mode fast --at probe:util_src_stream_take.rs:predicate:7b453838
-  no repair start offered: repair route not ready (missing evidence: producer-owned missing discriminator fact: boundary_value; safe test target; new test proposal blocked: no governed inline cfg-test module exists in the owner file); run `ripr repair probe:util_src_stream_take.rs:predicate:7b453838 --root <cwd>/fixtures/same_crate_trait_impl_same_leaf_doctest_control/input` for the full gate's answer
+  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: producer-owned missing discriminator fact: boundary_value; safe test target; new test proposal blocked: no governed inline cfg-test module exists in the owner file; follow the Next step above, then rerun `ripr check`
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/same_crate_trait_impl_same_leaf_doctest_control/input --at util/src/stream/take.rs:10 --kind predicate
 

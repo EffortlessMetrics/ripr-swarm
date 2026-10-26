@@ -1,0 +1,4 @@
+[package]
+name = "rust_param_rebind_destructuring_let"
+version = "0.1.0"
+edition = "2024"

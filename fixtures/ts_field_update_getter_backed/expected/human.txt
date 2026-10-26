@@ -19,7 +19,9 @@ Start here:
   Static exposure: weak (severity: warning, confidence 0.40)
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: this.hits += 1;
-  Missing discriminator: Related tests reach `recordHit` with a strong oracle, but the TypeScript preview adapter does not recognise the shape of the changed line, so static evidence cannot tie an…
+  Missing discriminator: Related tests reach `recordHit` with a strong oracle, but the TypeScript
+    preview adapter does not recognise the shape of the changed line, so static evidence cannot tie
+    an assertion to it
   Related test: tests/stats.test.ts:5 one hit (ripr could not confirm that this assertion observes the changed behavior)
   Next step — TypeScript preview advisory: add a test that exercises the changed behavior with an
     exact-value assertion (`toBe` / `toEqual` / `toStrictEqual`); no actionable repair packet is
@@ -32,6 +34,9 @@ Start here:
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
       unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;
+      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;
+      candidate line = changed line ripr considers for probes
     - reach yes: 1 related test(s) found for owner `recordHit`
     - infection unknown: TypeScript preview adapter does not yet model infection
     - 4 more detail line(s) in --format human-full
@@ -39,7 +44,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/ts_field_update_getter_backed/input --diff <cwd>/fixtures/ts_field_update_getter_backed/diff.patch --mode fast probe:src_stats.ts:typescript_preview:d2fea2a2
   ripr context --root <cwd>/fixtures/ts_field_update_getter_backed/input --diff <cwd>/fixtures/ts_field_update_getter_backed/diff.patch --mode fast --at probe:src_stats.ts:typescript_preview:d2fea2a2
-  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_stats.ts:typescript_preview:d2fea2a2 --root <cwd>/fixtures/ts_field_update_getter_backed/input` for the full gate's answer
+  no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full

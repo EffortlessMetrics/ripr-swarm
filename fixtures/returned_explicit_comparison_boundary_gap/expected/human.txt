@@ -26,6 +26,9 @@ Start here:
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
       unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;
+      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;
+      candidate line = changed line ripr considers for probes
     - reach yes: Related tests appear to reach ships_free: big_order_ships_free, small_order_pays_shipping
     - infection weak: Related tests contain input values, but the equality-boundary discriminator is missing
     - 10 more detail line(s) in --format human-full
@@ -33,7 +36,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/returned_explicit_comparison_boundary_gap/input --diff <cwd>/fixtures/returned_explicit_comparison_boundary_gap/diff.patch --mode fast probe:src_lib.rs:predicate:ca3e18b4
   ripr context --root <cwd>/fixtures/returned_explicit_comparison_boundary_gap/input --diff <cwd>/fixtures/returned_explicit_comparison_boundary_gap/diff.patch --mode fast --at probe:src_lib.rs:predicate:ca3e18b4
-  no repair start offered: repair route not ready (missing evidence: incomplete evidence stage: activation); run `ripr repair probe:src_lib.rs:predicate:ca3e18b4 --root <cwd>/fixtures/returned_explicit_comparison_boundary_gap/input` for the full gate's answer
+  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: incomplete evidence stage: activation; follow the Next step above, then rerun `ripr check`
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/returned_explicit_comparison_boundary_gap/input --at src/lib.rs:3 --kind predicate
 
