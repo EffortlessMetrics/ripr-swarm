@@ -137,10 +137,7 @@ pub(crate) fn credit_same_file_assertion_macros(index: &mut RustIndex) {
         }
         let mut body = test.body.as_str().to_string();
         for (call_text, statement) in &credit.rewrites {
-            // Keep the line count: a multi-line call leaves its newlines
-            // behind the one-line expansion.
-            let padding = "\n".repeat(call_text.matches('\n').count());
-            body = body.replacen(call_text.as_str(), &format!("{statement}{padding}"), 1);
+            body = body.replacen(call_text.as_str(), statement, 1);
         }
         test.body = SourceText::owned(body);
     });
@@ -193,8 +190,7 @@ pub(crate) fn expanded_assertion_view(source: &str) -> Cow<'_, str> {
         if region.matches(text).count() != 1 {
             continue;
         }
-        let padding = "\n".repeat(text.matches('\n').count());
-        let replaced = region.replacen(text, &format!("{}{padding}", expanded.statement), 1);
+        let replaced = region.replacen(text, &expanded.statement, 1);
         view.replace_range(start..end, &replaced);
         changed = true;
     }
@@ -273,10 +269,10 @@ fn expand_call(call: &LocalMacroCall) -> Option<ExpandedCall> {
     }
     let statement = single_assertion_statement(&arm.transcriber)?;
     let expanded = substitute_fragments(statement, &names, &arguments)?;
-    // The expansion replaces the call's text in place and the call's own
-    // newlines are re-added as padding, so a line break inside the expansion
-    // would shift every later line.
-    if expanded.contains('\n') {
+    // The expansion replaces the call's text in place, so a line break in
+    // either would shift every later line, and a call split from its `;` by a
+    // newline would not match the file scan's statement text.
+    if expanded.contains('\n') || call.text.trim().contains('\n') {
         return None;
     }
     let mut assertions = extract_assertions(&expanded, call.start_line);
