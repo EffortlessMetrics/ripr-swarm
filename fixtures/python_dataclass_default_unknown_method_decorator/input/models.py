@@ -1,6 +1,10 @@
 from dataclasses import dataclass, field
 
 
+def tweak(fn):
+    return None
+
+
 @dataclass
 class Invoice:
     amount: int

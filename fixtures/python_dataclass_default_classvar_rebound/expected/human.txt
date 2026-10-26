@@ -13,7 +13,7 @@ Analysis outcome: findings below (analysis complete)
 Start here:
   State: preview language, advisory only
   Safe next action: static limitation `decorator_indirection` keeps this Python preview finding from a repair card, so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; check by hand whether a test observes this change, then rerun `ripr check`
-  File: models.py:9
+  File: models.py:10
   Language: python
   Language status: preview
   Static exposure: unknown (severity: note, confidence 0.20)

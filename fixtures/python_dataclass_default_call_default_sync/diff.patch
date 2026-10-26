@@ -1,6 +1,6 @@
 --- a/models.py
 +++ b/models.py
-@@ -4,7 +4,7 @@
+@@ -8,7 +8,7 @@
  @dataclass
  class Invoice:
      amount: int

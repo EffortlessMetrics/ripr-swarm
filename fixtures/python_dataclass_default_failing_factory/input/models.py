@@ -1,6 +1,10 @@
 from dataclasses import dataclass, field
 
 
+def fail():
+    raise RuntimeError("factory failed")
+
+
 @dataclass
 class Invoice:
     amount: int

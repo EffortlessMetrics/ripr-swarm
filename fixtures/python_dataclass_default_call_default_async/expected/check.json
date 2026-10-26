@@ -7,7 +7,7 @@
   "summary": {"changed_rust_files":0,"probes":1,"findings":1,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":1,"changed_files_by_language":[{"language":"python","files":1}]},
   "analysis_outcome": {
     "analysis_complete": true,
-    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:22d926b58d6300e8","base_revision":null,"input_identity":"sha256:e87d788c4a22fd0623c5be90bb654ec8ba39f4c9446604908ec3dec42a8bdab7","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:22d926b58d6300e8","base_revision":null,"input_identity":"sha256:6c447430f67fc3e759d23d037edfd2f3e57557adfab8e35d255abf8810d05e79","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
   },
   "findings": [
     {
@@ -20,7 +20,7 @@
         "family": "predicate",
         "delta": "control",
         "file": "models.py",
-        "line": 7,
+        "line": 11,
         "expression": "    tax_rate: float = 0.25",
         "owner": "python:models.py::Invoice"
        },
@@ -84,5 +84,5 @@
       "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
     }
   ],
-  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"models.py","digest":"sha256:0d7b48be5ed3ba5698b9bc0a43ced42fa3aaf0e954ac229c1fee78a7464291a7"}]}
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"models.py","digest":"sha256:6a7a7b38bf326564774f7eb91f025473f68f4e47ddce22d98e918293c90d605b"}]}
 }

@@ -1,6 +1,10 @@
 from dataclasses import dataclass, field
 
 
+def boom():
+    raise RuntimeError("class creation failed")
+
+
 @dataclass
 class Invoice:
     amount: int
