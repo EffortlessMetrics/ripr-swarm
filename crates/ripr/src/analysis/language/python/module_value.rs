@@ -352,6 +352,14 @@ fn credits<'a>(
         old_line_text,
         new_source,
     } = *edit;
+    if let Some((name, parameters, new_body)) = lambda_line(line_text) {
+        return lambda_credits(
+            edit,
+            (&name, &parameters, &new_body),
+            module_owner,
+            all_tests,
+        );
+    }
     let (name, new_value) = constant_line(line_text)?;
     let (old_name, old_value) = constant_line(old_line_text?)?;
     if name != old_name || old_value == new_value {
@@ -494,6 +502,173 @@ fn credits<'a>(
         }
     }
     Some(out)
+}
+
+/// The credits for a body-only edit of a top-level `NAME = lambda ...`
+/// binding: an assertion that holds with the old body and fails with the new
+/// one when the test calls the lambda with literal arguments.
+fn lambda_credits<'a>(
+    edit: &ModuleEdit<'_>,
+    (name, parameters, new_body): (&str, &[String], &Expr),
+    module_owner: &PythonOwner,
+    all_tests: &'a [PythonTest],
+) -> Option<Vec<ModuleValueCredit<'a>>> {
+    let ModuleEdit {
+        file,
+        line,
+        old_line_text,
+        new_source,
+        ..
+    } = *edit;
+    let old_line_text = old_line_text?;
+    let (old_name, old_parameters, old_body) = lambda_line(old_line_text)?;
+    if old_name != name || old_parameters != parameters {
+        return None;
+    }
+    // Another workspace file or test file that writes the attribute or patches
+    // the module can rebind the name for every test.
+    if module_owner.foreign_writes.may_rebind(name, file)
+        || all_tests.iter().any(|test| {
+            test.constant_rebinding
+                .attributes
+                .contains(&name.to_string())
+        })
+    {
+        return None;
+    }
+    // The name is bound once, by this line, in both the new and the old module.
+    let old_source = with_line_replaced(new_source, line, old_line_text)?;
+    for source in [new_source, old_source.as_str()] {
+        let Mod::Module(module) = parse_module_result(file, source).ok()? else {
+            return None;
+        };
+        if !ModuleBindingFacts::of(source, &module.body).bound_once(name) {
+            return None;
+        }
+    }
+    let (old_reader, new_reader) = (
+        Reader {
+            parameters: parameters.to_vec(),
+            expression: old_body,
+        },
+        Reader {
+            parameters: parameters.to_vec(),
+            expression: new_body.clone(),
+        },
+    );
+    // `owner_module_callees` reads function owners, not the module owner.
+    let mut callee = module_owner.clone();
+    callee.owner_kind = Some(OwnerKind::Function);
+    callee.name = name.to_string();
+    callee.qualified_name = name.to_string();
+    let unused = Value::Bool(false);
+
+    let mut out = Vec::new();
+    for test in all_tests {
+        if super::test_activation::activation_control(test).is_some()
+            || test.constant_rebinding.edited_in_diff
+            || test.constant_rebinding.assigns_attribute(name)
+        {
+            continue;
+        }
+        let spellings = reader_spellings(test, &callee);
+        if spellings.is_empty() {
+            continue;
+        }
+        for assertion in &test.assertions {
+            let Some(expression) = assertion_expression(assertion) else {
+                continue;
+            };
+            if !straight_line_assertion(test, assertion) {
+                continue;
+            }
+            let Some(preceding) = test
+                .assertions
+                .iter()
+                .filter(|prior| prior.line < assertion.line)
+                .map(assertion_expression)
+                .collect::<Option<Vec<_>>>()
+            else {
+                continue;
+            };
+            if flips(
+                &expression,
+                "",
+                (&unused, &unused),
+                &[],
+                &spellings,
+                (Some(&old_reader), Some(&new_reader)),
+                &preceding,
+            ) {
+                out.push(ModuleValueCredit {
+                    test,
+                    assertion,
+                    constant: name.to_string(),
+                    old: lambda_rendering(old_line_text),
+                    new: lambda_rendering(edit.line_text),
+                    reader: Some(name.to_string()),
+                });
+                break;
+            }
+        }
+    }
+    Some(out)
+}
+
+/// `NAME = lambda a, b: body` on one line: the name, its positional-only
+/// parameters (no defaults, `*args` or keywords) and the body.
+fn lambda_line(text: &str) -> Option<(String, Vec<String>, Expr)> {
+    let Mod::Module(module) = parse_module_result(Path::new("line.py"), text.trim_end()).ok()?
+    else {
+        return None;
+    };
+    let [stmt] = module.body.as_slice() else {
+        return None;
+    };
+    let (target, value) = match stmt {
+        Stmt::Assign(assign) => match assign.targets.as_slice() {
+            [target] => (target, assign.value.as_ref()),
+            _ => return None,
+        },
+        Stmt::AnnAssign(assign) if assign.simple => {
+            (assign.target.as_ref(), assign.value.as_deref()?)
+        }
+        _ => return None,
+    };
+    let (Expr::Name(name), Expr::Lambda(lambda)) = (target, value) else {
+        return None;
+    };
+    let args = &lambda.args;
+    if args.vararg.is_some()
+        || args.kwarg.is_some()
+        || !args.kwonlyargs.is_empty()
+        || args
+            .posonlyargs
+            .iter()
+            .chain(args.args.iter())
+            .any(|arg| arg.default.is_some())
+    {
+        return None;
+    }
+    let parameters = args
+        .posonlyargs
+        .iter()
+        .chain(args.args.iter())
+        .map(|arg| arg.def.arg.to_string())
+        .collect();
+    Some((
+        name.id.to_string(),
+        parameters,
+        lambda.body.as_ref().clone(),
+    ))
+}
+
+/// The lambda expression of an edited line, for the evidence text.
+fn lambda_rendering(line: &str) -> String {
+    line.split_once('=')
+        .map_or(line, |(_, value)| value)
+        .trim()
+        .to_string()
 }
 
 fn credit<'a>(

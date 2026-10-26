@@ -1003,3 +1003,328 @@ fn one_workspace_index_gives_each_changed_file_its_own_foreign_view() {
         );
     }
 }
+
+// A body-only edit of a top-level `NAME = lambda ...` binding (#9619).
+
+const LAMBDA_OLD: &str = "triple = lambda x: x * 3";
+const LAMBDA_NEW: &str = "triple = lambda x: x * 4";
+const LAMBDA_TEST: &str =
+    "from hostile.settings import triple\n\n\ndef test_it():\n    assert triple(4) == 12\n";
+
+fn lambda_test(body: &str) -> String {
+    format!("from hostile.settings import triple\n\n\ndef test_it():\n{body}\n")
+}
+
+/// Classify a one-line edit of `source` (new text at line 1) against the test
+/// and any other workspace files, with the workspace's foreign-write scan.
+fn classify_lambda(
+    source: &str,
+    new: &str,
+    old: &str,
+    others: &[(&str, &str)],
+    test_source: &str,
+) -> Result<Finding, String> {
+    let mut owners = owners_of(source);
+    let mut tests = tests_of(&[("tests/test_settings.py", test_source)]);
+    let own = Path::new("hostile/settings.py");
+    let foreign = super::module_value::ForeignWrites::scan(
+        own,
+        others
+            .iter()
+            .map(|(file, text)| (Path::new(file), *text))
+            .chain([
+                (own, source),
+                (Path::new("tests/test_settings.py"), test_source),
+            ]),
+        false,
+    );
+    for owner in owners.iter_mut().filter(|owner| owner.is_module_owner()) {
+        owner.foreign_writes = foreign.clone();
+    }
+    super::bool_oracle::credit_bare_bool_asserts(&mut tests, &owners, |path| {
+        if path == own {
+            Some(source)
+        } else if path == Path::new("tests/test_settings.py") {
+            Some(test_source)
+        } else {
+            others
+                .iter()
+                .find(|(file, _)| Path::new(file) == path)
+                .map(|(_, text)| *text)
+        }
+    });
+    classify_change_with_context(
+        own,
+        1,
+        new,
+        Some(old),
+        &owners,
+        &tests,
+        PythonNoBehaviorContext {
+            sole_line_replacement: true,
+            ..PythonNoBehaviorContext::default()
+        },
+        Some(source),
+    )
+    .ok_or_else(|| "the edit must yield a finding".to_string())
+}
+
+fn lambda_source(line: &str) -> String {
+    format!("{line}\n")
+}
+
+fn assert_lambda_withheld(finding: &Finding, label: &str) {
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "{label}: {finding:?}"
+    );
+    assert!(
+        !finding
+            .evidence
+            .iter()
+            .any(|line| line.starts_with("related_test_relation: module_value_call")),
+        "{label}: {:?}",
+        finding.evidence
+    );
+}
+
+#[test]
+fn a_lambda_body_edit_no_assertion_distinguishes_is_not_credited() -> Check {
+    for body in [
+        // 0 * 3 and 0 * 4 agree.
+        "    assert triple(0) == 0",
+        // Fails before the edit, so it is not an oracle that the edit broke.
+        "    assert triple(4) == 13",
+        // Holds under both bodies.
+        "    assert triple(4) > 0",
+    ] {
+        let finding = classify_lambda(
+            &lambda_source(LAMBDA_NEW),
+            LAMBDA_NEW,
+            LAMBDA_OLD,
+            &[],
+            &lambda_test(body),
+        )?;
+        assert_lambda_withheld(&finding, body);
+    }
+    Ok(())
+}
+
+#[test]
+fn a_lambda_edit_that_is_not_a_body_only_change_is_not_credited() -> Check {
+    for (label, new, old) in [
+        (
+            "parameter renamed",
+            "triple = lambda y: y * 4",
+            "triple = lambda x: x * 3",
+        ),
+        (
+            "arity changed",
+            "triple = lambda x: x * 4",
+            "triple = lambda x, y: x * 3",
+        ),
+        (
+            "default added",
+            "triple = lambda x=1: x * 4",
+            "triple = lambda x: x * 3",
+        ),
+        (
+            "vararg added",
+            "triple = lambda *x: 4",
+            "triple = lambda *x: 3",
+        ),
+        (
+            "name changed",
+            "other = lambda x: x * 4",
+            "triple = lambda x: x * 3",
+        ),
+        ("was not a lambda", "triple = lambda x: x * 4", "triple = 3"),
+    ] {
+        let finding = classify_lambda(&lambda_source(new), new, old, &[], LAMBDA_TEST)?;
+        assert_lambda_withheld(&finding, label);
+    }
+    Ok(())
+}
+
+#[test]
+fn a_lambda_body_outside_the_evaluator_is_not_credited() -> Check {
+    for (label, new, old) in [
+        (
+            "call",
+            "triple = lambda x: abs(x) * 4",
+            "triple = lambda x: abs(x) * 3",
+        ),
+        (
+            "attribute",
+            "triple = lambda x: x.real * 4",
+            "triple = lambda x: x.real * 3",
+        ),
+        (
+            "subscript",
+            "triple = lambda x: x[0] * 4",
+            "triple = lambda x: x[0] * 3",
+        ),
+        (
+            "global name",
+            "triple = lambda x: x * K",
+            "triple = lambda x: x * 3",
+        ),
+        (
+            "float",
+            "triple = lambda x: x * 4.0",
+            "triple = lambda x: x * 3.0",
+        ),
+        (
+            "nested lambda",
+            "triple = lambda x: (lambda y: y * 4)(x)",
+            "triple = lambda x: (lambda y: y * 3)(x)",
+        ),
+    ] {
+        let finding = classify_lambda(&lambda_source(new), new, old, &[], LAMBDA_TEST)?;
+        assert_lambda_withheld(&finding, label);
+    }
+    Ok(())
+}
+
+#[test]
+fn a_lambda_bound_twice_or_conditionally_is_not_credited() -> Check {
+    for (label, source) in [
+        (
+            "rebound later",
+            "triple = lambda x: x * 4\ntriple = print\n",
+        ),
+        (
+            "rebound by def",
+            "triple = lambda x: x * 4\n\n\ndef triple(x):\n    return 0\n",
+        ),
+        ("augmented", "triple = lambda x: x * 4\ntriple += 1\n"),
+        (
+            "loop target",
+            "triple = lambda x: x * 4\nfor triple in []:\n    pass\n",
+        ),
+        (
+            "global write",
+            "triple = lambda x: x * 4\n\n\ndef patch():\n    global triple\n    triple = print\n",
+        ),
+    ] {
+        let finding = classify_lambda(source, LAMBDA_NEW, LAMBDA_OLD, &[], LAMBDA_TEST)?;
+        assert_lambda_withheld(&finding, label);
+    }
+    Ok(())
+}
+
+#[test]
+fn another_file_that_rewrites_the_lambda_withholds_the_credit() -> Check {
+    for (label, file) in [
+        (
+            "attribute write",
+            (
+                "app/main.py",
+                "from hostile import settings\n\nsettings.triple = print\n",
+            ),
+        ),
+        (
+            "setattr",
+            (
+                "app/main.py",
+                "from hostile import settings\n\nsetattr(settings, 'triple', print)\n",
+            ),
+        ),
+        (
+            "autouse monkeypatch",
+            (
+                "tests/conftest.py",
+                "import pytest\n\n\n@pytest.fixture(autouse=True)\ndef off(monkeypatch):\n    monkeypatch.setattr('hostile.settings.triple', print)\n",
+            ),
+        ),
+        (
+            "reload",
+            (
+                "app/reloader.py",
+                "import importlib\nfrom hostile import settings\n\nimportlib.reload(settings)\n",
+            ),
+        ),
+    ] {
+        let finding = classify_lambda(
+            &lambda_source(LAMBDA_NEW),
+            LAMBDA_NEW,
+            LAMBDA_OLD,
+            &[file],
+            LAMBDA_TEST,
+        )?;
+        assert_lambda_withheld(&finding, label);
+    }
+    Ok(())
+}
+
+#[test]
+fn a_test_that_shadows_or_may_skip_the_lambda_is_not_credited() -> Check {
+    for (label, test) in [
+        (
+            "local rebind",
+            "from hostile.settings import triple\n\n\ndef test_it():\n    triple = lambda x: x * 3\n    assert triple(4) == 12\n".to_string(),
+        ),
+        (
+            "parameter",
+            "from hostile.settings import triple\n\n\ndef test_it(triple):\n    assert triple(4) == 12\n".to_string(),
+        ),
+        (
+            "other module",
+            "from other.settings import triple\n\n\ndef test_it():\n    assert triple(4) == 12\n".to_string(),
+        ),
+        (
+            "patched in the test",
+            "from unittest.mock import patch\nfrom hostile.settings import triple\n\n\ndef test_it():\n    with patch('hostile.settings.triple', print):\n        assert triple(4) == 12\n".to_string(),
+        ),
+        ("guarded", lambda_test("    if flag:\n        assert triple(4) == 12")),
+        ("after return", lambda_test("    return\n    assert triple(4) == 12")),
+        ("non-literal argument", lambda_test("    n = 4\n    assert triple(n) == 12")),
+        ("keyword call", lambda_test("    assert triple(x=4) == 12")),
+        ("wrong arity", lambda_test("    assert triple(4, 1) == 12")),
+    ] {
+        let finding = classify_lambda(
+            &lambda_source(LAMBDA_NEW),
+            LAMBDA_NEW,
+            LAMBDA_OLD,
+            &[],
+            &test,
+        )?;
+        assert_lambda_withheld(&finding, label);
+    }
+    Ok(())
+}
+
+#[test]
+fn a_pinned_lambda_body_edit_is_credited() -> Check {
+    for body in [
+        "    assert triple(4) == 12",
+        "    assert triple(2) == 6\n    assert triple(0) == 0",
+        "    assert 12 == triple(4)",
+        "    assert triple(1) < 4",
+    ] {
+        let finding = classify_lambda(
+            &lambda_source(LAMBDA_NEW),
+            LAMBDA_NEW,
+            LAMBDA_OLD,
+            &[],
+            &lambda_test(body),
+        )?;
+        assert_credited(&finding);
+    }
+    // Read through the module path and an alias.
+    for test in [
+        "from hostile import settings\n\n\ndef test_it():\n    assert settings.triple(4) == 12\n",
+        "from hostile.settings import triple as t3\n\n\ndef test_it():\n    assert t3(4) == 12\n",
+    ] {
+        let finding = classify_lambda(
+            &lambda_source(LAMBDA_NEW),
+            LAMBDA_NEW,
+            LAMBDA_OLD,
+            &[],
+            test,
+        )?;
+        assert_credited(&finding);
+    }
+    Ok(())
+}
