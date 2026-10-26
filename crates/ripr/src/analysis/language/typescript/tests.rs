@@ -19018,6 +19018,11 @@ fn describe_skip_if_and_run_if_index_their_tests_under_the_factory_guard() {
         Some("describe.skipIf(!existsSync(dist))")
     );
     assert!(tests.iter().all(|test| test.assertions.is_empty()));
+    assert!(
+        tests
+            .iter()
+            .all(|test| { test.assertion_admission == TypeScriptAssertionAdmission::Unresolved })
+    );
 }
 
 #[test]
