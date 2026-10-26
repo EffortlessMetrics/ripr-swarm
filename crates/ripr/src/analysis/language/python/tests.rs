@@ -4553,6 +4553,7 @@ fn a_caplog_that_is_not_the_builtin_fixture_keeps_abstaining() -> Result<(), Str
                 body_text: "def caplog():\n    return Recorder()\n".to_string(),
                 imports: Vec::new(),
                 literal_construction: None,
+                literal_params: None,
                 isolated: false,
                 scope_imports: Vec::new(),
             });
