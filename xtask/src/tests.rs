@@ -51369,12 +51369,47 @@ fn vscode_verify_vsix_reuses_sealed_archive_license_check() -> Result<(), String
     let mit = String::from_utf8(notices.mit.clone()).map_err(|err| err.to_string())?;
     let apache = String::from_utf8(notices.apache.clone()).map_err(|err| err.to_string())?;
     with_temp_cwd("vscode-verify-vsix-reuse", |root| {
-        let good = root.join("good.vsix");
+        let good = root.join("ripr-0.11.0.vsix");
         let license_txt = packaged_license_txt(&mit, &apache);
-        write_packaging_test_vsix(&good, &[("extension/LICENSE.txt", &license_txt)])?;
+        let versioned = |version: &str| {
+            (
+                format!("{{\"name\":\"ripr\",\"version\":\"{version}\"}}"),
+                format!(
+                    "<PackageManifest><Metadata><Identity Language=\"en-US\" Id=\"ripr\" Version=\"{version}\" Publisher=\"EffortlessMetrics\" /></Metadata></PackageManifest>"
+                ),
+            )
+        };
+        let (package_json, vsixmanifest) = versioned("0.11.0");
+        write_packaging_test_vsix(
+            &good,
+            &[
+                ("extension/LICENSE.txt", &license_txt),
+                ("extension/package.json", &package_json),
+                ("extension.vsixmanifest", &vsixmanifest),
+            ],
+        )?;
         super::vscode_verify_vsix(&[good.to_string_lossy().into_owned()])?;
 
-        let pointer = root.join("pointer.vsix");
+        // #10731: a stale 0.8.0 extension under a 0.10.0 name must fail.
+        let stale = root.join("ripr-0.10.0.vsix");
+        let (package_json, vsixmanifest) = versioned("0.8.0");
+        write_packaging_test_vsix(
+            &stale,
+            &[
+                ("extension/LICENSE.txt", &license_txt),
+                ("extension/package.json", &package_json),
+                ("extension.vsixmanifest", &vsixmanifest),
+            ],
+        )?;
+        let Err(error) = super::vscode_verify_vsix(&[stale.to_string_lossy().into_owned()]) else {
+            return Err("vscode-verify-vsix must reject a stale extension version".to_string());
+        };
+        assert!(
+            error.contains("named for version 0.10.0") && error.contains("0.8.0"),
+            "{error}"
+        );
+
+        let pointer = root.join("ripr-0.11.1.vsix");
         write_packaging_test_vsix(&pointer, &[("extension/LICENSE.txt", POINTER_LICENSE)])?;
         let Err(error) = super::vscode_verify_vsix(&[pointer.to_string_lossy().into_owned()])
         else {
