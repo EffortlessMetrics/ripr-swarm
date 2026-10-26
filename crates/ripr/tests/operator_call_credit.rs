@@ -759,6 +759,60 @@ mod named {
     };
     assert_eq!(classes(&one_named_call)?, [ExposureClass::WeaklyExposed]);
 
+    // Same-named tests in different inline modules are different tests. The
+    // later one calls the method and observes the sum, so the finding is
+    // judged by that test too (it was once dropped as a duplicate by name).
+    let same_name_named_call_later = Case {
+        label: "same_name_named_call_later",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        extra_items: "
+#[cfg(test)]
+mod operator {
+    use super::*;
+
+    #[test]
+    fn operator_under_test() {
+        let sum = Money(1) + Money(1);
+        assert_eq!(sum.0, 2);
+    }
+}
+",
+        test_body: "let other = Money(2).add(Money(3));\n        assert_eq!(other.0, 5);",
+        ..ADD
+    };
+    assert_eq!(
+        classes(&same_name_named_call_later)?,
+        [ExposureClass::Exposed]
+    );
+
+    // The row for the later test must resolve to that test's own body: an
+    // earlier operator-only test of the same name must not stand in for a
+    // later one that calls `.add(` and confirms nothing.
+    let same_name_unconfirmed_named_call_later = Case {
+        label: "same_name_unconfirmed_named_call_later",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        extra_items: "
+#[cfg(test)]
+mod operator {
+    use super::*;
+
+    #[test]
+    fn operator_under_test() {
+        let sum = Money(1) + Money(1);
+        assert_eq!(sum.0, 2);
+    }
+}
+",
+        test_body: "let r = Money(2).add(Money(3));\n        assert_eq!(r.0, 5);",
+        ..ADD
+    };
+    assert_eq!(
+        classes(&same_name_unconfirmed_named_call_later)?,
+        [ExposureClass::WeaklyExposed]
+    );
+
     // A finding whose infection is not read has a different missing leg: the
     // changed line sits behind a branch the test's operands never take.
     let branch_not_driven = Case {
