@@ -1,7 +1,7 @@
 {
   "kind": "operand_binding_expected_test_projection",
   "summary": {
-    "findings": 34
+    "findings": 52
   },
   "findings": [
     {
@@ -303,6 +303,168 @@
     },
     {
       "id": "16:subtotal+shipping",
+      "classification": "exposed",
+      "probe": {
+        "family": "field_construction"
+      },
+      "discriminate": "yes",
+      "operand_pin": false
+    },
+    {
+      "id": "17:subtotal + shipping",
+      "classification": "exposed",
+      "probe": {
+        "family": "field_construction"
+      },
+      "discriminate": "yes",
+      "operand_pin": false
+    },
+    {
+      "id": "17:subtotal+shipping",
+      "classification": "exposed",
+      "probe": {
+        "family": "field_construction"
+      },
+      "discriminate": "yes",
+      "operand_pin": false
+    },
+    {
+      "id": "18:subtotal + shipping",
+      "classification": "exposed",
+      "probe": {
+        "family": "field_construction"
+      },
+      "discriminate": "yes",
+      "operand_pin": false
+    },
+    {
+      "id": "18:subtotal+shipping",
+      "classification": "exposed",
+      "probe": {
+        "family": "field_construction"
+      },
+      "discriminate": "yes",
+      "operand_pin": false
+    },
+    {
+      "id": "19:subtotal + shipping",
+      "classification": "exposed",
+      "probe": {
+        "family": "field_construction"
+      },
+      "discriminate": "yes",
+      "operand_pin": false
+    },
+    {
+      "id": "19:subtotal+shipping",
+      "classification": "exposed",
+      "probe": {
+        "family": "field_construction"
+      },
+      "discriminate": "yes",
+      "operand_pin": false
+    },
+    {
+      "id": "20:subtotal + shipping",
+      "classification": "exposed",
+      "probe": {
+        "family": "field_construction"
+      },
+      "discriminate": "yes",
+      "operand_pin": false
+    },
+    {
+      "id": "20:subtotal+shipping",
+      "classification": "exposed",
+      "probe": {
+        "family": "field_construction"
+      },
+      "discriminate": "yes",
+      "operand_pin": false
+    },
+    {
+      "id": "21:subtotal + shipping",
+      "classification": "exposed",
+      "probe": {
+        "family": "field_construction"
+      },
+      "discriminate": "yes",
+      "operand_pin": false
+    },
+    {
+      "id": "21:subtotal+shipping",
+      "classification": "exposed",
+      "probe": {
+        "family": "field_construction"
+      },
+      "discriminate": "yes",
+      "operand_pin": false
+    },
+    {
+      "id": "22:subtotal + shipping",
+      "classification": "exposed",
+      "probe": {
+        "family": "field_construction"
+      },
+      "discriminate": "yes",
+      "operand_pin": false
+    },
+    {
+      "id": "22:subtotal+shipping",
+      "classification": "exposed",
+      "probe": {
+        "family": "field_construction"
+      },
+      "discriminate": "yes",
+      "operand_pin": false
+    },
+    {
+      "id": "23:subtotal + shipping",
+      "classification": "exposed",
+      "probe": {
+        "family": "field_construction"
+      },
+      "discriminate": "yes",
+      "operand_pin": false
+    },
+    {
+      "id": "23:subtotal+shipping",
+      "classification": "exposed",
+      "probe": {
+        "family": "field_construction"
+      },
+      "discriminate": "yes",
+      "operand_pin": false
+    },
+    {
+      "id": "24:subtotal + shipping",
+      "classification": "exposed",
+      "probe": {
+        "family": "field_construction"
+      },
+      "discriminate": "yes",
+      "operand_pin": false
+    },
+    {
+      "id": "24:subtotal+shipping",
+      "classification": "exposed",
+      "probe": {
+        "family": "field_construction"
+      },
+      "discriminate": "yes",
+      "operand_pin": false
+    },
+    {
+      "id": "25:subtotal + shipping",
+      "classification": "exposed",
+      "probe": {
+        "family": "field_construction"
+      },
+      "discriminate": "yes",
+      "operand_pin": false
+    },
+    {
+      "id": "25:subtotal+shipping",
       "classification": "exposed",
       "probe": {
         "family": "field_construction"

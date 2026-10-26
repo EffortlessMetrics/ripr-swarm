@@ -914,7 +914,17 @@ wrong credits.
    type, alias or unresolved import. Value parameters, locals, functions,
    constants and statics of the same name do not rebind the type namespace.
    Nested function/module declarations do not contaminate the owner's scope.
-   Primitive value bindings come only from plain direct owner-body lets;
+   Local value-binding evidence comes only from plain direct owner-body lets
+   completed before the actual field. The currently initialized pattern and
+   later lets cannot lend their types to that initializer. A let dependency
+   requires a completed earlier binding or an established primitive parameter;
+   the existing requirement that every relevant rebind prove primitive remains.
+   Hoisted direct functions, constants, statics, unit/tuple constructors and
+   unresolved matching imports or globs unsettle parameter-value evidence,
+   including evidence borrowed through another let. Type-only aliases, traits,
+   modules, enums and record structs do not rebind values. Established supported
+   standard primitive imports retain their type-only identity. Unmodeled
+   extern blocks and opaque item expansion refuse this proof. Thus
    nested functions, disjoint blocks and unused closures cannot establish or
    veto an outer value. Unread direct patterns, declaration-only bindings,
    let-else and attributed lets refuse this proof instead of silently keeping
@@ -923,8 +933,8 @@ wrong credits.
    A nested block, closure, match arm or binding-control expression can
    replace a value at that sink. This includes condition-side `if`/`while`
    let chains, before entering their body. Those contexts refuse this operand
-   proof, including genuinely primitive
-   nested constructions, rather than borrowing outer primitive evidence.
+   proof, including genuinely primitive nested constructions, rather than
+   borrowing outer primitive evidence.
    Direct-body return, let and call wrappers introduce no additional binding
    scope and remain eligible. This is not general lexical value resolution.
    An annotation or cast uses only the lexical scopes enclosing its parsed

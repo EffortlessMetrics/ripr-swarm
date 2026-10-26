@@ -303,7 +303,13 @@ fn primitive_type_aliases_do_not_hide_observed_operator_effects() -> Result<(), 
     .chain(disjoint_operator_sources())
     .chain(unread_rebinding_sources())
     .chain(sink_shadow_sources())
-    .chain(sink_condition_sources());
+    .chain(sink_condition_sources())
+    .chain(direct_value_sources())
+    .chain([
+        item_dependency_source(),
+        later_value_source(),
+        later_dependency_source(),
+    ]);
     let mut findings = Vec::new();
     for (case, source) in sources.enumerate() {
         assert_binding_class(&source, ExposureClass::Exposed)?;
@@ -467,6 +473,140 @@ fn sink_condition_sources() -> Vec<String> {
                 )
         })
         .collect()
+}
+
+#[test]
+fn hoisted_value_items_cannot_borrow_parameter_types() -> Result<(), String> {
+    for source in direct_value_sources() {
+        assert_binding_class(&source, ExposureClass::Exposed)?;
+    }
+    Ok(())
+}
+
+fn direct_value_sources() -> Vec<String> {
+    let source = include_str!("fixtures/operand_whitespace/module_param_alias.rs")
+        .replace("shipping: u64)", "shipping: i64)")
+        .replace("quote(3_000, 3, Shipping)", "quote(3_000, 3, 0)");
+    let mut sources = [
+        "const shipping: Shipping = Shipping;",
+        "use crate::Shipping as shipping;",
+        "mod values { pub use crate::Shipping as shipping; } use values::*;",
+        "struct shipping; impl std::ops::Add<shipping> for i64 { type Output = i64; fn add(self, _: shipping) -> i64 { ADD_CALLS.fetch_add(1, Ordering::SeqCst); self } }",
+    ]
+    .into_iter()
+    .map(|item| source.replace("    Quote {", &format!("    {item}\n    Quote {{")))
+    .collect::<Vec<_>>();
+    sources.push(
+        source
+            .replace(
+                "pub struct Shipping;",
+                "#[derive(Clone, Copy)]\npub struct Shipping;",
+            )
+            .replace(
+                "    Quote {",
+                "    static shipping: Shipping = Shipping;\n    Quote {",
+            ),
+    );
+    sources.push(
+        source
+            .replace("    Quote {", "    let result = Quote {")
+            .replace(
+                "    }\n}\n\n#[cfg(test)]",
+                "    };\n    const shipping: Shipping = Shipping;\n    result\n}\n\n#[cfg(test)]",
+            ),
+    );
+    sources
+}
+
+#[test]
+fn a_later_item_is_hoisted_over_the_parameter() -> Result<(), String> {
+    let sources = direct_value_sources();
+    let source = sources
+        .last()
+        .ok_or_else(|| "missing later-item fixture".to_string())?;
+    assert_binding_class(source, ExposureClass::Exposed)
+}
+
+#[test]
+fn a_shadowed_parameter_cannot_establish_a_dependent_binding() -> Result<(), String> {
+    assert_binding_class(&item_dependency_source(), ExposureClass::Exposed)
+}
+
+fn item_dependency_source() -> String {
+    include_str!("fixtures/operand_whitespace/module_param_alias.rs")
+        .replace("shipping: u64)", "fee: i64)")
+        .replace("quote(3_000, 3, Shipping)", "quote(3_000, 3, 0)")
+        .replace(
+            "    Quote {",
+            "    const fee: Shipping = Shipping;\n    let shipping = fee;\n    Quote {",
+        )
+}
+
+#[test]
+fn later_lets_cannot_establish_an_earlier_field() -> Result<(), String> {
+    assert_binding_class(&later_value_source(), ExposureClass::Exposed)
+}
+
+fn later_value_source() -> String {
+    include_str!("fixtures/operand_whitespace/module_param_alias.rs")
+        .replace("    Quote {", "    let result = Quote {")
+        .replace(
+            "    }\n}\n\n#[cfg(test)]",
+            "    };\n    let shipping = 0;\n    result\n}\n\n#[cfg(test)]",
+        )
+}
+
+#[test]
+fn later_lets_cannot_establish_an_earlier_dependency() -> Result<(), String> {
+    assert_binding_class(&later_dependency_source(), ExposureClass::Exposed)
+}
+
+fn later_dependency_source() -> String {
+    include_str!("fixtures/operand_whitespace/module_param_alias.rs")
+        .replace("shipping: u64)", "fee: u64)")
+        .replace(
+            "    Quote {",
+            "    let shipping = fee;\n    let fee = 0;\n    Quote {",
+        )
+}
+
+#[test]
+fn later_lets_do_not_veto_an_earlier_primitive_field() -> Result<(), String> {
+    let source = format!("struct Shipping;\n{SPACED}")
+        .replace("    Quote {", "    let result = Quote {")
+        .replace(
+            "    }\n}\n\n#[cfg(test)]",
+            "    };\n    let shipping = Shipping;\n    result\n}\n\n#[cfg(test)]",
+        );
+    assert_binding_class(&source, ExposureClass::WeaklyExposed)
+}
+
+#[test]
+fn the_current_pattern_does_not_shadow_its_field_initializer() -> Result<(), String> {
+    let source = SPACED
+        .replace("    Quote {", "    let shipping = Quote {")
+        .replace(
+            "    }\n}\n\n#[cfg(test)]",
+            "    };\n    shipping\n}\n\n#[cfg(test)]",
+        );
+    assert_binding_class(&source, ExposureClass::WeaklyExposed)
+}
+
+#[test]
+fn type_only_items_do_not_rebind_primitive_values() -> Result<(), String> {
+    for item in [
+        "type shipping = ();",
+        "trait shipping {}",
+        "mod shipping {}",
+        "struct shipping { value: u64 }",
+        "enum shipping { Value }",
+        "use std::primitive::u64 as shipping;",
+        "use std::primitive::*;",
+    ] {
+        let source = SPACED.replace("    Quote {", &format!("    {item}\n    Quote {{"));
+        assert_binding_class(&source, ExposureClass::WeaklyExposed)?;
+    }
+    Ok(())
 }
 
 #[test]

@@ -68,8 +68,15 @@ pub(in crate::analysis) fn operand_only_pin(
     let owner_name = owner.name.as_str();
     let owner_body = owner.body.as_str();
     if !primitive_binding::context_is_closed(owner, index, expression)
-        || !operand_established_primitive(left, owner_body, outer_imports, index, owner)
-        || !operand_established_primitive(right, owner_body, outer_imports, index, owner)
+        || !operand_established_primitive(left, owner_body, outer_imports, index, owner, expression)
+        || !operand_established_primitive(
+            right,
+            owner_body,
+            outer_imports,
+            index,
+            owner,
+            expression,
+        )
     {
         return None;
     }
@@ -206,6 +213,7 @@ fn operand_established_primitive(
     outer_imports: Option<&BTreeSet<String>>,
     index: &RustIndex,
     owner: &FunctionSummary,
+    expression: &str,
 ) -> bool {
     // Comments are dropped first. A string, char literal or block comment
     // could hide a binding or a type this proof would misread, so such an
@@ -214,13 +222,15 @@ fn operand_established_primitive(
     if text.contains(['"', '\'']) || text.contains("/*") {
         return false;
     }
-    let Some(bindings) = primitive_binding::direct_let_bindings(owner, index) else {
+    let Some(direct) = primitive_binding::direct_bindings(owner, index, expression) else {
         return false;
     };
+    let bindings = &direct.lets;
     let primitive_params: Vec<String> = owner_param_types(&text)
         .into_iter()
-        .filter(|(_, ty)| {
-            primitive_binding::type_is_primitive(ty, owner, index, TypeSite::Signature)
+        .filter(|(name, ty)| {
+            direct.parameter_is_unshadowed(name)
+                && primitive_binding::type_is_primitive(ty, owner, index, TypeSite::Signature)
         })
         .map(|(name, _)| name)
         .collect();
@@ -229,20 +239,15 @@ fn operand_established_primitive(
     // `let shipping = Money::new(shipping)` over `shipping: u64`).
     let mut established: Vec<String> = primitive_params
         .iter()
-        .filter(|name| !bindings.iter().any(|(bound, _, _, _)| bound == *name))
+        .filter(|name| !bindings.iter().any(|binding| &binding.name == *name))
         .cloned()
         .collect();
     loop {
         let mut changed = false;
-        for (name, _, _, _) in &bindings {
+        for binding in bindings {
+            let name = &binding.name;
             if established.iter().any(|seen| seen == name) {
                 continue;
-            }
-            // A rebound primitive parameter is primitive before the rebind,
-            // so initializers may refer to it (`let n = n + 1;`).
-            let mut basis = established.clone();
-            if primitive_params.contains(name) {
-                basis.push(name.clone());
             }
             // Shadowing: a name is established only when every binding of it
             // proves, so the value at the literal is primitive whichever
@@ -252,23 +257,38 @@ fn operand_established_primitive(
             // looks like a literal (`let s: Money = 499;`).
             let all = bindings
                 .iter()
-                .filter(|(bound, _, _, _)| bound == name)
-                .all(|(_, bound_expr, annotation, offset)| match annotation {
-                    Some(ty) => primitive_binding::type_is_primitive(
-                        ty,
-                        owner,
-                        index,
-                        TypeSite::Annotation(*offset),
-                    ),
-                    None => expression_established(
-                        bound_expr,
-                        *offset,
-                        &basis,
-                        &text,
-                        outer_imports,
-                        index,
-                        owner,
-                    ),
+                .filter(|binding| &binding.name == name)
+                .all(|binding| {
+                    let offset = binding.offset;
+                    // A later let cannot lend its type to an earlier use.
+                    let mut basis = established
+                        .iter()
+                        .filter(|seen| {
+                            primitive_params.contains(seen) || direct.binding_precedes(seen, offset)
+                        })
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    // Preserve the existing primitive-parameter rebind basis.
+                    if primitive_params.contains(name) {
+                        basis.push(name.clone());
+                    }
+                    match binding.annotation.as_deref() {
+                        Some(ty) => primitive_binding::type_is_primitive(
+                            ty,
+                            owner,
+                            index,
+                            TypeSite::Annotation(offset),
+                        ),
+                        None => expression_established(
+                            &binding.expression,
+                            offset,
+                            &basis,
+                            &text,
+                            outer_imports,
+                            index,
+                            owner,
+                        ),
+                    }
                 });
             if all {
                 established.push(name.clone());

@@ -1,5 +1,7 @@
-//! Refusal premises for rule 7's primitive *type*, not value, namespace.
+//! Primitive type authority and owner-site value premises for rule 7.
 //! This does not resolve arbitrary aliases, re-exports or qualified types.
+
+mod value_scope;
 
 use super::{FunctionSummary, RustIndex, primitive_type_token};
 use crate::analysis::syntax::{
@@ -10,7 +12,7 @@ use ra_ap_syntax::{
     AstNode, SyntaxKind, SyntaxNode,
     ast::{self, HasName},
 };
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 fn same_name(left: &str, right: &str) -> bool {
     left.trim_start_matches("r#") == right.trim_start_matches("r#")
@@ -62,49 +64,47 @@ fn function(owner: &FunctionSummary, index: &RustIndex) -> Option<ast::Fn> {
     (matches.len() == 1).then(|| matches.remove(0))
 }
 
-pub(super) type LetBinding = (String, String, Option<String>, usize);
+pub(super) struct LetBinding {
+    pub(super) name: String,
+    pub(super) expression: String,
+    pub(super) annotation: Option<String>,
+    pub(super) offset: usize,
+    pub(super) completed: usize,
+}
 
-/// Read only the owner's direct body lets. A nested function, closure or
-/// disjoint block cannot establish or veto the value used by its owner.
-/// Refuse unread direct bindings instead of silently retaining a parameter's
-/// primitive evidence across a destructured or attributed rebind.
-pub(super) fn direct_let_bindings(
+pub(super) struct DirectBindings {
+    pub(super) lets: Vec<LetBinding>,
+    value_items: BTreeSet<String>,
+    glob_import: bool,
+    first_let_ends: BTreeMap<String, usize>,
+}
+
+impl DirectBindings {
+    pub(super) fn binding_precedes(&self, name: &str, offset: usize) -> bool {
+        self.first_let_ends
+            .get(name.trim_start_matches("r#"))
+            .is_some_and(|end| *end <= offset)
+    }
+
+    pub(super) fn parameter_is_unshadowed(&self, name: &str) -> bool {
+        !self.glob_import && !self.value_items.iter().any(|bound| same_name(bound, name))
+    }
+}
+
+pub(super) fn direct_bindings(
     owner: &FunctionSummary,
     index: &RustIndex,
-) -> Option<Vec<LetBinding>> {
+    expression: &str,
+) -> Option<DirectBindings> {
     let function = function(owner, index)?;
-    let start = usize::from(function.fn_token()?.text_range().start());
-    let body = function.body()?.stmt_list()?;
-    let mut bindings = Vec::new();
-    for binding in body.syntax().children().filter_map(ast::LetStmt::cast) {
-        if binding
-            .syntax()
-            .children()
-            .any(|node| ast::Attr::can_cast(node.kind()))
-            || binding.let_else().is_some()
-        {
-            return None;
-        }
-        let ast::Pat::IdentPat(pattern) = binding.pat()? else {
-            return None;
-        };
-        if pattern.ref_token().is_some() || pattern.pat().is_some() {
-            return None;
-        }
-        let name = pattern.name()?.text().to_string();
-        if !super::is_identifier(&name) {
-            return None;
-        }
-        let initializer = binding.initializer()?;
-        let offset = usize::from(initializer.syntax().text_range().start()).checked_sub(start)?;
-        bindings.push((
-            name,
-            super::strip_line_comments(&initializer.syntax().text().to_string()),
-            binding.ty().map(|ty| ty.syntax().text().to_string()),
-            offset,
-        ));
-    }
-    Some(bindings)
+    let field = value_scope::owner_field(&function, expression)?;
+    let scope_items = enclosing_scopes(field.syntax())
+        .iter()
+        .map(items)
+        .collect::<Vec<_>>();
+    value_scope::direct_bindings(&function, expression, &|path, glob| {
+        standard_primitive_import(path, glob, owner, index, &scope_items)
+    })
 }
 
 fn enclosing_scopes(site: &SyntaxNode) -> Vec<SyntaxNode> {
@@ -247,51 +247,6 @@ fn closed_scope(scope: &SyntaxNode, derives: bool) -> bool {
     })
 }
 
-/// Direct-body bindings cannot settle a field inside another binding scope.
-fn field_in_owner_body(function: &ast::Fn, expression: &str) -> bool {
-    let Some(body) = function.body().and_then(|body| body.stmt_list()) else {
-        return false;
-    };
-    let fields = function
-        .syntax()
-        .descendants()
-        .filter_map(ast::RecordExprField::cast)
-        .filter(|field| {
-            field
-                .syntax()
-                .text()
-                .to_string()
-                .trim()
-                .trim_end_matches(',')
-                .trim()
-                == expression.trim().trim_end_matches(',').trim()
-        })
-        .collect::<Vec<_>>();
-    let [field] = fields.as_slice() else {
-        return false;
-    };
-    for scope in field.syntax().ancestors() {
-        if scope == *body.syntax() {
-            return true;
-        }
-        if matches!(
-            scope.kind(),
-            SyntaxKind::STMT_LIST
-                | SyntaxKind::CLOSURE_EXPR
-                | SyntaxKind::MATCH_ARM
-                | SyntaxKind::IF_EXPR
-                | SyntaxKind::WHILE_EXPR
-                | SyntaxKind::FOR_EXPR
-                | SyntaxKind::LOOP_EXPR
-                | SyntaxKind::MATCH_EXPR
-                | SyntaxKind::LET_EXPR
-        ) {
-            return false;
-        }
-    }
-    false
-}
-
 pub(super) fn context_is_closed(
     owner: &FunctionSummary,
     index: &RustIndex,
@@ -299,7 +254,7 @@ pub(super) fn context_is_closed(
 ) -> bool {
     let derives = derives_have_root_context(owner, index);
     function(owner, index).is_some_and(|function| {
-        field_in_owner_body(&function, expression)
+        value_scope::owner_field(&function, expression).is_some()
             && context_scopes(&function)
                 .iter()
                 .all(|scope| closed_scope(scope, derives))
@@ -361,37 +316,7 @@ pub(super) fn type_is_primitive(
         return false;
     }
     let standard_primitive = |path: &[String], glob: bool| {
-        let [root, namespace, rest @ ..] = path else {
-            return false;
-        };
-        if !matches!(root.as_str(), "std" | "core")
-            || namespace != "primitive"
-            || if glob {
-                !rest.is_empty()
-            } else {
-                !matches!(rest, [name] if primitive_type_token(name))
-            }
-            || !index
-                .drop_in_manifests
-                .unbound_standard_root(&owner.file, root)
-            || super::super::owner_pin::target_root(&owner.file, index, &Default::default())
-                .as_ref()
-                != Some(&owner.file)
-        {
-            return false;
-        }
-        // This is the existing closed manifest AND target-root proof plus
-        // source binding refusal, not a spelling exception. Out-of-line
-        // files cannot establish a Rust 2015 crate-root import's bindings.
-        // Absolute/opaque paths refuse too.
-        !scope_items.iter().any(|items| {
-            let scope = name_scope_for_items(items);
-            items.iter().any(|item| type_name(item).is_some_and(|name| same_name(name.text(), root)))
-                || scope.imports.iter().any(|import| same_name(&import.bound, root))
-                || scope.globs.iter().any(|glob| glob.as_ref().is_none_or(|path| {
-                    !matches!(path.as_slice(), [r, p] if matches!(r.as_str(), "std" | "core") && p == "primitive")
-                }))
-        })
+        standard_primitive_import(path, glob, owner, index, &scope_items)
     };
     scope_items.iter().all(|items| {
         let scope = name_scope_for_items(items);
@@ -409,5 +334,44 @@ pub(super) fn type_is_primitive(
                 glob.as_ref()
                     .is_some_and(|path| standard_primitive(path, true))
             })
+    })
+}
+
+fn standard_primitive_import(
+    path: &[String],
+    glob: bool,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+    scope_items: &[Vec<ast::Item>],
+) -> bool {
+    let [root, namespace, rest @ ..] = path else {
+        return false;
+    };
+    if !matches!(root.as_str(), "std" | "core")
+        || namespace != "primitive"
+        || if glob {
+            !rest.is_empty()
+        } else {
+            !matches!(rest, [name] if primitive_type_token(name))
+        }
+        || !index
+            .drop_in_manifests
+            .unbound_standard_root(&owner.file, root)
+        || super::super::owner_pin::target_root(&owner.file, index, &Default::default()).as_ref()
+            != Some(&owner.file)
+    {
+        return false;
+    }
+    // This is the existing closed manifest AND target-root proof plus
+    // source binding refusal, not a spelling exception. Out-of-line
+    // files cannot establish a Rust 2015 crate-root import's bindings.
+    // Absolute/opaque paths refuse too.
+    !scope_items.iter().any(|items| {
+        let scope = name_scope_for_items(items);
+        items.iter().any(|item| type_name(item).is_some_and(|name| same_name(name.text(), root)))
+            || scope.imports.iter().any(|import| same_name(&import.bound, root))
+            || scope.globs.iter().any(|glob| glob.as_ref().is_none_or(|path| {
+                !matches!(path.as_slice(), [r, p] if matches!(r.as_str(), "std" | "core") && p == "primitive")
+            }))
     })
 }
