@@ -11146,7 +11146,11 @@ fn caplog_snapshot_native_statement_bounds_reject_extra_uses() -> Result<(), Str
         "tag = \"é\"; msgs[0] = \"low balance: 5\"; assert \"low balance: 5\" in msgs",
         "assert \"low balance: 5\" in msgs; del msgs",
         "assert \"low balance: 5\" in msgs; assert \"low balance: 5\" in msgs",
-        "assert any(\"low balance: 5\" in msgs for msgs in [[\"low balance: 5\"]])",
+        "match [\"low balance: 5\"]:\n        case msgs:\n            pass\n    assert \"low balance: 5\" in msgs",
+        "import logging as msgs\n    assert \"low balance: 5\" in msgs",
+        "try:\n        pass\n    except Exception as msgs:\n        pass\n    assert \"low balance: 5\" in msgs",
+        "assert [msgs := [\"low balance: 5\"] for _ in [0]] and \"low balance: 5\" in msgs",
+        "assert [True for msgs[0] in [\"low balance: 5\"]] and \"low balance: 5\" in msgs",
     ] {
         let test = captured_records_test(&format!("msgs = caplog.messages\n    {tail}"));
         assert_eq!(
@@ -11204,7 +11208,9 @@ fn caplog_snapshot_record_aliases_keep_native_comprehension_reads() -> Result<()
         "assert any(r.getMessage() == \"low balance: 5\" for r in msgs)",
         "assert \"low balance: 5\" in [r.message for r in msgs]",
     ] {
-        let test = captured_records_test(&format!("msgs = caplog.records\n    {assertion}"));
+        // Select the records assertion, rather than a competing return oracle.
+        let test = captured_records_test(&format!("msgs = caplog.records\n    {assertion}"))
+            .replace("assert check_balance(5) is False", "check_balance(5)");
         assert_eq!(
             classify_log_text_edit(
                 AUDIT_OWNER,
@@ -11217,7 +11223,8 @@ fn caplog_snapshot_record_aliases_keep_native_comprehension_reads() -> Result<()
     }
     let test = captured_records_test(
         "msgs = caplog.records\n    assert not any(r.message == \"deprecated warning\" for r in msgs)",
-    );
+    )
+    .replace("assert check_balance(5) is False", "check_balance(5)");
     assert_eq!(
         classify_log_text_edit(AUDIT_OWNER, "log.warning(\"deprecated warning\")", &test)?,
         (ExposureClass::Exposed, None)

@@ -727,25 +727,31 @@ pub(super) fn substitute_caplog_aliases(test: &PythonTest, gate_text: &str) -> S
 /// Whether `text` uses the local name `name`: a whole word that is not an
 /// attribute (`caplog.text` does not use a local called `text`).
 fn mentions_local_name(text: &str, name: &str) -> bool {
+    local_name_offsets(text, name).next().is_some()
+}
+
+fn local_name_offsets<'a>(text: &'a str, name: &'a str) -> impl Iterator<Item = usize> + 'a {
     let is_word = |ch: char| ch.is_alphanumeric() || ch == '_';
-    text.match_indices(name).any(|(start, _)| {
+    text.match_indices(name).filter_map(move |(start, _)| {
         let before = text[..start].trim_end();
-        !before.ends_with('.')
+        (!before.ends_with('.')
             && !text[..start].chars().next_back().is_some_and(is_word)
             && !text[start + name.len()..]
                 .chars()
                 .next()
-                .is_some_and(is_word)
+                .is_some_and(is_word))
+        .then_some(start)
     })
 }
 
 /// The assertion text with its aliases of captured-log reads replaced by the
 /// reads, or None when an alias is not provably a plain snapshot: the name is
 /// bound once, to the read, at the assertion's own indentation after every
-/// owner call and before the assertion, and appears nowhere else in the test (a mutation, rebinding,
-/// deletion, nested use or other read keeps the abstention). `caplog.text`,
-/// `.messages` and `.records` are rebuilt on each access, so an alias taken
-/// before the call would hold the earlier records.
+/// owner call and before the assertion, and appears nowhere else in the test
+/// (a mutation, rebinding, deletion, nested use or other read keeps the abstention).
+/// `caplog.text` and `.messages` are rebuilt on each access, so an alias taken
+/// before the call would hold earlier records. `.records` uses the same bounded
+/// eligibility policy, though it exposes the handler's record list.
 fn snapshot_alias_gate(
     test: &PythonTest,
     assertion: &PythonAssertion,
@@ -793,6 +799,20 @@ fn snapshot_alias_gate(
         let binding_line = lines.get(alias.index)?;
         let binding_start =
             line_starts.get(alias.index)? + binding_line.len() - binding_line.trim_start().len();
+        // Keep the conservative extra-use gate for names stored outside ExprName,
+        // such as match captures, imports and exception targets. Native statement
+        // bounds exclude same-line prefix/suffix uses from the assertion allowance.
+        let only_uses = lines.iter().enumerate().all(|(index, line)| {
+            index == alias.index
+                || local_name_offsets(line, alias.name).all(|offset| {
+                    let start = line_starts[index] + offset;
+                    start >= usize::from(assertion_range.start())
+                        && start + alias.name.len() <= usize::from(assertion_range.end())
+                })
+        });
+        if !only_uses {
+            return None;
+        }
         let mut uses = SnapshotAliasUses {
             name: alias.name,
             binding_start,

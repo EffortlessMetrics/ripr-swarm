@@ -983,13 +983,14 @@ mutant calibrates the rule; ripr reports only the static shape.
     separate statement even on the same physical line. Native store contexts,
     including walrus expressions inside f-strings and comprehension targets,
     cannot borrow the alias's captured-log evidence (#10595). An
-    alias that is appended to, rebound, deleted, read in a comprehension,
+    alias that is appended to, rebound, deleted, used outside the selected assertion,
     taken before the call or inside a nested block keeps the abstention, as
     does a name spelled inside a quoted literal (single, double or triple
     quoted), which is data. A local called `text`, `messages` or `records`
-    is not confused with the attribute of `caplog.text` and the like. `caplog`'s
-    reads are rebuilt on each access, so an alias taken before the call
-    would hold earlier records (#10151).
+    is not confused with the attribute of `caplog.text` and the like. The
+    `caplog.text` and `.messages` reads are rebuilt on each access, so an alias
+    taken before the call would hold earlier records. `.records` exposes the
+    handler's record list but follows the same bounded eligibility policy (#10151).
 23. **An assertion that cannot run or cannot fail is not read.** The
     assertion collector skips the dead arm of an `if` or `while` whose
     condition is a literal (`if False:`, `if 0:`, `if None:`, `while False:`;
