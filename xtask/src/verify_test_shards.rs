@@ -152,18 +152,30 @@ fn verify(options: &Options, expected_blobs: Result<Vec<String>, String>) -> Out
     let mut total_tests = 0u64;
     let mut first_context = String::new();
     let mut first_environment = String::new();
+    let mut first_dir = None;
     let mut used_attempts = BTreeSet::new();
 
     for shard in 1..=options.shards {
         let tag = format!("shard {shard}");
-        let Some((dir, shard_attempt)) = select_shard_dir(options, shard) else {
-            problems.push(format!(
-                "{tag}: artifact is missing for attempts 1..={}",
-                options.attempt
-            ));
-            summary.push_str(&format!("{tag}: no artifact\n"));
-            continue;
+        let (dir, shard_attempt) = match select_shard_dir(options, shard) {
+            Ok(Some(selected)) => selected,
+            Ok(None) => {
+                problems.push(format!(
+                    "{tag}: artifact is missing for attempts 1..={}",
+                    options.attempt
+                ));
+                summary.push_str(&format!("{tag}: no artifact\n"));
+                continue;
+            }
+            Err(why) => {
+                problems.push(format!("{tag}: {why}"));
+                summary.push_str(&format!("{tag}: ambiguous artifact attempt\n"));
+                continue;
+            }
         };
+        if shard == 1 {
+            first_dir = Some(dir.clone());
+        }
         used_attempts.insert(shard_attempt);
         let list = read_named(&dir, &format!("list-{shard}.txt"), &tag, &mut problems);
         let list_lines: BTreeSet<String> = list
@@ -212,15 +224,12 @@ fn verify(options: &Options, expected_blobs: Result<Vec<String>, String>) -> Out
         ));
     }
 
-    let all_dir = select_shard_dir(options, 1).map_or_else(
-        || {
-            options.dir.join(format!(
-                "{}-nextest-shard-1-{}",
-                options.artifact, options.attempt
-            ))
-        },
-        |(dir, _attempt)| dir,
-    );
+    let all_dir = first_dir.unwrap_or_else(|| {
+        options.dir.join(format!(
+            "{}-nextest-shard-1-{}",
+            options.artifact, options.attempt
+        ))
+    });
     let all_lines: BTreeSet<String> = match read_named(
         &all_dir,
         "list-all.txt",
@@ -287,12 +296,18 @@ fn verify(options: &Options, expected_blobs: Result<Vec<String>, String>) -> Out
 /// A partial "re-run failed jobs" uploads fresh artifacts only for the
 /// re-run shards (#10605), so a shard's evidence is its latest artifact for
 /// this run at or before the verifying attempt. Suffixes that are not
-/// attempts, or name a future attempt, are not evidence.
-fn select_shard_dir(options: &Options, shard: u32) -> Option<(PathBuf, u32)> {
-    let current: u32 = options.attempt.parse().ok()?;
+/// attempts, or name a future attempt, are not evidence. Eligible numeric
+/// suffixes must use canonical decimal spelling: aliases would make selection
+/// depend on directory enumeration order or permit fallback past newer evidence.
+fn select_shard_dir(options: &Options, shard: u32) -> Result<Option<(PathBuf, u32)>, String> {
+    let Ok(current) = options.attempt.parse::<u32>() else {
+        return Ok(None);
+    };
     let prefix = format!("{}-nextest-shard-{shard}-", options.artifact);
     let mut best: Option<(PathBuf, u32)> = None;
-    let entries = fs::read_dir(&options.dir).ok()?;
+    let Ok(entries) = fs::read_dir(&options.dir) else {
+        return Ok(None);
+    };
     for entry in entries.filter_map(Result::ok) {
         let name = entry.file_name();
         let Some(name) = name.to_str() else {
@@ -307,6 +322,11 @@ fn select_shard_dir(options: &Options, shard: u32) -> Option<(PathBuf, u32)> {
         if attempt == 0 || attempt > current {
             continue;
         }
+        if suffix != attempt.to_string() {
+            return Err(format!(
+                "noncanonical artifact attempt suffix `{suffix}` for attempt {attempt}"
+            ));
+        }
         if best
             .as_ref()
             .is_none_or(|(_, best_attempt)| attempt > *best_attempt)
@@ -314,7 +334,7 @@ fn select_shard_dir(options: &Options, shard: u32) -> Option<(PathBuf, u32)> {
             best = Some((entry.path(), attempt));
         }
     }
-    best
+    Ok(best)
 }
 
 /// List lines with terminal colour escapes removed: the hosted job sets

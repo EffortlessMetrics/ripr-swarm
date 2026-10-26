@@ -453,11 +453,61 @@ fn aggregate_attempt_disclosure_cannot_come_from_source_shards() -> Result<(), S
 }
 
 #[test]
+fn eligible_attempt_aliases_cannot_hide_canonical_or_historical_evidence() -> Result<(), String> {
+    for suffix in ["02", "002", "+2"] {
+        for layout in [
+            "alias-only",
+            "alias-first",
+            "canonical-first",
+            "older-alias",
+        ] {
+            let root = crate::tests::temp_dir("receipt-attempt-alias");
+            put_attempt(&root, 1, 1)?;
+            put_attempt(&root, 2, 1)?;
+            let canonical = put_attempt(&root, 2, 2)?;
+            let alias = canonical.with_file_name(format!("integration-nextest-shard-2-{suffix}"));
+            if layout == "canonical-first" {
+                fs::create_dir_all(&alias).map_err(|err| err.to_string())?;
+                for entry in fs::read_dir(&canonical).map_err(|err| err.to_string())? {
+                    let entry = entry.map_err(|err| err.to_string())?;
+                    fs::copy(entry.path(), alias.join(entry.file_name()))
+                        .map_err(|err| err.to_string())?;
+                }
+            } else {
+                fs::rename(&canonical, &alias).map_err(|err| err.to_string())?;
+                if layout == "alias-first" {
+                    put_attempt(&root, 2, 2)?;
+                }
+            }
+            let verifying = if layout == "older-alias" { 3 } else { 2 };
+            if layout == "older-alias" {
+                put_attempt(&root, 2, 3)?;
+            } else if layout != "alias-only" {
+                // A green alias must never conceal the failing canonical newest attempt.
+                fs::write(canonical.join("shard-2.status"), "1\n")
+                    .map_err(|err| err.to_string())?;
+            }
+            let outcome = verify(&attempt_options(&root, verifying), Ok(attempt_blobs()));
+            assert!(
+                outcome.problems.iter().any(|why| {
+                    why.contains("shard 2: noncanonical artifact attempt suffix")
+                        && why.contains(suffix)
+                }),
+                "{suffix}/{layout} must reject the ambiguous layout: {:?}",
+                outcome.problems
+            );
+            fs::remove_dir_all(root).map_err(|err| err.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn future_zero_and_non_attempt_artifacts_are_not_selected() -> Result<(), String> {
     let root = crate::tests::temp_dir("receipt-ignored-attempts");
     put_attempt(&root, 1, 1)?;
     put_attempt(&root, 2, 1)?;
-    for suffix in ["3", "0", "not-an-attempt"] {
+    for suffix in ["3", "03", "+3", "0", "00", "not-an-attempt", "4294967296"] {
         fs::create_dir_all(
             root.join("in")
                 .join(format!("integration-nextest-shard-2-{suffix}")),
