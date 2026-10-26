@@ -67,9 +67,13 @@ pub(super) struct ForeignWrites {
     table_unsafe: Vec<String>,
     /// Every word of the files that can reach a module's objects reflectively.
     reflective_words: Vec<String>,
-    /// Some other file is reflective and imports modules, so it may reach a
-    /// table through an alias or re-export no word of it names.
-    reflective_imports: bool,
+    /// Module names (file stems and package directories) in the import
+    /// component of some other reflective file: it may reach those modules
+    /// through an alias or re-export no word of it names.
+    reflective_reach: Vec<String>,
+    /// Some other reflective file also loads modules dynamically, so the
+    /// modules it reaches are unknown.
+    reflective_opaque: bool,
     /// A workspace file could not be read or the scan hit its bound, so the
     /// absence of a write is unknown.
     unknown: bool,
@@ -99,7 +103,8 @@ const DYNAMIC_LOADERS: [&str; 13] = [
 ];
 
 /// Spellings that reach a module's objects without writing their names.
-const REFLECTIVE_SPELLINGS: [&str; 15] = [
+const REFLECTIVE_SPELLINGS: [&str; 16] = [
+    "exec",
     "getattr",
     "dir",
     "getmembers",
@@ -119,6 +124,10 @@ const REFLECTIVE_SPELLINGS: [&str; 15] = [
     "__closure__",
 ];
 
+/// Function attributes whose assignment replaces what a reader returns without
+/// rebinding its name (`price.__code__ = other.__code__`).
+const CODE_SLOTS: [&str; 4] = ["__code__", "__defaults__", "__kwdefaults__", "__closure__"];
+
 /// What each workspace source contributes to [`ForeignWrites`], parsed and
 /// tokenized once so a diff that changes many Python files does not repeat
 /// the whole-workspace work per file (#10125).
@@ -128,6 +137,8 @@ pub(super) struct ForeignIndex<'a> {
     /// malformed file's own function/name is not an import.
     references: std::collections::BTreeMap<&'a str, Option<&'a Path>>,
     hidden_import: bool,
+    /// For each reflective file, the module names in its import component.
+    reflective_reach: Vec<(&'a Path, std::collections::BTreeSet<String>)>,
     /// The reference index passed its bound or a file went unread.
     unknown: bool,
 }
@@ -152,9 +163,10 @@ struct IndexedSource<'a> {
     table_unsafe: Vec<String>,
     /// Holds a reflective spelling: every word is a possible table access.
     reflective_words: Option<Vec<&'a str>>,
-    /// The reflective file also imports, so the module it reflects over may
-    /// be another file's re-export.
-    reflective_imports: bool,
+    /// Words of the lines that import, to link modules into components.
+    import_words: Vec<&'a str>,
+    /// The reflective file also loads modules by name at runtime.
+    reflective_opaque: bool,
 }
 
 impl<'a> ForeignIndex<'a> {
@@ -202,6 +214,7 @@ impl<'a> ForeignIndex<'a> {
                             references: std::collections::BTreeMap::new(),
                             hidden_import,
                             unknown: true,
+                            reflective_reach: Vec::new(),
                         };
                     }
                 }
@@ -235,15 +248,26 @@ impl<'a> ForeignIndex<'a> {
                     dynamic_words: dynamic.then(|| source_words(source).collect()),
                     table_unsafe,
                     reflective_words: reflective.then(|| source_words(source).collect()),
-                    reflective_imports: reflective && mentions_identifier(source, "import"),
+                    import_words: if tables.is_empty() {
+                        Vec::new()
+                    } else {
+                        import_words(source)
+                    },
+                    reflective_opaque: reflective
+                        && (source.contains("sys.modules")
+                            || MODULE_LOADERS
+                                .iter()
+                                .any(|loader| mentions_identifier(source, loader))),
                 });
             }
         }
+        let reflective_reach = reflective_reaches(&files);
         Self {
             files,
             references,
             hidden_import,
             unknown: unread_files,
+            reflective_reach,
         }
     }
 
@@ -260,11 +284,11 @@ impl<'a> ForeignIndex<'a> {
         let mut words = std::collections::BTreeSet::new();
         let mut table_unsafe = std::collections::BTreeSet::new();
         let mut reflective_words = std::collections::BTreeSet::new();
-        let mut reflective_imports = false;
+        let mut reflective_opaque = false;
         let mut unparsed = Vec::new();
         for indexed in self.files.iter().filter(|indexed| indexed.file != own) {
             table_unsafe.extend(indexed.table_unsafe.iter().cloned());
-            reflective_imports |= indexed.reflective_imports;
+            reflective_opaque |= indexed.reflective_opaque;
             if let Some(reflective) = &indexed.reflective_words {
                 reflective_words.extend(reflective.iter().map(|word| word.to_string()));
             }
@@ -300,7 +324,15 @@ impl<'a> ForeignIndex<'a> {
             dynamic_words: words.into_iter().collect(),
             table_unsafe: table_unsafe.into_iter().collect(),
             reflective_words: reflective_words.into_iter().collect(),
-            reflective_imports,
+            reflective_reach: self
+                .reflective_reach
+                .iter()
+                .filter(|(file, _)| *file != own)
+                .flat_map(|(_, reach)| reach.iter().cloned())
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
+                .collect(),
+            reflective_opaque,
             unknown,
         }
     }
@@ -339,6 +371,15 @@ impl ForeignWrites {
 }
 
 impl ForeignWrites {
+    /// Whether some workspace file assigns a function's code slots, which can
+    /// replace any reader without rebinding its name (#10626). Checked where a
+    /// reader is evaluated, not for plain names such as `version_info`.
+    pub(super) fn may_replace_reader_code(&self) -> bool {
+        self.attributes
+            .iter()
+            .any(|attribute| CODE_SLOTS.contains(&attribute.as_str()))
+    }
+
     /// Whether another file may change the contents of the dict-literal
     /// constant `name` of the module at `module_file` in place, or alias it.
     pub(super) fn may_mutate_table(&self, name: &str, module_file: &Path) -> bool {
@@ -347,7 +388,8 @@ impl ForeignWrites {
             .and_then(|stem| stem.to_str())
             .unwrap_or_default();
         self.may_rebind(name, module_file)
-            || self.reflective_imports
+            || self.reflective_opaque
+            || (!stem.is_empty() && self.reflective_reach.iter().any(|word| word == stem))
             || self
                 .table_unsafe
                 .iter()
@@ -357,6 +399,144 @@ impl ForeignWrites {
                 .iter()
                 .any(|word| word == name || (!stem.is_empty() && word == stem))
     }
+}
+
+/// Spellings that load a module chosen at runtime.
+const MODULE_LOADERS: [&str; 11] = [
+    // Evaluated code can import any module and mutate its tables.
+    "eval",
+    "exec",
+    "compile",
+    "importlib",
+    "__import__",
+    "import_module",
+    "load_module",
+    "exec_module",
+    "runpy",
+    "builtins",
+    "__builtins__",
+];
+
+/// Every name of the logical statements that hold an `import` keyword. The
+/// lexer ends a statement, so a parenthesis or backslash continuation reads
+/// whole (`from . import (\n    settings as hub,\n)`) while a bracket inside
+/// a comment or string does not. A lexing error reads every word.
+fn import_words(source: &str) -> Vec<&str> {
+    use rustpython_parser::{Mode, Tok, lexer::lex};
+    let mut words = Vec::new();
+    let mut statement: Vec<&str> = Vec::new();
+    let mut imports = false;
+    for token in lex(source, Mode::Module) {
+        let Ok((tok, range)) = token else {
+            return source_words(source).collect();
+        };
+        match tok {
+            Tok::Newline | Tok::Semi => {
+                if imports {
+                    words.append(&mut statement);
+                }
+                statement.clear();
+                imports = false;
+            }
+            Tok::Import => imports = true,
+            Tok::Name { .. } => {
+                if let Some(text) = source.get(usize::from(range.start())..usize::from(range.end()))
+                {
+                    statement.push(text);
+                }
+            }
+            _ => {}
+        }
+    }
+    if imports {
+        words.append(&mut statement);
+    }
+    words
+}
+
+/// For each reflective file, the names of the modules in its import
+/// component: files linked by an import word naming another file's stem or
+/// package `__init__.py`, in either direction, plus every `conftest.py`
+/// component (a fixture hands a module to any test). A reflective file can
+/// only reach a module that is connected to it, even through a helper that
+/// receives the module as an argument.
+fn reflective_reaches<'a>(
+    files: &[IndexedSource<'a>],
+) -> Vec<(&'a Path, std::collections::BTreeSet<String>)> {
+    if files
+        .iter()
+        .all(|indexed| indexed.reflective_words.is_none())
+    {
+        return Vec::new();
+    }
+    // A package name stands for its `__init__.py` alone: importing `pkg`
+    // runs that file, not its sibling modules.
+    let names = |file: &Path| -> Vec<String> {
+        let stem = file.file_stem().and_then(|stem| stem.to_str());
+        let package = file
+            .parent()
+            .and_then(Path::file_name)
+            .and_then(|name| name.to_str())
+            .filter(|_| stem == Some("__init__"));
+        stem.into_iter()
+            .chain(package)
+            .map(str::to_string)
+            .collect()
+    };
+    let mut named: std::collections::BTreeMap<String, Vec<usize>> =
+        std::collections::BTreeMap::new();
+    for (index, indexed) in files.iter().enumerate() {
+        for name in names(indexed.file) {
+            named.entry(name).or_default().push(index);
+        }
+    }
+    let mut parent: Vec<usize> = (0..files.len()).collect();
+    fn find(parent: &mut [usize], mut index: usize) -> usize {
+        while parent[index] != index {
+            parent[index] = parent[parent[index]];
+            index = parent[index];
+        }
+        index
+    }
+    for (index, indexed) in files.iter().enumerate() {
+        for word in &indexed.import_words {
+            for &other in named.get(*word).into_iter().flatten() {
+                let (a, b) = (find(&mut parent, index), find(&mut parent, other));
+                parent[a] = b;
+            }
+        }
+    }
+    let mut members: std::collections::BTreeMap<usize, std::collections::BTreeSet<String>> =
+        std::collections::BTreeMap::new();
+    let mut conftest_roots = std::collections::BTreeSet::new();
+    for (index, indexed) in files.iter().enumerate() {
+        let root = find(&mut parent, index);
+        members.entry(root).or_default().extend(names(indexed.file));
+        if indexed
+            .file
+            .file_name()
+            .is_some_and(|name| name == "conftest.py")
+        {
+            conftest_roots.insert(root);
+        }
+    }
+    let conftest: std::collections::BTreeSet<String> = conftest_roots
+        .iter()
+        .filter_map(|root| members.get(root))
+        .flatten()
+        .cloned()
+        .collect();
+    let mut reaches = Vec::new();
+    for (index, indexed) in files.iter().enumerate() {
+        if indexed.reflective_words.is_none() {
+            continue;
+        }
+        let root = find(&mut parent, index);
+        let mut reach = members.get(&root).cloned().unwrap_or_default();
+        reach.extend(conftest.iter().cloned());
+        reaches.push((indexed.file, reach));
+    }
+    reaches
 }
 
 fn source_words(source: &str) -> impl Iterator<Item = &str> {
@@ -378,23 +558,42 @@ pub(super) struct ModuleValueCredit<'a> {
     pub(super) reader: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum Value {
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum Value {
     Int(i128),
     Bool(bool),
     Str(String),
+    /// Only inside a dataclass default read (`dataclass_default.rs`), where
+    /// `Scope::floats` admits it; a module constant never evaluates to one.
+    Float(f64),
     /// A dict literal of `str` or `int` keys, each once, to scalar values
     /// (#9619). Only a module function reads it, through `.get` or a subscript.
     Table(Vec<(Value, Value)>),
 }
 
+/// Floats are compared and combined exactly as Python does only while an
+/// integer converts to one without rounding.
+const FLOAT_EXACT_LIMIT: i128 = 1 << 53;
+
 impl Value {
-    fn truthy(&self) -> bool {
+    pub(super) fn truthy(&self) -> bool {
         match self {
             Self::Int(value) => *value != 0,
             Self::Bool(value) => *value,
             Self::Str(value) => !value.is_empty(),
+            Self::Float(value) => *value != 0.0,
             Self::Table(entries) => !entries.is_empty(),
+        }
+    }
+
+    /// The value as a float, when an integer converts to it exactly.
+    fn float(&self) -> Option<f64> {
+        match self {
+            Self::Float(value) => Some(*value),
+            _ => {
+                let number = self.number()?;
+                (number.abs() < FLOAT_EXACT_LIMIT).then_some(number as f64)
+            }
         }
     }
 
@@ -402,16 +601,17 @@ impl Value {
         match self {
             Self::Int(value) => Some(*value),
             Self::Bool(value) => Some(i128::from(*value)),
-            Self::Str(_) | Self::Table(_) => None,
+            Self::Str(_) | Self::Float(_) | Self::Table(_) => None,
         }
     }
 
-    fn render(&self) -> String {
+    pub(super) fn render(&self) -> String {
         match self {
             Self::Int(value) => value.to_string(),
             Self::Bool(true) => "True".to_string(),
             Self::Bool(false) => "False".to_string(),
             Self::Str(value) => format!("{value:?}"),
+            Self::Float(value) => format!("{value:?}"),
             Self::Table(entries) => {
                 let entries: Vec<String> = entries
                     .iter()
@@ -439,23 +639,35 @@ impl Value {
 
 /// A module function the evaluator can run: positional parameters and one
 /// `return` expression.
-struct Reader {
-    parameters: Vec<String>,
-    expression: Expr,
+pub(super) struct Reader {
+    pub(super) parameters: Vec<String>,
+    pub(super) expression: Expr,
 }
 
 /// What an expression's names and calls mean while it is evaluated.
-struct Scope<'a> {
-    constant: &'a str,
-    value: &'a Value,
+pub(super) struct Scope<'a> {
+    pub(super) constant: &'a str,
+    pub(super) value: &'a Value,
     /// Reader mode: the parameter values of one call. `None` evaluates a test
     /// expression, where no bare name but a constant spelling is known.
-    parameters: Option<&'a [(String, Value)]>,
+    pub(super) parameters: Option<&'a [(String, Value)]>,
     /// Test mode: the spellings that read the constant itself.
-    constant_spellings: &'a [String],
+    pub(super) constant_spellings: &'a [String],
     /// Test mode: the spellings that call the reader, and the reader.
-    reader_spellings: &'a [String],
-    reader: Option<&'a Reader>,
+    pub(super) reader_spellings: &'a [String],
+    pub(super) reader: Option<&'a Reader>,
+    /// Test mode of a dataclass default read: the class the assertion builds.
+    pub(super) model: Option<&'a super::dataclass_default::ClassModel>,
+    /// Reader mode of a dataclass method: the receiver name and its fields.
+    pub(super) receiver: Option<(&'a str, &'a [(String, Value)])>,
+    /// Floats and `round` are modelled: a dataclass default read only.
+    pub(super) floats: bool,
+}
+
+impl Scope<'_> {
+    fn floats(&self) -> bool {
+        self.floats
+    }
 }
 
 /// The changed line of a module-level edit and the new-side source it sits in.
@@ -574,6 +786,7 @@ fn credits<'a>(
         if !new_facts.bound_once(&owner.name)
             || !old_facts.bound_once(&owner.name)
             || module_owner.foreign_writes.may_rebind(&owner.name, file)
+            || module_owner.foreign_writes.may_replace_reader_code()
         {
             continue;
         }
@@ -892,6 +1105,9 @@ fn flips(
             constant_spellings,
             reader_spellings,
             reader,
+            model: None,
+            receiver: None,
+            floats: false,
         };
         if !preceding
             .iter()
@@ -932,6 +1148,9 @@ fn constant_line(text: &str) -> Option<(String, Value)> {
         constant_spellings: &[],
         reader_spellings: &[],
         reader: None,
+        model: None,
+        receiver: None,
+        floats: false,
     };
     if let Expr::Dict(dict) = value {
         return Some((name.id.to_string(), table_of(dict, &empty)?));
@@ -978,7 +1197,7 @@ fn table_constant(source: &str, body: &[Stmt], name: &str, line: usize) -> Optio
 }
 
 /// `source` with the 1-indexed `line` replaced by one line of `replacement`.
-fn with_line_replaced(source: &str, line: usize, replacement: &str) -> Option<String> {
+pub(super) fn with_line_replaced(source: &str, line: usize, replacement: &str) -> Option<String> {
     if replacement.contains('\n') || replacement.contains('\r') {
         return None;
     }
@@ -1098,7 +1317,11 @@ fn collect_names(expr: &Expr, out: &mut Vec<String>) {
 /// imports from the module (`from settings import LIMIT as L`) and `module.LIMIT`
 /// for a receiver that reaches the module. A spelling whose root the test binds
 /// itself is not one.
-fn constant_spellings(test: &PythonTest, module_owner: &PythonOwner, name: &str) -> Vec<String> {
+pub(super) fn constant_spellings(
+    test: &PythonTest,
+    module_owner: &PythonOwner,
+    name: &str,
+) -> Vec<String> {
     let mut spellings = Vec::new();
     for import in &test.imports {
         if import.imported == name
@@ -1117,7 +1340,7 @@ fn reader_spellings(test: &PythonTest, owner: &PythonOwner) -> Vec<String> {
     keep_unshadowed(test, owner_module_callees(test, owner))
 }
 
-fn keep_unshadowed(test: &PythonTest, mut spellings: Vec<String>) -> Vec<String> {
+pub(super) fn keep_unshadowed(test: &PythonTest, mut spellings: Vec<String>) -> Vec<String> {
     spellings.retain(|spelling| {
         let root = spelling.split('.').next().unwrap_or(spelling);
         !test.constant_rebinding.rebinds(root)
@@ -1130,7 +1353,7 @@ fn keep_unshadowed(test: &PythonTest, mut spellings: Vec<String>) -> Vec<String>
 }
 
 /// The condition of a bare `assert <condition>` assertion.
-fn assertion_expression(assertion: &PythonAssertion) -> Option<Expr> {
+pub(super) fn assertion_expression(assertion: &PythonAssertion) -> Option<Expr> {
     let text = assertion.gate_text.trim();
     if !text.starts_with("assert ") {
         return None;
@@ -1171,7 +1394,7 @@ const LEAVING_CALLS: [&str; 12] = [
 /// Whether the assertion is a direct statement of the test body that every run
 /// reaches: nothing before it returns, raises, branches, loops, enters a
 /// context or calls a skipping function.
-fn straight_line_assertion(test: &PythonTest, assertion: &PythonAssertion) -> bool {
+pub(super) fn straight_line_assertion(test: &PythonTest, assertion: &PythonAssertion) -> bool {
     // A call of a generator test does not execute its body.
     if rustpython_parser::lexer::lex(&test.body_text, rustpython_parser::Mode::Module).any(
         |token| match token {
@@ -1252,12 +1475,13 @@ fn straight_line_assertion(test: &PythonTest, assertion: &PythonAssertion) -> bo
     })
 }
 
-fn evaluate(expr: &Expr, scope: &Scope<'_>) -> Option<Value> {
+pub(super) fn evaluate(expr: &Expr, scope: &Scope<'_>) -> Option<Value> {
     match expr {
         Expr::Constant(constant) => match &constant.value {
             ast::Constant::Int(value) => value.to_string().parse().ok().map(Value::Int),
             ast::Constant::Bool(value) => Some(Value::Bool(*value)),
             ast::Constant::Str(value) => Some(Value::Str(value.clone())),
+            ast::Constant::Float(value) if scope.floats() => Some(Value::Float(*value)),
             _ => None,
         },
         Expr::Name(name) => match scope.parameters {
@@ -1272,6 +1496,32 @@ fn evaluate(expr: &Expr, scope: &Scope<'_>) -> Option<Value> {
                 .any(|spelling| spelling == name.id.as_str())
                 .then(|| scope.value.clone()),
         },
+        // `self.field` inside a dataclass method.
+        Expr::Attribute(attribute) if scope.receiver.is_some() => {
+            let (receiver, fields) = scope.receiver?;
+            let Expr::Name(base) = attribute.value.as_ref() else {
+                return None;
+            };
+            (base.id.as_str() == receiver)
+                .then(|| {
+                    fields
+                        .iter()
+                        .find(|(name, _)| name == attribute.attr.as_str())
+                        .map(|(_, value)| value.clone())
+                })
+                .flatten()
+        }
+        // `Class(...).field` in a test.
+        Expr::Attribute(attribute) if scope.model.is_some() => {
+            let Expr::Call(constructor) = attribute.value.as_ref() else {
+                return None;
+            };
+            let instance = scope.model?.instance(constructor, scope)?;
+            instance
+                .into_iter()
+                .find(|(name, _)| name == attribute.attr.as_str())
+                .and_then(|(_, value)| value)
+        }
         Expr::Attribute(_) if scope.parameters.is_none() => {
             let full = expr_full_name(expr)?;
             scope
@@ -1283,15 +1533,21 @@ fn evaluate(expr: &Expr, scope: &Scope<'_>) -> Option<Value> {
             let operand = evaluate(&unary.operand, scope)?;
             match unary.op {
                 ast::UnaryOp::Not => Some(Value::Bool(!operand.truthy())),
-                ast::UnaryOp::USub => operand.number()?.checked_neg().map(Value::Int),
-                ast::UnaryOp::UAdd => operand.number().map(Value::Int),
+                ast::UnaryOp::USub => match operand {
+                    Value::Float(value) if scope.floats() => Some(Value::Float(-value)),
+                    other => other.number()?.checked_neg().map(Value::Int),
+                },
+                ast::UnaryOp::UAdd => match operand {
+                    Value::Float(value) if scope.floats() => Some(Value::Float(value)),
+                    other => other.number().map(Value::Int),
+                },
                 ast::UnaryOp::Invert => None,
             }
         }
         Expr::BinOp(binary) => {
             let left = evaluate(&binary.left, scope)?;
             let right = evaluate(&binary.right, scope)?;
-            arithmetic(&binary.op, &left, &right)
+            arithmetic(&binary.op, &left, &right, scope.floats())
         }
         Expr::BoolOp(bool_op) => {
             let mut last = None;
@@ -1319,12 +1575,50 @@ fn evaluate(expr: &Expr, scope: &Scope<'_>) -> Option<Value> {
             let mut left = evaluate(&compare.left, scope)?;
             for (op, comparator) in compare.ops.iter().zip(&compare.comparators) {
                 let right = evaluate(comparator, scope)?;
-                if !comparison(op, &left, &right)? {
+                if !comparison(op, &left, &right, scope.floats())? {
                     return Some(Value::Bool(false));
                 }
                 left = right;
             }
             Some(Value::Bool(true))
+        }
+        // `Class(...).method(...)` in a test.
+        Expr::Call(call)
+            if scope.model.is_some()
+                && matches!(
+                    call.func.as_ref(),
+                    Expr::Attribute(attribute) if matches!(attribute.value.as_ref(), Expr::Call(_))
+                ) =>
+        {
+            let Expr::Attribute(attribute) = call.func.as_ref() else {
+                return None;
+            };
+            let Expr::Call(constructor) = attribute.value.as_ref() else {
+                return None;
+            };
+            let model = scope.model?;
+            let instance = model.instance(constructor, scope)?;
+            model.run_method(
+                attribute.attr.as_str(),
+                &call.args,
+                &call.keywords,
+                &instance,
+                scope,
+            )
+        }
+        // The builtin `round(x)`, unshadowed.
+        Expr::Call(call) if scope.floats() && is_builtin_round(call) => {
+            let [argument] = call.args.as_slice() else {
+                return None;
+            };
+            match evaluate(argument, scope)? {
+                Value::Float(value) => {
+                    let rounded = value.round_ties_even();
+                    (rounded.is_finite() && rounded.abs() < FLOAT_EXACT_LIMIT as f64)
+                        .then_some(Value::Int(rounded as i128))
+                }
+                other => other.number().map(Value::Int),
+            }
         }
         Expr::Call(call) if scope.parameters.is_none() => {
             let callee = expr_full_name(&call.func)?;
@@ -1348,6 +1642,9 @@ fn evaluate(expr: &Expr, scope: &Scope<'_>) -> Option<Value> {
                 constant_spellings: &[],
                 reader_spellings: &[],
                 reader: None,
+                model: None,
+                receiver: None,
+                floats: false,
             };
             evaluate(&reader.expression, &inner)
         }
@@ -1396,9 +1693,23 @@ fn evaluate(expr: &Expr, scope: &Scope<'_>) -> Option<Value> {
     }
 }
 
-fn arithmetic(op: &ast::Operator, left: &Value, right: &Value) -> Option<Value> {
+fn arithmetic(op: &ast::Operator, left: &Value, right: &Value, floats: bool) -> Option<Value> {
     if let (Value::Str(left), Value::Str(right), ast::Operator::Add) = (left, right, op) {
         return Some(Value::Str(format!("{left}{right}")));
+    }
+    if floats {
+        let float_operand = matches!(left, Value::Float(_)) || matches!(right, Value::Float(_));
+        if float_operand || matches!(op, ast::Operator::Div) {
+            let (left, right) = (left.float()?, right.float()?);
+            let result = match op {
+                ast::Operator::Add => left + right,
+                ast::Operator::Sub => left - right,
+                ast::Operator::Mult => left * right,
+                ast::Operator::Div if right != 0.0 => left / right,
+                _ => return None,
+            };
+            return result.is_finite().then_some(Value::Float(result));
+        }
     }
     let (left, right) = (left.number()?, right.number()?);
     match op {
@@ -1429,9 +1740,12 @@ fn arithmetic(op: &ast::Operator, left: &Value, right: &Value) -> Option<Value> 
     .map(Value::Int)
 }
 
-fn comparison(op: &ast::CmpOp, left: &Value, right: &Value) -> Option<bool> {
+fn comparison(op: &ast::CmpOp, left: &Value, right: &Value, floats: bool) -> Option<bool> {
     let ordering = match (left, right) {
         (Value::Str(left), Value::Str(right)) => Some(left.cmp(right)),
+        _ if floats && (matches!(left, Value::Float(_)) || matches!(right, Value::Float(_))) => {
+            left.float()?.partial_cmp(&right.float()?)
+        }
         _ => left
             .number()
             .zip(right.number())
@@ -1446,4 +1760,11 @@ fn comparison(op: &ast::CmpOp, left: &Value, right: &Value) -> Option<bool> {
         ast::CmpOp::GtE => Some(ordering? != std::cmp::Ordering::Less),
         _ => None,
     }
+}
+
+/// `round(...)` as the builtin: the model checked at build time that nothing
+/// in the module or the test rebinds the name.
+fn is_builtin_round(call: &ast::ExprCall) -> bool {
+    matches!(call.func.as_ref(), Expr::Name(name) if name.id.as_str() == "round")
+        && call.keywords.is_empty()
 }
