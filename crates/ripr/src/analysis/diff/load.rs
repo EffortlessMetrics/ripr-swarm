@@ -1321,6 +1321,13 @@ fn default_base_failure_context(root: &Path, git_timeout: Option<Duration>) -> S
         return String::new();
     };
     if !head.status.success() {
+        // Exit 1 with no message is the unborn HEAD; exit 128 with a `fatal:`
+        // line is a damaged repository (a corrupt `packed-refs` answers this
+        // way), where "commit once" would name a repair that does not apply
+        // (#10566).
+        if let Some(message) = unreadable_repository_message(root, &head) {
+            return format!(" {message}");
+        }
         return " This repository has no commits yet; commit once, then analyze uncommitted \
                 edits with `--base HEAD --worktree`."
             .to_string();

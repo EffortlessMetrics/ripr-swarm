@@ -1110,6 +1110,30 @@ fn damaged_git_state_names_the_cause_and_a_repair() -> Result<(), String> {
     Ok(())
 }
 
+/// With no `--base`, a corrupt `packed-refs` must not read as an unborn HEAD:
+/// the repository has commits and "commit once" repairs nothing (#10566).
+#[test]
+fn corrupt_packed_refs_without_base_is_not_reported_as_unborn() -> Result<(), String> {
+    let scratch = Scratch::new("packed-refs-default-base")?;
+    let root = plain(&scratch, "packed-refs-default-base")?;
+    fs::write(root.join(".git/packed-refs"), b"garbage\n")
+        .map_err(|e| format!("write failed: {e}"))?;
+    let ran = ripr(&root, &["check"], &[])?;
+    assert_sane(&ran, "corrupt packed-refs, default base")?;
+    if ran.code != Some(2) {
+        return Err(format!("expected a refusal\n{}", ran.stderr));
+    }
+    for needle in ["packed-refs", "correct or restore it"] {
+        if !ran.stderr.contains(needle) {
+            return Err(format!("missing `{needle}`\n{}", ran.stderr));
+        }
+    }
+    if ran.stderr.contains("no commits yet") {
+        return Err(format!("wrong cause `no commits yet`\n{}", ran.stderr));
+    }
+    Ok(())
+}
+
 /// A checkout whose `.git` is a gitfile pointing at a vanished gitdir is
 /// still a repository checkout; "run it from inside your repository" is the
 /// wrong repair (#6927).
