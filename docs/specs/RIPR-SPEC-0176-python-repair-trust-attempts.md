@@ -315,6 +315,11 @@ authorization, and the standing non-claims. The record carries no timestamps:
 equivalent preparation is byte-identical, and the manifest location is the
 declared telemetry. Equivalence requires identical accepted packet and before
 snapshot bytes, configuration, analyzer, selection, and authorization inputs.
+On Linux the running binary digest reads the kernel's executing-image link
+directly. Removing or replacing the executable pathname does not change that
+identity to the replacement file or prevent the binding from being recorded.
+Unavailable executing-image bytes still fail closed; no pathname fallback is
+accepted. Other platforms retain their existing executable-read behavior.
 Two fresh durable attempts have different exact continuations in their sealed
 packets and therefore different packet input digests, even for the same selected
 row. Each binding pins its own final packet bytes; attempt identity is never
@@ -526,6 +531,11 @@ no lifecycle state at all.
   verification phase: identity revalidation, bounded execution, after
   analysis, native-identity movement comparison, rollback proof, and the
   immutable receipt.
+- `crates/ripr/src/app/running_binary.rs` — the shared executing-image reader
+  used by binding records and verification receipts. The Linux regression in
+  `crates/ripr/src/app/python_repair_binding/tests/driver_image.rs` drives the
+  binding-record producer after removing or replacing an owned executable link
+  and requires the original image's digest.
 - `crates/ripr/src/cli/agent.rs`, `crates/ripr/src/cli/mod.rs`,
   `crates/ripr/src/cli/commands/agent.rs` — the driver CLI surface (trust and
   authorization flags, before-phase publication hook, after-phase
