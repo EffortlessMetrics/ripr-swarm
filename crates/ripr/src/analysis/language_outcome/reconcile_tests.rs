@@ -373,36 +373,134 @@ fn typescript_family_duplicates_can_differ_and_are_not_a_conflict() -> Result<()
 }
 
 #[test]
-fn both_typescript_ids_may_retain_more_findings_than_children_but_never_fewer() -> Result<(), String>
-{
+fn both_typescript_ids_in_diff_mode_require_exact_equality() -> Result<(), String> {
     let findings = vec![
         finding_in(LanguageId::TypeScript)?,
         finding_in(LanguageId::TypeScript)?,
     ];
-    let aggregate = diff_aggregate(diff_children(
+    // Build the aggregate with both labels, as the diff loop does.
+    let mut both_aggregate = LanguageAggregate::new("full".to_string());
+    for child in diff_children(
         LanguageId::TypeScript,
         findings[..1].to_vec(),
         &["typescript"],
-    ));
-    let both = [LanguageId::TypeScript, LanguageId::JavaScript];
-    // Retained duplicates from the second loop run are tolerated...
-    let javascript = diff_children(LanguageId::JavaScript, Vec::new(), &["javascript"]);
-    let mut with_js = aggregate.clone();
-    for child in javascript {
-        with_js.record(child);
+    )
+    .into_iter()
+    .chain(diff_children(
+        LanguageId::JavaScript,
+        Vec::new(),
+        &["javascript"],
+    )) {
+        both_aggregate.record(child);
     }
-    let with_js = with_js.finish();
-    assert_eq!(reconcile(&with_js, &both, &findings, None), Ok(()));
-    // ...but a retained list shorter than the children is still a contradiction.
+    let with_js = both_aggregate.finish();
+    let both = [LanguageId::TypeScript, LanguageId::JavaScript];
+    assert_eq!(reconcile(&with_js, &both, &findings[..1], None), Ok(()));
+    // The old tolerance for a longer retained list (#10013) is gone.
+    rejected(
+        reconcile(&with_js, &both, &findings, None),
+        "retained findings are 2",
+    )?;
     rejected(
         reconcile(&with_js, &both, &[], None),
         "children carry 1 finding",
-    )?;
-    // And with one id selected the rule is exact.
-    rejected(
-        reconcile(&aggregate, &[LanguageId::TypeScript], &findings, None),
-        "retained findings are 2",
     )
+}
+
+fn family_children(count: usize) -> Result<Vec<LanguageAnalysisOutcomeV1>, String> {
+    let findings = (0..count)
+        .map(|_| finding_in(LanguageId::TypeScript))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(vec![
+        repo_child(LanguageId::TypeScript, findings.clone(), 3),
+        repo_child(LanguageId::JavaScript, findings, 3),
+    ])
+}
+
+#[test]
+fn repo_mode_counts_the_shared_typescript_family_once() -> Result<(), String> {
+    let both = [LanguageId::TypeScript, LanguageId::JavaScript];
+    let retained = vec![
+        finding_in(LanguageId::TypeScript)?,
+        finding_in(LanguageId::TypeScript)?,
+    ];
+    let aggregate = repo_aggregate(family_children(2)?);
+    assert_eq!(reconcile(&aggregate, &both, &retained, None), Ok(()));
+    // Retaining the adapter output once per id is rejected.
+    let doubled = [retained.clone(), retained.clone()].concat();
+    rejected(
+        reconcile(&aggregate, &both, &doubled, None),
+        "retained findings are 4",
+    )?;
+    rejected(
+        reconcile(&aggregate, &both, &retained[..1], None),
+        "children carry 2 finding(s)",
+    )
+}
+
+#[test]
+fn repo_mode_family_count_composes_with_a_sibling_child() -> Result<(), String> {
+    let selected = [
+        LanguageId::TypeScript,
+        LanguageId::JavaScript,
+        LanguageId::Python,
+    ];
+    let mut children = family_children(2)?;
+    children.push(repo_child(
+        LanguageId::Python,
+        vec![finding_in(LanguageId::Python)?],
+        2,
+    ));
+    let aggregate = repo_aggregate(children);
+    let retained = vec![
+        finding_in(LanguageId::TypeScript)?,
+        finding_in(LanguageId::TypeScript)?,
+        finding_in(LanguageId::Python)?,
+    ];
+    assert_eq!(reconcile(&aggregate, &selected, &retained, None), Ok(()));
+    let doubled = [retained[..2].to_vec(), retained].concat();
+    rejected(
+        reconcile(&aggregate, &selected, &doubled, None),
+        "retained findings are 5",
+    )
+}
+
+#[test]
+fn repo_mode_family_children_must_agree_unless_a_pass_failed() -> Result<(), String> {
+    let both = [LanguageId::TypeScript, LanguageId::JavaScript];
+    // Two different non-zero counts cannot come from one shared result.
+    let uneven = repo_aggregate(vec![
+        repo_child(
+            LanguageId::TypeScript,
+            vec![finding_in(LanguageId::TypeScript)?],
+            3,
+        ),
+        repo_child(
+            LanguageId::JavaScript,
+            vec![
+                finding_in(LanguageId::TypeScript)?,
+                finding_in(LanguageId::TypeScript)?,
+            ],
+            3,
+        ),
+    ]);
+    let retained = vec![finding_in(LanguageId::TypeScript)?; 2];
+    rejected(reconcile(&uneven, &both, &retained, None), "two children")?;
+    // A pass that errored carries no findings; the other pass is the family.
+    let failed = repo_aggregate(vec![
+        repo_child(
+            LanguageId::TypeScript,
+            vec![finding_in(LanguageId::TypeScript)?],
+            3,
+        ),
+        LanguageAnalysisOutcomeV1::from_repo_err(
+            LanguageId::JavaScript,
+            "boom".to_string(),
+            LanguageRunStatus::Failed,
+        ),
+    ]);
+    assert_eq!(reconcile(&failed, &both, &retained[..1], None), Ok(()));
+    Ok(())
 }
 
 #[test]

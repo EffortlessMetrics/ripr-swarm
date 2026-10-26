@@ -1272,12 +1272,133 @@ reached without a placeable call and the `cfg_attr` test reading
 (RIPR-SPEC-0240, #9442, #9443), with the same scope: generation, content
 commitment, dependent verify commitments and receipt byte hashes only.
 
+### Exported macro_rules! test tables classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.104 to 1.105 for
+`#[macro_export]` test generators named by `use crate::name;`
+(RIPR-SPEC-0117, #10298), with the same scope: generation, content
+commitment, dependent verify commitments and receipt byte hashes only.
+
+### Exported macro_rules! crate-path calls classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.106 to 1.107 for
+top-level `crate::name!` calls to `#[macro_export]` test generators
+(RIPR-SPEC-0117, #10298), with the same scope: generation, content
+commitment, dependent verify commitments and receipt byte hashes only.
+
+### `#[test_case]` literal rows classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.107 to 1.108 for
+literal-row `#[test_case]` bodies (RIPR-SPEC-0120, #10190), with the same
+scope: generation, content commitment, dependent verify commitments and
+receipt byte hashes only.
+
+## Pending — boundary_gap (25)
+
+Reason:
+RIPR-SPEC-0122: explain bounded Evidence stage and state meanings for #9373 item 1; retain full-human and JSON contracts
+
+Command:
+`cargo xtask goldens bless boundary_gap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — boundary_gap (26)
+
+Reason:
+RIPR-SPEC-0122: #9373 item 1 review repair; missing discriminators include absent assertions as well as inputs
+
+Command:
+`cargo xtask goldens bless boundary_gap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — boundary_gap (27)
+
+Reason:
+RIPR-SPEC-0122: #9373 item 1 observation-gloss repair; report independent related test/assertion evidence without implying that the changed arm executes.
+
+Operation:
+Manual edit: replaced only the observation clause in the existing five-line bounded Evidence legend with `observation = related test/assertion evidence`.
+
+Execution:
+Source-only reviewed edit; no native fixture or goldens-bless command executed because local storage admission is unavailable.
+
+Updated:
+- `expected/human.txt`
+
+## Pending — boundary_gap (28)
+
+Reason:
+RIPR-SPEC-0122: bounded evidence legend defines the Summary count terms (#9244 item 4)
+
+Command:
+`cargo xtask goldens bless boundary_gap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+### one-line else-if ladder classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.98 to 1.99 for the
+one-line `else if` ladder tail (#9630), with the same scope: generation,
+content commitment, dependent verify commitments and receipt byte hashes only.
+
+### equal-valued arm sink limit classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.99 to 1.100 for the
+equal-valued arm sink limit (#9843), with the same scope: generation,
+content commitment, dependent verify commitments and receipt byte hashes only.
+
+### multi-line equal-valued arm sink limit classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.101 to 1.102 for the
+rustfmt-layout equal-valued arm sink limit (#10134), with the same scope:
+generation, content commitment, dependent verify commitments and receipt byte
+hashes only.
+
+### loop accumulator classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.103 to 1.104 for the
+returned loop-accumulator update (#6485), with the same scope: generation,
+content commitment, dependent verify commitments and receipt byte hashes only.
+
+### table-driven loop-accumulator classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.105 to 1.106 for the
+table-driven loop-accumulator pin (#6485), with the same scope: generation,
+content commitment, dependent verify commitments and receipt byte hashes only.
+
+### indirect owner call limit classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.108 to 1.109 for owners
+reached without a placeable call and the `cfg_attr` test reading
+(RIPR-SPEC-0240, #9442, #9443), with the same scope: generation, content
+commitment, dependent verify commitments and receipt byte hashes only.
+
 ### format placeholder edit classified-cache generation parity
 
 The same snapshots follow corpus cache generation 1.109 to 1.110 for the
 placeholder-edit reading of the display pin (RIPR-SPEC-0297, #9836), with the
 same scope: generation, content commitment, dependent verify commitments and
 receipt byte hashes only.
+
+### Exported macro_rules! grouped-import classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.109 to 1.110 for
+grouped `use crate::{a, b};` imports of `#[macro_export]` test generators
+(RIPR-SPEC-0117, #10298), with the same scope: generation, content
+commitment, dependent verify commitments and receipt byte hashes only.
+
+
 
 ## Pending — boundary_gap (29)
 
