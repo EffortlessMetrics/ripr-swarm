@@ -262,8 +262,10 @@ wrong credits.
    unchanged, including when an unrelated binding shares a helper's name.
    Any other statement, a second argument, a changed output, an attribute, a
    method on the result or a different executor (`futures::executor::block_on`,
-   a runtime's `block_on`) is not the helper, and the call keeps the
-   `rust_indirect_owner_call_unresolved` limit (RIPR-SPEC-0240).
+   a runtime's `block_on`) supplies no polling-helper pin. Existing
+   unresolved-executor limits remain applicable: a bound expected value
+   isolates `rust_indirect_owner_call_unresolved` (RIPR-SPEC-0240), while a
+   literal expectation can select `rust_framework_oracle_unresolved` first.
    An assertion inside an `async` block keeps the async-context refusal below,
    except the one `async` block that is the only argument of
    `tokio::spawn(..)` chained directly into `.await.unwrap()` or
