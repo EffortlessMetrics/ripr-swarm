@@ -6380,6 +6380,7 @@ fn spec_numbering_violations(root: &Path) -> Result<Vec<String>, String> {
     }
 
     validate_specs_readme_index(root, &specs, &ids, &mut violations)?;
+    validate_spec_index_fragments(root, &mut violations)?;
     validate_spec_references(root, &ids, &mut violations)?;
 
     violations.sort();
@@ -6432,21 +6433,68 @@ fn collect_spec_files_for_root(root: &Path) -> Result<Vec<SpecFile>, String> {
 /// that each add a spec no longer conflict on the README tail (#10455).
 const SPEC_INDEX_FRAGMENT_DIR: &str = "docs/spec-index.d";
 
-/// The README index plus every row fragment, in file-name order. Index links are
-/// matched against this text, so a row may live in either place.
+/// The README index plus every row fragment, in file-name order. A fragment
+/// lives one directory away from the specs, so its links read
+/// `../specs/<file>`; they are normalised to the README's bare file names so one
+/// index-link match serves both places.
 fn specs_index_text(root: &Path, readme: &Path) -> Result<String, String> {
     let mut text = read_text_lossy(readme)?;
-    let directory = root.join(SPEC_INDEX_FRAGMENT_DIR);
-    if directory.is_dir() {
-        for path in collect_files(&directory)? {
-            if path.extension().and_then(|value| value.to_str()) != Some("md") {
-                continue;
-            }
-            text.push('\n');
-            text.push_str(&read_text_lossy(&path)?);
-        }
+    for (_, fragment) in spec_index_fragments(root)? {
+        text.push('\n');
+        text.push_str(&fragment.replace("](../specs/", "]("));
     }
     Ok(text)
+}
+
+/// Every `docs/spec-index.d/*.md` as (file name, text), in file-name order.
+fn spec_index_fragments(root: &Path) -> Result<Vec<(String, String)>, String> {
+    let directory = root.join(SPEC_INDEX_FRAGMENT_DIR);
+    let mut fragments = Vec::new();
+    if !directory.is_dir() {
+        return Ok(fragments);
+    }
+    for path in collect_files(&directory)? {
+        if path.extension().and_then(|value| value.to_str()) != Some("md") {
+            continue;
+        }
+        let name = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default()
+            .to_string();
+        if name == "README.md" {
+            continue;
+        }
+        fragments.push((name, read_text_lossy(&path)?));
+    }
+    Ok(fragments)
+}
+
+/// A fragment registers exactly the spec its file name states: `RIPR-SPEC-NNNN.md`
+/// holds spec rows for `RIPR-SPEC-NNNN` only, so a misnamed fragment cannot
+/// satisfy another spec's index entry.
+fn validate_spec_index_fragments(root: &Path, violations: &mut Vec<String>) -> Result<(), String> {
+    for (name, text) in spec_index_fragments(root)? {
+        let Some(stem) = name.strip_suffix(".md").filter(|stem| is_spec_id(stem)) else {
+            violations.push(format!(
+                "{SPEC_INDEX_FRAGMENT_DIR}/{name} must be named RIPR-SPEC-NNNN.md"
+            ));
+            continue;
+        };
+        for id in spec_ids_in_text(&text) {
+            if id != stem {
+                violations.push(format!(
+                    "{SPEC_INDEX_FRAGMENT_DIR}/{name} names `{id}` but only `{stem}` may appear in it"
+                ));
+            }
+        }
+        if !text.contains(&format!("[{stem}](../specs/")) {
+            violations.push(format!(
+                "{SPEC_INDEX_FRAGMENT_DIR}/{name} has no `[{stem}](../specs/<file>)` row"
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn validate_specs_readme_index(

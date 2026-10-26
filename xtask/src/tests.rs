@@ -31682,7 +31682,7 @@ fn spec_numbering_accepts_index_rows_from_fragments() -> Result<(), String> {
 
     write(
         &root.join("docs/spec-index.d/RIPR-SPEC-0002.md"),
-        "| [RIPR-SPEC-0002](RIPR-SPEC-0002-two.md) | proposed | Two |\n",
+        "| [RIPR-SPEC-0002](../specs/RIPR-SPEC-0002-two.md) | proposed | Two |\n",
     );
     let with = spec_numbering_violations(&root)?;
     assert!(
@@ -31695,7 +31695,7 @@ fn spec_numbering_accepts_index_rows_from_fragments() -> Result<(), String> {
     // A fragment is not a license to reference a spec that does not exist.
     write(
         &root.join("docs/spec-index.d/RIPR-SPEC-9999.md"),
-        "| [RIPR-SPEC-9999](missing.md) | proposed | Missing |\n",
+        "| [RIPR-SPEC-9999](../specs/missing.md) | proposed | Missing |\n",
     );
     let phantom = spec_numbering_violations(&root)?;
     assert!(
@@ -31703,6 +31703,46 @@ fn spec_numbering_accepts_index_rows_from_fragments() -> Result<(), String> {
             .iter()
             .any(|violation| violation.contains("references missing spec `RIPR-SPEC-9999`")),
         "{phantom:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn spec_index_fragments_must_be_named_for_the_one_spec_they_register() -> Result<(), String> {
+    let root = temp_dir("spec-index-fragment-names");
+    for (id, file) in [("0001", "one"), ("0002", "two")] {
+        write(
+            &root.join(format!("docs/specs/RIPR-SPEC-{id}-{file}.md")),
+            &format!("# RIPR-SPEC-{id}: T\n"),
+        );
+    }
+    write(
+        &root.join("docs/specs/README.md"),
+        "| [RIPR-SPEC-0001](RIPR-SPEC-0001-one.md) | proposed | One |\n",
+    );
+    // 0002's row filed under 0001's name must not satisfy 0002.
+    write(
+        &root.join("docs/spec-index.d/RIPR-SPEC-0001.md"),
+        "| [RIPR-SPEC-0002](../specs/RIPR-SPEC-0002-two.md) | proposed | Two |\n",
+    );
+    let violations = spec_numbering_violations(&root)?;
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.contains("names `RIPR-SPEC-0002` but only `RIPR-SPEC-0001`")),
+        "{violations:?}"
+    );
+
+    write(
+        &root.join("docs/spec-index.d/stray.md"),
+        "| [RIPR-SPEC-0002](../specs/RIPR-SPEC-0002-two.md) | proposed | Two |\n",
+    );
+    let violations = spec_numbering_violations(&root)?;
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.contains("stray.md must be named RIPR-SPEC-NNNN.md")),
+        "{violations:?}"
     );
     Ok(())
 }

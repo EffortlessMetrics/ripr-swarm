@@ -94,9 +94,12 @@ the spec index (`docs/specs/README.md` or a row fragment under
 reference missing spec IDs.
 
 A PR that adds a spec puts its one index row in
-`docs/spec-index.d/RIPR-SPEC-NNNN.md` (the same three-column row the README table uses: spec link, status,
-topic) instead of appending to the README
-table, so two PRs that each add a spec do not conflict on the README tail.
+`docs/spec-index.d/RIPR-SPEC-NNNN.md` (the same three-column row the README
+table uses: spec link, status, topic) instead of appending to the README table,
+so two PRs that each add a spec do not conflict on the README tail. The link
+target is relative to the fragment, `../specs/<spec file>`. The file name must
+be the spec ID, and the fragment may name only that ID; the numbering guard
+fails a misnamed or mixed fragment.
 
 A PR registers its tests, fixtures, code, outputs and metrics in a file of its
 own under `.ripr/traceability.d/`. `[[extend]]` with a behavior `id` adds array
