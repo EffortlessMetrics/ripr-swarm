@@ -1,0 +1,22 @@
+{
+  "case_id": "nodetest-spec0247-ex07-legacy-equal-loose-owner",
+  "subject_id": "authored-ts-spec0247-7loose",
+  "origin": "authored",
+  "anchor": "src/tally.ts:2",
+  "behavior_family": "return_value",
+  "test_shape": "nodetest_legacy_assert_equal_loose_owner",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}
