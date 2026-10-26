@@ -21,6 +21,14 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# The first trial archived debug-info test binaries: 4.5 GB, a 48 to 144 second
+# download and a runner out of disk while extracting. Test binaries need no debug
+# info in CI, and the same setting on the shards keeps the tests' own nested cargo
+# builds on the same profile as the archive.
+env:
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_TEST_DEBUG: "0"
+
 jobs:
   archive:
     name: archive
