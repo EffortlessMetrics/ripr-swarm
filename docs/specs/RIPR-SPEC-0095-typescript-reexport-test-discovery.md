@@ -83,7 +83,7 @@ because the call reaches the owner through the barrel. The chain follows
 the same bounds as a named export: named re-exports of the namespace name
 (`export { units } from './inner'`) and star hops are followed within
 `MAX_REEXPORT_HOPS`; two star sources that bind the name to different
-modules, a cycle, a mocked barrel or target, and an unresolvable mock
+modules (or one source binds it as an ordinary export), a cycle, a mocked barrel or target, and an unresolvable mock
 specifier leave the import as written. A body-local `units`, an enclosing
 scope that rebinds it, and `export type * as` bind no namespace value.
 

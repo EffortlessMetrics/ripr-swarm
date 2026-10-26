@@ -73,6 +73,12 @@ pub(crate) fn ts_close_to_pin_facts(
         if local_identifier_declared_in_test_body(&test.body_text, &owner.name) {
             continue;
         }
+        // The extracted assertion keeps no promise modifier, and a
+        // synchronous number cannot satisfy `.resolves` or `.rejects`.
+        let code = ts_mask_literals_and_comments(&test.body_text);
+        if code.contains(".resolves") || code.contains(".rejects") {
+            continue;
+        }
         let receivers =
             unshadowed_owner_namespace_receivers(test, owner, alias_map, workspace_root);
         // A bare `f(...)` is the owner only when this file imports `f` by

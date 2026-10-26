@@ -446,6 +446,9 @@ stays `unknown`; the classifier reads it strong) when all of these hold:
   uses), and the owner is synchronous and not a generator with nothing
   between its signature and the return that branches, returns or throws
   early, so the changed line runs for every call;
+  the owner is read from the source it was parsed from, not the worktree;
+- the test body has no `.resolves` or `.rejects` (the extracted assertion keeps
+  no promise modifier, and a synchronous number cannot satisfy either);
 - the assertion observes the whole result of one owner call with scalar
   literal arguments, through a name the test imports from the owner's
   module (the observation gate of rules 2 and 5);

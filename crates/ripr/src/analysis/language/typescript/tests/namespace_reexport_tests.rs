@@ -203,6 +203,22 @@ fn an_ambiguous_or_cyclic_chain_is_not_followed() -> Result<(), String> {
         &related_through_namespace(&ambiguous, &test_source(CALL))?,
         "two star sources with different namespaces",
     );
+    let competing = [
+        ("src/units.ts", UNITS),
+        ("src/a.ts", "export * as units from \"./units\";\n"),
+        (
+            "src/b.ts",
+            "export const units = { cmToIn: (cm: number) => cm };\n",
+        ),
+        (
+            "src/barrel.ts",
+            "export * from \"./a\";\nexport * from \"./b\";\n",
+        ),
+    ];
+    assert_not_credited(
+        &related_through_namespace(&competing, &test_source(CALL))?,
+        "a namespace star and an ordinary star export of the same name",
+    );
     let cycle = [
         ("src/units.ts", UNITS),
         ("src/a.ts", "export { units } from \"./barrel\";\n"),

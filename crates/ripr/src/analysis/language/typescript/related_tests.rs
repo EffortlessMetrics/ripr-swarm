@@ -862,6 +862,14 @@ impl ReExportIndex {
         }
         let mut found: Option<String> = None;
         for (_, star_source) in self.star_edges.iter().filter(|(from, _)| from == module) {
+            // Another star source that exports `name` as an ordinary binding
+            // makes the name ambiguous, whichever source binds a namespace.
+            if !matches!(
+                self.resolve_export(star_source, name, hops + 1, &mut stack.clone(), mocked),
+                ExportResolution::NotFound
+            ) {
+                return None;
+            }
             match self.resolve_namespace_export(star_source, name, hops + 1, stack, mocked) {
                 None => {}
                 Some(target) => match &found {

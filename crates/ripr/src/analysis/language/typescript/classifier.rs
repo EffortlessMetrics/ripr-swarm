@@ -1197,6 +1197,28 @@ fn ts_mask_lexically(
     out
 }
 
+/// The owner's source lines, line `owner.start_line + i` at index `i`. Read
+/// from the text the owner was parsed from, so committed-history analysis
+/// sees the committed owner, not the worktree; the worktree file is the
+/// fallback when the owner carries no source.
+fn owner_source_lines(
+    owner: &TypeScriptOwner,
+    workspace_root: Option<&Path>,
+) -> Option<Vec<String>> {
+    if let Some(text) = owner.source_text.as_deref() {
+        return Some(text.lines().map(str::to_string).collect());
+    }
+    let source = std::fs::read_to_string(workspace_root?.join(&owner.file)).ok()?;
+    Some(
+        source
+            .lines()
+            .skip(owner.start_line.saturating_sub(1))
+            .take(owner.end_line.saturating_sub(owner.start_line) + 1)
+            .map(str::to_string)
+            .collect(),
+    )
+}
+
 /// The old and new expression of a changed one-line `return <expression>;` at
 /// the owner's own function level, when the owner can be evaluated on its
 /// call arguments: it declares parameters, never reassigns one, and opens no
@@ -1212,7 +1234,7 @@ pub(crate) fn plain_changed_return<'t>(
     if owner.arity.is_none() || owner.params.is_empty() {
         return None;
     }
-    let (Some(old_line_text), Some(root)) = (old_line_text, workspace_root) else {
+    let (Some(old_line_text), Some(_)) = (old_line_text, workspace_root) else {
         return None;
     };
     let (Some(old_expression), Some(new_expression)) = (
@@ -1223,17 +1245,13 @@ pub(crate) fn plain_changed_return<'t>(
     };
     // An earlier statement may rebind a parameter, so the call arguments
     // would not be the values the returned expression reads.
-    let Ok(source) = std::fs::read_to_string(root.join(&owner.file)) else {
-        return None;
-    };
-    let body_text: String = source
-        .lines()
+    let lines = owner_source_lines(owner, workspace_root)?;
+    let changed = line.checked_sub(owner.start_line)?;
+    let body_text: String = lines
+        .iter()
         .enumerate()
-        .filter(|(index, _)| {
-            let number = index + 1;
-            number > owner.start_line && number <= owner.end_line && number != line
-        })
-        .map(|(_, text)| text)
+        .filter(|(index, _)| *index > 0 && *index != changed)
+        .map(|(_, text)| text.as_str())
         .collect::<Vec<_>>()
         .join("\n");
     if owner
@@ -1245,14 +1263,10 @@ pub(crate) fn plain_changed_return<'t>(
     }
     // The changed return must sit at the owner's own function level: inside a
     // nested function its parameters can shadow the owner's.
-    let before_return: String = source
-        .lines()
-        .enumerate()
-        .filter(|(index, _)| {
-            let number = index + 1;
-            number >= owner.start_line && number < line
-        })
-        .map(|(_, text)| text)
+    let before_return: String = lines
+        .iter()
+        .take(changed)
+        .map(String::as_str)
         .collect::<Vec<_>>()
         .join("\n");
     // Drop the signature: only what follows the owner's opening brace can
@@ -1280,20 +1294,16 @@ pub(crate) fn changed_return_runs_unconditionally(
     owner: &TypeScriptOwner,
     workspace_root: Option<&Path>,
 ) -> bool {
-    let Some(root) = workspace_root else {
+    let Some(lines) = owner_source_lines(owner, workspace_root) else {
         return false;
     };
-    let Ok(source) = std::fs::read_to_string(root.join(&owner.file)) else {
+    let Some(changed) = line.checked_sub(owner.start_line) else {
         return false;
     };
-    let head: String = source
-        .lines()
-        .enumerate()
-        .filter(|(index, _)| {
-            let number = index + 1;
-            number >= owner.start_line && number < line
-        })
-        .map(|(_, text)| text)
+    let head = lines
+        .iter()
+        .take(changed)
+        .map(String::as_str)
         .collect::<Vec<_>>()
         .join("\n");
     let masked = ts_mask_literals_and_comments(&head);
