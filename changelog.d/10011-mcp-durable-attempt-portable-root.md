@@ -1,2 +1,2 @@
 <!-- section: Fixed -->
-- The MCP repair-attempt projection renders `next_command` with the portable root `.` instead of the host-local checkout path, matching its claim boundary that the host-local root is not projected. The CLI keeps the paste-and-run root (#10009, #10011).
+- Ordinary MCP durable repair-attempt `next_command` displays no longer embed the host-local checkout path: they use the portable root `.`. CLI displays retain the bound checkout root; trust-bound, store-qualified and unparseable continuations keep their persisted spelling (#10009, #10011).
