@@ -172,18 +172,30 @@ pub(crate) fn expanded_assertion_view(source: &str) -> Cow<'_, str> {
         let Some(&start) = line_starts.get(call.start_line.saturating_sub(1)) else {
             continue;
         };
-        let end = line_starts
-            .get(call.end_line)
-            .copied()
-            .unwrap_or(source.len());
-        let region = &view[start..end.min(view.len())];
+        // The region's end comes from the current view: an earlier edit on
+        // the same line changed its byte length, and expansions keep the
+        // newline count, so the call's lines end after this many newlines.
+        let mut end = start;
+        for _ in call.start_line..=call.end_line.max(call.start_line) {
+            match view.get(end..).and_then(|rest| rest.find('\n')) {
+                Some(offset) => end += offset + 1,
+                None => {
+                    end = view.len();
+                    break;
+                }
+            }
+        }
+        if start > end || !view.is_char_boundary(start) || !view.is_char_boundary(end) {
+            continue;
+        }
+        let region = &view[start..end];
         let text = call.text.trim();
         if region.matches(text).count() != 1 {
             continue;
         }
         let padding = "\n".repeat(text.matches('\n').count());
         let replaced = region.replacen(text, &format!("{}{padding}", expanded.statement), 1);
-        view.replace_range(start..end.min(view.len()), &replaced);
+        view.replace_range(start..end, &replaced);
         changed = true;
     }
     if changed {

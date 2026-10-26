@@ -412,3 +412,18 @@ fn macro_call_nested_in_a_multiline_helper_call_is_not_credited() -> Result<(), 
     );
     Ok(())
 }
+
+#[test]
+fn view_expands_several_calls_on_one_line_beside_non_ascii_text() {
+    use super::super::expanded_assertion_view;
+    let source = module_with(
+        "macro_rules! assert_gate {\n        ($x:expr, $want:expr) => {{ assert_eq!(gate($x), $want); }};\n    }",
+        "assert_gate!(11, true); assert_gate!(2, false); // héllo ✓",
+    );
+    let view = expanded_assertion_view(&source);
+    assert!(
+        view.contains("assert_eq!(gate(11), true); assert_eq!(gate(2), false); // héllo ✓"),
+        "{view}"
+    );
+    assert_eq!(view.matches('\n').count(), source.matches('\n').count());
+}
