@@ -841,9 +841,8 @@ mod tests {
 
     use super::{
         ClassifiedSeam, RepairPacketIneligibility, RepairTargetSelection,
-        cross_language_oracle_visibility_unresolved, discriminator_fact_matches,
-        humanize_evidence, is_safe_for_repair_packet, repair_packet_eligibility,
-        repair_packet_queue_visible,
+        cross_language_oracle_visibility_unresolved, discriminator_fact_matches, humanize_evidence,
+        is_safe_for_repair_packet, repair_packet_eligibility, repair_packet_queue_visible,
     };
     use crate::analysis::new_test_target::{
         NewTestKind, NewTestProposalProvenance, NewTestTargetAdmission, NewTestTargetProposal,
