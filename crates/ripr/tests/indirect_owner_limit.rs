@@ -385,33 +385,53 @@ mod tests {
 const TAX_BEFORE: &str = "    p + p / 10";
 const TAX_AFTER: &str = "    p / 10 + p";
 
+/// RIPR-SPEC-0197 rule 1: `block_on` here only polls its argument to
+/// completion and returns the output, so the assertion pins the owner's
+/// return exactly as `add_tax(100).await` would. Runtime truth: `p + p / 5`
+/// gives 120, `p - p / 10` gives 90, and either fails `== 110`.
 #[test]
-fn an_owner_called_inside_a_local_executor_is_a_limit_not_a_gap() -> Result<(), String> {
-    // #10143's framework rule reads this literal-expectation shape first, so
-    // either of the two named limits is the withhold; it is never a gap.
-    let findings = edited(ASYNC_OWNER, TAX_BEFORE, TAX_AFTER)?;
-    let named = |f: &Finding| {
-        matches!(
-            f.static_limit_kind.map(|kind| kind.as_str()),
-            Some("rust_indirect_owner_call_unresolved" | "rust_framework_oracle_unresolved")
-        )
-    };
-    if findings.iter().any(is_gap) || !findings.iter().any(named) {
-        return Err(format!(
-            "local block_on: expected the indirect-owner or framework-oracle limit, got {:?}",
-            summary(&findings)
-        ));
-    }
-    Ok(())
+fn an_owner_called_inside_a_polling_helper_is_credited() -> Result<(), String> {
+    credited(ASYNC_OWNER, TAX_BEFORE, TAX_AFTER, "polling helper")
 }
 
-/// Runtime truth: `p + p / 10` to `p + p / 5` fails `120 != 110`, so the
-/// assertion discriminates, but the expectation is a binding, not a literal,
-/// which `framework_oracle` does not read. Only this rule withholds it.
 #[test]
-fn a_local_future_executor_with_a_bound_expected_value_is_a_limit_not_a_gap() -> Result<(), String>
-{
+fn a_polling_helper_with_a_bound_expected_value_is_credited() -> Result<(), String> {
     let lib = ASYNC_OWNER.replace(
+        "assert_eq!(block_on(add_tax(100)), 110);",
+        "let expected = 110;\n        assert_eq!(block_on(add_tax(100)), expected);",
+    );
+    credited(
+        &lib,
+        TAX_BEFORE,
+        TAX_AFTER,
+        "bound expected through a helper",
+    )
+}
+
+/// A helper with any statement beyond the poll loop is not read as one: it
+/// may count polls, time out or rewrite the output.
+#[test]
+fn a_helper_with_an_extra_statement_is_a_limit_not_a_gap() -> Result<(), String> {
+    let lib = ASYNC_OWNER
+        .replace(
+            "        loop {\n            if let Poll::Ready",
+            "        let _polls = 0;\n        loop {\n            if let Poll::Ready",
+        )
+        .replace(
+            "assert_eq!(block_on(add_tax(100)), 110);",
+            "let expected = 110;\n        assert_eq!(block_on(add_tax(100)), expected);",
+        );
+    withheld(
+        &lib,
+        TAX_BEFORE,
+        TAX_AFTER,
+        "helper with an extra statement",
+    )
+}
+
+#[test]
+fn a_helper_that_rewrites_the_output_is_a_limit_not_a_gap() -> Result<(), String> {
+    let lib = ASYNC_OWNER.replace("return v;", "return v * 2;").replace(
         "assert_eq!(block_on(add_tax(100)), 110);",
         "let expected = 110;\n        assert_eq!(block_on(add_tax(100)), expected);",
     );
@@ -419,8 +439,32 @@ fn a_local_future_executor_with_a_bound_expected_value_is_a_limit_not_a_gap() ->
         &lib,
         TAX_BEFORE,
         TAX_AFTER,
-        "bound expected through a Future executor",
+        "helper that rewrites the output",
     )
+}
+
+/// The helper is verified, but the assertion does not pin the changed value.
+#[test]
+fn a_polling_helper_with_a_weak_assertion_is_a_limit_not_a_gap() -> Result<(), String> {
+    let lib = ASYNC_OWNER.replace(
+        "assert_eq!(block_on(add_tax(100)), 110);",
+        "assert!(block_on(add_tax(100)) > 0);",
+    );
+    withheld(
+        &lib,
+        TAX_BEFORE,
+        TAX_AFTER,
+        "weak assertion through a helper",
+    )
+}
+
+#[test]
+fn a_polling_helper_result_used_after_a_method_call_is_a_limit_not_a_gap() -> Result<(), String> {
+    let lib = ASYNC_OWNER.replace(
+        "assert_eq!(block_on(add_tax(100)), 110);",
+        "assert_eq!(block_on(add_tax(100)).count_ones(), 6);",
+    );
+    withheld(&lib, TAX_BEFORE, TAX_AFTER, "method on the helper result")
 }
 
 #[test]

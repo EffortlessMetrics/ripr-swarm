@@ -128,6 +128,10 @@ pub(in crate::analysis) struct OwnerReturnPin {
     /// The owner is an `async fn`, so a test reads its return value as
     /// `owner(..).await` (RIPR-SPEC-0197 rule 1, `#[tokio::test]`).
     awaited: bool,
+    /// Test-local helpers that poll one future to completion and return its
+    /// output, so `helper(owner(..))` reads as `owner(..).await` (RIPR-SPEC-0197
+    /// rule 1). Empty unless the owner is `async`.
+    poll_helpers: BTreeSet<String>,
     /// Every record type the owner's return expression constructs has at
     /// most a plain (empty) `Drop` impl in the workspace, so dropping the
     /// receiver while unwinding from a failed assertion cannot exit the
@@ -3301,6 +3305,11 @@ impl OwnerReturnPin {
                 &probe.expression,
             ),
             awaited: declares_async(owner, index),
+            poll_helpers: if declares_async(owner, index) {
+                super::poll_helper::verified_helpers(index)
+            } else {
+                BTreeSet::new()
+            },
             drop_plain: Self::returned_types_drop_plain(owner, index),
             owner_file: owner.file.clone(),
             owner_start_line: owner.start_line,
@@ -3429,6 +3438,11 @@ impl OwnerReturnPin {
             pointer_mask_gate: super::mask_pin::PointerMaskGate::Refuse,
             pointer_return_change: None,
             awaited: declares_async(owner, index),
+            poll_helpers: if declares_async(owner, index) {
+                super::poll_helper::verified_helpers(index)
+            } else {
+                BTreeSet::new()
+            },
             drop_plain: Self::returned_types_drop_plain(owner, index),
             owner_file: owner.file.clone(),
             owner_start_line: owner.start_line,
@@ -3533,6 +3547,11 @@ impl OwnerReturnPin {
             pointer_mask_gate: super::mask_pin::PointerMaskGate::Refuse,
             pointer_return_change: None,
             awaited: declares_async(owner, index),
+            poll_helpers: if declares_async(owner, index) {
+                super::poll_helper::verified_helpers(index)
+            } else {
+                BTreeSet::new()
+            },
             drop_plain: Self::returned_types_drop_plain(owner, index),
             owner_file: owner.file.clone(),
             owner_start_line: owner.start_line,
@@ -3629,6 +3648,11 @@ impl OwnerReturnPin {
             pointer_mask_gate: super::mask_pin::PointerMaskGate::Refuse,
             pointer_return_change: None,
             awaited: declares_async(owner, index),
+            poll_helpers: if declares_async(owner, index) {
+                super::poll_helper::verified_helpers(index)
+            } else {
+                BTreeSet::new()
+            },
             drop_plain: Self::returned_types_drop_plain(owner, index),
             owner_file: owner.file.clone(),
             owner_start_line: owner.start_line,
@@ -3714,7 +3738,8 @@ impl OwnerReturnPin {
         // An async owner's bare call is its future, not its return value.
         match (self.awaited, operand.strip_suffix(".await")) {
             (true, Some(call)) => owner_call_shape(call.trim_end(), name),
-            (true, None) => None,
+            (true, None) => super::poll_helper::strip_helper_call(operand, &self.poll_helpers)
+                .and_then(|future| owner_call_shape(future, name)),
             (false, _) => owner_call_shape(operand, name),
         }
     }

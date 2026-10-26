@@ -1272,6 +1272,13 @@ reached without a placeable call and the `cfg_attr` test reading
 (RIPR-SPEC-0240, #9442, #9443), with the same scope: generation, content
 commitment, dependent verify commitments and receipt byte hashes only.
 
+### polling helper owner pin classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.109 to 1.110 for an
+`async` owner called through a test-local polling helper (RIPR-SPEC-0197,
+#9478), with the same scope: generation, content commitment, dependent verify
+commitments and receipt byte hashes only.
+
 ## Pending — boundary_gap (29)
 
 Reason:

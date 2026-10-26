@@ -234,6 +234,18 @@ wrong credits.
    3)`). Its bare call is a future and refuses; a sync owner's `.await` awaits
    a future it returns and stays refused. A sync `fn` under `#[tokio::test]`
    does not compile and refuses.
+   A plain `#[test]` reads the same value through a test-local polling
+   helper (#9478): `assert_eq!(block_on(total(&[1, 2])), 3)`, where `block_on`
+   is a function in the workspace whose whole source is one generic
+   `fn block_on<F: Future>(fut: F) -> F::Output` that pins its argument,
+   builds a `Context` over `Waker::noop()` and loops returning the output of
+   `poll` once `Ready` (an `if let` or a `match`, with `std::`/`core::` path
+   spellings). Every function of that name must be such a helper, and the
+   operand must be exactly `block_on(<owner call>)` with the owner `async`.
+   Any other statement, a second argument, a changed output, an attribute, a
+   method on the result or a different executor (`futures::executor::block_on`,
+   a runtime's `block_on`) is not the helper, and the call keeps the
+   `rust_indirect_owner_call_unresolved` limit (RIPR-SPEC-0240).
    An assertion inside an `async` block keeps the async-context refusal below,
    except the one `async` block that is the only argument of
    `tokio::spawn(..)` chained directly into `.await.unwrap()` or
