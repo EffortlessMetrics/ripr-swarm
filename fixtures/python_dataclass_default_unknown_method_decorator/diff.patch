@@ -1,0 +1,11 @@
+--- a/models.py
++++ b/models.py
+@@ -8,7 +8,7 @@
+ @dataclass
+ class Invoice:
+     amount: int
+-    tax_rate: float = 0.2
++    tax_rate: float = 0.25
+ 
+     def total(self):
+         return round(self.amount * (1 + self.tax_rate))
