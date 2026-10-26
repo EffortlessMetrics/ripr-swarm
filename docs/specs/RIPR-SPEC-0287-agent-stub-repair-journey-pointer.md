@@ -34,10 +34,11 @@ Support-tier impact:
 
 Policy impact:
 
-- The `rust_test_stub` schema version is `0.3` (`0.2` → `0.3`,
-  additive); `docs/OUTPUT_SCHEMA.md`, `docs/EXIT_CODES.md`,
-  `docs/AGENT_WORKFLOWS.md`, and the `ripr agent stub --help` text carry
-  the same literal.
+- The `next_repair` block was added in schema `0.3`, additive on `0.2`.
+  Current `rust_test_stub` documents use `0.4`; its language-refusal addition
+  is governed by [RIPR-SPEC-0122](RIPR-SPEC-0122-bounded-human-check-output.md).
+  `docs/OUTPUT_SCHEMA.md`, `docs/EXIT_CODES.md`, `docs/AGENT_WORKFLOWS.md`,
+  and the `ripr agent stub --help` text carry the current literal.
 - No new exposure class, oracle kind, severity, or stage-state value.
   The eligibility flip reuses the existing repair-route authorities
   (`repair_packet_eligibility` plus `recommended_test_is_repair_edit_target`);
@@ -67,9 +68,9 @@ surface) with a message that never mentions the stub.
 
 ### `next_repair` on the ready document (#8727)
 
-The `rust_test_stub` schema moves to `0.3`, additive on `0.2`: the ready
-document may carry a `next_repair` block, and refused envelopes keep the
-`0.2` field set. The block states, for the same seam:
+The `next_repair` block was introduced in schema `0.3` and is retained in
+current schema `0.4`: the ready document may carry that block, and refused
+envelopes keep the `0.2` field set. The block states, for the same seam:
 
 - `start_command`: the documented repair transaction start,
   `ripr agent repair --root <root> --seam-id <id> --phase before`, with
@@ -131,7 +132,7 @@ refusal is the honest resolution.
 - `agent stub --write` on a seam whose placement diverges from the packet
   surface refuses before writing, names both files and the supported
   route, and leaves the tree untouched.
-- The schema version is `0.3` on every ready and refused
+- The schema version is `0.4` on every ready and refused
   `rust_test_stub` document, and the docs/help literals agree.
 
 ## Test Mapping
@@ -152,13 +153,13 @@ refusal is the honest resolution.
 
 ## Acceptance Examples
 
-Ready document, schema `0.3`, for a seam whose producer target selection
+Ready document, schema `0.4`, for a seam whose producer target selection
 proposes `tests/clamp_tests.rs` while the stub lands inline in
 `src/clamp.rs`:
 
 ```json
 {
-  "schema_version": "0.3",
+  "schema_version": "0.4",
   "kind": "rust_test_stub",
   "state": "ready",
   "next_repair": {
@@ -181,7 +182,7 @@ Next repair: ripr agent repair --root . --seam-id 8f7fa8644fd12280 --phase befor
 Warning: this stub lands in src/clamp.rs, but the repair packet admits only tests/clamp_tests.rs as its edit surface. Write the test in tests/clamp_tests.rs instead, then run the repair; writing the stub to src/clamp.rs makes the repair's before phase refuse the edit.
 ```
 
-A `--at --kind` file-parse ready document carries schema `0.3` with no
+A `--at --kind` file-parse ready document carries schema `0.4` with no
 `next_repair` key, and its human output stops after the `Run it:` line.
 
 ## Non-Goals
@@ -206,7 +207,7 @@ A `--at --kind` file-parse ready document carries schema `0.3` with no
   is the file the before-phase cage actually admits.
 - `crates/ripr/src/cli/commands/agent_stub.rs` renders the conditional
   `next_repair` JSON block in the ready `rust_test_stub` document (schema
-  `0.3`, additive) and the `Next repair:` / divergence warning lines on
+  `0.4`) and the `Next repair:` / divergence warning lines on
   the human surface; `RUST_TEST_STUB_SCHEMA_VERSION` feeds both paths.
 - `crates/ripr/src/cli/help/agent.rs` documents the block and the
   omission rule beside the existing strongly_gripped guidance;
