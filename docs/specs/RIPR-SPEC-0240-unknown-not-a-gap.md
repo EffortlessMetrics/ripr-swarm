@@ -853,6 +853,8 @@ Tests in `crates/ripr/src/analysis/classify/framework_oracle.rs` and
 - `an_arm_chosen_by_the_environment_is_withheld` and its keeps-the-gap control
 - `an_expect_debug_literal_is_withheld` and its keeps-the-gap control
 - `an_unredacted_insta_field_is_withheld` and its keeps-the-gap control
+- `fixtures/fixture_receiver_coincident_data` and its independent honesty case
+  retain equal-column, single-row product/sum and all-zero product/sum refusals.
 - `fixture_receiver_literal_pin_reads_helper_data` and
   `a_fixture_receiver_shape_that_differs_keeps_the_finding` and
   `fixture_receiver_credit_requires_readable_carried_data`,

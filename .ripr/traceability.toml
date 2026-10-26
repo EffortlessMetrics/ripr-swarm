@@ -18002,6 +18002,7 @@ tests = [
 ]
 fixtures = [
   "fixtures/fixture_receiver_extension_iter",
+  "fixtures/fixture_receiver_coincident_data",
   "fixtures/proximity_unrelated_oracle_not_credited",
   "fixtures/macro_site_scoped_rest_limit",
   "fixtures/parser_formatted_input_provenance",
