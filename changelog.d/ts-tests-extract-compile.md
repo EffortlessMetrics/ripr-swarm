@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Repair the two `collect_tests_from_statements` call sites under the unevaluable-`if` guard registration (#10438): #10488 removed the `mocks` parameter in favor of the shared per-file list, and the concurrent guard-registration landing kept passing it, leaving main at ad01356f7f not compiling (`mocks` not found; 7 arguments for a 6-argument function). Both sites now use the post-#10488 signature; behavior is unchanged because mocks resolve through the shared scope (#10488).
