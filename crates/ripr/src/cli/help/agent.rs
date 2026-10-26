@@ -8,13 +8,13 @@ Primary workflow:
 
 Advanced and compatibility workflows:
   start      Write a source-edit-free workflow manifest for one seam.
-  brief      Rank a working-set brief for the agent-active router.
+  brief      Rank the seams in a working set so an agent starts at the strongest one.
   packet     Expand one visible seam into the existing agent seam packet JSON.
   card       Hand off one visible seam as the compact default repair card.
   stub       Write a compiling Rust test stub for one gap, ready to fill and run.
   verify     Compare before/after repo-exposure JSON for agent verification.
   verify-execute
-             Execute one validated producer-owned direct verify route.
+             Run the one validated, bounded, read-only verify command a packet names.
   receipt    Summarize one seam from agent verify JSON for review handoff.
   review-summary
              Join agent-loop artifacts into a compact review packet.
@@ -239,6 +239,10 @@ Movement vocabulary (#2648): the JSON output uses two related fields:
   - `gap_movement` (per-item): closed | persisted | new
 Precedence: `change: improved` means the grip class moved up; `gap_movement: closed`
 means the gap disappeared entirely. A gap can persist even when grip improves.
+
+The stdout document is the artifact `ripr agent receipt --verify-json` reads;
+save it in the verify loop, for example:
+  ripr agent verify --before before.repo-exposure.json --after after.repo-exposure.json --json > agent-verify.json
 "#;
 pub(super) const AGENT_VERIFY_EXECUTE_HELP: &str = r#"Execute one validated producer-owned verification route.
 
@@ -255,7 +259,11 @@ Options:
                        refused. A relative path resolves against the resolved
                        root, not the current directory.
   --authorize          Required explicit authorization for process execution.
-  --cancel-after-ms N  Optional bounded cancellation request.
+  --cancel-after-ms N  Optional operator deadline: kill the verify process N
+                       milliseconds after it starts, before the packet's own
+                       timeout. A hit is a bounded observation, not an error:
+                       the result records the `cancelled` disposition and the
+                       exit status stays 0.
   --json               Required machine-readable output.
 
 Only the exact direct, no-network, no-write `ripr agent verify` route is
