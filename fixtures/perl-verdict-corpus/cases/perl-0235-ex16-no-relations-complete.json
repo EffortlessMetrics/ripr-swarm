@@ -44,7 +44,7 @@
     "ripr_commit": "4f48195",
     "full_checkout_verdict": "limited",
     "full_checkout_classifications": [
-      "static_unknown"
+      "no_static_path"
     ],
     "excerpt_parity": "matched"
   },
