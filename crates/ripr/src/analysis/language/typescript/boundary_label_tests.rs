@@ -14,7 +14,8 @@ use super::*;
 const TWO_COMPARISONS_OLD: &str = "  if (isDone || index > stopIndex || readingCount >= concurrency || total - headIndex >= backpressure) {";
 
 fn boundary_text(old: Option<&str>, new: &str) -> String {
-    typescript_changed_boundary_text(&ProbeFamily::Predicate, old, new).into_owned()
+    typescript_changed_boundary_text(Path::new("src/lib.ts"), &ProbeFamily::Predicate, old, new)
+        .into_owned()
 }
 
 fn boundary_label(old: Option<&str>, new: &str) -> Option<String> {
@@ -170,8 +171,8 @@ fn operand_deletion_in_a_compound_condition_names_that_comparison() {
 
 #[test]
 fn generics_and_arrows_are_not_comparison_sites() {
-    let old = "  if (n.length > 0 && ((x) => x) && y: Array<Array<string>>) {";
-    let new = "  if (n.length >= 0 && ((x) => x) && y: Array<Array<string>>) {";
+    let old = "  if (n.length > 0 && ((x) => x) && identity<Array<string>>(xs)) {";
+    let new = "  if (n.length >= 0 && ((x) => x) && identity<Array<string>>(xs)) {";
     // The generic `<`/`>` and the arrow `=>` add no sites the edit touched.
     assert_eq!(
         boundary_label(Some(old), new).as_deref(),
@@ -193,7 +194,9 @@ fn call_or_paren_operand_names_no_boundary() {
 fn shift_operator_is_not_a_comparison_site() {
     let old = "  if (a >> 1 > b) {";
     let new = "  if (a >> 1 >= b) {";
-    assert!(boundary_text(Some(old), new).contains(">= b"));
+    // A shift is not another comparison, but its compound operand is not
+    // a simple boundary that the label reader can represent.
+    assert_eq!(boundary_label(Some(old), new), None);
 }
 
 #[test]
@@ -231,7 +234,12 @@ fn non_ascii_identifiers_tokenize_as_words() {
 fn non_predicate_family_reads_the_whole_line() {
     let line = "  return a >= b || c >= d;";
     assert_eq!(
-        typescript_changed_boundary_text(&ProbeFamily::ReturnValue, Some("x"), line),
+        typescript_changed_boundary_text(
+            Path::new("src/lib.ts"),
+            &ProbeFamily::ReturnValue,
+            Some("x"),
+            line
+        ),
         line
     );
 }
@@ -338,4 +346,237 @@ fn finding_for_regex_edit_names_no_boundary_and_is_not_exposed() -> Result<(), S
     let text = format!("{:?} {:?}", finding.missing, finding.evidence);
     assert!(!text.contains("a == b"), "regex content leaked: {text}");
     Ok(())
+}
+
+#[test]
+fn literal_only_edits_and_token_identical_edits_refuse_boundaries() {
+    for (old, new) in [
+        ("if (ready || /a>b/) {", "if (ready || /a>=b/) {"),
+        ("if (ready || \"a>b\") {", "if (ready || \"a>=b\") {"),
+        (
+            "if (ready || total > limit) {",
+            "if (ready || total > limit /* why */) {",
+        ),
+        (
+            "if (ready || total > limit) {",
+            "if (ready || total  > limit) {",
+        ),
+        (
+            "if (total > limit || 'unterminated) {",
+            "if (total >= limit) {",
+        ),
+    ] {
+        assert_eq!(boundary_label(Some(old), new), None, "{old} -> {new}");
+    }
+}
+
+#[test]
+fn sole_changed_comparison_ignores_literal_and_comment_operators() {
+    for (old, new) in [
+        (
+            "if (a > b || flags[\"x>=y\"]) {",
+            "if (a < b || flags[\"x>=y\"]) {",
+        ),
+        ("if (a > b || /x>=y/) {", "if (a < b || /x>=y/) {"),
+        ("if (a > b) { // x>=y", "if (a < b) { // x>=y"),
+        ("if (a /* x>=y */ > b) {", "if (a /* x>=y */ < b) {"),
+        (
+            "if (a > b || xs.some(x => x >= y)) {",
+            "if (a < b || xs.some(x => x >= y)) {",
+        ),
+    ] {
+        assert_eq!(
+            boundary_label(Some(old), new).as_deref(),
+            Some("a == b"),
+            "{old} -> {new}"
+        );
+    }
+}
+
+#[test]
+fn nested_syntax_edits_do_not_name_an_outer_predicate_boundary() {
+    for (old, new) in [
+        (
+            "if (xs.some(x => x >= y) || a > b) {",
+            "if (xs.some(x => x > y) || a > b) {",
+        ),
+        (
+            "if (check(x >= y) || a > b) {",
+            "if (check(x > y) || a > b) {",
+        ),
+        (
+            "if (flags[x >= y] || a > b) {",
+            "if (flags[x > y] || a > b) {",
+        ),
+        (
+            "if ([x >= y].length || a > b) {",
+            "if ([x > y].length || a > b) {",
+        ),
+        (
+            "if (identity<Array<string>>(xs) || a > b) {",
+            "if (identity<Array<number>>(xs) || a > b) {",
+        ),
+        ("if (a > b || c > d) {", "if (a < b || c < d) {"),
+    ] {
+        assert_eq!(boundary_label(Some(old), new), None, "{old} -> {new}");
+    }
+}
+
+#[test]
+fn grouped_changed_comparison_keeps_its_boundary() {
+    assert_eq!(
+        boundary_label(Some("if ((a > b) || c > d) {"), "if ((a >= b) || c > d) {").as_deref(),
+        Some("a == b")
+    );
+}
+
+#[test]
+fn finding_refuses_literal_and_nested_edits_even_with_a_strong_assertion() -> Result<(), String> {
+    for (old, new) in [
+        ("if (ready || /a>b/) {", "if (ready || /a>=b/) {"),
+        (
+            "if (xs.some(a => a >= b) || total > limit) {",
+            "if (xs.some(a => a > b) || total > limit) {",
+        ),
+        ("if (ready || a > b) {", "if (ready || a > b /* why */) {"),
+    ] {
+        let owner = test_owner("applyDiscount", "src/lib.ts");
+        let test = direct_test_with_assertion(
+            "discount test",
+            "applyDiscount",
+            "expect(applyDiscount(a, b)).toBe(90)",
+            "toBe",
+            1,
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+        );
+        let finding = classify_change_with_alias_state(
+            Path::new("src/lib.ts"),
+            2,
+            new,
+            Some(old),
+            &[owner],
+            &[test],
+            None,
+            &ReExportIndex::empty(),
+            None,
+            None,
+        )
+        .ok_or_else(|| "expected a finding".to_string())?;
+        assert!(!matches!(finding.class, ExposureClass::Exposed), "{new}");
+        assert!(
+            missing_discriminator_values(&finding).is_empty(),
+            "{new}: {:?}",
+            missing_discriminator_values(&finding)
+        );
+        assert!(
+            format!("{:?} {:?}", finding.missing, finding.evidence)
+                .contains("no statically comparable predicate boundary"),
+            "{new}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn computed_comparison_operands_refuse_truncated_labels() {
+    for (old, new) in [
+        ("if (arr[i] >= n || c > d) {", "if (arr[i] > n || c > d) {"),
+        ("if (a >= arr[i] || c > d) {", "if (a > arr[i] || c > d) {"),
+    ] {
+        assert_eq!(boundary_label(Some(old), new), None, "{new}");
+    }
+}
+
+#[test]
+fn changed_comparison_beside_await_keeps_its_boundary() {
+    assert_eq!(
+        boundary_label(
+            Some("if (await ready() || a > b) {"),
+            "if (await ready() || a >= b) {"
+        )
+        .as_deref(),
+        Some("a == b")
+    );
+}
+
+#[test]
+fn selected_comparison_preserves_dead_expected_side_refusal() -> Result<(), String> {
+    let old = "  if ((total > 100) || ready) {";
+    let new = "  if ((total >= 100) || ready) {";
+    let mut owner = test_owner("applyDiscount", "src/lib.ts");
+    owner.params = vec!["total".to_string(), "ready".to_string()];
+    owner.arity = Some(2);
+    owner.source_text = Some(format!(
+        "export function applyDiscount(total: number, ready: boolean) {{\n{new}\n    return total * 0.9;\n  }}\n  return total;\n}}"
+    ));
+    for (expected, exposed) in [("90", true), ("999", false)] {
+        let mut test = direct_test_with_assertion(
+            "discount test",
+            "applyDiscount",
+            format!("expect(applyDiscount(100, false)).toBe({expected})"),
+            "toBe",
+            1,
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+        );
+        test.assertions[0].observed_expression = Some("applyDiscount(100, false)".to_string());
+        test.assertions[0].expected_value_or_variant = Some(expected.to_string());
+        let finding = classify_change_with_alias_state(
+            Path::new("src/lib.ts"),
+            2,
+            new,
+            Some(old),
+            &[owner.clone()],
+            &[test],
+            None,
+            &ReExportIndex::empty(),
+            None,
+            None,
+        )
+        .ok_or_else(|| "expected a finding".to_string())?;
+        assert_eq!(
+            matches!(finding.class, ExposureClass::Exposed),
+            exposed,
+            "expected {expected}: {:?} {:?}",
+            finding.missing,
+            finding.evidence
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn edits_around_an_unchanged_comparison_do_not_select_it() -> Result<(), String> {
+    for (old, new) in [
+        (
+            "if (leftFlag || a > b || rightFlag) {",
+            "if (newLeftFlag || a > b || newRightFlag) {",
+        ),
+        (
+            "if (leftFlag || a>b || rightFlag) {",
+            "if (newLeftFlag || a > b || newRightFlag) {",
+        ),
+    ] {
+        assert_eq!(boundary_label(Some(old), new), None, "{new}");
+        let finding = classify_with_old(old, new)?;
+        assert!(missing_discriminator_values(&finding).is_empty());
+    }
+    assert_eq!(
+        boundary_label(Some("if (a > b || a >= b) {"), "if (a >= b || a >= b) {").as_deref(),
+        Some("a == b")
+    );
+    Ok(())
+}
+
+#[test]
+fn optional_static_member_comparison_keeps_its_boundary() {
+    assert_eq!(
+        boundary_label(
+            Some("if (order?.amount >= 50) {"),
+            "if (order?.amount > 50) {"
+        )
+        .as_deref(),
+        Some("order.amount == 50")
+    );
 }

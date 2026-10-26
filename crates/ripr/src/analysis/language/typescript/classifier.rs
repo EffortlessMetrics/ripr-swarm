@@ -1441,6 +1441,8 @@ pub(crate) struct TsBoundaryRowContext<'a> {
     /// not witness reads it.
     pub(crate) boundary_fact: Option<&'a TypeScriptBoundaryFact>,
     pub(crate) line_text: &'a str,
+    /// Full changed source line for branch/source provenance checks.
+    pub(crate) source_line: &'a str,
     pub(crate) owner: &'a TypeScriptOwner,
     /// Every parsed test, so a row can blank its file's other test bodies.
     pub(crate) sibling_tests: &'a [TypeScriptTest],
@@ -1521,6 +1523,7 @@ pub(crate) fn ts_predicate_boundary_row_activation(
         boundary,
         boundary_fact,
         line_text,
+        source_line,
         owner,
         sibling_tests,
         alias_map,
@@ -1659,8 +1662,9 @@ pub(crate) fn ts_predicate_boundary_row_activation(
                 continue;
             }
             if let Some(expected) = assertion.expected_value_or_variant.as_deref()
-                && expected_side_is_live(
+                && expected_side_is_live_at_source(
                     owner,
+                    source_line,
                     line_text,
                     &effective_left,
                     &effective_right,
@@ -4675,6 +4679,7 @@ pub(super) fn balanced_close_offset(inner: &str) -> Option<usize> {
 /// behavior took the opposite branch — that is exactly what makes the input
 /// discriminating. Crate-visible so the typescript unit tests can pin the
 /// `None` fail-closed contract directly.
+#[cfg(test)]
 pub(crate) fn expected_side_is_live(
     owner: &TypeScriptOwner,
     line_text: &str,
@@ -4683,9 +4688,23 @@ pub(crate) fn expected_side_is_live(
     arguments: &[String],
     expected: &str,
 ) -> Option<bool> {
+    expected_side_is_live_at_source(
+        owner, line_text, line_text, left, right, arguments, expected,
+    )
+}
+
+fn expected_side_is_live_at_source(
+    owner: &TypeScriptOwner,
+    source_line: &str,
+    boundary_text: &str,
+    left: &str,
+    right: &str,
+    arguments: &[String],
+    expected: &str,
+) -> Option<bool> {
     let source = owner.source_text.as_deref()?;
     let expected_value = signed_numeric_expected_value(expected)?;
-    let operator = changed_comparison_operator(line_text)?;
+    let operator = changed_comparison_operator(boundary_text)?;
     let lines: Vec<&str> = source.lines().collect();
     // Locate the changed line inside the owner body. Uniqueness runs before
     // the declared offset (#4117 review): a multiline variable declarator can
@@ -4696,7 +4715,7 @@ pub(crate) fn expected_side_is_live(
     let mut matching = lines
         .iter()
         .enumerate()
-        .filter(|(_, candidate)| candidate.trim() == line_text.trim())
+        .filter(|(_, candidate)| candidate.trim() == source_line.trim())
         .map(|(index, _)| index);
     let start = matching.next()?;
     if matching.next().is_some() {
@@ -6314,7 +6333,7 @@ pub(crate) fn classify_resolved_owner(
     // #10399: the boundary is the comparison the edit changed, never a
     // neighbouring one on the same line.
     let boundary_text =
-        typescript_changed_boundary_text(&probe_shape.family, old_line_text, line_text);
+        typescript_changed_boundary_text(file, &probe_shape.family, old_line_text, line_text);
     let boundary_text = boundary_text.as_ref();
     let predicate_boundary = ts_predicate_boundary(&probe_shape, boundary_text);
     let row_activation = |candidate: &TypeScriptRelatedCandidate<'_>,
@@ -6323,6 +6342,7 @@ pub(crate) fn classify_resolved_owner(
             boundary: &predicate_boundary,
             boundary_fact,
             line_text: boundary_text,
+            source_line: line_text,
             owner,
             sibling_tests: all_tests,
             alias_map,
@@ -6914,7 +6934,7 @@ pub(crate) fn classify_resolved_owner(
     // an observed input that does not reach the boundary.
     if !missing_discriminators.is_empty()
         && let Some(fact) = boundary_fact.unwrap_or_else(|| {
-            ts_boundary_fact_for_change(&probe_shape, line, line_text, owner, workspace_root)
+            ts_boundary_fact_for_change(&probe_shape, line, boundary_text, owner, workspace_root)
         })
     {
         evidence.push(fact.evidence_line());

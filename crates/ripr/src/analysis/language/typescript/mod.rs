@@ -62,6 +62,7 @@ mod boundary_input;
 mod boundary_input_tests;
 #[cfg(test)]
 mod boundary_label_tests;
+mod boundary_selection;
 mod bounded_read;
 mod bun_bridge;
 #[cfg(test)]
@@ -178,6 +179,7 @@ pub(crate) use assertion_selection::{
 };
 pub(crate) use boolean_pin_guard::*;
 pub(crate) use boundary_input::*;
+pub(crate) use boundary_selection::typescript_changed_boundary_text;
 pub(crate) use bounded_read::*;
 pub(crate) use bun_bridge::*;
 pub(crate) use class_entries::*;
