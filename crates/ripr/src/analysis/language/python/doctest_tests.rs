@@ -564,7 +564,7 @@ fn example_test(
 ) -> Option<PythonTest> {
     let test_name = format!("test_doctest_line_{}", example.line);
     let synthetic = format!(
-        "from {import_module} import {name}\n\n\ndef {test_name}():\n    assert {} == {}\n",
+        "from {import_module} import {name}\n\n\ndef {test_name}():\n    assert (\n        {}\n    ) == {}\n",
         example.call, example.expected
     );
     let path = synthetic_path(file, example.line);

@@ -284,3 +284,13 @@ fn a_root_with_more_subdirectories_than_the_scan_cap_is_unknown() -> Result<(), 
     assert!(!collected);
     Ok(())
 }
+
+#[test]
+fn a_trailing_comment_on_the_example_line_does_not_hide_the_comparison() -> Result<(), String> {
+    let doc = "    >>> clip('abcdef', 3)  # == 'zzz'\n    'abc'\n";
+    let (old, new) = pair("text[:n]", "text[:n + 1]", doc);
+    assert_eq!(count("comment", ENABLED, &old, &new)?, 1);
+    let (old, new) = pair("text[:n]", "text[:n]", doc);
+    assert_eq!(count("comment-same", ENABLED, &old, &new)?, 0);
+    Ok(())
+}
