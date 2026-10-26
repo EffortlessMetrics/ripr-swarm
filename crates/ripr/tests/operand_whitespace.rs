@@ -297,10 +297,14 @@ fn primitive_type_aliases_do_not_hide_observed_operator_effects() -> Result<(), 
         include_str!("fixtures/operand_whitespace/local_annotation_alias.rs"),
         include_str!("fixtures/operand_whitespace/module_param_alias.rs"),
         include_str!("fixtures/operand_whitespace/module_return_alias.rs"),
-    ];
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .chain(disjoint_operator_sources())
+    .chain(unread_rebinding_sources());
     let mut findings = Vec::new();
-    for (case, source) in sources.into_iter().enumerate() {
-        assert_binding_class(source, ExposureClass::Exposed)?;
+    for (case, source) in sources.enumerate() {
+        assert_binding_class(&source, ExposureClass::Exposed)?;
         for spelling in ["subtotal + shipping", "subtotal+shipping"] {
             let source = source.replace("subtotal + shipping", spelling);
             let finding = field_finding(&source, &format!("total_cents: {spelling}"))?;
@@ -330,37 +334,51 @@ fn primitive_type_aliases_do_not_hide_observed_operator_effects() -> Result<(), 
 
 #[test]
 fn disjoint_value_bindings_cannot_supply_outer_primitive_evidence() -> Result<(), String> {
-    let source = include_str!("fixtures/operand_whitespace/module_param_alias.rs");
-    for addition in [
-        "fn unrelated() { let ignored = 0; let shipping = 0; }",
-        "{ let ignored = 0; let shipping = 0; }",
-        "let _unused = || { let ignored = 0; let shipping = 0; };",
-        "{ let ignored = 0; let shipping: i64 = 0; }",
-        "let _unused = || { let ignored = 0; let shipping: i64 = 0; };",
-    ] {
-        let source = source.replace(
-            "    ADD_CALLS.store(",
-            &format!("    {addition}\n    ADD_CALLS.store("),
-        );
+    for source in disjoint_operator_sources() {
         assert_binding_class(&source, ExposureClass::Exposed)?;
     }
     Ok(())
 }
 
+fn disjoint_operator_sources() -> Vec<String> {
+    let source = include_str!("fixtures/operand_whitespace/module_param_alias.rs");
+    [
+        "fn unrelated() { let ignored = 0; let shipping = 0; }",
+        "{ let ignored = 0; let shipping = 0; }",
+        "let _unused = || { let ignored = 0; let shipping = 0; };",
+        "{ let ignored = 0; let shipping: i64 = 0; }",
+        "let _unused = || { let ignored = 0; let shipping: i64 = 0; };",
+    ]
+    .into_iter()
+    .map(|addition| {
+        source.replace(
+            "    ADD_CALLS.store(",
+            &format!("    {addition}\n    ADD_CALLS.store("),
+        )
+    })
+    .collect()
+}
+
 #[test]
 fn unread_direct_rebindings_cannot_leave_a_parameter_primitive() -> Result<(), String> {
-    let source = include_str!("fixtures/operand_whitespace/module_param_alias.rs")
-        .replace("shipping: u64)", "shipping: i64)")
-        .replace("quote(3_000, 3, Shipping)", "quote(3_000, 3, 0)");
-    for rebind in [
-        "#[cfg(all())] let shipping = Shipping;",
-        "let (shipping,) = (Shipping,);",
-        "let shipping; shipping = Shipping;",
-    ] {
-        let source = source.replace("    Quote {", &format!("    {rebind}\n    Quote {{"));
+    for source in unread_rebinding_sources() {
         assert_binding_class(&source, ExposureClass::Exposed)?;
     }
     Ok(())
+}
+
+fn unread_rebinding_sources() -> Vec<String> {
+    let source = include_str!("fixtures/operand_whitespace/module_param_alias.rs")
+        .replace("shipping: u64)", "shipping: i64)")
+        .replace("quote(3_000, 3, Shipping)", "quote(3_000, 3, 0)");
+    [
+        "#[cfg(all())] let shipping = Shipping;",
+        "let (shipping,) = (Shipping,);",
+        "let shipping; shipping = Shipping;",
+    ]
+    .into_iter()
+    .map(|rebind| source.replace("    Quote {", &format!("    {rebind}\n    Quote {{")))
+    .collect()
 }
 
 #[test]

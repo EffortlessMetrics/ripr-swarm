@@ -214,7 +214,9 @@ fn operand_established_primitive(
     if text.contains(['"', '\'']) || text.contains("/*") {
         return false;
     }
-    let bindings = let_binding_expressions(&text);
+    let Some(bindings) = primitive_binding::direct_let_bindings(owner, index) else {
+        return false;
+    };
     let primitive_params: Vec<String> = owner_param_types(&text)
         .into_iter()
         .filter(|(_, ty)| {
@@ -452,52 +454,6 @@ fn primitive_type_token(text: &str) -> bool {
             | "f64"
             | "bool"
     )
-}
-
-/// `(name, initializer, annotation)` for each plain `let name = ..` of
-/// `text`, in order. The signature wrapper is cut first, so a `let` after
-/// the body's opening brace is read. A typed binding carries its
-/// annotation text; patterns other than a plain name, and
-/// initializer-less declarations, are not read.
-fn let_binding_expressions(text: &str) -> Vec<(String, String, Option<String>, usize)> {
-    let start = match text.find('{') {
-        Some(open) if text[..open].contains("fn ") => open + 1,
-        _ => 0,
-    };
-    let inner = text[start..]
-        .trim_end()
-        .strip_suffix('}')
-        .unwrap_or(&text[start..]);
-    inner
-        .split(';')
-        .scan(start, |offset, statement| {
-            let start = *offset;
-            *offset += statement.len() + 1;
-            Some((start, statement))
-        })
-        .filter_map(|(start, statement)| {
-            let rest = statement.trim().strip_prefix("let ")?;
-            let (name, value) = rest.split_once('=')?;
-            let name = name.trim();
-            let name = match name.strip_prefix("mut ") {
-                Some(name) => name.trim(),
-                None => name,
-            };
-            let (name, annotation) = match name.split_once(':') {
-                Some((name, ty)) => (name.trim(), Some(ty.trim().to_string())),
-                None => (name, None),
-            };
-            let offset = start + statement.trim_end().len() - value.trim_start().len();
-            is_identifier(name).then(|| {
-                (
-                    name.to_string(),
-                    value.trim().to_string(),
-                    annotation,
-                    offset,
-                )
-            })
-        })
-        .collect()
 }
 
 /// `(name, type)` for each plain `name: Type` parameter of the function

@@ -62,6 +62,49 @@ fn function(owner: &FunctionSummary, index: &RustIndex) -> Option<ast::Fn> {
     (matches.len() == 1).then(|| matches.remove(0))
 }
 
+/// Read only the owner's direct body lets. A nested function, closure or
+/// disjoint block cannot establish or veto the value used by its owner.
+/// Refuse unread direct bindings instead of silently retaining a parameter's
+/// primitive evidence across a destructured or attributed rebind.
+pub(super) fn direct_let_bindings(
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> Option<Vec<(String, String, Option<String>, usize)>> {
+    let function = function(owner, index)?;
+    let start = usize::from(function.fn_token()?.text_range().start());
+    let body = function.body()?.stmt_list()?;
+    let mut bindings = Vec::new();
+    for binding in body.syntax().children().filter_map(ast::LetStmt::cast) {
+        if binding
+            .syntax()
+            .children()
+            .any(|node| ast::Attr::can_cast(node.kind()))
+            || binding.let_else().is_some()
+        {
+            return None;
+        }
+        let ast::Pat::IdentPat(pattern) = binding.pat()? else {
+            return None;
+        };
+        if pattern.ref_token().is_some() || pattern.pat().is_some() {
+            return None;
+        }
+        let name = pattern.name()?.text().to_string();
+        if !super::is_identifier(&name) {
+            return None;
+        }
+        let initializer = binding.initializer()?;
+        let offset = usize::from(initializer.syntax().text_range().start()).checked_sub(start)?;
+        bindings.push((
+            name,
+            super::strip_line_comments(&initializer.syntax().text().to_string()),
+            binding.ty().map(|ty| ty.syntax().text().to_string()),
+            offset,
+        ));
+    }
+    Some(bindings)
+}
+
 fn enclosing_scopes(site: &SyntaxNode) -> Vec<SyntaxNode> {
     site.ancestors()
         .filter(|node| {
@@ -233,21 +276,30 @@ pub(super) fn type_is_primitive(
     };
     // Fn/impl/trait type parameters bind the type namespace. Const generics
     // and value parameters of the same name do not.
-    if function.syntax().ancestors().any(|ancestor| {
-        ancestor
-            .children()
-            .filter_map(ast::GenericParamList::cast)
-            .any(|list| {
-                list.syntax()
-                    .children()
-                    .filter_map(ast::TypeParam::cast)
-                    .any(|parameter| {
-                        parameter
-                            .name()
-                            .is_some_and(|name| same_name(name.text(), ty))
-                    })
-            })
-    }) {
+    if function
+        .syntax()
+        .ancestors()
+        .take_while(|ancestor| {
+            // A nested module establishes its own item namespace; an outer
+            // function's generics cannot bind a primitive imported inside it.
+            !ast::Module::can_cast(ancestor.kind())
+        })
+        .any(|ancestor| {
+            ancestor
+                .children()
+                .filter_map(ast::GenericParamList::cast)
+                .any(|list| {
+                    list.syntax()
+                        .children()
+                        .filter_map(ast::TypeParam::cast)
+                        .any(|parameter| {
+                            parameter
+                                .name()
+                                .is_some_and(|name| same_name(name.text(), ty))
+                        })
+                })
+        })
+    {
         return false;
     }
     let scopes = enclosing_scopes(&site);

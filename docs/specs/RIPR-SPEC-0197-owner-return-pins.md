@@ -914,6 +914,13 @@ wrong credits.
    type, alias or unresolved import. Value parameters, locals, functions,
    constants and statics of the same name do not rebind the type namespace.
    Nested function/module declarations do not contaminate the owner's scope.
+   Primitive value bindings come only from plain direct owner-body lets;
+   nested functions, disjoint blocks and unused closures cannot establish or
+   veto an outer value. Unread direct patterns, declaration-only bindings,
+   let-else and attributed lets refuse this proof instead of silently keeping
+   a parameter's earlier type. Generic lookup stops at a module boundary, so
+   a nested module's primitive import does not capture an outer function's
+   generic parameter.
    An annotation or cast uses only the lexical scopes enclosing its parsed
    type occurrence. A binding inside a disjoint block or unused closure cannot
    rebind that type; direct items in an applicable scope remain hoisted even
