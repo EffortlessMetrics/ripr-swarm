@@ -17,10 +17,11 @@ pub(super) fn with_publication_barrier(
         let sender = sender.clone();
         async move {
             let channels = installed.map_err(tower_lsp_server::jsonrpc::Error::invalid_params)?;
-            sender
-                .send(channels)
-                .await
-                .map_err(|_| tower_lsp_server::jsonrpc::Error::internal_error())?;
+            sender.send(channels).await.map_err(|error| {
+                let mut failure = tower_lsp_server::jsonrpc::Error::internal_error();
+                failure.data = Some(serde_json::json!({"cause": error.to_string()}));
+                failure
+            })?;
             Ok::<(), tower_lsp_server::jsonrpc::Error>(())
         }
     });
@@ -159,7 +160,7 @@ fn release_matching_begin(
             .take()
             .ok_or("missing publication release")?
             .send(())
-            .map_err(|_| "publication release dropped".to_string())?;
+            .map_err(|returned| format!("publication release dropped: {returned:?}"))?;
     }
     Ok(())
 }
@@ -236,7 +237,9 @@ async fn ordered_case(
                 .take()
                 .ok_or("missing witness")?
                 .send(7)
-                .map_err(|_| "witness dropped")?;
+                .map_err(|generation| {
+                    format!("publication witness dropped for generation {generation}")
+                })?;
         }
         write_lsp_message(
             &mut peer,
@@ -300,13 +303,17 @@ async fn ordered_case(
                 .map_err(|error| error.to_string())?;
             prefix_read
                 .await
-                .map_err(|_| "partial frame was not consumed")?;
+                .map_err(|error| format!("partial frame was not consumed: {error}"))?;
             witness
                 .take()
                 .ok_or("missing witness")?
                 .send(7)
-                .map_err(|_| "witness dropped")?;
-            released.await.map_err(|_| "release dropped")?;
+                .map_err(|generation| {
+                    format!("publication witness dropped for generation {generation}")
+                })?;
+            released
+                .await
+                .map_err(|error| format!("release dropped: {error}"))?;
             peer.write_all(&header.as_bytes()[3..])
                 .await
                 .map_err(|error| error.to_string())?;
@@ -314,7 +321,9 @@ async fn ordered_case(
                 .await
                 .map_err(|error| error.to_string())?;
         } else {
-            released.await.map_err(|_| "release dropped")?;
+            released
+                .await
+                .map_err(|error| format!("release dropped: {error}"))?;
         }
         let response = serde_json::json!({"jsonrpc":"2.0","id":2,"result":null});
         if response_first {
