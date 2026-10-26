@@ -367,3 +367,33 @@ fn a_workspace_type_with_its_own_arithmetic_keeps_the_abstention() -> Check {
     withheld(&finding, "workspace type with __mul__ and __add__");
     Ok(())
 }
+
+#[test]
+fn arithmetic_reached_through_another_import_keeps_the_abstention() -> Check {
+    let source = quote_source(QUOTE_NEW);
+    let table = "from .rate import Rate\n\n\ndef lookup(tier):\n    return Rate()\n";
+    let rate = "class Rate:\n    def __mul__(self, units):\n        return 30\n\n    def __add__(self, units):\n        return 30\n";
+    let mut files = workspace_with(table, &source, TEST);
+    files.push(("shapes/rates/rate.py", rate));
+    let finding = quote_finding(&files)?;
+    withheld(&finding, "arithmetic one import away");
+    // An unrelated module with arithmetic does not reach the callee.
+    let mut files = workspace(&source, TEST);
+    files.push(("shapes/money.py", rate));
+    let finding = quote_finding(&files)?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn replacing_the_owners_code_slots_elsewhere_is_not_credited() -> Check {
+    let source = quote_source(QUOTE_NEW);
+    let mut files = workspace(&source, TEST);
+    files.push((
+        "tests/conftest.py",
+        "from shapes.rates.quote import quote\n\n\ndef frozen(tier, units):\n    return 30\n\n\nquote.__code__ = frozen.__code__\n",
+    ));
+    let finding = quote_finding(&files)?;
+    withheld(&finding, "owner code slot replaced");
+    Ok(())
+}

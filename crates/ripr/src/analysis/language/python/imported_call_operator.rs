@@ -16,8 +16,9 @@
 //!   to exactly one undecorated module-level function of the workspace, with
 //!   parameters and literals as arguments, and the other operand is an
 //!   expression over the parameters and integer literals;
-//! - no workspace type defines `__add__`, `__sub__`, `__mul__` or their reflected
-//!   forms, which could answer the operator with the pinned value itself;
+//! - no file the owner or the callee imports, directly or through other workspace
+//!   files, defines `__add__`, `__sub__`, `__mul__` or their reflected forms,
+//!   which could answer the operator with the pinned value itself;
 //! - a straight-line `assert owner(<literals>) == <integer literal>`
 //!   of a test names the owner through an import the test does not rebind;
 //! - the old operator, the literals and the assertion fix a whole number `X`,
@@ -31,11 +32,12 @@ use super::module_value::{
     ModuleEdit, ModuleValueCredit, Scope, Value, assertion_expression, evaluate, reader_spellings,
     straight_line_assertion, with_line_replaced,
 };
-use super::related_tests::import_source_module_matches_owner;
+use super::related_tests::{import_source_module_matches_owner, owner_module_paths};
 use super::source_facts::parse_module_result;
 use super::{PythonOwner, PythonTest, expr_full_name};
 use crate::domain::OwnerKind;
 use rustpython_parser::ast::{self, Expr, Mod, Stmt};
+use std::path::Path;
 
 /// The limit evidence this credit replaces.
 pub(super) const IMPORTED_CALL_LIMIT_EVIDENCE: &str =
@@ -47,6 +49,39 @@ pub(super) const IMPORTED_CALL_LIMIT_EVIDENCE: &str =
 const ARITHMETIC_METHODS: [&str; 6] = [
     "__add__", "__radd__", "__sub__", "__rsub__", "__mul__", "__rmul__",
 ];
+
+/// The workspace files `starts` import, directly or through other workspace
+/// files: every file whose module path a `from M import Y` (as `M` or `M.Y`) or
+/// `import M` of a reached file names.
+fn reachable_files<'a>(owners: &'a [PythonOwner], starts: &[&'a Path]) -> Vec<&'a Path> {
+    let mut reached: Vec<&Path> = starts.to_vec();
+    let mut index = 0;
+    while let Some(&path) = reached.get(index) {
+        index += 1;
+        let names: Vec<String> = owners
+            .iter()
+            .filter(|owner| owner.file == path)
+            .flat_map(|owner| owner.imports.iter())
+            .flat_map(|import| {
+                [
+                    import.source_module.clone(),
+                    format!("{}.{}", import.source_module, import.imported),
+                    import.imported.clone(),
+                ]
+            })
+            .collect();
+        for owner in owners {
+            if !reached.iter().any(|seen| *seen == owner.file)
+                && owner_module_paths(&owner.file)
+                    .iter()
+                    .any(|module| names.contains(module))
+            {
+                reached.push(owner.file.as_path());
+            }
+        }
+    }
+    reached
+}
 
 /// The one-`return` shape of the owner: `call OP other` or `other OP call`.
 struct Shape {
@@ -91,14 +126,6 @@ fn credits<'a>(
     let module_owner = owners
         .iter()
         .find(|candidate| candidate.is_module_owner() && candidate.file == file)?;
-    // The integer reading of the call result holds only while no workspace
-    // type defines its own arithmetic.
-    if owners
-        .iter()
-        .any(|candidate| ARITHMETIC_METHODS.contains(&candidate.name.as_str()))
-    {
-        return None;
-    }
     let old_source = with_line_replaced(new_source, line, old_line_text)?;
     let (Mod::Module(new_module), Mod::Module(old_module)) = (
         parse_module_result(file, new_source).ok()?,
@@ -149,6 +176,7 @@ fn credits<'a>(
     }
     if module_owner.foreign_writes.may_rebind(&callee, file)
         || module_owner.foreign_writes.may_rebind(&owner.name, file)
+        || module_owner.foreign_writes.may_replace_reader_code()
     {
         return None;
     }
@@ -168,6 +196,15 @@ fn credits<'a>(
     });
     let target = resolved.next()?;
     if resolved.next().is_some() || !target.decorators.is_empty() {
+        return None;
+    }
+    // The integer reading of the call result holds only while no type the
+    // callee can reach defines its own arithmetic.
+    let reachable = reachable_files(owners, &[file, target.file.as_path()]);
+    if owners.iter().any(|candidate| {
+        ARITHMETIC_METHODS.contains(&candidate.name.as_str())
+            && reachable.iter().any(|path| *path == candidate.file)
+    }) {
         return None;
     }
 
