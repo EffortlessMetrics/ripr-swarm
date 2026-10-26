@@ -18467,6 +18467,7 @@ mod namespace_reexport_tests;
 mod nested_callback_tests;
 mod nullish_chain_tests;
 mod out_dir_specifier_tests;
+mod playwright_fixture_tests;
 mod playwright_unit_tests;
 mod reexport_chain_tests;
 mod registration_binding_tests;

@@ -1218,6 +1218,42 @@ member assignment, update, compound and loop targets included) and only called,
 optionally through a member chain. A file that can reach a name without
 spelling it (`eval`, `with`, an identifier escape) reads nothing.
 
+**Rule 23. A Playwright fixture that constructs a class is that class's
+receiver (2026-10-26, #9619).** `const test = base.extend<{ cart: Cart }>({
+cart: async ({}, use) => { await use(new Cart()); } })` hands every `test("...",
+({ cart }) => ...)` a fresh `Cart`, which reads as `const cart = new Cart()`
+in the registration's scope: a call through `cart` relates to the class's
+methods as rule 5's receivers do. It applies only when all of these hold, and
+otherwise the parameter stays unresolved as before:
+
+- `base` is the local name of `test` imported from `@playwright/test`, and
+  the file has exactly one `.extend` call, no `mergeTests`, and no use of
+  the extended `test` beyond calling it and its registration members
+  (`describe`, hooks, `only`, `skip`, `fixme`, `step`, `slow`): a `use`
+  override in any spelling (`.use (`, `["use"]`, a template key), an alias, a wrapper call, a
+  re-export or a template tag withholds, and so does punctuation directly
+  after the word in a comment or title;
+- the extended `test` is declared once and never reassigned;
+- the `extend` argument is one object literal of plain `key: function`
+  entries (no spread, computed key, method shorthand or `[fixture, options]`
+  tuple) and the fixture's function is `async ({}, use) => { await
+  use(new Cls(<literals>)); }`: an empty first pattern, a plain `use`
+  parameter, one awaited statement, a class named by a plain identifier and
+  string, number, boolean or `null` literal arguments;
+- the registration is a call of the extended `test` itself, not `test.only`
+  or another member (a skipped registration that destructures the fixture
+  withholds the name file-wide), and its callback's first parameter destructures the key
+  with a plain identifier (`{ cart }` or `{ cart: basket }`), with no
+  default and no nested pattern;
+- nothing else in the file writes or redeclares that name (a hook taking
+  the same fixture counts) or rebinds the class, by rule 5's receiver checks.
+
+A fixture that does more than construct (a second statement, a dependency
+on another fixture, a factory call, a statement that seeds the instance), a worker-scoped or
+`auto` tuple, an override with `test.use` (any spelling), and a merged or twice-extended
+test leave the parameter unresolved: the instance the test sees may not be
+the fresh one the constructor builds.
+
 **Rule 8. A mocked dependency on the changed line is `static_unknown`.**
 When the changed line calls a symbol imported (`imported_symbol_call`)
 from a module that the owner file imports (`TypeScriptOwner.imports`),
@@ -1779,6 +1815,22 @@ keys); do not take the next number.
     2), /down/)`: `exact_error_variant` / strong, `exposed` (rule 20; today
     `broad_error` / weak). With `/other/`, or with a second `throw` in the
     owner: `broad_error` / weak.
+
+- example `playwright-fixture-class-receiver`: `src/cart.ts` changes `add`'s
+  `this.cents.push(amount)` to `amount + 1` (corpus case
+  `pw-fixture-add-amount`), and `test/cart.spec.ts` has `const test =
+  base.extend<{ cart: Cart }>({ cart: async ({}, use) => { await use(new
+  Cart()); } })` with `test("lines add up", ({ cart }) => { cart.add(250);
+  cart.add(150); expect(cart.total()).toBe(400); })`: the fixture builds a
+  fresh `Cart`, so `cart.add` relates to the owner and `exact_value` /
+  strong reads `exposed` (rule 23; today `no_static_path`). The same spec
+  with the fixture also calling `seed(cart)` before `use`, or with a
+  `test.use({ cart })` override: `no_static_path` (unchanged).
+- example `playwright-fixture-reducer-seed`: the same `Cart`, with `total`'s
+  `reduce((a, b) => a + b, 0)` changed to start from `1` (corpus case
+  `pw-fixture-empty-total`), and `test("an empty cart totals zero", ({ cart })
+  => { expect(cart.total()).toBe(0); })`: `exact_value` / strong, `exposed`
+  (rule 23).
 
 ## Test Mapping
 
