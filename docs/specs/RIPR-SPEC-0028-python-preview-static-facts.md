@@ -462,7 +462,16 @@ source read, not a complete import or reflective-execution graph. The assertion
 reads `NAME` itself or calls a module function with literal arguments whose
 body is one `return` expression over its parameters, literals and `NAME`; a
 name, call, operator or value kind outside that bounded evaluator decides
-nothing and the edit keeps the `missing_import_graph` abstention. A value no
+nothing and the edit keeps the `missing_import_graph` abstention. A body-only edit of
+a top-level `NAME = lambda a, b: <body>` binding (#9619) credits the same way:
+the parameters are unchanged positional ones without defaults, `*args` or
+keywords, `NAME` is bound once in the old and new module, no file writes or
+patches it, and the bound expression over the parameters and literals is inside
+the same evaluator; a test that calls `NAME` with literal arguments in a
+straight-line `assert` that holds with the old body and fails with the new one
+is the oracle, and only then is the lambda-syntax limit lifted. A changed
+parameter list, a default, a body outside the evaluator, a second binding or a
+test that shadows, patches or may skip the call keeps `unsupported_syntax`. A value no
 assertion distinguishes is never graded as a gap. A function defined under a
 decided module-level `if sys.version_info >= (3, 0):` condition (the only
 decided shapes are Python 2/3 version tuples, with `sys` the single plain
@@ -765,6 +774,17 @@ can show:
   emit `decorator_indirection`, so a memoized owner with a direct exact test is
   credited and a twin whose test misses the change remains a gap, while `@retry`
   stays limited
+- a corpus row (`py-shapes-decorator-wrapped-return`) and unit tests proving a
+  workspace-local forwarding decorator does not emit `decorator_indirection`
+  (#9619). Accepted: a bare `@name` over a module-level `def name(fn)` bound
+  once in the owner's file whose wrapper takes only `*args`/`**kwargs`, may run
+  side-effect calls that neither touch the arguments nor call or reset `fn`
+  (plain `fn.__name__`-style reads are allowed), is optionally decorated by
+  plain `functools.wraps(fn)`, and ends with `return fn(*args[, **kwargs])`.
+  Rejected, keeping the limit: called or grouped decorator spellings,
+  transforming, swallowing or retrying wrappers, `yield`/`await`, a wrapper
+  name or parameter that shadows `fn`, rebound, imported or method-scoped
+  decorators, and repo-mode classification (no owner source)
 - fixtures proving the first repair classes carry activation-level missing
   discriminators for predicate boundaries, return values, exception paths,
   field/object values, and output/log/call effects

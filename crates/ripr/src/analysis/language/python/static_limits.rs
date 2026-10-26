@@ -4,6 +4,7 @@ use super::approx_band::{PythonBandReading, parse_expression, python_band_readin
 use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion};
 use super::caplog_text::{PythonLogEvidence, substitute_caplog_aliases};
 use super::effect_alignment::ChangedEffect;
+use super::forwarding_decorator::is_forwarding_decorator;
 use super::literal_patch::{literal_patch_calls, without_calls};
 use super::related_tests::{
     PythonRelatedCandidate, PythonRelationKind, body_calls_owner, dunder_method_class,
@@ -158,11 +159,10 @@ pub(super) fn static_limit_for_focused_change(
             ),
         });
     }
-    if let Some(decorator) = owner
-        .decorators
-        .iter()
-        .find(|decorator| !is_transparent_owner_decorator_for_owner(decorator, owner))
-    {
+    if let Some(decorator) = owner.decorators.iter().find(|decorator| {
+        !is_transparent_owner_decorator_for_owner(decorator, owner)
+            && !is_forwarding_decorator(decorator, owner, owner_source)
+    }) {
         return Some(PythonStaticLimit {
             kind: StaticLimitKind::DecoratorIndirection,
             evidence: format!("static_limit decorator_indirection: `{decorator}`"),
@@ -329,13 +329,17 @@ pub(super) fn static_limit_for_focused_change(
     if contains_lambda_keyword(trimmed) {
         return Some(PythonStaticLimit {
             kind: StaticLimitKind::UnsupportedSyntax,
-            evidence: "static_limit unsupported_syntax: changed line uses lambda syntax"
-                .to_string(),
+            evidence: LAMBDA_LIMIT_EVIDENCE.to_string(),
             missing: "Static limit `unsupported_syntax`: the changed line uses a Python syntax shape this preview adapter does not model precisely yet.".to_string(),
         });
     }
     None
 }
+
+/// The evidence of the lambda-syntax limit. A module-value credit (#9619) that
+/// reads the edited lambda body lifts exactly this limit.
+pub(super) const LAMBDA_LIMIT_EVIDENCE: &str =
+    "static_limit unsupported_syntax: changed line uses lambda syntax";
 
 /// A `lambda` expression: the keyword at an identifier boundary and followed
 /// by a space, `:` or `(`. Text in a string is read as text only when the line
@@ -1516,7 +1520,7 @@ pub(super) fn unpinned_equality_dunder_limit(
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use crate::domain::StaticLimitKind;
     use std::path::PathBuf;
@@ -1537,7 +1541,10 @@ mod tests {
         }
     }
 
-    fn owner_with(decorators: &[&str], imports: Vec<PythonImport>) -> PythonOwner {
+    pub(in crate::analysis::language::python) fn owner_with(
+        decorators: &[&str],
+        imports: Vec<PythonImport>,
+    ) -> PythonOwner {
         PythonOwner {
             name: "owner".to_string(),
             qualified_name: "owner".to_string(),

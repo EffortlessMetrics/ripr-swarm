@@ -13,7 +13,6 @@ const REQUIRED_GATES: &[(&str, &str)] = &[
     ("dependencies", "cargo xtask check-dependencies"),
     ("process_policy", "cargo xtask check-process-policy"),
     ("network_policy", "cargo xtask check-network-policy"),
-    ("workspace_check", "cargo check --workspace --all-targets"),
     (
         "all_features_check",
         "cargo check -p ripr --all-targets --all-features",

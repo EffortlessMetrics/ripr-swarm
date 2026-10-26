@@ -12319,6 +12319,78 @@ fn sorted_allowlist_content_preserves_header_and_sorts_entries() {
 }
 
 #[test]
+fn count_policy_fragments_merge_rows_and_reject_a_row_declared_in_both_files() -> Result<(), String>
+{
+    with_temp_cwd("count-policy-fragments", |root| {
+        let list = "policy/process_allowlist.txt";
+        write(
+            &root.join(list),
+            "# header\na.rs|ExampleMarker|1|owner|main row\n",
+        );
+        // Without a fragment directory the main list is the whole allowlist.
+        let rows = super::read_count_policy_allowlist(list)?;
+        assert_eq!(rows.len(), 1);
+
+        write(
+            &root.join("policy/process_allowlist.d/b.txt"),
+            "b.rs|ExampleMarker|2|owner|fragment row\n",
+        );
+        let rows = super::read_count_policy_allowlist(list)?;
+        assert_eq!(
+            rows.get(&("b.rs".to_string(), "ExampleMarker".to_string())),
+            Some(&2)
+        );
+        assert_eq!(rows.len(), 2);
+
+        write(
+            &root.join("policy/process_allowlist.d/dup.txt"),
+            "a.rs|ExampleMarker|9|owner|silently wider bound\n",
+        );
+        let error = super::read_count_policy_allowlist(list)
+            .err()
+            .unwrap_or_default();
+        assert!(
+            error.contains("policy/process_allowlist.d/dup.txt")
+                && error.contains("already declared in policy/process_allowlist.txt"),
+            "{error}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn count_policy_fragments_fail_closed_on_a_non_txt_entry_and_a_malformed_row() -> Result<(), String>
+{
+    with_temp_cwd("count-policy-fragments-closed", |root| {
+        let list = "policy/network_allowlist.txt";
+        write(&root.join(list), "# header\n");
+        let dir = root.join("policy/network_allowlist.d");
+
+        write(&dir.join("notes.md"), "not a fragment\n");
+        let error = super::read_count_policy_allowlist(list)
+            .err()
+            .unwrap_or_default();
+        assert!(
+            error.contains("is not a .txt allowlist fragment"),
+            "{error}"
+        );
+        fs::remove_file(dir.join("notes.md")).map_err(|e| e.to_string())?;
+
+        write(&dir.join("bad.txt"), "only|three|fields\n");
+        let error = super::read_count_policy_allowlist(list)
+            .err()
+            .unwrap_or_default();
+        assert!(
+            error.contains(
+                "policy/network_allowlist.d/bad.txt:1 expected path|pattern|max_count|owner|reason"
+            ),
+            "{error}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
 fn count_policy_allowlist_rejects_duplicate_path_pattern_row() -> Result<(), String> {
     let policy = "\
 # header

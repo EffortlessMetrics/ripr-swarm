@@ -80,6 +80,7 @@ mod enum_member_guard;
 mod error_payload_guard;
 mod extraction_cache;
 mod field_update_guard;
+mod gap_reach;
 mod guard_entry_guard;
 mod helper_inline;
 #[cfg(test)]
@@ -169,7 +170,9 @@ mod workspace_packages;
 // submodule's `use super::*;` resolves, and so that `tests.rs` which
 // uses `use super::*;` can access all items.
 pub(crate) use actionability::*;
-pub(crate) use admission::{TypeScriptAdmissionContext, TypeScriptAssertionAdmission};
+pub(crate) use admission::{
+    RegistrationNames, TypeScriptAdmissionContext, TypeScriptAssertionAdmission,
+};
 pub(crate) use annotation_only::*;
 pub(crate) use assertion_selection::{
     TypeScriptAssertionSelection, row_projection_move, select_family_relevant_assertion,
@@ -495,6 +498,9 @@ impl TypeScriptAdapter {
         // evaluate (#8714): the credit stands, the disclosure carries the
         // "may never execute" caveat.
         let mut conditional_credit_gaps: Vec<TypeScriptConditionalCreditGap> = Vec::new();
+        // Tests registered under an unevaluated `if` (#10438): indexed for
+        // reach, never credited; one gap per test file.
+        let mut conditional_registration_gaps: Vec<TypeScriptConditionalCreditGap> = Vec::new();
         // Owner shapes the extractor does not index, detected on CHANGED
         // production files only (#4104-A): their changed lines produce no
         // finding today, so the disclosure is the only honest signal.
@@ -659,6 +665,18 @@ impl TypeScriptAdapter {
                 if let Some(gap) = conditional_credit_gap {
                     conditional_credit_gaps.push(gap);
                 }
+                // One gap per guarded test, so a finding is marked partial only
+                // by the guarded tests it actually relates to (review on #10456).
+                for test in tests
+                    .iter()
+                    .filter(|test| test.conditional_registration.is_some())
+                {
+                    conditional_registration_gaps.push(TypeScriptConditionalCreditGap {
+                        file: relative.to_path_buf(),
+                        sample_line: test.line,
+                        condition: test.conditional_registration.clone().unwrap_or_default(),
+                    });
+                }
                 all_tests.extend(tests);
             } else {
                 // #10071/#10044: owners came out of the same single parse as
@@ -706,6 +724,10 @@ impl TypeScriptAdapter {
         // then (#4261); an ownerless, import-only or deletion-only TS change
         // never reads the index.
         let mut test_index_consumed = false;
+        // A Rust change related to TypeScript tests through the Bun bridge is
+        // not reachable by TypeScript imports, so it keeps the workspace-wide
+        // partial-extraction disclosure (#10436).
+        let mut cross_language_consumed = false;
         for changed in changed_files {
             for added in &changed.added_lines {
                 if let Some(finding) = bun_cross_language_finding_for_changed_rust_line(
@@ -715,6 +737,7 @@ impl TypeScriptAdapter {
                     &all_tests,
                 ) {
                     test_index_consumed = true;
+                    cross_language_consumed = true;
                     findings.push(finding);
                 }
             }
@@ -1151,11 +1174,35 @@ impl TypeScriptAdapter {
         // The index is workspace-wide, so a diff that classified nothing
         // against it (Rust-only, or TS test edits only) is not made partial by
         // test shapes it never consulted (#4261).
-        let consulted_gaps: &[_] = if test_index_consumed {
-            &extraction_gaps
+        // #10436: a dropped registration matters only when a test in its file
+        // could be related to code this diff changed. `GapReach` answers that
+        // from the file's local import closure and keeps the gap whenever it
+        // cannot prove otherwise.
+        let scoped_gaps: Vec<TypeScriptTestExtractionGap> = if test_index_consumed {
+            let owner_names = all_owners
+                .iter()
+                .filter(|owner| changed_paths.contains(&normalized_path(&owner.file)))
+                .flat_map(|owner| {
+                    std::iter::once(owner.name.clone()).chain(owner.class_name.clone())
+                })
+                .collect::<Vec<_>>();
+            let reach = gap_reach::GapReach::new(
+                &source_by_normalized,
+                &changed_paths,
+                owner_names,
+                alias_map_ref,
+                &options.root,
+                cross_language_consumed,
+            );
+            extraction_gaps
+                .iter()
+                .filter(|gap| reach.may_reach(&gap.file))
+                .cloned()
+                .collect()
         } else {
-            &[]
+            Vec::new()
         };
+        let consulted_gaps: &[_] = &scoped_gaps;
         // One summary limitation for the whole workspace-wide index, not one
         // line per unrelated test file: the gaps are not in the diff, so a
         // per-file list buried the changed-file result.
@@ -1174,12 +1221,35 @@ impl TypeScriptAdapter {
             .flat_map(|finding| finding.related_tests.iter())
             .map(|related| normalized_path(&related.file))
             .collect();
+        let consulted_test_lines: std::collections::BTreeSet<(String, usize)> = findings
+            .iter()
+            .flat_map(|finding| finding.related_tests.iter())
+            .map(|related| (normalized_path(&related.file), related.line))
+            .collect();
         let consulted_credit_gaps: Vec<&TypeScriptConditionalCreditGap> = if test_index_consumed {
             consulted_credit_gaps(&conditional_credit_gaps, &consulted_test_files)
         } else {
             Vec::new()
         };
         if let Some(limitation) = conditional_assertion_credit_summary(&consulted_credit_gaps)? {
+            limitations.push(limitation);
+        }
+        let consulted_registration_gaps: Vec<&TypeScriptConditionalCreditGap> =
+            if test_index_consumed {
+                conditional_registration_gaps
+                    .iter()
+                    .filter(|gap| {
+                        consulted_test_lines
+                            .contains(&(normalized_path(&gap.file), gap.sample_line))
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+        if let Some(limitation) = conditional_gap_summary(
+            &consulted_registration_gaps,
+            ConditionalGapKind::Registration,
+        )? {
             limitations.push(limitation);
         }
         // Partial owner extraction (#4104-A): changed lines inside owner
@@ -1420,6 +1490,48 @@ const CONDITIONAL_ASSERTION_CREDIT_SAMPLES: usize = 3;
 fn conditional_assertion_credit_summary(
     gaps: &[&TypeScriptConditionalCreditGap],
 ) -> Result<Option<AnalysisLimitation>, String> {
+    conditional_gap_summary(gaps, ConditionalGapKind::AssertionCredit)
+}
+
+/// Which unevaluated-condition disclosure a gap summary is for.
+#[derive(Clone, Copy)]
+enum ConditionalGapKind {
+    /// An assertion sits under the condition and keeps its credit (#8714).
+    AssertionCredit,
+    /// A test registration sits under the condition and earns no credit
+    /// (#10438).
+    Registration,
+}
+
+impl ConditionalGapKind {
+    fn name(self) -> &'static str {
+        match self {
+            Self::AssertionCredit => "typescript_conditional_assertion_credit",
+            Self::Registration => "typescript_conditional_registration",
+        }
+    }
+
+    fn plural_subject(self) -> &'static str {
+        match self {
+            Self::AssertionCredit => {
+                "credit assertions under conditions static analysis cannot evaluate"
+            }
+            Self::Registration => "register tests under conditions static analysis cannot evaluate",
+        }
+    }
+
+    fn limitation(self, gap: &TypeScriptConditionalCreditGap) -> TypeScriptNamedLimitation {
+        match self {
+            Self::AssertionCredit => conditional_assertion_credit_limitation(gap),
+            Self::Registration => conditional_registration_limitation(gap),
+        }
+    }
+}
+
+fn conditional_gap_summary(
+    gaps: &[&TypeScriptConditionalCreditGap],
+    kind: ConditionalGapKind,
+) -> Result<Option<AnalysisLimitation>, String> {
     let recovery = || {
         AnalysisRecovery::new(
             AnalysisRecoveryKind::InspectFailure,
@@ -1430,7 +1542,7 @@ fn conditional_assertion_credit_summary(
         [] => Ok(None),
         [gap] => {
             let gap = *gap;
-            let limitation = conditional_assertion_credit_limitation(gap);
+            let limitation = kind.limitation(gap);
             Ok(Some(
                 AnalysisLimitation::new(
                     AnalysisLimitationKind::UnevaluatedCondition,
@@ -1440,8 +1552,10 @@ fn conditional_assertion_credit_summary(
                 .with_path(gap.file.to_string_lossy())?
                 .with_affected_items(1)?
                 .with_detail(format!(
-                    "typescript_conditional_assertion_credit: `{}` at {}",
-                    gap.condition, limitation.sample_source
+                    "{}: `{}` at {}",
+                    kind.name(),
+                    gap.condition,
+                    limitation.sample_source
                 ))?,
             ))
         }
@@ -1457,14 +1571,16 @@ fn conditional_assertion_credit_summary(
                     format!(
                         "`{}` at {}",
                         gap.condition,
-                        conditional_assertion_credit_limitation(gap).sample_source
+                        kind.limitation(gap).sample_source
                     )
                 })
                 .collect::<Vec<_>>();
             let remainder = gaps.len().saturating_sub(samples.len());
             let head = format!(
-                "typescript_conditional_assertion_credit: {} test file(s) credit assertions under conditions static analysis cannot evaluate",
-                files.len()
+                "{}: {} test file(s) {}",
+                kind.name(),
+                files.len(),
+                kind.plural_subject()
             );
             let mut detail = format!("{head}; e.g. {}", samples.join("; "));
             if remainder > 0 {

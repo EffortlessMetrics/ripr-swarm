@@ -1,4 +1,5 @@
 mod adapter;
+mod constant_return;
 pub(crate) mod fn_signature;
 pub(crate) mod lexical;
 mod local_assertion_macros;
@@ -13,7 +14,10 @@ mod owner_pin;
 mod passthrough_item_macros;
 mod pattern_pin;
 pub(crate) mod run_memo;
+pub(crate) use constant_return::returns_only_a_literal;
 pub(crate) use mut_parameter::mut_parameter_unwritten_at;
+#[cfg(test)]
+pub(crate) use owner_pin::COMPARISON_NESTED_MACROS;
 pub(crate) use owner_pin::debug_assert_eq_calls;
 pub(crate) use owner_pin::macro_binding_candidates;
 pub(crate) use owner_pin::{
@@ -41,7 +45,7 @@ pub(crate) use local_test_macros::{
     GeneratedTestPins, expand_local_test_macros_with, generated_test_pins,
 };
 pub(crate) use macro_scope::{
-    ImportedMacros, MacroScope, calls_only_at_top_level, first_macro_call, macro_scope,
+    ImportedMacros, MacroScope, first_macro_call, generator_calls, macro_scope,
 };
 pub(crate) use module_tree::{RustModuleTreeEdge, RustModuleTreeScan, rust_module_tree_scan};
 pub(crate) use name_scope::{

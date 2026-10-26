@@ -144,3 +144,134 @@ fn a_member_of_another_module_or_another_name_does_not_reach_the_owner() -> Resu
     assert_eq!(other_name, ExposureClass::NoStaticPath);
     Ok(())
 }
+
+#[test]
+fn a_file_that_binds_its_own_require_reads_no_import() {
+    for source in [
+        "const require = () => ({ stringify() {} });\nconst s = require('./lib').stringify;\n",
+        "function require() {}\nconst { stringify } = require('./lib');\n",
+        "let require = null;\nconst lib = require('./lib');\n",
+    ] {
+        assert_eq!(imports_of(source), Vec::new(), "{source}");
+    }
+    assert_eq!(
+        imports_of(
+            "import { createRequire } from 'node:module';\nconst require = createRequire(import.meta.url);\nconst s = require('./lib').stringify;\n"
+        )
+        .into_iter()
+        .filter(|import| import.0 == "./lib")
+        .collect::<Vec<_>>(),
+        vec![named("./lib", "stringify", "s")],
+        "createRequire keeps the loader identity"
+    );
+}
+
+#[test]
+fn a_reassigned_import_binding_does_not_reach_the_owner() -> Result<(), String> {
+    for (label, binding) in [
+        (
+            "req-let-member",
+            "let s = require('../src/lib').stringify;\ns = () => '{\"a\":1}';",
+        ),
+        (
+            "req-let-destructured",
+            "let { stringify: s } = require('../src/lib');\ns = () => '{\"a\":1}';",
+        ),
+        (
+            "req-var-member",
+            "var s = require('../src/lib').stringify;\ns = () => '{\"a\":1}';",
+        ),
+    ] {
+        let class = class_for(label, binding, "s({ a: 1 })")?;
+        assert_eq!(class, ExposureClass::NoStaticPath, "{label}");
+    }
+    // The same bindings without the reassignment still relate.
+    let class = class_for(
+        "req-let-unwritten",
+        "let s = require('../src/lib').stringify;",
+        "s({ a: 1 })",
+    )?;
+    assert_eq!(class, ExposureClass::WeaklyExposed);
+    Ok(())
+}
+
+#[test]
+fn a_shadowed_require_does_not_reach_the_owner() -> Result<(), String> {
+    for (label, binding) in [
+        (
+            "req-shadow-member",
+            "const require = () => ({ stringify: () => '{\"a\":1}' });\nconst s = require('../src/lib').stringify;",
+        ),
+        (
+            "req-shadow-destructured",
+            "const require = () => ({ stringify: () => '{\"a\":1}' });\nconst { stringify: s } = require('../src/lib');",
+        ),
+    ] {
+        let class = class_for(label, binding, "s({ a: 1 })")?;
+        assert_eq!(class, ExposureClass::NoStaticPath, "{label}");
+    }
+    Ok(())
+}
+
+fn ts_imports_of(source: &str) -> usize {
+    let allocator = Allocator::default();
+    let parsed = Parser::new(&allocator, source, SourceType::ts()).parse();
+    extract_imports_from_statements(&parsed.program.body).len()
+}
+
+#[test]
+fn every_way_of_writing_a_mutable_require_binding_records_no_import() {
+    for source in [
+        "let s = require('./lib').f;\ns = other;\n",
+        "var s = require('./lib').f;\ns += 1;\n",
+        "let s = require('./lib').f;\ns++;\n",
+        "let s = require('./lib').f;\n[s] = list;\n",
+        "let s = require('./lib').f;\n({ s } = bag);\n",
+        "let s = require('./lib').f;\nfor (s of list) {}\n",
+        "let s = require('./lib').f;\nfunction swap() { s = other; }\n",
+        "let { f: s } = require('./lib');\ns = other;\n",
+        "let lib = require('./lib');\nlib = other;\n",
+    ] {
+        assert_eq!(imports_of(source), Vec::new(), "{source}");
+    }
+    assert_eq!(
+        ts_imports_of("let s = require('./lib').f;\n(s as any) = other;\n"),
+        0,
+        "a wrapped target is still a write"
+    );
+}
+
+#[test]
+fn bindings_that_are_not_rewritten_keep_their_import() {
+    // A `const` cannot be reassigned (a same-named parameter write is another
+    // binding); a member write does not rebind the local.
+    for source in [
+        "const s = require('./lib').f;\nfunction t(s) { s = 1; }\n",
+        "let s = require('./lib').f;\ns.prop = 1;\n",
+        "let lib = require('./lib');\nlib.value = 1;\n",
+        "let s = require('./lib').f;\nconsole.log(s);\n",
+    ] {
+        assert_eq!(imports_of(source).len(), 1, "{source}");
+    }
+}
+
+#[test]
+fn a_hoisted_block_require_or_a_late_create_require_import_is_read_conservatively() {
+    assert_eq!(
+        imports_of(
+            "if (true) { function require() { return { f() {} }; } }\nconst s = require('./lib').f;\n"
+        ),
+        Vec::new(),
+        "a block-level function require hoists in sloppy CommonJS"
+    );
+    assert_eq!(
+        imports_of(
+            "const require = createRequire(import.meta.url);\nconst s = require('./lib').f;\nimport { createRequire } from 'node:module';\n"
+        )
+        .into_iter()
+        .filter(|import| import.0 == "./lib")
+        .collect::<Vec<_>>(),
+        vec![named("./lib", "f", "s")],
+        "imports hoist, so their position does not matter"
+    );
+}

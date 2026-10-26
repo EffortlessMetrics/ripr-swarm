@@ -1360,6 +1360,37 @@ pub(crate) fn test_reaches_through_chain(
     reached.then_some(chain)
 }
 
+/// Whether `body` opens a raw string (`r"`, `r#"`, `br"`, `cr##"`). The
+/// `r` must start the token: the `r` ending an identifier or an ordinary
+/// literal (`"other"`, `"user"`) is not an opener, and `r#parse` is a raw
+/// identifier, not a raw string. A literal that merely contains `r#"` still
+/// matches, which only refuses (missed credit), never credits.
+fn has_raw_string_opener(body: &str) -> bool {
+    let bytes = body.as_bytes();
+    let is_ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
+    bytes.iter().enumerate().any(|(index, &byte)| {
+        if byte != b'r' {
+            return false;
+        }
+        // A `b` or `c` prefix belongs to the opener, not to an identifier.
+        let token_start = match index.checked_sub(1).map(|at| bytes[at]) {
+            Some(b'b' | b'c') => index - 1,
+            _ => index,
+        };
+        if token_start
+            .checked_sub(1)
+            .is_some_and(|at| is_ident(bytes[at]))
+        {
+            return false;
+        }
+        let mut next = index + 1;
+        while bytes.get(next) == Some(&b'#') {
+            next += 1;
+        }
+        bytes.get(next) == Some(&b'"')
+    })
+}
+
 /// Evaluate a helper's return value over bound exact inputs (#3296,
 /// the boolean/return predicate family). V1 supports a body whose
 /// final expression is a bare binding established by simple single-line
@@ -1428,8 +1459,7 @@ pub(crate) fn helper_return_value(
                 continue;
             }
             if !super::match_transfer::is_single_literal(raw_line.trim().trim_end_matches(';'))
-                || helper.body.contains("r#")
-                || helper.body.contains("r\"")
+                || has_raw_string_opener(&helper.body)
                 // Masking blanks block-comment text exactly like a string,
                 // so a quoted line inside `/* ... */` would read as a tail.
                 || helper.body.contains("/*")

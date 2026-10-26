@@ -517,3 +517,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_heuristic_relation (29)
+
+Reason:
+RIPR-SPEC-0122: define finding, unsuppressed, unknown, base-side and candidate line in the evidence legend (#9244)
+
+Command:
+`cargo xtask goldens bless ts_heuristic_relation --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
