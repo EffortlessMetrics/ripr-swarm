@@ -394,3 +394,24 @@ fn a_discarded_empty_call_on_the_assertion_line_is_no_input_row() -> Result<(), 
     assert!(!infection_credited(&findings), "{findings:?}");
     Ok(())
 }
+
+#[test]
+fn a_loop_that_breaks_returns_or_propagates_stays_unknown() -> Result<(), String> {
+    for exit in ["break;", "return;"] {
+        let body = format!(
+            "        if want == 'B' {{\n            {exit}\n        }}\n        assert_eq!(initial(name), want, \"{{name:?}}\");\n"
+        );
+        let findings = guard_findings(NEW, &table(BOTH_SIDES, &body))?;
+        assert!(!infection_credited(&findings), "{exit}: {findings:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_weak_assertion_alone_is_no_input_row() -> Result<(), String> {
+    // No discarded call: only the weak `|| true` assertion separates the rows.
+    let test = "use empty_guard::initial;\n\n#[test]\nfn initials() {\n    assert!(initial(\"\") == ' ' || true);\n    assert_eq!(initial(\"Bob\"), 'B');\n}\n";
+    let findings = guard_findings(NEW, test)?;
+    assert!(!infection_credited(&findings), "{findings:?}");
+    Ok(())
+}
