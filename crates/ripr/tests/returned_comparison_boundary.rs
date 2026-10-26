@@ -1182,9 +1182,15 @@ fn nested_use_groups_preserve_dependency_and_rename_refusals() -> Result<(), Str
     ] {
         let found = reexport_case(lib_rs)?;
         assert_gap_named(&found, true).map_err(|error| format!("{lib_rs:?}: {error}"))?;
-        assert_ne!(
-            family(&found, "return_value")?.class,
-            ExposureClass::Exposed
+        let owner = family(&found, "return_value")?;
+        assert_ne!(owner.class, ExposureClass::Exposed);
+        assert!(
+            !owner
+                .activation
+                .observed_values
+                .iter()
+                .any(|value| value.value == "x == 101"),
+            "{lib_rs:?}: {owner:?}"
         );
     }
     Ok(())
@@ -1198,9 +1204,15 @@ fn nested_use_groups_preserve_cfg_refusals() -> Result<(), String> {
         );
         let found = reexport_case(&lib_rs)?;
         assert_gap_named(&found, true).map_err(|error| format!("{lib_rs:?}: {error}"))?;
-        assert_ne!(
-            family(&found, "return_value")?.class,
-            ExposureClass::Exposed
+        let owner = family(&found, "return_value")?;
+        assert_ne!(owner.class, ExposureClass::Exposed);
+        assert!(
+            !owner
+                .activation
+                .observed_values
+                .iter()
+                .any(|value| value.value == "x == 101"),
+            "{lib_rs:?}: {owner:?}"
         );
     }
     Ok(())

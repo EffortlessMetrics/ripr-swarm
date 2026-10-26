@@ -3,7 +3,7 @@
   "tool": "ripr",
   "mode": "fast",
   "root": "fixtures/rust_nested_use_dependency_alias/input",
-  "summary": {"changed_rust_files":1,"probes":3,"findings":3,"exposed":0,"weakly_exposed":2,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":1,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "summary": {"changed_rust_files":1,"probes":3,"findings":3,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":1,"static_unknown":2,"changed_files_by_language":[{"language":"rust","files":1}]},
   "analysis_outcome": {
     "analysis_complete": true,
     "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:7b3edc8ab9d51020253e36739e5b6043e0e59607009510acc5630c67979e6f05","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":3,"finding_count":3},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
@@ -11,20 +11,8 @@
   "findings": [
     {
       "id": "probe:src_internal.rs:predicate:2361a6b7",
-      "canonical_gap_id": "gap:rust:src/internal.rs:thr:predicate_boundary:predicate:x==101",
-      "canonical_gap_group_size": 1,
-      "canonical_gap": {
-        "id": "gap:rust:src/internal.rs:thr:predicate_boundary:predicate:x==101",
-        "language": "rust",
-        "file": "src/internal.rs",
-        "owner": "thr",
-        "behavior_kind": "predicate_boundary",
-        "probe_kind": "predicate",
-        "normalized_discriminator": "x==101"
-
-      },
-      "classification": "weakly_exposed",
-      "severity": "warning",
+      "classification": "static_unknown",
+      "severity": "note",
       "confidence": 0.84,
       "probe": {
         "id": "probe:src_internal.rs:predicate:2361a6b7",
@@ -41,12 +29,12 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"high","summary":"Only relational oracle found; it may not discriminate the changed value exactly"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach thr: at, high, low", "infection weak: Related tests contain input values, but the equality-boundary discriminator is missing", "propagation yes: Changed behavior appears to influence returned value: x > 101", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Only relational oracle found; it may not discriminate the changed value exactly", "local flow reaches returned value: x > 101 (line 2)", "related test tests/api.rs:12 at uses weak relational check oracle: assert!(!thr::thr(101));", "related test tests/api.rs:7 high uses weak relational check oracle: assert!(thr::internal::thr(500));", "related test tests/api.rs:2 low uses weak relational check oracle: assert!(!thr::internal::thr(50));", "source function argument value x = 50 at line 3", "source function argument value x = 500 at line 8", "source function argument value x = 101 at line 13", "missing discriminator x == 101: No related test call uses x equal to 101; observed x values: 50, 500; target 101 value: 101"],
+      "evidence_path": ["reach yes: Related tests appear to reach thr: at, high, low", "infection weak: Related tests contain input values, but the equality-boundary discriminator is missing", "propagation yes: Changed behavior appears to influence returned value: x > 101", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Only relational oracle found; it may not discriminate the changed value exactly", "local flow reaches returned value: x > 101 (line 2)", "related test tests/api.rs:12 at uses weak relational check oracle: assert!(!thr::thr(101));", "related test tests/api.rs:7 high uses weak relational check oracle: assert!(thr::internal::thr(500));", "related test tests/api.rs:2 low uses weak relational check oracle: assert!(!thr::internal::thr(50));", "source function argument value x = 50 at line 3", "source function argument value x = 500 at line 8", "source function argument value x = 101 at line 13"],
       "flow_sinks": [
         {"kind":"return_value","text":"x > 101","line":2}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence returned value: x > 101", "Only relational oracle found; it may not discriminate the changed value exactly", "Related tests appear to reach thr: at, high, low", "Related tests contain input values, but the equality-boundary discriminator is missing"],
-      "missing": ["Missing discriminator value: x == 101", "No strong discriminator was detected"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence returned value: x > 101", "Only relational oracle found; it may not discriminate the changed value exactly", "Related tests appear to reach thr: at, high, low", "Related tests contain input values, but the equality-boundary discriminator is missing", "gap_withheld: weakly_exposed is not claimed; whether the assertion observes the owner reached without a call ripr can place (rust_indirect_owner_call_unresolved)", "limitation_last_established_edge: related tests `low` (tests/api.rs:2), `high` (tests/api.rs:7), `at` (tests/api.rs:12)", "limitation_first_unresolved_edge: whether the assertion observes the owner reached without a call ripr can place", "limitation_analyzer_route: analysis/classify/gap-admission", "limitation_non_claim: no missing test, no weak oracle, and no test adequacy is established"],
+      "missing": ["A Rust test reaches this code without a call to the owner that ripr can place: the owner is passed as a function value, is generated by a macro ripr does not expand, or is called as the argument of an executor helper such as `block_on`. Whether the test's assertion observes the changed behavior is not established, so ripr does not claim a gap; this is a named limitation, not a coverage claim."],
       "assertion_texts": {
         "3": "assert!(!thr::internal::thr(50));",
         "8": "assert!(thr::internal::thr(500));",
@@ -71,11 +59,6 @@
           }
         ],
         "missing_discriminators": [
-          {
-            "value": "x == 101",
-            "reason": "No related test call uses x equal to 101; observed x values: 50, 500; target 101 value: 101",
-            "flow_sink": {"kind":"return_value","text":"x > 101","line":2}
-          }
         ]
       },
       "observed_values": [
@@ -96,11 +79,6 @@
         }
       ],
       "missing_discriminators": [
-        {
-          "value": "x == 101",
-          "reason": "No related test call uses x equal to 101; observed x values: 50, 500; target 101 value: 101",
-          "flow_sink": {"kind":"return_value","text":"x > 101","line":2}
-        }
       ],
       "related_tests_total": 3,
       "related_tests": [
@@ -141,12 +119,20 @@
           "why": "assertion too weak to tell the old behavior from the new"
         }
       ],
-      "stop_reasons": [],
+      "stop_reasons": ["gap_evidence_unresolved"],
       "oracle_kind": "relational_check",
       "oracle_strength": "weak",
-      "recommended_next_step": "Add boundary tests for below, equal, and above the changed threshold with exact assertions.",
-      "suggested_next_action": "Add boundary tests for below, equal, and above the changed threshold with exact assertions.",
+      "recommended_next_step": "`low` (tests/api.rs:2), `high` (tests/api.rs:7), `at` (tests/api.rs:12) passes the owner as a function value, and ripr does not follow the indirect call to the assertion, so ripr does not report a gap. Check that the assertion's expected value differs between the old and the new behavior; add a test only if it does not.",
+      "suggested_next_action": "`low` (tests/api.rs:2), `high` (tests/api.rs:7), `at` (tests/api.rs:12) passes the owner as a function value, and ripr does not follow the indirect call to the assertion, so ripr does not report a gap. Check that the assertion's expected value differs between the old and the new behavior; add a test only if it does not.",
       "language": "rust",
+      "static_limit_kind": "rust_indirect_owner_call_unresolved",
+      "static_limitation": {
+        "analyzer_route": "analysis/classify/gap-admission",
+        "first_unresolved_edge": "whether the assertion observes the owner reached without a call ripr can place",
+        "kind": "rust_indirect_owner_call_unresolved",
+        "last_established_edge": "related tests `low` (tests/api.rs:2), `high` (tests/api.rs:7), `at` (tests/api.rs:12)",
+        "non_claim": "no missing test, no weak oracle, and no test adequacy is established"
+      },
       "source_currentness": "candidate_current"
     },
     {
@@ -284,21 +270,9 @@
     },
     {
       "id": "probe:src_internal.rs:return_value:42dc8ea8",
-      "canonical_gap_id": "gap:rust:src/internal.rs:thr:return_value:return_value:x>101",
-      "canonical_gap_group_size": 1,
-      "canonical_gap": {
-        "id": "gap:rust:src/internal.rs:thr:return_value:return_value:x>101",
-        "language": "rust",
-        "file": "src/internal.rs",
-        "owner": "thr",
-        "behavior_kind": "return_value",
-        "probe_kind": "return_value",
-        "normalized_discriminator": "x>101"
-
-      },
-      "classification": "weakly_exposed",
-      "severity": "warning",
-      "confidence": 0.84,
+      "classification": "static_unknown",
+      "severity": "note",
+      "confidence": 0.56,
       "probe": {
         "id": "probe:src_internal.rs:return_value:42dc8ea8",
         "family": "return_value",
@@ -311,15 +285,15 @@
         "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach thr: at, high, low"},
         "infect": {"state":"weak","confidence":"medium","summary":"Related tests contain input values, but the equality-boundary discriminator is missing"},
         "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: x > 101"},
-        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
-        "discriminate": {"state":"weak","confidence":"high","summary":"Only relational oracle found; it may not discriminate the changed value exactly"}
+        "observe": {"state":"no","confidence":"medium","summary":"No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)"},
+        "discriminate": {"state":"no","confidence":"medium","summary":"No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach thr: at, high, low", "infection weak: Related tests contain input values, but the equality-boundary discriminator is missing", "propagation yes: Complete propagation witness reaches returned value: x > 101", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Only relational oracle found; it may not discriminate the changed value exactly", "local flow reaches returned value: x > 101 (line 2)", "related test tests/api.rs:12 at uses weak relational check oracle: assert!(!thr::thr(101));", "related test tests/api.rs:7 high uses weak relational check oracle: assert!(thr::internal::thr(500));", "related test tests/api.rs:2 low uses weak relational check oracle: assert!(!thr::internal::thr(50));", "source function argument value x = 50 at line 3", "source function argument value x = 500 at line 8", "source function argument value x = 101 at line 13", "missing discriminator x == 101: No related test call uses x equal to 101; observed x values: 50, 500; target 101 value: 101"],
+      "evidence_path": ["reach yes: Related tests appear to reach thr: at, high, low", "infection weak: Related tests contain input values, but the equality-boundary discriminator is missing", "propagation yes: Complete propagation witness reaches returned value: x > 101", "observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "local flow reaches returned value: x > 101 (line 2)", "related test tests/api.rs:12 at uses no oracle", "related test tests/api.rs:7 high uses no oracle", "related test tests/api.rs:2 low uses no oracle", "source function argument value x = 50 at line 3", "source function argument value x = 500 at line 8", "source function argument value x = 101 at line 13"],
       "flow_sinks": [
         {"kind":"return_value","text":"x > 101","line":2}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: x > 101", "Only relational oracle found; it may not discriminate the changed value exactly", "Related tests appear to reach thr: at, high, low", "Related tests contain input values, but the equality-boundary discriminator is missing"],
-      "missing": ["Missing discriminator value: x == 101", "No strong discriminator was detected"],
+      "evidence": ["Complete propagation witness reaches returned value: x > 101", "No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "Related tests appear to reach thr: at, high, low", "Related tests contain input values, but the equality-boundary discriminator is missing", "assertion not credited: `assert!` in at at tests/api.rs:13: `pub use {internal::{*}, other_dep::{thr as\nthr}};` at src/lib.rs:2 glob-imports from outside the workspace, which may bring in a different `assert!`", "gap_withheld: reachable_unrevealed is not claimed; whether the assertion observes the owner reached without a call ripr can place (rust_indirect_owner_call_unresolved)", "limitation_last_established_edge: related tests `low` (tests/api.rs:2), `high` (tests/api.rs:7), `at` (tests/api.rs:12)", "limitation_first_unresolved_edge: whether the assertion observes the owner reached without a call ripr can place", "limitation_analyzer_route: analysis/classify/gap-admission", "limitation_non_claim: no missing test, no weak oracle, and no test adequacy is established"],
+      "missing": ["A Rust test reaches this code without a call to the owner that ripr can place: the owner is passed as a function value, is generated by a macro ripr does not expand, or is called as the argument of an executor helper such as `block_on`. Whether the test's assertion observes the changed behavior is not established, so ripr does not claim a gap; this is a named limitation, not a coverage claim."],
       "assertion_texts": {
         "3": "assert!(!thr::internal::thr(50));",
         "8": "assert!(thr::internal::thr(500));",
@@ -344,11 +318,6 @@
           }
         ],
         "missing_discriminators": [
-          {
-            "value": "x == 101",
-            "reason": "No related test call uses x equal to 101; observed x values: 50, 500; target 101 value: 101",
-            "flow_sink": {"kind":"return_value","text":"x > 101","line":2}
-          }
         ]
       },
       "observed_values": [
@@ -369,11 +338,6 @@
         }
       ],
       "missing_discriminators": [
-        {
-          "value": "x == 101",
-          "reason": "No related test call uses x equal to 101; observed x values: 50, 500; target 101 value: 101",
-          "flow_sink": {"kind":"return_value","text":"x > 101","line":2}
-        }
       ],
       "related_tests_total": 3,
       "related_tests": [
@@ -381,45 +345,53 @@
           "name": "at",
           "file": "tests/api.rs",
           "line": 12,
-          "oracle_strength": "weak",
-          "oracle_kind": "relational_check",
-          "oracle": "assert!(!thr::thr(101));",
+          "oracle_strength": "none",
+          "oracle_kind": "unknown",
+          "oracle": "",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
-          "miss": "weak_assertion",
-          "why": "assertion too weak to tell the old behavior from the new"
+          "miss": "assertion_not_credited",
+          "why": "assertion not credited: ripr could not establish that this assertion counts here"
         },
         {
           "name": "high",
           "file": "tests/api.rs",
           "line": 7,
-          "oracle_strength": "weak",
-          "oracle_kind": "relational_check",
-          "oracle": "assert!(thr::internal::thr(500));",
+          "oracle_strength": "none",
+          "oracle_kind": "unknown",
+          "oracle": "",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
-          "miss": "weak_assertion",
-          "why": "assertion too weak to tell the old behavior from the new"
+          "miss": "assertion_not_credited",
+          "why": "assertion not credited: ripr could not establish that this assertion counts here"
         },
         {
           "name": "low",
           "file": "tests/api.rs",
           "line": 2,
-          "oracle_strength": "weak",
-          "oracle_kind": "relational_check",
-          "oracle": "assert!(!thr::internal::thr(50));",
+          "oracle_strength": "none",
+          "oracle_kind": "unknown",
+          "oracle": "",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
-          "miss": "weak_assertion",
-          "why": "assertion too weak to tell the old behavior from the new"
+          "miss": "assertion_not_credited",
+          "why": "assertion not credited: ripr could not establish that this assertion counts here"
         }
       ],
-      "stop_reasons": [],
-      "oracle_kind": "relational_check",
-      "oracle_strength": "weak",
-      "recommended_next_step": "Replace broad assertions with exact equality or a property that constrains the changed returned value.",
-      "suggested_next_action": "Replace broad assertions with exact equality or a property that constrains the changed returned value.",
+      "stop_reasons": ["gap_evidence_unresolved"],
+      "oracle_kind": "unknown",
+      "oracle_strength": "none",
+      "recommended_next_step": "`low` (tests/api.rs:2), `high` (tests/api.rs:7), `at` (tests/api.rs:12) passes the owner as a function value, and ripr does not follow the indirect call to the assertion, so ripr does not report a gap. Check that the assertion's expected value differs between the old and the new behavior; add a test only if it does not.",
+      "suggested_next_action": "`low` (tests/api.rs:2), `high` (tests/api.rs:7), `at` (tests/api.rs:12) passes the owner as a function value, and ripr does not follow the indirect call to the assertion, so ripr does not report a gap. Check that the assertion's expected value differs between the old and the new behavior; add a test only if it does not.",
       "language": "rust",
+      "static_limit_kind": "rust_indirect_owner_call_unresolved",
+      "static_limitation": {
+        "analyzer_route": "analysis/classify/gap-admission",
+        "first_unresolved_edge": "whether the assertion observes the owner reached without a call ripr can place",
+        "kind": "rust_indirect_owner_call_unresolved",
+        "last_established_edge": "related tests `low` (tests/api.rs:2), `high` (tests/api.rs:7), `at` (tests/api.rs:12)",
+        "non_claim": "no missing test, no weak oracle, and no test adequacy is established"
+      },
       "source_currentness": "candidate_current"
     }
   ]

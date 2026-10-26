@@ -2959,6 +2959,13 @@ binding that cannot establish owner credit, so it cannot silently reveal an owne
 glob underneath it (#10047). The nested positive and dependency-glob, renamed-leaf
 and cfg controls are pinned in `returned_comparison_boundary` and the
 `rust_nested_use_*` fixtures; the conservative fixtures also join RIPR-SPEC-0108.
+These controls assert the infection-stage boundary summary and presence or absence
+of the exact `x == 101` input row, independently of final gap admission. On the
+current integrated main, the same-name path-qualifier false refusal (#10604)
+leaves all four fixture return-value findings `static_unknown` before and after
+the re-export repair and clears final missing-discriminator arrays. The fixtures
+use direct calls, not function values; their retained limitation is a known
+independent defect, not evidence that the qualifier names a function value.
 
 Accepted tradeoff: a genuine owner call spelled through a path ripr cannot resolve is declined, so its input is not read and a missing-equality gap can stay open although a test exercises the boundary. That direction was chosen because crediting an unresolved qualified call lets another function's input suppress the gap and reads `Exposed` wrongly. The filter covers the direct owner calls and the helper-transferred entry rows (`chain_entry_rows`). It does not cover the computed-input continuation (`computed_input_parameters`), which reads calls by name and stays unfiltered because it is conservative (it only ever unresolves a boundary), nor the adaptor element-run reader (`sequence_runs`): dropping only some of its calls could remove the discriminating element and create an actionable gap. The call-value producer and the chain entry rows are the only consumers filtered. A re-export counts only from the owner crate target's own module file (a `main.rs`, `src/bin` or `tests` file is another crate) and only from a top-level `pub use` item whose leaf is not renamed; a `use` inside a nested module binds there and never counts.
 

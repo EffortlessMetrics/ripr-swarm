@@ -50,3 +50,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_nested_use_dependency_glob (5)
+
+Reason:
+RIPR-SPEC-0197 #10047: preserve infection-stage boundary evidence while recording inherited main same-name qualifier limitation #10604 and accepted summary legend #10426; final classes are unchanged from source-equivalent main.
+
+Command:
+`cargo xtask goldens bless rust_nested_use_dependency_glob --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
