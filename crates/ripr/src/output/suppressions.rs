@@ -1558,19 +1558,26 @@ reason = "second"
 
     #[test]
     fn path_glob_matches_pathological_star_pattern_without_backtracking_blowup() {
-        // Twenty `*a` wildcards against a forty-`a` name with no trailing
-        // `b`: naive recursive backtracking explores ~C(40, 20) splits.
-        // The matcher is O(pattern * subject), so doubling both quadruples
-        // the work and the factor sits above 4. Naive backtracking does not
-        // finish at these sizes, so it ends at the harness timeout.
-        crate::testing::scale::assert_growth_within("suppression globs", 300, 600, 6, |k| {
-            let pattern = format!("src/{}b.rs", "*a".repeat(k) + "*");
-            let path = format!("src/{}.rs", "a".repeat(2 * k));
-            assert!(!path_glob_matches(&pattern, &path));
-            let pattern = format!("{}/b.rs", "**/a".repeat(k));
-            let path = format!("{}/c.rs", vec!["a"; 2 * k].join("/"));
-            assert!(!path_glob_matches(&pattern, &path));
-        });
+        // Observe both matcher loops through the public suppression wrapper.
+        // Doubling both dimensions permits quadratic (4x) transition growth;
+        // the counter excludes normalization/allocation and elapsed time.
+        let steps = |k| {
+            crate::analysis::path_glob::matcher_steps(|| {
+                let pattern = format!("src/{}b.rs", "*a".repeat(k) + "*");
+                let path = format!("src/{}.rs", "a".repeat(2 * k));
+                assert!(!path_glob_matches(&pattern, &path));
+                let pattern = format!("{}/b.rs", "**/a".repeat(k));
+                let path = format!("{}/c.rs", vec!["a"; 2 * k].join("/"));
+                assert!(!path_glob_matches(&pattern, &path));
+            })
+        };
+        let (small, large) = (steps(300), steps(600));
+        eprintln!("suppression globs: matcher steps {small} -> {large}");
+        assert!(small > 0 && large > 0);
+        assert!(
+            large <= small * 6,
+            "suppression globs: matcher steps {small} -> {large}"
+        );
     }
 
     fn candidate(finding_id: &str, path: &str, class: &str) -> CheckSuppressionCandidate {
