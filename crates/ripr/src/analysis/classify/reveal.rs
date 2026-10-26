@@ -89,6 +89,11 @@ pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
     /// Exact projected mutable argument read through the shared collection observer.
     pub(in crate::analysis) collection_argument_observed:
         &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
+    /// #7697: whether the assertion compares, whole, the field collection the
+    /// owner pushes the probe's literal onto
+    /// (`activation::pushed_collection_compared_whole`), the rule activation
+    /// already applies. Only consulted for `field_construction` probes.
+    pub(in crate::analysis) pushed_literal_observed: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
     /// RIPR-SPEC-0351: the owner `&mut` parameter whose call-site local the
     /// assertion reads (`format(&mut s, ..); assert_eq!(s, ..)`), or `None`.
     pub(in crate::analysis) out_parameter_read:
@@ -155,6 +160,7 @@ fn reveal_evidence(
             effect_state_carried: &|_, _| true,
             setter_writes_field: &|_, _, _| true,
             collection_argument_observed: &|_, _| false,
+            pushed_literal_observed: &|_, _| false,
             out_parameter_read: &|_, _| None,
             getter_reads_field: &|_, _, _| false,
             getter_reads_key: &|_, _, _| None,
@@ -198,6 +204,7 @@ fn reveal_evidence_with_exit(
             effect_state_carried: &|_, _| true,
             setter_writes_field: &|_, _, _| true,
             collection_argument_observed: &|_, _| false,
+            pushed_literal_observed: &|_, _| false,
             out_parameter_read: &|_, _| None,
             getter_reads_field: &|_, _, _| false,
             getter_reads_key: &|_, _, _| None,
@@ -244,6 +251,7 @@ fn reveal_evidence_proximity_reach(
             effect_state_carried: &|_, _| true,
             setter_writes_field: &|_, _, _| true,
             collection_argument_observed: &|_, _| false,
+            pushed_literal_observed: &|_, _| false,
             getter_reads_field: &|_, _, _| false,
             getter_reads_key: &|_, _, _| None,
             owner_argument_names: &[],
@@ -2259,7 +2267,17 @@ fn analyze_related_assertions(
                         return_admission,
                     )
                 });
-            let field_collection_read = field_collection_read || keyed_read;
+            // #7697: a pushed field literal is confirmed by the same
+            // whole-collection comparison activation accepts, even when the
+            // other operand is a collection the test built by hand.
+            // Fail closed when the owner may leave before the push (#8051,
+            // #8205): a test that expects the collection empty, or restates
+            // what it seeded, then took the exit and never ran the literal.
+            let pushed_literal_read = matches!(probe.family, ProbeFamily::FieldConstruction)
+                && !return_admission.owner_may_exit_before_probe
+                && !test_is_should_panic(test)
+                && (return_admission.pushed_literal_observed)(test, assertion);
+            let field_collection_read = field_collection_read || keyed_read || pushed_literal_read;
             let collection_argument_read =
                 (return_admission.collection_argument_observed)(test, assertion);
             // RIPR-SPEC-0351: an `assert_eq!` on the local a direct owner
@@ -5798,6 +5816,7 @@ mod tests {
             setter_writes_field: &|_, _, _| false,
             getter_reads_field: &|_, _, _| false,
             collection_argument_observed: &|_, _| false,
+            pushed_literal_observed: &|_, _| false,
             out_parameter_read: &|_, _| None,
             getter_reads_key: &|_, getter, field| {
                 (getter == "on_hand" && field == "stock")
@@ -7239,6 +7258,7 @@ mod tests {
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                pushed_literal_observed: &|_, _| false,
                 out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
@@ -7333,6 +7353,7 @@ mod tests {
                     effect_state_carried: &|_, _| true,
                     setter_writes_field: &|_, _, _| true,
                     collection_argument_observed: &|_, _| false,
+                    pushed_literal_observed: &|_, _| false,
                     out_parameter_read: &|_, _| None,
                     getter_reads_field: &|_, _, _| false,
                     getter_reads_key: &|_, _, _| None,
@@ -7514,6 +7535,7 @@ mod tests {
                     effect_state_carried: &|_, _| true,
                     setter_writes_field: &|_, _, _| true,
                     collection_argument_observed: &|_, _| false,
+                    pushed_literal_observed: &|_, _| false,
                     out_parameter_read: &|_, _| None,
                     getter_reads_field: &|_, _, _| false,
                     getter_reads_key: &|_, _, _| None,
@@ -7622,6 +7644,7 @@ mod tests {
                     effect_state_carried: &|_, _| true,
                     setter_writes_field: &|_, _, _| true,
                     collection_argument_observed: &|_, _| false,
+                    pushed_literal_observed: &|_, _| false,
                     out_parameter_read: &|_, _| None,
                     getter_reads_field: &|_, _, _| false,
                     getter_reads_key: &|_, _, _| None,
@@ -8043,6 +8066,7 @@ mod tests {
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                pushed_literal_observed: &|_, _| false,
                 out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
@@ -8133,6 +8157,7 @@ mod tests {
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                pushed_literal_observed: &|_, _| false,
                 out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
@@ -9908,6 +9933,7 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                pushed_literal_observed: &|_, _| false,
                 out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
@@ -9977,6 +10003,7 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                pushed_literal_observed: &|_, _| false,
                 out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
@@ -10017,6 +10044,7 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                pushed_literal_observed: &|_, _| false,
                 out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
@@ -10076,6 +10104,7 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                pushed_literal_observed: &|_, _| false,
                 out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
@@ -10137,6 +10166,7 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                pushed_literal_observed: &|_, _| false,
                 out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
@@ -10342,6 +10372,7 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                pushed_literal_observed: &|_, _| false,
                 out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
@@ -10385,6 +10416,7 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                pushed_literal_observed: &|_, _| false,
                 out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
@@ -10793,6 +10825,7 @@ return Err(\"typed pin\".into());
                         owner_argument_names: &[],
                         getter_reads_key: &|_, _, _| None,
                         collection_argument_observed: &|_, _| false,
+                        pushed_literal_observed: &|_, _| false,
                         out_parameter_read: &|_, _| None,
                         assertion_has_known_implicit_observer: &|_, _| Some(false),
                         returned_closure_pin_required: false,
@@ -10871,6 +10904,7 @@ return Err(\"typed pin\".into());
                     owner_argument_names: &[],
                     getter_reads_key: &|_, _, _| None,
                     collection_argument_observed: &|_, _| false,
+                    pushed_literal_observed: &|_, _| false,
                     returned_closure_pin_required: false,
                     out_parameter_read: &|_, _| None,
                     owner_return_pin: &|_, _| false,
@@ -10973,6 +11007,7 @@ return Err(\"typed pin\".into());
                     effect_state_carried: &carried,
                     setter_writes_field: &|_, _, _| true,
                     collection_argument_observed: &|_, _| false,
+                    pushed_literal_observed: &|_, _| false,
                     out_parameter_read: &|_, _| None,
                     getter_reads_field: &|_, _, _| false,
                     getter_reads_key: &|_, _, _| None,
@@ -11262,6 +11297,7 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                pushed_literal_observed: &|_, _| false,
                 out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
@@ -11366,6 +11402,7 @@ return Err(\"typed pin\".into());
                     effect_state_carried: &|_, _| true,
                     setter_writes_field: &|_, _, _| true,
                     collection_argument_observed: &|_, _| false,
+                    pushed_literal_observed: &|_, _| false,
                     out_parameter_read: &|_, _| None,
                     getter_reads_field: &|_, _, _| false,
                     getter_reads_key: &|_, _, _| None,
@@ -11413,6 +11450,7 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                pushed_literal_observed: &|_, _| false,
                 out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
@@ -11911,6 +11949,7 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                pushed_literal_observed: &|_, _| false,
                 out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
@@ -12457,6 +12496,7 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                pushed_literal_observed: &|_, _| false,
                 out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
