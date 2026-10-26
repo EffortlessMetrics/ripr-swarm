@@ -66,12 +66,12 @@ fn finding_with_shape(
     bound: &str,
     shape: OperandShape,
 ) -> Result<Value, String> {
-    finding_with_signature(prelude, "", ty, expression, argument, bound, shape)
+    finding_with_context(prelude, ("", ""), ty, expression, argument, bound, shape)
 }
 
-fn finding_with_signature(
+fn finding_with_context(
     prelude: &str,
-    generics: &str,
+    (generics, body_prefix): (&str, &str),
     ty: &str,
     expression: &str,
     argument: &str,
@@ -114,8 +114,10 @@ fn finding_with_signature(
             1,
         ),
     };
+    let lines = lines + body_prefix.lines().count();
+    let predicate_offset = predicate_offset + body_prefix.lines().count();
     let source = format!(
-        "{prelude}pub fn score{generics}(n: {ty}) -> bool {{\n{binding}    {after}\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n    #[test]\n    fn anchor() {{ assert!(score({argument})); }}\n}}\n"
+        "{prelude}pub fn score{generics}(n: {ty}) -> bool {{\n{body_prefix}{binding}    {after}\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n    #[test]\n    fn anchor() {{ assert!(score({argument})); }}\n}}\n"
     );
     std::fs::write(scratch.0.join("src/lib.rs"), source).map_err(|error| error.to_string())?;
     let diff = scratch.0.join("change.diff");
@@ -123,7 +125,8 @@ fn finding_with_signature(
     std::fs::write(
         &diff,
         format!(
-            "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -{start},{lines} +{start},{lines} @@\n pub fn score{generics}(n: {ty}) -> bool {{\n{}-    {before}\n+    {after}\n }}\n",
+            "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -{start},{lines} +{start},{lines} @@\n pub fn score{generics}(n: {ty}) -> bool {{\n{}{}-    {before}\n+    {after}\n }}\n",
+            body_prefix.lines().map(|line| format!(" {line}\n")).collect::<String>(),
             binding.replace("    let", "     let")
         ),
     )
@@ -209,9 +212,12 @@ fn owner_generic_parameters_still_refuse_intrinsic_identity() -> Result<(), Stri
             intrinsic["ripr"]["infect"]["state"], "yes",
             "the identical typed literal is supported for a primitive owner: {intrinsic}"
         );
-        let finding = finding_with_signature(
+        let finding = finding_with_context(
             "",
-            "<usize: core::ops::Add<Output = core::primitive::usize> + Copy>",
+            (
+                "<usize: core::ops::Add<Output = core::primitive::usize> + Copy>",
+                "",
+            ),
             "usize",
             "n + n",
             "2_usize",
@@ -236,6 +242,36 @@ fn owner_generic_parameters_still_refuse_intrinsic_identity() -> Result<(), Stri
                 .is_empty(),
             "a refused generic cannot invent a missing boundary: {finding}"
         );
+    }
+    Ok(())
+}
+
+#[test]
+fn descendant_generic_declarations_do_not_escape_into_the_owner() -> Result<(), String> {
+    for body_prefix in [
+        "    fn helper<usize>() {}\n",
+        "    { fn helper<usize>() {} }\n",
+        "    let _unused = || { fn helper<usize>() {} };\n",
+    ] {
+        for shape in [
+            OperandShape::Local,
+            OperandShape::Direct,
+            OperandShape::Reversed,
+        ] {
+            let finding =
+                finding_with_context("", ("", body_prefix), "usize", "n + 1", "2", "3", shape)?;
+            assert_eq!(finding["ripr"]["infect"]["state"], "yes", "{finding}");
+            assert!(
+                finding["activation"]["observed_values"]
+                    .as_array()
+                    .ok_or("missing observed values")?
+                    .iter()
+                    .any(|value| value["value"]
+                        .as_str()
+                        .is_some_and(|value| value.contains(" == "))),
+                "a nested generic cannot remove the primitive equality boundary: {finding}"
+            );
+        }
     }
     Ok(())
 }

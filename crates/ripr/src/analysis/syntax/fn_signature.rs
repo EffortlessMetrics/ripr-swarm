@@ -390,8 +390,9 @@ impl TypeNameBindings {
         Self::collect(source, None)
     }
 
-    /// Generic parameters bind only in the selected function and its enclosing
-    /// impl/trait, unlike the conservative file-wide item/import evidence.
+    /// Generic spellings in the owner's enclosing declarations cannot prove
+    /// primitive identity, including an outer fn's forbidden generic capture.
+    /// Descendant generic declarations do not bind the selected owner.
     pub(crate) fn for_owner(source: &str, name: &str, start_line: usize) -> Self {
         Self::collect(source, Some((name, start_line)))
     }
@@ -473,12 +474,15 @@ impl TypeNameBindings {
             };
             add_generics(function.generic_param_list());
             for ancestor in function.syntax().ancestors().skip(1) {
-                // Nested fn/module items do not inherit outer generic
-                // parameters; methods do inherit their impl/trait parameters.
-                if ast::Fn::can_cast(ancestor.kind()) || ast::Module::can_cast(ancestor.kind()) {
+                // A module resets type lookup. A nested fn cannot capture
+                // an outer generic (E0401), but that forbidden reference is
+                // still not evidence of a primitive with the same spelling.
+                if ast::Module::can_cast(ancestor.kind()) {
                     break;
                 }
-                if let Some(item) = ast::Impl::cast(ancestor.clone()) {
+                if let Some(item) = ast::Fn::cast(ancestor.clone()) {
+                    add_generics(item.generic_param_list());
+                } else if let Some(item) = ast::Impl::cast(ancestor.clone()) {
                     add_generics(item.generic_param_list());
                 } else if let Some(item) = ast::Trait::cast(ancestor) {
                     add_generics(item.generic_param_list());
@@ -1504,7 +1508,8 @@ mod cmp {
             "fn helper<usize>() {}\nfn score(n: usize) {}",
             "struct Other<usize>(usize); impl<usize> Other<usize> { fn helper() {} }\nfn score(n: usize) {}",
             "trait Other<usize> { fn helper() {} }\nfn score(n: usize) {}",
-            "fn outer<usize>() {\nfn score(n: usize) {}\n}",
+            "fn outer<T>() {\nfn score(n: usize) {}\n}",
+            "fn outer<usize>() { mod nested {\nfn score(n: usize) {}\n} }",
             "use std::primitive::usize; fn helper<std, core, alloc>() {}\nfn score(n: usize) {}",
         ] {
             assert!(
@@ -1512,14 +1517,22 @@ mod cmp {
                 "{source}"
             );
         }
-        for source in [
-            "fn score<usize>(n: usize) {}",
-            "fn score<r#usize>(n: r#usize) {}",
-            "struct Cell<T>(T); impl<usize> Cell<usize> { fn score(n: usize) {} }",
-            "trait Cell<usize> { fn score(n: usize) {} }",
+        for (source, line) in [
+            ("fn score<usize>(n: usize) {}", 1),
+            ("fn score<r#usize>(n: r#usize) {}", 1),
+            (
+                "struct Cell<T>(T); impl<usize> Cell<usize> { fn score(n: usize) {} }",
+                1,
+            ),
+            ("trait Cell<usize> { fn score(n: usize) {} }", 1),
+            ("fn outer<usize>() {\nfn score(n: usize) {}\n}", 2),
+            (
+                "fn outer<usize>() { fn middle() {\nfn score(n: usize) {}\n} }",
+                2,
+            ),
         ] {
             assert!(
-                TypeNameBindings::for_owner(source, "score", 1).shadows("usize"),
+                TypeNameBindings::for_owner(source, "score", line).shadows("usize"),
                 "{source}"
             );
         }

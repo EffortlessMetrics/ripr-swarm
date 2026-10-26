@@ -11765,6 +11765,7 @@ tests = [
   "crates/ripr/src/analysis/syntax/fn_signature.rs::tests::intrinsic_generic_bindings_follow_the_selected_owner_scope",
   "crates/ripr/tests/local_value_transfer_semantics.rs::unrelated_generic_parameters_preserve_intrinsic_boundaries",
   "crates/ripr/tests/local_value_transfer_semantics.rs::owner_generic_parameters_still_refuse_intrinsic_identity",
+  "crates/ripr/tests/local_value_transfer_semantics.rs::descendant_generic_declarations_do_not_escape_into_the_owner",
   "crates/ripr/src/analysis/test_stub/tests.rs::unrelated_generic_does_not_remove_a_concrete_stub_comparison",
   "crates/ripr/tests/method_hop_relations.rs",
   "crates/ripr/src/analysis/classify/value_transfer.rs::tests",

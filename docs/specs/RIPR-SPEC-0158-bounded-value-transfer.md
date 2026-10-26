@@ -70,6 +70,9 @@ exercised boundary from a missing one.
   Type parameters of the owner and its enclosing impl/trait also refuse
   intrinsic identity; unrelated functions' generic parameters do not bind
   that owner. A missing or ambiguous owner context remains unresolved.
+  Generic declarations inside an owner do not escape into its signature.
+  A nested function's forbidden reference to an outer generic stays unresolved;
+  the absence of legal capture does not establish primitive identity.
   Both forms share the intrinsic-identity admission; their operation-family
   limits remain distinct. Literal-only expressions do not require unused
   parameter types to be resolved. Alias resolution is not inferred from a name.
