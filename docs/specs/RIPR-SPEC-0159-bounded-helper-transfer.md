@@ -482,13 +482,18 @@ close that gap, both reach-only and both fail-closed:
   out-of-line parent module, or a `use .. as Type` rename).
 
 The receiver name must resolve through the shared call-identity authority to
-one declared struct, enum or union in the method impl's own module. The
+one nongeneric declared struct, enum or union in the method impl's own module. The
 root-package library declaration path and the test's import must be established;
 foreign unrenamed imports, sibling namesakes, aliases, generic self types and
 unreadable or generated bindings decline. Qualified type references and
 constructor calls in the test decline even beside a genuine unused import.
 Method sites must use a plain ASCII receiver name bound by a distinct top-level
-`let`; field/path suffixes, inline/parenthesized receivers, non-ASCII identifiers, nested,
+`let` with a direct record literal or a whole bare type annotation, taking the
+value rather than a reference pattern. The inherent method must take `&self`;
+the shared owner-pin prelude-method veto also applies. Visible imports must name
+directly declared data types in the owner's module; foreign, renamed (including
+`as _`), glob and unresolved imports, and local trait declarations, decline.
+Local item bindings, field/path suffixes, inline/parenthesized receivers, non-ASCII identifiers, nested,
 closure, destructuring and later shadow bindings remain unestablished. The receiver route permits only unrebound bare standard assertion and `vec!`
 macros; pattern macros and stringified tokens establish no reach. Qualified-hop
 callers with any macro invocation decline. These checks share the helper-transfer

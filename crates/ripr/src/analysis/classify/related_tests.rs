@@ -4524,6 +4524,7 @@ fn method_entry_uses_plain_receiver(
     // Read tokens too: assertion macro arguments can hide patterns from AST
     // descendants, but they must not lend a different receiver's type.
     let mut bindings = BTreeSet::new();
+    let mut typed_receivers = BTreeSet::new();
     let mut lets = 0;
     for binding in statements
         .syntax()
@@ -4540,9 +4541,22 @@ fn method_entry_uses_plain_receiver(
             return false;
         };
         if pattern.pat().is_some()
+            || pattern.ref_token().is_some()
             || !bindings.insert(name.text().trim_start_matches("r#").to_string())
         {
             return false;
+        }
+        let plain_type = match binding.ty() {
+            Some(ty) => ty.syntax().text().to_string().trim() == self_type,
+            None => match binding.initializer() {
+                Some(ast::Expr::RecordExpr(record)) => record
+                    .path()
+                    .is_some_and(|path| path.syntax().text().to_string().trim() == self_type),
+                _ => false,
+            },
+        };
+        if plain_type {
+            typed_receivers.insert(name.text().trim_start_matches("r#").to_string());
         }
         lets += 1;
     }
@@ -4570,9 +4584,12 @@ fn method_entry_uses_plain_receiver(
             let receiver = &tokens[receiver_at];
             if tokens[at - 1].kind() != SyntaxKind::DOT
                 || receiver.kind() != SyntaxKind::IDENT
-                || !bindings.contains(receiver.text().trim_start_matches("r#"))
+                || !typed_receivers.contains(receiver.text().trim_start_matches("r#"))
                 || receiver_at.checked_sub(1).is_some_and(|before| {
-                    matches!(tokens[before].kind(), SyntaxKind::DOT | SyntaxKind::COLON2)
+                    matches!(
+                        tokens[before].kind(),
+                        SyntaxKind::DOT | SyntaxKind::COLON | SyntaxKind::COLON2
+                    )
                 })
             {
                 return false;
@@ -4584,7 +4601,21 @@ fn method_entry_uses_plain_receiver(
         }
         if matches!(
             token.kind(),
-            SyntaxKind::FOR_KW | SyntaxKind::MATCH_KW | SyntaxKind::FN_KW | SyntaxKind::ASYNC_KW
+            SyntaxKind::FOR_KW
+                | SyntaxKind::MATCH_KW
+                | SyntaxKind::FN_KW
+                | SyntaxKind::ASYNC_KW
+                | SyntaxKind::USE_KW
+                | SyntaxKind::CONST_KW
+                | SyntaxKind::STATIC_KW
+                | SyntaxKind::TYPE_KW
+                | SyntaxKind::STRUCT_KW
+                | SyntaxKind::ENUM_KW
+                | SyntaxKind::UNION_KW
+                | SyntaxKind::TRAIT_KW
+                | SyntaxKind::MOD_KW
+                | SyntaxKind::EXTERN_KW
+                | SyntaxKind::IMPL_KW
         ) || matches!(token.text(), "|" | "||")
         {
             return false;

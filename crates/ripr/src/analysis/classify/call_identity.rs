@@ -1062,6 +1062,18 @@ pub(super) fn inherent_entry_type_identity(
     let FunctionContainer::Inherent { self_ty } = &owner.item.container else {
         return None;
     };
+    let source = &index.files().get(&owner.file)?.source;
+    let signature =
+        crate::analysis::syntax::fn_signature::owner_signature_at_line(source, owner.start_line)?;
+    if signature.name != owner.name
+        || signature.receiver != Some(crate::analysis::syntax::fn_signature::OwnerReceiver::Ref)
+        || !matches!(&signature.container,
+            crate::analysis::syntax::fn_signature::OwnerContainer::Inherent { self_type }
+                if self_type == self_ty)
+        || super::owner_pin::method_may_dispatch_through_prelude(&owner.name)
+    {
+        return None;
+    }
     if !super::helper_transfer::is_identifier(self_ty)
         || package_key(&owner.file).is_some()
         || package_remaps_module_paths(index, None)
@@ -1096,6 +1108,9 @@ pub(super) fn inherent_entry_type_identity(
                     || ast::Enum::can_cast(node.kind())
                     || ast::Union::can_cast(node.kind()))
                 || node
+                    .children()
+                    .any(|child| ast::GenericParamList::can_cast(child.kind()))
+                || node
                     .ancestors()
                     .any(|ancestor| ast::BlockExpr::can_cast(ancestor.kind()))
             {
@@ -1129,6 +1144,7 @@ pub(super) fn inherent_entry_type_identity(
 
 impl OwnerCallIdentity {
     pub(super) fn binds_inherent_entry_type(&self, test: &TestSummary, index: &RustIndex) -> bool {
+        use ra_ap_syntax::{AstNode, ast, ast::HasName};
         let Some(facts) = index.files().get(&test.file) else {
             return false;
         };
@@ -1139,6 +1155,85 @@ impl OwnerCallIdentity {
         let Some(scopes) = context.scopes.as_deref() else {
             return false;
         };
+        let Some(snapshot) = index.source_syntax.get(index, &test.file) else {
+            return false;
+        };
+        let Some(tree) = snapshot.tree() else {
+            return false;
+        };
+        // Imported traits can beat the inherent method during receiver
+        // candidate lookup. In particular, `as _` imports are not recorded
+        // in NameScopes but still put a trait in scope. Keep this new route
+        // to explicit, unrenamed imports of directly declared data types in
+        // the owner's module; unresolved trait/import dispatch grants no reach.
+        if tree.syntax().descendants().any(|node| {
+            ast::Trait::can_cast(node.kind())
+                || ast::TraitAlias::can_cast(node.kind())
+                || ast::UseTree::cast(node).is_some_and(|item| item.rename().is_some())
+        }) {
+            return false;
+        }
+        let Some(owner_snapshot) = index.source_syntax.get(index, &self.owner_file) else {
+            return false;
+        };
+        let Some(owner_tree) = owner_snapshot.tree() else {
+            return false;
+        };
+        let Some(owner_module) = self.definitions.first().and_then(Option::as_ref) else {
+            return false;
+        };
+        let Some(file_module) = file_module_segments(&self.owner_file) else {
+            return false;
+        };
+        let data_types: BTreeSet<Vec<String>> = owner_tree
+            .syntax()
+            .descendants()
+            .filter(|node| {
+                ast::Struct::can_cast(node.kind())
+                    || ast::Enum::can_cast(node.kind())
+                    || ast::Union::can_cast(node.kind())
+            })
+            .filter_map(|node| {
+                if node
+                    .ancestors()
+                    .any(|ancestor| ast::BlockExpr::can_cast(ancestor.kind()))
+                {
+                    return None;
+                }
+                let name = ast::AnyHasName::cast(node.clone())?.name()?;
+                let mut inline: Vec<String> = node
+                    .ancestors()
+                    .filter_map(ast::Module::cast)
+                    .filter_map(|item| item.name().map(|name| name.text().to_string()))
+                    .collect();
+                inline.reverse();
+                let mut path = join(&file_module, &inline);
+                if &path != owner_module {
+                    return None;
+                }
+                path.push(name.text().trim_start_matches("r#").to_string());
+                Some(path)
+            })
+            .collect();
+        for scope in &scopes.scopes {
+            if !scope.globs.is_empty() || scope.block_globs || !scope.block_bindings.is_empty() {
+                return false;
+            }
+            let base = context
+                .file_segments
+                .as_deref()
+                .map(|file| join(file, &scope.modules));
+            for import in &scope.imports {
+                let UseBinding::Path(path) = &import.binding else {
+                    return false;
+                };
+                if use_target(path, base.as_deref(), scope, &context.crate_names)
+                    .is_none_or(|resolved| !data_types.contains(&resolved))
+                {
+                    return false;
+                }
+            }
+        }
         if context.crate_names.iter().any(|name| {
             scopes
                 .scopes

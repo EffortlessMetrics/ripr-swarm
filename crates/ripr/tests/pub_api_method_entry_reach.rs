@@ -552,3 +552,82 @@ fn a_qualified_value_receiver_does_not_borrow_a_local_namesake() -> Result<(), S
     );
     assert_unrelated(&TempRepo::create(LIB, &tests)?)
 }
+
+#[test]
+fn a_nested_import_cannot_replace_the_annotated_receiver() -> Result<(), String> {
+    let tests = api_tests(
+        "#[test]\nfn imported_receiver() {\n    let req: VersionReq = make_own();\n    { use foreign::req; assert!(req.matches(&Version { major: 5 })); }\n}\n",
+    );
+    assert_unrelated(&TempRepo::create(LIB, &tests)?)
+}
+
+#[test]
+fn a_nested_const_cannot_replace_the_annotated_receiver() -> Result<(), String> {
+    let tests = api_tests(
+        "#[test]\nfn constant_receiver() {\n    let req: VersionReq = make_own();\n    { const req: Foreign = FOREIGN; assert!(req.matches(&Version { major: 5 })); }\n}\n",
+    );
+    assert_unrelated(&TempRepo::create(LIB, &tests)?)
+}
+
+#[test]
+fn an_assertion_block_static_cannot_replace_the_annotated_receiver() -> Result<(), String> {
+    let tests = api_tests(
+        "#[test]\nfn static_receiver() {\n    let req: VersionReq = make_own();\n    assert!({ static req: Foreign = FOREIGN; req.matches(&Version { major: 5 }) });\n}\n",
+    );
+    assert_unrelated(&TempRepo::create(LIB, &tests)?)
+}
+
+#[test]
+fn generic_specializations_do_not_share_a_plain_impl_owner() -> Result<(), String> {
+    let lib = LIB.replace(
+        "pub struct VersionReq {",
+        "pub struct VersionReq<const N: usize = 0> {",
+    );
+    let tests = api_tests(
+        "use external::Matches;\n#[test]\nfn specialized_receiver() {\n    let req: VersionReq<1> = make_other_specialization();\n    assert!(req.matches(&Version { major: 5 }));\n}\n",
+    );
+    assert_unrelated(&TempRepo::create(&lib, &tests)?)
+}
+
+#[test]
+fn an_imported_trait_may_precede_the_inherent_receiver_candidate() -> Result<(), String> {
+    let tests = format!("use external::Matches;\n{}", api_tests(LITERAL_RECEIVER));
+    assert_unrelated(&TempRepo::create(LIB, &tests)?)
+}
+
+#[test]
+fn an_underscore_trait_import_still_participates_in_dispatch() -> Result<(), String> {
+    let tests = format!(
+        "use external::Matches as _;\n{}",
+        api_tests(LITERAL_RECEIVER)
+    );
+    assert_unrelated(&TempRepo::create(LIB, &tests)?)
+}
+
+#[test]
+fn a_prelude_consuming_method_may_precede_an_inherent_shared_receiver() -> Result<(), String> {
+    let lib = LIB.replace("fn matches(", "fn into_future(");
+    let tests = api_tests(&LITERAL_RECEIVER.replace(".matches(", ".into_future("));
+    assert_unrelated(&TempRepo::create(&lib, &tests)?)
+}
+
+#[test]
+fn a_mutable_owner_receiver_is_outside_the_bounded_entry_shape() -> Result<(), String> {
+    let lib = LIB.replace("matches(&self", "matches(&mut self");
+    let tests = api_tests(&LITERAL_RECEIVER.replace("let req", "let mut req"));
+    assert_unrelated(&TempRepo::create(&lib, &tests)?)
+}
+
+#[test]
+fn a_ref_pattern_does_not_bind_a_by_value_receiver() -> Result<(), String> {
+    let tests = api_tests(&LITERAL_RECEIVER.replace("let req", "let ref req"));
+    assert_unrelated(&TempRepo::create(LIB, &tests)?)
+}
+
+#[test]
+fn a_reference_annotation_is_outside_the_bounded_entry_shape() -> Result<(), String> {
+    let tests = api_tests(
+        "#[test]\nfn borrowed_receiver() {\n    let req: &VersionReq = borrow_own();\n    assert!(req.matches(&Version { major: 5 }));\n}\n",
+    );
+    assert_unrelated(&TempRepo::create(LIB, &tests)?)
+}

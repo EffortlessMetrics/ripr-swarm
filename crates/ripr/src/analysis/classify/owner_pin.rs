@@ -4526,9 +4526,7 @@ impl OwnerReturnPin {
                 }
                 let shadowed_by_std = match &receiver_type {
                     ReceiverType::ByteSlice => BYTE_SLICE_METHODS.contains(&self.name.as_str()),
-                    ReceiverType::Named(_) => {
-                        BY_VALUE_PRELUDE_METHODS.contains(&self.name.as_str())
-                    }
+                    ReceiverType::Named(_) => method_may_dispatch_through_prelude(&self.name),
                 };
                 !shadowed_by_std
                     && trait_scope.as_ref().is_none_or(|scope| {
@@ -14207,6 +14205,10 @@ const BYTE_SLICE_METHODS: &[&str] = &[
 /// cannot see which std traits a workspace type implements (derives,
 /// blanket impls), so a named receiver never credits a pin through these
 /// names.
+pub(super) fn method_may_dispatch_through_prelude(name: &str) -> bool {
+    BY_VALUE_PRELUDE_METHODS.contains(&name)
+}
+
 const BY_VALUE_PRELUDE_METHODS: &[&str] = &[
     "all",
     "any",
