@@ -1,0 +1,155 @@
+//! Same-impl forwarder methods in front of a private-looking owner (#9638).
+//!
+//! Each owner `try_*` sits behind a forwarder that an integration test calls
+//! with a receiver (`pool.grow(4)`), the way a caller of `SmallVec::grow`
+//! reaches `try_grow`.
+
+#[derive(Debug, PartialEq)]
+pub struct Overflow;
+
+#[derive(Default)]
+pub struct Pool {
+    spilled: bool,
+}
+
+impl Pool {
+    pub fn try_grow(&mut self, wanted: usize) -> Result<bool, Overflow> {
+        if wanted > 4 {
+            self.spilled = true;
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    pub fn grow(&mut self, wanted: usize) -> Result<bool, Overflow> {
+        self.try_grow(wanted)
+    }
+
+    pub fn spilled(&self) -> bool {
+        self.spilled
+    }
+}
+
+#[derive(Default)]
+pub struct Lane {
+    merged: usize,
+}
+
+impl Lane {
+    pub fn try_merge(&mut self, wanted: usize) -> Result<bool, Overflow> {
+        if wanted > 4 {
+            self.merged += 1;
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    pub fn merge(&mut self, wanted: usize) -> bool {
+        let _ = self.try_merge(wanted);
+        true
+    }
+}
+
+#[derive(Default)]
+pub struct Wing {
+    folds: usize,
+}
+
+impl Wing {
+    pub fn try_fold(&mut self, wanted: usize) -> Result<bool, Overflow> {
+        if wanted > 4 {
+            self.folds += 1;
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    pub fn fold(&mut self, wanted: usize) -> Result<bool, Overflow> {
+        self.try_fold(wanted)
+    }
+}
+
+#[derive(Default)]
+pub struct Fin {
+    wanted: usize,
+}
+
+impl Fin {
+    pub fn fold(&mut self, wanted: usize) -> Result<bool, Overflow> {
+        self.wanted = wanted;
+        Ok(true)
+    }
+}
+
+#[derive(Default)]
+pub struct Left {
+    halves: usize,
+}
+
+impl Left {
+    pub fn try_halve(&mut self, wanted: usize) -> Result<bool, Overflow> {
+        if wanted > 4 {
+            self.halves += 1;
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    pub fn halve(&mut self, wanted: usize) -> Result<bool, Overflow> {
+        self.try_halve(wanted)
+    }
+}
+
+#[derive(Default)]
+pub struct Right {
+    cuts: usize,
+}
+
+impl Right {
+    pub fn try_halve(&mut self, wanted: usize) -> Result<bool, Overflow> {
+        self.cuts += wanted;
+        Ok(true)
+    }
+
+    pub fn cut(&mut self, wanted: usize) -> Result<bool, Overflow> {
+        self.try_halve(wanted)
+    }
+}
+
+#[derive(Default)]
+pub struct Ring {
+    pushed: usize,
+}
+
+impl Ring {
+    pub fn try_push(&mut self, wanted: usize) -> Result<bool, Overflow> {
+        if wanted > 4 {
+            self.pushed += 1;
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    pub fn len(&mut self, wanted: usize) -> Result<bool, Overflow> {
+        self.try_push(wanted)
+    }
+}
+
+#[derive(Default)]
+pub struct Gate {
+    shut: usize,
+}
+
+impl Gate {
+    pub fn try_shut(&mut self, wanted: usize) -> Result<bool, Overflow> {
+        if wanted > 4 {
+            self.shut += 1;
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    pub fn insert(&mut self, wanted: usize) -> Result<bool, Overflow> {
+        self.try_shut(wanted)
+    }
+}

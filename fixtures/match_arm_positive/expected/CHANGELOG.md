@@ -253,3 +253,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — match_arm_positive (22)
+
+Reason:
+RIPR-SPEC-0122: plain-language repair-route refusal names the missing evidence without internal fact codes (#10644)
+
+Command:
+`cargo xtask goldens bless match_arm_positive --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
