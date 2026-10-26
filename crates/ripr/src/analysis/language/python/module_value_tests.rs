@@ -2326,6 +2326,11 @@ fn a_dataclass_whose_creation_or_construction_may_raise_is_not_credited() -> Che
     for (label, source, test) in [
         ("failing default_factory", factory.to_string(), DC_TEST),
         (
+            "call default on an async method",
+            format!("{base}\n    async def other(self, extra=boom()):\n        return 1\n"),
+            DC_TEST,
+        ),
+        (
             "call evaluated at class creation as a parameter default",
             format!("{base}\n    def other(self, extra=boom()):\n        return 1\n"),
             DC_TEST,
@@ -2349,6 +2354,10 @@ fn a_dataclass_whose_creation_or_construction_may_raise_is_not_credited() -> Che
         let finding = classify_dc(&source, DC_NEW, &[], test)?;
         assert_lambda_withheld(&finding, label);
     }
+    // A directly parametrized argument is not a fixture request.
+    let parametrized = "import pytest\nfrom hostile.settings import Invoice\n\n\n@pytest.mark.parametrize(\"case\", [1])\ndef test_it(case):\n    assert Invoice(100).total() == 120\n";
+    let finding = classify_dc(&base, DC_NEW, &[], parametrized)?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
     // Builtin descriptors and `list`/`dict` factories keep the credit.
     let plain = format!(
         "{}\n    @property\n    def big(self):\n        return self.amount >= 1000\n",

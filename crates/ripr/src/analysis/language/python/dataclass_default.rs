@@ -246,9 +246,13 @@ fn credits<'a>(
 
     let mut out = Vec::new();
     for test in all_tests {
-        // A fixture parameter can run code that patches the class.
+        // A fixture request can run code that patches the class; a directly
+        // parametrized argument cannot.
         if super::test_activation::activation_control(test).is_some()
-            || !test.fixtures.is_empty()
+            || test
+                .fixtures
+                .iter()
+                .any(|parameter| !test.direct_parametrized.contains(parameter))
             || test.constant_rebinding.edited_in_diff
             || test.constant_rebinding.assigns_attribute(&field)
             || test.constant_rebinding.assigns_attribute(class)
@@ -475,7 +479,12 @@ fn class_model(module: &[Stmt], class: &str, spellings: &[String]) -> Option<Cla
             }
             Stmt::FunctionDef(function) => {
                 if CONSTRUCTION_HOOKS.contains(&function.name.as_str())
-                    || !plain_definition(module, function)
+                    || !plain_definition(
+                        module,
+                        &function.decorator_list,
+                        &function.args,
+                        function.returns.as_deref(),
+                    )
                 {
                     return None;
                 }
@@ -490,10 +499,15 @@ fn class_model(module: &[Stmt], class: &str, spellings: &[String]) -> Option<Cla
                 }
             }
             Stmt::AsyncFunctionDef(function) => {
-                // Async definitions are not modelled, and their defaults and
+                // Async definitions are not modelled, but their defaults and
                 // decorators run at class creation.
                 if CONSTRUCTION_HOOKS.contains(&function.name.as_str())
-                    || !function.decorator_list.is_empty()
+                    || !plain_definition(
+                        module,
+                        &function.decorator_list,
+                        &function.args,
+                        function.returns.as_deref(),
+                    )
                 {
                     return None;
                 }
@@ -665,9 +679,13 @@ fn plain_field_call(module: &[Stmt], call: &ast::ExprCall) -> bool {
 /// A method definition whose class-creation work cannot raise or replace the
 /// method: no decorators but unshadowed builtin descriptors, literal-only
 /// defaults, and builtin-name annotations.
-fn plain_definition(module: &[Stmt], function: &ast::StmtFunctionDef) -> bool {
-    let args = &function.args;
-    let plain_decorators = function.decorator_list.iter().all(|decorator| {
+fn plain_definition(
+    module: &[Stmt],
+    decorators: &[Expr],
+    args: &ast::Arguments,
+    returns: Option<&Expr>,
+) -> bool {
+    let plain_decorators = decorators.iter().all(|decorator| {
         matches!(decorator, Expr::Name(name)
             if matches!(name.id.as_str(), "property" | "classmethod" | "staticmethod")
                 && count_bindings(module, name.id.as_str()) == 0)
@@ -694,8 +712,5 @@ fn plain_definition(module: &[Stmt], function: &ast::StmtFunctionDef) -> bool {
     plain_decorators
         && plain_args
         && plain_variadics
-        && function
-            .returns
-            .as_deref()
-            .is_none_or(|r| plain_annotation(module, r))
+        && returns.is_none_or(|r| plain_annotation(module, r))
 }

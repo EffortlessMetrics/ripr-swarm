@@ -494,7 +494,14 @@ the old default and fails with the new one. For this read the evaluator adds flo
 and the unshadowed one-argument builtin `round`.
 An explicit value for the field, a field default that is `field(...)` or
 computed, a method outside the evaluator, a rebound class or field, or a test
-that shadows, writes or may skip the construction keeps `decorator_indirection`. A function defined under a
+that shadows, writes or may skip the construction keeps `decorator_indirection`.
+The class body must also run nothing the model does not evaluate: a field call
+other than `field(default=<literal>)` or `field(default_factory=list|dict|set)`
+with the builtin unbound, an annotation other than an unbound builtin name, a
+non-literal parameter default or non-builtin annotation on any method (async
+included), or a decorator other than an unbound `property`, `classmethod` or
+`staticmethod` keeps the abstention, and a test that requests a fixture is not a
+reader (directly parametrized arguments are not fixture requests). A function defined under a
 decided module-level `if sys.version_info >= (3, 0):` condition (the only
 decided shapes are Python 2/3 version tuples, with `sys` the single plain
 import) is an ordinary function owner when its name has no other live
