@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-spec-b-missing-owner",
+  "origin": "authored",
+  "version_label": "authored 2026-10-26 for RIPR-SPEC-0150#8; top-level LazyLock initializer without an owning function",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "a2d47e980890ecfc35d2f559a815c52489ecb35145fdd971924f45494db7a777"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "39148fe51a4783e6540cd11a51e7570b34183038aabf37ead90d3ad960167458"
+    }
+  ]
+}

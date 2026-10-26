@@ -767,10 +767,6 @@ reason = "the meta-gate's own pass/fail messages over charter fixtures; the Rust
 id = "RIPR-SPEC-0150"
 scope = "in"
 
-[[spec.waived]]
-example = 8
-reason = "a rfind/map_or let-binding needs an enclosing function body to compile (Option::map_or and str::rfind are not const), so a missing owner cannot be authored as compiling Rust; the binding-owner unit tests cover the refusal"
-
 # Rust producer-owned source role
 [[unmeasured]]
 id = "RIPR-SPEC-0153"

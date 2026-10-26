@@ -405,6 +405,10 @@ case = "spec-b-0150-member-lookalike"
 reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0150/0157 changed-binding case (limited at the let line, fail-closed); added with the case in #10118. Delete this entry when the row credits."
 
 [[entry]]
+case = "spec-b-0150-missing-owner"
+reason = "The LazyLock test discriminates both the default and mapped index, but the changed binding has no owning function; ripr correctly keeps the generic static-unknown limitation without a value-propagation kind or predicate relation (#10503). Delete this entry when the row credits."
+
+[[entry]]
 case = "spec-b-0150-rfind-map-or-equality"
 reason = "Tests discriminate the change but ripr abstains on this RIPR-SPEC-0150/0157 changed-binding case (limited at the let line, fail-closed); added with the case in #10118. Delete this entry when the row credits."
 

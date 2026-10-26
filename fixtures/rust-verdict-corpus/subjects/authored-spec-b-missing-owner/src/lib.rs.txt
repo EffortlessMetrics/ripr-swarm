@@ -1,0 +1,20 @@
+//! A changed binding in a static initializer has no owning function.
+
+use std::sync::LazyLock;
+
+pub static CUTS: LazyLock<[bool; 2]> = LazyLock::new(|| {
+    ["a.b", "abc"].map(|input| {
+        let end = input.rfind('.').map_or(0, |idx| idx);
+        end == 1
+    })
+});
+
+#[cfg(test)]
+mod tests {
+    use super::CUTS;
+
+    #[test]
+    fn static_initializer_keeps_some_and_none_distinct() {
+        assert_eq!(*CUTS, [true, false]);
+    }
+}
