@@ -423,12 +423,19 @@ fn conftests_allow_collection(root: &Path, file: &Path) -> bool {
     let Ok(entries) = std::fs::read_dir(root) else {
         return true;
     };
-    entries
+    // Directory order is arbitrary, so a cap that stopped early would pick
+    // different directories per run: a root with more subdirectories than the
+    // cap is unknown and refuses the read.
+    let directories: Vec<PathBuf> = entries
         .flatten()
-        .take(MAX_SIBLING_DIRECTORIES)
         .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
         .filter_map(|entry| entry.path().strip_prefix(root).map(Path::to_path_buf).ok())
-        .all(|directory| clean(&directory, &ELSEWHERE))
+        .take(MAX_SIBLING_DIRECTORIES + 1)
+        .collect();
+    directories.len() <= MAX_SIBLING_DIRECTORIES
+        && directories
+            .iter()
+            .all(|directory| clean(directory, &ELSEWHERE))
 }
 
 /// One `>>> call(...)` example and the literal line that follows it.

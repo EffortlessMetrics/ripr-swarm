@@ -262,3 +262,25 @@ fn an_escape_in_the_docstring_source_drops_it() -> Result<(), String> {
     assert_eq!(count("escape", ENABLED, &old, &new)?, 0);
     Ok(())
 }
+
+#[test]
+fn a_pytest_ini_without_a_pytest_section_leaves_collection_unknown() -> Result<(), String> {
+    let root = root("empty-ini", ENABLED)?;
+    std::fs::write(root.join("pytest.ini"), "").map_err(|err| format!("{err}"))?;
+    let collected = collects_doctests(&root, Path::new("src/texts.py"));
+    let _ = std::fs::remove_dir_all(&root);
+    assert!(!collected);
+    Ok(())
+}
+
+#[test]
+fn a_root_with_more_subdirectories_than_the_scan_cap_is_unknown() -> Result<(), String> {
+    let root = root("many-dirs", ENABLED)?;
+    for index in 0..300 {
+        std::fs::create_dir_all(root.join(format!("d{index}"))).map_err(|err| format!("{err}"))?;
+    }
+    let collected = collects_doctests(&root, Path::new("src/texts.py"));
+    let _ = std::fs::remove_dir_all(&root);
+    assert!(!collected);
+    Ok(())
+}
