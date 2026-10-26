@@ -795,30 +795,43 @@ mod tests {
 
     #[test]
     fn lexical_fallback_facts_refuse_precision() -> Result<(), String> {
-        let source = "fn price() {\n    if montant_é > discount_threshold { true }\n}\n";
-        let start = require_find(source, PREDICATE, "predicate")?;
-        let finding = current_finding("probe:lex", 2, PREDICATE);
-        let mut index = index_with(source);
-        if let Some(facts) = index.file_data_mut(&PathBuf::from("src/lib.rs")) {
-            facts.used_lexical_fallback = true;
-        } else {
-            return Err("facts missing".to_string());
+        for (source, fallback_row) in [
+            (
+                "fn price() {\n    if montant_é > discount_threshold { true }\n}\n",
+                1,
+            ),
+            (
+                "fn price() {\r    let a = 1;\n    let b = 2;\r    if montant_é > discount_threshold { true }\r}\r",
+                2,
+            ),
+        ] {
+            let start = require_find(source, PREDICATE, "predicate")?;
+            let finding = current_finding("probe:lex", 2, PREDICATE);
+            let mut index = index_with(source);
+            if let Some(facts) = index.file_data_mut(&PathBuf::from("src/lib.rs")) {
+                facts.used_lexical_fallback = true;
+            } else {
+                return Err("facts missing".to_string());
+            }
+            let mut spans = BTreeMap::new();
+            spans.insert(finding.id.clone(), ParserByteSpan { start_byte: start });
+            let loaded = vec![(PathBuf::from("src/lib.rs"), source.as_bytes().to_vec())];
+            let origins = origins_for_rust_findings(
+                std::slice::from_ref(&finding),
+                &OriginBuildContext {
+                    root: Path::new("/workspace"),
+                    loaded_files: &loaded,
+                    index: &index,
+                    parser_spans: &spans,
+                },
+            );
+            let origin = require_origin(&origins, "probe:lex")?;
+            assert_eq!(origin.kind, OriginKind::CoarseZeroWidth);
+            assert_eq!(origin.line, fallback_row);
+            assert_eq!(origin.utf8.end, origin.utf8.start);
+            assert_eq!(origin.utf16.end, origin.utf16.start);
+            assert_eq!(origin.utf32.end, origin.utf32.start);
         }
-        let mut spans = BTreeMap::new();
-        spans.insert(finding.id.clone(), ParserByteSpan { start_byte: start });
-        let loaded = vec![(PathBuf::from("src/lib.rs"), source.as_bytes().to_vec())];
-        let origins = origins_for_rust_findings(
-            std::slice::from_ref(&finding),
-            &OriginBuildContext {
-                root: Path::new("/workspace"),
-                loaded_files: &loaded,
-                index: &index,
-                parser_spans: &spans,
-            },
-        );
-        let origin = require_origin(&origins, "probe:lex")?;
-        assert_eq!(origin.kind, OriginKind::CoarseZeroWidth);
-        assert_eq!(origin.utf8.end, origin.utf8.start);
         Ok(())
     }
 
@@ -938,6 +951,12 @@ mod tests {
         }
         let origins = origins_for(&finding, source, valid, Some("different facts"));
         assert_eq!(require_origin(&origins, &finding.id)?.line, 2);
+        // Matching expression bytes on another analyzer row cannot select
+        // their editor row, even when the parser anchor is otherwise valid.
+        finding.probe.location.line = 1;
+        let origins = origins_for(&finding, source, valid, None);
+        assert_eq!(require_origin(&origins, &finding.id)?.line, 0);
+        finding.probe.location.line = 2;
         finding.source_currentness = SourceCurrentness::BaseDeleted;
         let origins = origins_for(&finding, source, valid, None);
         assert_eq!(require_origin(&origins, &finding.id)?.line, 2);

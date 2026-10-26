@@ -6837,6 +6837,7 @@ tests = [
   "crates/ripr/src/lsp/tests/bare_cr_origin_tests.rs::rust_analysis_origins_project_editor_rows_for_bare_cr",
   "crates/ripr/src/lsp/tests/bare_cr_origin_tests.rs::rust_analysis_deleted_eof_origins_keep_the_terminal_editor_row",
   "crates/ripr/src/analysis/diagnostic_origin.rs::tests::standalone_cr_bounds_untrusted_or_missing_anchors",
+  "crates/ripr/src/analysis/diagnostic_origin.rs::tests::lexical_fallback_facts_refuse_precision",
   "crates/ripr/src/analysis/diagnostic_origin.rs::tests::standalone_cr_deleted_eof_preserves_the_terminal_editor_row",
   "crates/ripr/src/analysis/diagnostic_origin.rs::tests::standalone_cr_duplicate_expression_uses_the_parser_anchor",
   "crates/ripr/src/cli/commands.rs::tests::lsp_terminal_hint_is_written_only_for_terminal_stdin",
