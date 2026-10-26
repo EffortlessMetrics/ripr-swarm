@@ -706,6 +706,8 @@ mutant calibrates the rule; ripr reports only the static shape.
     For helpers whose definition reads a parameter field, credit additionally
     requires a direct field compared with a literal expected operand, retained
     helper/class/module/receiver bindings, and an eager straight-line test body.
+    Defining-module attribute writes join caller rebinding facts, including the
+    original imported constructor name when the caller uses an import alias.
     Copies or aliases used as expected values, replaced helpers or methods,
     overwritten fields, deferred calls, definition-time calls and multiline
     call-shaped literal text do not establish field-helper credit. Supported

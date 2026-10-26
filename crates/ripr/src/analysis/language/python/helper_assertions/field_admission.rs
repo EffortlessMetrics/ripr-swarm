@@ -13,6 +13,7 @@ pub(super) fn origin(
     function: &Stmt,
     gate: &str,
     field_observer: bool,
+    helper_attributes: &[String],
     source: &SourceText<'_>,
 ) -> PythonHelperOrigin {
     if !field_observer {
@@ -24,9 +25,23 @@ pub(super) fn origin(
     let [Stmt::Assert(assertion)] = parsed.body.as_slice() else {
         return PythonHelperOrigin::FieldHelperRefused;
     };
-    let rebinding = &test.constant_rebinding;
+    // Imported helpers can replace a method or exported constructor before
+    // the test imports/calls it. Join the defining module's write facts with
+    // the caller's facts; keep the shared lists immutable.
+    let mut rebinding = test.constant_rebinding.clone();
+    if !helper_attributes.is_empty() {
+        let mut attributes = rebinding.attributes.as_ref().clone();
+        attributes.extend_from_slice(helper_attributes);
+        attributes.sort();
+        attributes.dedup();
+        rebinding.attributes = std::sync::Arc::new(attributes);
+    }
     let admitted = literal_field(&assertion.test).is_some_and(|field| {
         !rebinding.assigns_attribute(field)
+            && !test
+                .imports
+                .iter()
+                .any(|import| rebinding.assigns_attribute(&import.imported))
             && !rebinding.opaque
             && !rebinding
                 .names
@@ -37,7 +52,7 @@ pub(super) fn origin(
                 .iter()
                 .any(|name| name.starts_with("__"))
             && test.decorators.is_empty()
-            && eager_test(function, rebinding, source)
+            && eager_test(function, &rebinding, source)
     });
     if admitted {
         PythonHelperOrigin::FieldHelperSupported
