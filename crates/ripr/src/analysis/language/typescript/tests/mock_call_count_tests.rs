@@ -428,3 +428,65 @@ fn capped_mock_call_count_alias_receivers_do_not_become_identifier_dependencies(
     }
     Ok(())
 }
+
+#[test]
+fn unconditional_block_mock_call_count_aliases_are_not_argument_pins() -> Result<(), String> {
+    for assertion in [
+        "{ const calls = fn.mock.calls; assert.equal(calls.length, 1); }",
+        "{ const count = fn.mock.calls.length; assert.equal(count, 1); }",
+        "{ const calls = fn?.[\"mock\"][\"calls\"]; assert.equal(calls[\"length\"], 1); }",
+        "{ { const count = fn.mock.callCount?.(); assert.equal(count, 1); } }",
+    ] {
+        let source = node_test(assertion);
+        let tests = extract_tests(Path::new("tests/notify.test.ts"), &source);
+        assert_eq!(tests.len(), 1, "{assertion}");
+        assert_eq!(tests[0].assertions.len(), 1, "{assertion}");
+        assert_eq!(
+            notify_class("block-count-alias", &source)?,
+            ExposureClass::WeaklyExposed,
+            "{assertion}"
+        );
+        assert_eq!(mock_call_count_assertions(&tests[0]), vec![true]);
+    }
+    Ok(())
+}
+
+#[test]
+fn unconditional_block_mock_call_count_aliases_preserve_argument_and_added_call_credit()
+-> Result<(), String> {
+    let argument = node_test(
+        "{ const calls = fn.mock.calls; assert.equal(calls[0].arguments[0], 8); }",
+    );
+    let tests = extract_tests(Path::new("tests/notify.test.ts"), &argument);
+    assert_eq!(tests.len(), 1);
+    assert_eq!(tests[0].assertions.len(), 1);
+    assert_eq!(mock_call_count_assertions(&tests[0]), vec![false]);
+    assert_eq!(
+        notify_class("block-argument-pin", &argument)?,
+        ExposureClass::Exposed
+    );
+    assert_eq!(
+        notify_class_for(
+            "block-added-call",
+            &node_test("{ const calls = fn.mock.calls; assert.equal(calls.length, 1); }"),
+            None,
+        )?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+#[test]
+fn unused_block_mock_call_count_alias_does_not_capture_an_outer_argument_pin() -> Result<(), String>
+{
+    let source = "import { test, mock } from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport { notify } from \"../src/notify\";\nlet count = 0;\ntest(\"notify\", () => {\n const fn = mock.fn((value: number) => { count = value; });\n notify(4, {send: fn});\n { const count = fn.mock.calls.length; }\n assert.equal(count, 8);\n});\n";
+    let tests = extract_tests(Path::new("tests/notify.test.ts"), source);
+    assert_eq!(tests.len(), 1);
+    assert_eq!(tests[0].assertions.len(), 1);
+    assert_eq!(mock_call_count_assertions(&tests[0]), vec![false]);
+    assert_eq!(
+        notify_class("block-alias-scope-refusal", source)?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
