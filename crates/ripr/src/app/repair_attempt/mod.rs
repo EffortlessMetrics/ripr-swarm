@@ -609,14 +609,14 @@ fn read_retained_before_snapshot(
     if actual_path != expected_path {
         return Err(format!(
             "verify before snapshot {} is not the retained snapshot for attempt {}",
-            actual_path.display(),
+            crate::output::path::human_path(&actual_path),
             attempt_id
         ));
     }
     std::fs::read_to_string(&expected_path).map_err(|error| {
         format!(
             "read retained before snapshot {} failed: {error}",
-            expected_path.display()
+            crate::output::path::human_path(&expected_path)
         )
     })
 }
@@ -1759,7 +1759,7 @@ pub(crate) fn retain_terminal_evidence_from(
             .ok_or_else(|| {
                 format!(
                     "repair attempt terminal artifact has no file name: {}",
-                    source_path.display()
+                    crate::output::path::human_path(&source_path)
                 )
             })?
             .to_owned();
@@ -1769,8 +1769,12 @@ pub(crate) fn retain_terminal_evidence_from(
                 file_name.to_string_lossy()
             ));
         }
-        let bytes = std::fs::read(&source_path)
-            .map_err(|error| format!("read {} failed: {error}", source_path.display()))?;
+        let bytes = std::fs::read(&source_path).map_err(|error| {
+            format!(
+                "read {} failed: {error}",
+                crate::output::path::human_path(&source_path)
+            )
+        })?;
         let digest = sha256_bytes(&bytes);
         let size = u64::try_from(bytes.len()).map_err(|error| {
             format!("repair attempt terminal artifact size does not fit u64: {error}")
@@ -2565,7 +2569,7 @@ pub(crate) fn finish_repair_attempt_from(
     let packet = std::fs::read(&retained_packet_path).map_err(|error| {
         format!(
             "read repair packet {} failed: {error}",
-            retained_packet_path.display()
+            crate::output::path::human_path(&retained_packet_path)
         )
     })?;
     let packet_sha256 = sha256_bytes(&packet);
@@ -3527,7 +3531,7 @@ fn stage_sources(
             .ok_or_else(|| {
                 format!(
                     "repair attempt artifact has no file name: {}",
-                    source_path.display()
+                    crate::output::path::human_path(&source_path)
                 )
             })?
             .to_owned();
@@ -3538,8 +3542,12 @@ fn stage_sources(
             ));
         }
         let read_started = Instant::now();
-        let bytes = std::fs::read(&source_path)
-            .map_err(|error| format!("read {} failed: {error}", source_path.display()))?;
+        let bytes = std::fs::read(&source_path).map_err(|error| {
+            format!(
+                "read {} failed: {error}",
+                crate::output::path::human_path(&source_path)
+            )
+        })?;
         if trace_spans {
             crate::edit_cage::trace_persist_latency(
                 &format!("attempt_stage_source_read:{}", source.role),

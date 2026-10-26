@@ -1,0 +1,17 @@
+//! The rfind family appears only in a trailing comment.
+
+pub fn ext_start_is(path: &str, at: usize) -> bool {
+    let start = path.len(); // rfind('.').map_or(0, |i| i + 1)
+    start == at
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_start_is_the_length_b_comment() {
+        assert!(ext_start_is("abc", 3));
+        assert!(!ext_start_is("abc", 2));
+    }
+}

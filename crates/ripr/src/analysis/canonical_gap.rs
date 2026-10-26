@@ -301,9 +301,7 @@ mod tests {
     use super::*;
     use crate::analysis::seams::{ExpectedSink, RepoSeam, SeamGripClass};
     use crate::analysis::test_grip_evidence::TestGripEvidence;
-    use crate::domain::{
-        Confidence, MissingDiscriminatorFact, StageEvidence, StageState, ValueFact,
-    };
+    use crate::domain::{Confidence, MissingDiscriminatorFact, StageEvidence, StageState};
 
     fn stage(state: StageState) -> StageEvidence {
         StageEvidence::new(state, Confidence::Medium, "test stage")
@@ -339,7 +337,7 @@ mod tests {
             propagate: stage(StageState::Yes),
             observe: stage(StageState::Yes),
             discriminate: stage(StageState::Weak),
-            observed_values: Vec::<ValueFact>::new(),
+            observed_values: Vec::new(),
             missing_discriminators: vec![MissingDiscriminatorFact {
                 value: missing.to_string(),
                 reason: "missing equality boundary".to_string(),
@@ -376,7 +374,7 @@ mod tests {
             propagate: stage(StageState::Yes),
             observe: stage(StageState::Yes),
             discriminate: stage(StageState::Yes),
-            observed_values: Vec::<ValueFact>::new(),
+            observed_values: Vec::new(),
             missing_discriminators: Vec::new(),
             statically_contradicted_related_tests: 0,
             new_test_target: None,

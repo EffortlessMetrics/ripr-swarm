@@ -1,0 +1,111 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/python_multiline_literal_sibling_read/input",
+  "config_path": "<cwd>/fixtures/python_multiline_literal_sibling_read/input/ripr.toml",
+  "summary": {"changed_rust_files":0,"probes":1,"findings":1,"exposed":0,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"python","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:22d926b58d6300e8","base_revision":null,"input_identity":"sha256:2f52b14a48bf041f2ac9a938aceb73d646f4e33a78e55860fa1e5478131235da","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:labels.py:python_preview:c4a51c9b",
+      "canonical_gap_id": "gap:python:labels.py:labels:predicate_boundary:predicate:label_y",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:python:labels.py:labels:predicate_boundary:predicate:label_y",
+        "language": "python",
+        "file": "labels.py",
+        "owner": "labels",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "label_y"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.40,
+      "probe": {
+        "id": "probe:labels.py:python_preview:c4a51c9b",
+        "family": "predicate",
+        "delta": "control",
+        "file": "labels.py",
+        "line": 4,
+        "expression": "        \"label\": \"y\",",
+        "owner": "python:labels.py::labels"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"low","summary":"1 related Python test(s) found for owner `labels`"},
+        "infect": {"state":"yes","confidence":"low","summary":"Changed Python expression can alter preview-classified predicate behavior: `\"label\": \"y\",`"},
+        "propagate": {"state":"weak","confidence":"low","summary":"Changed Python fallback expression can propagate through selected behavior; preview evidence does not prove the concrete downstream sink."},
+        "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
+        "discriminate": {"state":"weak","confidence":"low","summary":"Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior."}
+       },
+      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `labels`", "infection yes: Changed Python expression can alter preview-classified predicate behavior: `\"label\": \"y\",`", "propagation weak: Changed Python fallback expression can propagate through selected behavior; preview evidence does not prove the concrete downstream sink.", "observation weak: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches unknown sink: \"label\": \"y\", (line 4)", "related test tests/test_labels.py:3 test_name_is_x uses strong exact value oracle: assert labels()[\"name\"] == \"x\""],
+      "flow_sinks": [
+        {"kind":"unknown","text":"\"label\": \"y\",","line":4}
+      ],
+      "evidence": ["owner: labels", "owner_kind: function", "suggested_repair_action: strengthen_existing_test", "suggested_test_file: tests/test_labels.py", "suggested_test_name: test_name_is_x", "suggested_test_node_id: tests/test_labels.py::test_name_is_x", "suggested_verify_command: python -m pytest tests/test_labels.py::test_name_is_x", "suggested_verify_command_confidence: high", "suggested_test_location_reason: strengthen existing weak pytest relation", "test_framework: pytest (test_name_is_x)", "test_verify_command: python -m pytest tests/test_labels.py::test_name_is_x (test_name_is_x)", "related_test_relation: syntactic_call (test_name_is_x)", "test_oracle: exact_value strong (test_name_is_x)", "test_oracle_shape: field_assertion (test_name_is_x)"],
+      "missing": ["A strong Python oracle reaches `labels`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add an assertion on the changed owner's output."],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "test_name_is_x",
+          "file": "tests/test_labels.py",
+          "line": 3,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert labels()[\"name\"] == \"x\"",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        }
+      ],
+      "repair_placement": {
+        "suggested_test_file": "tests/test_labels.py",
+        "suggested_test_name": "test_name_is_x",
+        "suggested_test_node_id": "tests/test_labels.py::test_name_is_x",
+        "verify_command": "python -m pytest tests/test_labels.py::test_name_is_x",
+        "verify_command_confidence": "high"
+       },
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
+      "language": "python",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "changed_sink": "label",
+      "observed_sink": "assert labels()[\"name\"] == \"x\"",
+      "oracle_alignment": "orthogonal",
+      "alignment_reason": "strong_oracle_observes_different_sink",
+      "source_currentness": "candidate_current"
+    }
+  ],
+  "preview_languages": [
+    {
+      "language": "python",
+      "file_count": 1,
+      "sample_paths": ["labels.py"],
+      "enabled": true,
+      "analyzed": true,
+      "category": "preview_language_advisory",
+      "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+    }
+  ],
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"labels.py","digest":"sha256:9aba91913731dac95cca8b9377e9bd933e79fecc5062798c30791ca3237c9b5b"}]}
+}

@@ -20,7 +20,9 @@ Start here:
   Static exposure: unknown (severity: note, confidence 0.20)
   Why unknown: the analysis could not determine a static exposure state
   Changed behavior: const next = ;
-  Analyzer limit: Static limit `unsupported_syntax`: malformed TypeScript/JavaScript prevented syntax-first owner, test, and probe extraction for `src/broken.ts`. Repair route: fix or isolate the…
+  Analyzer limit: Static limit `unsupported_syntax`: malformed TypeScript/JavaScript prevented
+    syntax-first owner, test, and probe extraction for `src/broken.ts`. Repair route: fix or isolate
+    the unsupported syntax before relying on repair guidance
   Next step — TypeScript preview advisory: static limit `unsupported_syntax`; Repair route: fix or
     isolate the unsupported syntax before relying on repair guidance; no actionable repair packet is
     emitted
@@ -32,6 +34,9 @@ Start here:
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
       unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;
+      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;
+      candidate line = changed line ripr considers for probes
     - reach unknown: TypeScript preview parser could not build syntax facts for `src/broken.ts`: 1 parser error(s): Unexpected token
     - infection unknown: TypeScript preview parser could not build syntax facts for `src/broken.ts`: 1 parser error(s): Unexpected token
     - 6 more detail line(s) in --format human-full
@@ -39,7 +44,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/typescript_parse_error_unsupported_syntax/input --diff <cwd>/fixtures/typescript_parse_error_unsupported_syntax/diff.patch --mode fast probe:src_broken.ts:typescript_preview_unsupported_syntax:7027d4b0
   ripr context --root <cwd>/fixtures/typescript_parse_error_unsupported_syntax/input --diff <cwd>/fixtures/typescript_parse_error_unsupported_syntax/diff.patch --mode fast --at probe:src_broken.ts:typescript_preview_unsupported_syntax:7027d4b0
-  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_broken.ts:typescript_preview_unsupported_syntax:7027d4b0 --root <cwd>/fixtures/typescript_parse_error_unsupported_syntax/input` for the full gate's answer
+  no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full

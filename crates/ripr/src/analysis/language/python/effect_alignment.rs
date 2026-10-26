@@ -18,6 +18,9 @@ use super::related_tests::{
 };
 use super::{PythonOwner, PythonTest};
 use crate::domain::OwnerKind;
+use rustpython_parser::text_size::TextRange;
+
+use std::rc::Rc;
 
 /// The side effect a changed line writes.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -63,15 +66,18 @@ impl ChangedEffect {
             .class_facts
             .direct_statements
             .iter()
-            .any(|statement| statement == line)
-            || guard_entered;
+            .any(|statement| statement == line);
+        // Guard entry (#9833) is proved for the method-call rows of a
+        // `self.attr` write; it does not widen a free function's module
+        // object write, which stays physically direct only.
+        let self_run = direct || guard_entered;
         if let Some(attr) = self_attribute_write(line)
             && matches!(owner.owner_kind, Some(OwnerKind::Method))
             // Only a statement written directly in the method body always
             // runs; a write under an `if`, `try` or loop may never run in
             // the test (#9421, #9782), so it reads no effect unless every
             // strong call provably enters the guard (#9833).
-            && direct
+            && self_run
         {
             return Some(Self::SelfField {
                 attr: attr.to_string(),
@@ -87,7 +93,7 @@ impl ChangedEffect {
             // Only a statement written directly in the method body always
             // runs; one under an `if`, `try` or loop may never run in the
             // test, so it reads no effect (unknown facts fail closed).
-            && direct
+            && self_run
         {
             return Some(Self::SelfField {
                 attr: attr.to_string(),
@@ -183,6 +189,9 @@ impl ChangedEffect {
 /// test, so each of its assertions is checked against it cheaply.
 #[derive(Debug, Default)]
 pub(super) struct EffectReads {
+    first_call_start: Option<usize>,
+    first_call_end: Option<usize>,
+    guarded_field: Option<(String, Rc<str>)>,
     operands: Vec<String>,
     mocked_calls: Vec<String>,
     /// The file line of the test's first owner call. A read on an earlier
@@ -192,9 +201,28 @@ pub(super) struct EffectReads {
 }
 
 impl EffectReads {
-    pub(super) fn of(effect: &ChangedEffect, test: &PythonTest, owner: &PythonOwner) -> Self {
+    pub(super) fn of(
+        effect: &ChangedEffect,
+        test: &PythonTest,
+        owner: &PythonOwner,
+        guard_entered: bool,
+    ) -> Self {
+        let calls = owner_calls(test, owner);
         let mut reads = Self {
-            first_call_line: owner_calls(test, owner)
+            first_call_start: calls.first().map(|(offset, _)| *offset),
+            first_call_end: calls
+                .iter()
+                .map(|(_, args)| {
+                    args.as_ptr().addr() - test.body_text.as_ptr().addr() + args.len() + 1
+                })
+                .min(),
+            guarded_field: match effect {
+                ChangedEffect::SelfField { attr } if guard_entered => {
+                    Some((attr.clone(), Rc::from(test.body_text.as_str())))
+                }
+                _ => None,
+            },
+            first_call_line: calls
                 .first()
                 .map(|(offset, _)| test.line + test.body_text[..*offset].matches('\n').count()),
             ..Self::default()
@@ -265,6 +293,8 @@ impl EffectReads {
                     } else {
                         entry.statement_offset
                     };
+                    reads.first_call_start = Some(offset);
+                    reads.first_call_end = Some(offset);
                     // An offset at the end of a body with no final newline is
                     // the last line itself, so the line after it is one more.
                     let unterminated =
@@ -284,27 +314,61 @@ impl EffectReads {
     /// observes the effect. It must run after an owner call: an assertion
     /// with no known line, or one above the first owner call, reads the
     /// channel before the changed effect could write it.
-    pub(super) fn observed_by(&self, assertion: &str, line: Option<usize>) -> bool {
+    pub(super) fn observed_by(
+        &self,
+        assertion: &str,
+        line: Option<usize>,
+        source_range: Option<TextRange>,
+        observations: &[(String, TextRange)],
+        helper_derived: bool,
+    ) -> bool {
         if self
             .first_call_line
             .zip(line)
-            .is_none_or(|(first_call, line)| line < first_call)
+            .is_none_or(|(call, line)| line < call)
         {
             return false;
         }
-        if !self.operands.is_empty() {
-            let compared = compared_operands(assertion);
-            if self
-                .operands
-                .iter()
-                .any(|operand| compared.contains(&operand.as_str()))
+        let (Some(range), Some(call_end)) = (source_range, self.first_call_end) else {
+            return false;
+        };
+        let before_assertion = call_end <= usize::from(range.start());
+        // A helper can capture a field in an argument before another argument
+        // calls the owner. Its synthesized comparison is not that call's read.
+        if helper_derived && !before_assertion && self.mocked_calls.is_empty() {
+            return false;
+        }
+        let compared = compared_operands(assertion);
+        for operand in &self.operands {
+            if !compared.contains(&operand.as_str()) {
+                continue;
+            }
+            let read = if helper_derived {
+                Some(usize::from(range.start()))
+            } else {
+                observations
+                    .iter()
+                    .filter(|(text, read)| text == operand && usize::from(read.start()) >= call_end)
+                    .map(|(_, read)| usize::from(read.start()))
+                    .min()
+            };
+            if let Some(read) = read
+                && self.guarded_field.as_ref().is_none_or(|(attr, source)| {
+                    self.first_call_start.is_some_and(|start| {
+                        super::guard_credit::field_retained_after(source, start, read, attr)
+                    })
+                })
             {
                 return true;
             }
         }
-        self.mocked_calls
-            .iter()
-            .any(|mocked| pins_mock_call(assertion, mocked))
+        // Mock inspection happens after its expected arguments are evaluated.
+        // An owner call inside those arguments can therefore precede it.
+        call_end <= usize::from(range.end())
+            && self
+                .mocked_calls
+                .iter()
+                .any(|mocked| pins_mock_call(assertion, mocked))
     }
 }
 

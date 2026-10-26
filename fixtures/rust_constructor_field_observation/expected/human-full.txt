@@ -38,6 +38,7 @@ Weakness
 
 Stop reasons:
   - propagation_evidence_unknown — ripr could not tell whether the changed value flows to something a test observes
+    Next: Assert on the value the change flows into (the return value or an observable field), not only on success.
 
 Next step
   Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown

@@ -1,0 +1,12 @@
+diff --git a/src/b_reassigned.rs b/src/b_reassigned.rs
+--- a/src/b_reassigned.rs
++++ b/src/b_reassigned.rs
+@@ -1,7 +1,7 @@
+ //! The changed binding is reassigned before the equality.
+ 
+ pub fn width_matches_reassigned(text: &str, width: usize) -> bool {
+-    let mut end = text.len();
++    let mut end = text.as_bytes().len();
+     end = end.min(width);
+     end == width
+ }

@@ -1,0 +1,45 @@
+{
+  "case_id": "py-unrun-swallow-else-read",
+  "subject_id": "authored-py-pytest-unrunnable",
+  "diff": "cases/py-unrun-swallow-else-read.diff",
+  "anchor": {
+    "file": "unrun/core.py",
+    "line": 30
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "returned_value",
+  "test_shape": "assert_in_else_of_swallowing_try",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return a + b",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests/test_swallow_else.py::test_swallow_else",
+        "equivalence_review": "not equivalent: 3 + 7 is 10, not 21"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "RIPR-SPEC-0238 rule 23: the else block still runs and pins 21.",
+  "labeling_observation": {
+    "ripr_commit": "0a6b07d5",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

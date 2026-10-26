@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- Python diff mode now analyzes up to 4000 workspace `.py` files by default (was 800), so a Django-sized workspace completes instead of returning `partial_with_limitations`. Per-file fact extraction and the cross-file write index now parse in parallel, and module constant checks reuse the existing parse; Django's full walk dropped from about 10 s to 5.5 s on 4 cores with identical findings (#10441).

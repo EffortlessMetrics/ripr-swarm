@@ -1,0 +1,45 @@
+{
+  "case_id": "py-props-name-outside-loop",
+  "subject_id": "authored-py-pytest-properties",
+  "diff": "cases/py-props-name-outside-loop.diff",
+  "anchor": {
+    "file": "props/core.py",
+    "line": 26
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "returned_value",
+  "test_shape": "pytest_expected_name_bound_outside_loop",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return a ** 2 * b",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests/test_props.py::test_scale_e",
+        "equivalence_review": "not equivalent: the owner returns a different value (an expected value bound outside a loop is independent and pins the returned value at a == 2)"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "RIPR-SPEC-0238 rule 25: an expected value bound outside a loop is independent and pins the returned value at a == 2.",
+  "labeling_observation": {
+    "ripr_commit": "cf7ea6d8",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

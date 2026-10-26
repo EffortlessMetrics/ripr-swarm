@@ -1,0 +1,44 @@
+{
+  "case_id": "py-conjuncts-not-exact",
+  "subject_id": "authored-py-pytest-conjuncts",
+  "diff": "cases/py-conjuncts-not-exact.diff",
+  "anchor": {
+    "file": "rates/core.py",
+    "line": 18
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "arithmetic_constant",
+  "test_shape": "pytest_not_exact_negation",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return x * 3 + 2",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the owner returns a different value (the negated comparison excludes only 31, so the edit to 32 is admitted)"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "RIPR-SPEC-0238 rule 15: the negated comparison excludes only 31, so the edit to 32 is admitted.",
+  "labeling_observation": {
+    "ripr_commit": "cee4169a",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -2888,6 +2888,20 @@ mod tests {
                 .iter()
                 .any(|line| line.contains("RIPR_TEST_SERVER_PATH = $env:RIPR_PACKAGED"))
         );
+        // The trusted editor journey must opt into the packaged-server handshake
+        // with the digest recorded at install time; otherwise the editor test
+        // host skips that test and the lane still passes (#10195).
+        assert!(lines.iter().any(|line| {
+            line.contains("RIPR_TEST_SERVER_PATH = $env:RIPR_PACKAGED")
+                && line.contains("RIPR_TEST_PACKAGED_SERVER_PATH = $env:RIPR_PACKAGED")
+                && line.contains("RIPR_TEST_PACKAGED_SERVER_SHA256 = $env:RIPR_PACKAGED_SHA256")
+                && line.contains("RIPR_TEST_WORKSPACE_TRUST = 'trusted'")
+        }));
+        assert!(
+            lines.iter().any(
+                |line| line.contains("\"RIPR_PACKAGED_SHA256=$binaryHash\" >> $env:GITHUB_ENV")
+            )
+        );
         assert!(
             lines
                 .iter()
