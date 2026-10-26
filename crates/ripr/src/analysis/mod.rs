@@ -967,6 +967,7 @@ impl LanguageRunStatus {
 
 #[derive(Clone, Debug)]
 pub struct AnalysisResult {
+    pub(crate) value_origins: crate::value_origins::ValueOrigins,
     /// Test-harness registry projections (#3532): what each exact
     /// registration established for this run — harness kind, provenance,
     /// subject identity, selector capability, and typed limitations.
@@ -1028,6 +1029,10 @@ pub struct AnalysisResult {
     pub(crate) rust_diagnostic_origins: crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
     /// Raw per-path Rust producer observations, separate from decoded geometry.
     pub(crate) rust_consumed_sources: crate::analysis::consumed_source::ConsumedRustSources,
+    /// Crate-private mixed-language completeness view of this run's sealed
+    /// aggregate (#6475). A sidecar for in-process consumers (the editor);
+    /// never serialized and not part of the public output contract.
+    pub(crate) language_view: Option<language_outcome::LanguageCompletenessView>,
 }
 
 /// Default language list when callers do not pass `[languages]` config.

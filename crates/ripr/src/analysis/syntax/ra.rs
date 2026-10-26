@@ -5,10 +5,15 @@ use ra_ap_syntax::{
     AstNode, SourceFile, TextSize,
     ast::{self, HasAttrs, HasGenericArgs, HasGenericParams, HasName},
 };
+mod closure_callbacks;
 #[cfg(test)]
 mod module_scope_walk_tests;
 mod probe_shapes;
 mod property_macros;
+pub(crate) use closure_callbacks::{
+    InvokedCallbackParam, closure_argument_positions, invoked_callback_params, macro_call_columns,
+    passes_call_making_closure,
+};
 use probe_shapes::extract_parser_probe_shapes;
 #[cfg(test)]
 mod probe_shape_walk_tests;
@@ -35,11 +40,11 @@ use super::{
     rust_nesting_refusal,
 };
 use crate::analysis::rust_index::{
-    FunctionFact, OracleFact, ProbeShapeFact, ProbeShapeKind, SourceText, TestFact,
-    classify_assertion_in, err_return_guard_oracles, extract_call_facts, extract_identifier_tokens,
-    extract_line_scanned_oracles, extract_literal_facts, extract_return_facts,
-    guarded_result_match_scan_with_shadow_authority, is_unwrap_err_bound_error_assertion,
-    unwrap_err_bound_variables,
+    FunctionFact, LazyDecls, OracleFact, ProbeShapeFact, ProbeShapeKind, SourceText, TestFact,
+    classify_assertion_with, err_return_guard_oracles, extract_call_facts,
+    extract_identifier_tokens, extract_line_scanned_oracles, extract_literal_facts,
+    extract_return_facts, guarded_result_match_scan_with_shadow_authority,
+    is_unwrap_err_bound_error_assertion, unwrap_err_bound_variables,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -148,8 +153,13 @@ fn parser_oracles_for_function_uncached(
         .find_map(ast::Fn::cast)?;
     let line_index = LineIndex::new(function_text);
     // The re-parse holds only this function, so no file scope is visible.
-    let mut oracles =
-        extract_parser_oracles(&function, function_text, &line_index, DropInScope::Unknown);
+    let mut oracles = extract_parser_oracles(
+        &function,
+        function_text,
+        &line_index,
+        DropInScope::Unknown,
+        &LazyDecls::new(function_text),
+    );
     let line_offset = function_start_line.saturating_sub(1);
     for oracle in &mut oracles {
         oracle.line += line_offset;
@@ -538,6 +548,9 @@ fn summarize_file_with_collectors(
 
     let source = parse.tree();
     let line_index = LineIndex::new(text);
+    // Built on the first assertion that needs it, then shared by the file:
+    // rebuilding per function masks the whole file again.
+    let file_decls = LazyDecls::new(text);
     // #5415 step 2: one allocation for the file; bodies and shape snippets
     // below share spans of it instead of copying substrings.
     let shared_source: Arc<str> = Arc::from(text);
@@ -648,6 +661,7 @@ fn summarize_file_with_collectors(
                     text,
                     &line_index,
                     DropInScope::WholeFile,
+                    &file_decls,
                 ),
                 literals,
                 attrs,
@@ -1152,6 +1166,9 @@ fn disambiguate_duplicate_symbol_ids(functions: &mut [FunctionFact]) {
 /// commented-out or string-embedded lookalikes never count.
 pub(crate) fn has_test_attribute(function: &ast::Fn) -> bool {
     function.attrs().any(|attr| {
+        if cfg_predicates::attribute_introduces_only_test(&attr.syntax().text().to_string()) {
+            return true;
+        }
         let compact = attr
             .syntax()
             .text()
@@ -2282,6 +2299,7 @@ fn extract_parser_oracles(
     text: &str,
     line_index: &LineIndex,
     drop_in_scope: DropInScope,
+    decls: &LazyDecls,
 ) -> Vec<OracleFact> {
     // RIPR-SPEC-0106 (Part A): pre-scan the function body for `unwrap_err`/
     // `expect_err` variable bindings so assertions on those variables can be
@@ -2309,7 +2327,7 @@ fn extract_parser_oracles(
         }
         let range = macro_call.syntax().text_range();
         let assertion_text = slice_macro_call_text(text, range.start(), range.end());
-        let mut classification = classify_assertion_in(&assertion_text, text);
+        let mut classification = classify_assertion_with(&assertion_text, decls.get());
         // Upgrade exact assertions on unwrap_err-bound variables to
         // ExactErrorVariant when the assertion pins a specific error result
         // (RIPR-SPEC-0106, Part A). Constructor-payload equality reaches this
@@ -2440,7 +2458,7 @@ fn extract_parser_oracles(
         // call split across lines). That grade is a ceiling: a weaker
         // reading of the compared value (a tautology, a broad `is_err()`)
         // is kept, as the line scan keeps it.
-        let classification = classify_assertion_in(&assertion_text, text);
+        let classification = classify_assertion_with(&assertion_text, decls.get());
         let (kind, strength) = if matches!(
             classification.strength,
             OracleStrength::Weak | OracleStrength::Smoke | OracleStrength::None
@@ -2933,6 +2951,40 @@ mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    /// #10363: the declaration table is built once per file, not once per
+    /// function or assertion, so a large test file stays linear.
+    #[test]
+    fn declaration_table_is_built_once_per_file_by_the_parser_adapter() -> Result<(), String> {
+        let mut source = String::from("enum Only { Value }\n");
+        for index in 0..40 {
+            let test = "#[test]\nfn tN() {\n    assert_eq!(N, N);\n    assert!(matches!(make(), Only::Value));\n}\n";
+            source.push_str(&test.replace('N', &index.to_string()));
+        }
+        let before = crate::analysis::extract::table_builds();
+        let facts = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), &source)?;
+        let builds = crate::analysis::extract::table_builds() - before;
+        if builds != 1 {
+            return Err(format!("40 tests built {builds} declaration tables"));
+        }
+        // The table must be the file's own: `Only` is a single-variant enum there,
+        // so the matches! assertion reads as a weak relational check.
+        let weak = facts.tests.iter().all(|test| {
+            test.assertions
+                .iter()
+                .any(|fact| fact.kind == crate::domain::OracleKind::RelationalCheck)
+        });
+        if !weak {
+            return Err("an assertion was not read against the file's own enum".to_string());
+        }
+        // A file with no assertion never needs a table.
+        let before = crate::analysis::extract::table_builds();
+        RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), "pub fn f() -> i32 { 1 }\n")?;
+        if crate::analysis::extract::table_builds() != before {
+            return Err("a file without assertions built a declaration table".to_string());
+        }
+        Ok(())
+    }
 
     /// #4558: where each `fn` sits, as a type-path call `T::name(` sees it.
     #[test]

@@ -16,7 +16,7 @@ Start here:
   Canonical gap: gap:rust:src/lib.rs:mean_latency:predicate_boundary:predicate:samples.len==0
   Changed behavior: samples.len() == 0
   Missing discriminator: samples.len() == 0
-  Related test (1 of 6 matched rows): src/lib.rs:43 average_of_nothing_is_zero (no call to the changed code found; linked by file location only)
+  Related test (1 of 6 matched rows): src/lib.rs:43 average_of_nothing_is_zero (no established call path to the changed code; linked by file location only)
   Next step: Add boundary tests for below, equal, and above the changed threshold with exact assertions
   Evidence: reach yes · infection weak · propagation yes · observation yes · discriminator missing
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
@@ -26,6 +26,9 @@ Start here:
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
       unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;
+      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;
+      candidate line = changed line ripr considers for probes
     - reach yes: Related tests appear to reach mean_latency: mean_lies_between_min_and_max
     - infection weak: Related tests contain input values, but the equality-boundary discriminator is missing
     - 19 more detail line(s) in --format human-full
@@ -33,7 +36,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_slice_table_zero_elements/input --diff <cwd>/fixtures/rust_slice_table_zero_elements/diff.patch --mode fast probe:src_lib.rs:predicate:2639b14d
   ripr context --root <cwd>/fixtures/rust_slice_table_zero_elements/input --diff <cwd>/fixtures/rust_slice_table_zero_elements/diff.patch --mode fast --at probe:src_lib.rs:predicate:2639b14d
-  no repair start offered: repair route not ready (missing evidence: producer-owned missing discriminator fact: boundary_value; incomplete evidence stage: activation); run `ripr repair probe:src_lib.rs:predicate:2639b14d --root <cwd>/fixtures/rust_slice_table_zero_elements/input` for the full gate's answer
+  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: producer-owned missing discriminator fact: boundary_value; incomplete evidence stage: activation; follow the Next step above, then rerun `ripr check`
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/rust_slice_table_zero_elements/input --at src/lib.rs:18 --kind predicate
 

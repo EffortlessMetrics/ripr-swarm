@@ -131,8 +131,14 @@ fn relation_of(
         .find(|owner| change.line >= owner.start_line && change.line <= owner.end_line)
         .ok_or("owner not extracted")?;
     let tests = extract_tests(Path::new(TEST_FILE), test_source);
-    let candidates =
-        related_test_candidates(owner, &tests, Some(&root), &ReExportIndex::empty(), None);
+    let candidates = related_test_candidates(
+        owner,
+        &tests,
+        Some(&root),
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
     let _ = std::fs::remove_dir_all(&root);
     candidates
         .iter()
@@ -279,18 +285,133 @@ fn mixed_rows_keep_their_own_miss() -> Result<(), String> {
     Ok(())
 }
 
-/// A strong assertion whose own input misses the boundary the owner pins.
-/// `missing_input` is withheld (its shared prose over-claims), so the row
-/// reports the unconfirmed observation.
+fn support_of(finding: &Finding, test: &str) -> Option<String> {
+    finding
+        .related_tests
+        .iter()
+        .find(|row| row.name == test)
+        .and_then(|row| row.miss_support.as_ref())
+        .map(|support| support.value.clone())
+}
+
+/// A strong assertion whose own closed-body input misses the boundary the
+/// owner pins carries `missing_input` (#10040), the row-owned fact the
+/// hedged TypeScript wording stands behind.
 #[test]
-fn strong_row_off_the_boundary_is_observation_unconfirmed() -> Result<(), String> {
+fn strong_row_off_the_boundary_is_missing_input() -> Result<(), String> {
     let source =
         format!("{IMPORT}test('below', () => {{\n  expect(applyDiscount(50)).toBe(50);\n}});\n");
     let finding = classify(&PREDICATE_CHANGE, &source)?;
     weakly(&finding);
     assert_eq!(
         miss_of(&finding, "below")?,
-        Some(RelatedTestMiss::ObservationUnconfirmed)
+        Some(RelatedTestMiss::MissingInput)
+    );
+    // The row carries the finding's boundary as its row-owned support.
+    let support = support_of(&finding, "below");
+    assert_eq!(support.as_deref(), Some("total == 100"));
+    Ok(())
+}
+
+/// `missing_input` (#10040) is claimed only from the closed-body fact. Each
+/// shape is the control with one construct that can reach the owner with
+/// another input, or that the fact cannot read; none may carry the miss.
+#[test]
+fn missing_input_is_withheld_for_every_unclosed_shape() -> Result<(), String> {
+    const CONTROL_BODY: &str =
+        "test('below', () => {\n  expect(applyDiscount(50)).toBe(50);\n});\n";
+    let control = classify(&PREDICATE_CHANGE, &format!("{IMPORT}{CONTROL_BODY}"))?;
+    weakly(&control);
+    assert_eq!(
+        miss_of(&control, "below")?,
+        Some(RelatedTestMiss::MissingInput)
+    );
+    // A control with an inert runner import still emits.
+    let finding = classify(
+        &PREDICATE_CHANGE,
+        &format!("{IMPORT}import {{ describe, expect, test }} from 'vitest';\n{CONTROL_BODY}"),
+    )?;
+    assert_eq!(
+        miss_of(&finding, "below")?,
+        Some(RelatedTestMiss::MissingInput),
+        "control with a runner import"
+    );
+    let cases: &[(&str, String)] = &[
+        (
+            "non-literal argument",
+            "test('below', () => {\n  expect(applyDiscount(Number('50'))).toBe(50);\n});\n".to_string(),
+        ),
+        (
+            "owner aliased to a local",
+            "test('below', () => {\n  const f = applyDiscount;\n  expect(f(50)).toBe(50);\n});\n".to_string(),
+        ),
+        (
+            "owner passed as a value",
+            "test('below', () => {\n  expect([50].map(applyDiscount)).toEqual([50]);\n});\n".to_string(),
+        ),
+        (
+            "owner called again at the boundary",
+            "test('below', () => {\n  expect(applyDiscount(50)).toBe(50);\n  applyDiscount(100);\n});\n".to_string(),
+        ),
+        (
+            "owner named outside test bodies",
+            "const alias = applyDiscount;\ntest('below', () => {\n  expect(applyDiscount(50)).toBe(50);\n});\n".to_string(),
+        ),
+        (
+            "owner called from a same-file helper",
+            "function helper() {\n  return applyDiscount(100);\n}\ntest('below', () => {\n  helper();\n  expect(applyDiscount(50)).toBe(50);\n});\n".to_string(),
+        ),
+        (
+            "unknown constant import",
+            "import { BOUND } from '../src/other';\ntest('below', () => {\n  expect(applyDiscount(BOUND)).toBe(50);\n});\n".to_string(),
+        ),
+        (
+            "owner module mocked",
+            "jest.mock('../src/pricing');\ntest('below', () => {\n  expect(applyDiscount(50)).toBe(50);\n});\n".to_string(),
+        ),
+        (
+            "table-driven owner call",
+            "test.each([[50], [100]])('below %i', (n) => {\n  expect(applyDiscount(n)).toBeDefined();\n});\n".to_string(),
+        ),
+    ];
+    for (label, body) in cases {
+        let finding = classify(&PREDICATE_CHANGE, &format!("{IMPORT}{body}"))?;
+        // Each shape must still produce a related row, so the check below
+        // cannot pass vacuously.
+        assert!(
+            !finding.related_tests.is_empty(),
+            "{label}: the shape produced no related row"
+        );
+        for row in &finding.related_tests {
+            assert_ne!(
+                row.miss,
+                Some(RelatedTestMiss::MissingInput),
+                "{label}: row {} rows {:?}",
+                row.name,
+                finding
+                    .related_tests
+                    .iter()
+                    .map(|r| (&r.name, r.miss))
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+    // A body that rebinds the owner name is not related at all: no row
+    // exists to carry the miss.
+    let rebound = classify(
+        &PREDICATE_CHANGE,
+        &format!(
+            "{IMPORT}test('below', () => {{\n  const applyDiscount = (n: number) => n;\n  expect(applyDiscount(50)).toBe(50);\n}});\n"
+        ),
+    )?;
+    assert!(
+        rebound.related_tests.is_empty(),
+        "rebound owner name: {:?}",
+        rebound
+            .related_tests
+            .iter()
+            .map(|r| (&r.name, r.miss))
+            .collect::<Vec<_>>()
     );
     Ok(())
 }
@@ -306,7 +427,7 @@ fn boundary_input_from_another_row_is_not_borrowed() -> Result<(), String> {
     weakly(&finding);
     assert_eq!(
         miss_of(&finding, "below")?,
-        Some(RelatedTestMiss::ObservationUnconfirmed)
+        Some(RelatedTestMiss::MissingInput)
     );
     assert_eq!(
         miss_of(&finding, "at boundary weak")?,
@@ -408,8 +529,14 @@ fn class_gate_withholds_every_row_miss() -> Result<(), String> {
         .find(|owner| owner.name == "applyDiscount")
         .ok_or("owner not extracted")?;
     let tests = extract_tests(Path::new(TEST_FILE), &source);
-    let candidates =
-        related_test_candidates(&owner, &tests, Some(&root), &ReExportIndex::empty(), None);
+    let candidates = related_test_candidates(
+        &owner,
+        &tests,
+        Some(&root),
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
     let _ = std::fs::remove_dir_all(&root);
     assert_eq!(candidates.len(), 1);
     let shape = classify_probe_shape_detail(RETURN_CHANGE.text);
@@ -431,6 +558,7 @@ fn class_gate_withholds_every_row_miss() -> Result<(), String> {
                     pin_facts: &pin_facts,
                     changed_field: None,
                 },
+                boundary_fact: None,
             },
             &candidates,
             &[TypeScriptPredicateActivation::NotApplicable],
@@ -446,6 +574,58 @@ fn class_gate_withholds_every_row_miss() -> Result<(), String> {
     assert_eq!(run(ExposureClass::Exposed, false), vec![None]);
     assert_eq!(run(ExposureClass::StaticUnknown, false), vec![None]);
     assert_eq!(run(ExposureClass::NoStaticPath, false), vec![None]);
+    Ok(())
+}
+
+/// A `missing_input` row whose finding has no boundary fact keeps its reason
+/// and carries no support: the renderer then words it without a value.
+#[test]
+fn missing_input_without_a_boundary_fact_carries_no_support() -> Result<(), String> {
+    let source =
+        format!("{IMPORT}test('below', () => {{\n  expect(applyDiscount(50)).toBe(50);\n}});\n");
+    let root = ts_unique_tempdir("row-miss-no-fact")?;
+    std::fs::create_dir_all(root.join("src")).map_err(|err| format!("mkdir: {err}"))?;
+    let owner = extract_owners(Path::new(OWNER_FILE), OWNER_SOURCE)
+        .into_iter()
+        .find(|owner| owner.name == "applyDiscount")
+        .ok_or("owner not extracted")?;
+    let tests = extract_tests(Path::new(TEST_FILE), &source);
+    let candidates = related_test_candidates(
+        &owner,
+        &tests,
+        Some(&root),
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    assert_eq!(candidates.len(), 1);
+    let shape = classify_probe_shape_detail(RETURN_CHANGE.text);
+    let mock_facts = MockCallFacts::read(RETURN_CHANGE.text, None, &owner.name, &owner.params);
+    let pin_facts = PinFacts::default();
+    let mut rows = related_tests_for_candidates(&candidates, Some(&shape.family));
+    assign_row_misses(
+        &TsRowMissContext {
+            class: &ExposureClass::WeaklyExposed,
+            static_limited: false,
+            probe_shape: &shape,
+            line_text: RETURN_CHANGE.text,
+            owner: &owner,
+            alias_map: None,
+            workspace_root: None,
+            credits: CreditFacts {
+                mock_facts: &mock_facts,
+                pin_facts: &pin_facts,
+                changed_field: None,
+            },
+            boundary_fact: None,
+        },
+        &candidates,
+        &[TypeScriptPredicateActivation::MissedBoundary],
+        &mut rows,
+    );
+    assert_eq!(rows[0].miss, Some(RelatedTestMiss::MissingInput));
+    assert!(rows[0].miss_support.is_none());
     Ok(())
 }
 
@@ -551,7 +731,7 @@ fn non_witness_predicate_row_is_observation_unconfirmed() -> Result<(), String> 
     Ok(())
 }
 
-/// The miss is non-decisional: no row is `is_unmatched`, and the decision
+/// The miss is non-decisional: no row is examined-only, and the decision
 /// readers (gap next step, witness) give the same answer with the misses
 /// stripped. Row order is the candidate order and is compared too.
 #[test]
@@ -575,7 +755,12 @@ fn stripping_the_miss_changes_no_decision_surface() -> Result<(), String> {
             "fixture must carry a miss: {:?}",
             finding.related_tests
         );
-        assert!(finding.related_tests.iter().all(|row| !row.is_unmatched()));
+        assert!(
+            finding
+                .related_tests
+                .iter()
+                .all(|row| row.is_contributing())
+        );
         let mut stripped = finding.clone();
         for row in &mut stripped.related_tests {
             row.miss = None;

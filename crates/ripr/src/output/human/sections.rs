@@ -187,10 +187,21 @@ pub(crate) fn render_finding_digest_with_config(
         } else {
             label.to_string()
         };
-        out.push_str(&format!(
-            "  {label}: {}\n",
-            trim_field_period(&one_line(missing))
-        ));
+        // #4323 parity: this prose names what is missing and why, and it ends
+        // with the operative classification — a hard `one_line` cut drops that
+        // tail silently (the old clipped card ended "but helper-derived…"
+        // with no pointer to the rest). Wrap like the next-step and
+        // not-credited lines instead of truncating; `--format human-full`
+        // keeps the same text in its Weakness section.
+        let value = trim_field_period(&missing.split_whitespace().collect::<Vec<_>>().join(" "))
+            .to_string();
+        let prefix = format!("  {label}: ");
+        if prefix.chars().count() + value.chars().count() <= LINE_BUDGET {
+            out.push_str(&format!("{prefix}{value}\n"));
+        } else {
+            out.push_str(&wrap_human_prose(&value, &prefix, "    "));
+            out.push('\n');
+        }
     }
     if let Some(test) = finding.related_tests.first() {
         // #4320: the digest shows only the first related-test row; carry the
@@ -207,12 +218,10 @@ pub(crate) fn render_finding_digest_with_config(
         };
         // #5344: say why the named test misses, so the reader can open it
         // and disagree without re-deriving the analysis.
-        let why = crate::output::related_test_miss::related_test_miss_reason(
-            test,
-            &finding.activation.missing_discriminators,
-        )
-        .map(|why| format!(" ({why})"))
-        .unwrap_or_default();
+        let why =
+            crate::output::related_test_miss::related_test_miss_reason(test, &finding.probe.family)
+                .map(|why| format!(" ({why})"))
+                .unwrap_or_default();
         out.push_str(&format!(
             "  {label}: {}:{} {}{why}\n",
             display_path(&test.file),
@@ -277,6 +286,9 @@ pub(crate) fn render_finding_digest_with_config(
             "      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused\n",
             "    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;\n",
             "      unrevealed = tests reach it but nothing appears to notice; no path = no test path found\n",
+            "      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;\n",
+            "      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;\n",
+            "      candidate line = changed line ripr considers for probes\n",
         ));
         for line in evidence.iter().take(2) {
             // #7756: list-item values carry no trailing period.
@@ -492,7 +504,7 @@ pub(crate) fn render_finding_with_config(
     root: &Path,
     wording: JsonPointerWording,
 ) -> String {
-    render_finding_with_shared_sections(finding, config, root, wording, None)
+    render_finding_with_shared_sections(finding, config, root, wording, None, None)
 }
 
 pub(super) fn render_finding_with_shared_sections(
@@ -501,6 +513,7 @@ pub(super) fn render_finding_with_shared_sections(
     root: &Path,
     wording: JsonPointerWording,
     shared: Option<&super::shared::SharedSections>,
+    files: Option<&[Option<std::path::PathBuf>]>,
 ) -> String {
     let mut out = String::new();
     let severity = display_severity(finding, config);
@@ -589,7 +602,7 @@ pub(super) fn render_finding_with_shared_sections(
     if let Some(shared) = shared {
         out.push_str(&shared.evidence);
     } else {
-        for line in evidence_path_lines(finding, wording) {
+        for line in super::evidence_lines::evidence_path_lines_with_files(finding, wording, files) {
             push_evidence_line(&mut out, &line);
         }
     }
@@ -612,6 +625,15 @@ pub(super) fn render_finding_with_shared_sections(
                 reason.as_str(),
                 reason.describe()
             ));
+            // A gap-evidence stop always rides a named static limitation, whose
+            // `Next:` line is specific; the generic stop-reason line would
+            // compete with it.
+            if *reason == crate::domain::StopReason::GapEvidenceUnresolved
+                && finding.static_limit_kind.is_some()
+            {
+                continue;
+            }
+            out.push_str(&format!("    Next: {}\n", reason.next_step()));
         }
     }
 
@@ -626,6 +648,7 @@ pub(super) fn render_finding_with_shared_sections(
             static_limit_kind.as_str(),
             static_limit_kind.describe_for_family(&finding.probe.family)
         ));
+        out.push_str(&format!("  Next: {}\n", static_limit_kind.next_step()));
     }
 
     // RIPR-SPEC-0115/0117: when a Rust reach limitation (on a no_static_path
@@ -1355,7 +1378,10 @@ fn classification_hint(
                 Some(format!(
                     "a related test asserts here, but ripr could not establish that the assertion runs and is {standard_macro}"
                 ))
-            } else if reveal.observe.state == StageState::No && !callee_only {
+            } else if reveal.observe.state == StageState::No
+                && !callee_only
+                && ripr.reach.state != StageState::Weak
+            {
                 Some(
                     "a related test reaches this change, but no assertion observes the changed behavior"
                         .to_string(),

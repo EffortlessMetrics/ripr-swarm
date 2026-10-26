@@ -12,6 +12,11 @@ on:
         required: false
         type: boolean
         default: false
+      runner_probe_only:
+        description: "Run only the native windows-advisory-run forced-deadline control (#9272); skip the full lanes"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -85,15 +90,20 @@ concurrency:
 jobs:
   windows-advisory:
     name: windows-advisory
-    if: (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'windows-ci') || contains(github.event.pull_request.labels.*.name, 'full-ci'))
+    if: ${{ !inputs.runner_probe_only && (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'windows-ci') || contains(github.event.pull_request.labels.*.name, 'full-ci')) }}
     runs-on: windows-latest
-    # Above the sum of the cargo step deadlines below (15+45+15+75+75), so the
+    # Above the sum of the cargo step deadlines below (15+45+15+15+75+75, including the runner build), so the
     # cargo steps alone cannot exhaust it. Checkout, toolchain, cache, summary
     # compilation and the manual isolation repeats have no deadline of their own.
     timeout-minutes: 270
 
     steps:
+      # Full history, like the Linux test lanes (ci, routed-rust, rust-gates):
+      # tests that resolve a default base against this checkout (pr-evidence,
+      # worktree check) otherwise refuse on a shallow clone (#10344).
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95
 
@@ -108,8 +118,9 @@ jobs:
       - name: Prepare locked JSON owner-return fixture dependencies
         run: cargo fetch --locked --manifest-path fixtures/owner_return_pin_json_real_literal/input/Cargo.toml
 
-      # Every cargo step below writes its log with a file redirect, not
-      # `| tee`. A pipe stays open until every process holding its write end
+      # The check steps below write their log with a file redirect, not
+      # `| tee`; the test steps do the same job through `windows-advisory-run`
+      # (see its comment), which also streams. A pipe stays open until every process holding its write end
       # exits, so one test that leaks a child (a failed test skipping its
       # cleanup) made `tee` wait for EOF after cargo had already finished.
       # The 2026-10-21 run (39549631529) printed cargo's final
@@ -131,12 +142,29 @@ jobs:
         run: |
           mkdir -p target; set +e; cargo check -p ripr --no-default-features --features lang-rust --all-targets > target/nofeatures-check.log 2>&1; printf '%s\n' "$?" > target/nofeatures-check.status; cat target/nofeatures-check.log; exit 0
 
+      # #9272/#9660: the three test steps run under `windows-advisory-run`, which
+      # streams output to this log, enforces its own deadline over the whole
+      # process tree, names tests libtest reports as running for over 60
+      # seconds, and ends descendants that keep the output pipe open. The hosted
+      # `timeout-minutes` below stay as a backstop above each runner deadline:
+      # jobs 119992784688 and 120026188944 ran for hours past a 75-minute
+      # step limit with no output, so the step limit alone does not bound them.
+      # The runner is copied out of `target/debug` first because `cargo test
+      # --workspace` rebuilds `xtask.exe`, and Windows will not overwrite an
+      # image that is running.
+      - name: Build advisory step runner
+        if: ${{ !cancelled() }}
+        timeout-minutes: 15
+        shell: bash
+        run: |
+          cargo build -p xtask && mkdir -p target/advisory-run && cp target/debug/xtask.exe target/advisory-run/xtask.exe
+
       - name: Test --no-default-features (advisory)
         if: ${{ !cancelled() }}
         timeout-minutes: 45
         shell: bash
         run: |
-          mkdir -p target; set +e; cargo test -p ripr --no-default-features --features lang-rust --no-fail-fast > target/nofeatures-test.log 2>&1; printf '%s\n' "$?" > target/nofeatures-test.status; cat target/nofeatures-test.log; exit 0
+          mkdir -p target; target/advisory-run/xtask.exe windows-advisory-run --timeout-minutes 40 --log target/nofeatures-test.log --status target/nofeatures-test.status -- cargo test -p ripr --no-default-features --features lang-rust --no-fail-fast || echo "windows-advisory-run failed ($?); the missing status is reported by the summarizer"; exit 0
 
       - name: Check --all-features (advisory)
         if: ${{ !cancelled() }}
@@ -157,7 +185,7 @@ jobs:
       # `--no-fail-fast` keeps cargo going after one target fails, so a routine
       # test failure no longer hides every later target — the masking this lane
       # exists to expose. The real cargo exit status is captured from
-      # `$?` into a file rather than inferred from log prose, which
+      # the runner (`$?` of the child) into a file rather than inferred from log prose, which
       # cannot distinguish a compile failure from a test failure reliably. The
       # step itself exits 0 because test outcomes are advisory.
       - name: Run workspace tests (advisory, run 1)
@@ -165,14 +193,14 @@ jobs:
         timeout-minutes: 75
         shell: bash
         run: |
-          mkdir -p target; set +e; cargo test --workspace --no-fail-fast > target/windows-run1.log 2>&1; printf '%s\n' "$?" > target/windows-run1.status; cat target/windows-run1.log; exit 0
+          mkdir -p target; target/advisory-run/xtask.exe windows-advisory-run --timeout-minutes 70 --log target/windows-run1.log --status target/windows-run1.status -- cargo test --workspace --no-fail-fast || echo "windows-advisory-run failed ($?); the missing status is reported by the summarizer"; exit 0
 
       - name: Run workspace tests (advisory, run 2)
         if: ${{ !cancelled() }}
         timeout-minutes: 75
         shell: bash
         run: |
-          mkdir -p target; set +e; cargo test --workspace --no-fail-fast > target/windows-run2.log 2>&1; printf '%s\n' "$?" > target/windows-run2.status; cat target/windows-run2.log; exit 0
+          mkdir -p target; target/advisory-run/xtask.exe windows-advisory-run --timeout-minutes 70 --log target/windows-run2.log --status target/windows-run2.status -- cargo test --workspace --no-fail-fast || echo "windows-advisory-run failed ($?); the missing status is reported by the summarizer"; exit 0
 
       - name: Summarize environment
         if: ${{ !cancelled() }}
@@ -332,7 +360,7 @@ jobs:
   # audit responsibility (docs/CI.md, Advisory Windows Lane).
   windows-advisory-subset:
     name: windows-advisory-subset
-    if: github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))
+    if: ${{ !inputs.runner_probe_only && (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) }}
     runs-on: windows-latest
     timeout-minutes: 45
     env:
@@ -1502,3 +1530,21 @@ jobs:
             target/subset-selector-literal.status
             target/selector-literal/
           if-no-files-found: ignore
+
+  # Native forced-deadline control for `windows-advisory-run` (#9272). The
+  # runner's deadline and leaked-descendant tests need `sh`, so they are
+  # Unix-only; this runs the Windows-native one on its own, without the
+  # two-hour workspace repeats.
+  windows-advisory-runner-probe:
+    name: windows-advisory-runner-probe
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.runner_probe_only && (github.event_name != 'pull_request' || (github.event.action == 'labeled' && github.event.label.name == 'merge-ready')) }}
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+
+      # No toolchain or cache action here: `rust-toolchain.toml` pins 1.95 and
+      # the workflow-pin tests count those actions per workflow.
+      - name: Native forced-deadline control
+        timeout-minutes: 30
+        run: cargo test -p xtask --bin xtask windows_native_deadline -- --nocapture

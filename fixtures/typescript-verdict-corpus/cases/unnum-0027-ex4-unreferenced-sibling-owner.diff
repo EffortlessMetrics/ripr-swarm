@@ -1,0 +1,12 @@
+diff --git a/src/pricing.ts b/src/pricing.ts
+--- a/src/pricing.ts
++++ b/src/pricing.ts
+@@ -6,7 +6,7 @@ export function discountedTotal(amount: number): number {
+ }
+ 
+ export function loyaltyPrice(amount: number, years: number): number {
+-  if (years >= 5) {
++  if (years >= 6) {
+     return amount - Math.floor(amount / 20);
+   }
+   return amount;

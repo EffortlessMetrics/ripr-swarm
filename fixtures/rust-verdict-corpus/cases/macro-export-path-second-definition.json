@@ -1,0 +1,54 @@
+{
+  "case_id": "macro-export-path-second-definition",
+  "subject_id": "authored-macro-modules",
+  "diff": "cases/macro-export-path-second-definition.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 25
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "table_row_far_inputs",
+  "hard_case": "The same exported-table shape, but another module of the test crate defines a private macro of the same name; ripr cannot tell which definition the path names, so it indexes nothing.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "limit > width",
+        "mutated_line": "limit > width",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: 5 against a limit of 5 no longer fits"
+      },
+      {
+        "replacement": "limit + 1 >= width",
+        "mutated_line": "limit + 1 >= width",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: 6 against a limit of 5 now fits"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "shadow_small(1, 5, true) and shadow_large(9, 5, false) read the same for every mutant, so every mutant passes. A second `shadowed_table` definition sits in tests/export_other/mod.rs; ripr cannot tell which definition `use crate::shadowed_table;` names and must not guess one, so the row stays limited rather than reading as a gap or a credit it cannot attribute. Spec cell: RIPR-SPEC-0117 example 10 (#10298).",
+  "labeling_observation": {
+    "ripr_commit": "96786dd2d + #10298 exported macro scope",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0117#10"
+  ]
+}

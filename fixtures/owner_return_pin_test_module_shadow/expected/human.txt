@@ -2,7 +2,7 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/owner_return_pin_test_module_shadow/input
 
-Summary: 1 probe (0 exposed, 1 weak, 0 unrevealed, 0 no path); 1 of 1 finding unsuppressed
+Summary: 1 probe (0 exposed, 0 weak, 1 unrevealed, 0 no path); 1 of 1 finding unsuppressed
 
 Analysis outcome: findings below (analysis complete)
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
@@ -11,16 +11,16 @@ Start here:
   State: a test gap to inspect or repair
   Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
   File: ./src/lib.rs:17
-  Static exposure: weak (severity: warning, confidence 0.66)
-  Why weak: a related test reaches this change but does not observe the exact changed value
+  Static exposure: unrevealed (severity: warning, confidence 0.66)
+  Why unrevealed: no test is seen calling this change
   Canonical gap: gap:rust:src/lib.rs:impl Clone for Window::clone:field_construction:field_construction:start_self.start
   Changed behavior: start: self.start
-  Missing discriminator (1 of 2): start: self.start
-  Related test: src/lib.rs:34 a_clone_equals_its_original (no assertion pins `start: self.start`)
+  Missing discriminator (1 of 4): start: self.start
+  Related test: src/lib.rs:34 a_clone_equals_its_original (no established call path to the changed code; linked by name only)
   Next step: The indexed related tests do not establish a call to the changed owner. Inspect
     existing tests, doctests and examples before changing assertions; they may already constrain the
     changed behavior. Add or strengthen a test only if that inspection finds a gap
-  Evidence: reach weak · infection yes · propagation yes · observation yes · discriminator weak
+  Evidence: reach weak · infection yes · propagation yes · observation no · discriminator no
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
       discriminator = assertion distinguishes intended from wrong behavior
@@ -28,6 +28,9 @@ Start here:
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
       unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;
+      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;
+      candidate line = changed line ripr considers for probes
     - reach weak: No test is seen calling clone; tests share only its file or a name token: a_clone_equals_its_original
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 5 more detail line(s) in --format human-full
@@ -35,7 +38,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/owner_return_pin_test_module_shadow/input --diff <cwd>/fixtures/owner_return_pin_test_module_shadow/diff.patch --mode fast probe:src_lib.rs:field_construction:721bb1ba
   ripr context --root <cwd>/fixtures/owner_return_pin_test_module_shadow/input --diff <cwd>/fixtures/owner_return_pin_test_module_shadow/diff.patch --mode fast --at probe:src_lib.rs:field_construction:721bb1ba
-  no repair start offered: repair route not ready (missing evidence: producer-owned missing discriminator fact: field_value); run `ripr repair probe:src_lib.rs:field_construction:721bb1ba --root <cwd>/fixtures/owner_return_pin_test_module_shadow/input` for the full gate's answer
+  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: producer-owned missing discriminator fact: field_value; follow the Next step above, then rerun `ripr check`
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/owner_return_pin_test_module_shadow/input --at src/lib.rs:17 --kind field_construction
 

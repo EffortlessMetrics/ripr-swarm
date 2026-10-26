@@ -1,0 +1,22 @@
+{
+  "case_id": "py-caplog-absence-text-still-absent",
+  "subject_id": "authored-py-pytest-caplog-absence",
+  "origin": "authored",
+  "anchor": "absence/audit.py:36",
+  "behavior_family": "output_text",
+  "test_shape": "pytest_caplog_text_absence_unreached",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

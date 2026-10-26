@@ -1,0 +1,45 @@
+{
+  "case_id": "method-hop-multi-caller-both-reached",
+  "subject_id": "authored-method-hop",
+  "diff": "cases/method-hop-multi-caller-both-reached.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 136
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "exact_pin_assert",
+  "hard_case": "One helper call reaches the owner through two different methods, so the tests' own call path to the owner is ambiguous.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "bytes <= unit",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests::twin_formats_one_binary_unit",
+        "equivalence_review": "the edit itself: exactly one unit formats as the raw byte count instead of one unit"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "`check_twin` asserts both `size.twin_a(si)` and `size.twin_b(si)`, and both methods call `twin`. A single helper call reaches two callers of the owner, so no one caller carries the row; ripr must decline the chain and abstain, never pick one. 1 of 1 listed mutants fails cargo test; the extra mutant `bytes > unit`, run by hand, fails it too. Spec cells: RIPR-SPEC-0158, RIPR-SPEC-0159.",
+  "labeling_observation": {
+    "ripr_commit": "581975f",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "infection_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

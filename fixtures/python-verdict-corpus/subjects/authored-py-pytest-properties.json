@@ -1,0 +1,29 @@
+{
+  "subject_id": "authored-py-pytest-properties",
+  "origin": "authored",
+  "version_label": "authored@b6491843",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "props/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "props/core.py",
+      "sha256": "c7a562c07f20f3d99a6114e239dd2b4efb51fb9a2e2437442287e0a072a88b88"
+    },
+    {
+      "path": "pyproject.toml",
+      "sha256": "ec31ac8b934b2a2cf5b74f83a5323fdfc3f27582de7c48e57d7a964c9ff8bbe8"
+    },
+    {
+      "path": "tests/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tests/test_props.py",
+      "sha256": "af915c6e119ec5d3e01e3bb996bf5cd5b5ad82228a3d36b3dd2315d7bd48ca4a"
+    }
+  ]
+}

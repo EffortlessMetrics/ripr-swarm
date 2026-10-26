@@ -1,0 +1,151 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/python_caplog_alias_in_literal/input",
+  "config_path": "<cwd>/fixtures/python_caplog_alias_in_literal/input/ripr.toml",
+  "summary": {"changed_rust_files":0,"probes":1,"findings":1,"exposed":0,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"python","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:22d926b58d6300e8","base_revision":null,"input_identity":"sha256:b95192dd64a8b598892508c0f90e23dcea63b6030b3b8ec99135a84340a3d422","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:audit.py:python_preview:a2e6d4a7",
+      "canonical_gap_id": "gap:python:audit.py:check_balance:call_or_output_effect:side_effect:log.warning_msgs_5",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:python:audit.py:check_balance:call_or_output_effect:side_effect:log.warning_msgs_5",
+        "language": "python",
+        "file": "audit.py",
+        "owner": "check_balance",
+        "behavior_kind": "call_or_output_effect",
+        "probe_kind": "side_effect",
+        "normalized_discriminator": "log.warning_msgs_5"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.40,
+      "probe": {
+        "id": "probe:audit.py:python_preview:a2e6d4a7",
+        "family": "side_effect",
+        "delta": "effect",
+        "file": "audit.py",
+        "line": 8,
+        "expression": "        log.warning(\"msgs: 5\")",
+        "owner": "python:audit.py::check_balance"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"low","summary":"1 related Python test(s) found for owner `check_balance`"},
+        "infect": {"state":"yes","confidence":"low","summary":"Changed Python call or output effect can alter observable side effects: `log.warning(\"msgs: 5\")`"},
+        "propagate": {"state":"weak","confidence":"low","summary":"Changed Python call/output behavior can propagate through side effects; runtime target resolution is not inferred."},
+        "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted Python oracle kind: `relational_check` (rank 3)"},
+        "discriminate": {"state":"weak","confidence":"low","summary":"Python preview adapter found no strong discriminator; missing proof: `call includes \"msgs: 5\"`."}
+       },
+      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `check_balance`", "infection yes: Changed Python call or output effect can alter observable side effects: `log.warning(\"msgs: 5\")`", "propagation weak: Changed Python call/output behavior can propagate through side effects; runtime target resolution is not inferred.", "observation weak: Strongest extracted Python oracle kind: `relational_check` (rank 3)", "discriminator weak: Python preview adapter found no strong discriminator; missing proof: `call includes \"msgs: 5\"`.", "local flow reaches call effect: log.warning(\"msgs: 5\") (line 8)", "related test tests/test_audit.py:6 test_low_balance uses weak relational check oracle: assert \"msgs: 5\" in msgs", "missing discriminator call includes \"msgs: 5\": changed Python output/log/call effect at line 8 lacks a concrete repair discriminator"],
+      "flow_sinks": [
+        {"kind":"call_effect","text":"log.warning(\"msgs: 5\")","line":8}
+      ],
+      "evidence": ["owner: check_balance", "owner_kind: function", "missing_discriminator: call includes \"msgs: 5\"", "suggested_repair_action: strengthen_existing_test", "suggested_test_file: tests/test_audit.py", "suggested_test_name: test_low_balance", "suggested_test_node_id: tests/test_audit.py::test_low_balance", "suggested_verify_command: python -m pytest tests/test_audit.py::test_low_balance", "suggested_verify_command_confidence: high", "suggested_test_location_reason: strengthen existing weak pytest relation", "test_framework: pytest (test_low_balance)", "test_fixtures: caplog (test_low_balance)", "test_verify_command: python -m pytest tests/test_audit.py::test_low_balance (test_low_balance)", "related_test_relation: syntactic_call (test_low_balance)", "test_oracle: relational_check weak (test_low_balance)", "test_oracle_shape: boundary_assertion (test_low_balance)"],
+      "missing": ["Related Python test reaches `check_balance` but the strongest extracted oracle is `relational_check`; add or strengthen a focused assertion for the changed output/log/call effect."],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+          {
+            "value": "call includes \"msgs: 5\"",
+            "reason": "changed Python output/log/call effect at line 8 lacks a concrete repair discriminator",
+            "flow_sink": {"kind":"call_effect","text":"log.warning(\"msgs: 5\")","line":8}
+          }
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+        {
+          "value": "call includes \"msgs: 5\"",
+          "reason": "changed Python output/log/call effect at line 8 lacks a concrete repair discriminator",
+          "flow_sink": {"kind":"call_effect","text":"log.warning(\"msgs: 5\")","line":8}
+        }
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "test_low_balance",
+          "file": "tests/test_audit.py",
+          "line": 6,
+          "oracle_strength": "weak",
+          "oracle_kind": "relational_check",
+          "oracle": "assert \"msgs: 5\" in msgs",
+          "miss": "weak_assertion",
+          "why": "assertion too weak to tell the old behavior from the new"
+        }
+      ],
+      "repair_placement": {
+        "suggested_test_file": "tests/test_audit.py",
+        "suggested_test_name": "test_low_balance",
+        "suggested_test_node_id": "tests/test_audit.py::test_low_balance",
+        "verify_command": "python -m pytest tests/test_audit.py::test_low_balance",
+        "verify_command_confidence": "high"
+       },
+      "python_repair_card": {
+        "card_version": "python_repair_card.v1",
+        "source": "check_python_preview",
+        "canonical_gap_id": "gap:python:audit.py:check_balance:call_or_output_effect:side_effect:log.warning_msgs_5",
+        "language": "python",
+        "language_status": "preview",
+        "authority_boundary": "preview_advisory_only",
+        "repair_action": "strengthen_existing_test",
+        "changed_owner": "check_balance",
+        "changed_behavior": "call_or_output_effect changed at audit.py:8: `log.warning(\"msgs: 5\")`",
+        "current_test_evidence": "tests/test_audit.py:6 test_low_balance currently has oracle_strength=weak, oracle_kind=relational_check: assert \"msgs: 5\" in msgs",
+        "missing_discriminator": "call includes \"msgs: 5\"",
+        "recommended_test_shape": "Strengthen the existing pytest output/log/call-effect assertion for `call includes \"msgs: 5\"`.",
+        "suggested_assertion": "Assert the changed output, log text, or call effect for `call includes \"msgs: 5\"`.",
+        "suggested_location": {
+          "test_file": "tests/test_audit.py",
+          "test_name": "test_low_balance",
+          "pytest_node_id": "tests/test_audit.py::test_low_balance"
+         },
+        "verify": {
+          "command": "python -m pytest tests/test_audit.py::test_low_balance",
+          "confidence": "high"
+         },
+        "receipt": {
+          "command": null,
+          "status": "unavailable_until_python_gap_ledger",
+          "guidance": "Save this `ripr check --format json` report, then run `ripr first-pr --check-output <check.json>` or `ripr reports gap-ledger --check-output <check.json>` to materialize a gap ledger with a concrete receipt command."
+         },
+        "stop_conditions": ["Stop if imports, fixtures, or test setup cannot call the changed owner.", "Stop if the expected value for the missing discriminator is ambiguous.", "Stop if adding the test appears to require a production-code edit."],
+        "limits": ["Syntax-first Python preview evidence only.", "No source edits, generated tests, mutation execution, provider calls, or gate authority.", "Verify success alone is not a gap-closure receipt."]
+       },
+      "stop_reasons": [],
+      "oracle_kind": "relational_check",
+      "oracle_strength": "weak",
+      "recommended_next_step": "Python preview: strengthen the existing related test with an output/log/call-effect assertion for missing discriminator `call includes \"msgs: 5\"`.",
+      "suggested_next_action": "Python preview: strengthen the existing related test with an output/log/call-effect assertion for missing discriminator `call includes \"msgs: 5\"`.",
+      "language": "python",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "changed_sink": "log, warning, msgs, msgs: 5",
+      "oracle_alignment": "unknown",
+      "alignment_reason": "no_strong_oracle",
+      "source_currentness": "candidate_current"
+    }
+  ],
+  "preview_languages": [
+    {
+      "language": "python",
+      "file_count": 1,
+      "sample_paths": ["audit.py"],
+      "enabled": true,
+      "analyzed": true,
+      "category": "preview_language_advisory",
+      "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+    }
+  ],
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"audit.py","digest":"sha256:76823a4eaed7824d054937ee73e12104ef4221d9862ea813e0d943d67d39e870"},{"path":"tests/test_audit.py","digest":"sha256:425315eed19c67b68e87846d5539fd09946c48687cce5df00c3032e0d459c4b1"}]}
+}

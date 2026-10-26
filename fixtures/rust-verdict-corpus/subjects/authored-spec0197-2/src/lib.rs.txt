@@ -1,0 +1,39 @@
+//! The same trait default, tested only through its Err exit.
+
+#[derive(Debug, PartialEq)]
+pub struct TryGetError;
+
+fn sign_extend(value: u64, nbytes: usize) -> i64 {
+    let shift = 64 - 8 * nbytes as u32;
+    ((value << shift) as i64) >> shift
+}
+
+pub trait Buf {
+    fn try_get_uint(&mut self, nbytes: usize) -> Result<u64, TryGetError>;
+
+    fn try_get_int(&mut self, nbytes: usize) -> Result<i64, TryGetError> {
+        Ok(sign_extend(self.try_get_uint(nbytes)?, nbytes))
+    }
+}
+
+impl Buf for &[u8] {
+    fn try_get_uint(&mut self, nbytes: usize) -> Result<u64, TryGetError> {
+        if self.len() < nbytes {
+            return Err(TryGetError);
+        }
+        let (head, rest) = self.split_at(nbytes);
+        *self = rest;
+        Ok(head.iter().fold(0u64, |acc, byte| (acc << 8) | *byte as u64))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn short_input_is_refused() {
+        let mut short = &[0x01, 0x02][..];
+        assert_eq!(short.try_get_int(4), Err(TryGetError));
+    }
+}

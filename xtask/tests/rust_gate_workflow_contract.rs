@@ -13,7 +13,6 @@ const REQUIRED_GATES: &[(&str, &str)] = &[
     ("dependencies", "cargo xtask check-dependencies"),
     ("process_policy", "cargo xtask check-process-policy"),
     ("network_policy", "cargo xtask check-network-policy"),
-    ("workspace_check", "cargo check --workspace --all-targets"),
     (
         "all_features_check",
         "cargo check -p ripr --all-targets --all-features",
@@ -22,9 +21,16 @@ const REQUIRED_GATES: &[(&str, &str)] = &[
         "clippy",
         "cargo clippy --workspace --all-targets -- -D warnings",
     ),
-    ("rust-tests", "cargo nextest run --workspace --profile ci"),
     ("goldens", "cargo xtask goldens check"),
     ("fixtures", "cargo xtask fixtures"),
+    (
+        "capability_producers",
+        "cargo xtask check-capability-producers",
+    ),
+    ("capability_docs", "cargo xtask capability-docs --check"),
+    ("verdict_corpus", "cargo xtask verdict-corpus check-all"),
+    // After the fast gates so main-side drift fails within minutes (#10341).
+    ("rust-tests", "cargo nextest run --workspace --profile ci"),
 ];
 
 fn step_id(block: &str) -> Option<&str> {
@@ -163,6 +169,29 @@ fn rust_gate_workflow_rejects_policy_after_workspace_tests() {
             .iter()
             .any(|finding| finding.ends_with("gate order changed"))
     );
+}
+
+#[test]
+fn rust_gate_workflow_pins_fast_gates_before_workspace_tests() {
+    for id in [
+        "goldens",
+        "fixtures",
+        "capability_producers",
+        "capability_docs",
+        "verdict_corpus",
+    ] {
+        let changed = WORKFLOW
+            .replace(&format!("        id: {id}"), "        id: swap")
+            .replace("        id: rust-tests", &format!("        id: {id}"))
+            .replace("        id: swap", "        id: rust-tests");
+        let findings = contract_violations(&changed);
+        assert!(
+            findings
+                .iter()
+                .any(|finding| finding.ends_with("gate order changed")),
+            "{id} placed after the workspace tests was not rejected: {findings:?}"
+        );
+    }
 }
 
 #[test]

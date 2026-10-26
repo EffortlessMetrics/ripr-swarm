@@ -12,6 +12,7 @@ use crate::output::agent_seam_packets::{
 };
 use crate::output::evidence_record::repair_start_command_for;
 use crate::output::first_useful_action::DEFAULT_FIRST_USEFUL_ACTION_OUT;
+use crate::output::human::plain_observation_wording;
 use crate::output::preview_actionability::{PreviewActionability, preview_actionability_for};
 use crate::output::typescript_packet_projection::typescript_gap_record_for;
 use serde_json::Value;
@@ -628,7 +629,7 @@ fn finding_hover_markdown(diagnostic: &Diagnostic, finding: &Finding) -> String 
             // listing a `none` oracle grade.
             let why = crate::output::related_test_miss::related_test_miss_reason(
                 test,
-                &finding.activation.missing_discriminators,
+                &finding.probe.family,
             );
             // #5927: only an unmatched row uses the `misses/checked` form, as
             // in human output; a matched row keeps its oracle kind and
@@ -637,7 +638,7 @@ fn finding_hover_markdown(diagnostic: &Diagnostic, finding: &Finding) -> String 
             // reason, so hover never grades an oracle that does not exist.
             let label = crate::output::related_test_miss::related_test_miss_label(test);
             let oracle_text = match (&why, &test.oracle) {
-                (Some(why), Some(oracle)) if test.is_unmatched() => format!(
+                (Some(why), Some(oracle)) if test.is_examined_only() => format!(
                     " {label}: {why}; checked `{}`",
                     crate::output::related_test_miss::checked_assertion_text(oracle)
                 ),
@@ -674,7 +675,7 @@ fn finding_hover_markdown(diagnostic: &Diagnostic, finding: &Finding) -> String 
         lines.push(String::new());
         lines.push("## Weakness".to_string());
         for item in &finding.missing {
-            lines.push(format!("- {item}"));
+            lines.push(format!("- {}", plain_observation_wording(item)));
         }
     }
 
@@ -718,7 +719,8 @@ fn push_diagnostic_witness(lines: &mut Vec<String>, witness: &DiagnosticWitness)
     for missing in &witness.missing_discriminators {
         lines.push(format!(
             "- missing discriminator: `{}` — {}",
-            missing.value, missing.reason
+            missing.value,
+            plain_observation_wording(&missing.reason)
         ));
     }
     if let Some(fix_site) = &witness.fix_site {
@@ -880,8 +882,15 @@ fn push_missing_actionability_fields(
     ));
 }
 
+/// #9929: the hover is prose for a person, so the producer's machine marker
+/// `observation_unverified` is spelled in words here; the structured stage
+/// summary (JSON, diagnostic `data`) keeps the machine value.
 fn stage_line(name: &str, stage: &StageEvidence) -> String {
-    format!("* {name} {}: {}", stage.state.as_str(), stage.summary)
+    format!(
+        "* {name} {}: {}",
+        stage.state.as_str(),
+        plain_observation_wording(&stage.summary)
+    )
 }
 
 /// The producer's `discriminate` stage grades the strongest related oracle.
@@ -905,13 +914,13 @@ fn discriminator_stage_line(finding: &Finding) -> String {
         format!(
             "* discriminator not established ({}); related oracle: {}",
             finding.class.as_str(),
-            stage.summary
+            plain_observation_wording(&stage.summary)
         )
     } else {
         format!(
             "* discriminator missing: {}; related oracle: {}",
             missing.join(", "),
-            stage.summary
+            plain_observation_wording(&stage.summary)
         )
     }
 }
@@ -991,7 +1000,11 @@ fn classified_seam_hover_markdown(
         lines.push(String::new());
         lines.push("## Missing discriminator".to_string());
         for missing in &evidence.missing_discriminators {
-            lines.push(format!("- `{}` — {}", missing.value, missing.reason));
+            lines.push(format!(
+                "- `{}` — {}",
+                missing.value,
+                plain_observation_wording(&missing.reason)
+            ));
         }
     }
 
@@ -1319,7 +1332,7 @@ fn normalize_path(path: &Path) -> String {
 }
 
 fn seam_stage_line(name: &str, stage: &StageEvidence) -> String {
-    format!("* {name} {}: {}", stage.state.as_str(), stage.summary)
+    stage_line(name, stage)
 }
 
 fn push_classification_explanation(
@@ -1342,7 +1355,10 @@ fn push_classification_explanation(
     for (name, stage) in stages {
         if stage.state == StageState::Yes {
             has_strong_evidence = true;
-            lines.push(format!("- {name} yes: {}", stage.summary));
+            lines.push(format!(
+                "- {name} yes: {}",
+                plain_observation_wording(&stage.summary)
+            ));
         }
     }
     if !has_strong_evidence {
@@ -1358,7 +1374,7 @@ fn push_classification_explanation(
             lines.push(format!(
                 "- {name} {}: {}",
                 stage.state.as_str(),
-                stage.summary
+                plain_observation_wording(&stage.summary)
             ));
         }
     }
@@ -1366,7 +1382,8 @@ fn push_classification_explanation(
         has_gap_evidence = true;
         lines.push(format!(
             "- missing discriminator `{}`: {}",
-            missing.value, missing.reason
+            missing.value,
+            plain_observation_wording(&missing.reason)
         ));
     }
     if !has_gap_evidence {
@@ -1493,13 +1510,15 @@ mod seam_hover_tests {
             propagate: stage(StageState::Yes, "Seam flows to return_value"),
             observe: stage(StageState::Yes, "Exact value assertion exists"),
             discriminate: stage(StageState::Weak, "Equality boundary missing"),
-            observed_values: vec![ValueFact {
-                file: None,
-                line: 12,
-                text: "discounted_total(50, 100)".to_string(),
-                value: "50".to_string(),
-                context: ValueContext::FunctionArgument,
-            }],
+            observed_values: vec![
+                ValueFact {
+                    line: 12,
+                    text: "discounted_total(50, 100)".to_string(),
+                    value: "50".to_string(),
+                    context: ValueContext::FunctionArgument,
+                }
+                .into(),
+            ],
             missing_discriminators: vec![MissingDiscriminatorFact {
                 value: "discount_threshold (equality boundary)".to_string(),
                 reason: "observed values do not include the equality-boundary case".to_string(),
@@ -1626,6 +1645,7 @@ mod seam_hover_tests {
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: super::super::state::UnavailableAdapterCoverage::default(),
+            language_view: None,
         }
     }
 
@@ -1888,6 +1908,52 @@ mod seam_hover_tests {
             HoverContents::Markup(content) => Ok(content.value.as_str()),
             other => Err(format!("expected MarkupContent, got {other:?}")),
         }
+    }
+
+    // #9929: the seam hover's Strong/Weak evidence lists, evidence stage lines
+    // and missing-discriminator reasons spell the producer marker in words;
+    // embedded source text with the token is left alone.
+    #[test]
+    fn seam_hover_spells_the_unconfirmed_observation_in_words() -> Result<(), String> {
+        let mut seam = weakly_gripped_classified();
+        seam.evidence.observe = stage(
+            StageState::Yes,
+            "assertion reads the value (observation_unverified)",
+        );
+        seam.evidence.discriminate = stage(
+            StageState::Weak,
+            "changed value never named (observation_unverified)",
+        );
+        seam.evidence.missing_discriminators = vec![
+            MissingDiscriminatorFact {
+                value: "a".to_string(),
+                reason: "input unexecuted (observation_unverified)".to_string(),
+                flow_sink: None,
+            },
+            MissingDiscriminatorFact {
+                value: "b".to_string(),
+                reason: "missing proof: `raise ValueError(\"observation_unverified\")`."
+                    .to_string(),
+                flow_sink: None,
+            },
+        ];
+        let hover = classified_seam_hover_response(&seam, &sample_diagnostic(), None);
+        let md = extract_markup(&hover)?;
+        if md.contains("(observation_unverified)") {
+            return Err(format!("seam hover kept the producer marker:\n{md}"));
+        }
+        for needle in [
+            "- observation yes: assertion reads the value\n",
+            "- discrimination weak: changed value never named\n",
+            "* observation yes: assertion reads the value\n",
+            "- missing discriminator `a`: input unexecuted\n",
+            "`raise ValueError(\"observation_unverified\")`.",
+        ] {
+            if !md.contains(needle) {
+                return Err(format!("missing {needle:?} in:\n{md}"));
+            }
+        }
+        Ok(())
     }
 
     #[test]

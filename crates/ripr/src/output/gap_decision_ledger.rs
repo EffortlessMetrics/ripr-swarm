@@ -454,7 +454,7 @@ pub(crate) fn build_gap_decision_ledger_report(
             // #5203: propagate the producer's run-state disclosure (for
             // example `limited_findings_bound`) so a ledger built from a
             // bounded check document stays visibly bounded. Without this the
-            // gate would evaluate the rendered prefix as a complete
+            // gate would evaluate the rendered subset as a complete
             // denominator. Any source kind may carry the entry; only
             // presence propagates.
             run_limitations = source_value
@@ -692,8 +692,7 @@ pub(crate) fn check_output_subject_paths(
     contents: &str,
     root: &Path,
 ) -> Result<BTreeSet<String>, String> {
-    let mut records = gap_records_from_check_output_json(contents)?;
-    attach_check_output_preview_receipt_routes(&mut records, &root.to_string_lossy());
+    let records = check_output_gap_records(contents, &root.to_string_lossy())?;
     let mut paths = BTreeSet::new();
     for record in &records {
         paths.extend(gap_source_subject::gap_record_subject_paths(
@@ -702,6 +701,18 @@ pub(crate) fn check_output_subject_paths(
         ));
     }
     Ok(paths)
+}
+
+/// The gap records a `ripr check` JSON document projects, with the preview
+/// receipt and regeneration routes attached for `root`: the records
+/// `ripr reports gap-ledger --check-output` would write for that document.
+pub(crate) fn check_output_gap_records(
+    contents: &str,
+    root: &str,
+) -> Result<Vec<GapRecord>, String> {
+    let mut records = gap_records_from_check_output_json(contents)?;
+    attach_check_output_preview_receipt_routes(&mut records, root);
+    Ok(records)
 }
 
 fn gap_record_json_value(record: &GapRecord) -> Result<Value, String> {
@@ -4908,7 +4919,17 @@ mod tests {
         // #9185: `python_message_pin_no_exposed_credit` downgrades a message-only
         // `raise` edit under a pattern that fits both messages to `weakly_exposed`
         // (RIPR-SPEC-0238); the card is direct-aligned.
-        if (direct, no_strong, orthogonal, family_selection) != (10, 26, 14, 1) {
+        // #9868: fourteen guarded self-field negative fixtures carry an
+        // orthogonal card and stay packet-ineligible; the entering/read-only
+        // positives are exposed and carry no card. Preserve the literal inventory.
+        // #10184 / #10289: a dynamic-namespace fixture's module-object write is a
+        // `mocked_module` static limit, not a weak finding, so it carries no
+        // card that would assert on the stale imported object. Its unresolved
+        // constant has no repair target and contributes no card either.
+        // #10151: `python_caplog_alias_in_literal` keeps a captured-log alias
+        // spelled inside the asserted literal a weak gap (RIPR-SPEC-0238 rule
+        // 22), which carries one no-strong-oracle card.
+        if (direct, no_strong, orthogonal, family_selection) != (10, 27, 28, 1) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));

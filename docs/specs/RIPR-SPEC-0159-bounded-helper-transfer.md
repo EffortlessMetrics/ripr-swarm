@@ -274,15 +274,148 @@ can only hint that a caller "may lead here" without changing anything.
   as `<lib>::entry(..)` with no `use`, where `<lib>` is the root manifest's
   `[lib] name`, else its package name with hyphens folded to underscores
   (the package name is not a second spelling when `[lib] name` differs; a
-  moved `[lib] path` admits nothing). It is refused for a longer path,
-  another crate name, a test file that declares any item, `let`, closure
-  or typed parameter named like the crate, aliases anything to that name
-  (`use x as <lib>`), imports a path ending in it (raw `r#` spellings
-  included), or has any glob import or `include!`; a unit test inside
-  `src/`; a test module child (only `tests/<name>.rs` and
-  `tests/<name>/main.rs` roots qualify); a call spelled only in a string
-  or comment on the line; a workspace member's entry; a
-  `src/main.rs` entry, and an entry inside an inline `mod`. The edge
+  moved `[lib] path` admits nothing). The entry may also sit in a
+  `src/` file module or inline module composed under that library, spelled
+  with its exact module path (`<lib>::inner::entry(..)`; a segment that is
+  not the entry's module path, `crate::`/`self::`/bare `inner::` forms and
+  a `use <lib>::inner;` module import are refused), only when no file of
+  the package carries a `#[path]` attribute and no binary root also
+  declares the module. A module-qualified entry is also refused when any
+  `src/` file of the package declares a module segment other than exactly
+  once, puts `cfg`/`cfg_attr` on that declaration, an enclosing inline
+  module or the entry's own file (read from parsed module items, so a
+  comment or string cannot hide the attribute), defines a macro, invokes a
+  macro in item position, or does not parse; and for any qualified spelling
+  when the test crate invokes an `include`-family macro however its tokens
+  are spaced or commented. Imports of the entry (`use <lib>::inner::{entry, ..}`)
+  with a bare call were already related; that bare-call route is now
+  refused too when the test file imports a path starting with the library's
+  name and the file aliases, imports, globs or declares that name, or
+  invokes an `include`-family macro, defines a macro or invokes any macro in
+  item position (an expansion may declare the name; the prefix then may not
+  name the library), imports the entry's name through any `self::`/`crate::`/`super::` path
+  (only `crate::` from a unit test under `src/` and the resolved relative
+  imports below are credited), or when any
+  `const`/`static` of that name appears anywhere in the test file.
+
+  The imported suffix is resolved, not only the prefix: an import of the
+  entry's name through the library must spell the entry's definition module
+  path exactly (`<lib>::<module path>::<entry>`), or be the crate-root
+  `<lib>::<entry>` of a plain unaliased top-level crate-root `pub use` of that same
+  path (a `use` inside another module, a non-`pub` use, a glob or macro at
+  the root, or any other root item named like the entry refuses). A path reaching the name through another module (a re-export such as
+  `pub mod foreign { pub use std::cmp::max; }`), an aliased tail, or an entry
+  whose definition path is unknown refuses.
+
+  The library must also bind that module path to the entry's file: every
+  file-module segment is declared once by an unconditional, un-remapped
+  out-of-line `mod <segment>;` at the top level of the previous file, with no
+  other module of that name beside it, and the chain from `src/lib.rs` must
+  end at the indexed definition's file (a `#[path]` that compiles the file
+  under another name, a same-named inline module, or an orphan declared only
+  inside another module refuses). A `#[path]` on an unrelated declaration and a
+  binary root that also declares the module do not refuse.
+
+  Known limits (a proper path resolver is a follow-up to #8999): the bare-call
+  route credits only a direct `use <lib>::..` import (list imports included)
+  where nothing in the test file can shadow the library name. Valid but
+  refused routes: an extern-crate alias, a re-export through a test-crate
+  module (`pub use ::<lib>::..`, including beside a same-named local module),
+  `super::public_api::..` re-export routes and `self::` re-exports through a
+  test-crate module; the const/static
+  veto is file-wide, so a same-named value inside an unrelated module also
+  refuses. The package-wide macro-definition and item-position-macro scan on
+  the library side is deliberately coarse and fail-closed. A bare call is read from the masked file at
+  its own line, so a spelling only in a string or comment is not a call.
+  The qualified spelling is refused for:
+  - a path longer or shorter than the entry's own, or another crate name;
+  - a test file that declares any item, `let`, closure or typed parameter
+    named like the crate, declares a module (`mod <lib>;` or inline) under
+    the library's name, aliases anything to that name (`use x as <lib>`), or
+    imports a path ending in it (raw `r#` spellings included);
+  - a raw `r#` module segment, a glob import, an `include`-family macro
+    however its tokens are spaced or commented, a macro definition, or any
+    macro invoked in item position in the test file (an expansion may
+    declare a module named like the library);
+  - a unit test inside `src/`, a test module child (only `tests/<name>.rs`
+    and `tests/<name>/main.rs` roots qualify), a workspace member's entry or
+    a `src/main.rs` entry;
+  - a call spelled only in a string or comment, including a multiline raw
+    string or block comment that ends on a line holding a real call (the
+    call is read from the masked file at its own line);
+  - an entry whose module path is not placed under the library (a
+    binary-shared module, a `#[path]` package, a module not declared
+    exactly once, or declared under `cfg`/`cfg_attr`).
+
+  A refused case may still render `limitation_last_established_edge: test -> entry`
+  from the pre-existing name-only hint path (SPEC-0114/0115); that is a
+  projection wording limit, not a reach promotion (tracked in #10026).
+
+  Binders inside macro token trees are not seen by the shadow veto and still
+  link (for example `assert_eq!({ let max = other as fn(u32, u32) -> u32; max(10, 5) }, 10)`,
+  a closure parameter `|max| max(10, 5)` inside `assert!`, a `match` arm
+  binding, or a block-local `fn` inside a macro argument); this is a named
+  limit tracked in #9971.
+
+  A relative `use super::<entry>;`, `use super::super::..`, `use super::<module>::<entry>;`
+  or `use self::<module>::<entry>;` (#9971) in a unit test under the root
+  package's `src/` is resolved against the test file's own module (read from
+  the layout) to an absolute module path, and is credited only when that path
+  equals the entry's definition module path and both sides are bound: the
+  entry by the library declaration chain above, the test file by an
+  unconditional, un-remapped chain from `src/lib.rs` whose only `cfg` is a bare
+  `#[cfg(test)]` on the test module's own out-of-line declaration and which
+  passes through no inline module. Inside the test file each `use` item that
+  spells the import is resolved from its own position (#10279): the inline
+  modules around it extend the file's module before `self`/`super` apply, so
+  the default in-file layout `#[cfg(test)] mod tests { use super::<entry>; }`
+  beside the entry resolves to the entry's module, while `super` from
+  `flat::tests` names `flat`. Every such item in the file must resolve to the
+  entry's module, and one must sit in the same inline module as the test
+  function: an import in a sibling module does not bind the test's bare call. It refuses (verdict-corpus rows and the
+  honesty corpus pin each): any `#[path]` in the package, a test file in a
+  workspace member or under `tests/`, a spelling whose inline-module scope
+  resolves elsewhere or past the crate root, a glob import,
+  `cfg`-gated `use`, inner `cfg`, macro definition or item-position macro in the
+  test file, a renamed or function-local import, a path through `self`/`super`/
+  `crate` again or past the crate root, a path that resolves to another module
+  or only re-exports the entry, a `cfg`/`cfg_attr`-gated, duplicated or
+  `#[path]`-remapped declaration on the chain, and every nearer-binding veto
+  above (a body `let`, closure parameter, `fn`, `const`, `static` or tuple
+  struct of the entry's name). Verdict-corpus row
+  `spec0236-seam-private-tier-src-test-chain` (`use super::checkout;` in
+  `src/checkout_tests.rs`, declared `#[cfg(test)] mod checkout_tests;`) is the
+  recovered positive; fixture `module_reach_super_import_in_file_tests` is the
+  in-file positive and `module_reach_super_import_in_file_wrong_module` its
+  wrong-scope counterexample. An in-file import that resolves to another module
+  only re-exporting the entry (`mod flat { pub use crate::<entry>; mod tests {
+  use super::<entry>; } }`) is an accepted conservative loss, as is a test function nested inside another
+  function. Still refused, tracked in #9971: a test module on a
+  declaration chain that passes through an inline module (the library index
+  does not place such a file in a module context either), a test module under
+  a `cfg(test)`-gated parent, and the other routes listed above.
+
+  Accepted conservative losses (tracked in #9971): the fully qualified
+  spelling of a crate-root re-export of an inline-module entry
+  (`qual_reach::entry(..)` for `mod inner { pub fn entry }` plus
+  `pub use inner::entry;`) is refused because the spelled path is shorter than
+  the entry's module path (the bare `use qual_reach::entry;` import links); and
+  module visibility is not checked, so a spelling through a private module
+  (which would not compile) is credited like a public one; and
+  the library-binding proof reparses every non-test source file once per module
+  segment, a coarse cost boundary left unmemoized.
+
+  Fail-open shapes kept as known limits (tracked in #9971): the bare-call
+  prefix proof returns the older name-only result when the package has no
+  resolvable `[lib]` name (a moved `[lib] path`), when the entry sits in a
+  workspace member, and when the test file has no own-crate import at all
+  (for example `mod foo { pub use std::cmp; } use self::foo::cmp::max;` in a
+  member crate). A body-local value item of the entry's name (`fn`, `const`, `static`,
+  tuple or unit `struct`) whose block holds the call refuses; type-namespace
+  items (`type`, `trait`, `enum`, `union`, `mod`, braced `struct`) do not
+  shadow a value call.
+
+  The edge
   carries relation only: argument rows and entry pairing still read a
   direct call site, so the qualified spelling adds no new value-credit
   path of its own (the argument reader may still read a qualified

@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-trap-loop-accumulator-table",
+  "origin": "authored",
+  "version_label": "authored 2026-10-25 for #6485 (loop accumulator whose table rows separate nothing)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "38a4c1c922553b57357d88bfc25ce9bfac704e164fb7f7bc39c893e537b97368"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "5eed117215bad2472b096ee15825b052ccbb60cf50a5ad02a2747bfbae5cee27"
+    }
+  ]
+}

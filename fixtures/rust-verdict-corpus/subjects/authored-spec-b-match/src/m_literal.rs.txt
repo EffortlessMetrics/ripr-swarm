@@ -1,0 +1,29 @@
+//! A helper whose whole body is one match over string literals.
+
+pub fn label_lit(kind: &str) -> &'static str {
+    match kind {
+        "word" => "alpha",
+        "text" => "beta",
+        _ => "other",
+    }
+}
+
+pub fn classify_lit(input: &str) -> &'static str {
+    let final_label = label_lit(input);
+    if final_label == "alpha" {
+        "word"
+    } else {
+        "blank"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn each_arm_has_its_own_label_m_literal() {
+        assert_eq!(classify_lit("word"), "word");
+        assert_eq!(classify_lit("text"), "blank");
+    }
+}

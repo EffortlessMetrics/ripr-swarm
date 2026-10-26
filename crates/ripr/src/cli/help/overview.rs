@@ -43,7 +43,7 @@ What are you trying to do?
                         # edit one focused test
                         ripr continue
   Compose PR evidence   ripr first-pr --root . --base BASE --head HEAD
-  Work in an editor     ripr lsp --stdio
+  Work in an editor     ripr lsp --stdio (started by your editor)
   Adopt advisory CI     ripr init --ci github
 
 More:
@@ -92,7 +92,7 @@ Task map:
 
 Setup:
   ripr doctor
-  ripr capabilities [--language NAME] [--json]
+  ripr capabilities [--language NAME] [--json | --markdown]
   ripr init [--root PATH] [--ci github] [--dry-run] [--force]
   ripr config validate [--root PATH]
   ripr cache status [--root PATH] [--json]

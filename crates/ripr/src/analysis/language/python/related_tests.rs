@@ -22,11 +22,18 @@ pub(super) enum PythonRelationKind {
     SyntacticCall,
     ImportAliasCall,
     ApiClientRouteCall,
+    /// The test calls the route's path and verb through a request client whose
+    /// application is not established (#10110). Reach evidence only.
+    ApiClientRouteUnidentifiedApp,
     ConstructCall,
     ConstructorCall,
     LocalBinding,
     DunderProtocol,
     ProtocolEntryCall,
+    /// The test's assertion statically depends on an edited module-level
+    /// constant, directly or through a module function it calls with literal
+    /// arguments, and fails under the new value (`module_value.rs`, #9423).
+    ModuleValueCall,
     SameStem,
     TestNameSimilarity,
     FixtureName,
@@ -45,11 +52,13 @@ impl PythonRelationKind {
             Self::SyntacticCall => 5,
             Self::ImportAliasCall => 4,
             Self::ApiClientRouteCall => 4,
+            Self::ApiClientRouteUnidentifiedApp => 2,
             Self::ConstructCall => 4,
             Self::ConstructorCall => 4,
             Self::LocalBinding => 4,
             Self::DunderProtocol => 3,
             Self::ProtocolEntryCall => 4,
+            Self::ModuleValueCall => 4,
             Self::SameStem => 3,
             Self::TestNameSimilarity => 2,
             Self::FixtureName => 1,
@@ -69,6 +78,7 @@ impl PythonRelationKind {
                 | Self::ConstructorCall
                 | Self::LocalBinding
                 | Self::ProtocolEntryCall
+                | Self::ModuleValueCall
         )
     }
 
@@ -81,11 +91,13 @@ impl PythonRelationKind {
             Self::SyntacticCall => "syntactic_call",
             Self::ImportAliasCall => "import_alias_call",
             Self::ApiClientRouteCall => "api_client_route_call",
+            Self::ApiClientRouteUnidentifiedApp => "api_client_route_unidentified_app",
             Self::ConstructCall => "construct_call",
             Self::ConstructorCall => "constructor_call",
             Self::LocalBinding => "local_binding",
             Self::DunderProtocol => "dunder_protocol",
             Self::ProtocolEntryCall => "protocol_entry_call",
+            Self::ModuleValueCall => "module_value_call",
             Self::SameStem => "same_stem",
             Self::TestNameSimilarity => "test_name_similarity",
             Self::FixtureName => "fixture_name",
@@ -131,25 +143,24 @@ pub(super) fn related_test_candidates<'a>(
             })
         })
         .collect();
+    sort_related_candidates(&mut candidates);
+    candidates
+}
+
+/// Candidate order is owner-level and shared by every changed line of the
+/// owner, so it has no changed family: it ranks by the strongest assertion
+/// overall (focus `None`). Which assertion a row displays and the classifier
+/// judges is the per-change selection in `related_tests_for_candidates`.
+pub(super) fn sort_related_candidates(candidates: &mut [PythonRelatedCandidate<'_>]) {
     candidates.sort_by(|left, right| {
         right
             .relation
             .rank()
             .cmp(&left.relation.rank())
-            .then_with(|| {
-                // Candidate order is owner-level and shared by every changed
-                // line of the owner, so it has no changed family: it ranks by
-                // the strongest assertion overall (focus `None`). Which
-                // assertion a row displays and the classifier judges is the
-                // per-change selection in `related_tests_for_candidates`.
-                let left_rank = strongest_rank(left.test);
-                let right_rank = strongest_rank(right.test);
-                right_rank.cmp(&left_rank)
-            })
+            .then_with(|| strongest_rank(right.test).cmp(&strongest_rank(left.test)))
             .then_with(|| left.test.file.cmp(&right.test.file))
             .then_with(|| left.test.name.cmp(&right.test.name))
     });
-    candidates
 }
 
 /// Most same-module caller hops followed from a changed helper (#4568).
@@ -306,6 +317,8 @@ pub(super) fn related_tests_for_candidates(
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             }
         })
         .collect()
@@ -474,13 +487,14 @@ pub(super) fn related_test_relation(
     // The bare-name relations below key on call text alone; a route literal
     // or a fixture's own call does not depend on the name the test imported.
     if bare_name_bound_to_other_module(test, owner) {
-        if api_client_route_calls_owner(test, owner) {
+        let route = api_client_route_calls_owner(test, owner);
+        if route == Some(ClientRoute::Identified) {
             return Some(PythonRelationKind::ApiClientRouteCall);
         }
         if fixture_owner_call(test, owner) {
             return Some(PythonRelationKind::FixtureOwnerCall);
         }
-        return None;
+        return route.map(|_| PythonRelationKind::ApiClientRouteUnidentifiedApp);
     }
     if body_calls_owner(&test.body_text, owner) || exception_assertion_calls_owner(test, owner) {
         return Some(PythonRelationKind::SyntacticCall);
@@ -497,7 +511,8 @@ pub(super) fn related_test_relation(
     if import_alias_calls_owner(test, owner) {
         return Some(PythonRelationKind::ImportAliasCall);
     }
-    if api_client_route_calls_owner(test, owner) {
+    let route = api_client_route_calls_owner(test, owner);
+    if route == Some(ClientRoute::Identified) {
         return Some(PythonRelationKind::ApiClientRouteCall);
     }
     if construct_call_invokes_owner(test, owner) {
@@ -508,6 +523,9 @@ pub(super) fn related_test_relation(
     }
     if fixture_owner_call(test, owner) {
         return Some(PythonRelationKind::FixtureOwnerCall);
+    }
+    if route.is_some() {
+        return Some(PythonRelationKind::ApiClientRouteUnidentifiedApp);
     }
     // A test is related to an owner only when it references the owner
     // (RIPR-SPEC-0028). File-stem, test-name and fixture-name proximity are
@@ -727,23 +745,43 @@ fn protocol_entry_calls(text: &str, body: &str, local: &str, builtin: &str) -> V
         .collect()
 }
 
+/// Whether the name at `idx` sits on a `case` pattern line where it may be a
+/// capture (`case {"k": r}:`, `case Foo(x=r):`, `case (1 | r):`). Any such
+/// mention withholds credit, which also demotes a guard read
+/// (`case x if r:`); a dotted value pattern (`case r.A:`) or a class pattern
+/// (`case r(1):`) is a read and is not matched.
+fn is_case_capture(body: &str, idx: usize, after: &str) -> bool {
+    let line_start = body[..idx].rfind('\n').map_or(0, |at| at + 1);
+    let is_case_line = body[line_start..idx]
+        .trim_start()
+        .strip_prefix("case")
+        .is_some_and(|tail| tail.starts_with([' ', '\t', '(', '[', '{']));
+    is_case_line && !after.starts_with(['.', '('])
+}
+
 /// Whether `var` appears in a position that can bind it through a target list
 /// or an annotation (`x, r = ...`, `for i, r in ...`, `with a as (b, r)`,
 /// `r: list = ...`). Any `var,` / `, var` / `var:` occurrence counts, which
 /// also demotes some reads (`f(r, 1)`); that only fails closed.
-fn binds_in_target_list(body: &str, var: &str) -> bool {
+pub(super) fn binds_in_target_list(body: &str, var: &str) -> bool {
     body.match_indices(var).any(|(idx, _)| {
         let end = idx + var.len();
         python_callee_start_has_boundary(body, idx)
             && !next_char_is_identifier(body, end)
             && !python_text_hides_code(body, idx)
             && {
-                let after = body[end..].trim_start_matches([' ', '\t']);
-                let before = body[..idx].trim_end_matches([' ', '\t']);
+                let spaced = body[end..].trim_start_matches([' ', '\t']);
+                let after = skip_blank_forward(spaced, false);
+                // A backslash continuation before the `=` (`r \\\n = [1]`) is a
+                // second binding of the name, never the construction line.
+                let continued = after.len() != spaced.len();
+                let before = skip_blank_backward(&body[..idx], false);
                 after.starts_with(',')
                     || (after.starts_with(':') && !after.starts_with(":="))
                     || before.ends_with(',')
                     || before.ends_with('*')
+                    || (continued && (plain_assign(after) || augmented_assign_op(after)))
+                    || is_case_capture(body, idx, after)
                     || chained_or_bracketed_target(body, idx, before, after)
             }
     })
@@ -757,21 +795,22 @@ fn binds_in_target_list(body: &str, var: &str) -> bool {
 fn chained_or_bracketed_target(body: &str, idx: usize, before: &str, after: &str) -> bool {
     let line_start = body[..idx].rfind('\n').map_or(0, |at| at + 1);
     let not_line_start = !body[line_start..idx].trim().is_empty();
-    let plain_assign = |rest: &str| rest.starts_with('=') && !rest.starts_with("==");
-    if not_line_start && plain_assign(after) {
+    // `if z: r += [1]`, `a = 1; r += [1]`: an augmented assignment after a
+    // header or `;` rebinds like a plain one.
+    if not_line_start && (plain_assign(after) || augmented_assign_op(after)) {
         return true;
     }
     // Peel each matching `(` ... `)` / `[` ... `]` pair around the name, so
-    // spacing, nesting (`(( r ))`) and a split across lines do not change the
-    // reading.
+    // spacing, nesting (`(( r ))`), a split across lines, a backslash
+    // continuation and a comment inside the brackets do not change the reading.
     let mut head_end = before.len();
-    let mut rest = after.trim_start();
+    let mut rest = skip_blank_forward(after, true);
     let mut peeled = false;
     while let Some(closer) = rest.chars().next().filter(|c| matches!(c, ']' | ')')) {
         let opener = if closer == ']' { '[' } else { '(' };
         let Some(open_at) = body
             .get(..head_end)
-            .map(str::trim_end)
+            .map(|head| skip_blank_backward(head, true))
             .filter(|head| head.ends_with(opener))
             .map(|head| head.len() - 1)
         else {
@@ -780,7 +819,7 @@ fn chained_or_bracketed_target(body: &str, idx: usize, before: &str, after: &str
         head_end = body
             .get(..open_at)
             .map_or(open_at, |head| head.trim_end_matches([' ', '\t']).len());
-        rest = rest[1..].trim_start();
+        rest = skip_blank_forward(&rest[1..], true);
         peeled = true;
     }
     if !peeled {
@@ -791,12 +830,107 @@ fn chained_or_bracketed_target(body: &str, idx: usize, before: &str, after: &str
         .get(head.rfind('\n').map_or(0, |at| at + 1)..)
         .unwrap_or("");
     plain_assign(rest)
+        || augmented_assign_op(rest)
         || (rest.starts_with(',') && opener_is_target_position(head_line))
+        // An annotated target (`(r): list = [1]`); `if (r):` is not at a target
+        // position. `case (r):` / `case [r]:` is a match capture that rebinds
+        // `r`, so a `case` line withholds credit too.
+        || (rest.starts_with(':')
+            && !rest.starts_with(":=")
+            && (opener_is_target_position(head_line)
+                || head_line
+                    .trim_start()
+                    .strip_prefix("case")
+                    .is_some_and(|tail| !tail.starts_with(is_python_identifier_char))))
         // `in` binds only inside a `for` target list (`for (r) in items`,
-        // `for x, (r) in items`); a membership test such as
+        // `for (r)in items`, `for x, (r) in items`); a membership test such as
         // `assert ((r)) in items` rebinds nothing.
-        || (rest.starts_with("in ") && is_inside_for_target(head_line))
-        || head.trim_end().ends_with(" as")
+        || (rest.strip_prefix("in").is_some_and(|after_in| {
+            !after_in.starts_with(is_python_identifier_char) && is_inside_for_target(head_line)
+        }))
+        || head.trim_end().strip_suffix("as").is_some_and(|before_as| {
+            before_as.ends_with([' ', '\t']) || before_as.ends_with(['(', ','])
+        })
+}
+
+fn plain_assign(rest: &str) -> bool {
+    rest.starts_with('=') && !rest.starts_with("==")
+}
+
+/// Whether `rest` starts with an augmented-assignment operator (`+=`, `//=`,
+/// `>>=`), which rebinds its target. Comparisons (`<=`, `>=`) are not listed.
+fn augmented_assign_op(rest: &str) -> bool {
+    [
+        "+=", "-=", "*=", "/=", "//=", "%=", "@=", "&=", "|=", "^=", ">>=", "<<=", "**=",
+    ]
+    .iter()
+    .any(|op| rest.starts_with(op))
+}
+
+/// `text` without leading blanks: spaces, tabs and backslash-newline
+/// continuations, and when `across_lines` also newlines and `#` comments
+/// (inside brackets, where a line break is not a statement end).
+fn skip_blank_forward(text: &str, across_lines: bool) -> &str {
+    let mut rest = text;
+    loop {
+        let trimmed = rest.trim_start_matches([' ', '\t']);
+        let next = if let Some(after) = trimmed
+            .strip_prefix("\\\r\n")
+            .or_else(|| trimmed.strip_prefix("\\\n"))
+        {
+            after
+        } else if across_lines && trimmed.starts_with('#') {
+            trimmed.find('\n').map_or("", |at| &trimmed[at..])
+        } else if across_lines {
+            trimmed.trim_start()
+        } else {
+            trimmed
+        };
+        if next.len() == rest.len() {
+            return rest;
+        }
+        rest = next;
+    }
+}
+
+/// `text` without trailing blanks, mirroring [`skip_blank_forward`]: trailing
+/// `#` comments are dropped when `across_lines`.
+fn skip_blank_backward(text: &str, across_lines: bool) -> &str {
+    let mut head = text;
+    loop {
+        let trimmed = if across_lines {
+            head.trim_end()
+        } else {
+            head.trim_end_matches([' ', '\t'])
+        };
+        let removed = &head[trimmed.len()..];
+        let mut next = trimmed
+            .strip_suffix("\\\r\n")
+            .or_else(|| trimmed.strip_suffix("\\\n"))
+            // Across lines `trim_end` also removed the newline of a trailing
+            // backslash continuation (`(\\\n (r))`).
+            .or_else(|| {
+                trimmed
+                    .strip_suffix('\\')
+                    .filter(|_| across_lines && removed.contains('\n'))
+            })
+            .unwrap_or(trimmed);
+        if across_lines {
+            let line_start = next.rfind('\n').map_or(0, |at| at + 1);
+            let line = &next[line_start..];
+            if let Some(at) = line
+                .match_indices('#')
+                .map(|(at, _)| at)
+                .find(|at| !python_prefix_hides_code(&line[..*at]))
+            {
+                next = &next[..line_start + at];
+            }
+        }
+        if next.len() == head.len() {
+            return head;
+        }
+        head = next;
+    }
 }
 
 /// Whether `head` (the text of a line before a peeled target) sits in the
@@ -807,7 +941,9 @@ fn is_inside_for_target(head: &str) -> bool {
     while let Some(at) = head[..search].rfind("for") {
         let boundary_before = !head[..at].ends_with(is_python_identifier_char);
         let boundary_after = !head[at + 3..].starts_with(is_python_identifier_char);
-        if boundary_before && boundary_after {
+        // A `for` inside a string or after a comment is text, not a keyword.
+        let hidden = python_prefix_hides_code(&head[..at]);
+        if boundary_before && boundary_after && !hidden {
             let targets = &head[at + 3..];
             return !targets.contains(['=', ':'])
                 && !targets
@@ -934,7 +1070,7 @@ fn construction_is_whole_value(body: &str, idx: usize, construct: &str) -> bool 
 /// Whether the test rebinds the builtin `name` (an import, an assignment,
 /// a `def`/`class`/`for`/`as`/walrus target, or a parameter), so a call spelled
 /// `name(...)` is no longer the builtin.
-fn builtin_is_shadowed(test: &PythonTest, name: &str) -> bool {
+pub(super) fn builtin_is_shadowed(test: &PythonTest, name: &str) -> bool {
     test.imports.iter().any(|import| import.alias == name)
         || test_rebinds_import_alias(test, name)
         || test.constant_rebinding.rebinds(name)
@@ -2090,25 +2226,209 @@ fn import_binds_owner_name(import: &PythonImport, owner: &PythonOwner) -> bool {
         || (import.imported == "*" && !owner.name.starts_with('_') && owner.star_exported)
 }
 
-fn api_client_route_calls_owner(test: &PythonTest, owner: &PythonOwner) -> bool {
-    owner
-        .route_paths
-        .iter()
-        .any(|route| body_calls_api_client_route(&test.body_text, route))
+/// How firmly a test's request client is tied to the owner's route.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ClientRoute {
+    /// The client is built over the application the owner's decorator
+    /// registers on.
+    Identified,
+    /// The client calls the route's path and verb but its application is not
+    /// established (a fixture the adapter cannot read, a factory-built app,
+    /// an app defined in the test, a decorator on an unrecognised receiver).
+    Unidentified,
 }
 
-fn body_calls_api_client_route(body_text: &str, route: &str) -> bool {
-    [
-        "client.get",
-        "client.post",
-        "client.put",
-        "client.patch",
-        "client.delete",
-        "client.options",
-        "client.head",
-    ]
-    .into_iter()
-    .any(|callee| contains_python_call_with_first_string_argument(body_text, callee, route))
+fn api_client_route_calls_owner(test: &PythonTest, owner: &PythonOwner) -> Option<ClientRoute> {
+    let receivers = super::route_client::client_receivers(&test.body_text);
+    let mut found = None;
+    for (index, route) in owner.route_paths.iter().enumerate() {
+        // An empty or missing verb list is an unknown verb, which keeps the
+        // path-only match; a known list must contain the verb the test called.
+        let verbs = owner
+            .route_methods
+            .get(index)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        for receiver in &receivers {
+            if !body_calls_api_client_route(&test.body_text, receiver, route, verbs) {
+                continue;
+            }
+            match client_app_identity(
+                test,
+                owner,
+                receiver,
+                owner.route_receivers.get(index).map(String::as_str),
+            ) {
+                ClientApp::Own => return Some(ClientRoute::Identified),
+                ClientApp::Unidentified => found = Some(ClientRoute::Unidentified),
+                ClientApp::Rival => {}
+            }
+        }
+    }
+    found
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ClientApp {
+    Own,
+    Rival,
+    Unidentified,
+}
+
+/// The application name a receiver's client is built over, and the imports
+/// that name resolves against: the test body, or the fixture the receiver is
+/// a parameter of (the test's module or a `conftest.py` up its chain).
+fn client_app_source<'a>(
+    test: &'a PythonTest,
+    receiver: &str,
+) -> Option<(String, &'a [PythonImport])> {
+    if let Some(app) = super::route_client::client_app_name(&test.body_text, receiver) {
+        // An application name bound in the test body is not the import it spells.
+        if super::route_client::rebinds_name(&test.body_text, &app) || test.fixtures.contains(&app)
+        {
+            return None;
+        }
+        return Some((app, test.imports.as_slice()));
+    }
+    // A fixture parameter: the client alias leads back to it, nothing in the
+    // body rebinds it, and a class-level fixture override (which is not
+    // recorded) cannot apply because the test is a module-level function.
+    let root = super::route_client::client_root(&test.body_text, receiver);
+    if test.qualified_name != test.name
+        || !super::route_client::is_unrebound_parameter(&test.body_text, &root)
+    {
+        return None;
+    }
+    let def = test
+        .fixture_defs
+        .iter()
+        .find(|def| def.name == root && test.fixtures.contains(&root))?;
+    let app = super::route_client::fixture_client_app_name(&def.body_text)?;
+    // The fixture's own parameters and local bindings are not module imports.
+    if super::route_client::rebinds_name(&def.body_text, &app)
+        || super::route_client::is_unrebound_parameter(&def.body_text, &app)
+    {
+        return None;
+    }
+    Some((app, def.imports.as_slice()))
+}
+
+/// Which application the client targets, decided only from the pair: a client
+/// built over a name imported from the owner's module (or a package above it)
+/// under the decorator receiver's symbol is the owner's own application; one
+/// built over a different imported symbol, or over the receiver's name from
+/// another module, is a rival. Anything else (a fixture or factory the adapter
+/// cannot read, an app defined in the test, a router the application includes
+/// under another name, a decorator on an unrecognised receiver) is
+/// unidentified and does not earn oracle credit.
+fn client_app_identity(
+    test: &PythonTest,
+    owner: &PythonOwner,
+    receiver: &str,
+    owner_receiver: Option<&str>,
+) -> ClientApp {
+    let Some(owner_receiver) = owner_receiver.filter(|name| !name.is_empty()) else {
+        return ClientApp::Unidentified;
+    };
+    let Some((app_name, imports)) = client_app_source(test, receiver) else {
+        return ClientApp::Unidentified;
+    };
+    // Where the owner's file itself got the receiver: a shared application
+    // imported from a third module is the same object the test imports from there.
+    let owner_origin = owner
+        .imports
+        .iter()
+        .find(|import| import_bound_name(import) == owner_receiver)
+        .map(|import| (import.source_module.as_str(), import.imported.as_str()));
+    let mut identity = ClientApp::Unidentified;
+    for import in imports {
+        if import_bound_name(import) != app_name || import.source_module.is_empty() {
+            continue;
+        }
+        let verdict = match owner_origin {
+            // Same module, different symbol (`from common import other_app as app`)
+            // is a different application under the same bound name.
+            Some((origin, symbol)) => {
+                if import.source_module == origin {
+                    if import.imported == symbol {
+                        ClientApp::Own
+                    } else {
+                        ClientApp::Rival
+                    }
+                } else if import.imported == owner_receiver || import.imported == symbol {
+                    // The owner's own module re-exports the app it imported; a
+                    // package above it may define another `app`.
+                    if import_source_module_matches_owner(import, owner, &test.file) {
+                        ClientApp::Own
+                    } else if owner_module_paths(&owner.file)
+                        .iter()
+                        .any(|path| path.starts_with(&format!("{}.", import.source_module)))
+                    {
+                        ClientApp::Unidentified
+                    } else {
+                        ClientApp::Rival
+                    }
+                } else {
+                    ClientApp::Unidentified
+                }
+            }
+            // Defined in the owner's own module: the test's import must name that
+            // module or a package above it (`from pkg import app` re-exports
+            // `pkg/main.py`'s `app`).
+            None => {
+                let names_owner_module =
+                    import_source_module_matches_owner(import, owner, &test.file)
+                        || owner_module_paths(&owner.file)
+                            .iter()
+                            .any(|path| path.starts_with(&format!("{}.", import.source_module)));
+                if import.imported == owner_receiver {
+                    if names_owner_module {
+                        ClientApp::Own
+                    } else {
+                        ClientApp::Rival
+                    }
+                } else if names_owner_module {
+                    ClientApp::Rival
+                } else {
+                    ClientApp::Unidentified
+                }
+            }
+        };
+        match verdict {
+            ClientApp::Rival => return ClientApp::Rival,
+            ClientApp::Own => identity = ClientApp::Own,
+            ClientApp::Unidentified => {}
+        }
+    }
+    identity
+}
+
+fn import_bound_name(import: &PythonImport) -> &str {
+    if import.alias.is_empty() {
+        import.imported.as_str()
+    } else {
+        import.alias.as_str()
+    }
+}
+
+fn body_calls_api_client_route(
+    body_text: &str,
+    receiver: &str,
+    route: &str,
+    route_verbs: &[String],
+) -> bool {
+    ["get", "post", "put", "patch", "delete", "options", "head"]
+        .into_iter()
+        .filter(|verb| {
+            route_verbs.is_empty() || route_verbs.iter().any(|accepted| accepted == verb)
+        })
+        .any(|verb| {
+            contains_python_call_with_first_string_argument(
+                body_text,
+                &format!("{receiver}.{verb}"),
+                route,
+            )
+        })
 }
 
 fn contains_python_call_with_first_string_argument(
@@ -2215,7 +2535,18 @@ fn converter_accepts(converter: &str, value: &str) -> bool {
 pub(super) fn first_parenthesized_string_argument(text: &str) -> Option<String> {
     let body = text.strip_prefix('(')?.trim_start();
     let literal = first_python_string_literal(body)?;
-    body.starts_with(&literal)
+    // The literal must be the whole argument: `"/items" + suffix`, `"/x" % v`,
+    // `"/x".format(..)` and adjacent literals name a different path.
+    let mut after = body.strip_prefix(&literal)?.trim_start();
+    // A comment between the literal and the delimiter does not extend it.
+    while after.starts_with('#') {
+        after = after
+            .split_once('\n')
+            .map_or("", |(_, rest)| rest)
+            .trim_start();
+    }
+    let whole_argument = after.starts_with([',', ')']);
+    whole_argument
         .then(|| python_string_literal_value(&literal))
         .flatten()
 }
@@ -2589,8 +2920,12 @@ pub(super) fn has_unclosed_quote(prefix: &str) -> bool {
     in_single || in_double
 }
 
+/// Whether `ch` can be part of a Python identifier. Any non-ASCII character
+/// counts (identifiers may hold Unicode letters, digits and combining marks, and
+/// outside strings and comments nothing else non-ASCII is valid code), so a
+/// boundary check never splits an accented prefix from the ASCII name after it.
 pub(super) fn is_python_identifier_char(ch: char) -> bool {
-    ch == '_' || ch.is_ascii_alphanumeric()
+    ch == '_' || ch.is_ascii_alphanumeric() || !ch.is_ascii()
 }
 
 /// Whether the test body references the changed owner, even when the reference
@@ -2703,7 +3038,7 @@ pub(super) fn text_binds_name(text: &str, name: &str) -> bool {
 /// [`test_binds_local`] for an imported alias: the test body's own
 /// `import pkg.mod as alias` statement is the import being checked (#4567
 /// records it among the test's imports), not a rebinding of it.
-fn test_rebinds_import_alias(test: &PythonTest, alias: &str) -> bool {
+pub(super) fn test_rebinds_import_alias(test: &PythonTest, alias: &str) -> bool {
     test.fixtures.iter().any(|fixture| fixture == alias)
         || assignment_count(&test.body_text, alias) > 0
         || keyword_or_operator_binds_text(&test.body_text, alias, false)
@@ -2712,19 +3047,25 @@ fn test_rebinds_import_alias(test: &PythonTest, alias: &str) -> bool {
 fn keyword_or_operator_binds_text(body: &str, name: &str, import_as_binds: bool) -> bool {
     augmented_assignment(body, name)
         || walrus_binds(body, name)
-        || ["def ", "class ", "for ", "as "]
+        || ["def", "class", "for", "as", "import", "nonlocal"]
             .into_iter()
             .any(|keyword| {
-                let needle = format!("{keyword}{name}");
-                body.match_indices(&needle).any(|(idx, _)| {
-                    let end = idx + needle.len();
+                body.match_indices(keyword).any(|(idx, _)| {
+                    let after_keyword = idx + keyword.len();
+                    let spaced = &body[after_keyword..];
+                    // Any run of blanks (or a backslash continuation) may separate
+                    // the keyword from the name: `for  r  in`, `as\tr`.
+                    let rest = skip_blank_forward(spaced, false);
+                    let name_at = body.len() - rest.len();
                     let line_start = body[..idx].rfind('\n').map_or(0, |offset| offset + 1);
                     let line = body[line_start..].trim_start();
                     let import_line = line.starts_with("import ") || line.starts_with("from ");
-                    python_callee_start_has_boundary(body, idx)
-                        && !next_char_is_identifier(body, end)
+                    rest.len() != spaced.len()
+                        && rest.starts_with(name)
+                        && python_callee_start_has_boundary(body, idx)
+                        && !next_char_is_identifier(body, name_at + name.len())
                         && !python_text_hides_code(body, idx)
-                        && (import_as_binds || keyword != "as " || !import_line)
+                        && (import_as_binds || !matches!(keyword, "as" | "import") || !import_line)
                 })
             })
 }
@@ -2756,9 +3097,8 @@ fn walrus_binds(body_text: &str, name: &str) -> bool {
         let end = idx + name.len();
         python_callee_start_has_boundary(body_text, idx)
             && !next_char_is_identifier(body_text, end)
-            && body_text[end..]
-                .trim_start_matches([' ', '\t'])
-                .starts_with(":=")
+            // `(r\n := [1])`: a line break is legal inside the brackets.
+            && skip_blank_forward(&body_text[end..], true).starts_with(":=")
             && !python_text_hides_code(body_text, idx)
     })
 }
@@ -2838,27 +3178,53 @@ pub(super) fn python_text_hides_code(text: &str, idx: usize) -> bool {
 /// Whether `idx` falls inside an open triple-quoted string. A small lexer:
 /// triple delimiters inside ordinary single-line strings (`'"""'`) and `#`
 /// comments do not open a docstring, and a backslash escapes the next char.
+/// The replacement fields of a triple-quoted f-string (`f"""{\n  helper(1)\n}"""`)
+/// are code, not string text, so a call inside one stays visible (#8787).
 fn inside_triple_quoted_string(text: &str, idx: usize) -> bool {
-    let mut triple: Option<&str> = None;
+    // `(delimiter, is_f_string)` of the open triple-quoted string.
+    let mut triple: Option<(&str, bool)> = None;
     let mut cursor = 0;
     while cursor < idx {
         let rest = &text[cursor..];
-        if let Some(delimiter) = triple {
+        if let Some((delimiter, formatted)) = triple {
             if let Some(escaped) = rest.strip_prefix('\\') {
-                cursor += 1 + escaped.chars().next().map_or(0, char::len_utf8);
+                // In an f-string a backslash before a brace is a literal
+                // character on its own; the brace then lexes normally.
+                let brace = formatted && matches!(escaped.chars().next(), Some('{' | '}'));
+                cursor += 1 + if brace {
+                    0
+                } else {
+                    escaped.chars().next().map_or(0, char::len_utf8)
+                };
             } else if rest.starts_with(delimiter) {
                 triple = None;
                 cursor += delimiter.len();
+            } else if formatted && rest.starts_with("{{") {
+                cursor += 2;
+            } else if formatted && rest.starts_with('{') {
+                // A field the scanner cannot prove closed (unterminated, a
+                // comment, or the string's own delimiter nested inside it)
+                // hides the rest of the text: a miss, never an invented call.
+                let Some(field) = fstring_field_scan(rest, delimiter, idx - cursor, 0) else {
+                    return true;
+                };
+                if field.target_hidden {
+                    return true;
+                }
+                if idx < cursor + field.len {
+                    return false;
+                }
+                cursor += field.len;
             } else {
                 cursor += rest.chars().next().map_or(1, char::len_utf8);
             }
             continue;
         }
-        if rest.starts_with("\"\"\"") {
-            triple = Some("\"\"\"");
-            cursor += 3;
-        } else if rest.starts_with("'''") {
-            triple = Some("'''");
+        let delimiter = ["\"\"\"", "'''"]
+            .into_iter()
+            .find(|delimiter| rest.starts_with(delimiter));
+        if let Some(delimiter) = delimiter {
+            triple = Some((delimiter, string_prefix_is_f_string(text, cursor)));
             cursor += 3;
         } else if rest.starts_with('#') || rest.starts_with('"') || rest.starts_with('\'') {
             let len = if rest.starts_with('#') {
@@ -2879,16 +3245,289 @@ fn inside_triple_quoted_string(text: &str, idx: usize) -> bool {
     triple.is_some()
 }
 
+/// Whether the string literal whose quote opens at `quote` carries an `f`
+/// prefix (`f`, `F`, `rf`, `fR`, ...), so its `{...}` fields are expressions.
+fn string_prefix_is_f_string(text: &str, quote: usize) -> bool {
+    let prefix_start = text[..quote]
+        .char_indices()
+        .rev()
+        .find(|(_, ch)| !is_python_identifier_char(*ch))
+        .map_or(0, |(at, ch)| at + ch.len_utf8());
+    let prefix = &text[prefix_start..quote];
+    prefix.len() <= 2 && matches!(prefix.to_ascii_lowercase().as_str(), "f" | "rf" | "fr")
+}
+
+/// The extent of one f-string replacement field.
+struct FStringField {
+    /// Byte length from the opening `{` through its matching `}`.
+    len: usize,
+    /// The scanned offset sits inside a string literal nested in the field.
+    target_hidden: bool,
+}
+
+/// Nesting bound for f-string literals inside replacement fields; deeper
+/// nesting hides the rest of the text.
+const MAX_NESTED_FSTRING_DEPTH: usize = 4;
+
+/// Where the scanner is inside one replacement field.
+enum FieldMode {
+    /// Expression text; the count is the open `(`, `[` and dict/set `{` depth.
+    Code(usize),
+    /// Literal format-spec text after the field's top-level `:`.
+    Spec,
+}
+
+/// Scan the replacement field that begins at `rest` inside a triple-quoted
+/// f-string closed by `delimiter`, balancing braces and skipping nested string
+/// literals. The text after a field's top-level `:` is literal format-spec text
+/// (hidden) except for nested `{...}` replacement fields, which are code again.
+/// A colon that is unsure to be the spec colon hides (a miss, never a false
+/// call). `None` when the field is not closed before the string's own closing
+/// delimiter, the delimiter is nested in the field, a nested triple-quoted
+/// literal is unterminated, or a `#` comment appears in expression text; the
+/// caller then hides the rest of the text. `target` is a
+/// byte offset into `rest`; the result records whether a nested string literal
+/// or spec text covers it.
+fn fstring_field_scan(
+    rest: &str,
+    delimiter: &str,
+    target: usize,
+    depth: usize,
+) -> Option<FStringField> {
+    if depth > MAX_NESTED_FSTRING_DEPTH {
+        return None;
+    }
+    let bytes = rest.as_bytes();
+    let mut stack: Vec<FieldMode> = Vec::new();
+    let mut index = 0;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        let hidden = |len: usize| {
+            Some(FStringField {
+                len,
+                target_hidden: true,
+            })
+        };
+        let Some(mode) = stack.last_mut() else {
+            // Only the opening `{` starts a field.
+            if byte != b'{' {
+                return None;
+            }
+            stack.push(FieldMode::Code(0));
+            index += 1;
+            continue;
+        };
+        match mode {
+            FieldMode::Spec => match byte {
+                b'{' => {
+                    stack.push(FieldMode::Code(0));
+                    index += 1;
+                }
+                b'}' => {
+                    stack.pop();
+                    index += 1;
+                    if stack.is_empty() {
+                        return Some(FStringField {
+                            len: index,
+                            target_hidden: false,
+                        });
+                    }
+                }
+                b'"' | b'\'' if rest[index..].starts_with(delimiter) => return None,
+                _ => {
+                    if index == target {
+                        return hidden(index + 1);
+                    }
+                    index += 1;
+                }
+            },
+            FieldMode::Code(nest) => match byte {
+                b'{' | b'(' | b'[' => {
+                    *nest += 1;
+                    index += 1;
+                }
+                b')' | b']' => {
+                    *nest = nest.saturating_sub(1);
+                    index += 1;
+                }
+                b'}' => {
+                    index += 1;
+                    if *nest == 0 {
+                        stack.pop();
+                        if stack.is_empty() {
+                            return Some(FStringField {
+                                len: index,
+                                target_hidden: false,
+                            });
+                        }
+                    } else {
+                        *nest -= 1;
+                    }
+                }
+                // A comment (Python 3.12) can hold brackets and braces that
+                // unbalance the field: give up and hide.
+                b'#' => return None,
+                b':' if *nest == 0 => {
+                    *mode = FieldMode::Spec;
+                    index += 1;
+                }
+                b'"' | b'\'' => {
+                    if rest[index..].starts_with(delimiter) {
+                        return None;
+                    }
+                    let literal = &rest[index..];
+                    let len = match ["\"\"\"", "'''"]
+                        .into_iter()
+                        .find(|triple| literal.starts_with(triple))
+                    {
+                        Some(triple) if string_prefix_is_f_string(rest, index) => {
+                            // An f-string nested in a field: its own fields are
+                            // code, scanned by the same rules.
+                            let nested = nested_fstring_scan(
+                                literal,
+                                triple,
+                                target.checked_sub(index).unwrap_or(usize::MAX),
+                                depth + 1,
+                            )?;
+                            if nested.target_hidden {
+                                return hidden(index + nested.len);
+                            }
+                            if target >= index && target < index + nested.len {
+                                // A live field inside the nested literal.
+                                index += nested.len;
+                                continue;
+                            }
+                            nested.len
+                        }
+                        Some(triple) => triple_literal_len(literal, triple)?,
+                        None => {
+                            let len = single_line_string_len(literal);
+                            // A single-line f-string with a field of its own may
+                            // nest its own quote (Python 3.12), which the quote
+                            // pairing cannot follow: give up and hide.
+                            if string_prefix_is_f_string(rest, index)
+                                && literal[..len].contains('{')
+                            {
+                                return None;
+                            }
+                            len
+                        }
+                    };
+                    if target >= index && target < index + len {
+                        return hidden(index + len);
+                    }
+                    index += len;
+                }
+                _ => index += 1,
+            },
+        }
+    }
+    None
+}
+
+/// Extent of a nested triple-quoted f-string literal.
+struct NestedFString {
+    /// Byte length through the closing delimiter.
+    len: usize,
+    /// The scanned offset sits in the literal's own text or a hidden part of a
+    /// field; otherwise it is in a live field or outside the literal.
+    target_hidden: bool,
+}
+
+/// Scan the f-string literal at the start of `rest` (opened by `triple`):
+/// literal text and `{{` are hidden, replacement fields use
+/// `fstring_field_scan`. `None` when unterminated or a field is unsafe.
+fn nested_fstring_scan(
+    rest: &str,
+    triple: &str,
+    target: usize,
+    depth: usize,
+) -> Option<NestedFString> {
+    let hidden = |len: usize| {
+        Some(NestedFString {
+            len,
+            target_hidden: true,
+        })
+    };
+    let bytes = rest.as_bytes();
+    if target < triple.len() {
+        return hidden(triple.len());
+    }
+    let mut index = triple.len();
+    while index < bytes.len() {
+        let tail = &bytes[index..];
+        if bytes[index] == b'\\' {
+            // A backslash before a brace is a literal character on its own.
+            let step = if matches!(bytes.get(index + 1), Some(b'{' | b'}')) {
+                1
+            } else {
+                2
+            };
+            if target >= index && target < index + step {
+                return hidden(index + step);
+            }
+            index += step;
+        } else if tail.starts_with(triple.as_bytes()) {
+            let len = index + triple.len();
+            return Some(NestedFString {
+                len,
+                target_hidden: target >= index && target < len,
+            });
+        } else if tail.starts_with(b"{{") {
+            if target == index || target == index + 1 {
+                return hidden(index + 2);
+            }
+            index += 2;
+        } else if bytes[index] == b'{' {
+            let field =
+                fstring_field_scan(&rest[index..], triple, target.wrapping_sub(index), depth)?;
+            if field.target_hidden {
+                return hidden(index + field.len);
+            }
+            index += field.len;
+        } else {
+            if index == target {
+                return hidden(index + 1);
+            }
+            index += 1;
+        }
+    }
+    None
+}
+
+/// Byte length of the complete triple-quoted literal at the start of `rest`
+/// (opened by `triple`), newlines included; `None` when it is unterminated.
+fn triple_literal_len(rest: &str, triple: &str) -> Option<usize> {
+    let bytes = rest.as_bytes();
+    let mut index = triple.len();
+    while index < bytes.len() {
+        if bytes[index] == b'\\' {
+            index += 2;
+        } else if bytes[index..].starts_with(triple.as_bytes()) {
+            return Some(index + triple.len());
+        } else {
+            index += 1;
+        }
+    }
+    None
+}
+
 /// Byte length of the ordinary single-line string literal at the start of
 /// `rest` (which begins with its quote): through the closing quote, or to the
-/// end of the line when unterminated.
+/// end of the line when unterminated. A backslash continues the string over the
+/// newline that follows it, including a CRLF pair.
 fn single_line_string_len(rest: &str) -> usize {
     let quote = rest.as_bytes()[0];
     let bytes = rest.as_bytes();
     let mut index = 1;
     while index < bytes.len() {
         match bytes[index] {
-            b'\\' => index += 2,
+            b'\\' => {
+                let crlf = bytes
+                    .get(index + 1..)
+                    .is_some_and(|tail| tail.starts_with(b"\r\n"));
+                index += if crlf { 3 } else { 2 };
+            }
             b'\n' => return index,
             byte if byte == quote => return index + 1,
             _ => index += 1,

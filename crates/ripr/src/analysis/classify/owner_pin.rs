@@ -45,6 +45,7 @@ pub(super) mod closure_adaptor;
 mod expected_binding;
 mod fallible_check;
 mod helper_arguments;
+pub(super) mod returned_closure;
 pub(super) mod short_circuit;
 pub(in crate::analysis) use fallible_check::{FallibleCheckReceipt, fallible_check_receipt};
 
@@ -119,6 +120,11 @@ pub(in crate::analysis) struct OwnerReturnPin {
     /// integer, so `.min(K)`, `.max(K)`, `* 1` and `+ 0` keep their std
     /// meaning on it (trap-ceiling-wide-min-control).
     returns_integer: bool,
+    /// A masked integer tail needs an individually discriminating literal
+    /// pointer input; the direct-call mask guard reads original owner names.
+    pointer_mask_gate: super::mask_pin::PointerMaskGate,
+    /// A typed pointer must observe a value that differs from the baseline.
+    pointer_return_change: Option<crate::analysis::test_grip_evidence::PointerReturnChange>,
     /// The owner is an `async fn`, so a test reads its return value as
     /// `owner(..).await` (RIPR-SPEC-0197 rule 1, `#[tokio::test]`).
     awaited: bool,
@@ -144,17 +150,153 @@ struct StdRootedCalls {
     unrebound: BTreeSet<String>,
 }
 
-/// The rooted spellings of `assert_eq!` and, for the boolean owner pins and
-/// effect probes, `assert!` (#8927): each needs the same root proof.
-const STD_ROOTED_ASSERT_EQ: [&str; 8] = [
+/// The assertion macros whose execution the shared admission can establish
+/// (#8927, #8983): the equality family and the boolean family, each with its
+/// `debug_` twin. `assert_ne!` and the `debug_` spellings run the same
+/// argument-evaluating, early-diverging expansion as `assert_eq!`/`assert!`,
+/// so a context that never runs one never runs the others.
+const ADMITTED_ASSERTION_MACROS: [&str; 6] = [
+    "assert_eq",
+    "assert_ne",
+    "debug_assert_eq",
+    "debug_assert_ne",
+    "assert",
+    "debug_assert",
+];
+
+/// Whether the masked assertion text holds a token that can leave the test
+/// before the comparison runs (`return`, `break`, `continue`, `yield`, `?`).
+fn operand_holds_exit_token(text: &str) -> bool {
+    let masked = mask_comments_and_strings(text);
+    masked.contains('?')
+        || ["return", "break", "continue", "yield"]
+            .iter()
+            .any(|word| !whole_word_offsets(&masked, word).is_empty())
+}
+
+/// Pure comparison macros that may nest in a boolean assertion's operand,
+/// each with the crate that exports it. Their expansions compare two values
+/// and never leave the enclosing function.
+const KNOWN_COMPARISON_MACROS: [(&str, &str); 4] = [
+    ("approx_eq", "float_cmp"),
+    ("relative_eq", "approx"),
+    ("abs_diff_eq", "approx"),
+    ("ulps_eq", "approx"),
+];
+
+/// The [`KNOWN_COMPARISON_MACROS`] names `source` imports by name from their
+/// crate (no glob, no `as` alias).
+fn imported_comparison_macros(source: &str) -> BTreeSet<&'static str> {
+    let imports = mask_comments_and_strings(source);
+    // Every `use` statement that names a macro, as its `use` tree and whether
+    // an attribute (`#[cfg(..)]`) precedes it.
+    let trees: Vec<(&str, bool)> = imports
+        .split(';')
+        .filter_map(|statement| {
+            let (before, tree) = statement.trim().rsplit_once("use ")?;
+            // Only an attribute attached to this `use` gates it, not one on
+            // an enclosing `mod` or an earlier item.
+            let attached = before
+                .rfind(['{', '}'])
+                .map_or(before, |at| &before[at + 1..]);
+            Some((tree, attached.contains("#[")))
+        })
+        .collect();
+    KNOWN_COMPARISON_MACROS
+        .iter()
+        .filter(|(name, krate)| {
+            // A `use` of the same name from anywhere else, or a gated one,
+            // could be the binding the assertion resolves to.
+            let mut from_crate = false;
+            for (tree, gated) in &trees {
+                if whole_word_offsets(tree, name).is_empty() {
+                    continue;
+                }
+                // The name must be a direct item of the crate's path: `krate::name`
+                // or one entry of `krate::{.., name, ..}`.
+                let direct = tree
+                    .trim()
+                    .strip_prefix(&format!("{krate}::"))
+                    .is_some_and(|rest| {
+                        let rest = rest.trim();
+                        // A nested group (`{inner::{x, name}}`) is not a direct
+                        // item list, so it is refused rather than split.
+                        rest.strip_prefix('{')
+                            .and_then(|group| group.strip_suffix('}'))
+                            .map_or(vec![rest], |group| {
+                                if group.contains(['{', '}']) {
+                                    Vec::new()
+                                } else {
+                                    group.split(',').collect()
+                                }
+                            })
+                            .iter()
+                            .any(|item| item.trim() == *name)
+                    });
+                let clean = !gated && direct && !tree.contains('*') && !tree.contains(" as ");
+                if !clean {
+                    return false;
+                }
+                from_crate = true;
+            }
+            from_crate
+        })
+        .map(|(name, _)| *name)
+        .collect()
+}
+
+/// Every name some `macro_rules!` in the index defines.
+fn macro_rules_names(index: &RustIndex) -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
+    for file in index.files().values() {
+        let masked = mask_comments_and_strings(&file.source);
+        for at in whole_word_offsets(&masked, "macro_rules") {
+            let Some(rest) = masked[at + "macro_rules".len()..]
+                .trim_start()
+                .strip_prefix('!')
+            else {
+                continue;
+            };
+            let name: String = rest
+                .trim_start()
+                .chars()
+                .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
+                .collect();
+            if !name.is_empty() {
+                names.insert(name);
+            }
+        }
+    }
+    names
+}
+
+/// The rooted spellings of every admitted assertion macro: each needs the
+/// same root proof.
+const STD_ROOTED_ASSERT_EQ: [&str; 24] = [
     "std::assert_eq",
     "core::assert_eq",
     "::std::assert_eq",
     "::core::assert_eq",
+    "std::assert_ne",
+    "core::assert_ne",
+    "::std::assert_ne",
+    "::core::assert_ne",
+    "std::debug_assert_eq",
+    "core::debug_assert_eq",
+    "::std::debug_assert_eq",
+    "::core::debug_assert_eq",
+    "std::debug_assert_ne",
+    "core::debug_assert_ne",
+    "::std::debug_assert_ne",
+    "::core::debug_assert_ne",
     "std::assert",
     "core::assert",
     "::std::assert",
     "::core::assert",
+    "std::debug_assert",
+    "core::debug_assert",
+    "::std::debug_assert",
+    "::core::debug_assert",
 ];
 
 impl StdRootedCalls {
@@ -214,6 +356,10 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     /// made the entry depend on which probe reached the file first, which
     /// with workers is scheduling (#8797).
     by_file: SyncMemo<BTreeMap<PathBuf, Arc<OwnerPinAssertions>>>,
+    /// #10389: per test file, the known comparison macros it imports by name.
+    comparison_imports: SyncMemo<BTreeMap<PathBuf, Arc<BTreeSet<&'static str>>>>,
+    /// #10389: every name a `macro_rules!` in the index defines, scanned once.
+    macro_rules_names: SyncMemo<Option<BTreeSet<String>>>,
     /// Per module-parent file, read with the plain trusted-macro list.
     module_parents: SyncMemo<BTreeMap<PathBuf, Arc<OwnerPinAssertions>>>,
     /// #6648 (RIPR-SPEC-0279): per doc example test (file, start line), its
@@ -228,10 +374,19 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     /// Per file: the expansion-coordinate admission facts of the tests a
     /// same-file `macro_rules!` generated (#5334).
     generated: SyncMemo<BTreeMap<PathBuf, Vec<GeneratedTestPins>>>,
+    /// The macro definitions a file sees from other files (#6925), the same
+    /// resolution the generated-test pass applied.
+    macro_visibility: OnceLock<crate::analysis::facts::macro_visibility::MacroVisibility>,
     resolved_modules: OnceLock<BTreeSet<(PathBuf, usize, String)>>,
     execution_contexts: SyncMemo<BTreeMap<PathBuf, Arc<Option<ExecutionContext>>>>,
     /// Workspace-wide inputs to [`TargetRoots::root`], computed once.
     target_roots: OnceLock<TargetRoots>,
+    /// Names of the workspace's `macro_rules!` macros, scanned once per run
+    /// (RIPR-SPEC-0351 out-parameter owner scan).
+    workspace_macro_names: OnceLock<Vec<String>>,
+    /// Whether a workspace trait could answer `write_str`-style calls on the
+    /// std buffers, scanned once per run.
+    user_buffer_traits: OnceLock<bool>,
     /// #6974: path-call memos. A path-shaped assertion is read once per
     /// probe, test and assertion, and each input below scans the workspace,
     /// so every answer is kept for the run under the key it depends on.
@@ -629,18 +784,18 @@ impl OwnerPinSyntax {
         // takes the context gate whenever an assertion macro sits in its tail.
         let compound = outer
             .as_deref()
-            .is_none_or(|name| !matches!(name, "assert_eq" | "assert"));
+            .is_none_or(|name| !ADMITTED_ASSERTION_MACROS.contains(&name));
         let gated = match outer.as_deref() {
             _ if compound => {
                 let masked = mask_comments_and_strings(&assertion.text);
                 matches!(family, ProbeFamily::SideEffect | ProbeFamily::CallDeletion)
-                    && ["assert_eq", "assert"].iter().any(|name| {
+                    && ADMITTED_ASSERTION_MACROS.iter().any(|name| {
                         whole_word_offsets(&masked, name)
                             .into_iter()
                             .any(|at| masked[at + name.len()..].trim_start().starts_with('!'))
                     })
             }
-            Some("assert_eq") => matches!(
+            Some("assert_eq" | "assert_ne" | "debug_assert_eq" | "debug_assert_ne") => matches!(
                 family,
                 ProbeFamily::ReturnValue
                     | ProbeFamily::ErrorPath
@@ -648,9 +803,12 @@ impl OwnerPinSyntax {
                     | ProbeFamily::SideEffect
                     | ProbeFamily::CallDeletion
             ),
-            Some("assert") => matches!(
+            Some("assert" | "debug_assert") => matches!(
                 family,
-                ProbeFamily::MatchArm | ProbeFamily::SideEffect | ProbeFamily::CallDeletion
+                ProbeFamily::ReturnValue
+                    | ProbeFamily::MatchArm
+                    | ProbeFamily::SideEffect
+                    | ProbeFamily::CallDeletion
             ),
             _ => false,
         };
@@ -664,6 +822,30 @@ impl OwnerPinSyntax {
             // keeps its credit. The return family keeps refusing (#8927).
             Some(AssertionRefusal::Syntax(AssertionContextRefusal::DuplicateSpellingOneRuns)) => {
                 matches!(family, ProbeFamily::SideEffect | ProbeFamily::CallDeletion)
+            }
+            // #10389: a boolean `assert!` whose operand only nests a known
+            // pure comparison macro (`assert!(approx_eq!(f64, ..))`) is not
+            // shown dead, only unresolved: ripr does not expand third-party
+            // macros. The return family keeps the credit it had before this
+            // gate, because `rust_assertion_context_unestablished` would
+            // demote live rows of the verdict corpus. Any other nested
+            // macro (it may hide a `return`), an operand with an exit token,
+            // a test with any attribute besides `#[test]` (the function-level
+            // macro scan reports first and would hide `TestAttribute`), and
+            // every other refusal still withhold it.
+            Some(AssertionRefusal::Syntax(AssertionContextRefusal::MacroOperandExit(_))) => {
+                family == ProbeFamily::ReturnValue
+                    && matches!(outer.as_deref(), Some("assert" | "debug_assert"))
+                    && test.attrs.iter().all(|attr| {
+                        attr.chars()
+                            .filter(|ch| !ch.is_whitespace())
+                            .eq("#[test]".chars())
+                    })
+                    && !operand_holds_exit_token(&assertion.text)
+                    && self.nested_macros_are_known_comparisons(&assertion.text, &test.file, index)
+                    && self
+                        .refusal_trusting_comparison_macros(test, assertion, index)
+                        .is_none()
             }
             Some(_) => false,
         }
@@ -880,8 +1062,15 @@ impl OwnerPinSyntax {
                 .chain(placement.iter())
                 .all(|file| {
                     if matches!(root, "std" | "core") {
-                        matches!(leaf, "assert" | "assert_eq" | "assert_ne")
-                            && index.drop_in_manifests.unbound_standard_root(file, root)
+                        matches!(
+                            leaf,
+                            "assert"
+                                | "assert_eq"
+                                | "assert_ne"
+                                | "debug_assert"
+                                | "debug_assert_eq"
+                                | "debug_assert_ne"
+                        ) && index.drop_in_manifests.unbound_standard_root(file, root)
                     } else {
                         matches!(leaf, "assert_eq" | "assert_ne")
                             && index.drop_in_manifests.verified(file, root)
@@ -1250,6 +1439,91 @@ impl OwnerPinSyntax {
         pin.macros.is_disjoint(&ambiguous).then_some(pin.value)
     }
 
+    /// Whether every macro nested in the boolean assertion `text` is one of
+    /// [`KNOWN_COMPARISON_MACROS`], imported by name from its crate in the
+    /// test file and not defined by a `macro_rules!` anywhere in the index. A
+    /// nested path-qualified, glob-imported or locally defined macro may hide
+    /// an exit. The import and definition scans run once per file and index.
+    fn nested_macros_are_known_comparisons(
+        &self,
+        text: &str,
+        test_file: &Path,
+        index: &RustIndex,
+    ) -> bool {
+        let masked = mask_comments_and_strings(text);
+        let mut names = Vec::new();
+        for (at, _) in masked.match_indices('!') {
+            let after = masked[at + 1..].trim_start();
+            if !after.starts_with(['(', '[', '{']) {
+                continue;
+            }
+            let before = masked[..at].trim_end();
+            let start = before
+                .rfind(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+                .map_or(0, |last| last + 1);
+            let name = &before[start..];
+            // A `!` with no identifier before it negates a parenthesized
+            // expression; it is not a macro invocation.
+            if name.is_empty() {
+                continue;
+            }
+            if before[..start].ends_with("::") {
+                return false;
+            }
+            names.push(name);
+        }
+        // The outer assertion is the first invocation; the rest are nested.
+        let Some((_, nested)) = names.split_first() else {
+            return false;
+        };
+        let Some(file) = index.files().get(test_file) else {
+            return false;
+        };
+        let imported = self
+            .comparison_imports
+            .get_or_build(&test_file.to_path_buf(), || {
+                imported_comparison_macros(&file.source)
+            });
+        let mut defined = self.macro_rules_names.borrow_mut();
+        let defined = defined.get_or_insert_with(|| macro_rules_names(index));
+        nested
+            .iter()
+            .all(|name| imported.contains(name) && !defined.contains(*name))
+    }
+
+    /// The file-text verdict for `assertion` with the known nested comparison
+    /// macros read as plain, so the function-level `MacroOperandExit` does not
+    /// hide a dead context (`return`, `loop {}`, an uncalled `fn`, `if
+    /// cfg!(any())`) the per-assertion gates would refuse (#10389). Anything
+    /// not read from the file's own text (doc examples, generated tests)
+    /// refuses.
+    fn refusal_trusting_comparison_macros(
+        &self,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        index: &RustIndex,
+    ) -> Option<AssertionContextRefusal> {
+        if index.doctest_source(test).is_some() {
+            return Some(AssertionContextRefusal::UnidentifiedTest);
+        }
+        let Some(facts) = index.files().get(&test.file) else {
+            return Some(AssertionContextRefusal::UnidentifiedTest);
+        };
+        let Ok(ambiguous) = self.context_ambiguities(test, assertion.line, index) else {
+            return Some(AssertionContextRefusal::UnidentifiedTest);
+        };
+        self.by_file
+            .get_or_build(&test.file, || {
+                owner_pin_assertions(&facts.source, &assertion_context_macros())
+            })
+            .refusal_trusting_comparison_macros(
+                (test.start_line, test.end_line, &test.name),
+                &test.body,
+                (assertion.line, &assertion.text),
+                &ambiguous,
+            )
+    }
+
     fn refusal(
         &self,
         test: &TestSummary,
@@ -1301,9 +1575,9 @@ impl OwnerPinSyntax {
         let rooted = self
             .std_rooted
             .get_or_build(&test.file, || StdRootedCalls::of(&facts.source));
-        let qualified: BTreeSet<String> = std_rooted_macro_path(&assertion.text, "assert_eq")
-            .into_iter()
-            .chain(std_rooted_macro_path(&assertion.text, "assert"))
+        let qualified: BTreeSet<String> = ADMITTED_ASSERTION_MACROS
+            .iter()
+            .filter_map(|name| std_rooted_macro_path(&assertion.text, name))
             .chain(rooted.calls.iter().cloned())
             .collect();
         if let Some(path) = qualified.into_iter().find(|path| {
@@ -1345,7 +1619,20 @@ impl OwnerPinSyntax {
             .generated
             .borrow_mut()
             .entry(test.file.clone())
-            .or_insert_with(|| generated_test_pins(&test.file, &facts.source, NON_RETURNING_MACROS))
+            .or_insert_with(|| {
+                let imported = self
+                    .macro_visibility
+                    .get_or_init(|| {
+                        crate::analysis::facts::macro_visibility::MacroVisibility::new(
+                            index
+                                .files()
+                                .iter()
+                                .map(|(path, file)| (path.clone(), file.source.clone())),
+                        )
+                    })
+                    .imported_macros(&test.file);
+                generated_test_pins(&test.file, &facts.source, &imported, NON_RETURNING_MACROS)
+            })
             .iter()
             .filter(|invocation| {
                 invocation.start_line == test.start_line && invocation.end_line == test.end_line
@@ -1431,8 +1718,9 @@ impl OwnerPinSyntax {
             .into_iter()
             .map(|(name, _)| name),
         );
-        if let Some(path) = std_rooted_macro_path(&assertion.text, "assert_eq")
-            .or_else(|| std_rooted_macro_path(&assertion.text, "assert"))
+        if let Some(path) = ADMITTED_ASSERTION_MACROS
+            .iter()
+            .find_map(|name| std_rooted_macro_path(&assertion.text, name))
             .or_else(|| StdRootedCalls::of(source).calls.into_iter().next())
         {
             return Some(AssertionRefusal::Syntax(
@@ -1654,7 +1942,8 @@ fn target_context_roots(
                     .parent()
                     .and_then(Path::file_name)
                     .is_some_and(|p| p == "tests"))
-                || !recognized_target_root(root, src_dirs)
+                || !(recognized_target_root(root, src_dirs)
+                    || index.member_crates.is_custom_lib_path_root(root))
         })
     {
         return None;
@@ -1681,6 +1970,20 @@ fn recognized_target_root(root: &Path, src_dirs: &BTreeSet<PathBuf>) -> bool {
 }
 
 impl OwnerPinSyntax {
+    /// Whether a workspace trait could answer `write_str`-style calls on
+    /// `String`/`Vec`/`VecDeque`, scanned once per run.
+    pub(in crate::analysis) fn user_buffer_traits(&self, index: &RustIndex) -> bool {
+        *self
+            .user_buffer_traits
+            .get_or_init(|| super::out_parameter::workspace_has_user_buffer_traits(index))
+    }
+
+    /// The workspace's `macro_rules!` macro names, scanned once per run.
+    pub(in crate::analysis) fn workspace_macro_names(&self, index: &RustIndex) -> &[String] {
+        self.workspace_macro_names
+            .get_or_init(|| super::out_parameter::workspace_macro_names(index))
+    }
+
     /// Workspace routing inputs, computed once per run.
     fn target_roots(&self, index: &RustIndex) -> &TargetRoots {
         self.target_roots.get_or_init(|| TargetRoots::new(index))
@@ -2537,6 +2840,23 @@ enum ReturnPathGate {
     /// pinned value to be an `Ok(..)` that every element reached
     /// (`requires_ok`, #9490).
     Adaptor { position: usize, requires_ok: bool },
+    /// RIPR-SPEC-0265 rule 5: the changed tail is the owner's whole body and
+    /// one closure over its own parameters. The pinned operand must apply
+    /// the returned closure to `arity` distinct nonzero numeric literals, so
+    /// the closure runs once and the bounded typed body discriminates the
+    /// supported arithmetic replacements, including through literal captures.
+    ReturnedClosure {
+        arity: usize,
+        arithmetic: returned_closure::ArithmeticPin,
+    },
+    /// RIPR-SPEC-0360: the changed statement adds into (or subtracts from) a
+    /// zero-initialized local that the owner returns, once per element of the
+    /// slice-like parameter at `position`. The pinned call must pass that
+    /// parameter a non-empty literal sequence, and the pinned value must be
+    /// a nonzero integer literal: from zero, a nonzero result separates the
+    /// update from a flipped sign, a product, a quotient and a deleted
+    /// statement.
+    LoopAccumulator { position: usize },
     /// RIPR-SPEC-0197 rule 3: the changed tail is the owner's whole body and
     /// one pure `&&` or `||` chain over its parameters. The pinned call
     /// must evaluate every operand on some run.
@@ -2797,7 +3117,25 @@ fn collect_exit_records(expression: &ast::Expr, records: &mut Vec<ast::RecordExp
     }
 }
 
+/// A changed whole returned closure can confirm observation only through
+/// its admitted application pin, even when the arithmetic model is unknown.
+pub(in crate::analysis) fn returned_closure_pin_required(
+    probe: &Probe,
+    owner: &FunctionSummary,
+) -> bool {
+    matches!(probe.family, ProbeFamily::ReturnValue)
+        && returned_closure::owner_returned_closure_tail(owner)
+            .is_some_and(|tail| tail.tail_is(&probe.expression))
+}
+
 impl OwnerReturnPin {
+    /// The owner's changed value is its unconditional whole boolean tail.
+    /// A wrapper pin may reuse boundary pairing only for this shape; the
+    /// short-circuit and adaptor paths require their own pinned-input gates.
+    pub(in crate::analysis) fn is_unconditional_boolean_tail(&self) -> bool {
+        self.returns_bool && matches!(self.path, ReturnPathGate::Any)
+    }
+
     /// The owner-side gates: `None` when the probe is not a return value
     /// (or a changed `return Err(..)`, filed as `error_path`),
     /// the owner's declaration or return paths are not established, or
@@ -2850,12 +3188,37 @@ impl OwnerReturnPin {
             // closure refusal ("a closure in the tail no longer refuses it
             // on this shape") and must stay unguarded: 0265's keeping-pair
             // registry is what tells a closure-carried change apart there.
+            None if matches!(probe.family, ProbeFamily::ReturnValue)
+                && let Some(accumulator) =
+                    crate::analysis::syntax::loop_accumulator::loop_accumulator_at(
+                        &owner.body,
+                        changed_line,
+                    ) =>
+            {
+                ReturnPathGate::LoopAccumulator {
+                    position: accumulator.walked_position,
+                }
+            }
             None if matches!(probe.family, ProbeFamily::ReturnValue) => {
                 closure_adaptor::admitted_owner_adaptor_tail(owner, index)
                     .filter(|tail| tail.tail_is(&probe.expression))
                     .map(|tail| ReturnPathGate::Adaptor {
                         position: tail.position,
                         requires_ok: tail.collects_result(),
+                    })
+                    // RIPR-SPEC-0265 rule 5: a returned closure applied in the
+                    // pinned expression.
+                    .or_else(|| {
+                        returned_closure::owner_returned_closure_tail(owner)
+                            .filter(|tail| tail.tail_is(&probe.expression))
+                            .and_then(|tail| {
+                                Some(ReturnPathGate::ReturnedClosure {
+                                    arity: tail.arity,
+                                    arithmetic: returned_closure::ArithmeticPin::establish(
+                                        owner, index,
+                                    )?,
+                                })
+                            })
                     })?
             }
             None => return None,
@@ -2926,6 +3289,17 @@ impl OwnerReturnPin {
             returns_integer: returns_primitive_scalar(owner, index)
                 && declared_return_type(&owner.body)
                     .is_some_and(|returned| INTEGER_TYPES.contains(&returned.as_str())),
+            pointer_mask_gate: super::mask_pin::PointerMaskGate::for_owner(
+                &probe.expression,
+                name,
+                &owner.body,
+                index,
+            ),
+            pointer_return_change: crate::analysis::test_grip_evidence::PointerReturnChange::new(
+                owner,
+                probe.before.as_deref(),
+                &probe.expression,
+            ),
             awaited: declares_async(owner, index),
             drop_plain: Self::returned_types_drop_plain(owner, index),
             owner_file: owner.file.clone(),
@@ -3052,6 +3426,8 @@ impl OwnerReturnPin {
             returns_bool: false,
             returns_scalar: false,
             returns_integer: false,
+            pointer_mask_gate: super::mask_pin::PointerMaskGate::Refuse,
+            pointer_return_change: None,
             awaited: declares_async(owner, index),
             drop_plain: Self::returned_types_drop_plain(owner, index),
             owner_file: owner.file.clone(),
@@ -3154,6 +3530,8 @@ impl OwnerReturnPin {
             returns_bool: false,
             returns_scalar: false,
             returns_integer: false,
+            pointer_mask_gate: super::mask_pin::PointerMaskGate::Refuse,
+            pointer_return_change: None,
             awaited: declares_async(owner, index),
             drop_plain: Self::returned_types_drop_plain(owner, index),
             owner_file: owner.file.clone(),
@@ -3248,6 +3626,8 @@ impl OwnerReturnPin {
             returns_bool: false,
             returns_scalar: false,
             returns_integer: false,
+            pointer_mask_gate: super::mask_pin::PointerMaskGate::Refuse,
+            pointer_return_change: None,
             awaited: declares_async(owner, index),
             drop_plain: Self::returned_types_drop_plain(owner, index),
             owner_file: owner.file.clone(),
@@ -3323,6 +3703,14 @@ impl OwnerReturnPin {
     /// not hold, so that stays refused.
     fn awaited_call_shape<'a>(&self, operand: &'a str, name: &str) -> Option<CallShape<'a>> {
         let operand = operand.trim();
+        // RIPR-SPEC-0265 rule 5: the pinned value is the returned closure
+        // applied to its arguments; the call shape is the owner call inside.
+        let operand = match &self.path {
+            ReturnPathGate::ReturnedClosure { arity, .. } => {
+                returned_closure::strip_applied(operand, *arity)?
+            }
+            _ => operand,
+        };
         // An async owner's bare call is its future, not its return value.
         match (self.awaited, operand.strip_suffix(".await")) {
             (true, Some(call)) => owner_call_shape(call.trim_end(), name),
@@ -3425,6 +3813,7 @@ impl OwnerReturnPin {
         let condition;
         let matches_operands: [String; 2];
         let expect_operands: [String; 2];
+        let pointer_call;
         // RIPR-SPEC-0197: `assert!(owner(..) == v)` and its guard twin
         // `if owner(..) != v { return Err(..) }` read like `assert_eq!`. A
         // guard reads only its condition, never a macro inside its body,
@@ -3498,6 +3887,45 @@ impl OwnerReturnPin {
         } else if reads_assert_eq {
             let Some(operands) = assertion_comparison_operands(&assertion.text) else {
                 return false;
+            };
+            // #9478: a typed immutable function pointer lends its exact call,
+            // not an arbitrary use of the owner as a value. Keep this bounded
+            // to a sync scalar free-function tail compared with a literal;
+            // every identity, expected-value and execution gate below remains.
+            pointer_call = (!self.awaited
+                && self.returns_scalar
+                && matches!(self.call, PinCall::Bare)
+                && matches!(self.path, ReturnPathGate::Any)
+                && (test.start_line..=test.end_line).contains(&assertion.line))
+            .then(|| {
+                [(0, 1), (1, 0)].into_iter().find_map(|(at, other)| {
+                    if self.awaited_call_shape(operands[at], &self.name).is_some() {
+                        return None;
+                    }
+                    helper_arguments::expected_literal(operands[other], index)?;
+                    let call = crate::analysis::extract::local_fn_pointer_call(
+                        &test.body,
+                        operands[at],
+                        &assertion.text,
+                        assertion.line.checked_sub(test.start_line)?,
+                    )?;
+                    self.awaited_call_shape(&call, &self.name)?;
+                    self.pointer_mask_gate.admits(&call).then_some(())?;
+                    if self
+                        .pointer_return_change
+                        .as_ref()
+                        .is_some_and(|change| change.is_invisible_at_call(&call))
+                    {
+                        return None;
+                    }
+                    Some((at, call))
+                })
+            })
+            .flatten();
+            let operands = match &pointer_call {
+                Some((0, call)) => [call.as_str(), operands[1]],
+                Some((1, call)) => [operands[0], call.as_str()],
+                _ => operands,
             };
             // trap-shine-debug-exact-control: the std rendering of a
             // primitive scalar names its value, so an exact string pins it.
@@ -3643,15 +4071,15 @@ impl OwnerReturnPin {
                 (None, Some(call)) => (call, left.as_str(), Some(right.as_str())),
                 _ => return false,
             }
-        } else if !is_guard
-            && is_plain_assert_of_matches(&assertion.text)
-            && let Some(operands) = outer_assertion_condition(&assertion.text)
-                .as_deref()
-                .and_then(literal_matches_operands)
+        } else if let Some(operands) = matches_pin_condition(&assertion.text)
+            .as_deref()
+            .and_then(literal_matches_operands)
         {
             // RIPR-SPEC-0197 literal `matches!` pins: `assert!(matches!(owner(..), Ok(5)))`
             // with a literal-only pattern pins the value as
-            // `assert_eq!(owner(..), Ok(5))` does.
+            // `assert_eq!(owner(..), Ok(5))` does. #10121: so does its
+            // Err-return guard twin `if !matches!(owner(..), Ok(5)) { return
+            // Err(..) }` (RIPR-SPEC-0154 example 2).
             matches_operands = operands;
             let Some(call) = owner_call_shape(&matches_operands[0], &self.name) else {
                 return false;
@@ -3874,6 +4302,32 @@ impl OwnerReturnPin {
                             text,
                             &self.name,
                             *position,
+                        )
+                    })
+                {
+                    return false;
+                }
+                // RIPR-SPEC-0265 rule 5: the application must tell the
+                // closure's operators apart.
+                if let ReturnPathGate::ReturnedClosure { arity, arithmetic } = path
+                    && !call_text.is_some_and(|text| {
+                        returned_closure::applied_inputs_are_distinct_literals(text, *arity)
+                            && arithmetic.discriminates(text)
+                    })
+                {
+                    return false;
+                }
+                // RIPR-SPEC-0360: some pinned run walks a non-empty literal
+                // sequence and pins a nonzero integer.
+                if let ReturnPathGate::LoopAccumulator { position } = path
+                    && !call_text.is_some_and(|text| {
+                        closure_adaptor::pinned_run_sums_to_nonzero(
+                            test,
+                            loan.as_ref(),
+                            text,
+                            &self.name,
+                            *position,
+                            expected,
                         )
                     })
                 {
@@ -4864,10 +5318,11 @@ impl ReturnPathGate {
 
     fn admits(&self, expected: &str) -> bool {
         match self {
-            Self::Any | Self::ShortCircuit(_) => true,
+            Self::Any | Self::ReturnedClosure { .. } | Self::ShortCircuit(_) => true,
             Self::Adaptor { requires_ok, .. } => {
                 !requires_ok || constructor_call_span(expected.trim(), "Ok").is_some()
             }
+            Self::LoopAccumulator { .. } => true,
             Self::Head(head) | Self::EarlyHead(head) => {
                 constructor_call_span(expected.trim(), head).is_some()
             }
@@ -4913,7 +5368,7 @@ enum CallShape<'a> {
 /// token of the one `fn <name>` item whose span holds the owner's start
 /// line. No parse, or no single match, reads as sync: an async owner then
 /// gets no `.await` credit, and its bare call (a future) does not compile.
-fn declares_async(owner: &FunctionSummary, index: &RustIndex) -> bool {
+pub(super) fn declares_async(owner: &FunctionSummary, index: &RustIndex) -> bool {
     let Some(facts) = index.files().get(&owner.file) else {
         return false;
     };
@@ -5287,7 +5742,7 @@ fn item_nesting_with_impl(
 }
 
 /// Whether `node` carries a `cfg` or `cfg_attr` attribute, outer or inner.
-fn has_cfg_attr(node: &impl ast::HasAttrs) -> bool {
+pub(super) fn has_cfg_attr(node: &impl ast::HasAttrs) -> bool {
     // `cfg` and `cfg_attr` parse to their own metas, which have no `path`.
     node.attrs().any(|attr| {
         matches!(
@@ -5550,7 +6005,20 @@ fn return_path_gate_from(
     // with the changed text (`Ok("a")` is not `Ok("b")`).
     let masked_changed = collapse_whitespace(&mask_comments_and_strings(changed));
     let tail_is_changed = [after_semicolon, after_brace].into_iter().any(|start| {
-        let tail = collapse_whitespace(&inner_text[start..]);
+        // A comment after the tail (`1 + x // assert_eq!(..)`) is masked to
+        // blanks, so the code ends where the masked tail does; reading the
+        // unmasked rest would compare the comment with the changed text.
+        // Masking also blanks string and char literals, so the code ends at
+        // the masked end only when a real comment starts there.
+        let masked_end = start + inner[start..].trim_end().len();
+        let rest = inner_text[masked_end..].trim_start();
+        let comment_follows = rest.starts_with("//") || rest.starts_with("/*");
+        let code_end = if comment_follows {
+            masked_end
+        } else {
+            inner_text.len()
+        };
+        let tail = collapse_whitespace(&inner_text[start..code_end]);
         (tail == changed
             || (collapse_whitespace(&inner[start..]) == masked_changed && tail.ends_with(changed)))
             && spans_changed_line(start, inner_text.len())
@@ -5579,7 +6047,15 @@ fn return_path_gate_from(
     let early_exits = inner.bytes().filter(|byte| *byte == b'?').count() + other_returns;
     // The uncollapsed expression: collapsing would also merge whitespace
     // inside a string literal that the change touched.
-    if changed_part_evaluates_conditionally(expression, before) {
+    // RIPR-SPEC-0265 rule 4: a `std::thread::spawn(move || e).join().unwrap()`
+    // tail runs `e` once on every input and returns its value, so the closure's
+    // own `||` is not a short circuit and the change is read inside `e`.
+    let thread_pair = spawn_join_body(expression).zip(before.and_then(spawn_join_body));
+    let conditional = match &thread_pair {
+        Some((body, before_body)) => changed_part_evaluates_conditionally(body, Some(before_body)),
+        None => changed_part_evaluates_conditionally(expression, before),
+    };
+    if conditional {
         // RIPR-SPEC-0197 rule 3: a pure `&&`/`||` chain is the one
         // conditional tail a pin may observe, and only on a pinned call
         // that evaluates every operand (checked per test).
@@ -5923,6 +6399,40 @@ const NEGATING_KEYWORDS: &[&str] = &[
     "if", "while", "return", "match", "in", "else", "break", "let", "mut", "move", "as", "yield",
     "ref", "unsafe", "async",
 ];
+
+/// The closure body of a tail that is exactly
+/// `std::thread::spawn(<zero-parameter closure>).join().unwrap()`: the spawned
+/// closure runs once on every call and the join returns its value. `None` for
+/// any other text, including a `thread::spawn` path that `use` could rebind.
+pub(in crate::analysis) fn spawn_join_body(text: &str) -> Option<String> {
+    // The masked text keeps the byte layout of `text`, so structure is read
+    // from it and the closure argument is cut from the unmasked text.
+    let masked = mask_comments_and_strings(text);
+    let start = masked.len() - masked.trim_start().len();
+    let end = masked.trim_end().trim_end_matches(';').trim_end().len();
+    let prefix = "std::thread::spawn";
+    let after = masked.get(start..end)?.strip_prefix(prefix)?;
+    let open = start + prefix.len() + (after.len() - after.trim_start().len());
+    if masked.as_bytes().get(open) != Some(&b'(') {
+        return None;
+    }
+    let close = matching_close(&masked, open, b'(', b')')?;
+    let rest: String = masked
+        .get(close + 1..end)?
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect();
+    if rest != ".join().unwrap()" {
+        return None;
+    }
+    let argument = text.get(open + 1..close)?.trim();
+    let body = argument
+        .strip_prefix("move")
+        .map_or(argument, str::trim_start)
+        .strip_prefix("||")?
+        .trim();
+    (!body.is_empty()).then(|| body.to_string())
+}
 
 /// #6578: whether the part of the changed tail that differs from its old
 /// text (`before`) is evaluated only on some inputs, or passes through code
@@ -11931,6 +12441,11 @@ fn fixture_parameters(test: &TestSummary, masked: &str) -> Option<BTreeSet<Strin
     if masked[open + 1..close].trim().is_empty() {
         return Some(BTreeSet::new());
     }
+    // A `#[test_case]` function has no fixtures: the syntax gate admits it
+    // only when every row holds one scalar literal per parameter.
+    if test.attrs.iter().any(|attr| is_test_case_attribute(attr)) {
+        return Some(BTreeSet::new());
+    }
     let parse = parse_clean_source_file(&test.body)?;
     let function = parse
         .tree()
@@ -11954,6 +12469,11 @@ fn fixture_parameters(test: &TestSummary, masked: &str) -> Option<BTreeSet<Strin
         }
     }
     Some(fixtures)
+}
+
+fn is_test_case_attribute(attribute: &str) -> bool {
+    let compact: String = attribute.split_whitespace().collect();
+    compact.starts_with("#[test_case(") || compact.starts_with("#[test_case::test_case(")
 }
 
 /// The offsets of the parentheses around the parameter list of the `fn`
@@ -12244,7 +12764,13 @@ fn is_trivial_expression(expression: &str, locals: bool) -> bool {
 /// nested `fn`'s parameters. Lexical and conservative: a `|` operator or an unrelated
 /// match arm that mentions the name also counts.
 fn binds_outside_let(masked: &str, name: &str) -> bool {
-    let fns = whole_word_offsets(masked, "fn");
+    // A function-pointer type has no item name: its `fn` is followed by
+    // `(`. Its parameter labels bind no values in the surrounding test.
+    // Keep the existing conservative refusal for actual nested fn items.
+    let fns: Vec<_> = whole_word_offsets(masked, "fn")
+        .into_iter()
+        .filter(|offset| !masked[offset + "fn".len()..].trim_start().starts_with('('))
+        .collect();
     if fns.len() > 1 {
         return true;
     }
@@ -13342,6 +13868,21 @@ fn top_level_semicolon(masked: &str) -> Option<usize> {
         }
     }
     None
+}
+
+/// The `matches!(scrutinee, pattern)` condition a literal `matches!` pin reads
+/// from `text`: a plain `assert!(matches!(..))`, or the assertion twin of a
+/// terminal Err-return guard over a negated `matches!`. Guards are read through
+/// the same twin, so both spellings take one admission (#10121).
+fn matches_pin_condition(text: &str) -> Option<String> {
+    if is_plain_assert_of_matches(text) {
+        return outer_assertion_condition(text);
+    }
+    let (_, twin) = err_return_guard_twin(text)?;
+    if !is_plain_assert_of_matches(&twin) {
+        return None;
+    }
+    outer_assertion_condition(&twin)
 }
 
 /// Whether `text` is one unqualified `assert!` whose only nested macro is a

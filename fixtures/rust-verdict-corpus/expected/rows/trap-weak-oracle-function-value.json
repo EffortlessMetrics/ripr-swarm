@@ -1,0 +1,22 @@
+{
+  "case_id": "trap-weak-oracle-function-value",
+  "subject_id": "authored-weak-oracle-kit",
+  "origin": "authored",
+  "anchor": "src/values.rs:2",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "direct_call_and_function_value_weak_assertion",
+  "hard_case": true,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": true,
+  "observed_classifications": [
+    "static_unknown"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}
