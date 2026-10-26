@@ -19020,6 +19020,27 @@ fn describe_skip_if_and_run_if_index_their_tests_under_the_factory_guard() {
 }
 
 #[test]
+fn describe_skip_if_accepts_an_options_argument_before_the_callback() {
+    let source = "describe.skipIf(c)('a', { timeout: 5 }, () => {\n  it('x', () => { expect(f(1)).toBe(2); });\n});\n";
+    let tests = extract_tests(Path::new("tests/a.test.ts"), source);
+    assert_eq!(tests.len(), 1, "{tests:?}");
+    assert_eq!(
+        tests[0].conditional_registration.as_deref(),
+        Some("describe.skipIf(c)")
+    );
+}
+
+#[test]
+fn describe_skip_if_on_a_local_or_unrelated_describe_is_not_a_runner_suite() {
+    let local = "const describe = { skipIf: () => (_n, cb) => cb() };\ndescribe.skipIf(true)('local', () => {\n  it('x', () => { expect(f(1)).toBe(2); });\n});\n";
+    let tests = extract_tests(Path::new("tests/a.test.ts"), local);
+    assert!(tests.is_empty(), "{tests:?}");
+    let imported = "import { describe } from './harness';\ndescribe.skipIf(true)('local', () => {\n  it('x', () => { expect(f(1)).toBe(2); });\n});\n";
+    let tests = extract_tests(Path::new("tests/a.test.ts"), imported);
+    assert!(tests.is_empty(), "{tests:?}");
+}
+
+#[test]
 fn describe_skip_if_on_another_root_is_not_descended_and_a_dynamic_title_still_is() {
     let source = "runner.skipIf(c)('a', () => {\n  it('x', () => { expect(f(1)).toBe(2); });\n});\ndescribe.skipIf(c)(title, () => {\n  it('y', () => { expect(f(1)).toBe(2); });\n});\n";
     let tests = extract_tests(Path::new("tests/a.test.ts"), source);
