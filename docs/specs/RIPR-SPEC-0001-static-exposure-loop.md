@@ -113,6 +113,30 @@ harness registrations; external parent edges, configuration and Cargo manifests
 are not reconstructed.
 Unavailable or malformed source retains existing uncertainty rather than
 borrowing a candidate line.
+A field line of a `struct` declared inside an item macro (`pin_project! { pub
+struct X { buffered: Option<u8>, } }`) is also a declaration (#10268), on the
+added side and the reconstructed old side alike. The macro body is an opaque
+token tree, so the line counts only when it is plausibly `name: Type,` and its
+owner is unambiguous: every token sits directly in a `{ .. }` tree that is the
+direct input of one macro call (not a macro nested in a macro), is preceded in
+that tree by a `struct` header (searched to the tree boundary, failing closed at
+a top-level `,`, `;`, `=`, or a `fn`/`impl`/`enum`/`trait`/brace owner), and is
+followed only by the tree end or another item. The line's tokens must come from
+an allowlist of type syntax: identifiers and paths, lifetimes, balanced `<..>`,
+a reference `&` or raw-pointer `*const`/`*mut` prefix, `dyn`/`impl`/`fn`/`for`/
+`mut`/`const`/`unsafe`/`extern`, `->`, `pub` with `(crate|super|self|in path)`,
+`+` joining bound names, a paren group only as a `fn`/`Fn*` argument list or
+tuple type, and a bracket holding exactly one non-empty element type (no comma
+outside `<..>`; `[]`, `[;3]` and `[T;]` are not types) whose length, if any, is a
+literal or a path, and `<..>` only after a path or `for`. Everything else
+keeps `field_construction`: a construction (`Task { buffered: None }`), a
+literal, closure, `|`, `.`, `as`, `?`, `..`, unary or binary operator, call
+(`compute()`), macro `!`, nested brace, array element list (`[A, B]`, `[1, 2]`) or non-path length
+(`[u8; N + 1]`, `[compute(); 3]`), a second field on the line, and an
+initializer or discriminant `=`. Declared limit: a bare path such as `None` or
+`Foo` is indistinguishable from a type, so `value: None,` inside an item macro
+reads as a declaration; so does `A + B` between two bound names and a
+parenthesised single path `(a)`.
 
 Finding IDs remain content-addressed by path, probe family, owner and normalized
 expression. Line movement, checkout root, diff/discovery order and unrelated
@@ -127,8 +151,11 @@ identity input invalidates the
 ID so an earlier suppression cannot silently select a different value. Genuine
 repeated expressions retain distinct ordinal-suffixed IDs. The public-path
 metamorphic and stale-suppression controls are in
-`crates/ripr/tests/finding_identity_contract.rs` (#8832). The distinct-payload
-fp8 collision witnesses in #8838 remain unmet acceptance; duplicate-expression
+`crates/ripr/tests/finding_identity_contract.rs` (#8832). Distinct expressions
+that share an fp8 at one owner take their collision ordinals from a full
+payload digest, so their IDs do not depend on diff order (#8838). The
+sole-expression half of #8838, a lone changed expression whose fp8 equals a
+different earlier expression's, remains unmet acceptance; duplicate-expression
 ordinal tests do not establish collision stability or waive this requirement.
 
 Each finding should carry:
@@ -683,6 +710,13 @@ closer on or inside a function span (including its `end_line`) keeps its probe
 (#4216), and so does any file with no indexed function or no file facts. The
 helper checks the line's position, not the kind of item it closes. The removed
 side is unchanged.
+
+A changed line that opens with the `impl` keyword (optionally `unsafe`) and holds
+no body brace, `;` or `fn ` is the first line of a rustfmt-wrapped `impl` header
+(`impl<Item, const N: usize> Drop` before `for Holder<Item, N>` and `{` on later
+lines). It declares only, so it seeds a single `static_unknown` probe like a
+one-line `impl ... {` header (#8389) and never `field_construction` for a
+const-generic bound or `call_deletion` for a generic attribute (#10244).
 
 ## Implementation Mapping
 

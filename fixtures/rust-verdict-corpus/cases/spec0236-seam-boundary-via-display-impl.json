@@ -9,7 +9,7 @@
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "predicate_boundary",
   "test_shape": "display_impl_to_string_exact",
-  "hard_case": "Seam class matches example 16: the `suffix` boundary seam reads activation_unknown (reach weak, activate unknown, propagate/observe/discriminate yes) and keeps the one missing discriminator `1 (boundary value)`; the evidence record reads static_limitation. The diff finding reads weakly_exposed, so check reports the gap that the seam inventory files as an unknown.",
+  "hard_case": "Seam class matches example 16: the `suffix` boundary seam reads activation_unknown (reach weak, activate unknown, propagate/observe/discriminate yes) and keeps the one missing discriminator `1 (boundary value)`; the evidence record reads static_limitation. The diff finding reads propagation_unknown (verdict limited): the test reaches `suffix` through the one `Display::fmt` caller (#8999) but the helper's result is not shown to be forwarded, so check abstains where the seam inventory files an unknown.",
   "truth": {
     "state": "partially_discriminated",
     "method": "runtime_mutant_kill",

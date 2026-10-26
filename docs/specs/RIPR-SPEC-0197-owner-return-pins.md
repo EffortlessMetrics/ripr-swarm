@@ -102,8 +102,9 @@ combination produces `reachable_unrevealed` with Observe `no` and Discriminate
 can never execute. Other owner-specific pin failures retain the existing token
 rule only for an assertion whose context was admitted.
 
-The same execution/macro-context admission applies to `assert_eq!` and `assert!`
-oracles for `side_effect` and `call_deletion` probes (#8927). Calling the changed
+The same execution/macro-context admission applies to `assert_eq!`, `assert_ne!`,
+`assert!` and their `debug_` twins (bare or `std::`/`core::` qualified) for
+`side_effect` and `call_deletion` probes (#8927, #8983). Calling the changed
 owner before `return`, a literal-false block or an uncalled closure establishes
 reach without establishing that an assertion inside the skipped context runs.
 Refuse that assertion through the shared admission decision and retain the
@@ -123,24 +124,35 @@ compound and takes the same gate rather than reading as a plain macro path.
 More generally an effect oracle is ungated only when its text starts with an
 `assert_eq!` / `assert!` invocation; any other leading shape (`matches!(..) && { A }`,
 `!true && { A }`, `cfg!(..).then(|| { A })`) is compound and gated by the
-assertion macro in its tail. A root `loop` with no `break` and a root
-`std::process::exit` / `abort` call end the test like an earlier `return`, for every
-family that reads this admission. Not covered: `assert_ne!` and `debug_assert*!`
-(#8983), and `process::exit` reached through a `use` alias.
+assertion macro in its tail. A root `loop` or `while true` that no `break` leaves, and a
+root `std::process::exit` / `abort` call, end the test like an earlier `return`, for every
+family that reads this admission. A `break` leaves the root loop only when it belongs to
+it: an inner loop's unlabeled `break`, one in a closure or async block, or a labeled
+`break` naming an inner loop or block does not. The process exit may be spelled in full
+(`std::process::exit`), through an imported module under any name (`use std::process;`,
+`use std::process as quit;`) or as an imported leaf (`use std::process::exit;`); a
+file-wide `use` is read, so an over-match only withholds credit. A boolean `assert!` /
+`debug_assert!` takes the same admission for `return_value`, `match_arm`, `side_effect` and `call_deletion`, so one in a dead
+context (after `return`, in an uncalled `fn` or closure, `if false`, `loop {}`,
+`cfg!(any())`) no longer credits (#10389). The one exception is an operand that
+nests only a known pure comparison macro (`approx_eq!` from `float_cmp`;
+`relative_eq!`, `abs_diff_eq!`, `ulps_eq!` from `approx`), imported by name, in a
+plain `#[test]` whose function has no other refusal: ripr does not expand
+third-party macros, so that nesting alone keeps the `return_value` credit. Any other
+nested macro, a local `macro_rules!` of that name, or an operand holding an exit
+token withholds it.
 
 Residual fail-open contexts. The admission is a syntactic reading, not a control
 flow proof. These contexts still credit a plain `assert_eq!` / `assert!` as
 `exposed` for `side_effect` and `call_deletion` (non-blocking, disclosed by
-review of #8934; tracked with the #8983 follow-up unless a separate issue says
+review of #8934; tracked with #8983 unless a separate issue says
 otherwise):
 
-- An infinite outer loop hidden by a nested exit: `loop { for _ in 0..1 { break; } }`
-  or `loop { let _c = || { loop { break; } }; }` before the assertion. Root
-  divergence detection treats any descendant `break` as an exit of the root loop.
-  The return family credits these too.
-- A non-root `{ std::process::exit(0); }` block, `while true {}`, and
-  `use std::process::exit; exit(0);` before the assertion. Only the `use` alias
-  is named above; the other two are equally undetected.
+- A non-root divergence before the assertion, such as `{ std::process::exit(0); }`
+  or `if true { loop {} }`. Only the body's own statement list is read.
+- A `loop` whose only `break` sits behind a condition that never holds
+  (`loop { if false { break; } }`): any `break` that belongs to the loop counts as
+  an exit.
 
 Reachable-oracle preservation (#8927, review of #8934). A `std::` / `core::`
 qualified `assert!` is admitted exactly like a qualified `assert_eq!`: the root
@@ -2899,6 +2911,31 @@ non-integer input or an operator-family change it cannot evaluate. Inputs on
 the same side of both thresholds keep the gap.
 
 The intermediate-input reading also declines when the owner may compare a value other than the caller's: any occurrence of the parameter name in the body before the compared line (a `let`, pattern, `for`, `if let`, `match` arm or closure binding, or any other use), a binding form beside it on the compared line, a `mut` binding or borrow of it, or any assignment to it (`x += 5`). The gap stays in those cases (#9147).
+
+An operand that merely name-matches an owner parameter is that parameter's
+observed value only while the owner leaves the name alone (#9197). When the
+owner rebinds or mutates the name on or before the compared line (`let x`,
+`let mut x`, `x += ..`, `x = ..`, destructuring assignment `(x, y) = ..`,
+`&mut x`, a `for`, `let` or `if let` pattern, a closure parameter list, a
+match-arm pattern before its own `=>`, or a `matches!` line that mentions it),
+the equality-boundary path withholds the credit and never lists the caller's
+values as the operand's observed values. When the withheld credit is the only
+thing that would have satisfied the boundary (the input equals the threshold
+only by name), the boundary is unresolved with a rebound-operand reason rather
+than a named missing equality value, because no input can satisfy a repair for
+a value ripr cannot see: the predicate reads infection-unknown and a returned
+comparison keeps its prior reading. Where no credit was at stake the existing
+reading is unchanged. The scan is deliberately over-eager (it does not prove
+scope, and a bare arm re-binding the scrutinee's own name is declined too), so
+it only ever removes a credit; a field access, path segment, comparison, the
+scrutinee of a one-line `match`, a use in an earlier arm's result or an
+unrelated local keeps it.
+One verdict-corpus row moves from credited to limited, inside its acceptable
+verdicts and abstained rather than actionable: `strsim-sorensen-dice-equal`
+(`if b == a` follows `let a: String = a.chars().filter(..).collect()`, so `a` is
+a rebound local, not the passed argument). A bare first-arm binder of the
+scrutinee's own name (`match n { n if 0 > n => .. }`, `grid-match-guard`) binds the
+same value and keeps its credit.
 
 Only unqualified owner calls supply separating inputs: a module-qualified or method call of the same name (`rival::thr(101)`) may be another function and is never counted by this path, and helper-transferred rows are not read (#9147). The shared producer's resolver (#9218, below) is more permissive for equality-boundary inputs; this path keeps its stricter rule.
 

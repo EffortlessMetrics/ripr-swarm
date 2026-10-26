@@ -1,0 +1,24 @@
+{
+  "id": "rust_local_integer_width_and_eager_default",
+  "language": "rust",
+  "tier": "pure",
+  "source_fixture": "fixtures/binding_value_semantics_fail_closed",
+  "vector": "local_and_direct_boundaries_require_intrinsic_integer_identity_and_successful_eager_default",
+  "probe_family": "predicate",
+  "assertions": [
+    {
+      "type": "must_not_report_clean"
+    },
+    {
+      "type": "expected_finding_count",
+      "count": 3
+    },
+    {
+      "type": "must_not_promote"
+    },
+    {
+      "type": "expected_class",
+      "class": "infection_unknown"
+    }
+  ]
+}

@@ -46,7 +46,14 @@ exercised boundary from a missing one.
   A computed or call-result argument, a generic or slice receiver and a
   rebound parameter stay unknown, and a local initializer that reads a
   parameter that is rebound, assigned, `mut`, or bound by `for`/`if let`/
-  `match`/closure earlier (`let x = x + 10;`) is unresolved. A direct
+  `while let`/`match`/closure earlier (`let x = x + 10;`) is unresolved.
+  The rebinding scan is token-level and fail-closed (#9774): the name as a
+  whole token in the pattern of any earlier `let` (plain, destructuring
+  `let (n, _)`/`let Foo { n, .. }`/`let &n`, `let Some(n) = .. else {..}`,
+  `if let`, `while let`, or on the declaration's own line), in a `for`
+  pattern, in any closure parameter list (`|(n, m)|`, `|&n|`), or in a
+  `match` arm pattern region (even when the `=>` is on another line), or in a
+  nested block's `let`, counts as a rebinding. Over-declining is accepted. A direct
   closed-form operand is known only when every related call row
   evaluates it; a computed local keeps its existing any-row semantics
   (#3295), where one evaluable row suffices. The difference is
@@ -171,6 +178,14 @@ exercised boundary from a missing one.
   `self`, readable only as `self.<index>` for an index in range; the cell
   is never an owner parameter value, never copied through a plain
   argument, and never compared against a boundary.
+- A `mut` parameter is the compared operand like any other parameter (#10306)
+  only while the caller's value is what the comparison reads: it is never
+  written, or every write (`n = ..`, `n op= ..`, `&mut n`, a method that may
+  mutate it, a macro that names it) comes after the comparison's `if`
+  condition or sits in the `then` block of an earlier arm of the same
+  `if` / `else if` chain, with no loop, closure or second binding of the name
+  in the function. Any other shape keeps the boundary operand unresolved
+  (`infection_unknown`).
 
 ## Required Evidence
 

@@ -25,6 +25,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 mod equality_dispatch;
+mod operator_dispatch;
 
 pub(in crate::analysis) use equality_dispatch::is_partial_eq_method;
 pub(in crate::analysis) use fmt_dispatch::{
@@ -368,6 +369,11 @@ impl RelatedTestCandidateIndex {
         if owner_fn.is_some_and(equality_dispatch::has_partial_eq_shape) {
             extend_bucket(&mut selected, Some(self.by_equality_assert.as_slice()));
         }
+        // Operator syntax has no token worth indexing; same-file tests of an
+        // operator-trait impl are scanned in full.
+        if owner_fn.is_some_and(operator_dispatch::has_operator_shape) {
+            scan_all = true;
+        }
 
         if owner_fn.is_none() {
             for token in probe_tokens
@@ -431,6 +437,11 @@ impl RelatedTestCandidateIndex {
                         .get(hop.caller.name.as_str())
                         .map(Vec::as_slice),
                 );
+                // A hop whose caller is a `Display`/`Debug` `fmt` is reached
+                // through formatting that never spells `fmt` (#8999).
+                if fmt_dispatch::is_fmt_dispatch_owner(&hop.caller) {
+                    selected.extend(self.fmt_dispatch_tests.iter().copied());
+                }
             }
         }
 
@@ -733,6 +744,17 @@ pub(in crate::analysis) fn find_related_tests_with_candidate_index<'a>(
     )
 }
 
+/// A helper-chain hop whose caller is a `Display`/`Debug` `fmt` owner (#8999):
+/// the caller, the indexed functions named like it (the exactly-one-impl gate)
+/// and its memoized dispatch context.
+struct FmtEntryHop<'a> {
+    caller: &'a FunctionSummary,
+    /// The caller's impl self type, for the entity-identity refusals.
+    self_type: String,
+    same_name_ids: Vec<&'a str>,
+    context: std::sync::Arc<Option<fmt_dispatch::FmtContext>>,
+}
+
 fn find_related_tests_with_candidates<'a>(
     probe: &Probe,
     owner_fn: Option<&FunctionSummary>,
@@ -844,6 +866,8 @@ fn find_related_tests_with_candidates<'a>(
     let owner_name_is_unique = workspace_complete && same_name_function_count == 1;
     // #8999: a user `PartialEq::eq`/`ne` a comparison macro runs unnamed.
     let equality_owner = owner_fn.and_then(|owner| equality_dispatch::equality_owner(owner, index));
+    // #9567: a user operator-trait method that operator syntax runs unnamed.
+    let operator_owner = owner_fn.and_then(|owner| operator_dispatch::operator_owner(owner, index));
     // Same-crate trait impls share a method name (`size_hint` on WhileSome
     // and Combinations). The uniqueness bypass above only gates *cross-crate*
     // package-prefix filtering; this count is the receiver-identity gate
@@ -983,6 +1007,39 @@ fn find_related_tests_with_candidates<'a>(
         && owner_fn.is_some_and(|owner| {
             owner.item.container == crate::analysis::facts::FunctionContainer::Free
         });
+    // #8999: a changed helper whose only chain entry is a `Display`/`Debug`
+    // `fmt` is reached by a test that formats a value of that impl's type
+    // (`merge.to_string()`) without naming `fmt` or the helper. One entry per
+    // fmt hop: the caller, the indexed functions named like it (the
+    // exactly-one-impl gate) and the memoized context.
+    let fmt_entry_hops: Vec<FmtEntryHop<'_>> = helper_chain
+        .map(|chain| {
+            chain
+                .hops
+                .iter()
+                .enumerate()
+                // Every hop from the helper up through the fmt caller must be
+                // a direct call: a macro hop carries reach only, and a hop
+                // below the fmt one is on the path the test's formatting runs.
+                .filter(|(at, _)| chain.hops[..=*at].iter().all(|hop| !hop.through_macro))
+                .map(|(_, hop)| hop)
+                .filter(|hop| fmt_dispatch::is_fmt_dispatch_owner(&hop.caller))
+                .filter_map(|hop| {
+                    Some(FmtEntryHop {
+                        caller: &hop.caller,
+                        self_type: impl_self_type_name(&hop.caller.id.0)?,
+                        same_name_ids: index
+                            .functions()
+                            .iter()
+                            .filter(|function| function.name == hop.caller.name)
+                            .map(|function| function.id.0.as_str())
+                            .collect(),
+                        context: fmt_contexts.context(index, &hop.caller),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     for test_index in candidate_indices {
         let test = index.tests().at(test_index);
         // Compute calls_owner BEFORE the package-prefix guard so a cross-crate
@@ -1024,17 +1081,31 @@ fn find_related_tests_with_candidates<'a>(
         // guards below, so only an in-package, same-file test can use it.
         // Evaluated independently of `calls_owner`: a name-only `Other::eq`
         // call elsewhere in the test must not hide a real macro dispatch.
+        let test_source = || {
+            index
+                .files()
+                .get(&test.file)
+                .map(|facts| facts.data().source.as_ref())
+        };
+        // Operator syntax (#9567) is the same kind of unnamed owner call as
+        // an equality macro (#8999), so it shares the signal.
         let equality_asserts_owner = !property_only_owner_call
-            && match (owner_fn, equality_owner.as_ref()) {
-                (Some(owner), Some(equality)) => {
+            && match (owner_fn, equality_owner.as_ref(), operator_owner.as_ref()) {
+                (Some(owner), Some(equality), _) => {
                     equality_dispatch::test_asserts_equality_through_owner(
                         test,
                         owner,
                         equality,
-                        index
-                            .files()
-                            .get(&test.file)
-                            .map(|facts| facts.data().source.as_ref()),
+                        test_source(),
+                        index,
+                    )
+                }
+                (Some(owner), None, Some(operator)) => {
+                    operator_dispatch::test_applies_operator_to_owner(
+                        test,
+                        owner,
+                        operator,
+                        test_source(),
                         index,
                     )
                 }
@@ -1272,8 +1343,40 @@ fn find_related_tests_with_candidates<'a>(
         // call relation (#6694, #6672): the typed chain is stronger
         // evidence than file proximity or a name token, and demoting it
         // let a tested wrapper's private helper read as file-level reach.
-        let helper_chain_reaches =
-            !calls_owner && !assertions_reference_owner && calls_helper_entry;
+        // #8999: a fmt entry is judged separately from `calls_helper_entry`
+        // so it never rides that signal's cross-package bypasses: only an
+        // in-package test can use it.
+        // Evaluated independently of `calls_owner`: an unrelated same-named
+        // method call elsewhere in the test must not hide a real formatting
+        // reach. The in-package check is explicit because a name-only owner
+        // call can pass the package guard below.
+        let dispatches_to_helper_fmt_entry = !calls_helper_entry
+            && !property_only_owner_call
+            && owner_package_prefix
+                .as_ref()
+                .is_none_or(|prefix| normalize_path(&test.file).starts_with(prefix))
+            && fmt_entry_hops.iter().any(|entry| {
+                Option::as_ref(&entry.context).is_some_and(|context| {
+                    fmt_dispatch::test_dispatches_to_fmt(
+                        test,
+                        entry.caller,
+                        &entry.same_name_ids,
+                        context,
+                    )
+                }) && !impl_identity_is_shadowed(
+                    test,
+                    entry.caller,
+                    &entry.self_type,
+                    index
+                        .files()
+                        .get(&test.file)
+                        .map(|facts| facts.data().source.as_ref()),
+                    index,
+                )
+            });
+        let helper_chain_reaches = !calls_owner
+            && !assertions_reference_owner
+            && (calls_helper_entry || dispatches_to_helper_fmt_entry);
 
         if !calls_owner
             && !equality_asserts_owner
@@ -1314,7 +1417,7 @@ fn find_related_tests_with_candidates<'a>(
                 .files()
                 .get(&test.file)
                 .map(|facts| facts.data().source.as_ref());
-            owner_call_relation_reason(
+            let by_name = owner_call_relation_reason(
                 test,
                 owner_fn,
                 owner_name,
@@ -1322,7 +1425,14 @@ fn find_related_tests_with_candidates<'a>(
                 test_source,
                 index,
                 dispatches_to_fmt,
-            )
+            );
+            // A name-only call (an unrelated same-named method) never hides
+            // the formatting reach of a helper-entry `fmt` (#8999).
+            if by_name == RelationReason::WeakTokenSubstring && dispatches_to_helper_fmt_entry {
+                RelationReason::HelperOwnerCall
+            } else {
+                by_name
+            }
         } else if helper_chain_reaches {
             // The test calls a function that reaches the owner through
             // the bounded helper-transfer chain (#3296).
@@ -2030,6 +2140,8 @@ fn imported_own_crate_prefix_is_bound_to_the_library(
                             && super::call_identity::unit_test_relative_import_names_entry(
                                 index,
                                 &test.file,
+                                &test.name,
+                                test.start_line,
                                 &import.path,
                                 caller,
                             )))
@@ -3802,13 +3914,13 @@ fn initializer_is_one_head_expr(init: &str) -> bool {
 }
 
 /// Type an expression's head evaluates to, from syntax alone: `Site { .. }`,
-/// `Site(..)`, a constructor-named associated call (`Site::new(..)`,
-/// `Site::default()`, `Site::from_x(..)`, `Site::with_x(..)`), an enum tuple
-/// variant (`Shape::Circle(..)`) or an associated item (`Shape::Circle`).
+/// `Site(..)`, one of the conventional constructors (`Site::new(..)`,
+/// `Site::default()`, `Site::from(..)`), an enum tuple variant
+/// (`Shape::Circle(..)`) or an associated item (`Shape::Circle`).
 /// Any other associated call (`Site::make_cache()`) may return another type
-/// and fails closed. The `new_*`/`from_*`/`with_*` prefixes are a naming
-/// convention, not a return type: `Site::with_cache()` still reads as `Site`
-/// even if it returns a `Cache`; there is no return-type lookup here.
+/// and fails closed. So do the `new_*`/`from_*`/`with_*` spellings: the prefix
+/// is a naming convention, not a return type, and `Site::with_cache()` may
+/// return a `Cache` (#8782 item 2). There is no return-type lookup here.
 /// Module-qualified heads stay unresolved: this matcher receives only a
 /// compact impl name, so the final segment cannot establish type identity.
 fn initializer_type_head(expr: &str) -> Option<&str> {
@@ -3839,9 +3951,6 @@ fn is_variant_name(name: &str) -> bool {
 
 fn is_constructor_name(name: &str) -> bool {
     matches!(name, "new" | "default" | "from")
-        || ["new_", "from_", "with_"]
-            .iter()
-            .any(|prefix| name.starts_with(prefix))
 }
 
 /// Leading `a::B::c` path of `text` after `&`/`mut`/`dyn`/whitespace, and the
@@ -4498,6 +4607,60 @@ fn dispatch_operand_has_type(expr: &str, preceding: &str, impl_type: &str) -> bo
     bracketed_expr_has_type(expr, expr.len(), impl_type, preceding, true)
 }
 
+/// Whether the test's own scope rebinds the owner's impl type or trait (the
+/// #6951 / #6950 / #7067 / #7053 / #7087 entity-identity refusals), so a
+/// receiver named like the type is not the production type. Shared by the
+/// direct owner-call relation and the formatting helper-entry route (#8999).
+fn impl_identity_is_shadowed(
+    test: &TestSummary,
+    owner: &FunctionSummary,
+    impl_type: &str,
+    test_source: Option<&str>,
+    index: &RustIndex,
+) -> bool {
+    let owner_scope =
+        super::owner_pin::OwnerScope::new(owner.name.as_str(), owner.start_line, &owner.file);
+    // `r#Window` denotes `Window`: a raw-identifier alias rebinds the name
+    // too, mirroring the pin-side single-file check.
+    let raw_impl_type = format!("r#{impl_type}");
+    if test_source.is_some_and(|source| {
+        super::owner_pin::test_module_shadows_type(
+            test,
+            source,
+            impl_type,
+            owner_scope.in_file(&test.file),
+        ) || super::owner_pin::file_renames_to(source, impl_type)
+            || super::owner_pin::file_renames_to(source, raw_impl_type.as_str())
+    }) || super::owner_pin::parent_chain_shadows_type(test, impl_type, owner_scope, index)
+    {
+        return true;
+    }
+    // #7053: a trait-impl owner is also shadowed by a same-named `trait`
+    // declared in the test's own module scope: `Render::render(..)` and
+    // `.render()` there name the test-local trait, so the production impl is
+    // never called. The refusal is spelling-blind — path-qualified
+    // `self::`/`super::`/`crate::` trait paths refuse the same way — and a
+    // trait-declaration default-method owner shares it (#7123). A trait the
+    // symbol id names (even a generic one) counts, and so does one declared
+    // at the root of an out-of-line parent module of the test file (#7087).
+    let owner_trait = owner_trait_name(&owner.id.0);
+    if owner_trait.as_deref().is_some_and(|trait_name| {
+        test_source.is_some_and(|source| {
+            super::owner_pin::test_module_shadows_trait(
+                test,
+                source,
+                trait_name,
+                owner_scope.in_file(&test.file),
+            )
+        })
+    }) || owner_trait.as_deref().is_some_and(|trait_name| {
+        super::owner_pin::parent_chain_shadows_trait(test, trait_name, owner_scope, index)
+    }) {
+        return true;
+    }
+    false
+}
+
 fn owner_call_relation_reason(
     test: &TestSummary,
     owner_fn: Option<&FunctionSummary>,
@@ -4603,44 +4766,7 @@ fn owner_call_relation_reason(
     // refuses the same way (#6950). A single-file `use ... as <type>`
     // rebinds the receiver too (#7067), in either spelling, exactly as it
     // refuses the owner pin.
-    let owner_scope =
-        super::owner_pin::OwnerScope::new(owner.name.as_str(), owner.start_line, &owner.file);
-    // `r#Window` denotes `Window`: a raw-identifier alias rebinds the name
-    // too, mirroring the pin-side single-file check.
-    let raw_impl_type = format!("r#{impl_type}");
-    if test_source.is_some_and(|source| {
-        super::owner_pin::test_module_shadows_type(
-            test,
-            source,
-            &impl_type,
-            owner_scope.in_file(&test.file),
-        ) || super::owner_pin::file_renames_to(source, &impl_type)
-            || super::owner_pin::file_renames_to(source, raw_impl_type.as_str())
-    }) || super::owner_pin::parent_chain_shadows_type(test, &impl_type, owner_scope, index)
-    {
-        return RelationReason::WeakTokenSubstring;
-    }
-    // #7053: a trait-impl owner is also shadowed by a same-named `trait`
-    // declared in the test's own module scope: `Render::render(..)` and
-    // `.render()` there name the test-local trait, so the production impl is
-    // never called. The refusal is spelling-blind — path-qualified
-    // `self::`/`super::`/`crate::` trait paths refuse the same way — and a
-    // trait-declaration default-method owner shares it (#7123). A trait the
-    // symbol id names (even a generic one) counts, and so does one declared
-    // at the root of an out-of-line parent module of the test file (#7087).
-    let owner_trait = owner_trait_name(&owner.id.0);
-    if owner_trait.as_deref().is_some_and(|trait_name| {
-        test_source.is_some_and(|source| {
-            super::owner_pin::test_module_shadows_trait(
-                test,
-                source,
-                trait_name,
-                owner_scope.in_file(&test.file),
-            )
-        })
-    }) || owner_trait.as_deref().is_some_and(|trait_name| {
-        super::owner_pin::parent_chain_shadows_trait(test, trait_name, owner_scope, index)
-    }) {
+    if impl_identity_is_shadowed(test, owner, &impl_type, test_source, index) {
         return RelationReason::WeakTokenSubstring;
     }
     // The formatting dispatch already bound the value to this impl's type
@@ -5844,6 +5970,76 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].0.name, "reaches_through_helper");
         assert_eq!(related[0].1, RelationReason::HelperOwnerCall);
+    }
+
+    // #9567: operator syntax names no call, so the candidate index scans every
+    // test for an operator-trait owner; it must find what the full scan finds.
+    #[test]
+    fn indexed_and_full_scan_match_for_an_operator_impl_owner() -> Result<(), String> {
+        let source = "pub struct Money(pub i64);\n\nimpl std::ops::Add for Money {\n    type Output = Money;\n    fn add(self, other: Money) -> Money {\n        Money(self.0 + other.0)\n    }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn adds_through_the_operator() {\n        assert_eq!(Money(1) + Money(2), Money(3));\n    }\n\n    #[test]\n    fn adds_integers() {\n        assert_eq!(1 + 2, 3);\n    }\n}\n";
+        let file_facts = crate::analysis::syntax::ra::summarize_file_with_parser(
+            std::path::Path::new("src/lib.rs"),
+            source,
+        )
+        .map_err(|error| error.to_string())?;
+        let owner = file_facts
+            .functions
+            .iter()
+            .find(|function| function.name == "add")
+            .cloned()
+            .ok_or("premise: the parser found the add impl method")?;
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: file_facts.functions.clone(),
+            tests: file_facts.tests.clone(),
+            files: std::iter::once((PathBuf::from("src/lib.rs"), file_facts)).collect(),
+            ..Default::default()
+        });
+        assert_eq!(index.tests().len(), 2, "the parser summarized both tests");
+        let probe = probe("src/lib.rs", "Money(self.0 + other.0)");
+        let candidate_index = RelatedTestCandidateIndex::new(&index);
+
+        let indexed = find_related_tests_with_candidate_index(
+            &probe,
+            Some(&owner),
+            &index,
+            true,
+            None,
+            None,
+            &candidate_index,
+        );
+        let full_scan = find_related_tests_with_candidates(
+            &probe,
+            Some(&owner),
+            &index,
+            true,
+            None,
+            None,
+            RelatedTestCandidates::FullScan,
+        );
+
+        let names = |found: &[(&TestSummary, RelationReason)]| -> Vec<(String, RelationReason)> {
+            found
+                .iter()
+                .map(|(test, reason)| (test.name.clone(), *reason))
+                .collect()
+        };
+        let direct = (
+            "adds_through_the_operator".to_string(),
+            RelationReason::DirectOwnerCall,
+        );
+        assert!(
+            names(&full_scan).contains(&direct),
+            "{:?}",
+            names(&full_scan)
+        );
+        assert!(
+            !names(&full_scan)
+                .contains(&("adds_integers".to_string(), RelationReason::DirectOwnerCall)),
+            "{:?}",
+            names(&full_scan)
+        );
+        assert_eq!(names(&indexed), names(&full_scan));
+        Ok(())
     }
 
     // #6780 Devin review: parser-backed facts from a real test file. A
@@ -11274,7 +11470,7 @@ let r = try_parse_summary(\"x\");",
             ("let s = Site::new(); (s).build();", true),
             ("let s = Site::new(); (&mut s).build();", true),
             ("Site::new().build();", true),
-            ("Site::with_langs(1).build();", true),
+            ("Site::with_langs(1).build();", false),
             ("Site { langs: 1 }.build();", true),
             ("(Site::default()).build();", true),
             ("Cache::new(Site::default()).build();", false),
@@ -11644,12 +11840,12 @@ let r = try_parse_summary(\"x\");",
             ("let x = make_site()", Some("make_site")),
             ("let x = Site::make_cache()", None),
             ("let x = Site::builder().build()", None),
-            ("let x = Site::new_empty()", Some("Site")),
-            ("let x = Vec::with_capacity(4)", Some("Vec")),
+            ("let x = Site::new_empty()", None),
+            ("let x = Vec::with_capacity(4)", None),
             ("let x = Shape::Circle", Some("Shape")),
             ("let x = Shape::Circle(1.0)", Some("Shape")),
-            // Known limit: prefixes are a convention, not a return type.
-            ("let x = Site::with_cache()", Some("Site")),
+            // Prefixes are a convention, not a return type (#8782 item 2).
+            ("let x = Site::with_cache()", None),
             ("let x = Site::FACTORY()", None),
             ("let x = |s: Site| s", None),
             ("let x = Site::new().cache()", None),

@@ -1,0 +1,97 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/python_dynamic_namespace_renamed_delattr/input
+config: <cwd>/fixtures/python_dynamic_namespace_renamed_delattr/input/ripr.toml
+
+Summary: 2 probe(s), 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 1 static_unknown; 2 of 2 finding(s) unsuppressed
+
+Changed file(s) by language: python = 2
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 2 changed file(s), 4 changed line(s), 2 candidate line(s), 2 probe(s), 2 finding(s)
+
+WARNING shop/pricing.py:5
+  id: probe:shop_pricing.py:python_preview:b9038d35
+
+Changed
+  after:      if amount >= DISCOUNT_THRESHOLD:
+
+Probe
+  family: predicate
+  delta:  control
+  owner:  python:shop/pricing.py::discounted_total
+  canonical gap: gap:python:shop/pricing.py:discounted_total:predicate_boundary:predicate:amount>=discount_threshold
+
+Language
+  language: python
+  status: preview
+  owner kind: function
+
+Static exposure
+  weakly_exposed (warning, confidence 0.40)
+
+Evidence
+  - reach yes: 1 related Python test(s) found for owner `discounted_total`
+  - infection weak: Related tests reach the changed predicate, but no strong related test call places an input at the changed boundary
+  - propagation weak: Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink
+  - observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)
+  - discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior
+  - local flow reaches unknown sink: if amount >= DISCOUNT_THRESHOLD: (line 5) — ripr could not classify where the changed value ends up; propagation confidence is limited
+  - related test tests/test_pricing.py:6 test_discount uses strong exact value oracle: assert discounted_total(DISCOUNT_THRESHOLD) == 9_000
+  - source function argument value amount = 20000 at line 9
+
+Weakness
+  - A strong Python oracle reaches `discounted_total`, but static evidence does not place a related test input at the changed predicate boundary. No strong related test call places amount equal to DISCOUNT_THRESHOLD; observed amount values: 20000; observed DISCOUNT_THRESHOLD values: unresolved
+
+Repair placement
+  suggested file: tests/test_pricing.py
+  suggested test: test_discount
+  pytest node: tests/test_pricing.py::test_discount
+  verify: python -m pytest tests/test_pricing.py::test_discount (high)
+Drill in:
+  ripr explain --root <cwd>/fixtures/python_dynamic_namespace_renamed_delattr/input --diff <cwd>/fixtures/python_dynamic_namespace_renamed_delattr/diff.patch --mode fast probe:shop_pricing.py:python_preview:b9038d35
+  ripr context --root <cwd>/fixtures/python_dynamic_namespace_renamed_delattr/input --diff <cwd>/fixtures/python_dynamic_namespace_renamed_delattr/diff.patch --mode fast --at probe:shop_pricing.py:python_preview:b9038d35
+
+NOTE shop/route.py:7
+  id: probe:shop_route.py:python_preview:6a58f374
+
+Changed
+  after:      response.status_code = 400
+
+Probe
+  family: field_construction
+  delta:  value
+  owner:  python:shop/route.py::checkout
+
+Language
+  language: python
+  status: preview
+  owner kind: function
+
+Static exposure
+  static_unknown (note, confidence 0.20)
+
+Evidence
+  - reach yes: 1 related Python test(s) found for owner `checkout`
+  - infection unknown: Static limit `mocked_module` prevents a safe Python infection claim
+  - propagation unknown: Static limit `mocked_module` prevents a safe Python propagation claim
+  - observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)
+  - discriminator unknown: Static limit `mocked_module` prevents a safe Python discriminator claim
+  - related test tests/test_route.py:7 test_checkout uses strong exact value oracle: assert response.status_code == 422
+
+Weakness
+  - Static limit `mocked_module`: a related Python test reloads the module or replaces its names (`response`) by assignment, `setattr`, `__setattr__` or `delattr`; the preview adapter does not resolve which object an imported name reads afterwards
+
+Stop reasons:
+  - static_probe_unknown — ripr could not model this change well enough to classify it
+    Next: Add a test that calls the changed code and asserts an exact result.
+
+Static limitation
+  mocked_module — A mocked module replaces the real implementation, so a passing test may not observe the actual changed behavior.
+  Next: Add a test that runs the real implementation, with no mock replacing the changed module, and assert on its result.
+Drill in:
+  ripr explain --root <cwd>/fixtures/python_dynamic_namespace_renamed_delattr/input --diff <cwd>/fixtures/python_dynamic_namespace_renamed_delattr/diff.patch --mode fast probe:shop_route.py:python_preview:6a58f374
+  ripr context --root <cwd>/fixtures/python_dynamic_namespace_renamed_delattr/input --diff <cwd>/fixtures/python_dynamic_namespace_renamed_delattr/diff.patch --mode fast --at probe:shop_route.py:python_preview:6a58f374
+
+
+Note: 2 Python files analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

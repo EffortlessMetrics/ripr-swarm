@@ -54,6 +54,14 @@ name: PR Staleness Watchdog
 #   job holds `pull-requests: write` and `statuses: write` only; it still never
 #   dispatches or checks out anything.
 #
+# - The second write is the re-apply notice (#10136). A merge-ready head that is
+#   not conflicting (mergeability computed), has no required check and no run in
+#   flight was pushed after the label or lost its label event; the sweep comments
+#   once per head (marker merge-ready-dark) saying to remove and re-apply the label.
+# - The third write retires a stale failure: a draft or unlabeled same-repo PR whose
+#   head still carries this repository's actions-bot `merge-ready conflict` failure gets
+#   a success status instead, since no qualification is requested on it any more (#10136).
+#
 # Each sweep's summary table (PR | head | mergeable_state | disposition) is the
 # audit trail.
 
@@ -97,7 +105,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          prs="$(gh api "repos/$REPOSITORY/pulls?state=open&per_page=100" --paginate --jq '.[] | [.number, .head.sha, .head.ref, (.head.repo.full_name // ""), (.draft | tostring), ([.labels[].name | ascii_downcase] | index("merge-ready") != null | tostring), .base.ref] | @tsv')"
+          prs="$(gh api "repos/$REPOSITORY/pulls?state=open&per_page=100" --paginate --jq '.[] | [.number, .head.sha, .head.ref, (.head.repo.full_name // ""), (.draft | tostring), ([.labels[].name | ascii_downcase] | index("merge-ready") != null | tostring), .base.ref, .updated_at] | @tsv')"
 
           {
             echo "### PR Staleness Watchdog (alert-only)"
@@ -126,7 +134,9 @@ jobs:
             marker="<!-- merge-ready-conflict:$2:$3 -->"
             # Match the marker as a fixed string; it embeds a branch name, which must
             # never be spliced into a jq filter.
-            known="$(gh api --paginate "repos/$REPOSITORY/issues/$1/comments?per_page=100" --jq '.[].body' | grep -cF -- "$marker" || true)"
+            # A failed lookup is not "no notice yet" or "no run": stop and let the next sweep retry.
+            bodies="$(gh api --paginate "repos/$REPOSITORY/issues/$1/comments?per_page=100" --jq '.[].body')" || return 1
+            known="$(grep -cF -- "$marker" <<<"$bodies" || true)"
             if [ "$known" = "0" ]; then
               gh api "repos/$REPOSITORY/issues/$1/comments" -f body="$marker
           \`merge-ready\` is set, but this PR conflicts with \`$3\` (head \`${2:0:8}\`), so GitHub creates no test-merge ref and no qualification run can start. Merge \`$3\` into the branch and resolve the conflicts, then remove and re-apply \`merge-ready\`." > /dev/null || return 1
@@ -134,15 +144,62 @@ jobs:
             gh api "repos/$REPOSITORY/statuses/$2" -f state=failure -f context="merge-ready conflict" -f description="Conflicts with $3: no qualification run can start; resolve and re-apply merge-ready" > /dev/null || return 1
           }
 
-          scanned=0 dark=0 in_progress=0 reported=0 cleared=0
-          while IFS=$'\t' read -r number head_sha head_ref head_repo draft requested base_ref; do
+          # A draft or unlabeled PR made no qualification request, so a conflict status this
+          # sweep or the notice posted earlier would sit red forever; retire it (#10136).
+          retire_stale() {
+            state="$(ours_state "$2")" || return 1
+            [ "$state" = "failure" ] || return 0
+            # Commit statuses belong to the SHA: another open PR on this head that still
+            # requests merge-ready needs the failure, so leave it.
+            awk -F'\t' -v sha="$2" '$2 == sha && $5 == "false" && $6 == "true" {f = 1} END {exit !f}' <<<"$prs" && return 0
+            # The list snapshot is stale by now: the label or ready state can have come back
+            # (and the label-time notice posted a fresh failure). Read the PR again and retire
+            # only while this same head, in this repository, still makes no request.
+            live_pr="$(gh api "repos/$REPOSITORY/pulls/$1" --jq '[.head.sha, (.head.repo.full_name // "-"), (.draft | tostring), ([.labels[].name | ascii_downcase] | index("merge-ready") != null | tostring)] | join(" ")')" || return 1
+            read -r now_head now_repo now_draft now_requested <<<"$live_pr"
+            [ "${now_head:-}" = "$2" ] && [ "${now_repo:-}" = "$REPOSITORY" ] || return 0
+            [ "${now_draft:-}" = "true" ] || [ "${now_requested:-}" != "true" ] || return 0
+            gh api "repos/$REPOSITORY/statuses/$2" -f state=success -f context="merge-ready conflict" -f description="merge-ready is not requested on this PR" > /dev/null || return 1
+            cleared=$((cleared + 1))
+            disposition="$disposition; stale conflict status retired"
+          }
+
+          # A head with no required check and no run in flight, and no conflict to blame,
+          # was pushed after the label or lost its label event (#10136): say so once per
+          # head, with the remedy, instead of only warning in the job log.
+          notify_dark() {
+            marker="<!-- merge-ready-dark:$2 -->"
+            # A failed lookup is not "no notice yet" or "no run": stop and let the next sweep retry.
+            bodies="$(gh api --paginate "repos/$REPOSITORY/issues/$1/comments?per_page=100" --jq '.[].body')" || return 1
+            known="$(grep -cF -- "$marker" <<<"$bodies" || true)"
+            [ "$known" = "0" ] || return 2
+            # The run may have become visible since the sweep's first look: an active request
+            # must be left alone (re-applying the label cancels it). A request that finished
+            # without the required check (admission refused, cancelled) is a different cause
+            # from a push after the label.
+            counts="$(gh api --paginate "repos/$REPOSITORY/actions/workflows/routed-rust.yml/runs?event=pull_request&head_sha=$2&per_page=100" --jq '[.workflow_runs[] | select(.display_title | startswith("Merge-ready request "))] | "\([.[] | select(.status != "completed")] | length) \(length)"')" || return 1
+            read -r active ran < <(awk '{a+=$1; t+=$2} END{print a+0, t+0}' <<<"$counts")
+            [ "$active" = "0" ] || return 3
+            if [ "$ran" = "0" ]; then
+              cause="no qualification run exists for head \`${2:0:8}\`: it was pushed after the label was applied, or the label event was dropped"
+            else
+              cause="the qualification run for head \`${2:0:8}\` finished without the required check (for example admission was refused; see its run)"
+            fi
+            gh api "repos/$REPOSITORY/issues/$1/comments" -f body="$marker
+          \`merge-ready\` is set, but $cause. Remove and re-apply \`merge-ready\` to request it again." > /dev/null
+          }
+
+          scanned=0 dark=0 in_progress=0 reported=0 cleared=0 told=0
+          while IFS=$'\t' read -r number head_sha head_ref head_repo draft requested base_ref updated_at; do
             [ -n "${number:-}" ] || continue
             scanned=$((scanned + 1))
-            mergeable_state="n/a"
+            mergeable_state="n/a" dark_kind=""
             if [ "$draft" = "true" ]; then
               disposition="skip: draft"
+              [ "$head_repo" = "$REPOSITORY" ] && { retire_stale "$number" "$head_sha" || disposition="$disposition; retire failed"; }
             elif [ "$requested" != "true" ]; then
               disposition="skip: no merge-ready request"
+              [ "$head_repo" = "$REPOSITORY" ] && { retire_stale "$number" "$head_sha" || disposition="$disposition; retire failed"; }
             elif [ "$head_repo" != "$REPOSITORY" ]; then
               disposition="skip: fork/untrusted head (${head_repo:-deleted})"
             else
@@ -168,6 +225,8 @@ jobs:
                   echo "::warning title=Dark conflicted PR head::PR #$number head ${head_sha:0:8} is mergeable_state=dirty, so no pull_request run can exist (no merge ref); merge main into $head_ref first, then remove and re-apply the merge-ready label."
                 else
                   dark=$((dark + 1))
+                  # Quiet for 10 minutes after any PR activity: a label just applied has not run yet.
+                  [ "$mergeable_state" = "unknown" ] || [ $(($(date +%s) - $(date -d "$updated_at" +%s))) -lt 600 ] || dark_kind="push"
                   disposition="DARK; needs merge-ready re-applied (\`$head_ref\`)"
                   echo "::warning title=Dark merge-ready PR head::PR #$number head ${head_sha:0:8} has no $REQUIRED_CHECK check and no queued or in-progress merge-ready run (pushed after the request, or the label event was dropped); remove and re-apply the merge-ready label."
                 fi
@@ -175,6 +234,7 @@ jobs:
               ours="$(ours_state "$head_sha")"
               if [ "$live_head" != "$head_sha" ] || [ "$live_base" != "$base_ref" ]; then
                 # Pushed or retargeted since the list call: the next sweep reads the new head.
+                dark_kind=""
                 disposition="$disposition; head or base moved, left for the next sweep"
               elif [ "$mergeable_state" = "dirty" ] && [ "$ours" != "failure" ]; then
                 if report_conflict "$number" "$head_sha" "$base_ref"; then
@@ -192,9 +252,18 @@ jobs:
                   disposition="$disposition; conflict status clear failed"
                 fi
               fi
+              if [ "$dark_kind" = "push" ]; then
+                notify_dark "$number" "$head_sha" && status=0 || status=$?
+                case "$status" in
+                  0) told=$((told + 1)); disposition="$disposition; re-apply notice posted" ;;
+                  2) disposition="$disposition; re-apply notice already posted" ;;
+                  3) dark=$((dark - 1)); in_progress=$((in_progress + 1)); disposition="in flight (a merge-ready run became visible; do not re-apply the label)" ;;
+                  *) disposition="$disposition; re-apply notice failed" ;;
+                esac
+              fi
             fi
             echo "| #$number | \`${head_sha:0:8}\` | \`$mergeable_state\` | $disposition |" >> "$GITHUB_STEP_SUMMARY"
           done <<<"$prs"
 
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Open PRs scanned: $scanned; in-flight qualifications: $in_progress; dark merge-ready heads reported: $dark; conflicts reported on the PR: $reported; conflict statuses cleared: $cleared." >> "$GITHUB_STEP_SUMMARY"
+          echo "Open PRs scanned: $scanned; in-flight qualifications: $in_progress; dark merge-ready heads reported: $dark; conflicts reported on the PR: $reported; conflict statuses cleared: $cleared; re-apply notices: $told." >> "$GITHUB_STEP_SUMMARY"

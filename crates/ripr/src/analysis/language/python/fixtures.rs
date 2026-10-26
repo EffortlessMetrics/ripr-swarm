@@ -13,7 +13,7 @@ use super::admission::PythonAssertionAdmission;
 use super::owners_tests::{decorator_names, test_imports};
 use super::source_utils::{SourceText, text_for_range};
 use super::{PythonFixtureDef, PythonImport, PythonTest};
-use rustpython_parser::ast::{Expr, Ranged, Stmt};
+use rustpython_parser::ast::{Constant, Expr, Ranged, Stmt};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -28,7 +28,12 @@ pub(super) fn collect_fixture_defs(
     module_imports: &[PythonImport],
 ) -> Vec<PythonFixtureDef> {
     let mut defs = Vec::new();
+    let mut aliases = fixture_aliases(module_imports);
     for stmt in statements {
+        // An alias stops being pytest's decorator once a statement before the
+        // decorated def rebinds the name (#10473), and starts again when a
+        // later pytest import binds it.
+        update_aliases_for_binding(stmt, &mut aliases);
         let (name, decorators, body, range) = match stmt {
             Stmt::FunctionDef(function) => (
                 function.name.as_str(),
@@ -44,15 +49,28 @@ pub(super) fn collect_fixture_defs(
             ),
             _ => continue,
         };
-        if !is_plain_fixture(source, decorators) {
+        if !is_plain_fixture(source, decorators, &aliases) {
             // A later def of the same name replaces the fixture as the
             // module attribute pytest collects, including a renamed
             // `@pytest.fixture(name=...)` def that is not itself recorded.
-            defs.retain(|def: &PythonFixtureDef| def.name != name);
+            defs.retain(|def: &PythonFixtureDef| def.binding != name);
+            // A fixture renamed to `caplog` is recorded under that public
+            // name so the captured-log readings see the override (#10418).
+            // Other renamed fixtures stay unrecorded.
+            if renames_to_caplog(decorators, &aliases) {
+                defs.push(PythonFixtureDef {
+                    name: "caplog".to_string(),
+                    binding: name.to_string(),
+                    file: file.to_path_buf(),
+                    body_text: text_for_range(source, range),
+                    imports: test_imports(file, module_imports, body),
+                });
+            }
             continue;
         }
         defs.push(PythonFixtureDef {
             name: name.to_string(),
+            binding: name.to_string(),
             file: file.to_path_buf(),
             body_text: text_for_range(source, range),
             imports: test_imports(file, module_imports, body),
@@ -61,17 +79,130 @@ pub(super) fn collect_fixture_defs(
     defs
 }
 
-/// A `fixture` / `pytest.fixture` / `pytest_asyncio.fixture` decorator that
-/// does not rename the fixture.
-fn is_plain_fixture(source: &str, decorators: &[Expr]) -> bool {
+/// Local names this file binds to pytest's fixture decorator with
+/// `from pytest import fixture as fx` (also `pytest_asyncio`), so a decorator
+/// spelled `@fx` is still a fixture (#10454).
+fn fixture_aliases(imports: &[PythonImport]) -> Vec<String> {
+    imports
+        .iter()
+        .filter(|import| {
+            import.imported == "fixture"
+                && matches!(import.source_module.as_str(), "pytest" | "pytest_asyncio")
+        })
+        // A later import that rebinds the same local name wins, so a shadowed
+        // alias is not trusted (fail closed, as before aliases were read).
+        .filter(|import| {
+            imports
+                .iter()
+                .rev()
+                .find(|other| other.alias == import.alias)
+                .is_some_and(|last| last == *import)
+        })
+        .map(|import| import.alias.clone())
+        .collect()
+}
+
+/// Apply the name bindings of one top-level statement to the fixture aliases:
+/// an assignment, `def` or `class` of an alias drops it, and a pytest
+/// `fixture` import (re)adds its local name. Other imports are already
+/// resolved by `fixture_aliases` (last import wins).
+fn update_aliases_for_binding(stmt: &Stmt, aliases: &mut Vec<String>) {
+    let mut bound = Vec::new();
+    match stmt {
+        Stmt::Assign(assign) => {
+            for target in &assign.targets {
+                target_names(target, &mut bound);
+            }
+        }
+        // A bare annotation (`fx: object`) binds nothing.
+        Stmt::AnnAssign(assign) if assign.value.is_some() => {
+            target_names(&assign.target, &mut bound);
+        }
+        Stmt::AugAssign(assign) => target_names(&assign.target, &mut bound),
+        Stmt::ClassDef(class) => bound.push(class.name.to_string()),
+        Stmt::FunctionDef(function) => bound.push(function.name.to_string()),
+        Stmt::AsyncFunctionDef(function) => bound.push(function.name.to_string()),
+        Stmt::Import(import) => {
+            for name in &import.names {
+                // `import a.b` binds `a`; `import a.b as c` binds `c`.
+                let local = name.asname.as_ref().map_or_else(
+                    || name.name.split('.').next().unwrap_or_default().to_string(),
+                    |alias| alias.to_string(),
+                );
+                bound.push(local);
+            }
+        }
+        Stmt::ImportFrom(import) => {
+            let from_pytest = import.level.is_none_or(|level| level.to_u32() == 0)
+                && import
+                    .module
+                    .as_ref()
+                    .is_some_and(|module| matches!(module.as_str(), "pytest" | "pytest_asyncio"));
+            for name in &import.names {
+                let local = name.asname.as_ref().unwrap_or(&name.name).to_string();
+                if from_pytest && name.name.as_str() == "fixture" {
+                    if !aliases.contains(&local) {
+                        aliases.push(local);
+                    }
+                } else {
+                    bound.push(local);
+                }
+            }
+        }
+        _ => {}
+    }
+    aliases.retain(|alias| !bound.contains(alias));
+}
+
+/// Plain names bound by an assignment target, including tuple/list unpacking.
+fn target_names(target: &Expr, out: &mut Vec<String>) {
+    match target {
+        Expr::Name(name) => out.push(name.id.to_string()),
+        Expr::Tuple(tuple) => tuple.elts.iter().for_each(|elt| target_names(elt, out)),
+        Expr::List(list) => list.elts.iter().for_each(|elt| target_names(elt, out)),
+        Expr::Starred(starred) => target_names(&starred.value, out),
+        _ => {}
+    }
+}
+
+fn is_fixture_decorator_name(name: &str, aliases: &[String]) -> bool {
+    name == "fixture" || name.ends_with(".fixture") || aliases.iter().any(|alias| alias == name)
+}
+
+/// A `fixture` / `pytest.fixture` / `pytest_asyncio.fixture` decorator (or an
+/// alias imported from them) that does not rename the fixture.
+fn is_plain_fixture(source: &str, decorators: &[Expr], aliases: &[String]) -> bool {
     decorators.iter().any(|decorator| {
         let names = decorator_names(std::slice::from_ref(decorator));
         names
             .iter()
-            .any(|name| name == "fixture" || name.ends_with(".fixture"))
+            .any(|name| is_fixture_decorator_name(name, aliases))
             && !text_for_range(source, decorator.range())
                 .replace(' ', "")
                 .contains("name=")
+    })
+}
+
+/// A fixture decorator whose `name=` keyword is the literal string `caplog`.
+/// Only the parsed keyword counts: the text of `params=` or another argument
+/// that spells it is data, not a registration name.
+fn renames_to_caplog(decorators: &[Expr], aliases: &[String]) -> bool {
+    decorators.iter().any(|decorator| {
+        let Expr::Call(call) = decorator else {
+            return false;
+        };
+        let is_fixture = decorator_names(std::slice::from_ref(decorator))
+            .iter()
+            .any(|name| is_fixture_decorator_name(name, aliases));
+        is_fixture
+            && call.keywords.iter().any(|keyword| {
+                keyword.arg.as_ref().is_some_and(|arg| arg == "name")
+                    && matches!(
+                        &keyword.value,
+                        Expr::Constant(constant)
+                            if matches!(&constant.value, Constant::Str(text) if text == "caplog")
+                    )
+            })
     })
 }
 
@@ -91,8 +222,10 @@ pub(super) fn attach_fixture_defs(
             if test.direct_parametrized.contains(parameter) {
                 continue;
             }
-            if attached.len() >= MAX_FIXTURE_DEFS_PER_TEST {
-                break;
+            // An override of `caplog` is always resolved: the log reading
+            // depends on it however many other fixtures the test requests.
+            if attached.len() >= MAX_FIXTURE_DEFS_PER_TEST && parameter != "caplog" {
+                continue;
             }
             if let Some(def) = resolve(&test.file, parameter, defs_by_file) {
                 attached.push(def.clone());

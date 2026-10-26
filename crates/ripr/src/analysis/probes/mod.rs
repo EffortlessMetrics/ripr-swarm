@@ -1,4 +1,5 @@
 mod binding_predicate;
+mod binding_return;
 mod classify;
 mod diff;
 mod expectations;
@@ -20,14 +21,17 @@ pub(crate) use binding_predicate::{
     BindingPredicateResolution, BindingValueResolution, ChangedBindingPredicateUse,
     resolve_changed_binding_uses,
 };
+pub(crate) use binding_return::ChangedBindingReturnFlow;
+#[cfg(test)]
+pub(crate) use binding_return::ReturnFlowKind;
 pub(crate) use classify::parser_expression_for_probe;
 pub(crate) use diff::probes_for_file_with_relations;
 pub(crate) use diff::resolve_probe_source_currentness;
 pub(crate) use diff::same_connectives;
 pub(crate) use expectations::{expected_sinks, required_oracles};
 pub(crate) use ids::{
-    fingerprint_probe_id, legacy_whole_line_diff_probe_id, normalize_expression,
-    normalize_rust_expression, sanitize_path,
+    collision_ordinals, collision_rank_key, fingerprint_probe_id, legacy_whole_line_diff_probe_id,
+    normalize_expression, normalize_rust_expression, sanitize_path,
 };
 #[cfg(test)]
 pub(crate) use repo::probes_for_repo_file;
@@ -38,6 +42,8 @@ pub(crate) use repo::probes_for_repo_file_seeded;
 pub(crate) struct SeededProbe {
     pub probe: Probe,
     pub binding_relation: Option<ChangedBindingPredicateUse>,
+    /// RIPR-SPEC-0357: the changed binding reaches the returned expression.
+    pub binding_return: Option<ChangedBindingReturnFlow>,
     pub parser_span: Option<ParserByteSpan>,
     /// Original changed closing line; canonical identity alone cannot confirm activation.
     pub propagation_origin: Option<crate::analysis::diff::ChangedLine>,
@@ -48,6 +54,7 @@ impl SeededProbe {
         Self {
             probe,
             binding_relation: None,
+            binding_return: None,
             propagation_origin: None,
             parser_span: None,
         }
@@ -57,6 +64,7 @@ impl SeededProbe {
         Self {
             probe,
             binding_relation: None,
+            binding_return: None,
             propagation_origin: None,
             parser_span: Some(parser_span),
         }
@@ -73,6 +81,7 @@ impl SeededProbe {
         Self {
             probe,
             binding_relation: Some(binding_relation),
+            binding_return: None,
             propagation_origin: None,
             parser_span: None,
         }

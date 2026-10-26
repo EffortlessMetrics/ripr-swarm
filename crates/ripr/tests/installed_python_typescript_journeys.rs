@@ -159,13 +159,19 @@ fn selected_typescript_gap(check_output: &str) -> Result<String, String> {
 /// The gap and base tokens of the first `ripr agent repair --gap-id <gap>
 /// --base <base> ...` start in `text`, wherever it sits on its line (the
 /// root may hold spaces, so only the leading tokens are read).
-#[cfg(feature = "lang-typescript")]
 fn gap_start_tokens(text: &str) -> Option<(String, String)> {
     let at = text.find("ripr agent repair --gap-id ")?;
     let tokens: Vec<&str> = text[at..].split_whitespace().collect();
     let value_after = |flag: &str| -> Option<String> {
         let position = tokens.iter().position(|token| *token == flag)?;
-        Some(tokens.get(position + 1)?.trim_matches('\'').to_string())
+        // POSIX `shell_arg` quotes with `'`, Windows with `"`; a Python gap
+        // (`units>=20`) is always quoted.
+        Some(
+            tokens
+                .get(position + 1)?
+                .trim_matches(|c| c == '\'' || c == '"')
+                .to_string(),
+        )
     };
     Some((value_after("--gap-id")?, value_after("--base")?))
 }
@@ -174,7 +180,6 @@ fn gap_start_tokens(text: &str) -> Option<(String, String)> {
 /// comparison base (`main`) is the base commit, so a plain `ripr check --root`
 /// (the command pilot routes to, which carries no `--base`) analyzes the head
 /// diff instead of the empty `main`-against-`main` comparison.
-#[cfg(feature = "lang-typescript")]
 fn onto_feature_branch(root: &Path) -> Result<(), String> {
     fixture_git_ok(root, &["checkout", "-q", "-b", "feature"])?;
     fixture_git_ok(root, &["branch", "-f", "main", "HEAD~1"])
@@ -182,7 +187,6 @@ fn onto_feature_branch(root: &Path) -> Result<(), String> {
 
 /// Published repair-attempt manifests under the root. The before-phase lock
 /// directory exists after any attempt to start; a manifest only after a start.
-#[cfg(feature = "lang-typescript")]
 fn attempt_manifests(root: &Path) -> Result<usize, String> {
     let attempts = root.join("target").join("ripr").join("repair-attempts");
     if !attempts.exists() {
@@ -210,8 +214,8 @@ fn attempt_id_of(manifest: &serde_json::Value) -> Result<String, String> {
 
 #[cfg(feature = "lang-python")]
 #[test]
-fn python_flat_layout_journey_stays_in_selected_root_and_ends_in_named_terminal_reason()
--> Result<(), String> {
+fn python_flat_layout_journey_runs_the_gap_bound_loop_from_the_printed_start() -> Result<(), String>
+{
     let (_guard, root, decoy) = materialize("blind_journey_installed_python", "head", "py", None)?;
     let root_arg = root.to_string_lossy().into_owned();
 
@@ -235,64 +239,50 @@ fn python_flat_layout_journey_stays_in_selected_root_and_ends_in_named_terminal_
         "Verify command: python -m pytest tests/test_pricing.py::",
         "module-form verify",
     )?;
-    // #9102: the seam inventory behind `repair` is Rust-only, so a Python
-    // gap has no seam to bind. The product states that precise terminal
-    // reason (not the generic "no seam binds") beside the complete manual
-    // route (gap, test node, verify command) printed above.
-    need(
-        &check,
-        "no repair start offered: the seam inventory behind `ripr repair`",
-        "check names the terminal reason",
-    )?;
-    need(
-        &check,
-        "covers Rust files only, so this Python finding in `pricing/core.py` has no seam",
-        "terminal reason names the language and file",
-    )?;
-    if check.contains("no seam in the finding's file binds") {
-        return Err(format!("check kept the generic refusal:\n{check}"));
+    // #10373: the finding's GapRecord passes the shared agent-packet
+    // validator, so check prints the gap-bound start instead of the #9102
+    // terminal reason.
+    let (gap, base) = gap_start_tokens(&check)
+        .ok_or_else(|| format!("check printed no gap-bound start:\n{check}"))?;
+    if !gap.starts_with("gap:python:pricing/core.py:bulk_discount_rate:") || base != "HEAD~1" {
+        return Err(format!("unexpected start `{gap}` / `{base}`:\n{check}"));
     }
-    // No runnable repair start is offered for the unbindable finding.
-    if check.contains("ripr repair probe:") && check.contains("ripr agent repair") {
-        return Err(format!("check offered a repair start:\n{check}"));
+    if check.contains("no repair start offered") {
+        return Err(format!("check kept a no-start refusal:\n{check}"));
     }
 
-    // Feed `repair` the exact finding id that `check` printed, not a literal.
+    // The seam-addressed entry points still have no Python seam; their
+    // refusal now points at the gap-bound start rather than reading terminal.
     let probe = check
         .split_whitespace()
         .find(|token| token.starts_with("probe:"))
         .ok_or_else(|| format!("check printed no probe id:\n{check}"))?;
     let (repair_ok, repair) = ripr(&decoy, &["repair", probe, "--root", &root_arg])?;
-    expect_exit(repair_ok, false, "repair of an unbindable finding id")?;
+    expect_exit(repair_ok, false, "repair of the Python finding id")?;
     need(
         &repair,
         "covers Rust files only, so this Python gap has no seam",
-        "repair states the terminal reason for the Python finding id",
+        "repair states the seam-inventory reason",
     )?;
-    if repair.contains("is stale") || repair.contains("stale or maps to no current seam") {
-        return Err(format!("repair called the Python id stale:\n{repair}"));
-    }
-
-    // The canonical gap id `check` prints is refused the same way by both
-    // repair entry points, with the language-specific terminal reason.
-    let gap = check
-        .split_whitespace()
-        .find(|token| token.starts_with("gap:python:"))
-        .ok_or_else(|| format!("check printed no python gap id:\n{check}"))?;
-    let (gap_ok, gap_repair) = ripr(&decoy, &["repair", gap, "--root", &root_arg])?;
-    expect_exit(gap_ok, false, "repair of the python gap id")?;
+    need(
+        &repair,
+        "prints a gap-bound start",
+        "repair points at the gap-bound start",
+    )?;
+    let (gap_repair_ok, gap_repair) = ripr(&decoy, &["repair", &gap, "--root", &root_arg])?;
+    expect_exit(gap_repair_ok, false, "repair of the Python gap id")?;
     need(
         &gap_repair,
-        "covers Rust files only",
-        "repair of the gap id states the terminal reason",
+        "prints a gap-bound start",
+        "repair <gap> points at the gap-bound start",
     )?;
-    let (agent_ok, agent_repair) = ripr(
+    let (seam_ok, seam_repair) = ripr(
         &decoy,
         &[
             "agent",
             "repair",
             "--seam-id",
-            gap,
+            &gap,
             "--root",
             &root_arg,
             "--phase",
@@ -300,18 +290,18 @@ fn python_flat_layout_journey_stays_in_selected_root_and_ends_in_named_terminal_
         ],
     )?;
     expect_exit(
-        agent_ok,
+        seam_ok,
         false,
-        "agent repair --phase before of the python gap id",
+        "agent repair --seam-id of the Python gap id",
     )?;
     need(
-        &agent_repair,
-        "covers Rust files only",
-        "agent repair states the terminal reason",
+        &seam_repair,
+        "prints a gap-bound start",
+        "--seam-id refusal points at the gap-bound start",
     )?;
 
     // Alternate: an id that is not a Python gap or preview finding keeps the
-    // generic stale-id guidance and never claims the Python terminal reason.
+    // generic stale-id guidance and never claims the Python reason.
     let (stale_ok, stale) = ripr(
         &decoy,
         &[
@@ -331,27 +321,210 @@ fn python_flat_layout_journey_stays_in_selected_root_and_ends_in_named_terminal_
         return Err(format!("unrelated id got the Python reason:\n{stale}"));
     }
 
+    // Negative control: a Python gap id the live diff does not carry is
+    // refused and starts nothing.
+    let forged = format!("{gap}_forged");
+    let (forged_ok, forged_out) = ripr(
+        &decoy,
+        &[
+            "agent", "repair", "--gap-id", &forged, "--base", &base, "--root", &root_arg,
+            "--phase", "before",
+        ],
+    )?;
+    expect_exit(
+        forged_ok,
+        false,
+        "agent repair --gap-id of a forged Python gap",
+    )?;
+    need(
+        &forged_out,
+        "names no current Python gap",
+        "forged gap is refused as absent",
+    )?;
+    if attempt_manifests(&root)? != 0 {
+        return Err("a refused start left an attempt manifest".to_string());
+    }
+
+    // Replay the printed start, add the missing boundary test, and let the
+    // after phase judge closure.
+    let (before_ok, before) = ripr(
+        &decoy,
+        &[
+            "agent", "repair", "--gap-id", &gap, "--base", &base, "--root", &root_arg, "--phase",
+            "before",
+        ],
+    )?;
+    expect_exit(before_ok, true, "agent repair --gap-id --phase before")?;
+    need(
+        &before,
+        "tests/test_pricing.py",
+        "the packet names the test file",
+    )?;
+    if attempt_manifests(&root)? != 1 {
+        return Err(format!("the start published no single attempt:\n{before}"));
+    }
+    let test_file = root.join("tests").join("test_pricing.py");
+    let mut tests =
+        std::fs::read_to_string(&test_file).map_err(|error| format!("read test file: {error}"))?;
+    tests.push_str(
+        "\n\ndef test_exact_boundary_gets_discount():\n    assert bulk_discount_rate(20) == 0.15\n",
+    );
+    std::fs::write(&test_file, tests).map_err(|error| format!("write test file: {error}"))?;
+    fixture_git_ok(&root, &["add", "tests/test_pricing.py"])?;
+    fixture_git_ok(&root, &["commit", "-q", "-m", "boundary test"])?;
+    let continue_command = before
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("Next, after the test edit: "))
+        .ok_or_else(|| format!("before printed no continue command:\n{before}"))?;
+    let attempt = continue_command
+        .split_whitespace()
+        .skip_while(|token| *token != "--attempt")
+        .nth(1)
+        .ok_or_else(|| format!("continue command names no attempt: {continue_command}"))?;
+    let (after_ok, after) = ripr(
+        &decoy,
+        &["continue", "--root", &root_arg, "--attempt", attempt],
+    )?;
+    expect_exit(
+        after_ok,
+        true,
+        "after phase of the Python gap-bound attempt",
+    )?;
+    need(
+        &after,
+        "closed: weakly_exposed -> exposed",
+        "the after phase reads the gap closed",
+    )?;
+    need(
+        &after,
+        "Test run: none recorded",
+        "static movement is not project verification",
+    )?;
+    if !root
+        .join("target")
+        .join("ripr")
+        .join("reports")
+        .join("agent-receipt.json")
+        .is_file()
+    {
+        return Err(format!("the after phase wrote no receipt:\n{after}"));
+    }
+
+    decoy_untouched(&decoy)
+}
+
+/// #10432: the refused-variant control for the Python gap-bound start. With
+/// the fixture's tests removed, no Python test reaches the changed predicate,
+/// so the finding is static-limited (`no_static_path`): `ripr check` offers no
+/// gap-bound start, starting one by hand is refused as not ready, and the
+/// refusal leaves no attempt and no workflow artifact behind.
+#[cfg(feature = "lang-python")]
+#[test]
+fn python_refused_variant_is_offered_no_gap_bound_start() -> Result<(), String> {
+    let (_guard, root, decoy) = materialize("blind_journey_installed_python", "head", "pyr", None)?;
+    let root_arg = root.to_string_lossy().into_owned();
+    fixture_git_ok(&root, &["rm", "-q", "-r", "tests"])?;
+    fixture_git_ok(&root, &["commit", "-q", "-m", "drop the tests"])?;
+
+    let (ok, check) = ripr(&decoy, &["check", "--root", &root_arg, "--base", "HEAD~2"])?;
+    expect_exit(ok, true, "check of the test-free variant")?;
+    decoy_untouched(&decoy)?;
+    need(
+        &check,
+        "1 no path",
+        "the variant's finding has no static path",
+    )?;
+    let gap = check
+        .split(|c: char| c.is_whitespace() || c == '`')
+        .find(|token| token.starts_with("gap:python:pricing/core.py:bulk_discount_rate:"))
+        .ok_or_else(|| format!("check printed no Python gap:\n{check}"))?
+        .to_string();
+    if check.contains("ripr agent repair --gap-id") {
+        return Err(format!(
+            "the refused variant was offered a gap-bound start:\n{check}"
+        ));
+    }
+
+    let (start_ok, start) = ripr(
+        &decoy,
+        &[
+            "agent", "repair", "--gap-id", &gap, "--base", "HEAD~2", "--root", &root_arg,
+            "--phase", "before",
+        ],
+    )?;
+    expect_exit(start_ok, false, "gap-bound start of the refused variant")?;
+    need(
+        &start,
+        "the repair packet is not ready",
+        "refusal names the packet",
+    )?;
+    need(
+        &start,
+        "no repair attempt was started",
+        "refusal states no attempt",
+    )?;
+    // Pin the reason: the static-limited guard refuses it, not a later step
+    // that happens to share the "not ready" prefix.
+    need(
+        &start,
+        "the finding is static-limited",
+        "refusal names the static limit",
+    )?;
+    if attempt_manifests(&root)? != 0 || root.join("target/ripr/workflow").exists() {
+        return Err(format!(
+            "the refused start left an attempt behind:\n{start}"
+        ));
+    }
+    decoy_untouched(&decoy)?;
+
+    // Positive control: the same fixture with its tests kept is offered the
+    // start, so the refusal above is the variant's, not the route's.
+    let (_kept_guard, kept, kept_decoy) =
+        materialize("blind_journey_installed_python", "head", "pyk", None)?;
+    let kept_arg = kept.to_string_lossy().into_owned();
+    let (kept_ok, kept_check) = ripr(
+        &kept_decoy,
+        &["check", "--root", &kept_arg, "--base", "HEAD~1"],
+    )?;
+    expect_exit(kept_ok, true, "check of the tested fixture")?;
+    if gap_start_tokens(&kept_check).map(|(start_gap, _)| start_gap) != Some(gap) {
+        return Err(format!(
+            "control: the tested fixture must offer the start:\n{kept_check}"
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(feature = "lang-python")]
+#[test]
+fn python_status_after_pilot_names_the_gap_bound_start() -> Result<(), String> {
+    let (_guard, root, decoy) = materialize("blind_journey_installed_python", "head", "pys", None)?;
+    let root_arg = root.to_string_lossy().into_owned();
+    onto_feature_branch(&root)?;
+
     let (pilot_ok, pilot) = ripr(&decoy, &["pilot", "--root", &root_arg])?;
     expect_exit(pilot_ok, true, "pilot")?;
-    need(
-        &pilot,
-        "no_python_findings",
-        "pilot reports no Python findings for a committed-diff gap",
-    )?;
-
+    let (routed_ok, routed_check) = ripr(&decoy, &["check", "--root", &root_arg])?;
+    expect_exit(routed_ok, true, "routed check")?;
+    let check_start = gap_start_tokens(&routed_check)
+        .ok_or_else(|| format!("the routed check printed no start:\n{routed_check}"))?;
     let (status_ok, status) = ripr(&decoy, &["agent", "status", "--root", &root_arg])?;
     expect_exit(status_ok, true, "agent status")?;
     need(
         &status,
-        "Status selects no next command",
-        "status terminates without a command",
+        "prints the gap-bound start",
+        "status names the start check prints",
     )?;
-    need(
-        &status,
-        "pilot_routed_to_check_no_repair_target",
-        "status names the terminal reason",
-    )?;
-
+    let status_start = gap_start_tokens(&status)
+        .ok_or_else(|| format!("status printed no start:\n{status}\n--- pilot:\n{pilot}"))?;
+    if status_start != check_start {
+        return Err(format!(
+            "status start {status_start:?} differs from check's {check_start:?}"
+        ));
+    }
+    if status.contains("offers no `ripr agent repair` start") {
+        return Err(format!("status kept the no-start claim:\n{status}"));
+    }
     decoy_untouched(&decoy)
 }
 

@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- Python: an owner decorated with a workspace-local decorator whose wrapper only forwards the call (`return fn(*args, **kwargs)` after optional side-effect calls, optionally under `functools.wraps`) no longer carries the `decorator_indirection` limit, so a test that asserts on the decorated function's return can credit. Transforming, swallowing, retrying, rebound and imported decorators keep the limit. Adds a credited row (`py-shapes-decorator-wrapped-return`) to the Python verdict corpus (#9619).

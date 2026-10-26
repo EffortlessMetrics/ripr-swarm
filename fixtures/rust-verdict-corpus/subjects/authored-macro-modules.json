@@ -1,7 +1,7 @@
 {
   "subject_id": "authored-macro-modules",
   "origin": "authored",
-  "version_label": "authored 2026-10-25 for RIPR-SPEC-0117 example 9 (macro_rules! test tables whose generator is defined in another file, #6925)",
+  "version_label": "authored 2026-10-25 for RIPR-SPEC-0117 examples 9, 10 and 11 (macro_rules! test tables whose generator is defined in another file, #6925, #10298)",
   "license": "MIT OR Apache-2.0",
   "shared_corpus": null,
   "retained_files": [
@@ -11,7 +11,7 @@
     },
     {
       "path": "src/lib.rs",
-      "sha256": "4695be383b9613af438bddff16dbf90b4daee4888d02300a782763a75d7256cb"
+      "sha256": "82e2682c782fdf24e9bbf82ee2fd9cf7785eb6e46e30faac78d25bffa0a95c31"
     },
     {
       "path": "tests/support/mod.rs",
@@ -28,6 +28,26 @@
     {
       "path": "tests/other/rows.rs",
       "sha256": "14f914118378dff5567067781e0434f4082301e7fb36c5af30133c3403510c08"
+    },
+    {
+      "path": "tests/export_other/mod.rs",
+      "sha256": "5009041a2344142e0152c20e67f857aa11dc5c0f0eb04ec047af2908f44408d2"
+    },
+    {
+      "path": "tests/export_rows/mod.rs",
+      "sha256": "fc6dd7a5b084597268a9b09f6d517ec64390429cb0f8d9edee4820c0e5d333c0"
+    },
+    {
+      "path": "tests/export_support/mod.rs",
+      "sha256": "525cfcf9e65906b026d90860d3ce54bbedf219ab4cc9f8e46d249576fedebd92"
+    },
+    {
+      "path": "tests/exported.rs",
+      "sha256": "80050a73a0a01368df0038caf4dcc8a214636066bcdd6b664ac00c49e8bcf270"
+    },
+    {
+      "path": "tests/export_call/mod.rs",
+      "sha256": "eac27143d92f53aedffbe33d8cad14b545b25b75ed75962d94dcb1091afc1f90"
     }
   ]
 }

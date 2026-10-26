@@ -1,0 +1,55 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/python_caplog_aliased_fixture_import/input
+config: <cwd>/fixtures/python_caplog_aliased_fixture_import/input/ripr.toml
+
+Summary: 1 probe(s), 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 1 static_unknown; 1 of 1 finding(s) unsuppressed
+
+Changed file(s) by language: python = 1
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
+
+NOTE audit.py:8
+  id: probe:audit.py:python_preview:e21f54bb
+
+Changed
+  after:          log.warning("balance low: %s", balance)
+
+Probe
+  family: side_effect
+  delta:  effect
+  owner:  python:audit.py::check_balance
+
+Language
+  language: python
+  status: preview
+  owner kind: function
+
+Static exposure
+  static_unknown (note, confidence 0.20)
+
+Evidence
+  - reach yes: 1 related Python test(s) found for owner `check_balance`
+  - infection unknown: Static limit `unsupported_syntax` prevents a safe Python infection claim
+  - propagation unknown: Static limit `unsupported_syntax` prevents a safe Python propagation claim
+  - observation yes: Strongest extracted Python oracle kind: `relational_check` (rank 3)
+  - discriminator unknown: Static limit `unsupported_syntax` prevents a safe Python discriminator claim
+  - related test tests/test_audit.py:6 test_low_balance uses weak relational check oracle: assert "low balance: 5" in caplog.text
+
+Weakness
+  - Static limit `unsupported_syntax`: a related Python test checks `<text> in caplog.text` against the changed logging call; the preview adapter does not evaluate `%`-formatted message arguments or the `caplog` level filter, so it cannot tell whether the edit changes the logged text the test reads
+
+Stop reasons:
+  - static_probe_unknown — ripr could not model this change well enough to classify it
+    Next: Add a test that calls the changed code and asserts an exact result.
+
+Static limitation
+  unsupported_syntax — The surrounding syntax is not yet supported by ripr's static model, so the reaching path is not resolvable.
+  Next: Move the changed logic into a plain function and test that function, or report the syntax in an issue so ripr can model it.
+Drill in:
+  ripr explain --root <cwd>/fixtures/python_caplog_aliased_fixture_import/input --diff <cwd>/fixtures/python_caplog_aliased_fixture_import/diff.patch --mode fast probe:audit.py:python_preview:e21f54bb
+  ripr context --root <cwd>/fixtures/python_caplog_aliased_fixture_import/input --diff <cwd>/fixtures/python_caplog_aliased_fixture_import/diff.patch --mode fast --at probe:audit.py:python_preview:e21f54bb
+
+
+Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.
