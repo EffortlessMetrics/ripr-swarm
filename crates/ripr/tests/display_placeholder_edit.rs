@@ -219,3 +219,29 @@ fn an_unsafe_format_edit_keeps_the_real_assertion_provenance() -> Result<(), Str
     assert!(!format!("{finding:?}").contains("rust_assertion_context_unestablished"));
     Ok(())
 }
+
+#[test]
+fn a_brace_fill_character_does_not_hide_a_literal_only_edit() -> Result<(), String> {
+    // Independent runtime witnesses: a brace is a valid fill before an alignment marker.
+    assert_eq!(format!("{:{<3}C", 21), "21{C");
+    assert_eq!(format!("{:}>3}C", 21), "}21C");
+    for (before, after, expected) in [
+        (r#""{:{<3}C""#, r#""{:{<3}F""#, r#""21{F""#),
+        (r#""{:}>3}C""#, r#""{:}>3}F""#, r#""}21F""#),
+        (r#""{:x<3}C""#, r#""{:x<3}F""#, r#""21xF""#),
+    ] {
+        assert_eq!(
+            class_after_template(before, after, expected)?,
+            ExposureClass::Exposed,
+            "{before} -> {after}"
+        );
+    }
+    // Changing the fill is a group edit and withholds credit.
+    assert_eq!(format!("{:{<3}C", 21), "21{C");
+    assert_eq!(format!("{:x<3}C", 21), "21xC");
+    assert_ne!(
+        class_after_template(r#""{:{<3}C""#, r#""{:x<3}C""#, r#""21xC""#)?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}

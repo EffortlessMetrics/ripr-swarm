@@ -437,6 +437,18 @@ fn format_fragments(literal: &str) -> Option<(Vec<String>, Vec<String>)> {
                         return None;
                     }
                     group.push(next);
+                    if next == ':' && !group[..group.len() - 1].contains(':') {
+                        // a fill character may be a brace: `{:{<3}` is one group
+                        let mut ahead = chars.clone();
+                        if let (Some(fill), Some(align)) = (ahead.next(), ahead.next())
+                            && matches!(align, '<' | '^' | '>')
+                        {
+                            group.push(fill);
+                            group.push(align);
+                            chars = ahead;
+                        }
+                        continue;
+                    }
                     if next == '}' {
                         break;
                     }
@@ -1665,6 +1677,32 @@ mod tests {
         ));
         // A lone brace is not format text ripr reads.
         assert!(!same("write!(f, \"a}\")", "write!(f, \"b}\")"));
+        // A brace is a valid fill character before an alignment marker (#9836).
+        assert!(same(
+            r#"write!(f, "{:{<3}C", self.0)"#,
+            r#"write!(f, "{:{<3}F", self.0)"#
+        ));
+        assert!(same(
+            r#"write!(f, "{:}>3}C", self.0)"#,
+            r#"write!(f, "{:}>3}F", self.0)"#
+        ));
+        assert!(same(
+            r#"write!(f, "{:x<3}C", self.0)"#,
+            r#"write!(f, "{:x<3}F", self.0)"#
+        ));
+        // Changing the fill, or dropping the alignment so the brace is no fill, is a group edit.
+        assert!(!same(
+            r#"write!(f, "{:{<3}C", self.0)"#,
+            r#"write!(f, "{:}<3}F", self.0)"#
+        ));
+        assert!(!same(
+            r#"write!(f, "{:{<3}C", self.0)"#,
+            r#"write!(f, "{:{3}F", self.0)"#
+        ));
+        assert!(!same(
+            r#"write!(f, "{:{{}}C", self.0)"#,
+            r#"write!(f, "{:{{}}F", self.0)"#
+        ));
         // Nothing changed, or no prior text.
         assert!(!same("write!(f, \"x\")", "write!(f, \"x\")"));
         assert!(!super::changes_only_string_literals(
