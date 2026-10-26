@@ -612,7 +612,8 @@ fn verified_namespace_member_registrations(
     if super::tests_extract::file_is_opaque(&code) {
         return Vec::new();
     }
-    let writes = FileWrites::scan(&code);
+    // Scanned on the first pick only, so a file with no pick scans no writes.
+    let writes = std::cell::OnceCell::new();
     let mut result = Vec::new();
     for namespace in namespaces {
         // The one declaration of the namespace.
@@ -729,7 +730,8 @@ fn verified_namespace_member_registrations(
             if local == namespace.local {
                 continue;
             }
-            let only_called = picked_local_is_only_called(&code, &writes, &local, span);
+            let writes = writes.get_or_init(|| FileWrites::scan(&code));
+            let only_called = picked_local_is_only_called(&code, writes, &local, span);
             // Equivalence control (#10646): the one-scan verdict must equal the
             // per-pick cut-and-rescan it replaced, for every pick any test makes.
             #[cfg(test)]

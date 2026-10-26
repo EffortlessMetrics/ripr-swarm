@@ -298,6 +298,10 @@ fn one_written_pick_among_fifty_refuses_alone() {
             format!("t{written}++;\n"),
             format!("const copy = t{written};\n"),
             format!("t{written}.only = 1;\n"),
+            // Call-shaped writes only the whole-file write scans catch.
+            format!("globalThis.t{written} = 1;\n"),
+            format!("this.t{written} = 1;\n"),
+            format!("(t{written} as any) = 1;\n"),
         ] {
             let locals = picked(&pick_source(&extra));
             let expected: Vec<String> = (0..PICKS)
@@ -311,6 +315,12 @@ fn one_written_pick_among_fifty_refuses_alone() {
 
 /// Removal control: the same file without the extra statement admits all 50,
 /// so the refusal above comes from that one statement and not from the shape.
+#[test]
+fn a_global_write_to_the_picked_name_refuses_the_pick() {
+    let source = "const runner = require('node:test'); const t = runner.test; globalThis.t = 1; t('a', () => {});";
+    assert!(picked(source).is_empty());
+}
+
 #[test]
 fn removing_the_write_restores_the_pick() {
     assert_eq!(picked(&pick_source("")).len(), PICKS);

@@ -1,5 +1,5 @@
 <!-- section: Changed -->
 - TypeScript: reading the members picked off a `require()` namespace now scans
-  the file for writes once instead of cutting and rescanning it per pick, so a
-  generated test file with dozens of picks no longer costs several whole-file
-  scans per pick. Verdicts are unchanged (#10646).
+  the file for writes once per file (on the first pick) instead of cutting and
+  rescanning it per pick; identifier occurrences are still read per pick.
+  Verdicts are unchanged (#10646).
