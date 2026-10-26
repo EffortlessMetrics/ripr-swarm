@@ -78,9 +78,11 @@ Weakness
   - A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim
 Stop reasons:
   - proc_macro_opaque — the changed expression contains a macro call whose expansion ripr does not see
+    Next: Call the changed owner directly from a test, outside the macro, and assert on its result.
   - gap_evidence_unresolved — ripr could not establish the evidence a gap needs for this change, so it does not claim one
 Static limitation
   rust_framework_oracle_unresolved — A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim.
+  Next: Add a direct `assert_eq!` on the changed value beside the environment, mock, expect-test or snapshot check.
 Limitation detail
   last established edge: related tests `exact_line` (src/let_else.rs:19)
   first unresolved edge: whether the framework oracle the related test checks notices the changed code
@@ -109,9 +111,11 @@ Weakness
   - A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim
 Stop reasons:
   - proc_macro_opaque — the changed expression contains a macro call whose expansion ripr does not see
+    Next: Call the changed owner directly from a test, outside the macro, and assert on its result.
   - gap_evidence_unresolved — ripr could not establish the evidence a gap needs for this change, so it does not claim one
 Static limitation
   rust_framework_oracle_unresolved — A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim.
+  Next: Add a direct `assert_eq!` on the changed value beside the environment, mock, expect-test or snapshot check.
 Limitation detail
   last established edge: related tests `exact_line` (src/let_else.rs:19)
   first unresolved edge: whether the framework oracle the related test checks notices the changed code
@@ -140,9 +144,11 @@ Weakness
   - A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim
 Stop reasons:
   - proc_macro_opaque — the changed expression contains a macro call whose expansion ripr does not see
+    Next: Call the changed owner directly from a test, outside the macro, and assert on its result.
   - gap_evidence_unresolved — ripr could not establish the evidence a gap needs for this change, so it does not claim one
 Static limitation
   rust_framework_oracle_unresolved — A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim.
+  Next: Add a direct `assert_eq!` on the changed value beside the environment, mock, expect-test or snapshot check.
 Limitation detail
   last established edge: related tests `exact_line` (src/owned_clone.rs:19)
   first unresolved edge: whether the framework oracle the related test checks notices the changed code
@@ -171,9 +177,11 @@ Weakness
   - A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim
 Stop reasons:
   - proc_macro_opaque — the changed expression contains a macro call whose expansion ripr does not see
+    Next: Call the changed owner directly from a test, outside the macro, and assert on its result.
   - gap_evidence_unresolved — ripr could not establish the evidence a gap needs for this change, so it does not claim one
 Static limitation
   rust_framework_oracle_unresolved — A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim.
+  Next: Add a direct `assert_eq!` on the changed value beside the environment, mock, expect-test or snapshot check.
 Limitation detail
   last established edge: related tests `exact_line` (src/owned_clone.rs:19)
   first unresolved edge: whether the framework oracle the related test checks notices the changed code
@@ -202,9 +210,11 @@ Weakness
   - A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim
 Stop reasons:
   - proc_macro_opaque — the changed expression contains a macro call whose expansion ripr does not see
+    Next: Call the changed owner directly from a test, outside the macro, and assert on its result.
   - gap_evidence_unresolved — ripr could not establish the evidence a gap needs for this change, so it does not claim one
 Static limitation
   rust_framework_oracle_unresolved — A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim.
+  Next: Add a direct `assert_eq!` on the changed value beside the environment, mock, expect-test or snapshot check.
 Limitation detail
   last established edge: related tests `exact_line` (src/raw_binding.rs:19)
   first unresolved edge: whether the framework oracle the related test checks notices the changed code
@@ -233,9 +243,11 @@ Weakness
   - A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim
 Stop reasons:
   - proc_macro_opaque — the changed expression contains a macro call whose expansion ripr does not see
+    Next: Call the changed owner directly from a test, outside the macro, and assert on its result.
   - gap_evidence_unresolved — ripr could not establish the evidence a gap needs for this change, so it does not claim one
 Static limitation
   rust_framework_oracle_unresolved — A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim.
+  Next: Add a direct `assert_eq!` on the changed value beside the environment, mock, expect-test or snapshot check.
 Limitation detail
   last established edge: related tests `exact_line` (src/raw_binding.rs:19)
   first unresolved edge: whether the framework oracle the related test checks notices the changed code
@@ -264,9 +276,11 @@ Weakness
   - A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim
 Stop reasons:
   - proc_macro_opaque — the changed expression contains a macro call whose expansion ripr does not see
+    Next: Call the changed owner directly from a test, outside the macro, and assert on its result.
   - gap_evidence_unresolved — ripr could not establish the evidence a gap needs for this change, so it does not claim one
 Static limitation
   rust_framework_oracle_unresolved — A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim.
+  Next: Add a direct `assert_eq!` on the changed value beside the environment, mock, expect-test or snapshot check.
 Limitation detail
   last established edge: related tests `exact_line` (src/raw_receiver.rs:23)
   first unresolved edge: whether the framework oracle the related test checks notices the changed code
@@ -295,9 +309,11 @@ Weakness
   - A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim
 Stop reasons:
   - proc_macro_opaque — the changed expression contains a macro call whose expansion ripr does not see
+    Next: Call the changed owner directly from a test, outside the macro, and assert on its result.
   - gap_evidence_unresolved — ripr could not establish the evidence a gap needs for this change, so it does not claim one
 Static limitation
   rust_framework_oracle_unresolved — A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim.
+  Next: Add a direct `assert_eq!` on the changed value beside the environment, mock, expect-test or snapshot check.
 Limitation detail
   last established edge: related tests `exact_line` (src/raw_receiver.rs:23)
   first unresolved edge: whether the framework oracle the related test checks notices the changed code
@@ -326,9 +342,11 @@ Weakness
   - A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim
 Stop reasons:
   - proc_macro_opaque — the changed expression contains a macro call whose expansion ripr does not see
+    Next: Call the changed owner directly from a test, outside the macro, and assert on its result.
   - gap_evidence_unresolved — ripr could not establish the evidence a gap needs for this change, so it does not claim one
 Static limitation
   rust_framework_oracle_unresolved — A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim.
+  Next: Add a direct `assert_eq!` on the changed value beside the environment, mock, expect-test or snapshot check.
 Limitation detail
   last established edge: related tests `exact_line` (src/unicode_binding.rs:19)
   first unresolved edge: whether the framework oracle the related test checks notices the changed code
@@ -357,9 +375,11 @@ Weakness
   - A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim
 Stop reasons:
   - proc_macro_opaque — the changed expression contains a macro call whose expansion ripr does not see
+    Next: Call the changed owner directly from a test, outside the macro, and assert on its result.
   - gap_evidence_unresolved — ripr could not establish the evidence a gap needs for this change, so it does not claim one
 Static limitation
   rust_framework_oracle_unresolved — A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim.
+  Next: Add a direct `assert_eq!` on the changed value beside the environment, mock, expect-test or snapshot check.
 Limitation detail
   last established edge: related tests `exact_line` (src/unicode_binding.rs:19)
   first unresolved edge: whether the framework oracle the related test checks notices the changed code

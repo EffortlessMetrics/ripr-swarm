@@ -14,7 +14,12 @@ Start here:
   Static exposure: unknown (severity: note, confidence 0.92)
   Why unknown: the analysis could not determine a static exposure state
   Changed behavior: sink.send(format!("n={n}"))
-  Analyzer limit: A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the…
+  Analyzer limit: A related Rust test checks this code through a test-framework idiom that ripr does
+    not evaluate (an environment variable the test sets or removes, a mockall closure that reads the
+    call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a
+    helper-built receiver under a changed closure, a hand-written recording double, or an async
+    owner driven by an executor helper in the test's file), so ripr cannot say whether the check
+    notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim
   Related test: src/let_else.rs:19 exact_line (ripr could not confirm that this assertion observes the changed behavior)
   Next step: `exact_line` (src/let_else.rs:19) passes the owner a test double and compares what the
     double recorded, and ripr does not follow the changed value through the double's own method into
@@ -29,6 +34,9 @@ Start here:
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
       unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;
+      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;
+      candidate line = changed line ripr considers for probes
     - reach yes: Related tests appear to reach report_let_else: exact_line
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 7 more detail line(s) in --format human-full
@@ -36,7 +44,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/recording_double_observer_refusals/input --diff <cwd>/fixtures/recording_double_observer_refusals/diff.patch --mode fast probe:src_let_else.rs:call_deletion:fbb4d2a8
   ripr context --root <cwd>/fixtures/recording_double_observer_refusals/input --diff <cwd>/fixtures/recording_double_observer_refusals/diff.patch --mode fast --at probe:src_let_else.rs:call_deletion:fbb4d2a8
-  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_let_else.rs:call_deletion:fbb4d2a8 --root <cwd>/fixtures/recording_double_observer_refusals/input` for the full gate's answer
+  no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
 No test stub here: the change shows up as a side effect or call, which needs an observer or mock ripr cannot write
 
 Hidden:
