@@ -1,6 +1,8 @@
 # Fixture: typescript_call_removal_multiple_calls
 
-Spec: RIPR-SPEC-0243 counted removal receiver witness (#10157).
+Spec: RIPR-SPEC-0243
+
+Counted removal receiver witness (#10157).
 
 ## Given
 

@@ -1371,6 +1371,35 @@ the masker.
     how many calls run (a count sees both), an aliased or optional-chained count,
     and `mock.calls[0].arguments` pins, which keep their reading.
 
+### Counted removal receiver witness (#10157)
+
+This bounded successor to #9667's removed-call rule 19 adds call-deletion
+credit for a whole `receiver.method(...)` statement replaced by `void local;`.
+The complete file diff must contain exactly one removed line and one added line
+at the same replacement coordinate. Multi-edit files and unavailable full diff
+facts withhold this bounded credit, so multiple old invocations cannot borrow
+a count-of-one witness from a replacement owner with no calls.
+A direct imported owner must run on a straight-line path after a `node:test`
+spy registration and before an exact positive count of one. The receiver is
+either a parsed const object passed in the receiver parameter position, or
+a direct exported const binding with an unshadowed named import resolved to the owner's complete module identity
+through the existing import resolver. Parsed declarations handle legal
+whitespace. Reassignment, enclosing shadows, reset/restore, intervening calls,
+conditional execution and unresolved identity withhold this additional credit.
+The owner module contains only the direct exported function and optional
+receiver object; the test file contains only trusted imports and one direct,
+two-argument `test` registration with a literal title. Extra setup/imports,
+suites and sibling functions/tests are outside this bounded witness.
+Nonreceiver arguments must be primitive literals; owner statements cannot
+replace the receiver or invoke opaque code. Removed-call identifier arguments
+must be initialized parameters or admitted earlier locals at the unique changed
+statement; unknown and later bindings withhold credit. The selected mocked
+method must exist exactly once. A default spy admits only a synchronous,
+nonthrowing no-op original (no default/destructured/rest parameters or opaque
+statements); an explicit admitted no-op replacement can bypass the original
+body check, but cannot supply a missing method. This does not change generic
+call-count oracle projection (#10174).
+
 ## Required Evidence
 
 - Each Problem table row reads as the acceptance examples state, in JSON
@@ -1695,49 +1724,7 @@ keys); do not take the next number.
     `broad_error` / weak). With `/other/`, or with a second `throw` in the
     owner: `broad_error` / weak.
 
-### Counted removal receiver witness (#10157)
-
-This bounded successor to #9667's removed-call rule 19 adds call-deletion
-credit for a whole `receiver.method(...)` statement replaced by `void local;`.
-The complete file diff must contain exactly one removed line and one added line
-at the same replacement coordinate. Multi-edit files and unavailable full diff
-facts withhold this bounded credit, so multiple old invocations cannot borrow
-a count-of-one witness from a replacement owner with no calls.
-A direct imported owner must run on a straight-line path after a `node:test`
-spy registration and before an exact positive count of one. The receiver is
-either a parsed const object passed in the receiver parameter position, or
-a direct exported const binding with an unshadowed named import resolved to the owner's complete module identity
-through the existing import resolver. Parsed declarations handle legal
-whitespace. Reassignment, enclosing shadows, reset/restore, intervening calls,
-conditional execution and unresolved identity withhold this additional credit.
-The owner module contains only the direct exported function and optional
-receiver object; the test file contains only trusted imports and one direct,
-two-argument `test` registration with a literal title. Extra setup/imports,
-suites and sibling functions/tests are outside this bounded witness.
-Nonreceiver arguments must be primitive literals; owner statements cannot
-replace the receiver or invoke opaque code. Removed-call identifier arguments
-must be initialized parameters or admitted earlier locals at the unique changed
-statement; unknown and later bindings withhold credit. The selected mocked
-method must exist exactly once. A default spy admits only a synchronous,
-nonthrowing no-op original (no default/destructured/rest parameters or opaque
-statements); an explicit admitted no-op replacement can bypass the original
-body check, but cannot supply a missing method. This does not change generic
-call-count oracle projection (#10174).
-
 ## Test Mapping
-
-- #10157: `call_removal_tests.rs::counted_removal_receiver_identity_controls`
-  covers the four executable controls from #9667 comment 6371144187 and the
-  passed-parameter and same-module positives. `counted_removal_refuses_unresolved_execution`
-  covers wrong arguments, resets, conditional registration and zero counts.
-  The same module's remaining tests pin early returns/default parameters,
-  opaque reads, export aliases, mock API replacement and registration argument
-  effects; `counted_removal_retained_corpus_shape_is_exposed` reuses the retained
-  corpus source and test without rewriting their spy. The target-method and
-  removed-argument regressions pin throwing/absent/duplicate methods, imported
-  and parameter receivers, valid explicit replacements, and earlier/later local
-  bindings. Four dedicated call-removal fixtures also pin `weakly_exposed` in
-  the cross-language evidence-promotion-honesty corpus.
 
 - #9683 (rule 11, empty table): `tests/table_loop_tests.rs` pins that an empty
   `const` table holds no assertions and a `let` table does not. Corpus row
@@ -1752,6 +1739,19 @@ call-count oracle projection (#10174).
 - #9684 (decision 22): `tests/mock_call_count_tests.rs` pins the call-count
   reading and its controls. Corpus row `ts-trap-mocked-send` moves from
   credited to gap.
+
+- #10157: `call_removal_tests.rs::counted_removal_receiver_identity_controls`
+  covers the four executable controls from #9667 comment 6371144187 and the
+  passed-parameter and same-module positives. `counted_removal_refuses_unresolved_execution`
+  covers wrong arguments, resets, conditional registration and zero counts.
+  The same module's remaining tests pin early returns/default parameters,
+  opaque reads, export aliases, mock API replacement and registration argument
+  effects; `counted_removal_retained_corpus_shape_is_exposed` reuses the retained
+  corpus source and test without rewriting their spy. The target-method and
+  removed-argument regressions pin throwing/absent/duplicate methods, imported
+  and parameter receivers, valid explicit replacements, and earlier/later local
+  bindings. Four dedicated call-removal fixtures also pin `weakly_exposed` in
+  the cross-language evidence-promotion-honesty corpus.
 
 - #9435 (rule 15): `crates/ripr/src/analysis/language/typescript/tests/returned_dataflow_tests.rs`
   pins each shape's credit and the fallbacks that reach the rule (a weak
