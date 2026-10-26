@@ -240,7 +240,7 @@ fn verdict_changers(finding: &Finding, owner_signature: Option<&str>) -> Vec<Str
     };
     if finding.related_tests.is_empty() {
         push(if unresolved_edge {
-            conditional_call.clone()
+            format!("{conditional_call}; assert on its result")
         } else {
             format!("call {owner} and assert on its result")
         });
@@ -404,6 +404,7 @@ mod tests {
             "{text}"
         );
         assert!(!text.contains("directly or through a helper"), "{text}");
+        assert!(text.contains("; assert on its result"), "{text}");
 
         // The same rule holds for a related test with no call path and a
         // retained static limitation instead of a stop reason.
