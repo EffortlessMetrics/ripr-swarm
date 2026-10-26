@@ -49,7 +49,10 @@ fn wrong_expected_message() { assert!(matches!(parse("bad"), Err(Fault::Bad)), "
             binary.as_os_str(),
         ];
         if mutant {
-            arguments.extend(["--cfg".as_ref(), "mutant".as_ref()]);
+            arguments.extend([
+                std::ffi::OsStr::new("--cfg"),
+                std::ffi::OsStr::new("mutant"),
+            ]);
         }
         compiles(run(Path::new("rustc"), &arguments)?, name)?;
         let output = run(&binary, &["--test-threads=1".as_ref()])?;
