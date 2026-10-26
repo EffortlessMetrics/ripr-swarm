@@ -1014,8 +1014,16 @@ mutant calibrates the rule; ripr reports only the static shape.
     statement, `fn()` or `return fn()`; there is no `else` or `finally`; and
     every handler is a bare `raise` alone, because a call before it could
     skip or exit (`pytest.skip()`, `sys.exit(0)`) and a path that returns or
-    falls off the end swallows. A module with a star import reads no
-    wrapper, since the import may rebind its name. The lambda takes no
+    falls off the end swallows. A handler's exception type must be a name,
+    a dotted attribute path or a tuple of those, because the type expression
+    runs when an exception arrives (`except pytest.skip('x'):` skips). The
+    wrapper's name may appear in its module only as its one `def` and as
+    plain calls `name(`; an assignment, `global`, import at any depth, walrus,
+    `case` capture, decorator, attribute or string mention could rebind it
+    where the binding scan cannot see, and `import *`, `globals(`, `vars(`,
+    `exec(`, `eval(` or `__dict__` anywhere refuses the module. Another
+    file that patches the module (a conftest fixture, a plugin) is not seen,
+    as for every helper this module resolves. The lambda takes no
     parameters, is the only argument, and its body is one call. A wrapper
     that swallows any exception (including after a partial re-raise, a
     conditional re-raise or a `finally` that returns), re-raises a different

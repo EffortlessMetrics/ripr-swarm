@@ -440,6 +440,14 @@ fn given_a_wrapper_that_can_swallow_when_it_runs_a_helper_lambda_then_nothing_re
             "def logged(fn):\n    try:\n        return fn()\n    except Exception as exc:\n        raise RuntimeError('x') from exc\n",
         ),
         (
+            "evaluates a skipping handler type",
+            "def logged(fn):\n    try:\n        return fn()\n    except pytest.skip('x'):\n        raise\n",
+        ),
+        (
+            "evaluates a call in a tuple handler type",
+            "def logged(fn):\n    try:\n        return fn()\n    except (ValueError, pytest.skip('x')):\n        raise\n",
+        ),
+        (
             "calls before the raise",
             "def logged(fn):\n    try:\n        return fn()\n    except Exception:\n        note()\n        raise\n",
         ),
@@ -551,7 +559,47 @@ fn given_a_wrapper_name_the_test_rebinds_or_imports_when_called_then_nothing_res
     let imported = "from pkg.sq import sq\nfrom tests.helpers import check_equal, logged\n\n\ndef test_sq():\n    logged(lambda: check_equal(sq(3), 9))\n";
     let both = "from pkg.sq import sq\nfrom tests.helpers import check_equal, logged\n\n\ndef logged(fn):\n    try:\n        return fn()\n    except Exception:\n        raise\n\n\ndef test_sq():\n    logged(lambda: check_equal(sq(3), 9))\n";
     let star = "from pkg.sq import sq\nfrom tests.helpers import check_equal\nfrom tests.shared import *\n\n\ndef logged(fn):\n    try:\n        return fn()\n    except Exception:\n        raise\n\n\ndef test_sq():\n    logged(lambda: check_equal(sq(3), 9))\n";
-    for source in [local, imported, both, star] {
+    let wrapper =
+        "def logged(fn):\n    try:\n        return fn()\n    except Exception:\n        raise\n";
+    let head = "from pkg.sq import sq\nfrom tests.helpers import check_equal\n\n\n";
+    let call = "    logged(lambda: check_equal(sq(3), 9))\n";
+    let rebinding = [
+        // A conditional import rebinds the name; the binding scan skips imports.
+        format!(
+            "{head}{wrapper}\n\ntry:\n    from compat import logged\nexcept ImportError:\n    pass\n\n\ndef test_sq():\n{call}"
+        ),
+        // A fixture rebinds it through `global`.
+        format!(
+            "{head}{wrapper}\n\n@pytest.fixture(autouse=True)\ndef _patch():\n    global logged\n    logged = lambda fn: None\n\n\ndef test_sq():\n{call}"
+        ),
+        // A walrus in the test body rebinds it.
+        format!("{head}{wrapper}\n\ndef test_sq():\n    (logged := lambda fn: None)\n{call}"),
+        // An import nested in the test body rebinds it.
+        format!(
+            "{head}{wrapper}\n\ndef test_sq():\n    if True:\n        from compat import logged\n{call}"
+        ),
+        // A `case` capture rebinds it.
+        format!(
+            "{head}{wrapper}\n\ndef test_sq():\n    match 1:\n        case logged:\n            pass\n{call}"
+        ),
+        // A string name for `setattr`.
+        format!(
+            "{head}{wrapper}\n\ndef test_sq(monkeypatch):\n    monkeypatch.setattr(sys.modules[__name__], 'logged', quiet)\n{call}"
+        ),
+        // Dynamic namespace access.
+        format!("{head}{wrapper}\n\ndef test_sq():\n    globals()['lo' + 'gged'] = quiet\n{call}"),
+        // A decorator use of the name.
+        format!("{head}{wrapper}\n\n@logged\ndef other():\n    pass\n\n\ndef test_sq():\n{call}"),
+        // A nested star import.
+        format!(
+            "{head}{wrapper}\n\nif FLAG:\n    from tests.shared import *\n\n\ndef test_sq():\n{call}"
+        ),
+    ];
+    for source in rebinding
+        .iter()
+        .map(String::as_str)
+        .chain([local, imported, both, star])
+    {
         let test = resolved(source, EQ_HELPER);
         assert!(helper_reading(&test).is_none(), "{source}");
     }

@@ -16,6 +16,7 @@
 use super::admission::{PythonAssertionAdmission, bound_names};
 use super::oracles::collect_assertions_from_statements;
 use super::owners_tests::collect_imports_from_statements;
+use super::related_tests::is_python_identifier_char;
 use super::source_facts::parse_module_result;
 use super::source_utils::{SourceText, line_for_range_start, text_for_range};
 use super::{PythonAssertion, PythonOracleShape, PythonTest};
@@ -66,7 +67,10 @@ pub(super) fn collect_helper_module(
         }
         // Unsupported shapes are skipped before the binding scan.
         let helper = helper_of(source, function);
-        let reraiser = helper.is_none() && !star_import && is_reraising_wrapper(function);
+        let reraiser = helper.is_none()
+            && !star_import
+            && is_reraising_wrapper(function)
+            && wrapper_only_defined_and_called(source, &name);
         if helper.is_none() && !reraiser {
             continue;
         }
@@ -189,8 +193,59 @@ fn is_reraising_wrapper(function: &ast::StmtFunctionDef) -> bool {
     calls_param
         && try_stmt.handlers.iter().all(|handler| {
             let ast::ExceptHandler::ExceptHandler(handler) = handler;
-            handler_ends_in_bare_raise(&handler.body)
+            handler.type_.as_deref().is_none_or(plain_exception_type)
+                && handler_ends_in_bare_raise(&handler.body)
         })
+}
+
+/// An exception class expression that cannot run code: a name, a dotted
+/// attribute path or a tuple of those. The type expression is evaluated when
+/// an exception reaches the handler, so `except pytest.skip('x'):` would skip.
+fn plain_exception_type(expr: &Expr) -> bool {
+    match expr {
+        Expr::Name(_) => true,
+        Expr::Attribute(attribute) => plain_exception_type(&attribute.value),
+        Expr::Tuple(tuple) => tuple.elts.iter().all(plain_exception_type),
+        _ => false,
+    }
+}
+
+/// Every occurrence of `name` in the module is its one `def` or a plain call
+/// `name(`. Any other mention (an assignment, `global`, an import at any
+/// depth, a walrus, a `case` capture, a decorator, an attribute, a string for
+/// `setattr`) could rebind it, and the binding scan does not see inside
+/// function bodies, expressions or nested imports. Dynamic namespace access
+/// (`globals()`, `vars()`, `exec`, `eval`, a star import) refuses the module.
+fn wrapper_only_defined_and_called(text: &str, name: &str) -> bool {
+    if [
+        "import *", "globals(", "vars(", "exec(", "eval(", "__dict__",
+    ]
+    .iter()
+    .any(|dynamic| text.contains(dynamic))
+    {
+        return false;
+    }
+    let mut defs = 0usize;
+    let mut from = 0usize;
+    while let Some(found) = text[from..].find(name) {
+        let start = from + found;
+        let end = start + name.len();
+        from = end;
+        let before = text[..start].chars().next_back();
+        let after = text[end..].chars().next();
+        if before.is_some_and(is_python_identifier_char)
+            || after.is_some_and(is_python_identifier_char)
+        {
+            continue;
+        }
+        let head = text[..start].trim_end_matches([' ', '\t']);
+        if head.ends_with("def") && head.len() < text[..start].len() && after == Some('(') {
+            defs += 1;
+        } else if before == Some('.') || after != Some('(') {
+            return false;
+        }
+    }
+    defs == 1
 }
 
 /// The handler is a bare `raise` and nothing else. A statement before it
