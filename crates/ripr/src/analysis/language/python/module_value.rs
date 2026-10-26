@@ -36,6 +36,7 @@ use super::source_utils::{SourceText, is_test_file};
 use super::table_reads::{dict_literal_names, unsafe_table_uses};
 use super::{PythonAssertion, PythonOwner, PythonTest, expr_full_name};
 use crate::domain::OwnerKind;
+use rayon::prelude::*;
 use rustpython_parser::ast::{self, Expr, Mod, Stmt};
 use std::path::Path;
 
@@ -73,6 +74,9 @@ pub(super) struct ForeignWrites {
 
 /// Most distinct words retained in the workspace reference index.
 const MAX_WORKSPACE_WORDS: usize = 200_000;
+/// Sources parsed per parallel batch before the batch is folded, so a tripped
+/// [`MAX_WORKSPACE_WORDS`] cap stops parsing within one batch.
+const FOREIGN_PARSE_BATCH_FILES: usize = 256;
 
 /// Spellings that can hide an imported module's name from the word index.
 const DYNAMIC_LOADERS: [&str; 13] = [
@@ -121,6 +125,8 @@ pub(super) struct ForeignIndex<'a> {
 
 // Parses the foreign index has done on this thread, so a test can pin that
 // the workspace is parsed once per run and not once per changed file (#10125).
+// It counts files folded into the index on the calling thread; the parses
+// themselves run on rayon workers (#10441).
 #[cfg(test)]
 thread_local! {
     pub(super) static FOREIGN_PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -147,62 +153,78 @@ impl<'a> ForeignIndex<'a> {
         let mut files = Vec::new();
         let mut references = std::collections::BTreeMap::new();
         let mut hidden_import = false;
+        // Parsing each source dominates the index on large workspaces, so each
+        // batch is parsed in parallel and then folded sequentially in input
+        // order: word ownership and the word cap behave as before, and a
+        // tripped word cap stops parsing within one batch (#10441).
         let sources: Vec<(&'a Path, &'a str)> = sources.collect();
         let tables: std::collections::BTreeSet<String> = sources
             .iter()
             .flat_map(|(_, source)| dict_literal_names(source))
             .collect();
-        for (file, source) in sources {
-            hidden_import |= DYNAMIC_LOADERS
-                .iter()
-                .any(|loader| mentions_identifier(source, loader))
-                || source.contains("sys.modules")
-                || (file.file_name().is_some_and(|name| name == "__init__.py")
-                    && mentions_identifier(source, "__all__"));
-            for word in source_words(source) {
-                let first = references.entry(word).or_insert(Some(file));
-                if first.is_some_and(|first| first != file) {
-                    *first = None;
-                }
-                if references.len() > MAX_WORKSPACE_WORDS {
-                    return Self {
-                        files: Vec::new(),
-                        references: std::collections::BTreeMap::new(),
-                        hidden_import,
-                        unknown: true,
-                    };
-                }
-            }
-            #[cfg(test)]
-            FOREIGN_PARSES.with(|parses| parses.set(parses.get() + 1));
-            let assigned = assigned_attributes(source);
-            let dynamic = assigned.is_none()
-                || DYNAMIC_WRITERS
+        let token = crate::analysis::cancellation::current_token();
+        for batch in sources.chunks(FOREIGN_PARSE_BATCH_FILES) {
+            let parsed: Vec<Option<Vec<String>>> = batch
+                .par_iter()
+                .map(|(_, source)| {
+                    crate::analysis::cancellation::with_optional_token(token.as_ref(), || {
+                        assigned_attributes(source)
+                    })
+                })
+                .collect();
+            for (&(file, source), assigned) in batch.iter().zip(parsed) {
+                hidden_import |= DYNAMIC_LOADERS
                     .iter()
-                    .any(|writer| mentions_identifier(source, writer))
-                || source.contains("sys.modules");
-            let table_unsafe =
-                if tables.is_empty() || !source_words(source).any(|word| tables.contains(word)) {
+                    .any(|loader| mentions_identifier(source, loader))
+                    || source.contains("sys.modules")
+                    || (file.file_name().is_some_and(|name| name == "__init__.py")
+                        && mentions_identifier(source, "__all__"));
+                for word in source_words(source) {
+                    let first = references.entry(word).or_insert(Some(file));
+                    if first.is_some_and(|first| first != file) {
+                        *first = None;
+                    }
+                    if references.len() > MAX_WORKSPACE_WORDS {
+                        return Self {
+                            files: Vec::new(),
+                            references: std::collections::BTreeMap::new(),
+                            hidden_import,
+                            unknown: true,
+                        };
+                    }
+                }
+                #[cfg(test)]
+                FOREIGN_PARSES.with(|parses| parses.set(parses.get() + 1));
+                let dynamic = assigned.is_none()
+                    || DYNAMIC_WRITERS
+                        .iter()
+                        .any(|writer| mentions_identifier(source, writer))
+                    || source.contains("sys.modules");
+                let table_unsafe = if tables.is_empty()
+                    || !source_words(source).any(|word| tables.contains(word))
+                {
                     Vec::new()
                 } else {
                     unsafe_table_uses(source, &|word| tables.contains(word), None)
                         .into_iter()
                         .collect()
                 };
-            // Reflection reaches a module's dict without naming it, or with a
-            // name built at runtime (`getattr(module, n)`, `dir(module)`,
-            // `inspect.getmembers`, `locals()`, `fn.__globals__`).
-            let reflective = !tables.is_empty()
-                && REFLECTIVE_SPELLINGS
-                    .iter()
-                    .any(|spelling| mentions_identifier(source, spelling));
-            files.push(IndexedSource {
-                file,
-                assigned,
-                dynamic_words: dynamic.then(|| source_words(source).collect()),
-                table_unsafe,
-                reflective_words: reflective.then(|| source_words(source).collect()),
-            });
+                // Reflection reaches a module's dict without naming it, or
+                // with a name built at runtime (`getattr(module, n)`,
+                // `dir(module)`, `inspect.getmembers`, `locals()`,
+                // `fn.__globals__`).
+                let reflective = !tables.is_empty()
+                    && REFLECTIVE_SPELLINGS
+                        .iter()
+                        .any(|spelling| mentions_identifier(source, spelling));
+                files.push(IndexedSource {
+                    file,
+                    assigned,
+                    dynamic_words: dynamic.then(|| source_words(source).collect()),
+                    table_unsafe,
+                    reflective_words: reflective.then(|| source_words(source).collect()),
+                });
+            }
         }
         Self {
             files,

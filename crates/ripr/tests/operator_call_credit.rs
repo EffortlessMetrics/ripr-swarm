@@ -713,6 +713,118 @@ fn a_credit_no_assertion_confirms_is_withheld_not_a_gap() -> Result<(), String> 
         [ExposureClass::StaticUnknown]
     );
 
+    // A second test that only exercises the operator is no more confirming.
+    let two_operator_tests = Case {
+        label: "two_operator_tests",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        extra_items: "
+#[cfg(test)]
+mod more {
+    use super::*;
+
+    #[test]
+    fn second_operator_use() {
+        let sum = Money(1) + Money(1);
+        assert_eq!(sum.0, 2);
+    }
+}
+",
+        ..ADD
+    };
+    assert_eq!(
+        classes(&two_operator_tests)?,
+        [ExposureClass::StaticUnknown]
+    );
+
+    // A test that names the method decided reach itself, so the finding is
+    // judged by its own evidence, not withheld as syntax-only.
+    let one_named_call = Case {
+        label: "one_named_call",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        extra_items: "
+#[cfg(test)]
+mod named {
+    use super::*;
+
+    #[test]
+    fn named_call() {
+        let sum = Money(1).add(Money(1));
+        assert_eq!(sum.0, 2);
+    }
+}
+",
+        ..ADD
+    };
+    assert_eq!(classes(&one_named_call)?, [ExposureClass::WeaklyExposed]);
+
+    // Same-named tests in different inline modules are different tests. The
+    // later one calls the method and observes the sum, so the finding is
+    // judged by that test too (it was once dropped as a duplicate by name).
+    let same_name_named_call_later = Case {
+        label: "same_name_named_call_later",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        extra_items: "
+#[cfg(test)]
+mod operator {
+    use super::*;
+
+    #[test]
+    fn operator_under_test() {
+        let sum = Money(1) + Money(1);
+        assert_eq!(sum.0, 2);
+    }
+}
+",
+        test_body: "let other = Money(2).add(Money(3));\n        assert_eq!(other.0, 5);",
+        ..ADD
+    };
+    assert_eq!(
+        classes(&same_name_named_call_later)?,
+        [ExposureClass::Exposed]
+    );
+
+    // The row for the later test must resolve to that test's own body: an
+    // earlier operator-only test of the same name must not stand in for a
+    // later one that calls `.add(` and confirms nothing.
+    let same_name_unconfirmed_named_call_later = Case {
+        label: "same_name_unconfirmed_named_call_later",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        extra_items: "
+#[cfg(test)]
+mod operator {
+    use super::*;
+
+    #[test]
+    fn operator_under_test() {
+        let sum = Money(1) + Money(1);
+        assert_eq!(sum.0, 2);
+    }
+}
+",
+        test_body: "let r = Money(2).add(Money(3));\n        assert_eq!(r.0, 5);",
+        ..ADD
+    };
+    assert_eq!(
+        classes(&same_name_unconfirmed_named_call_later)?,
+        [ExposureClass::WeaklyExposed]
+    );
+
+    // A finding whose infection is not read has a different missing leg: the
+    // changed line sits behind a branch the test's operands never take.
+    let branch_not_driven = Case {
+        label: "branch_not_driven",
+        signature: "type Output = Money;\n    fn add(self, other: Money) -> Money",
+        old_line: "        if self.0 > 100 { Money(self.0 + other.0) } else { Money(0) }",
+        new_line: "        if self.0 > 100 { Money(other.0 + self.0) } else { Money(0) }",
+        test_body: "assert_eq!(Money(2) + Money(3), Money(0));",
+        ..ADD
+    };
+    assert_eq!(classes(&branch_not_driven)?, [ExposureClass::WeaklyExposed]);
+
     // The same impl is a gap when the test never exercises the operator.
     let unexercised = Case {
         label: "self_constructor_unexercised",
