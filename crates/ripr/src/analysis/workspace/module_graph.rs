@@ -393,6 +393,18 @@ struct WorkspaceListing {
     symlink_targets: Vec<PathBuf>,
 }
 
+/// Complete manifest-directory inventory for negative target-identity checks.
+/// Reuse the bounded module-graph listing, including normally skipped source
+/// directories and the committed-source missing-file guard. A symlink can
+/// hide another manifest owner, so it cannot establish a closed inventory.
+pub(crate) fn target_manifest_directories(workspace_root: &Path) -> Option<Vec<PathBuf>> {
+    let listing = list_workspace(workspace_root)?;
+    listing
+        .symlink_targets
+        .is_empty()
+        .then_some(listing.manifest_dirs)
+}
+
 /// Lists the workspace, or `None` when the listing is cut short or cannot
 /// describe the tree the analysis reads: under a committed-source overlay,
 /// a Rust file or manifest that exists only at `HEAD` is missing from the

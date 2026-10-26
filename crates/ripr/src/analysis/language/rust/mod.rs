@@ -4216,6 +4216,101 @@ mod tests {
             .collect()
     }
 
+    /// #10191: exercise the real name-admission path, with a nonempty
+    /// withheld binary, instead of only Ready's whole-workspace index.
+    #[test]
+    fn binary_macro_boundaries_match_full_scope_with_withheld_binary() -> Result<(), String> {
+        use dependent_scope::DependentScopeMode;
+        for shared in [false, true] {
+            let root = temp_root("binary-macro-dependent-scope")?;
+            for (path, source) in [
+                (
+                    "Cargo.toml",
+                    "[workspace]\nmembers=['a','b','island']\nresolver='2'\n",
+                ),
+                (
+                    "a/Cargo.toml",
+                    "[package]\nname='scope_a'\nversion='0.0.0'\nedition='2024'\n",
+                ),
+                ("a/src/lib.rs", "pub fn answer() -> u8 {\n    7\n}\n"),
+                (
+                    "b/Cargo.toml",
+                    "[package]\nname='macro_binary'\nversion='0.0.0'\nedition='2024'\n[[bin]]\nname='parse'\npath='parse.rs'\n[dependencies]\nscope_a={path='../a'}\n",
+                ),
+                (
+                    "b/parse.rs",
+                    "#[macro_export]\nmacro_rules! assert_eq { ($($t:tt)*) => {} }\nfn main() {}\n",
+                ),
+                (
+                    "island/Cargo.toml",
+                    "[package]\nname='island'\nversion='0.0.0'\n",
+                ),
+                ("island/src/lib.rs", "pub fn unrelated() {}\n"),
+            ] {
+                write(&root.join(path), source)?;
+            }
+            let prefix = if shared {
+                "#[macro_use]\n#[path = \"../../b/parse.rs\"]\nmod shadow;\n"
+            } else {
+                ""
+            };
+            write(
+                &root.join("a/tests/pin.rs"),
+                &format!(
+                    "{prefix}use scope_a::answer;\n#[test]\nfn pin() {{ assert_eq!(answer(), 7); }}\n"
+                ),
+            )?;
+            let changed = diff::parse_unified_diff(
+                "diff --git a/a/src/lib.rs b/a/src/lib.rs\n--- a/a/src/lib.rs\n+++ b/a/src/lib.rs\n@@ -1,3 +1,3 @@\n pub fn answer() -> u8 {\n-    6\n+    7\n }\n",
+            );
+            let run = |mode| {
+                dependent_scope::with_forced_mode(mode, || {
+                    let result = RustAdapter.analyze_diff(
+                        &diff_options(root.clone(), AnalysisMode::Draft),
+                        &OraclePolicy::default(),
+                        &changed,
+                    )?;
+                    let mut findings = result.findings.into_iter().filter(|finding| {
+                        finding.probe.family == ProbeFamily::ReturnValue
+                            && finding.probe.expression == "7"
+                    });
+                    let finding = findings.next().ok_or("missing changed return")?;
+                    assert!(findings.next().is_none(), "one changed return");
+                    Ok::<_, String>((finding, dependent_scope::observed_main_files()))
+                })
+            };
+            let (full, full_main) = run(DependentScopeMode::Full)?;
+            let (named, main) = run(DependentScopeMode::NameAdmitted)?;
+            assert!(full_main.is_none(), "full control must not narrow");
+            let main = slash_paths(&main.ok_or("named control must actually narrow")?);
+            assert!(main.contains(&"a/tests/pin.rs".to_string()), "{main:?}");
+            assert!(
+                !main.contains(&"b/parse.rs".to_string()),
+                "binary must be withheld: {main:?}"
+            );
+            assert_eq!(named.class, full.class, "shared={shared}");
+            assert_eq!(named.ripr.observe.state, full.ripr.observe.state);
+            assert_eq!(named.ripr.discriminate.state, full.ripr.discriminate.state);
+            assert_eq!(named.related_tests.len(), 1);
+            assert_eq!(
+                named.related_tests[0].oracle_strength,
+                full.related_tests[0].oracle_strength
+            );
+            if shared {
+                assert_ne!(named.class, ExposureClass::Exposed);
+                assert_eq!(named.related_tests[0].oracle_strength, OracleStrength::None);
+            } else {
+                assert_eq!(named.class, ExposureClass::Exposed);
+                assert_eq!(
+                    named.related_tests[0].oracle_strength,
+                    OracleStrength::Strong
+                );
+            }
+            fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
+
     /// #5320: the name-admitted scope indexes `a` plus the one dependent file
     /// that spells the owner, widens to the relay chain only for the
     /// no-static-path witness, and never loads `e`. Its findings equal the

@@ -2168,8 +2168,11 @@ receiving call is itself resolved.
   assertion retains credit despite a local bare-name shadow. Every approved execution
   context must be a binary root, read from the selected manifest epoch:
   ordinary binary layouts or a literal `[[bin]] path`, including paths outside
-  `src/`. A file also declared as its package's or an ancestor package's library
-  root does not qualify. Shared library/module contexts, unresolved includes,
+  `src/`. A file also declared as any discovered package's library root,
+  including a sibling package's `../` target path, does not qualify. The bounded
+  manifest inventory and library paths use the selected source epoch; an
+  incomplete inventory cannot establish binary-only ownership.
+  Shared library/module contexts, unresolved includes,
   unknown paths, unparsed files and missing manifests keep the conservative
   refusal. The narrowed dependent-scope scan applies the same boundary only
   when the withheld file itself is that binary root. This exception does not
