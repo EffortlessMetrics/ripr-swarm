@@ -528,7 +528,7 @@ fn sdk_server_metadata_preserves_bounded_status_instructions() -> Result<(), Str
         .instructions
         .ok_or_else(|| "SDK metadata omitted instructions".to_string())?;
     if config.server_info.name != "ripr"
-        || !instructions.contains("ripr check --format json")
+        || !instructions.contains("ripr check --worktree --format json")
         || !instructions.contains("never edits source")
         || !instructions.contains("ripr_list_gaps")
     {

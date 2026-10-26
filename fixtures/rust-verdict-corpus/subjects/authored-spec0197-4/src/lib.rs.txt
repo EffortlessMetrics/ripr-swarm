@@ -1,0 +1,15 @@
+//! An Ok(x) return observed through a matches! with the exact payload.
+
+pub fn check(x: u32) -> Result<u32, String> {
+    Ok(x)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::check;
+
+    #[test]
+    fn five_is_accepted_as_five() {
+        assert!(matches!(check(5), Ok(5)));
+    }
+}

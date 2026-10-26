@@ -401,7 +401,8 @@ pub(super) fn parse_args(args: &[String]) -> Result<Options, String> {
     let mut expected_sha256 = None;
     let mut expected_version = None;
     let mut expected_commit = None;
-    let mut candidate_manifest: Option<String> = None;
+    let mut candidate_manifest: Option<PathBuf> = None;
+    let mut candidate_manifest_sha256: Option<String> = None;
     let mut families = Vec::new();
     let mut removal_controls = Vec::new();
     let mut removal_manifest = None;
@@ -435,9 +436,17 @@ pub(super) fn parse_args(args: &[String]) -> Result<Options, String> {
             "--expected-sha256" => expected_sha256 = Some(value),
             "--expected-version" => expected_version = Some(value),
             "--expected-commit" => expected_commit = Some(value),
+            // A repeated manifest or digest would let the last spelling win
+            // silently; refuse it like a repeated removal control.
             "--candidate-manifest" => {
-                candidate_manifest =
-                    Some(super::candidate_manifest::candidate_sha(Path::new(&value))?);
+                if candidate_manifest.replace(PathBuf::from(value)).is_some() {
+                    return Err("--candidate-manifest was given twice".to_string());
+                }
+            }
+            "--candidate-manifest-sha256" => {
+                if candidate_manifest_sha256.replace(value).is_some() {
+                    return Err("--candidate-manifest-sha256 was given twice".to_string());
+                }
             }
             "--family" => families.push(parse_family(&value)?),
             "--removal-control" => {
@@ -474,6 +483,21 @@ pub(super) fn parse_args(args: &[String]) -> Result<Options, String> {
     }
     let Some(binary) = binary else {
         return Err(usage().to_string());
+    };
+    let candidate_manifest = match (candidate_manifest, candidate_manifest_sha256) {
+        (Some(path), Some(accepted)) => {
+            Some(super::candidate_manifest::candidate_sha(&path, &accepted)?)
+        }
+        (Some(_), None) => {
+            return Err(
+                "--candidate-manifest requires --candidate-manifest-sha256 <accepted-raw-sha256> from the reviewed #1609 handoff"
+                    .to_string(),
+            );
+        }
+        (None, Some(_)) => {
+            return Err("--candidate-manifest-sha256 requires --candidate-manifest".to_string());
+        }
+        (None, None) => None,
     };
     if let Some(sha) = candidate_manifest {
         if expected_commit
@@ -551,7 +575,7 @@ fn parse_family(value: &str) -> Result<Family, String> {
 }
 
 fn usage() -> &'static str {
-    "usage: cargo xtask termination-qualification --binary <path> [--expected-sha256 <hex>] [--expected-version <text>] [--expected-commit <sha> | --candidate-manifest <path>] [--family <name>]... [--removal-control <family>=<binary>]... [--removal-manifest <manifest.json>] [--no-repeat] [--deadline-seconds <n>] [--allow-incomplete] [--work-dir <dir>] [--out <dir>]"
+    "usage: cargo xtask termination-qualification --binary <path> [--expected-sha256 <hex>] [--expected-version <text>] [--expected-commit <sha> | --candidate-manifest <path> --candidate-manifest-sha256 <accepted-raw-sha256>] [--family <name>]... [--removal-control <family>=<binary>]... [--removal-manifest <manifest.json>] [--no-repeat] [--deadline-seconds <n>] [--allow-incomplete] [--work-dir <dir>] [--out <dir>]"
 }
 
 fn hash_file(path: &Path) -> Result<String, String> {

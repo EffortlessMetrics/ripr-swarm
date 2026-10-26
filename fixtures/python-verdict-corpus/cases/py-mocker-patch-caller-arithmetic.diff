@@ -1,0 +1,13 @@
+diff --git a/shop/order.py b/shop/order.py
+--- a/shop/order.py
++++ b/shop/order.py
+@@ -1,8 +1,8 @@
+ from shop import rates
+ 
+ 
+ def checkout(cents):
+-    return cents + rates.tax(cents)
++    return cents - rates.tax(cents)
+ 
+ 
+ def rush(cents):

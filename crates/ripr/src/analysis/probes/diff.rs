@@ -8,13 +8,18 @@ use super::binding_predicate::{
     BindingPredicateResolution, masked_brace_delta, masked_paren_delta,
     resolve_changed_binding_uses,
 };
+use super::binding_return::{
+    ChangedBindingReturnFlow, is_single_statement, resolve_changed_binding_return,
+};
 use super::classify::{
     added_header_bound_lines, added_type_bound_lines, is_structural_delimiter_line,
     parser_probe_shapes_for_changed_line_against, removed_type_bounds, should_ignore_changed_line,
 };
 use super::expectations::{expected_sinks, required_oracles};
 use super::family::delta_for_family;
-use super::ids::diff_probe_id;
+use super::ids::{
+    collision_ordinals, collision_rank_key, diff_probe_id, normalize_rust_expression,
+};
 use super::lexical::{
     classify_changed_line, classify_changed_line_against, is_accumulator_rewrite_of,
 };
@@ -524,16 +529,24 @@ pub(crate) fn probes_for_file_with_relations(
             probes.extend(retargeted);
             continue;
         }
+        // RIPR-SPEC-0357: a changed `let` whose binding reaches the returned
+        // expression unchanged keeps its generic static-unknown probe and
+        // only gains the named flow as evidence.
+        let return_flow = (families == [ProbeFamily::StaticUnknown])
+            .then(|| changed_binding_return_flow(&build_context, added, text))
+            .flatten();
         for family in families {
             let before = removed_before(added.new_side_line, text, changed, &added_run_starts)
                 .map(|line| arm_before(&family, line, changed, old_source));
-            probes.push(SeededProbe::from_probe(build_probe(
+            let mut seeded = SeededProbe::from_probe(build_probe(
                 &build_context,
                 added,
                 family,
                 before,
                 Some(text.to_string()),
-            )));
+            ));
+            seeded.binding_return = return_flow.clone();
+            probes.push(seeded);
         }
     }
 
@@ -776,6 +789,30 @@ fn retarget_changed_binding_predicates(
     (!retargeted.is_empty()).then_some(retargeted)
 }
 
+/// Name the return flow of a changed complete single-line `let` (RIPR-SPEC-0357).
+fn changed_binding_return_flow(
+    context: &ProbeBuildContext<'_>,
+    added: &ChangedLine,
+    text: &str,
+) -> Option<ChangedBindingReturnFlow> {
+    let (binding, initializer) = changed_let_binding(text)?;
+    if !text.ends_with(';') || masked_paren_delta(text) != 0 || masked_brace_delta(text) != 0 {
+        return None;
+    }
+    // One statement on the line: a second `let` after `;` could shadow it.
+    if !is_single_statement(initializer) {
+        return None;
+    }
+    let owner = find_owner_function(context.index, &context.changed.path, added.new_side_line)?;
+    resolve_changed_binding_return(
+        binding,
+        initializer,
+        &owner.body,
+        owner.start_line,
+        added.new_side_line,
+    )
+}
+
 fn canonical_probe_text(changed_head: &str, parser_expression: &str) -> String {
     let changed_head = changed_head.trim();
     if changed_head.starts_with("let _ =") {
@@ -795,16 +832,33 @@ fn parser_span_for_canonical_shape(
     ParserByteSpan::same_line(shape.text, shape.start_byte)
 }
 
-/// Scan `probes` in order; for any id that appears more than once, rewrite the
-/// 2nd+ occurrences to append `.2`, `.3`, … (ordinal-based collision suffix).
+/// For any id that appears more than once, rewrite the 2nd+ occurrences to
+/// append `.2`, `.3`, … (ordinal-based collision suffix).
+///
+/// Occurrences of one expression keep encounter order, so repeated identical
+/// lines get the ordinals they always did. Distinct expressions that share an
+/// eight-hex fingerprint (#8838) rank by their full payload digest instead:
+/// the same pair gets the same two ids whichever the diff lists first.
 fn dedup_probe_ids(probes: &mut [SeededProbe]) {
-    use std::collections::HashMap;
-    let mut seen: HashMap<String, u32> = HashMap::new();
-    for seeded in probes.iter_mut() {
-        let count = seen.entry(seeded.probe.id.0.clone()).or_insert(0);
-        *count += 1;
-        if *count > 1 {
-            seeded.probe.id.0 = format!("{}.{}", seeded.probe.id.0, count);
+    let keyed = probes
+        .iter()
+        .map(|seeded| {
+            let probe = &seeded.probe;
+            let owner = probe.owner.as_ref().map_or("", |owner| owner.0.as_str());
+            let expression = normalize_rust_expression(&probe.expression);
+            (
+                probe.id.0.clone(),
+                collision_rank_key(&probe.id.0, owner, &expression),
+            )
+        })
+        .collect::<Vec<_>>();
+    let entries = keyed
+        .iter()
+        .map(|(base, key)| (base.as_str(), *key))
+        .collect::<Vec<_>>();
+    for (seeded, ordinal) in probes.iter_mut().zip(collision_ordinals(&entries)) {
+        if ordinal > 1 {
+            seeded.probe.id.0 = format!("{}.{ordinal}", seeded.probe.id.0);
         }
     }
 }
@@ -816,15 +870,23 @@ fn dedup_probe_ids(probes: &mut [SeededProbe]) {
 /// associated constant (`core::i32::MAX` -> `i32::MAX`). Anything else,
 /// including a line that differs elsewhere, stays probed.
 fn is_behavior_neutral_respelling(after: &str, before: &str) -> bool {
+    // A line that differs only in leading or trailing whitespace is a pure
+    // reformat, which is also neutral; a byte-identical pair is not an edit.
+    let raw_differs = after != before;
     let (after, before) = (after.trim(), before.trim());
     // String and comment text is output or prose, so a line holding either is
-    // never a respelling.
+    // never a respelling. A position-observing macro (`line!`, `column!`)
+    // expands from where it sits, so even a reindent moves its value.
     let prose = |line: &str| {
-        line.contains('"') || line.contains("//") || line.contains("/*") || observes_tokens(line)
+        line.contains('"')
+            || line.contains("//")
+            || line.contains("/*")
+            || observes_tokens(line)
+            || observes_position(line)
     };
     !prose(after)
         && !prose(before)
-        && after != before
+        && raw_differs
         && neutral_spelling(after) == neutral_spelling(before)
 }
 
@@ -905,23 +967,61 @@ fn canonical_integer_literals(text: &str) -> String {
 /// removed lines it replaced: the same statement joined or split across a
 /// different number of lines (`= \n Index::new(core::isize::MAX - 1);` joined
 /// onto one line as `isize::MAX`). Each side is joined with whitespace
-/// normalized, and some respelling must actually differ, so a pure reformat
-/// is left to the rest of the analysis. Blocks beyond `MAX_REWRAP_LINES` stay
-/// probed.
+/// normalized. A pure reformat whose joined token streams are identical is
+/// behavior-neutral too, as is a rewrap that only respells. Blocks beyond
+/// `MAX_REWRAP_LINES` stay probed.
 fn is_behavior_neutral_rewrap(after: &[&str], before: &[&str]) -> bool {
     const MAX_REWRAP_LINES: usize = 8;
     if after.len() > MAX_REWRAP_LINES || before.len() > MAX_REWRAP_LINES {
         return false;
     }
     let prose = |line: &&str| {
-        line.contains('"') || line.contains("//") || line.contains("/*") || observes_tokens(line)
+        line.contains('"')
+            || line.contains("//")
+            || line.contains("/*")
+            || observes_tokens(line)
+            || observes_position(line)
+            || has_whitespace_char_literal(line)
     };
     if after.iter().any(prose) || before.iter().any(prose) {
         return false;
     }
+    // Bracket-adjacent spacing inside a line (`{ a + b }` on one line, split
+    // as `{` / `a + b` / `}` across three) is formatting too, but a space can
+    // be content inside a character literal, so the squeezed comparison
+    // below fails closed when any line holds a single quote.
+    let quoted = after
+        .iter()
+        .chain(before.iter())
+        .any(|line| line.contains('\''));
     let (after, before) = (join_tokens(after), join_tokens(before));
-    let respelled = neutral_spelling(&before) != before || neutral_spelling(&after) != after;
-    respelled && neutral_spelling(&after) == neutral_spelling(&before)
+    neutral_spelling(&after) == neutral_spelling(&before)
+        || (!quoted
+            && neutral_spelling(&squeeze_bracket_spaces(&after))
+                == neutral_spelling(&squeeze_bracket_spaces(&before)))
+}
+
+/// `text` with spaces beside a delimiter removed, where spacing never
+/// separates Rust tokens (`{ a }` and `{a}` read alike, also inside macro
+/// token trees: a delimiter bounds its group, so spacing beside it is
+/// invisible there too). Punctuation is excluded — squeezing beside `<`,
+/// `,`, or `;` could merge two puncts into one joint punct (`-` `>` into
+/// `->`, `-` `,` into `-,`), which macro matching distinguishes. Interior
+/// spacing elsewhere is kept, so `a & &b` and `a && b` stay different, as
+/// do separated range dots.
+fn squeeze_bracket_spaces(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == ' '
+            && (matches!(out.chars().last(), Some('(' | '[' | '{'))
+                || matches!(chars.peek(), Some(')' | ']' | '}')))
+        {
+            continue;
+        }
+        out.push(c);
+    }
+    out
 }
 
 /// `lines` joined into one statement: whitespace runs collapse to one space,
@@ -943,13 +1043,28 @@ fn join_tokens(lines: &[&str]) -> String {
         let dots = (last == Some('.') && before_last == Some('.'))
             || (first == '.' && last == Some('.'))
             || (first == '.' && line.chars().nth(1) == Some('.'));
+        // A wrap before `,` or `;` after another punct would join the two
+        // into one joint punct (`-` `,` into `-,`) when the space drops,
+        // which macro matching distinguishes, so that space is kept.
+        // Joining beside a dot can manufacture a float token: `1\n.0`
+        // and `1.\n0` are not the single literal `1.0` in a macro. Keep
+        // those boundaries; a named method continuation still joins.
+        let numeric_dot = (first == '.'
+            && last.is_some_and(|c| c.is_ascii_digit() || c == '_')
+            && line
+                .chars()
+                .nth(1)
+                .is_none_or(|c| c.is_ascii_digit() || !continues_identifier(c)))
+            || (last == Some('.') && before_last.is_some_and(|c| c.is_ascii_digit() || c == '_'));
+        let joint = matches!(first, ',' | ';')
+            && matches!(last, Some(c) if c.is_ascii_punctuation() && !matches!(c, '(' | '[' | '{'));
         if let Some(last) = last
-            && !dots
-            && !(matches!(last, '(' | '[' | '{' | '.')
-                || matches!(first, ')' | ']' | '}' | '.' | ',' | ';'))
+            && (dots
+                || numeric_dot
+                || joint
+                || !(matches!(last, '(' | '[' | '{' | '.')
+                    || matches!(first, ')' | ']' | '}' | '.' | ',' | ';')))
         {
-            out.push(' ');
-        } else if last.is_some() && dots {
             out.push(' ');
         }
         out.push_str(&line);
@@ -1034,8 +1149,9 @@ fn attribute_continuation_lines(source: &str) -> std::collections::BTreeSet<usiz
     out
 }
 
-/// 1-based lines of `source` that hold string or comment text, or sit inside a
-/// token-observing macro (see [`token_macro_lines`]), read from the
+/// 1-based lines of `source` that hold string or comment text, or sit inside
+/// a token- or position-observing macro (see [`token_macro_lines`] and
+/// [`position_macro_lines`]), read from the
 /// whole file so a continuation line inside a multi-line literal counts (the
 /// per-line quote check cannot see it). A line whose only masked spans are
 /// character literals (`'x'`) holds code, which the mask also erases.
@@ -1051,6 +1167,7 @@ fn prose_lines(source: &str) -> std::collections::BTreeSet<usize> {
         .map(|(at, _)| at + 1)
         .collect::<std::collections::BTreeSet<_>>();
     lines.extend(token_macro_lines(source));
+    lines.extend(position_macro_lines(source));
     lines
 }
 
@@ -1125,15 +1242,19 @@ fn continues_identifier(ch: char) -> bool {
     !is_rust_whitespace(ch) && (ch.is_alphanumeric() || ch == '_' || !ch.is_ascii())
 }
 
-/// Each token-observing macro invocation in `masked` text as the byte offset
-/// of its name and of the first byte after its `!`. Trivia (whitespace, and
-/// comments the mask turned into spaces) may sit before the bang, as Rust
-/// allows. A name inside a longer identifier, or a `!=` comparison, is not an
-/// invocation.
-fn token_macro_bangs(masked: &str) -> Vec<(usize, usize)> {
+/// Macros that expand from their source position (`line!`, `column!`), so a
+/// rewrap or reindent changes their value even when every token is unchanged.
+const POSITION_MACROS: [&str; 2] = ["line", "column"];
+
+/// Each invocation of a macro named in `names` in `masked` text as the byte
+/// offset of its name and of the first byte after its `!`. Trivia
+/// (whitespace, and comments the mask turned into spaces) may sit before the
+/// bang, as Rust allows. A name inside a longer identifier, or a `!=`
+/// comparison, is not an invocation.
+fn macro_bangs(masked: &str, names: &[&str]) -> Vec<(usize, usize)> {
     let bytes = masked.as_bytes();
     let mut found = Vec::new();
-    for name in TOKEN_MACROS {
+    for name in names {
         for (at, _) in masked.match_indices(name) {
             let before_ok = masked[..at]
                 .chars()
@@ -1160,7 +1281,27 @@ fn token_macro_bangs(masked: &str) -> Vec<(usize, usize)> {
 /// check for callers without the whole file; [`token_macro_lines`] also
 /// covers the continuation lines of a multi-line invocation.
 fn observes_tokens(line: &str) -> bool {
-    !token_macro_bangs(&mask_comments_and_strings(line)).is_empty()
+    !macro_bangs(&mask_comments_and_strings(line), &TOKEN_MACROS).is_empty()
+}
+
+/// Whether `line` holds a position-observing macro invocation (`line!` or
+/// `column!`): its expansion is the source position it sits at, so moving
+/// the line changes the program even when its tokens are untouched.
+fn observes_position(line: &str) -> bool {
+    !macro_bangs(&mask_comments_and_strings(line), &POSITION_MACROS).is_empty()
+}
+
+/// Whether `line` holds a character or byte literal whose content is one
+/// whitespace character (`' '`, `'\t'` written with a real tab). Joining
+/// lines collapses whitespace runs, so that content would be erased from
+/// the comparison and a changed literal could read as a pure reformat.
+fn has_whitespace_char_literal(line: &str) -> bool {
+    let chars = line.chars().collect::<Vec<_>>();
+    // `char::is_whitespace`, not the lexer's narrower Pattern_White_Space:
+    // joining collapses every Unicode whitespace (a no-break space too).
+    chars
+        .windows(3)
+        .any(|window| window[0] == '\'' && window[1].is_whitespace() && window[2] == '\'')
 }
 
 /// 1-based lines of `source` inside a token-observing macro invocation, from
@@ -1168,6 +1309,25 @@ fn observes_tokens(line: &str) -> bool {
 /// a name inside a string or comment does not count. An invocation that never
 /// closes runs to the end of the file, which keeps its probes.
 fn token_macro_lines(source: &str) -> std::collections::BTreeSet<usize> {
+    macro_invocation_lines(source, &TOKEN_MACROS)
+}
+
+/// 1-based lines of `source` inside a position-observing macro invocation
+/// (`line!`, `column!`), from the macro name through its closing delimiter,
+/// with the same whole-file read as [`token_macro_lines`]. A name and its `!`
+/// may sit on different lines, where no single line names the macro, so the
+/// per-line [`observes_position`] alone cannot be the guard: a rewrap or
+/// reindent of the split invocation still moves the expansion's position.
+fn position_macro_lines(source: &str) -> std::collections::BTreeSet<usize> {
+    macro_invocation_lines(source, &POSITION_MACROS)
+}
+
+/// 1-based lines of `source` inside an invocation of a macro named in
+/// `names`, from the macro name through its closing delimiter, read from the
+/// masked file so a name inside a string or comment does not count. An
+/// invocation that never closes runs to the end of the file, which keeps its
+/// probes.
+fn macro_invocation_lines(source: &str, names: &[&str]) -> std::collections::BTreeSet<usize> {
     let masked = mask_comments_and_strings(source);
     let bytes = masked.as_bytes();
     let newlines = bytes
@@ -1178,7 +1338,7 @@ fn token_macro_lines(source: &str) -> std::collections::BTreeSet<usize> {
         .collect::<Vec<_>>();
     let line_of = |at: usize| newlines.partition_point(|&newline| newline < at) + 1;
     let mut lines = std::collections::BTreeSet::new();
-    let mut bangs = token_macro_bangs(&masked);
+    let mut bangs = macro_bangs(&masked, names);
     bangs.sort_unstable();
     let mut covered_to = 0usize;
     for (at, after_bang) in bangs {
@@ -3027,6 +3187,187 @@ mod tests {
         assert!(!changed.is_empty(), "a changed value keeps its probe");
     }
 
+    /// #9450: a pure reformat — one line split across lines, the reverse
+    /// join, or a reindent — holds the same tokens, so it seeds no probe,
+    /// while the same split with one token changed still does.
+    #[test]
+    fn a_pure_reformat_rewrap_seeds_no_probe_but_a_changed_token_does() {
+        let split_source = "fn add(a: i32, b: i32) -> i32 {\n    let total =\n        a +\n        b;\n    total\n}\n";
+        let split = block_probes(
+            split_source,
+            &[
+                (2, "    let total ="),
+                (3, "        a +"),
+                (4, "        b;"),
+            ],
+            &[(2, 2, "    let total = a + b;")],
+        );
+        assert!(split.is_empty(), "{split:?}");
+        let joined_source =
+            "fn add(a: i32, b: i32) -> i32 {\n    let total = a + b;\n    total\n}\n";
+        let joined = block_probes(
+            joined_source,
+            &[(2, "    let total = a + b;")],
+            &[
+                (2, 2, "    let total ="),
+                (3, 2, "        a +"),
+                (4, 2, "        b;"),
+            ],
+        );
+        assert!(joined.is_empty(), "{joined:?}");
+        let changed_source = "fn add(a: i32, b: i32) -> i32 {\n    let total =\n        a +\n        c;\n    total\n}\n";
+        let changed = block_probes(
+            changed_source,
+            &[
+                (2, "    let total ="),
+                (3, "        a +"),
+                (4, "        c;"),
+            ],
+            &[(2, 2, "    let total = a + b;")],
+        );
+        assert!(!changed.is_empty(), "a changed token keeps its probe");
+        let reindented_source =
+            "fn add(a: i32, b: i32) -> i32 {\n        let total = a + b;\n    total\n}\n";
+        let reindented = block_probes(
+            reindented_source,
+            &[(2, "        let total = a + b;")],
+            &[(2, 2, "    let total = a + b;")],
+        );
+        assert!(reindented.is_empty(), "{reindented:?}");
+    }
+
+    /// #9450 witness shape: a one-line function body split at its braces.
+    #[test]
+    fn a_function_body_split_at_its_braces_seeds_no_probe() {
+        let source = "pub fn add(a: i64, b: i64) -> i64 {\n    a + b\n}\n";
+        let split = block_probes(
+            source,
+            &[
+                (1, "pub fn add(a: i64, b: i64) -> i64 {"),
+                (2, "    a + b"),
+                (3, "}"),
+            ],
+            &[(1, 1, "pub fn add(a: i64, b: i64) -> i64 { a + b }")],
+        );
+        assert!(split.is_empty(), "{split:?}");
+    }
+
+    /// #9450: a one-line body split at its braces (`{ a + b }` over three
+    /// lines) joins at wrap points only; the bracket-adjacent spaces inside
+    /// the one-line side need the squeezed comparison.
+    #[test]
+    fn rewrap_squeezes_bracket_spaces_but_fails_closed_on_quotes() {
+        assert!(is_behavior_neutral_rewrap(
+            &["pub fn add(a: i64, b: i64) -> i64 {", "    a + b", "}"],
+            &["pub fn add(a: i64, b: i64) -> i64 { a + b }"]
+        ));
+        assert_eq!(squeeze_bracket_spaces("{ a + b }"), "{a + b}");
+        assert_eq!(squeeze_bracket_spaces("a & &b"), "a & &b");
+        assert_eq!(squeeze_bracket_spaces("a && b"), "a && b");
+        // A single quote anywhere in the block disables the squeezed
+        // comparison: a space can be literal content (`' '`), so a
+        // bracket-spacing difference beside a quote stays probed.
+        assert!(!is_behavior_neutral_rewrap(
+            &["let c = 'x'; f(a, b);"],
+            &["let c = 'x'; f(a,b);"]
+        ));
+    }
+
+    /// Review controls for #9450: position-observing macros, whitespace
+    /// character literals, and joint punctuation each keep a
+    /// formatting-only-looking change probed, because each changes the
+    /// program when the lines move.
+    #[test]
+    fn position_literal_and_joint_punct_guards_keep_reformats_probed() {
+        // `line!` expands to the line it sits on: splitting the statement
+        // moves it.
+        assert!(!is_behavior_neutral_rewrap(
+            &["    let l =", "        line!();"],
+            &["    let l = line!();"]
+        ));
+        // `column!` expands to its column: a pure reindent moves it.
+        assert!(!is_behavior_neutral_respelling(
+            "        let d = column!();",
+            "    let d = column!();"
+        ));
+        assert!(is_behavior_neutral_respelling(
+            "        let d = 1;",
+            "    let d = 1;"
+        ));
+        // A whitespace character literal (real tab) joined against a space
+        // literal would collapse to the same joined text.
+        assert!(has_whitespace_char_literal("let c = '\t';"));
+        assert!(!is_behavior_neutral_rewrap(
+            &["let c = ' ';", "f(a, b);"],
+            &["let c = '\t'; f(a, b);"]
+        ));
+        // Squeezing must not merge `-` and `>` into the joint punct `->`,
+        // or `<` and `=` into `<=`: macro matching distinguishes them.
+        assert_eq!(squeeze_bracket_spaces("m!(a -> b)"), "m!(a -> b)");
+        assert!(!is_behavior_neutral_rewrap(
+            &["let v = selector!(<=);"],
+            &["let v = selector!(< =);"]
+        ));
+        // A no-break space is whitespace to joining too, so a literal
+        // holding one vetoes neutrality like a space or tab literal.
+        assert!(has_whitespace_char_literal("let c = '\u{a0}';"));
+        // A wrap before a comma after another punct must not join them
+        // (`-` `,` into `-,`), and squeezing never touches commas.
+        assert_eq!(
+            join_tokens(&["let v = m!(a -", "    , b);"]),
+            "let v = m!(a - , b);"
+        );
+        assert!(!is_behavior_neutral_rewrap(
+            &["let v = m!(a -, b);"],
+            &["let v = m!(a -", "    , b);"]
+        ));
+        assert_eq!(squeeze_bracket_spaces("f(a, b)"), "f(a, b)");
+        assert!(!is_behavior_neutral_rewrap(
+            &["let v = m!(a -> b);"],
+            &["let v = m!(a -", "    > b);"]
+        ));
+    }
+
+    /// A position macro whose name and `!` sit on different lines names no
+    /// single line, so the per-line guard reads nothing; the whole-file
+    /// invocation-span scan must still keep the block probed, because the
+    /// rewrap moves the expansion's line.
+    #[test]
+    fn a_split_position_macro_keeps_its_rewrap_probed() {
+        let lines = position_macro_lines("fn f() {\n    line\n    !()\n}\n");
+        assert_eq!(lines, std::collections::BTreeSet::from([2, 3]), "{lines:?}");
+        // The rewrap changes the value (1 -> 2) while the joined token
+        // streams stay identical.
+        let source = "pub fn value() -> u32 {\n    line\n    !()\n}\n";
+        let split = block_probes(
+            source,
+            &[
+                (1, "pub fn value() -> u32 {"),
+                (2, "    line"),
+                (3, "    !()"),
+                (4, "}"),
+            ],
+            &[(1, 1, "pub fn value() -> u32 { line"), (2, 1, "!() }")],
+        );
+        assert!(
+            !split.is_empty(),
+            "a split line!() keeps its probe: {split:?}"
+        );
+    }
+
+    /// Indenting only the name of a split `column!()` moves its expansion
+    /// column while the replaced pair stays trim-equal, so the reindent path
+    /// must be vetoed by the whole-file span scan too.
+    #[test]
+    fn a_reindented_split_position_macro_keeps_its_probe() {
+        let new_source = "pub fn value() -> u32 {\n    column\n  !()\n}\n";
+        let reindented = block_probes(new_source, &[(2, "    column")], &[(2, 2, "  column")]);
+        assert!(
+            !reindented.is_empty(),
+            "a reindented split column!() keeps its probe: {reindented:?}"
+        );
+    }
+
     #[test]
     fn rewrap_normalization_keeps_word_boundaries() {
         assert!(is_behavior_neutral_rewrap(
@@ -3038,8 +3379,9 @@ mod tests {
             &["letmax = i32::MAX;"],
             &["let", "max = core::i32::MAX;"],
         ));
-        // A pure reformat holds no respelling.
-        assert!(!is_behavior_neutral_rewrap(
+        // A pure reformat holds no respelling, but its joined token stream
+        // is identical, so it is behavior-neutral too.
+        assert!(is_behavior_neutral_rewrap(
             &["let a = b;"],
             &["let a =", "b;"]
         ));
@@ -3128,6 +3470,59 @@ mod tests {
             &["let label = stringify!(i32::MAX);"],
             &["let label = stringify!(", "    core::i32::MAX);"],
         ));
+    }
+
+    /// Numeric-dot joins change the token stream even when joining the
+    /// raw text would make it identical. Exercise both production sides.
+    #[test]
+    fn numeric_dot_split_and_join_keep_their_probes() {
+        for (joined, split) in [
+            (
+                "pub fn value()->u32 { pick!(1.0) }",
+                ["pub fn value()->u32 { pick!(1", ".0) }"],
+            ),
+            (
+                "pub fn value()->u32 { pick!(1_.0) }",
+                ["pub fn value()->u32 { pick!(1_", ".0) }"],
+            ),
+            (
+                "pub fn value()->u32 { pick!(1.0) }",
+                ["pub fn value()->u32 { pick!(1.", "0) }"],
+            ),
+            (
+                "pub fn value()->u32 { pick!(1.e0) }",
+                ["pub fn value()->u32 { pick!(1.", "e0) }"],
+            ),
+        ] {
+            assert!(!is_behavior_neutral_rewrap(&split, &[joined]));
+            assert!(!is_behavior_neutral_rewrap(&[joined], &split));
+            assert_eq!(join_tokens(&["pick!(1", ".0)"]), "pick!(1 .0)");
+            assert_eq!(join_tokens(&["pick!(1.", "0)"]), "pick!(1. 0)");
+            assert_eq!(join_tokens(&["pick!(1_.", "0)"]), "pick!(1_. 0)");
+            assert_eq!(join_tokens(&["pick!(1.", "word)"]), "pick!(1. word)");
+            // Named methods (including a digit-ending receiver) and ordinary
+            // tuple fields still join when no numeric token can be formed.
+            assert_eq!(join_tokens(&["value2", ".method()"]), "value2.method()");
+            assert_eq!(join_tokens(&["value", ".0"]), "value.0");
+            for (source, added, removed) in [
+                (
+                    format!("{}\n{}\n", split[0], split[1]),
+                    vec![(1, split[0]), (2, split[1])],
+                    vec![(1, 1, joined)],
+                ),
+                (
+                    format!("{joined}\n"),
+                    vec![(1, joined)],
+                    vec![(1, 1, split[0]), (2, 1, split[1])],
+                ),
+            ] {
+                let probes = block_probes(&source, &added, &removed);
+                assert!(
+                    !probes.is_empty(),
+                    "changed float tokens keep probes: {probes:?}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -5586,6 +5981,78 @@ mod tests {
         assert!(probes.is_empty());
     }
 
+    // RIPR-SPEC-0357: a changed `let` whose binding reaches the returned
+    // slice keeps its generic probe on the changed line; the flow rides along.
+    #[test]
+    fn changed_binding_return_flow_keeps_the_probe_on_the_changed_line() -> Result<(), String> {
+        let path = PathBuf::from("src/lib.rs");
+        let body = "pub fn family(sku: &str) -> &str {\n    let end = sku.find('-').unwrap_or_else(|| sku.len());\n    &sku[..end]\n}";
+        let changed = ChangedFile {
+            path: path.clone(),
+            added_lines: vec![ChangedLine {
+                line: 2,
+                new_side_line: 2,
+                text: "let end = sku.find('-').unwrap_or_else(|| sku.len());".to_string(),
+            }],
+            removed_lines: vec![ChangedLine {
+                line: 2,
+                new_side_line: 2,
+                text: "let end = sku.find('-').unwrap_or(sku.len());".to_string(),
+            }],
+        };
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            files: BTreeMap::from([(
+                path.clone(),
+                FileFacts {
+                    path: path.clone(),
+                    functions: vec![FunctionFact {
+                        id: SymbolId("src/lib.rs::family".to_string()),
+                        name: "family".to_string(),
+                        file: path.clone(),
+                        start_line: 1,
+                        end_line: 4,
+                        body: body.into(),
+                        calls: vec![],
+                        returns: vec![],
+                        literals: vec![],
+                        source_role: FunctionSourceRole::Production,
+                        attrs: vec![],
+                        impl_attrs: Vec::new(),
+                        nested_fn_names: Vec::new(),
+                        let_bindings: Vec::new(),
+                        item: Default::default(),
+                        impl_context: Default::default(),
+                    }],
+                    ..FileFacts::default()
+                },
+            )]),
+            ..Default::default()
+        });
+
+        let probes = probes_for_file_with_relations(Path::new("workspace"), &changed, &index, &[]);
+
+        let [seeded] = probes.as_slice() else {
+            return Err(format!("expected one probe, got {probes:?}"));
+        };
+        if seeded.probe.family != ProbeFamily::StaticUnknown || seeded.probe.location.line != 2 {
+            return Err(format!(
+                "probe must stay on the changed line: {:?}",
+                seeded.probe
+            ));
+        }
+        if seeded.binding_relation.is_some() {
+            return Err("no predicate relation applies".to_string());
+        }
+        let flow = seeded
+            .binding_return
+            .as_ref()
+            .ok_or_else(|| "expected a return flow".to_string())?;
+        if flow.return_expression != "&sku[..end]" || flow.return_line != 3 {
+            return Err(format!("unexpected flow: {flow:?}"));
+        }
+        Ok(())
+    }
+
     // #3294: the changed `let` initializer retargets to its same-function
     // predicate use. The probe is predicate-shaped at the predicate line,
     // the initializers stay causal before/after evidence, and the typed
@@ -5915,6 +6382,89 @@ mod source_currentness_tests {
         };
         assert_ne!(probe.id.0, other_probe.id.0);
         Ok(())
+    }
+
+    /// #8838: `x >= 34804` and `x >= 44638` share the eight-hex fingerprint
+    /// `10e1cf10` at one owner. Which of the two takes the `.2` suffix must
+    /// not depend on the order the diff presents them in, and exact
+    /// duplicates of one expression keep their encounter-order ordinals.
+    fn collision_probe(expression: &str) -> SeededProbe {
+        let path = PathBuf::from("src/lib.rs");
+        let owner = SymbolId("src/lib.rs::collision".to_string());
+        SeededProbe::from_probe(Probe {
+            id: diff_probe_id(&path, &ProbeFamily::Predicate, Some(&owner), expression, 1),
+            location: SourceLocation::new(path, 1, 1),
+            owner: Some(owner),
+            family: ProbeFamily::Predicate,
+            delta: super::super::family::delta_for_family(&ProbeFamily::Predicate),
+            before: None,
+            after: Some(expression.to_string()),
+            expression: expression.to_string(),
+            expected_sinks: vec![],
+            required_oracles: vec![],
+        })
+    }
+
+    fn ids_by_expression(probes: &[SeededProbe]) -> Vec<(String, String)> {
+        let mut pairs = probes
+            .iter()
+            .map(|seeded| (seeded.probe.expression.clone(), seeded.probe.id.0.clone()))
+            .collect::<Vec<_>>();
+        pairs.sort();
+        pairs
+    }
+
+    #[test]
+    fn colliding_distinct_expressions_keep_their_ids_under_reorder() -> Result<(), String> {
+        let first = "x >= 34804";
+        let second = "x >= 44638";
+        let mut ab = vec![collision_probe(first), collision_probe(second)];
+        let mut ba = vec![collision_probe(second), collision_probe(first)];
+        assert_eq!(
+            ab[0].probe.id.0, ab[1].probe.id.0,
+            "fixture must be an actual fp8 collision"
+        );
+        dedup_probe_ids(&mut ab);
+        dedup_probe_ids(&mut ba);
+        assert_ne!(ab[0].probe.id.0, ab[1].probe.id.0);
+        assert_eq!(
+            ids_by_expression(&ab),
+            ids_by_expression(&ba),
+            "expression-to-id association must not follow encounter order"
+        );
+        // The real payload digests begin `10e1cf105ca4` (first) and
+        // `10e1cf10d8ef` (second): the first keeps the bare id it has always
+        // had in the order the diff listed it, so an existing suppression
+        // for it still names it.
+        let base = "probe:src_lib.rs:predicate:10e1cf10";
+        assert_eq!(
+            ids_by_expression(&ab),
+            vec![
+                (first.to_string(), base.to_string()),
+                (second.to_string(), format!("{base}.2"))
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn exact_duplicate_expressions_keep_encounter_order_ordinals() {
+        let line = "x >= 34804";
+        let mut probes = vec![
+            collision_probe(line),
+            collision_probe(line),
+            collision_probe(line),
+        ];
+        let base = probes[0].probe.id.0.clone();
+        dedup_probe_ids(&mut probes);
+        let ids = probes
+            .iter()
+            .map(|seeded| seeded.probe.id.0.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ids,
+            vec![base.clone(), format!("{base}.2"), format!("{base}.3")]
+        );
     }
 
     #[test]

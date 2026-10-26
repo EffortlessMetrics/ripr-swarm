@@ -1048,6 +1048,151 @@ fn b6_superseding_finish_keeps_first_attempt_byte_identical() -> Result<(), Stri
     Ok(())
 }
 
+/// #9823: `agent status` re-reads one worktree per finished current attempt.
+/// With two finished attempts under one policy the persist-latency trace must
+/// show a single `reevaluate_*` capture, not one per attempt, and the shared
+/// capture must not hide an edit: a later status call still sees the drift and
+/// withdraws "current" for every attempt that edit invalidated.
+#[test]
+fn status_shares_one_worktree_capture_across_finished_attempts() -> Result<(), String> {
+    // `RIPR_STATUS_CAPTURE_FILLER_FILES=3000` repeats the measurement the
+    // inner-loop target is stated against (#9823): the same two finished
+    // attempts over a larger tracked tree, with each status call timed.
+    let filler_files = std::env::var("RIPR_STATUS_CAPTURE_FILLER_FILES")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(0);
+    let (journey, _owned) = start_before_after("agentic-9823-shared-capture", |root| {
+        if filler_files == 0 {
+            return Ok(());
+        }
+        let line = "filler line for tracked-tree size\n".repeat(50);
+        fs::create_dir_all(root.join("filler")).map_err(|error| format!("filler dir: {error}"))?;
+        for index in 0..filler_files {
+            fs::write(root.join(format!("filler/f{index}.txt")), &line)
+                .map_err(|error| format!("write filler {index}: {error}"))?;
+        }
+        fixture_git_ok(root, &["add", "filler"]).map_err(|error| format!("add filler: {error}"))?;
+        fixture_git_ok(
+            root,
+            &[
+                "-c",
+                "user.name=RIPR test",
+                "-c",
+                "user.email=ripr@example.invalid",
+                "commit",
+                "-m",
+                "filler",
+            ],
+        )
+        .map_err(|error| format!("commit filler: {error}"))
+    })?;
+    let attempt_b = run_before_phase(&journey.root, &journey.root_arg, &journey.seam_id)?;
+    append_test_fn(
+        &journey.root,
+        "equality_boundary_discounts",
+        "assert_eq!(discounted_total(100, 100), 90);",
+    )?;
+    for attempt in [journey.attempt_id.as_str(), attempt_b.as_str()] {
+        let after = run_after_attempt(&journey.root, &journey.root_arg, attempt)?;
+        if !after.status.success() {
+            return Err(format!(
+                "after phase for {attempt} failed:\n{}",
+                combined_output(&after)
+            ));
+        }
+        let manifest = attempt_manifest(&journey.root, attempt)?;
+        if json_str(&manifest, "/state", "finished attempt manifest")? != "ready_to_finish" {
+            return Err(format!(
+                "{attempt} must finish ready_to_finish:\n{manifest}"
+            ));
+        }
+    }
+    let status_args = [
+        "agent",
+        "status",
+        "--json",
+        "--root",
+        journey.root_arg.as_str(),
+    ];
+    let traced = |label: &str| -> Result<(Value, usize), String> {
+        let started = std::time::Instant::now();
+        let output = run_ripr_with_env(
+            &journey.root,
+            &status_args,
+            "RIPR_PERSIST_LATENCY_TRACE",
+            "1",
+        )?;
+        if filler_files > 0 {
+            eprintln!(
+                "status_capture_measurement filler_files={filler_files} call={label} wall_ms={}",
+                started.elapsed().as_millis()
+            );
+        }
+        if !output.status.success() {
+            return Err(format!(
+                "{label}: agent status failed:\n{}",
+                combined_output(&output)
+            ));
+        }
+        let captures = String::from_utf8_lossy(&output.stderr)
+            .matches("phase=reevaluate_git_inventory ")
+            .count();
+        Ok((parse_stdout_json(&output)?, captures))
+    };
+    let currentness = |status: &Value| -> Vec<(String, String)> {
+        status
+            .pointer("/repair_attempts")
+            .and_then(Value::as_array)
+            .map(|attempts| {
+                attempts
+                    .iter()
+                    .map(|attempt| {
+                        (
+                            attempt
+                                .pointer("/attempt_id")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default()
+                                .to_string(),
+                            attempt
+                                .pointer("/head_current")
+                                .map_or_else(String::new, ToString::to_string),
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let (first, first_captures) = traced("first status")?;
+    let finished_current = currentness(&first);
+    if finished_current.len() < 2 {
+        return Err(format!(
+            "status must list both finished attempts, saw {finished_current:?}:\n{first}"
+        ));
+    }
+    if first_captures != 1 {
+        return Err(format!(
+            "two finished attempts under one policy must share one worktree capture, saw {first_captures}"
+        ));
+    }
+    // An edit after the first call is not hidden by it: the next call
+    // recaptures and the drift changes what status reports.
+    edit_out_of_surface(&journey.root)?;
+    let (second, second_captures) = traced("second status")?;
+    if second_captures != 1 {
+        return Err(format!(
+            "each status call captures once, saw {second_captures} on the second"
+        ));
+    }
+    if currentness(&second) == finished_current {
+        return Err(format!(
+            "an edit between status calls must change the reported currentness:\nbefore {finished_current:?}\nafter {:?}",
+            currentness(&second)
+        ));
+    }
+    Ok(())
+}
+
 /// Over-budget capture fails closed: a file one byte over the production
 /// per-file bound is planted before `--phase before` so both snapshots see
 /// `WorktreeIdentity::Other`. Production `evaluate_edit_cage` then records

@@ -1,0 +1,491 @@
+{
+  "analyzer_version": "",
+  "binary": "",
+  "boards": [
+    {
+      "counts": {
+        "below_target": 1,
+        "comparison_failed": 0,
+        "failed": 0,
+        "meets_target": 5,
+        "not_measured": 7,
+        "regressed": 0
+      },
+      "id": "agent",
+      "metrics": [
+        "agent.fix_success_rate",
+        "agent.answer_key_mutants_caught",
+        "agent.ripr_commands_to_fix",
+        "agent.tool_steps_to_fix",
+        "agent.false_weak_findings_after_fix",
+        "agent.stale_recheck_cycles",
+        "agent.white_box_tests_to_satisfy_ripr",
+        "agent.stub_calls",
+        "agent.stub_calls_producing_stub",
+        "agent.stub_compile_rate",
+        "agent.stub_coverage",
+        "agent.stub_observer_required_refusals",
+        "agent.stub_seconds"
+      ],
+      "status": "gaps"
+    }
+  ],
+  "claim_boundary": "Numbers hold for the recorded revision, binary, runner class and pinned corpus only. Targets are proposed bars, not product guarantees. Wall-time and memory metrics are compared only against a baseline from the same runner class; peak memory is sampled from /proc every 10 ms on Linux and is a lower bound. Static verdict metrics do not claim runtime mutation outcomes.",
+  "corpus": [],
+  "corpus_version": null,
+  "gate": {
+    "baseline_revision": null,
+    "baseline_runner_class": null,
+    "enabled": false,
+    "failed_comparisons": [],
+    "failed_instruments": [],
+    "regressions": [],
+    "review": [],
+    "status": "not_run",
+    "uncompared": []
+  },
+  "metrics": [
+    {
+      "baseline": {
+        "comparable": false,
+        "reason": "no baseline supplied"
+      },
+      "board": "agent",
+      "direction": "higher_is_better",
+      "id": "agent.fix_success_rate",
+      "partial": false,
+      "per_repo": false,
+      "runner_dependent": false,
+      "samples": [
+        {
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (run 2026-10-25, #10183); ripr 0.11.0 a6909e94",
+          "repo": null,
+          "status": "meets_target",
+          "value": 1.0
+        }
+      ],
+      "source": "ingest:agent-as-user",
+      "status": "meets_target",
+      "target": 1.0,
+      "title": "Targets where every answer-key mutant is caught after the agent finishes",
+      "unit": "ratio",
+      "value": 1.0
+    },
+    {
+      "baseline": {
+        "comparable": false,
+        "reason": "no baseline supplied"
+      },
+      "board": "agent",
+      "direction": "higher_is_better",
+      "id": "agent.answer_key_mutants_caught",
+      "partial": false,
+      "per_repo": true,
+      "runner_dependent": false,
+      "samples": [
+        {
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (run 2026-10-25, #10183); ripr 0.11.0 a6909e94",
+          "repo": "bytesize",
+          "status": "meets_target",
+          "value": 3.0
+        },
+        {
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (run 2026-10-25, #10183); ripr 0.11.0 a6909e94",
+          "repo": "humantime",
+          "status": "meets_target",
+          "value": 3.0
+        },
+        {
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (run 2026-10-25, #10183); ripr 0.11.0 a6909e94",
+          "repo": "semver",
+          "status": "meets_target",
+          "value": 3.0
+        }
+      ],
+      "source": "ingest:agent-as-user",
+      "status": "meets_target",
+      "target": 3.0,
+      "title": "Answer-key mutants caught after the agent's fix",
+      "unit": "mutants",
+      "value": 3.0
+    },
+    {
+      "baseline": {
+        "comparable": false,
+        "reason": "no baseline supplied"
+      },
+      "board": "agent",
+      "direction": "lower_is_better",
+      "id": "agent.ripr_commands_to_fix",
+      "partial": false,
+      "per_repo": true,
+      "runner_dependent": false,
+      "samples": [
+        {
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (run 2026-10-25, #10183); ripr 0.11.0 a6909e94",
+          "repo": "bytesize",
+          "status": "meets_target",
+          "value": 7.0
+        },
+        {
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (run 2026-10-25, #10183); ripr 0.11.0 a6909e94",
+          "repo": "humantime",
+          "status": "meets_target",
+          "value": 8.0
+        },
+        {
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (run 2026-10-25, #10183); ripr 0.11.0 a6909e94",
+          "repo": "semver",
+          "status": "meets_target",
+          "value": 10.0
+        }
+      ],
+      "source": "ingest:agent-as-user",
+      "status": "meets_target",
+      "target": 10.0,
+      "title": "ripr commands the agent ran to close the gap",
+      "unit": "commands",
+      "value": 10.0
+    },
+    {
+      "baseline": {
+        "comparable": false,
+        "reason": "no baseline supplied"
+      },
+      "board": "agent",
+      "direction": "lower_is_better",
+      "id": "agent.tool_steps_to_fix",
+      "partial": false,
+      "per_repo": true,
+      "runner_dependent": false,
+      "samples": [
+        {
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (run 2026-10-25, #10183); ripr 0.11.0 a6909e94",
+          "repo": "bytesize",
+          "status": "meets_target",
+          "value": 8.0
+        },
+        {
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (run 2026-10-25, #10183); ripr 0.11.0 a6909e94",
+          "repo": "humantime",
+          "status": "meets_target",
+          "value": 9.0
+        },
+        {
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (run 2026-10-25, #10183); ripr 0.11.0 a6909e94",
+          "repo": "semver",
+          "status": "meets_target",
+          "value": 9.0
+        }
+      ],
+      "source": "ingest:agent-as-user",
+      "status": "meets_target",
+      "target": 15.0,
+      "title": "All agent tool calls to close the gap",
+      "unit": "steps",
+      "value": 9.0
+    },
+    {
+      "baseline": {
+        "comparable": false,
+        "reason": "no baseline supplied"
+      },
+      "board": "agent",
+      "direction": "lower_is_better",
+      "id": "agent.false_weak_findings_after_fix",
+      "partial": false,
+      "per_repo": true,
+      "runner_dependent": false,
+      "samples": [
+        {
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (run 2026-10-25, #10183); ripr 0.11.0 a6909e94",
+          "repo": "bytesize",
+          "status": "meets_target",
+          "value": 0.0
+        },
+        {
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (run 2026-10-25, #10183); ripr 0.11.0 a6909e94",
+          "repo": "humantime",
+          "status": "below_target",
+          "value": 4.0
+        },
+        {
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (run 2026-10-25, #10183); ripr 0.11.0 a6909e94",
+          "repo": "semver",
+          "status": "below_target",
+          "value": 1.0
+        }
+      ],
+      "source": "ingest:agent-as-user",
+      "status": "below_target",
+      "target": 0.0,
+      "title": "Non-exposed verdicts left after every mutant is caught",
+      "unit": "findings",
+      "value": 4.0
+    },
+    {
+      "baseline": {
+        "comparable": false,
+        "reason": "no baseline supplied"
+      },
+      "board": "agent",
+      "direction": "lower_is_better",
+      "id": "agent.stale_recheck_cycles",
+      "per_repo": false,
+      "reason": "no --ingest file supplied for `ingest:agent-as-user`",
+      "runner_dependent": false,
+      "samples": [],
+      "source": "ingest:agent-as-user",
+      "status": "not_measured",
+      "target": 0.0,
+      "title": "Re-checks after an edit that returned stale output",
+      "unit": "cycles",
+      "value": null
+    },
+    {
+      "baseline": {
+        "comparable": false,
+        "reason": "no baseline supplied"
+      },
+      "board": "agent",
+      "direction": "lower_is_better",
+      "id": "agent.white_box_tests_to_satisfy_ripr",
+      "partial": false,
+      "per_repo": false,
+      "runner_dependent": false,
+      "samples": [
+        {
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (run 2026-10-25, #10183); ripr 0.11.0 a6909e94",
+          "repo": null,
+          "status": "meets_target",
+          "value": 0.0
+        }
+      ],
+      "source": "ingest:agent-as-user",
+      "status": "meets_target",
+      "target": 0.0,
+      "title": "White-box tests written only to satisfy ripr",
+      "unit": "tests",
+      "value": 0.0
+    },
+    {
+      "baseline": {
+        "comparable": false,
+        "reason": "no baseline supplied"
+      },
+      "board": "agent",
+      "direction": "higher_is_better",
+      "id": "agent.stub_calls",
+      "per_repo": false,
+      "reason": "no --ingest file supplied for `ingest:agent-as-user`",
+      "runner_dependent": false,
+      "samples": [],
+      "source": "ingest:agent-as-user",
+      "status": "not_measured",
+      "target": 0.0,
+      "title": "`ripr agent stub` calls the agent made on `check`'s suggestion",
+      "unit": "calls",
+      "value": null
+    },
+    {
+      "baseline": {
+        "comparable": false,
+        "reason": "no baseline supplied"
+      },
+      "board": "agent",
+      "direction": "higher_is_better",
+      "id": "agent.stub_calls_producing_stub",
+      "per_repo": false,
+      "reason": "no --ingest file supplied for `ingest:agent-as-user`",
+      "runner_dependent": false,
+      "samples": [],
+      "source": "ingest:agent-as-user",
+      "status": "not_measured",
+      "target": 1.0,
+      "title": "Of those stub calls, ones that produced a stub instead of a refusal",
+      "unit": "calls",
+      "value": null
+    },
+    {
+      "baseline": {
+        "comparable": false,
+        "reason": "no baseline supplied"
+      },
+      "board": "agent",
+      "direction": "higher_is_better",
+      "id": "agent.stub_compile_rate",
+      "per_repo": false,
+      "reason": "no --ingest file supplied for `ingest:agent-stub`",
+      "runner_dependent": false,
+      "samples": [],
+      "source": "ingest:agent-stub",
+      "status": "not_measured",
+      "target": 1.0,
+      "title": "Distinct generated stubs that compile and fail at their own ripr todo",
+      "unit": "ratio",
+      "value": null
+    },
+    {
+      "baseline": {
+        "comparable": false,
+        "reason": "no baseline supplied"
+      },
+      "board": "agent",
+      "direction": "higher_is_better",
+      "id": "agent.stub_coverage",
+      "per_repo": false,
+      "reason": "no --ingest file supplied for `ingest:agent-stub`",
+      "runner_dependent": false,
+      "samples": [],
+      "source": "ingest:agent-stub",
+      "status": "not_measured",
+      "target": 0.5,
+      "title": "Gap locations that get a working stub instead of a named refusal",
+      "unit": "ratio",
+      "value": null
+    },
+    {
+      "baseline": {
+        "comparable": false,
+        "reason": "no baseline supplied"
+      },
+      "board": "agent",
+      "direction": "lower_is_better",
+      "id": "agent.stub_observer_required_refusals",
+      "per_repo": false,
+      "reason": "no --ingest file supplied for `ingest:agent-stub`",
+      "runner_dependent": false,
+      "samples": [],
+      "source": "ingest:agent-stub",
+      "status": "not_measured",
+      "target": 0.0,
+      "title": "Gap locations refused because the stub needs an observer ripr cannot name",
+      "unit": "locations",
+      "value": null
+    },
+    {
+      "baseline": {
+        "comparable": false,
+        "reason": "no baseline supplied"
+      },
+      "board": "agent",
+      "direction": "lower_is_better",
+      "id": "agent.stub_seconds",
+      "per_repo": true,
+      "reason": "no --ingest file supplied for `ingest:agent-stub`",
+      "runner_dependent": true,
+      "samples": [],
+      "source": "ingest:agent-stub",
+      "status": "not_measured",
+      "target": 10.0,
+      "title": "One `ripr agent stub` call on a corpus repository",
+      "unit": "s",
+      "value": null
+    }
+  ],
+  "report": "dx-scoreboard",
+  "repos": [
+    {
+      "counts": {
+        "below_target": 0,
+        "comparison_failed": 0,
+        "failed": 0,
+        "meets_target": 0,
+        "not_measured": 0,
+        "regressed": 0
+      },
+      "id": "serde",
+      "metrics": [],
+      "note": "small library workspace, macro-heavy tests",
+      "sha": "dd18663450ec3ee38e35e3a4ee141932614e662c",
+      "status": "not_measured"
+    },
+    {
+      "counts": {
+        "below_target": 0,
+        "comparison_failed": 0,
+        "failed": 0,
+        "meets_target": 0,
+        "not_measured": 0,
+        "regressed": 0
+      },
+      "id": "ripgrep",
+      "metrics": [],
+      "note": "multi-crate CLI workspace",
+      "sha": "020687a77d13146923333f0beb274eeabd54a270",
+      "status": "not_measured"
+    },
+    {
+      "counts": {
+        "below_target": 0,
+        "comparison_failed": 0,
+        "failed": 0,
+        "meets_target": 0,
+        "not_measured": 0,
+        "regressed": 0
+      },
+      "id": "regex",
+      "metrics": [],
+      "note": "large library workspace with generated test suites",
+      "sha": "72d650cb0a880a01ab6dc2137c0888e8f89740f7",
+      "status": "not_measured"
+    },
+    {
+      "counts": {
+        "below_target": 0,
+        "comparison_failed": 0,
+        "failed": 0,
+        "meets_target": 0,
+        "not_measured": 0,
+        "regressed": 0
+      },
+      "id": "ripr-swarm",
+      "metrics": [],
+      "note": "large workspace (~900 files); pinned, not the checkout under test",
+      "sha": "7c64b9c8d0778cc7a6aeaab0deb0452d9e521663",
+      "status": "not_measured"
+    },
+    {
+      "counts": {
+        "below_target": 0,
+        "comparison_failed": 0,
+        "failed": 0,
+        "meets_target": 0,
+        "not_measured": 0,
+        "regressed": 0
+      },
+      "id": "cargo",
+      "metrics": [],
+      "note": "large long-lived binary workspace (~1400 .rs files); shared corpus pin",
+      "sha": "f3865b2a4d1acc5276f6b3c67d0e057f4dab3928",
+      "status": "not_measured"
+    },
+    {
+      "counts": {
+        "below_target": 0,
+        "comparison_failed": 0,
+        "failed": 0,
+        "meets_target": 0,
+        "not_measured": 0,
+        "regressed": 0
+      },
+      "id": "ripr-swarm-2026-10",
+      "metrics": [],
+      "note": "this repository at its 2026-10 size (~2100 .rs files), a fixed pin that will stop being current; the commit edits product Rust under crates/ripr, so the warm check pays for the macro-binding scan",
+      "sha": "8fbe8bd1598e0b11752c6c989aa54198a0510a2f",
+      "status": "not_measured"
+    }
+  ],
+  "revision": "acb0f4da401e4fa299bfce9b8f72cd124947ffc6",
+  "rollup": {
+    "below_target": 1,
+    "comparison_failed": 0,
+    "failed": 0,
+    "meets_target": 5,
+    "not_measured": 7,
+    "regressed": 0
+  },
+  "runner_class": "local-linux-x86_64-4cpu-intel-r-xeon-r-processor-2-80ghz",
+  "schema_version": "ripr-dx-scoreboard-v1",
+  "tool": "ripr"
+}

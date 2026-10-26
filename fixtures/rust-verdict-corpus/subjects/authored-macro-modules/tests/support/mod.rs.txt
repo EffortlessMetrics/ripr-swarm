@@ -1,0 +1,43 @@
+macro_rules! imported_table {
+    ($($name:ident($width:expr, $limit:expr, $want:expr))*) => {
+        $(
+            #[test]
+            fn $name() {
+                assert_eq!(fits_imported($width, $limit), $want);
+            }
+        )*
+    };
+}
+
+macro_rules! child_table {
+    ($($name:ident($width:expr, $limit:expr, $want:expr))*) => {
+        $(
+            #[test]
+            fn $name() {
+                assert_eq!(fits_child($width, $limit), $want);
+            }
+        )*
+    };
+}
+
+macro_rules! child_far_table {
+    ($($name:ident($width:expr, $limit:expr, $want:expr))*) => {
+        $(
+            #[test]
+            fn $name() {
+                assert_eq!(fits_child_far($width, $limit), $want);
+            }
+        )*
+    };
+}
+
+macro_rules! path_table {
+    ($($name:ident($width:expr, $limit:expr, $want:expr))*) => {
+        $(
+            #[test]
+            fn $name() {
+                assert_eq!(fits_path($width, $limit), $want);
+            }
+        )*
+    };
+}

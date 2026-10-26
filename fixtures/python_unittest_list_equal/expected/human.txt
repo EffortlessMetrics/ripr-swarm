@@ -19,7 +19,9 @@ Start here:
   Static exposure: exposed (severity: info, confidence 0.60)
   Canonical gap: gap:python:src/labels.py:labels:return_value:return_value:[1_2]
   Changed behavior: return [1, 2]
-  Discriminator (observed, advisory): Related Python test reaches `labels` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator
+  Discriminator (observed, advisory): Related Python test reaches `labels` with an `exact_value`
+    oracle. Static evidence suggests the changed behavior is observed under an exact-value
+    discriminator
   Related test: tests/test_labels.py:6 test_labels
   Next step — Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator yes
@@ -30,6 +32,9 @@ Start here:
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
       unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;
+      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;
+      candidate line = changed line ripr considers for probes
     - reach yes: 1 related Python test(s) found for owner `labels`
     - infection yes: Changed Python return expression can alter the owner return value: `return [1, 2]`
     - 5 more detail line(s) in --format human-full

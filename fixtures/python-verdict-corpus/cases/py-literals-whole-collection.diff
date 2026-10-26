@@ -1,0 +1,12 @@
+diff --git a/lits/cfg.py b/lits/cfg.py
+--- a/lits/cfg.py
++++ b/lits/cfg.py
+@@ -22,7 +22,7 @@ def limits():
+ def whole_config():
+     return {
+         "mode": "fast",
+-        "level": 2,
++        "level": 3,
+     }
+ 
+ 
