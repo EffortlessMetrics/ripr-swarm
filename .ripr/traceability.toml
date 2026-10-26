@@ -9043,6 +9043,7 @@ id = "RIPR-SPEC-0150"
 name = "Rust bounded value-propagation limitation"
 spec = "docs/specs/RIPR-SPEC-0150-rust-value-propagation-limitation.md"
 tests = [
+  "crates/ripr/tests/spec_b_binding_contracts.rs::numbered_binding_cases_keep_exact_semantic_contracts",
   "crates/ripr/src/analysis/language/rust/mod.rs::tests::diff_analysis_names_rfind_value_propagation_limitation",
   "crates/ripr/src/analysis/language/rust/mod.rs::tests::diff_analysis_names_len_utf8_value_propagation_limitation",
   "crates/ripr/src/analysis/language/rust/mod.rs::tests::diff_analysis_keeps_unbounded_value_shapes_fail_closed",
@@ -11735,6 +11736,7 @@ id = "RIPR-SPEC-0157"
 name = "Changed-binding to predicate-operand relation"
 spec = "docs/specs/RIPR-SPEC-0157-changed-binding-predicate-relation.md"
 tests = [
+  "crates/ripr/tests/spec_b_binding_contracts.rs::numbered_binding_cases_keep_exact_semantic_contracts",
   "crates/ripr/src/analysis/probes/binding_predicate.rs::tests",
   "crates/ripr/src/analysis/probes/diff.rs::tests::changed_binding_initializer_retargets_to_predicate_use",
   "crates/ripr/src/analysis/probes/diff.rs::tests::shadowed_binding_initializer_keeps_static_unknown",
