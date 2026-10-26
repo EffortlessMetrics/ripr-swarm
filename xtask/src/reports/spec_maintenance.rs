@@ -2057,6 +2057,7 @@ Status: proposed
                 ".allow/spec-system/**",
                 ".github/workflows/source-of-truth.yml",
                 ".ripr/traceability.toml",
+                ".ripr/traceability.d/**",
                 "docs/specs/**",
                 "docs/status/SUPPORT_TIERS.md",
                 "docs/templates/**",

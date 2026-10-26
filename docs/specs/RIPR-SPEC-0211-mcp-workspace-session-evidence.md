@@ -72,6 +72,11 @@ official SDK transport:
   correlated `-32602` Invalid Params error naming the field before session
   lookup. Omitted fields retain their defaults, valid values reach session
   lookup, and a subsequent request can recover on the same connection.
+- The `tools/call` `arguments` member is also omittable, but when present
+  must be an object. Explicit null is Invalid Params (`-32602`), including
+  for no-argument tools and `ripr_refresh`, before tool dispatch. Both
+  lifecycles retain metadata and request-ID validation precedence; valid
+  omission and an empty object keep their existing tool-specific behavior.
 - The catalog lists (`tools/list`, `prompts/list`, `resources/list`,
   `resources/templates/list`) are static and complete: the server returns
   every entry in one response and never issues a `nextCursor`. A

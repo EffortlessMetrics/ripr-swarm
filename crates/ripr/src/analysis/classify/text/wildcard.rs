@@ -16,7 +16,7 @@
 /// property but is not Rust whitespace, while U+200E/U+200F are
 /// `Pattern_White_Space` without the `White_Space` property — so the
 /// predicate uses the lexer's set, not the general Unicode one.
-fn is_rust_whitespace(ch: char) -> bool {
+pub(in crate::analysis::classify) fn is_rust_whitespace(ch: char) -> bool {
     matches!(
         ch,
         '\u{0009}'

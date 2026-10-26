@@ -632,21 +632,29 @@ fn lines_inside_triple_quotes(lines: &[&str]) -> Vec<bool> {
 /// multi-line string. Its condition is unreadable and masking skips it, so a
 /// walk must fail open rather than step over it (#9919).
 fn masked_header_opens_string(trimmed: &str, masked: bool, starts_in_code: bool) -> bool {
+    // Read the keyword boundary, not a required ASCII space: Python accepts
+    // `for\ts in ...`, `for(s)in ...` and `while(...)` on these headers.
+    let keyword = trimmed
+        .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
+        .next();
     masked
         && starts_in_code
         && (is_block_opener(trimmed)
-            || [
-                "if ",
-                "elif ",
-                "else",
-                "while ",
-                "async for ",
-                "async with ",
-                "match ",
-                "case ",
-            ]
-            .iter()
-            .any(|prefix| trimmed.starts_with(prefix)))
+            || trimmed.starts_with("else")
+            || matches!(
+                keyword,
+                Some(
+                    "if" | "elif"
+                        | "while"
+                        | "for"
+                        | "with"
+                        | "def"
+                        | "class"
+                        | "async"
+                        | "match"
+                        | "case"
+                )
+            ))
 }
 
 /// Per line: whether it is masked, and whether it begins in code.

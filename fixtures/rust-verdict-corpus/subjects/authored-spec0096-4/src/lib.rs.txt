@@ -1,0 +1,16 @@
+//! RIPR-SPEC-0096 acceptance example 4.
+
+pub struct Ledger {
+    pub balance: i64,
+}
+
+impl Ledger {
+    fn persist(&mut self, amount: i64) -> Result<(), String> {
+        self.balance += amount;
+        Ok(())
+    }
+
+    pub fn apply(&mut self, amount: i64) -> Result<(), String> {
+        return self.persist(amount * 10);
+    }
+}

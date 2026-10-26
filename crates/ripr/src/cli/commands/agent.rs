@@ -226,7 +226,9 @@ pub(in crate::cli) fn agent(args: &[String]) -> Result<(), CommandError> {
     resolve_agent_command_root(&mut command)?;
 
     match command {
-        AgentCommand::Start(options) => run_agent_start(options).map_err(CommandError::from),
+        // An unknown `--seam-id` is a typed refusal (exit 3), like `agent
+        // card`, `agent stub` and `agent packet`; other failures stay exit 2.
+        AgentCommand::Start(options) => run_agent_start(options),
         AgentCommand::Brief(options) => run_agent_brief(options).map_err(CommandError::from),
         AgentCommand::Packet(options) => run_agent_packet(options),
         // #5007: `agent card` refusals are typed like its siblings: the
@@ -277,13 +279,19 @@ pub(in crate::cli) fn agent(args: &[String]) -> Result<(), CommandError> {
     }
 }
 
-fn run_agent_start(options: AgentStartOptions) -> Result<(), String> {
+fn run_agent_start(options: AgentStartOptions) -> Result<(), CommandError> {
     let json = options.json;
-    let written = write_agent_start(options)?;
+    let written = write_agent_start(options).map_err(|error| {
+        if error.check_failure_kind() == Some(crate::core_error::CheckFailureKind::SeamIdUnknown) {
+            CommandError::Decision(String::from(error))
+        } else {
+            CommandError::Failure(String::from(error))
+        }
+    })?;
     if json {
         // Machine-readable mode: one JSON document with the same information
         // the prose lines carry. The prose output remains the default.
-        let rendered = render_agent_start_json(&written)?;
+        let rendered = render_agent_start_json(&written).map_err(CommandError::Failure)?;
         print!("{rendered}");
         return Ok(());
     }
@@ -348,7 +356,7 @@ struct AgentStartWritten {
     next_command: Option<String>,
 }
 
-fn write_agent_start(options: AgentStartOptions) -> Result<AgentStartWritten, String> {
+fn write_agent_start(options: AgentStartOptions) -> Result<AgentStartWritten, CoreError> {
     ensure_command_root(&options.root, "agent start")?;
     let (input, config) = load_root_input_and_config(&options.root)?;
     let report = analysis::inventory_classified_seams_report_at_with_config(&input.root, &config)?;
@@ -365,7 +373,7 @@ fn write_agent_start_with_report(
     input: &app::CheckInput,
     config: &RiprConfig,
     report: &analysis::ClassifiedSeamsReport,
-) -> Result<AgentStartWritten, String> {
+) -> Result<AgentStartWritten, CoreError> {
     let working_set = AgentBriefResolvedWorkingSet::seam_id(options.seam_id.clone());
     let mut selection = select_agent_brief_seams(
         &report.classified,
@@ -374,11 +382,23 @@ fn write_agent_start_with_report(
         AgentBriefPolicy::from_config(config),
     );
     if selection.top_seams.is_empty() {
-        return Err(format!(
+        let message = format!(
             "agent start seam_id {} was not found or is hidden by config. {}",
             options.seam_id,
             unknown_seam_id_hint(&options.root, &options.seam_id)
-        ));
+        );
+        // Like `agent packet`: only an id absent from the inventory is the
+        // typed unknown-seam refusal (exit 3). A known seam withheld by agent
+        // policy keeps the plain failure (exit 2).
+        let in_inventory = report
+            .classified
+            .iter()
+            .any(|entry| entry.seam.id().as_str() == options.seam_id);
+        return Err(if in_inventory {
+            CoreError::from(message)
+        } else {
+            CoreError::seam_id_unknown(message)
+        });
     }
     add_agent_brief_provenance_warning(&input.root, &mut selection);
 
@@ -662,8 +682,9 @@ pub(in crate::cli) fn translate_agent_repair_seam_id(
                 crate::app::task_first::non_rust_item_language(seam_id)
             {
                 format!(
-                    "agent repair --seam-id `{seam_id}` names no current seam in the selected root: {}",
-                    crate::app::task_first::no_seam_inventory_reason(language, "")
+                    "agent repair --seam-id `{seam_id}` names no current seam in the selected root: {}{}",
+                    crate::app::task_first::no_seam_inventory_reason(language, ""),
+                    crate::app::task_first::gap_bound_start_pointer(language)
                 )
             } else if seam_id.starts_with("probe:") || seam_id.starts_with("repo-probe:") {
                 format!(
@@ -1663,7 +1684,7 @@ fn run_agent_repair_phase(
                 "{}",
                 terminal_safe(format!(
                     "ripr: agent repair --phase before for seam `{seam_id}` at {}",
-                    root.display()
+                    crate::output::path::human_path(&root)
                 ))
             );
 
@@ -1765,7 +1786,8 @@ fn run_agent_repair_phase(
                 &before_input,
                 &before_config,
                 &before_report,
-            )?;
+            )
+            .map_err(String::from)?;
             for path in &started.paths {
                 eprintln!(
                     "{}",
@@ -1822,7 +1844,7 @@ fn run_agent_repair_phase(
                 "ripr: agent repair --phase after for attempt `{}` (seam `{}`) at {}",
                 attempt.attempt_id.as_str(),
                 attempt.seam_id,
-                root.display()
+                crate::output::path::human_path(&root)
             );
             // A C2a-era gap marker recorded only the symbolic base. It is not
             // re-resolved as if it were the original immutable base: the
@@ -1922,7 +1944,7 @@ fn run_agent_repair_phase(
             let packet_bytes = crate::bounded_input::read(&packet_path).map_err(|error| {
                 format!(
                     "read retained repair packet {} failed: {error}",
-                    packet_path.display()
+                    crate::output::path::human_path(&packet_path)
                 )
             })?;
             let packet_text = String::from_utf8(packet_bytes.clone())
@@ -2294,7 +2316,7 @@ fn run_agent_repair_phase(
                             Ok(apply_record_path) => {
                                 eprintln!(
                                     "ripr: python repair-trust apply record: {}",
-                                    apply_record_path.display()
+                                    crate::output::path::human_path(&apply_record_path)
                                 );
                             }
                             Err(error) => {
@@ -2429,7 +2451,7 @@ fn run_agent_repair_phase(
             }
             eprintln!(
                 "ripr: after phase complete. Receipt: {}",
-                receipt_path.display()
+                crate::output::path::human_path(&receipt_path)
             );
             Ok(())
         }
@@ -2440,7 +2462,7 @@ fn run_agent_repair_phase(
             })?;
             eprintln!(
                 "ripr: agent repair --phase verify for attempt `{attempt_id}` at {}",
-                root.display()
+                crate::output::path::human_path(&root)
             );
             let receipt_path = app::python_repair_verification::run_verification_phase(
                 app::python_repair_verification::VerificationOptions {
@@ -2457,7 +2479,7 @@ fn run_agent_repair_phase(
             let rendered = std::fs::read_to_string(&receipt_path).map_err(|error| {
                 format!(
                     "read verification receipt {} failed: {error}",
-                    receipt_path.display()
+                    crate::output::path::human_path(&receipt_path)
                 )
             })?;
             if json {
@@ -2470,7 +2492,7 @@ fn run_agent_repair_phase(
             }
             eprintln!(
                 "ripr: verification receipt: {} (immutable; execution and static movement are separate observations)",
-                receipt_path.display()
+                crate::output::path::human_path(&receipt_path)
             );
             Ok(())
         }
@@ -2585,7 +2607,7 @@ fn repair_after_summary_lines(receipt_path: &Path) -> Vec<String> {
         Ok(receipt) => repair_receipt_summary_lines(&receipt),
         Err(error) => vec![format!(
             "could not read {} to summarize the result: {error}",
-            receipt_path.display()
+            crate::output::path::human_path(receipt_path)
         )],
     }
 }
@@ -3131,12 +3153,24 @@ fn run_gap_bound_before_phase(
         format!("agent repair --gap-id `{gap_id}`: {error}. No repair attempt was started.")
     })?;
     let snapshot = super::check::gap_check_findings_snapshot(root, &base_commit)?;
-    let record = match lookup_gap_start(&snapshot.output.findings, gap_id) {
+    let python = crate::app::gap_bound_repair::is_python_gap_bound_subject(gap_id);
+    let lookup = if python {
+        crate::app::gap_bound_repair::lookup_python_gap_start(
+            &snapshot.output.findings,
+            &snapshot.rendered,
+            &root_display,
+            gap_id,
+        )
+    } else {
+        lookup_gap_start(&snapshot.output.findings, gap_id)
+    };
+    let language = if python { "Python" } else { "TypeScript" };
+    let record = match lookup {
         GapStartLookup::Ready(record) => *record,
         GapStartLookup::NoSuchGap => {
             refusal.start_refused = true;
             return Err(format!(
-                "agent repair --gap-id `{gap_id}` names no current TypeScript gap in the diff against `{base}` in the selected root; the id is stale or belongs to another diff. Re-run `ripr check --root {} --base {}` and use the gap it prints. No repair attempt was started.",
+                "agent repair --gap-id `{gap_id}` names no current {language} gap in the diff against `{base}` in the selected root; the id is stale or belongs to another diff. Re-run `ripr check --root {} --base {}` and use the gap it prints. No repair attempt was started.",
                 shell_arg(&root_display),
                 shell_arg(base)
             ));
@@ -3149,7 +3183,7 @@ fn run_gap_bound_before_phase(
         }
     };
     let before_snapshot_display = format!("target/ripr/workflow/{GAP_BOUND_BEFORE_SNAPSHOT_FILE}");
-    let packet = output::agent_seam_packets::render_typescript_gap_repair_packet(
+    let packet = output::agent_seam_packets::render_gap_bound_repair_packet(
         &before_snapshot_display,
         &record,
     )
@@ -3324,8 +3358,8 @@ fn after_phase_human_stdout(
     // still find the files these lines name.
     out.push_str(&format!(
         "  receipt: {}\n  verify result (JSON): {}; add --json to print the result document here\n",
-        receipt_path.display(),
-        verify_path.display()
+        crate::output::path::human_path(receipt_path),
+        crate::output::path::human_path(verify_path)
     ));
     out
 }
@@ -4697,10 +4731,14 @@ mod repair_summary_tests {
             .join("agent-receipt.json");
         let lines = repair_after_summary_lines(&missing);
         assert_eq!(lines.len(), 1, "expected one read-failure line: {lines:?}");
-        let expected_prefix = format!(
-            "could not read {} to summarize the result: ",
-            missing.display()
-        );
+        // Diagnostics print through human_path: `/` separators on Windows,
+        // the native spelling on Unix.
+        let printed = if cfg!(windows) {
+            missing.display().to_string().replace('\\', "/")
+        } else {
+            missing.display().to_string()
+        };
+        let expected_prefix = format!("could not read {printed} to summarize the result: ");
         assert!(
             lines
                 .first()

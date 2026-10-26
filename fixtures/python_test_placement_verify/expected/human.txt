@@ -20,7 +20,8 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Canonical gap: gap:python:src/pricing.py:calculate_discount:predicate_boundary:predicate:amount>=threshold
   Changed behavior: if amount >= threshold:
-  Missing discriminator (1 of 2): Related Python test reaches `calculate_discount` but the strongest extracted oracle is `smoke_only`; add or strengthen a focused assertion for the changed boundary
+  Missing discriminator (1 of 2): Related Python test reaches `calculate_discount` but the strongest
+    extracted oracle is `smoke_only`; add or strengthen a focused assertion for the changed boundary
   Related test: tests/test_pricing.py:4 test_calculate_discount_smoke (assertion too weak to tell the old behavior from the new)
   Suggested test file: tests/test_pricing.py
   Suggested test: test_calculate_discount_smoke
@@ -35,6 +36,9 @@ Start here:
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
       unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;
+      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;
+      candidate line = changed line ripr considers for probes
     - reach yes: 1 related Python test(s) found for owner `calculate_discount`
     - infection yes: Changed Python predicate can alter branch selection: `if amount >= threshold:`
     - 5 more detail line(s) in --format human-full

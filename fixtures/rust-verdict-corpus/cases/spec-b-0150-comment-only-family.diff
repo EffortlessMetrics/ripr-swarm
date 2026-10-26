@@ -1,0 +1,12 @@
+diff --git a/src/b_comment.rs b/src/b_comment.rs
+--- a/src/b_comment.rs
++++ b/src/b_comment.rs
+@@ -1,7 +1,7 @@
+ //! The rfind family appears only in a trailing comment.
+ 
+ pub fn ext_start_is(path: &str, at: usize) -> bool {
+-    let start = path.len(); // rfind('.').map_or(0, |i| i + 1)
++    let start = path.len() + 0; // rfind('.').map_or(0, |i| i + 1)
+     start == at
+ }
+ 

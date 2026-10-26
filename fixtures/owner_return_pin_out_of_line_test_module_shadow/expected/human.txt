@@ -28,6 +28,9 @@ Start here:
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
       unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;
+      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;
+      candidate line = changed line ripr considers for probes
     - reach weak: No test is seen calling clone; tests share only its file or a name token: a_clone_equals_its_original
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 5 more detail line(s) in --format human-full
@@ -35,7 +38,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/owner_return_pin_out_of_line_test_module_shadow/input --diff <cwd>/fixtures/owner_return_pin_out_of_line_test_module_shadow/diff.patch --mode fast probe:src_lib.rs:field_construction:721bb1ba
   ripr context --root <cwd>/fixtures/owner_return_pin_out_of_line_test_module_shadow/input --diff <cwd>/fixtures/owner_return_pin_out_of_line_test_module_shadow/diff.patch --mode fast --at probe:src_lib.rs:field_construction:721bb1ba
-  no repair start offered: repair route not ready (missing evidence: producer-owned missing discriminator fact: field_value); run `ripr repair probe:src_lib.rs:field_construction:721bb1ba --root <cwd>/fixtures/owner_return_pin_out_of_line_test_module_shadow/input` for the full gate's answer
+  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: producer-owned missing discriminator fact: field_value; follow the Next step above, then rerun `ripr check`
 No test stub here: the owner's tests live in an out-of-line `mod tests;` file
 
 More:
