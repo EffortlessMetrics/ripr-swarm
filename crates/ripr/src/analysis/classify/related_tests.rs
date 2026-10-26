@@ -1381,7 +1381,7 @@ fn find_related_tests_with_candidates<'a>(
         // test in the owner's package qualifies. The cross-package test pins
         // the outcome; this explicit prefix check is defense in depth that no
         // mutation test pins on its own (the later cross-package `continue`
-        // and the receiver-type proof refuse the same test).
+        // and the receiver-type check refuse the same test).
         let calls_method_entry = !calls_helper_entry
             && owner_package_prefix
                 .as_ref()

@@ -1188,7 +1188,7 @@ pub(crate) fn chain_has_method_hop(chain: &HelperChain) -> bool {
 /// - no hop from the owner up to the entry goes through a macro argument;
 /// - the test's only mentions of the name are receiver calls (never a path
 ///   call or function value) that no test-local binding shadows;
-/// - every receiver is provably a value of the entry's own impl type: a
+/// - every receiver is established as a value of the entry's own impl type: a
 ///   `let` the test binds only to that type's constructor or struct literal,
 ///   or an inline constructor, read by the owner-pin receiver reader. A std
 ///   or external receiver, a parameter, a rebound name or a foreign import of
@@ -1233,7 +1233,7 @@ pub(crate) fn test_calls_method_entry(
 }
 
 /// #9638 (false-credit review F1): every `.<entry>(` on the call line has a
-/// receiver the test provably built as a value of the entry's own impl type.
+/// receiver the test built as a value of the entry's own impl type.
 /// A receiver whose type is not established (`vec![1].len()`, a `HashSet`, a
 /// `String`, an iterator, a parameter or field) never relates the test: a
 /// method name alone is not type identity. Reads the owner-pin receiver

@@ -99,13 +99,13 @@ can only hint that a caller "may lead here" without changing anything.
   through a macro argument, the test's only mentions of the name are
   receiver calls (a path call `Pool::grow(&mut pool, 4)` or a function value
   never counts), no test-local binding, nested `fn` or foreign import
-  shadows the name, and every receiver is proven a value of the entry's own
+  shadows the name, and every receiver is established as a value of the entry's own
   impl type: a `let` the test binds only to that type's constructor
   (`Pool::default()`, a `Self`-returning associated fn) or struct literal,
   or an inline constructor, read by the owner-pin receiver reader, with no
   foreign or aliased import of the type. A receiver of std or external type
   (`vec.len()`, `HashSet::insert`, `String::is_empty`, an iterator's `next`),
-  a parameter or a rebound name is not proven and never relates the test.
+  a parameter or a rebound name is not established and never relates the test.
   The entry being the one workspace function of its name and the identity of
   each hop come from chain construction, and the in-package condition from
   `find_related_tests`, not from this rule: a test in another package is
@@ -600,7 +600,7 @@ foreign-qualified entry, nested comparison, imported constructor), and the
 unselected `match_arm` control);
 `crates/ripr/tests/helper_wrapper_reach.rs` (`forwarder_method_*`: the method
 entry credit and its swallowed, transformed, shared-name, two-candidate,
-shadowed, path-call, std-receiver, unproven-receiver, external-trait-impl,
+shadowed, path-call, std-receiver, unestablished-receiver, external-trait-impl,
 `#[cfg(test)]`, no-self, macro-hop and other-package controls);
 `crates/ripr/tests/crate_qualified_entry_reach.rs` (own-crate qualified
 entry call, `[lib] name` and hyphen spellings, and each refusal above).

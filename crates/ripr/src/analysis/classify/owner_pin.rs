@@ -13290,7 +13290,7 @@ fn named_or_slice(
     Some(ReceiverType::Named(base.to_string()))
 }
 
-/// #9638: the workspace type name a test's receiver expression is proven to
+/// #9638: the workspace type name a test's receiver expression is established to
 /// be a value of, by the owner-pin receiver reader: a plain identifier the
 /// test binds only by `let [mut] x [: T] = <constructor of T>;`, or an inline
 /// constructor expression (`Pool::default()`, `Pool { .. }`). `None` when the

@@ -1769,7 +1769,7 @@ fn forwarder_method_named_like_a_std_method_is_entered_by_the_real_owner_type() 
 }
 
 #[test]
-fn forwarder_method_receiver_of_an_unproven_type_is_not_related() -> Result<(), String> {
+fn forwarder_method_receiver_of_an_unestablished_type_is_not_related() -> Result<(), String> {
     for tests in [
         // A parameter-typed or rebound receiver is not built as a `Pool` here.
         "        let mut pool = std::collections::HashSet::<usize>::new();\n        assert!(pool.grow(4).is_ok());",
