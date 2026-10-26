@@ -331,3 +331,73 @@ fn an_ava_duplicate_message_stays_broad_in_javascript() -> Result<(), String> {
     }
     Ok(())
 }
+
+#[test]
+fn a_bare_ava_throws_async_outlives_the_test_so_it_stays_broad() -> Result<(), String> {
+    let delayed = "async () => {\n    await new Promise(resolve => setTimeout(resolve, 30));\n    parse(\"\");\n  }";
+    for (label, call, credited) in [
+        (
+            "bare",
+            format!("t.throwsAsync({delayed}, {{ message: \"blank\" }})"),
+            false,
+        ),
+        (
+            "awaited",
+            format!("await t.throwsAsync({delayed}, {{ message: \"blank\" }})"),
+            true,
+        ),
+        (
+            "returned",
+            format!("return t.throwsAsync({delayed}, {{ message: \"blank\" }})"),
+            true,
+        ),
+    ] {
+        let assertion = only_assertion(label, &call)?;
+        let expected = if credited {
+            OracleKind::ExactErrorVariant
+        } else {
+            OracleKind::BroadError
+        };
+        assert_eq!(assertion.oracle_kind, expected, "{label}");
+        let (class, summary) = class_for(label, &call)?;
+        let expected_class = if credited {
+            ExposureClass::Exposed
+        } else {
+            ExposureClass::WeaklyExposed
+        };
+        assert_eq!(class, expected_class, "{label}: {summary}");
+    }
+    Ok(())
+}
+
+#[test]
+fn ava_runner_edge_forms_credit_only_a_real_ava_registration() -> Result<(), String> {
+    let call = "t.throws(() => parse(\"\"), { message: \"blank\" })";
+    let aliased = only_assertion_in(
+        "aliased",
+        test_source_importing("import { test as it } from \"ava\";", call)
+            .replace("test(\"parse\"", "it(\"parse\""),
+    )?;
+    assert_eq!(aliased.oracle_kind, OracleKind::ExactErrorVariant);
+
+    let reexport = test_source_importing("export { test } from \"ava\";", call);
+    let tests = extract_tests(Path::new("tests/parse.test.ts"), &reexport);
+    for parsed in &tests {
+        for assertion in &parsed.assertions {
+            assert_eq!(assertion.oracle_kind, OracleKind::BroadError, "re-export");
+        }
+    }
+
+    let nested_param = only_assertion(
+        "nested-param",
+        "[1].forEach(t => t.is(1, 1));\n  t.throws(() => parse(\"\"), { message: \"blank\" })",
+    );
+    if let Ok(assertion) = nested_param {
+        assert_eq!(
+            assertion.oracle_kind,
+            OracleKind::BroadError,
+            "nested-param"
+        );
+    }
+    Ok(())
+}

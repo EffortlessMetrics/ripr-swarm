@@ -588,7 +588,8 @@ strong:
   key keeps the last value in JavaScript, so a second `message` is refused).
   AVA compares `message` by equality, as `node:assert` does. The first
   argument must be a plain function for `t.throws` and an async function for
-  `t.throwsAsync`, and every mention of the receiver in the test body must be
+  `t.throwsAsync`, a `t.throwsAsync` credits only when awaited or returned to
+  the runner (a bare call can outlive the test), and every mention of the receiver in the test body must be
   a `t.method(...)` call, so a shadowed receiver or a replaced matcher never
   credits. Any other field (`instanceOf`, `is`, `name`, `code`), a spread, a
   computed, shorthand or method `message`, a regex or non-literal `message`,

@@ -197,6 +197,7 @@ pub(crate) fn collect_callback_assertions(
             let text = statements_text(statements, source);
             identifier_occurrences(text, name) == receiver_method_call_occurrences(text, name)
         }),
+        returned_to_runner: false,
         table_consts: &table_consts,
     };
     let mut out = Vec::new();
@@ -335,6 +336,7 @@ pub(crate) fn statements_collect_assertion_probe(
         match_object_consts: &[],
         receiver_named_once: false,
         receiver_only_called: false,
+        returned_to_runner: false,
         table_consts: &[],
     };
     let mut probe = Vec::new();
@@ -371,6 +373,9 @@ pub(crate) struct AssertionContext<'a> {
     /// Whether every mention of the receiver is a `receiver.method(...)` call,
     /// so nothing shadows it or replaces one of its matchers.
     receiver_only_called: bool,
+    /// Whether the expression under inspection is a `return` argument the
+    /// test runner awaits.
+    returned_to_runner: bool,
     /// The test body's top-level literal table `const`s a `for...of` loop may
     /// read (RIPR-SPEC-0243 rule 11). Empty inside a nested statement.
     table_consts: &'a [TableConst],
@@ -379,6 +384,18 @@ pub(crate) struct AssertionContext<'a> {
 impl<'a> AssertionContext<'a> {
     /// This context for a statement nested in a block, loop, branch or
     /// `try`, which no longer reads the body's literal `const`s.
+    /// This context for the argument of a `return`, which the runner awaits
+    /// when the callback hands its value over.
+    fn returning(&self) -> AssertionContext<'a> {
+        AssertionContext {
+            returned_to_runner: self.returns_to_runner,
+            literal_consts: self.literal_consts,
+            match_object_consts: self.match_object_consts,
+            table_consts: self.table_consts,
+            ..self.nested()
+        }
+    }
+
     fn nested(&self) -> AssertionContext<'a> {
         AssertionContext {
             receiver: self.receiver,
@@ -388,6 +405,7 @@ impl<'a> AssertionContext<'a> {
             match_object_consts: &[],
             receiver_named_once: self.receiver_named_once,
             receiver_only_called: self.receiver_only_called,
+            returned_to_runner: false,
             table_consts: &[],
         }
     }
@@ -418,6 +436,7 @@ fn assertion_from_expression_any(
                     source,
                     r,
                     context.bindings.ava_runner && context.receiver_only_called,
+                    context.returned_to_runner,
                 )
             })
         })
@@ -466,7 +485,7 @@ pub(crate) fn collect_expect_assertions_in_statement(
         Statement::ReturnStatement(return_stmt) => {
             if let Some(argument) = &return_stmt.argument {
                 if let Some(mut assertion) =
-                    assertion_from_expression_any(argument, source, context)
+                    assertion_from_expression_any(argument, source, &context.returning())
                 {
                     attach_match_object_const(&mut assertion, argument, context);
                     out.push(assertion);
@@ -940,6 +959,7 @@ fn collect_nested_callback_assertions(
                 match_object_consts: &match_object_consts,
                 receiver_named_once: false,
                 receiver_only_called: false,
+                returned_to_runner: false,
                 table_consts: &table_consts,
             };
             collect_expect_assertions_from_statement_vec(statements, source, &subtest, out);
@@ -1411,7 +1431,9 @@ pub(crate) fn ava_assertion_from_expression(
     source: &SourceText<'_>,
     receiver: &str,
     ava_runner: bool,
+    returned_to_runner: bool,
 ) -> Option<TypeScriptAssertion> {
+    let awaited = matches!(expr, Expression::AwaitExpression(_));
     let expr = match expr {
         Expression::AwaitExpression(await_expr) => &await_expr.argument,
         _ => expr,
@@ -1459,25 +1481,32 @@ pub(crate) fn ava_assertion_from_expression(
     // Only a test registered through AVA's own `test` import: tape and uvu
     // give `t.throws` a different expectation contract.
     let error_payload = match method {
-        "throws" | "throwsAsync" if ava_runner => call
-            .arguments
-            .get(1)
-            .zip(call.arguments.first())
-            .filter(|(_, thrower)| ava_thrower_matches(thrower, method == "throwsAsync"))
-            .and_then(|(arg, _)| node_assert_error_payload(method == "throwsAsync", arg, source))
-            .filter(|_| {
-                call.arguments
-                    .get(1)
-                    .is_some_and(|arg| ava_message_only(arg))
-            })
-            .map(|payload| TypeScriptErrorPayload {
-                kind: if method == "throwsAsync" {
-                    TypeScriptErrorPayloadKind::AvaThrowsAsyncObject
-                } else {
-                    TypeScriptErrorPayloadKind::AvaThrowsObject
-                },
-                ..payload
-            }),
+        // A bare `t.throwsAsync(...)` can outlive the test, so its credit needs
+        // an `await` or a `return` the runner waits on.
+        "throws" | "throwsAsync"
+            if ava_runner && (method == "throws" || awaited || returned_to_runner) =>
+        {
+            call.arguments
+                .get(1)
+                .zip(call.arguments.first())
+                .filter(|(_, thrower)| ava_thrower_matches(thrower, method == "throwsAsync"))
+                .and_then(|(arg, _)| {
+                    node_assert_error_payload(method == "throwsAsync", arg, source)
+                })
+                .filter(|_| {
+                    call.arguments
+                        .get(1)
+                        .is_some_and(|arg| ava_message_only(arg))
+                })
+                .map(|payload| TypeScriptErrorPayload {
+                    kind: if method == "throwsAsync" {
+                        TypeScriptErrorPayloadKind::AvaThrowsAsyncObject
+                    } else {
+                        TypeScriptErrorPayloadKind::AvaThrowsObject
+                    },
+                    ..payload
+                })
+        }
         _ => None,
     };
     let (oracle_kind, oracle_strength) = if error_payload.is_some() {
