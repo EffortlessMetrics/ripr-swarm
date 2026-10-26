@@ -1138,14 +1138,27 @@ fn truncated_index_refusal_names_the_rebuild_repair() -> Result<(), String> {
         return Err(format!("expected a refusal\n{}", ran.stderr));
     }
     let bound = format!("git -C '{root_arg}' reset");
-    for needle in ["index file smaller than expected", bound.as_str()] {
+    for needle in [
+        "index file smaller than expected",
+        "discards staged changes",
+        "first copy the index file",
+        bound.as_str(),
+    ] {
         if !ran.stderr.contains(needle) {
             return Err(format!("missing `{needle}`\n{}", ran.stderr));
         }
     }
+    // Preservation comes before the destructive step.
+    let copy_at = ran.stderr.find("first copy the index file");
+    let remove_at = ran.stderr.find("Then remove it");
+    if !matches!((copy_at, remove_at), (Some(c), Some(r)) if c < r) {
+        return Err(format!("backup must precede removal\n{}", ran.stderr));
+    }
 
     // Follow the advice literally: remove the named index, rebuild it in the
     // selected root, and the same invocation now completes.
+    let backup = root.join(".git/index.bak");
+    fs::copy(&index, &backup).map_err(|e| format!("backup failed: {e}"))?;
     fs::remove_file(&index).map_err(|e| format!("remove index failed: {e}"))?;
     git(&root, &["reset", "-q"])?;
     let again = ripr(
@@ -1158,6 +1171,45 @@ fn truncated_index_refusal_names_the_rebuild_repair() -> Result<(), String> {
         fs::read(decoy.join(".git/index")).map_err(|e| format!("read failed: {e}"))?;
     if decoy_after != decoy_index {
         return Err("the refusal or repair touched the decoy repository's index".to_string());
+    }
+    let kept = fs::read(&backup).map_err(|e| format!("read backup failed: {e}"))?;
+    if kept != bytes[..bytes.len().min(20)] {
+        return Err("the retained copy is not the original damaged index".to_string());
+    }
+    Ok(())
+}
+
+/// A readable-index failure that is not corruption (an unreadable but valid
+/// index) keeps Git's reason and gets no delete-and-reset advice (#10567).
+#[cfg(unix)]
+#[test]
+fn unreadable_valid_index_gets_no_rebuild_advice() -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    let scratch = Scratch::new("unreadable-index")?;
+    let root = plain(&scratch, "unreadable-index")?;
+    let index = root.join(".git/index");
+    fs::set_permissions(&index, fs::Permissions::from_mode(0o000))
+        .map_err(|e| format!("chmod failed: {e}"))?;
+    let restore = |index: &Path| fs::set_permissions(index, fs::Permissions::from_mode(0o644));
+    if fs::read(&index).is_ok() {
+        // Running as a user that bypasses file modes (root): nothing to observe.
+        restore(&index).map_err(|e| format!("chmod failed: {e}"))?;
+        return Ok(());
+    }
+    let ran = ripr(&root, &["check", "--base", "main"], &[]);
+    restore(&index).map_err(|e| format!("chmod failed: {e}"))?;
+    let ran = ran?;
+    assert_sane(&ran, "unreadable index")?;
+    if ran.code != Some(2) {
+        return Err(format!("expected a refusal\n{}", ran.stderr));
+    }
+    for banned in ["git reset", "remove it", "damaged index"] {
+        if ran.stderr.contains(banned) {
+            return Err(format!(
+                "unexpected rebuild advice `{banned}`\n{}",
+                ran.stderr
+            ));
+        }
     }
     Ok(())
 }
