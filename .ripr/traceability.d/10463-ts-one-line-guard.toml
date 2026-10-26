@@ -1,0 +1,9 @@
+# Registers the one-line guard boundary test (#10463) under RIPR-SPEC-0027.
+[[extend]]
+id = "RIPR-SPEC-0027"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/tests.rs::boundary_discriminator_reads_the_condition_of_a_one_line_guard_statement",
+]
+code = [
+  "crates/ripr/src/analysis/language/typescript/probe_shape.rs",
+]

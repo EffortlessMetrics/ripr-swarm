@@ -437,9 +437,12 @@ cleanly; edits to adjacent blocks can still conflict, which is a bounded
 reduction of the old shared-line hotspot, not its elimination (a
 `missed_credit_ceiling` line in `spec-coverage.toml` is rejected). A
 whole-corpus `check` fails on a missed-credit row without an entry, naming it
-(a swap that keeps the count still fails), and passes with a printed note
-naming the entry to delete when an accepted row no longer misses credit, so a
-fix never deadlocks concurrent fixes. A `--case` subset is never gated on it.
+(a swap that keeps the count still fails), and equally fails when an
+accepted row no longer misses credit, naming the entry to delete: the entries
+must equal the blessed missed rows, so a stale entry fails early in `check-all`
+rather than after the full test step (#10341). A fix deletes its own block,
+which does not collide with concurrent fixes deleting other blocks. A `--case`
+subset is never gated on it.
 
 The `[oracle]` table of `spec-coverage.toml` holds `match_floor` and
 `overclaim_ceiling`. `validate` requires the table once any case is

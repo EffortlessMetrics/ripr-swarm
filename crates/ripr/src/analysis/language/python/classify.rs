@@ -29,12 +29,13 @@ use super::sink_alignment::{
     CreditedAssertion, SinkAlignment, classify_sink_alignment_with_old, enclosing_literal_pair,
 };
 use super::static_limits::{
-    heuristic_only_relation_limit, implicit_dunder_dispatch_limit, module_object_rebind_limit,
-    static_limit_for_focused_change, unpinned_equality_dunder_limit,
+    LAMBDA_LIMIT_EVIDENCE, heuristic_only_relation_limit, implicit_dunder_dispatch_limit,
+    module_object_rebind_limit, static_limit_for_focused_change, unpinned_equality_dunder_limit,
 };
 use super::table_rows::python_unvaried_table_operand;
 use super::term_activation::python_inactive_term_evidence;
 use super::transitive_reach::apply_python_no_static_path_limit;
+use super::type_guard::removed_type_guard_credit;
 use super::{
     PythonOracleShape, PythonOwner, PythonTest, fingerprint_probe_id, normalize_expression,
     owner_for_changed_line, python_no_family_relevant_missing_summary,
@@ -431,6 +432,34 @@ pub(super) fn classify_change_for_owner_with_value_origins(
         },
         None => alignment,
     };
+    // A removed `isinstance` operand guard on `__eq__`, observed by a test that
+    // compares an instance with a foreign literal (#9619).
+    let type_guard = (module_value.is_empty() && !alignment.observes())
+        .then(|| {
+            removed_type_guard_credit(
+                owner,
+                old_line_text,
+                line_text,
+                owner_source.unwrap_or(""),
+                &related_candidates,
+            )
+        })
+        .flatten();
+    let alignment = match &type_guard {
+        Some(credit) => SinkAlignment {
+            changed_sink: alignment.changed_sink,
+            observed_sink: Some(credit.assertion.text.clone()),
+            oracle_alignment: "direct".to_string(),
+            alignment_reason: "strong_oracle_observes_removed_type_guard".to_string(),
+            credited: Some(CreditedAssertion {
+                test_name: credit.test.name.clone(),
+                test_file: credit.test.file.clone(),
+                text: credit.assertion.text.clone(),
+                kind: OracleKind::RelationalCheck,
+            }),
+        },
+        None => alignment,
+    };
     let log_evidence = python_log_evidence(
         old_line_text,
         line_text,
@@ -449,6 +478,8 @@ pub(super) fn classify_change_for_owner_with_value_origins(
         owner_source.unwrap_or(""),
         &related_candidates,
     )
+    // A pinned lambda body edit is read by the module-value credit.
+    .filter(|limit| module_value.is_empty() || limit.evidence != LAMBDA_LIMIT_EVIDENCE)
     .or_else(|| {
         module_object_rebind_limit(
             line_text,
@@ -511,6 +542,7 @@ pub(super) fn classify_change_for_owner_with_value_origins(
         .map(|test| test.oracle_strength.rank())
         .chain(mock_pins_changed_call.then(|| OracleStrength::Strong.rank()))
         .chain((!module_value.is_empty()).then(|| OracleStrength::Strong.rank()))
+        .chain(type_guard.is_some().then(|| OracleStrength::Strong.rank()))
         .max()
         .unwrap_or(0);
     let strongest_kind = alignment

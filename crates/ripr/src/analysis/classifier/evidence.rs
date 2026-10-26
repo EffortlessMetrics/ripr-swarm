@@ -1,6 +1,6 @@
 use crate::analysis::classify::{
     ASSERTION_CONTEXT_UNESTABLISHED, ArmSelector, AssertionRefusal, EffectStateCarrier,
-    HELPER_RESULT_NOT_FORWARDED, OwnerPinSyntax, OwnerReturnPin, ProbeContext,
+    HELPER_RESULT_NOT_FORWARDED, OwnerInputs, OwnerPinSyntax, OwnerReturnPin, ProbeContext,
     PropagationWitnessV1, ReturnOracleAdmission, TransitiveReachIndex, WrapperEntryPairing,
     activation_and_boundary_input, assertion_observes_collection_argument, assertion_out_parameter,
     body_contains_owner_call, call_parameter_names, callee_is_unique, chain_entry_pin_admits,
@@ -170,7 +170,7 @@ impl ClassifiedProbeEvidence {
         } else {
             const_reader_reach(context)
         };
-        let flow_sinks = local_flow_sinks(context.probe, context.owner_fn);
+        let mut flow_sinks = local_flow_sinks(context.probe, context.owner_fn);
         let returned_ledger = match (context.owner_fn, context.helper_chain.as_ref()) {
             (Some(owner), Some(chain)) if helper_only_reach(&context.related_tests) => {
                 context.index.files().get(&owner.file).and_then(|file| {
@@ -278,6 +278,12 @@ impl ClassifiedProbeEvidence {
             &mut gathered,
             &flow_sinks,
         );
+        crate::analysis::classify::refine_literal_length_boundary(
+            context,
+            pin_syntax,
+            &mut gathered,
+            &mut flow_sinks,
+        );
         let mut activation = gathered.activation;
         // #3731 review (F11, G1): the changed owner's package scope, computed
         // once — the cross-package same-name defeats compare each related
@@ -349,13 +355,31 @@ impl ClassifiedProbeEvidence {
                         .any(|body| mentions_identifier(body, &owner.name))
                 }))
         });
+        // The truth-table reading takes `assert_eq!(owner(..), want)` as a
+        // comparison by the macro's name; a rebound name compares nothing.
+        // Only a `&&`/`||` owner reaches that reading, so other owners skip the
+        // per-file macro scan.
+        let assertion_macros_rebound = matches!(
+            context.probe.family,
+            ProbeFamily::Predicate | ProbeFamily::ReturnValue
+        ) && context
+            .owner_fn
+            .is_some_and(|owner| owner.body.contains("&&") || owner.body.contains("||"))
+            && crate::analysis::classify::macro_names_rebound(
+                context.index,
+                &["assert", "assert_eq", "assert_ne"],
+            );
         let infect = infection_evidence_for_owner(
             context.probe,
             &test_summaries,
             &activation,
             gathered.unresolved_boundary.as_deref(),
-            context.owner_fn,
+            OwnerInputs {
+                owner: context.owner_fn,
+                literal_length_boundary: gathered.literal_length_boundary.as_ref(),
+            },
             owner_has_other_callers,
+            assertion_macros_rebound,
         );
         // #6796's computed-argument discipline, wrapper edition (#6672,
         // #6694): when the tests reach the owner only through the helper
@@ -442,6 +466,7 @@ impl ClassifiedProbeEvidence {
                 &test_summaries,
                 owner,
                 owner_has_other_callers,
+                assertion_macros_rebound,
             )
             .map(|sink| (owner, sink))
         }) {
@@ -823,6 +848,9 @@ impl ClassifiedProbeEvidence {
             &import_defeats,
             &cross_package_defeats,
             &ReturnOracleAdmission {
+                returned_closure_pin_required: context.owner_fn.is_some_and(|owner| {
+                    crate::analysis::classify::returned_closure_pin_required(context.probe, owner)
+                }),
                 owner_return_pin: &owner_pin_admits,
                 wrapper_return_pin: &|test, assertion| {
                     wrapper_boundary_probe.is_some()
@@ -1065,6 +1093,21 @@ impl ClassifiedProbeEvidence {
             && infect.state == StageState::Yes
             && discriminate.state == StageState::Yes
             && !guard_side_flip_paired
+            && !gathered
+                .literal_length_boundary
+                .as_ref()
+                .is_some_and(|boundary| {
+                    context.owner_fn.is_some_and(|owner| {
+                        boundary.pairs(
+                            context.probe,
+                            owner,
+                            &test_summaries,
+                            context.index,
+                            &assertion_admitted,
+                            &owner_pin_admits,
+                        )
+                    })
+                })
             && !has_same_test_boundary_oracle_pairing(
                 context.probe,
                 context.owner_fn,

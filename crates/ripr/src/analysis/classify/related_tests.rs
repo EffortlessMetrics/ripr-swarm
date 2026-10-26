@@ -1492,13 +1492,18 @@ fn find_related_tests_with_candidates<'a>(
             .cmp(&relation_rank(*a_reason))
             .then_with(|| a.name.cmp(&b.name))
             .then_with(|| a.file.cmp(&b.file))
+            .then_with(|| a.start_line.cmp(&b.start_line))
     });
     // A test related through two reasons is no longer adjacent to itself
     // once confidence leads the sort; keep its first (strongest) entry.
-    // The touched signal is deliberately applied only after this dedup, so
-    // it can never change which same-named entry survives and is analyzed.
+    // A test is its name, file and start line: same-named tests in different
+    // inline modules of one file are different tests, and dropping the later
+    // one loses its assertions (#9567). The touched signal is deliberately
+    // applied only after this dedup, so it can never change which entry
+    // survives and is analyzed.
     let mut seen = BTreeSet::new();
-    related.retain(|(test, _)| seen.insert((test.name.clone(), test.file.clone())));
+    related
+        .retain(|(test, _)| seen.insert((test.name.clone(), test.file.clone(), test.start_line)));
     // Stable: name then file order holds within one (tier, touched) group.
     related.sort_by(|(a, a_reason), (b, b_reason)| {
         relation_rank(*b_reason)
@@ -4628,7 +4633,8 @@ fn impl_identity_is_shadowed(
             test,
             source,
             impl_type,
-            owner_scope.in_file(&test.file),
+            Some(owner_scope),
+            index,
         ) || super::owner_pin::file_renames_to(source, impl_type)
             || super::owner_pin::file_renames_to(source, raw_impl_type.as_str())
     }) || super::owner_pin::parent_chain_shadows_type(test, impl_type, owner_scope, index)
@@ -4650,7 +4656,8 @@ fn impl_identity_is_shadowed(
                 test,
                 source,
                 trait_name,
-                owner_scope.in_file(&test.file),
+                Some(owner_scope),
+                index,
             )
         })
     }) || owner_trait.as_deref().is_some_and(|trait_name| {
@@ -4717,7 +4724,8 @@ fn owner_call_relation_reason(
                         test,
                         source,
                         trait_name,
-                        owner_scope.in_file(&test.file),
+                        Some(owner_scope),
+                        index,
                     )
                 }) || super::owner_pin::parent_chain_shadows_trait(
                     test,
@@ -5805,9 +5813,10 @@ mod tests {
     }
 
     /// #8387: the diff-touched signal is a pure ranking key. Two same-named
-    /// tests in one file must resolve to the same analyzed body, and so the
-    /// same classification, reach, oracle strength and credited oracle, with
-    /// or without the signal.
+    /// tests in one file are two tests (#9567), and both are analyzed: the
+    /// same classification, reach, and set of related rows (line, oracle
+    /// strength, credited oracle) come out with or without the signal, which
+    /// may only reorder them.
     #[test]
     fn diff_touched_signal_does_not_change_which_duplicate_name_is_analyzed() -> Result<(), String>
     {
@@ -5879,18 +5888,31 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
         );
         assert_eq!(plain.class, ranked.class);
         assert_eq!(plain.ripr.reach.state, ranked.ripr.reach.state);
+        let rows = |finding: &crate::domain::Finding| {
+            let mut rows: Vec<_> = finding
+                .related_tests
+                .iter()
+                .map(|t| {
+                    (
+                        t.name.clone(),
+                        t.line,
+                        t.oracle_strength.clone(),
+                        t.oracle.clone(),
+                    )
+                })
+                .collect();
+            rows.sort_by_key(|row| (row.0.clone(), row.1));
+            rows
+        };
         assert_eq!(
-            plain
-                .related_tests
-                .iter()
-                .map(|t| (&t.name, t.line, t.oracle_strength.clone(), &t.oracle))
-                .collect::<Vec<_>>(),
-            ranked
-                .related_tests
-                .iter()
-                .map(|t| (&t.name, t.line, t.oracle_strength.clone(), &t.oracle))
-                .collect::<Vec<_>>(),
-            "the touched signal must not change the analyzed body or credited oracle"
+            rows(&plain).iter().filter(|row| row.0 == "dup").count(),
+            2,
+            "both same-named tests are analyzed: {plain:?}"
+        );
+        assert_eq!(
+            rows(&plain),
+            rows(&ranked),
+            "the touched signal must not change the analyzed bodies or credited oracles"
         );
         Ok(())
     }
@@ -5960,6 +5982,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
                 arguments: vec!["value".to_string()],
                 receiver: None,
                 through_macro: false,
+                transparent_macros_rebound: false,
             }],
             stop_above: None,
         };
@@ -6070,6 +6093,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
                 arguments: vec!["qty".to_string()],
                 receiver: None,
                 through_macro: false,
+                transparent_macros_rebound: false,
             }],
             stop_above: None,
         };
@@ -6124,6 +6148,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
                 arguments: vec!["qty".to_string()],
                 receiver: None,
                 through_macro: false,
+                transparent_macros_rebound: false,
             }],
             stop_above: None,
         };

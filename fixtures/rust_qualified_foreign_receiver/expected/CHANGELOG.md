@@ -42,6 +42,7 @@ Updated:
 ## Pending — rust_qualified_foreign_receiver (4)
 
 Reason:
+RIPR-SPEC-0319: explain verdict recipe is conditional on an unresolved reach edge (#10220)
 RIPR-SPEC-0319: main #9449 added Next guidance lines under static limitations without reblessing these fixtures (inherited red goldens); human.txt also carries this PR's RIPR-SPEC-0122 clipped-to-wrap line
 
 Command:
