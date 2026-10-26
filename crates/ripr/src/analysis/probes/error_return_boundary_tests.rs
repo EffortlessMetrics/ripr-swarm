@@ -315,7 +315,8 @@ fn twin_check_reads_every_shape_in_a_start_group() {
 /// quadratic. Before #6954, 100k shapes at one start took about a minute,
 /// and two 20k chains side by side ran past ten minutes; a linear pass takes
 /// milliseconds. The check compares depth 10k against 20k on the same runner
-/// (linear doubles, quadratic quadruples), so runner speed cancels out.
+/// (linear doubles, quadratic quadruples), with equal repetition counts and
+/// measured batches above the helper's timing floor.
 #[test]
 fn twin_check_stays_fast_on_deep_chains_that_share_a_start() {
     crate::testing::scale::assert_growth_within(

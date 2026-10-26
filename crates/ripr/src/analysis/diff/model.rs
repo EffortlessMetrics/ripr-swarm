@@ -1059,13 +1059,14 @@ mod tests {
             let literal = format!("const s = \"{}\";", "x".repeat(1_000 * k));
             let changed = ChangedFile {
                 path: PathBuf::from("src/big.ts"),
-                added_lines: (1..=70)
+                added_lines: (1..=140)
                     .map(|n| line(n, n, if n == 1 { &literal } else { "y();" }))
                     .collect(),
                 removed_lines: (1..=k)
                     .map(|n| line(n, 1, &format!("let v{n} = 0;")))
                     .collect(),
             };
+            assert!(changed.added_lines.len() * changed.removed_lines.len() > MAX_ALIGNED_CELLS);
             let map = changed.aligned_counterparts();
             assert_eq!(map.len(), 1);
         });

@@ -1,40 +1,23 @@
-//! Growth-ratio assertion for complexity regression tests.
+//! Bounded-noise growth measurements for complexity regression tests.
 //!
-//! An absolute wall-clock bound (`elapsed < 10s`) fails on a slow or contended
-//! runner without any code change. Comparing the same work at two sizes in
-//! one process removes the runner's absolute speed from the decision: a
-//! linear pass roughly doubles when the input doubles and a quadratic one
-//! roughly quadruples.
-//!
-//! What this does and does not establish: it rejects growth beyond `factor`
-//! once the small run is longer than [`NOISE_FLOOR`] (a quadratic regression
-//! at 2x input passes `factor = 3` only while the small run stays at or under
-//! the floor), so pick sizes whose small run is clearly above it. The two
-//! sizes are timed in separate groups, so a scheduler stall that hits only
-//! one group still moves the ratio. A regression that does not terminate
-//! (exponential backtracking) is not an assertion failure here; it ends at
-//! the harness timeout.
+//! Both sizes run the same number of repetitions. The batch grows until the
+//! fastest small sample reaches 100 ms, so the 10 ms allowance is at most 10%
+//! of that measurement. An unresolved measurement fails instead of passing
+//! below the floor. Interleaved samples reduce order effects; they cannot
+//! eliminate asymmetric scheduling delays or establish a universal bound.
+//! Nontermination is handled by the test runner, not by this assertion.
 
 use std::time::{Duration, Instant};
 
-/// Slack that absorbs timer noise; the sizes should keep the small run above it.
-const NOISE_FLOOR: Duration = Duration::from_millis(10);
+const NOISE_ALLOWANCE: Duration = Duration::from_millis(10);
+const MIN_SAMPLE: Duration = Duration::from_millis(100);
 const RUNS: usize = 3;
+const MAX_REPETITIONS: usize = 65_536;
 
-fn best_of(size: usize, work: &mut impl FnMut(usize)) -> Duration {
-    (0..RUNS)
-        .map(|_| {
-            let started = Instant::now();
-            work(size);
-            started.elapsed()
-        })
-        .min()
-        .unwrap_or_default()
-}
-
-/// Runs `work(small)` and `work(large)` three times each and asserts the best
-/// large time stays within `factor` times the best small time plus a noise
-/// floor. `work` should assert its own results so a wrong answer still fails.
+/// Compare work at two sizes, preserving the caller's semantic assertions on
+/// every repetition. At 2x input, factor 3 separates linear from quadratic
+/// growth; factor 6 permits quadratic work but rejects cubic growth once the
+/// measured ratio exceeds the factor plus the bounded noise allowance.
 pub(crate) fn assert_growth_within(
     label: &str,
     small: usize,
@@ -42,54 +25,148 @@ pub(crate) fn assert_growth_within(
     factor: u32,
     mut work: impl FnMut(usize),
 ) {
-    let small_time = best_of(small, &mut work);
-    let large_time = best_of(large, &mut work);
-    assert!(
-        large_time <= small_time * factor + NOISE_FLOOR,
-        "{label}: size {small} took {small_time:?} but size {large} took {large_time:?}, \
-         more than {factor}x plus {NOISE_FLOOR:?}"
-    );
+    assert_measured_growth(label, small, large, factor, |size, repetitions| {
+        let started = Instant::now();
+        for _ in 0..repetitions {
+            work(size);
+        }
+        started.elapsed()
+    });
+}
+
+fn assert_measured_growth(
+    label: &str,
+    small: usize,
+    large: usize,
+    factor: u32,
+    mut measure: impl FnMut(usize, usize) -> Duration,
+) {
+    assert!(small > 0 && large > small && factor > 0);
+    let mut repetitions = 1;
+    loop {
+        let mut small_time = Duration::MAX;
+        let mut large_time = Duration::MAX;
+        for sample in 0..RUNS {
+            // Alternate order without dividing by independently calibrated
+            // repetition counts: both samples must represent identical work.
+            let (s, l) = if sample % 2 == 0 {
+                (measure(small, repetitions), measure(large, repetitions))
+            } else {
+                let l = measure(large, repetitions);
+                (measure(small, repetitions), l)
+            };
+            small_time = small_time.min(s);
+            large_time = large_time.min(l);
+        }
+        if small_time >= MIN_SAMPLE {
+            eprintln!(
+                "{label}: {repetitions} repetitions, size {small} {small_time:?}, \
+                 size {large} {large_time:?}, factor {factor}, allowance {NOISE_ALLOWANCE:?}"
+            );
+            assert!(
+                large_time <= small_time * factor + NOISE_ALLOWANCE,
+                "{label}: growth exceeded {factor}x plus {NOISE_ALLOWANCE:?}: \
+                 {small_time:?} -> {large_time:?}"
+            );
+            return;
+        }
+        assert!(
+            repetitions < MAX_REPETITIONS,
+            "{label}: measurement unresolved: small sample {small_time:?} remains below \
+             {MIN_SAMPLE:?} after {repetitions} repetitions"
+        );
+        repetitions *= 2;
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::assert_growth_within;
-    use std::time::{Duration, Instant};
+    use super::assert_measured_growth;
+    use std::time::Duration;
 
-    fn spin(units: usize) {
-        let mut sink = 0u64;
-        for i in 0..units as u64 {
-            sink = std::hint::black_box(sink.wrapping_add(i));
-        }
-        std::hint::black_box(sink);
+    #[test]
+    fn matched_2x_linear_work_passes_even_below_the_initial_floor() {
+        assert_measured_growth("linear", 1, 2, 3, |size, repetitions| {
+            Duration::from_micros(2 * size as u64 * repetitions as u64)
+        });
     }
 
-    /// A unit count whose spin takes at least 40 ms on this machine, so the
-    /// small run sits well above the noise floor whatever the runner speed.
-    fn calibrated_units() -> usize {
-        let mut units = 1_000_000;
-        loop {
-            let started = Instant::now();
-            spin(units);
-            if started.elapsed() >= Duration::from_millis(40) || units >= 1 << 33 {
-                return units;
+    #[test]
+    #[should_panic(expected = "quadratic: growth exceeded")]
+    fn matched_2x_quadratic_work_fails_even_below_the_initial_floor() {
+        assert_measured_growth("quadratic", 1, 2, 3, |size, repetitions| {
+            Duration::from_micros(2 * (size * size * repetitions) as u64)
+        });
+    }
+
+    #[test]
+    fn quadratic_glob_growth_passes() {
+        assert_measured_growth("quadratic glob", 1, 2, 6, |size, repetitions| {
+            Duration::from_micros(2 * (size * size * repetitions) as u64)
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "cubic glob: growth exceeded")]
+    fn cubic_glob_growth_fails() {
+        assert_measured_growth("cubic glob", 1, 2, 6, |size, repetitions| {
+            Duration::from_micros(2 * (size * size * size * repetitions) as u64)
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "measurement unresolved")]
+    fn zero_measurements_cannot_pass() {
+        assert_measured_growth("zero clock", 1, 2, 3, |_, _| Duration::ZERO);
+    }
+
+    #[test]
+    #[should_panic(expected = "measurement unresolved")]
+    fn positive_measurements_stuck_below_floor_cannot_pass() {
+        assert_measured_growth("unresolved clock", 1, 2, 3, |_, _| {
+            Duration::from_millis(99)
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "stalled quadratic: growth exceeded")]
+    fn one_stalled_small_sample_cannot_satisfy_calibration() {
+        let mut first = true;
+        assert_measured_growth("stalled quadratic", 1, 2, 3, |size, repetitions| {
+            if first {
+                first = false;
+                Duration::from_secs(1)
+            } else {
+                Duration::from_micros(2 * (size * size * repetitions) as u64)
             }
-            units *= 2;
-        }
-    }
-
-    // The migrated tests double their input, so both controls use the same
-    // 2x step: linear work doubles, quadratic work quadruples.
-    #[test]
-    fn matched_2x_linear_work_passes() {
-        let unit = calibrated_units();
-        assert_growth_within("linear", 1, 2, 3, |step| spin(unit * step));
+        });
     }
 
     #[test]
-    #[should_panic(expected = "quadratic")]
-    fn matched_2x_quadratic_work_fails() {
-        let unit = calibrated_units();
-        assert_growth_within("quadratic", 1, 2, 3, |step| spin(unit * step * step));
+    fn isolated_large_stall_does_not_reject_linear_work() {
+        let mut stalled = false;
+        assert_measured_growth("linear stall", 1, 2, 3, |size, repetitions| {
+            if size == 2 && !stalled {
+                stalled = true;
+                Duration::from_secs(10)
+            } else {
+                Duration::from_millis(100 * (size * repetitions) as u64)
+            }
+        });
+    }
+
+    #[test]
+    fn allowance_boundary_is_inclusive() {
+        assert_measured_growth("boundary", 1, 2, 3, |size, _| {
+            Duration::from_millis(if size == 1 { 100 } else { 310 })
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "over boundary: growth exceeded")]
+    fn measurement_just_outside_allowance_fails() {
+        assert_measured_growth("over boundary", 1, 2, 3, |size, _| {
+            Duration::from_micros(if size == 1 { 100_000 } else { 310_001 })
+        });
     }
 }
