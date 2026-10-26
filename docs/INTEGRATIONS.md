@@ -40,16 +40,32 @@ repos:
         name: ripr (static test-gap check)
         entry: ripr check --worktree --base HEAD
         language: system
-        types: [rust]
+        types_or: [rust]
         pass_filenames: false
         verbose: true   # show findings even when the hook passes
 ```
 
-`types: [rust]` runs the hook on commits that change Rust files only. Add
-`python` or `javascript` and `ts` types if you enable those preview adapters.
+`types_or: [rust]` runs the hook when a Rust file is selected. To include
+enabled Python and TypeScript/JavaScript preview adapters, replace that line
+with:
+
+```yaml
+        types_or: [rust, python, javascript, jsx, ts, tsx]
+```
+
+[pre-commit's file filters](https://pre-commit.com/#filtering-files-with-types)
+match any listed `types_or` tag, while `types` requires every listed tag.
+Use the replacement above without a separate `types: [rust]` line, which
+would still exclude the other languages. These tags select when the hook
+runs; they do not enable ripr's language adapters.
+
 `--worktree` needs a 0.11 build. On 0.10 use `ripr check` after committing.
 Run locally against an uncommitted edit: exit 0, "no changed line is behavior
-ripr checks" for a comment-only change. Not run through the pre-commit tool.
+ripr checks" for a comment-only change. File selection was checked with
+pre-commit 4.7.0 on Linux using a recording entry: the default selected only
+`.rs`; the expanded list selected `.rs`, `.py`, `.js`, `.jsx`, `.ts`, and
+`.tsx`; both skipped Markdown. That check verifies the filter and
+`pass_filenames: false`, not an installed Git hook running ripr.
 
 ## GitLab CI and other hosted CI
 
