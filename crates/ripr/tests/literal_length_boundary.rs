@@ -402,8 +402,9 @@ fn a_single_equal_row_or_a_conditionally_run_row_is_not_credited() -> Result<(),
 #[test]
 fn short_circuited_attributed_or_shadowed_rows_are_not_credited() -> Result<(), String> {
     // A row guarded by a short-circuit never has to run, a cfg-gated or
-    // ignored row may not be compiled in, and a same-named nested `fn`
-    // after the call can be the callee.
+    // ignored row may not be compiled in, a same-named nested `fn` after the
+    // call can be the callee, and an earlier failing or diverging statement
+    // ends the test before the row runs.
     for (from, to) in [
         (
             "assert!(!fits(\"abcd\", 3));",
@@ -412,6 +413,14 @@ fn short_circuited_attributed_or_shadowed_rows_are_not_credited() -> Result<(), 
         (
             "assert!(!fits(\"abcd\", 3));",
             "assert!(false && !fits(\"abcd\", 3));",
+        ),
+        (
+            "assert!(fits(\"abc\", 3));",
+            "assert!(false); assert!(fits(\"abc\", 3));",
+        ),
+        (
+            "assert!(fits(\"abc\", 3));",
+            "panic!(\"stop\"); assert!(fits(\"abc\", 3));",
         ),
         (
             "assert!(!fits(\"abcd\", 3));",

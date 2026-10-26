@@ -419,6 +419,26 @@ fn straight_line_call(source: &str, test_start_line: usize, call: &Range<usize>)
     {
         return false;
     }
+    // A statement before the call that always fails or diverges ends the
+    // test before the row runs (`assert!(false); assert!(f(..));`).
+    if masked.get(open + 1..call.start).is_none_or(|before| {
+        before.split(';').any(|statement| {
+            let statement: String = statement.split_whitespace().collect();
+            [
+                "assert!(false",
+                "debug_assert!(false",
+                "panic!",
+                "unreachable!",
+                "todo!",
+                "unimplemented!",
+            ]
+            .iter()
+            .any(|head| statement.starts_with(head))
+                || statement.contains("process::exit(")
+        })
+    }) {
+        return false;
+    }
     if body.contains(['{', '}']) && {
         // Only the macro-invocation parentheses/brackets of straight-line
         // statements are expected; any inner brace is a block or branch.
