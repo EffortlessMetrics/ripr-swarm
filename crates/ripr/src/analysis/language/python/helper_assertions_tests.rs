@@ -360,3 +360,44 @@ fn given_a_function_result_helper_when_substituted_then_normal_owner_credit_is_p
     assert_eq!(finding.class, crate::domain::ExposureClass::Exposed);
     Ok(())
 }
+
+#[test]
+fn helper_executable_replacement_in_its_defining_module_refuses_credit() -> Result<(), String> {
+    for replacement in [
+        "check_writes.__code__ = ignore.__code__",
+        "alias = check_writes\nalias.__code__ = ignore.__code__",
+        "check_writes.__globals__['check_writes'] = ignore",
+        "setattr(check_writes, '__code__', ignore.__code__)",
+    ] {
+        let helper = format!("{FIELD_HELPER}\ndef ignore(obj, want):\n    pass\n\n{replacement}\n");
+        let source = field_test_source(
+            "from tests.helpers import check_writes\n",
+            "stats.record_write()\n    check_writes(stats, 0)",
+        );
+        let test = resolved(&source, &helper);
+        let assertion = only_assertion(&test)?;
+        assert_eq!(
+            assertion.helper_origin,
+            PythonHelperOrigin::FieldHelperRefused,
+            "{replacement}"
+        );
+        assert_eq!(
+            classified_helper_field(FIELD_OWNER, &source, &helper)?.class,
+            crate::domain::ExposureClass::WeaklyExposed,
+            "{replacement}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn helper_value_annotations_preserve_the_existing_result_route() -> Result<(), String> {
+    let helper =
+        "def check_equal(actual: int, expected: int) -> None:\n    assert actual == expected\n";
+    let test = resolved(&test_source("check_equal(sq(3), 9)"), helper);
+    assert_eq!(
+        only_assertion(&test)?.helper_origin,
+        PythonHelperOrigin::ValueHelper
+    );
+    Ok(())
+}

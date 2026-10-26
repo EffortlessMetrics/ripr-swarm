@@ -25,6 +25,8 @@ use super::super::{
 use super::read_limit_disclosure::bounded_read_limit_limitations;
 use super::{LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, route};
 mod admission;
+#[cfg(test)]
+mod assertion_helper_tests;
 mod assertion_selection;
 mod bounded_read;
 use crate::analysis::workspace::{
@@ -473,6 +475,26 @@ struct PythonImport {
     source_module: String,
 }
 
+/// A helper's comparison is retained even when its execution/bindings cannot
+/// establish effect credit. Named states prevent fallback from laundering it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PythonHelperOrigin {
+    Inline,
+    ValueHelper,
+    FieldHelperSupported,
+    FieldHelperRefused,
+}
+
+impl PythonHelperOrigin {
+    fn is_helper(self) -> bool {
+        self != Self::Inline
+    }
+
+    fn effect_only(self) -> bool {
+        matches!(self, Self::FieldHelperSupported | Self::FieldHelperRefused)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct PythonAssertion {
     text: String,
@@ -487,7 +509,7 @@ struct PythonAssertion {
     callable_call: Option<String>,
     /// The existing helper-resolution pass supplied this assertion. Its
     /// comparison alone does not establish a deferred owner's execution.
-    helper_derived: bool,
+    helper_origin: PythonHelperOrigin,
     /// Native assertion/call span, relative to the containing test body.
     source_range: Option<rustpython_parser::text_size::TextRange>,
     /// Only the native operands retained by the oracle gate, never its message.
