@@ -24,6 +24,7 @@ use crate::domain::{Probe, RelationConfidence, RelationReason};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
+mod drop_dispatch;
 mod equality_dispatch;
 mod implicit_dispatch;
 mod iterator_dispatch;
@@ -4522,6 +4523,14 @@ pub(in crate::analysis) fn resolves_method_in_prefix(
         return false;
     }
     text_resolves_method_to_type(prefix, method, impl_type, impl_trait, prefix, true)
+}
+
+/// Whether `owner` is shaped like `Drop::drop`. Rust forbids calling a
+/// destructor by name, so a test that reaches one does so through scope end,
+/// and no assertion-local authority exists that ties its effect to that end
+/// (#10553): a sibling-effect read of a shared cell cannot credit it.
+pub(in crate::analysis) fn is_drop_destructor(owner: &FunctionSummary) -> bool {
+    drop_dispatch::has_drop_shape(owner)
 }
 
 /// A bounded, test-local dispatch witness for an indexed trait impl. Naming

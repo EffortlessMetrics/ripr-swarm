@@ -340,6 +340,77 @@ fn a_loop_over_the_iterator_reaches_next_and_the_shared_sink_assertion_credits_i
     Ok(())
 }
 
+/// A `Drop` guard whose `drop` writes a shared cell, with the test body under
+/// study.
+fn drop_guard(test_body: &str) -> String {
+    format!(
+        r#"use std::{{cell::Cell, rc::Rc}};
+struct Guard {{ sink: Rc<Cell<usize>> }}
+impl Drop for Guard {{
+    fn drop(&mut self) {{
+        self.sink.set(1);
+    }}
+}}
+#[derive(Debug, PartialEq)] struct Observation {{ cell: Rc<Cell<usize>> }}
+#[test]
+fn drop_observer() {{
+{test_body}
+}}
+"#
+    )
+}
+
+/// #10553: relating scope end to `Drop::drop` lifts reach, so the ordinary
+/// sibling-effect read would credit any assertion on a cell. Nothing ties the
+/// assertion to the guard's cell or to the end of the scope, so a destructor is
+/// withheld, never `exposed`, however the cells are wired.
+#[test]
+fn a_shared_cell_assertion_never_credits_a_destructor() -> Result<(), String> {
+    let assertion =
+        "assert_eq!(Observation { cell: state }, Observation { cell: Rc::new(Cell::new(1)) });";
+    let cases = [
+        (
+            "shared_cell",
+            format!("    let state = Rc::new(Cell::new(0));\n    {{\n        let _g = Guard {{ sink: state.clone() }};\n    }}\n    {assertion}"),
+        ),
+        (
+            "assertion_reads_another_cell",
+            "    let state = Rc::new(Cell::new(0));\n    let other = Rc::new(Cell::new(0));\n    {\n        let _g = Guard { sink: state.clone() };\n    }\n    assert_eq!(Observation { cell: other }, Observation { cell: Rc::new(Cell::new(1)) });".to_string(),
+        ),
+        (
+            "guard_writes_a_fresh_cell",
+            format!("    let state = Rc::new(Cell::new(0));\n    {{\n        let _g = Guard {{ sink: Rc::new(Cell::new(0)) }};\n    }}\n    {assertion}"),
+        ),
+        (
+            "state_recreated_after_the_scope",
+            format!("    let state = Rc::new(Cell::new(0));\n    {{\n        let _g = Guard {{ sink: state.clone() }};\n    }}\n    let state = Rc::new(Cell::new(0));\n    {assertion}"),
+        ),
+        (
+            "test_writes_the_cell_after_the_scope",
+            format!("    let state = Rc::new(Cell::new(0));\n    {{\n        let _g = Guard {{ sink: state.clone() }};\n    }}\n    state.set(1);\n    {assertion}"),
+        ),
+        (
+            "assertion_before_the_scope",
+            "    let state = Rc::new(Cell::new(0));\n    assert_eq!(Observation { cell: state.clone() }, Observation { cell: Rc::new(Cell::new(0)) });\n    {\n        let _g = Guard { sink: state.clone() };\n    }".to_string(),
+        ),
+    ];
+    for (label, body) in cases {
+        let source = drop_guard(&body);
+        let finding = finding(
+            &source,
+            &changed_effect(&source, "self.sink.set(1)"),
+            "self.sink.set(1)",
+            "call_deletion",
+        )?;
+        assert_ne!(finding["classification"], "exposed", "{label}: {finding}");
+        assert_eq!(
+            finding["classification"], "static_unknown",
+            "{label}: {finding}"
+        );
+    }
+    Ok(())
+}
+
 const UNUSED_TRAIT: &str =
     include_str!("../../../fixtures/rust_unused_trait_effect_oracle/input/src/lib.rs");
 

@@ -771,10 +771,28 @@ sibling-effect oracle confirms that the assertion reads a cell the iterator
 writes (`Counter { sink: state.clone() }` then `assert_eq!(state.get(), 1)`),
 which credits it. A collected or returned value has no such carrier yet.
 
-`Drop::drop` is not related yet. The observed value (a counter behind a shared
-cell) shares no token with the changed line, and relating a scope end lifts
-reach so that the ordinary oracle credits a guard whose counter the assertion
-does not read (#9567). Drop waits for the carrier check of #10553 part 2.
+`Drop::drop` is related when a test drops a value at scope end (#10553). A
+statement-position `{ .. }` block that binds an owned value of the impl's type
+in a `let` and uses the name only as a method or field receiver, or `drop(x)`,
+`mem::drop(x)` of such a value, runs `drop` before a later assertion. The
+relation refuses a value that is moved, leaked (`mem::forget`, `ManuallyDrop`,
+`Box::leak`, anywhere a file naming the type spells it), or reached through a
+by-value method of the type or any std method the index cannot see; a `drop` or
+`mem` the test file may rebind (a local `fn drop`, `mod mem`, a renamed or
+foreign `use`); a reference operand; an assertion that came before the drop; a
+value that lives to the end of the test (it is dropped after every assertion);
+and the sites an iterator relation refuses (closures, branches, `#[cfg]`-disabled
+statements).
+
+Unlike `next`, a destructor is never credited by the sibling-effect read. A
+guard's counter shares no token with the changed line, and relating a scope end
+lifts reach, so without a gate the ordinary oracle credited an assertion on a
+different cell, a fresh guard cell, a cell the test re-created or wrote itself,
+or an assertion that ran before the scope (#9567). No assertion-local authority
+ties an assertion to the end of a scope, so a related destructor with an exact
+assertion stays `static_unknown` (`rust_implicit_call_unresolved`), and an
+assertion-free test stays a real `weakly_exposed` gap. A positive credit needs
+such a carrier check and is not claimed.
 
 Corpus effect: `shape-op-add-impl` moves from `limited` to `credited`, its
 ideal verdict.
