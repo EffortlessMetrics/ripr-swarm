@@ -1905,3 +1905,68 @@ fn forwarder_method_of_an_external_trait_impl_is_not_related() -> Result<(), Str
     assert_forwarder_not_related(&finding, "external trait impl");
     Ok(())
 }
+
+// #9638 re-review F2: identity is the declaration, not the bare name. A
+// sibling-module type of the same name, imported into the test, is not the
+// forwarder's `Pool`, even when it has no forwarder of its own (it derefs to
+// `Vec`, whose `reserve` is the call).
+const ALT_POOL: &str = "pub mod alt {\n    pub struct Pool {\n        pub v: Vec<usize>,\n    }\n    impl std::ops::Deref for Pool {\n        type Target = Vec<usize>;\n        fn deref(&self) -> &Vec<usize> {\n            &self.v\n        }\n    }\n    impl std::ops::DerefMut for Pool {\n        fn deref_mut(&mut self) -> &mut Vec<usize> {\n            &mut self.v\n        }\n    }\n}";
+
+#[test]
+fn forwarder_method_receiver_of_a_same_named_sibling_type_is_not_related() -> Result<(), String> {
+    let reserve = forwarder_named("reserve");
+    for tests in [
+        "        use super::alt::Pool;\n        let mut pool = Pool { v: vec![1] };\n        pool.reserve(4);\n        assert!(pool.capacity() >= 4);",
+        "        use super::alt::Pool;\n        assert_eq!(Pool { v: vec![1] }.len(), 1);\n        let mut pool = Pool { v: vec![1] };\n        pool.reserve(4);",
+    ] {
+        let finding = forwarder_finding(ALT_POOL, &reserve, tests)?;
+        assert_forwarder_not_related(&finding, tests);
+    }
+    Ok(())
+}
+
+#[test]
+fn forwarder_method_receiver_of_a_same_named_type_in_an_integration_test_is_not_related()
+-> Result<(), String> {
+    let scratch = Scratch::create()?;
+    let root = &scratch.0;
+    std::fs::create_dir_all(root.join("tests")).map_err(|error| error.to_string())?;
+    std::fs::write(root.join("Cargo.toml"), MANIFEST).map_err(|error| error.to_string())?;
+    let lib = forwarder_source(ALT_POOL, &forwarder_named("reserve"), "")
+        .split("#[cfg(test)]")
+        .next()
+        .unwrap_or_default()
+        .to_string();
+    std::fs::write(root.join("src/lib.rs"), lib).map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("tests/alt.rs"),
+        "use wrapper_reach::alt::Pool;\n\n#[test]\nfn reserve_on_the_vec() {\n    let mut pool = Pool { v: vec![1] };\n    pool.reserve(4);\n    assert!(pool.capacity() >= 4);\n}\n",
+    )
+    .map_err(|error| error.to_string())?;
+    let diff_file = root.join("change.diff");
+    std::fs::write(&diff_file, FORWARDER_DIFF).map_err(|error| error.to_string())?;
+    let report = check_workspace(CheckInput {
+        root: root.clone(),
+        diff_file: Some(diff_file),
+        mode: Mode::Fast,
+        format: OutputFormat::Json,
+        include_unchanged_tests: true,
+        ..CheckInput::default()
+    })?;
+    let json: Value = serde_json::from_str(&render_check(&report, &OutputFormat::Json)?)
+        .map_err(|error| error.to_string())?;
+    let finding = json["findings"]
+        .as_array()
+        .ok_or("missing findings")?
+        .iter()
+        .find(|finding| finding["probe"]["family"] == "predicate")
+        .cloned()
+        .ok_or_else(|| format!("no predicate finding: {json}"))?;
+    assert_ne!(
+        relation_of(&finding, "reserve_on_the_vec"),
+        Some("helper_owner_call"),
+        "{finding}"
+    );
+    assert_ne!(finding["classification"], "exposed", "{finding}");
+    Ok(())
+}

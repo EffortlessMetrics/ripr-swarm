@@ -103,7 +103,9 @@ can only hint that a caller "may lead here" without changing anything.
   impl type: a `let` the test binds only to that type's constructor
   (`Pool::default()`, a `Self`-returning associated fn) or struct literal,
   or an inline constructor, read by the owner-pin receiver reader, with no
-  foreign or aliased import of the type. A receiver of std or external type
+  foreign or aliased import of the type and exactly one workspace type
+  (struct, enum, union or alias, in any module or file) of that name, so a
+  same-named sibling-module type never stands for the forwarder's own. A receiver of std or external type
   (`vec.len()`, `HashSet::insert`, `String::is_empty`, an iterator's `next`),
   a parameter or a rebound name is not established and never relates the test.
   The entry being the one workspace function of its name and the identity of
@@ -600,7 +602,7 @@ foreign-qualified entry, nested comparison, imported constructor), and the
 unselected `match_arm` control);
 `crates/ripr/tests/helper_wrapper_reach.rs` (`forwarder_method_*`: the method
 entry credit and its swallowed, transformed, shared-name, two-candidate,
-shadowed, path-call, std-receiver, unestablished-receiver, external-trait-impl,
+shadowed, path-call, std-receiver, unestablished-receiver, same-named-type, external-trait-impl,
 `#[cfg(test)]`, no-self, macro-hop and other-package controls);
 `crates/ripr/tests/crate_qualified_entry_reach.rs` (own-crate qualified
 entry call, `[lib] name` and hyphen spellings, and each refusal above).

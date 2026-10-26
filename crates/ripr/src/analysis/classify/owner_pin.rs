@@ -13336,9 +13336,37 @@ pub(in crate::analysis) fn test_receiver_named_type(
         )
     };
     match typed? {
-        ReceiverType::Named(name) => Some(name),
-        ReceiverType::ByteSlice => None,
+        // The receiver reader resolves a bare type name. Two workspace types
+        // (or a type and an alias) of one name, in any module or file, make
+        // the name ambiguous (`alt::Pool` imported over the real `Pool`), so
+        // identity is not established.
+        ReceiverType::Named(name) if workspace_type_name_count(&name, index) == 1 => Some(name),
+        ReceiverType::Named(_) | ReceiverType::ByteSlice => None,
     }
+}
+
+/// How many `struct`, `enum`, `union` or `type` items named `name` the
+/// workspace declares, across every module and file.
+fn workspace_type_name_count(name: &str, index: &RustIndex) -> usize {
+    index
+        .files()
+        .values()
+        .filter(|facts| facts.source.contains(name))
+        .map(|facts| {
+            let masked = mask_comments_and_strings(&facts.source);
+            ["struct", "enum", "union", "type"]
+                .iter()
+                .map(|keyword| {
+                    whole_word_offsets(&masked, keyword)
+                        .into_iter()
+                        .filter(|offset| {
+                            starts_with_word(masked[offset + keyword.len()..].trim_start(), name)
+                        })
+                        .count()
+                })
+                .sum::<usize>()
+        })
+        .sum()
 }
 
 /// The owner's identity, for the #6957 shadow exemption: the owner's own
