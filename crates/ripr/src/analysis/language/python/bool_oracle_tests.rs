@@ -1,5 +1,7 @@
 //! Tests for crediting a bare boolean assertion on a `bool` owner (#9542).
 
+mod patch_scope_controls;
+
 use super::owners_tests::{extract_owners, extract_tests};
 use super::*;
 use std::path::Path;
@@ -566,7 +568,8 @@ fn given_a_patch_marker_in_the_owner_module_that_names_the_owner_then_the_assert
     assert_eq!(strengths, vec![OracleStrength::Smoke; 2]);
     let unrelated = "def is_adult(age) -> bool:\n    return age >= 18\n\n\ndef reset(monkeypatch):\n    monkeypatch.setenv('HOME', '/tmp')\n";
     let strengths = credited_strengths(unrelated, ADULT_TEST);
-    assert_eq!(strengths, vec![OracleStrength::Strong; 2]);
+    // An ordinary helper parameter does not establish pytest fixture identity.
+    assert_eq!(strengths, vec![OracleStrength::Smoke; 2]);
 }
 
 #[test]

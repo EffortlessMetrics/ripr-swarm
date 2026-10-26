@@ -5,11 +5,13 @@
 //! every real pytest file, so this pass keeps that veto and exempts only a
 //! closed allow-list of occurrences, read from the token stream:
 //!
-//! - exact `monkeypatch.setenv(` / `delenv(` / `chdir(` calls;
-//! - mock constructors (`Mock`, `MagicMock`, ..) and `x.assert_*(` calls;
+//! - exact `monkeypatch.setenv(` / `delenv(` / `chdir(` calls on an injected
+//!   test/fixture parameter (no default, rebinding, or explicit supplying call);
+//! - zero-argument constructors from unshadowed `unittest.mock` imports;
+//! - standard inspection/reset methods on their directly assigned, unrebound objects;
 //! - `import` / `from .. import` statements (a statement start, no `as`);
-//! - a declared parameter (`def test(monkeypatch)`) or its annotation;
-//! - a docstring.
+//! - a formal parameter (`def test(monkeypatch)`) or a recognized fixture type;
+//! - an inert string statement (never a formatted string).
 //!
 //! Any other name containing `patch`, `mock`, `Mock`, `setattr`, `delattr` or
 //! `monkey`, any string containing one of those (or `spy`, `setitem`,
@@ -24,7 +26,11 @@
 //! out of sight (both outside the file); a direct `rules.f = fake` assignment
 //! is caught by the binding scan, not here.
 
-use rustpython_parser::{Mode, Tok, lexer::lex};
+use rustpython_parser::{
+    Mode, Tok,
+    ast::{self, Expr, Stmt},
+    lexer::lex,
+};
 
 const PATCH_MARKERS: [&str; 5] = ["patch", "mock", "Mock", "setattr", "delattr"];
 
@@ -45,8 +51,8 @@ const INDIRECT_NAMES: [&str; 13] = [
     "syspath_prepend",
 ];
 
-/// Names that build or inspect a mock object without patching anything.
-const MOCK_OBJECT_NAMES: [&str; 9] = [
+/// Constructors that build a mock object without patching a binding.
+const MOCK_OBJECT_NAMES: [&str; 7] = [
     "Mock",
     "MagicMock",
     "AsyncMock",
@@ -54,12 +60,10 @@ const MOCK_OBJECT_NAMES: [&str; 9] = [
     "NonCallableMock",
     "NonCallableMagicMock",
     "mock_open",
-    "ANY",
-    "DEFAULT",
 ];
 
-/// The only calls on a patch-like name that keep the credit: they change the
-/// process environment or working directory, never a Python name.
+/// These methods on the pytest fixture change the environment or working
+/// directory. A locally rebound receiver does not inherit that exemption.
 const ENVIRONMENT_VERBS: [&str; 3] = ["setenv", "delenv", "chdir"];
 
 fn has_marker(text: &str) -> bool {
@@ -91,7 +95,7 @@ fn mentions_identifier(text: &str, name: &str) -> bool {
 
 /// Whether `source` may patch, mock or rebind any of `names`, or does so in a
 /// way this reading cannot follow. A source that does not lex is not trusted.
-pub(super) fn may_patch_names(source: &str, names: &[&str]) -> bool {
+pub(super) fn may_patch_names(source: &str, names: &[&str], module: &[Stmt]) -> bool {
     let mut tokens: Vec<Tok> = Vec::new();
     for token in lex(source, Mode::Module) {
         match token {
@@ -100,11 +104,13 @@ pub(super) fn may_patch_names(source: &str, names: &[&str]) -> bool {
         }
     }
     let regions = Regions::of(&tokens);
+    let bindings = Bindings { source, module };
     for (index, token) in tokens.iter().enumerate() {
         match token {
             Tok::Name { name } if INDIRECT_NAMES.contains(&name.as_str()) => return true,
             Tok::String { value, kind, .. } => {
-                let docstring = is_statement_start(&tokens, index)
+                let docstring = !kind.is_any_fstring()
+                    && is_statement_start(&tokens, index)
                     && matches!(tokens.get(index + 1), None | Some(Tok::Newline));
                 // A formatted string hides its expressions from the token stream.
                 if !docstring
@@ -125,7 +131,7 @@ pub(super) fn may_patch_names(source: &str, names: &[&str]) -> bool {
         if !chain.segments.iter().any(|segment| has_marker(segment)) {
             continue;
         }
-        if chain_may_patch(&tokens, &regions, index, &chain, names) {
+        if chain_may_patch(&tokens, &regions, &bindings, index, &chain, names) {
             return true;
         }
     }
@@ -144,6 +150,7 @@ fn is_statement_start(tokens: &[Tok], index: usize) -> bool {
 /// Token positions that are parameter lists or import statements.
 struct Regions {
     parameters: Vec<bool>,
+    annotations: Vec<bool>,
     imports: Vec<bool>,
     declarations: Vec<bool>,
 }
@@ -152,6 +159,7 @@ impl Regions {
     fn of(tokens: &[Tok]) -> Self {
         let mut regions = Self {
             parameters: vec![false; tokens.len()],
+            annotations: vec![false; tokens.len()],
             imports: vec![false; tokens.len()],
             declarations: vec![false; tokens.len()],
         };
@@ -165,7 +173,7 @@ impl Regions {
                         && matches!(tokens.get(index + 2), Some(Tok::Lpar))
                         && let Some(close) = matching_close(tokens, index + 2)
                     {
-                        regions.parameters[index + 3..close].fill(true);
+                        regions.mark_parameters(tokens, index + 3, close);
                     }
                 }
                 Tok::Lambda => {
@@ -173,7 +181,7 @@ impl Regions {
                         .iter()
                         .position(|token| matches!(token, Tok::Colon))
                         .map_or(tokens.len(), |offset| index + offset);
-                    regions.parameters[index + 1..end].fill(true);
+                    regions.mark_parameters(tokens, index + 1, end);
                 }
                 Tok::Import | Tok::From if is_statement_start(tokens, index) => {
                     let end = tokens[index..]
@@ -186,6 +194,192 @@ impl Regions {
             }
         }
         regions
+    }
+
+    // Only a formal parameter name is exempt. Defaults and annotations are
+    // expressions and can retain a patch factory for a later unmarked call.
+    fn mark_parameters(&mut self, tokens: &[Tok], start: usize, end: usize) {
+        let mut depth = 0usize;
+        let mut parameter_start = true;
+        for index in start..end {
+            match &tokens[index] {
+                Tok::Lpar | Tok::Lsqb | Tok::Lbrace => depth += 1,
+                Tok::Rpar | Tok::Rsqb | Tok::Rbrace => depth = depth.saturating_sub(1),
+                Tok::Comma if depth == 0 => parameter_start = true,
+                Tok::Name { .. } if depth == 0 && parameter_start => {
+                    self.parameters[index] = true;
+                    parameter_start = false;
+                    if matches!(tokens.get(index + 1), Some(Tok::Colon)) {
+                        self.annotations[index + 2] = true;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+struct Bindings<'a> {
+    source: &'a str,
+    module: &'a [Stmt],
+}
+
+impl Bindings<'_> {
+    fn imported(&self, root: &str, module: &str, member: Option<&str>) -> bool {
+        super::count_bindings(self.module, root) == 1
+            && !super::binds_by_walrus(self.source, root)
+            && self
+                .module
+                .iter()
+                .any(|statement| match (statement, member) {
+                    (Stmt::ImportFrom(import), Some(member)) => {
+                        import.level.is_none_or(|level| level.to_u32() == 0)
+                            && import
+                                .module
+                                .as_ref()
+                                .is_some_and(|name| name.as_str() == module)
+                            && import.names.iter().any(|alias| {
+                                alias.name.as_str() == member && alias.asname.is_none()
+                            })
+                    }
+                    (Stmt::Import(import), None) => import
+                        .names
+                        .iter()
+                        .any(|alias| alias.name.as_str() == module && alias.asname.is_none()),
+                    _ => false,
+                })
+    }
+
+    fn mock_constructor(&self, chain: &Chain<'_>) -> bool {
+        let Some(verb) = chain.segments.last() else {
+            return false;
+        };
+        MOCK_OBJECT_NAMES.contains(verb)
+            && match chain.segments.as_slice() {
+                [name] => self.imported(name, "unittest.mock", Some(name)),
+                ["mock", _] => self.imported("mock", "unittest", Some("mock")),
+                ["unittest", "mock", _] => self.imported("unittest", "unittest.mock", None),
+                _ => false,
+            }
+    }
+
+    fn fixture_annotation(&self, chain: &Chain<'_>) -> bool {
+        match chain.segments.as_slice() {
+            ["pytest", "MonkeyPatch"] => self.imported("pytest", "pytest", None),
+            ["pytest_mock", "MockerFixture"] => self.imported("pytest_mock", "pytest_mock", None),
+            _ => false,
+        }
+    }
+
+    fn mock_binding(&self, tokens: &[Tok], receiver: &str) -> bool {
+        super::count_bindings(self.module, receiver) == 1
+            && !super::binds_by_walrus(self.source, receiver)
+            && tokens.iter().enumerate().any(|(index, token)| {
+                if !is_statement_start(tokens, index)
+                    || !matches!(token, Tok::Name { name } if name == receiver)
+                    || !matches!(tokens.get(index + 1), Some(Tok::Equal))
+                {
+                    return false;
+                }
+                let Some(constructor) = Chain::at(tokens, index + 2) else {
+                    return false;
+                };
+                self.mock_constructor(&constructor)
+                    && matches!(tokens.get(constructor.end + 1), Some(Tok::Lpar))
+                    && matches!(tokens.get(constructor.end + 2), Some(Tok::Rpar))
+                    && matches!(
+                        tokens.get(constructor.end + 3),
+                        Some(Tok::Newline | Tok::Semi)
+                    )
+            })
+    }
+
+    fn mock_inspection(&self, tokens: &[Tok], chain: &Chain<'_>) -> bool {
+        let [receiver, verb] = chain.segments.as_slice() else {
+            return false;
+        };
+        matches!(
+            *verb,
+            "assert_called"
+                | "assert_called_once"
+                | "assert_called_with"
+                | "assert_called_once_with"
+                | "assert_any_call"
+                | "assert_has_calls"
+                | "assert_not_called"
+                | "assert_awaited"
+                | "assert_awaited_once"
+                | "assert_awaited_with"
+                | "assert_awaited_once_with"
+                | "assert_any_await"
+                | "assert_has_awaits"
+                | "assert_not_awaited"
+                | "reset_mock"
+        ) && self.mock_binding(tokens, receiver)
+    }
+
+    fn injection_site(
+        &self,
+        function: &str,
+        args: &ast::Arguments,
+        decorators: &[Expr],
+        name: &str,
+    ) -> bool {
+        let fixture = decorators.len() == 1 && self.imported("pytest", "pytest", None)
+            && decorators.iter().all(|decorator| {
+                let target = match decorator { Expr::Call(call) => &*call.func, other => other };
+                matches!(target, Expr::Attribute(attribute) if attribute.attr.as_str() == "fixture"
+                    && matches!(&*attribute.value, Expr::Name(root) if root.id.as_str() == "pytest"))
+            });
+        (fixture || function.starts_with("test_") && decorators.is_empty())
+            && args
+                .args
+                .iter()
+                .chain(&args.kwonlyargs)
+                .any(|arg| arg.def.arg.as_str() == name && arg.default.is_none())
+    }
+
+    fn injection_sites<'a>(&self, body: &'a [Stmt], name: &str, sites: &mut Vec<&'a str>) {
+        for statement in body {
+            match statement {
+                Stmt::FunctionDef(function)
+                    if self.injection_site(
+                        &function.name,
+                        &function.args,
+                        &function.decorator_list,
+                        name,
+                    ) =>
+                {
+                    sites.push(&function.name)
+                }
+                Stmt::AsyncFunctionDef(function)
+                    if self.injection_site(
+                        &function.name,
+                        &function.args,
+                        &function.decorator_list,
+                        name,
+                    ) =>
+                {
+                    sites.push(&function.name)
+                }
+                Stmt::ClassDef(class) => self.injection_sites(&class.body, name, sites),
+                _ => {}
+            }
+        }
+    }
+
+    fn fixture_parameter(&self, tokens: &[Tok], regions: &Regions, name: &str) -> bool {
+        let mut sites = Vec::new();
+        self.injection_sites(self.module, name, &mut sites);
+        !sites.is_empty()
+            && super::count_bindings(self.module, name) == sites.len()
+            && !super::binds_by_walrus(self.source, name)
+            // An explicit call or alias can supply an arbitrary receiver instead
+            // of pytest's fixture. Fixture dependencies may name another parameter.
+            && !tokens.iter().enumerate().any(|(index, token)| {
+                matches!(token, Tok::Name { name } if sites.contains(&name.as_str()))
+                    && !regions.declarations[index] && !regions.parameters[index]
+            })
     }
 }
 
@@ -232,6 +426,7 @@ impl<'a> Chain<'a> {
 fn chain_may_patch(
     tokens: &[Tok],
     regions: &Regions,
+    bindings: &Bindings<'_>,
     start: usize,
     chain: &Chain<'_>,
     names: &[&str],
@@ -243,18 +438,22 @@ fn chain_may_patch(
     if matches!(tokens.get(chain.end + 1), Some(Tok::Lpar)) {
         let allowed = (chain.segments.len() == 2
             && chain.segments[0] == "monkeypatch"
-            && ENVIRONMENT_VERBS.contains(&verb))
-            || MOCK_OBJECT_NAMES.contains(&verb)
-            || (chain.segments.len() >= 2 && verb.starts_with("assert"));
+            && ENVIRONMENT_VERBS.contains(&verb)
+            && bindings.fixture_parameter(tokens, regions, "monkeypatch"))
+            || (bindings.mock_constructor(chain)
+                && matches!(tokens.get(chain.end + 2), Some(Tok::Rpar)))
+            || bindings.mock_inspection(tokens, chain);
         return !allowed || call_args_hide_a_target(tokens, chain.end + 1, names);
     }
-    // A reference: only a declared parameter or its annotation is understood.
-    let previous = start.checked_sub(1).and_then(|before| tokens.get(before));
-    !(regions.parameters[start]
-        && matches!(
-            previous,
-            Some(Tok::Lpar | Tok::Comma | Tok::Star | Tok::DoubleStar | Tok::Colon)
-        ))
+    // A type annotation may be a patch factory, so only recognized fixture
+    // types qualify. A dotted chain is never a formal parameter name.
+    let mock_assignment = chain.segments.len() == 1
+        && is_statement_start(tokens, start)
+        && matches!(tokens.get(chain.end + 1), Some(Tok::Equal))
+        && bindings.mock_binding(tokens, chain.segments[0]);
+    !(mock_assignment
+        || regions.parameters[start] && chain.segments.len() == 1
+        || regions.annotations[start] && bindings.fixture_annotation(chain))
 }
 
 fn call_args_hide_a_target(tokens: &[Tok], open: usize, names: &[&str]) -> bool {

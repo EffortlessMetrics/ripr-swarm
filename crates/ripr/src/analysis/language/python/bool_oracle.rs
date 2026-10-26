@@ -142,10 +142,10 @@ const DYNAMIC_MARKERS: [&str; 10] = [
     "importlib",
 ];
 
-fn may_rebind_dynamically(source: &str, names: &[&str]) -> bool {
+fn may_rebind_dynamically(source: &str, names: &[&str], module: &[Stmt]) -> bool {
     DYNAMIC_MARKERS.iter().any(|marker| source.contains(marker))
         || names.iter().any(|name| binds_by_walrus(source, name))
-        || patch_scope::may_patch_names(source, names)
+        || patch_scope::may_patch_names(source, names, module)
 }
 
 /// Whether the test file keeps `callee` bound to the one import that brought it
@@ -153,12 +153,12 @@ fn may_rebind_dynamically(source: &str, names: &[&str]) -> bool {
 /// and no dynamic rebinding or patching of `callee` or the owner it imports.
 /// A file that does not parse is not trusted.
 fn test_keeps_callee(source: &str, path: &Path, callee: &str, owner_name: &str) -> bool {
-    if may_rebind_dynamically(source, &[callee, owner_name]) {
-        return false;
-    }
     let Ok(Mod::Module(module)) = parse_module_result(path, source) else {
         return false;
     };
+    if may_rebind_dynamically(source, &[callee, owner_name], &module.body) {
+        return false;
+    }
     count_bindings(&module.body, callee) == 1
 }
 
@@ -196,7 +196,7 @@ fn owner_returns_bool(
     };
     // Dynamic rebinding, then any binding of the name besides the owner's own
     // definition, at any depth (the definition itself is the one allowed).
-    if may_rebind_dynamically(source, &[owner.name.as_str()])
+    if may_rebind_dynamically(source, &[owner.name.as_str()], module)
         || count_bindings(module, &owner.name) != 1
     {
         return false;

@@ -201,10 +201,17 @@ mock expectations, and custom `assert_*` helpers.
     only to a closed allow-list (#10391): a test file keeps the credit when
     every occurrence of a name containing `patch`, `mock`, `Mock`, `setattr`,
     `delattr` or `monkey` is an exact `monkeypatch.setenv(` / `delenv(` /
-    `chdir(` call, a mock constructor (`Mock`, `MagicMock`, ..), an `assert_*`
-    call, an `import` / `from .. import` statement without `as`, a declared
-    parameter or its annotation, or a docstring, with no argument naming the
-    callee or owner. Everything else keeps the credit withheld: any other
+    `chdir(` call on an injected pytest test/fixture parameter (no default,
+    rebinding, or explicit supplying call), a zero-argument constructor from an
+    unshadowed `unittest.mock` import (`Mock`, `MagicMock`, ..), an `import` /
+    `from .. import` statement without `as`, a formal parameter, a recognized
+    imported fixture type annotation, or an inert string statement, with no
+    argument naming the callee or owner. Inspection such as
+    `handle.assert_not_called()` remains allowed; marker-bearing inspection/reset
+    calls require a direct, unrebound zero-argument mock construction. Constructor
+    arguments can replace inspection methods, so they retain the veto. Arbitrary
+    receivers do not qualify by an `assert` prefix or constructor suffix. Defaults and annotations are executable expressions,
+    and formatted strings are never inert docstrings. Everything else keeps the credit withheld: any other
     patch-like call or reference or alias (`patch*`, `setattr`, `delattr`,
     `monkeypatch.context()`, `mocker.spy`, `swap = ..`, `partial(..)`,
     `yield from [swap := ..]`), any string outside a docstring that contains
