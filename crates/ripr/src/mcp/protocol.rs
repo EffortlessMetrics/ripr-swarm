@@ -31,7 +31,7 @@ pub(super) const GAP_RESOURCE_TEMPLATE: &str = "ripr://gap/{canonical_id}";
 /// tool cannot reach in this slice stay named (reserved) so the wire
 /// contract is stable when the owning slice lands; each tool description
 /// says which codes it can actually return.
-fn failure_vocabulary() -> Vec<&'static str> {
+pub(super) fn failure_vocabulary() -> Vec<&'static str> {
     let mut codes = vec![
         "workspace_unavailable",
         "analysis_failed",
@@ -62,13 +62,13 @@ fn failure_vocabulary() -> Vec<&'static str> {
 /// this server does not, and the CLI route that runs analysis outside this
 /// session. Naming a route is not invoking it: the server still edits
 /// nothing and executes nothing (ADR 0022).
-pub(super) const INSTRUCTIONS: &str = "RIPR is a static analyzer that asks whether the current tests would notice if the behavior changed in a diff were wrong. This MCP server exposes one read-only workspace session; it never edits source, executes nothing, runs no tests or mutation, and launches no processes; it names CLI routes without invoking them (ADR 0022). No document this server returns is a repair authorization: the external client's approval and sandbox policy remain authoritative. Flow: call `ripr_workspace_status` for root discovery, authority, and session facts; call `ripr_refresh` to analyze the committed default-branch diff and commit a completed snapshot. In this snapshot, staged and unstaged tracked edits and untracked files are outside the analyzed scope — `ripr check` defaults to the working tree when staged or unstaged tracked edits exist; shared check authority does not mean identical input; use `ripr check --committed` for committed input or `ripr check --worktree --format json` for working-tree input. Continue with `ripr_list_gaps` for the bounded working set; read one item's evidence with `ripr_get_gap` or ripr://gap/{canonical_id}. When repair-readiness facts are established, `ripr_prepare_repair` creates (or replays) one bounded in-memory repair transaction; read it with `ripr_get_repair_attempt` or ripr://repair-attempt/{attempt_id}, inspect receipt state with `ripr_get_receipt_status` or ripr://receipt/{receipt_id}, list every durable attempt with `ripr_list_repair_attempts`, and project the repair card with `ripr_get_repair_card` or ripr://repair-card/{canonical_id} — the same repair_card.v1 document `ripr agent card` and the language server project.";
+pub(super) const INSTRUCTIONS: &str = "Flow: call `ripr_workspace_status` for root discovery, authority, and session facts; `ripr_refresh` analyzes the committed default-branch diff into a completed snapshot. `ripr_list_gaps` lists the bounded working set; read evidence with `ripr_get_gap` or ripr://gap/{canonical_id}; for repair prefer `ripr_get_repair_card` (ripr://repair-card/{canonical_id}). With established repair-readiness facts, `ripr_prepare_repair` creates (or replays) one bounded in-memory repair transaction; read it with `ripr_get_repair_attempt` (ripr://repair-attempt/{attempt_id}), inspect receipts with `ripr_get_receipt_status` (ripr://receipt/{receipt_id}), and list every durable attempt with `ripr_list_repair_attempts`. RIPR is a static analyzer that asks whether the current tests would notice if the behavior changed in a diff were wrong. This MCP server exposes one read-only workspace session: it never edits source, executes nothing, runs no tests or mutation, and launches no processes; it names CLI routes without invoking them (ADR 0022). No document this server returns is a repair authorization: the external client's approval and sandbox policy remain authoritative. Scope: committed input only; staged and unstaged tracked edits and untracked files are outside. `ripr check` defaults to the working tree when staged or unstaged tracked edits exist; shared check authority does not mean identical input. `ripr check --committed` reads committed input; `ripr check --worktree --format json` adds staged and unstaged tracked edits only. Untracked files need staging/intent-to-add (`git add -N <paths>`) before `--worktree`, or explicit `--diff`.";
 
 const STATUS_TOOL_DESCRIPTION: &str = "Report the RIPR workspace and session state: repository-root discovery state (validated or unavailable, with root error detail when no usable Git work tree is detected), launch-trust and authority facts (source edit, verification execution, mutation execution, and model provider are all none), and a session block — current desired input, attempt state (no_snapshot, in_flight, completed, failed), last completed snapshot identity, last-known-good state, freshness, the typed AnalysisOutcome, and profile facts (project_config loaded with enabled languages when the workspace ripr.toml resolves, built-in defaults otherwise, an unreadable config detected_not_loaded). `workspace_state: ready` means only that a repository root was discovered — not that analysis ran or that no issues were found. This tool returns session facts only: no gap evidence. It never edits source, runs tests or mutation, executes verification commands, or loads project-local provider configuration. To run analysis, call ripr_refresh.";
 
-const REFRESH_TOOL_DESCRIPTION: &str = "Run one bounded static analysis of the committed default-branch diff (optional `base` selects another revision) through RIPR's shared check authority and commit the completed snapshot into this server's session. staged and unstaged tracked edits and untracked files are outside the analyzed scope — `ripr check` defaults to the working tree when staged or unstaged tracked edits exist; shared check authority does not mean identical input; `ripr check --committed` covers committed input and `ripr check --worktree --format json` covers staged and unstaged edits outside MCP. The call blocks until a terminal attempt state: completed (snapshot identity returned), failed (typed code, bounded detail, recovery; last-known-good kept), in_flight (another attempt is running; wait and retry), or workspace_unavailable (restart the server with `--root <repository>`). An unresolvable default branch fails with analysis_failed naming candidate branches; retry with `base`. `base` starting with `-` or naming no commit fails closed; omitting `base` returns to the default branch. A cancelled attempt still commits as a completed snapshot when it finishes and only transport teardown abandons one before it commits; a superseded attempt is never committed. An unsupported client profile fails closed with unsupported_profile. This tool never edits source, executes verification or mutation commands, or prepares a repair.";
+const REFRESH_TOOL_DESCRIPTION: &str = "Run one bounded static analysis of the committed default-branch diff (optional `base` selects another revision) through shared check authority; commit its completed session snapshot. Blocks until: completed (snapshot identity returned), failed (typed code, bounded detail, recovery; last-known-good kept), in_flight (another attempt is running — wait and retry), or workspace_unavailable (restart with `--root <repository>`). An unresolvable default branch fails with analysis_failed naming candidate branches; retry with `base`. A `base` starting with `-` or naming no commit fails closed; omitting `base` returns to the default branch. A cancelled attempt still commits as a completed snapshot when it finishes and only transport teardown abandons one before it commits; a superseded attempt is never committed. Unsupported profiles fail closed with unsupported_profile. It never edits source, executes verification or mutation commands, or prepares a repair. Scope: committed input only; staged and unstaged tracked edits and untracked files are outside. `ripr check` defaults to the working tree when staged or unstaged tracked edits exist. `ripr check --committed` covers committed input; `ripr check --worktree --format json` adds staged and unstaged tracked edits only. Untracked files need staging/intent-to-add (`git add -N <paths>`) before `--worktree`, or explicit `--diff`; shared check authority does not mean identical input.";
 
-const LIST_GAPS_TOOL_DESCRIPTION: &str = "Return the deterministic bounded working set of canonical items for the current completed snapshot (optional snapshot_id must match or the call fails closed with stale_snapshot). The response carries counts, omitted identities with reasons, the selection basis, and one small summary per selected item; the outputSchema enumerates the fields. Selection is the shared CLI/LSP budget authority: MCP does not re-rank, never truncates silently, and infers no business risk; overflow is disclosed with reasons and the omitted identities. Optional file, class, language, and repair_ready filters narrow the stored selection before paging (conjunctive); offset and limit page the narrowed set in snapshot order, disclosing the window through page.has_more and page.next_offset. Before the first successful ripr_refresh this fails closed with no_snapshot; unavailable roots fail closed with workspace_unavailable (restart with `ripr mcp --stdio --root <repository>`); an over-bound page fails with result_too_large. Per-item detail: ripr_get_gap or ripr://gap/{canonical_id}.";
+const LIST_GAPS_TOOL_DESCRIPTION: &str = "Return the deterministic bounded working set of canonical items for the current completed snapshot (optional snapshot_id must match, else stale_snapshot). The response carries counts, omitted identities with reasons, the selection basis, and one small summary per selected item (fields in the outputSchema). Selection is the shared CLI/LSP budget authority: MCP does not re-rank, never truncates silently, and infers no business risk; overflow is disclosed with reasons. Optional file, class, language, and repair_ready filters narrow the stored selection conjunctively before paging; offset and limit page the narrowed set in snapshot order, disclosed through page.has_more and page.next_offset. Before the first successful ripr_refresh this fails closed with no_snapshot; unavailable roots fail closed with workspace_unavailable (restart with `ripr mcp --stdio --root <repository>`); an over-bound page fails with result_too_large. Per-item detail: ripr_get_gap or ripr://gap/{canonical_id}.";
 
 const GET_GAP_TOOL_DESCRIPTION: &str = "Return one canonical item's complete bounded analysis evidence from the current completed snapshot (optional snapshot_id must match or the call fails closed with stale_snapshot). This is the read for analysis evidence when no repair intent exists — prefer ripr_get_repair_card when the intent is to repair; this evidence never authorizes an edit. repair_packet_ready now reports the committed producer repair-readiness facts. Unknown ids fail closed with item_not_found; a document over the response bound fails with result_too_large — recovery is `ripr check --committed --format json` outside MCP (a bounded summary whose related tests cap per finding); retrying ripr_get_gap cannot shrink the item. Before the first successful ripr_refresh this fails closed with no_snapshot; unavailable roots fail closed with workspace_unavailable (restart with `ripr mcp --stdio --root <repository>`). The resource ripr://gap/{canonical_id} returns the same document.";
 
@@ -1719,10 +1719,10 @@ mod tests {
             &resource_templates_list_result(),
             INSTRUCTIONS,
         )?;
-        // Independent literal accounting at the #9935 basis, including the
+        // Independent literal accounting after #10514 routing repairs, including the
         // ninth tool and instructions once. Intentional metadata changes
         // need to reconcile this byte count as well as the ceilings.
-        assert_eq!(total, 15992);
+        assert_eq!(total, 15913);
         Ok(())
     }
 
@@ -1898,6 +1898,7 @@ mod tests {
                 REFRESH_TOOL_NAME,
                 &[
                     "shared check authority",
+                    "omitting `base` returns to the default branch",
                     "never edits source, executes verification or mutation commands",
                     "cancelled attempt still commits as a completed snapshot when it finishes",
                     "only transport teardown abandons one before it commits",
@@ -2154,7 +2155,33 @@ mod tests {
     }
 
     #[test]
+    fn pre_call_scope_routes_untracked_files_through_staging_or_explicit_diff() -> Result<(), String>
+    {
+        let tools = tools_list_result();
+        for (surface, text) in [
+            ("instructions", INSTRUCTIONS),
+            ("refresh", json_str(&tools, "/tools/1/description")?),
+        ] {
+            for required in [
+                "committed input only",
+                "staged and unstaged tracked edits only",
+                "Untracked files need staging/intent-to-add",
+                "git add -N <paths>",
+                "before `--worktree`, or explicit `--diff`",
+            ] {
+                if !text.contains(required) {
+                    return Err(format!(
+                        "{surface} lost the input-scope route {required:?}: {text}"
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn instructions_name_the_progressive_flow_and_the_cli_route() -> Result<(), String> {
+        assert!(INSTRUCTIONS.starts_with("Flow: call `ripr_workspace_status`"));
         for required in [
             "ripr_workspace_status",
             "ripr_refresh",

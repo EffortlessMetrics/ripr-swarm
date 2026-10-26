@@ -285,7 +285,9 @@ fn in_generic_arguments(masked: &str, at: usize) -> bool {
 
 /// Byte ranges of `stringify!(..)` arguments: the tokens become text and are
 /// never evaluated, so an operator inside runs no impl.
-fn stringified_ranges(masked: &str) -> Vec<std::ops::Range<usize>> {
+pub(in crate::analysis::classify) fn stringified_ranges(
+    masked: &str,
+) -> Vec<std::ops::Range<usize>> {
     let bytes = masked.as_bytes();
     let mut ranges = Vec::new();
     for (start, _) in masked.match_indices("stringify") {
