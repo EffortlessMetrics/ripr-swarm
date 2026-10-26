@@ -2,21 +2,32 @@ use super::evidence::{AssertionRefusalNote, ClassifiedProbeEvidence};
 use crate::analysis::classify::{
     ASSERTION_CONTEXT_UNESTABLISHED, ProbeContext, body_contains_owner_call,
     ensure_unknown_stop_reason, exact_error_variant, exact_oracle_gap_next_step,
-    is_partial_eq_method, missing_evidence, recommended_next_step, stop_reasons,
-    wrapper_error_seam_expression,
+    is_partial_eq_method, missing_evidence, oracle_crediting_relations, recommended_next_step,
+    stop_reasons, wrapper_error_seam_expression,
 };
 use crate::analysis::rust_index::TestSummary;
 use crate::domain::*;
+use crate::value_origins::LocatedActivationEvidence as ActivationEvidence;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 const STATIC_UNKNOWN_UNREACHED_NEXT_STEP: &str = "No static test path reaches this change; a test may still reach it through paths ripr cannot follow.";
 const PROXIMITY_ONLY_INSPECTION_NEXT_STEP: &str = "The indexed related tests do not establish a call to the changed owner. Inspect existing tests, doctests and examples before changing assertions; they may already constrain the changed behavior. Add or strengthen a test only if that inspection finds a gap.";
 
+#[cfg(test)]
 pub(in crate::analysis) fn build_finding(
     context: &ProbeContext<'_>,
     class: ExposureClass,
+    evidence: ClassifiedProbeEvidence,
+) -> Finding {
+    build_finding_with_origins(context, class, evidence, None)
+}
+
+pub(in crate::analysis) fn build_finding_with_origins(
+    context: &ProbeContext<'_>,
+    class: ExposureClass,
     mut evidence: ClassifiedProbeEvidence,
+    origins: Option<&std::sync::Mutex<crate::value_origins::ValueOrigins>>,
 ) -> Finding {
     let missing = missing_evidence(
         context.probe,
@@ -119,14 +130,27 @@ pub(in crate::analysis) fn build_finding(
         Some("Inspect existing tests for activation of the changed `?` exit and whether their oracle constrains that path; static activation is unestablished.".to_string())
     } else if class == ExposureClass::WeaklyExposed && exact_oracle_covers_direct_sink {
         None
-    } else if class == ExposureClass::WeaklyExposed
-        && evidence.reach.state == StageState::Weak
+    } else if matches!(
+        class,
+        ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed
+    ) && evidence.reach.state == StageState::Weak
         && !context.owner_assertion_shaped
         && !context.related_tests.is_empty()
-        && context
-            .related_tests
-            .iter()
-            .all(|(_, reason)| reason.is_proximity_only())
+        && context.related_tests.iter().all(|(test, reason)| {
+            // Name or path affinity (`owner_named_test`, `import_path_affinity`,
+            // `fixture_owner_affinity`) never runs the owner either (#10053);
+            // a seam-callee row keeps its own reading. `AssertionTargetAffinity`
+            // for a function owner is not emitted in diff mode (it needs a
+            // non-function owner), so it does not reach this arm in practice.
+            *reason != crate::domain::RelationReason::SeamCalleeCall
+                && !reason.establishes_reach(context.owner_fn.is_some())
+                // A row that reaches the owner by known implicit dispatch
+                // (`==`, `format!`, an operator) is not an inspection-only
+                // pointer, even when its relation reason is proximity-only.
+                && !evidence
+                    .implicit_dispatch_tests
+                    .contains(&(test.file.clone(), test.name.clone()))
+        })
         && !wrapper_error_seam_expression(&[context.probe.expression.as_str()])
     {
         // Proximity is an inspection pointer, not a finding that an
@@ -244,7 +268,8 @@ pub(in crate::analysis) fn build_finding(
         ));
     }
 
-    Finding {
+    let (activation, files) = evidence.activation.into_public();
+    let finding = Finding {
         analysis_scope: crate::domain::AnalysisScope::Diff,
         id: context.probe.id.0.clone(),
         canonical_gap: None,
@@ -255,7 +280,7 @@ pub(in crate::analysis) fn build_finding(
         evidence: evidence_lines,
         missing,
         flow_sinks: evidence.flow_sinks,
-        activation: evidence.activation,
+        activation,
         stop_reasons,
         related_tests_matched_total: Some(evidence.related_tests_matched_total),
         related_tests,
@@ -275,7 +300,15 @@ pub(in crate::analysis) fn build_finding(
         // evidence; this constructor has none, so the disposition stays the
         // explicit unknown (#3280).
         source_currentness: crate::domain::SourceCurrentness::UnresolvedSubject,
+    };
+    let receipt =
+        origins.and_then(|_| crate::value_origins::ValueOrigins::prepare(&finding, files));
+    if let (Some(origins), Some(receipt)) = (origins, receipt)
+        && let Ok(mut origins) = origins.lock()
+    {
+        origins.insert_receipt(receipt);
     }
+    finding
 }
 
 /// Which matched rows `reveal` left without a confirmed observation of the
@@ -327,8 +360,15 @@ fn annotate_related_test_misses(
             || implicit_dispatch_tests.contains(&(test.file.clone(), test.name.clone()))
     };
     let facts = &activation.missing_discriminators;
-    let boundary = input_boundary_fact(facts, family).is_some();
-    let exact = exact_assertion_fact(facts, family).is_some();
+    // The facts are finding-wide, but this producer assigns `missing_input` /
+    // `missing_exact_assertion` to every oracle-bearing, non-weak row of the
+    // finding on that one fact, so it applies to each of those rows. Attach
+    // it explicitly to each row it is assigned to (#5564); the renderer never
+    // reads the finding-wide list.
+    let boundary_fact = input_boundary_fact(facts, family);
+    let exact_fact = exact_assertion_fact(facts, family);
+    let boundary = boundary_fact.is_some();
+    let exact = exact_fact.is_some();
     let strongest_rank = related_tests
         .iter()
         .filter(|test| test.miss.is_none() && test.oracle.is_some())
@@ -342,12 +382,13 @@ fn annotate_related_test_misses(
         // assertion-level reason `reveal` recorded first
         // (`assertion_not_credited`) would point the reader at assertion
         // admission instead of the missing call. An `assertion_not_observing`
-        // row keeps its miss: that value is what marks it examined-only
-        // (`RelatedTest::is_unmatched`), and the no-static-path reach limit
-        // and fix-site selection read `oracle_related_tests` through it.
+        // row keeps its miss: the examined-only row
+        // (`RelatedTest::is_examined_only`, the explicit role, #5563) is
+        // skipped here, and the no-static-path reach limit and fix-site
+        // selection read `oracle_related_tests` through that role.
         for test in related_tests
             .iter_mut()
-            .filter(|test| !reaches(test) && !test.is_unmatched())
+            .filter(|test| !reaches(test) && test.is_contributing())
         {
             test.miss = Some(RelatedTestMiss::NoCallPath);
         }
@@ -371,8 +412,10 @@ fn annotate_related_test_misses(
                 ) {
                     Some(RelatedTestMiss::WeakAssertion)
                 } else if boundary {
+                    test.miss_support = boundary_fact.map(RelatedTestMissSupport::from_fact);
                     Some(RelatedTestMiss::MissingInput)
                 } else if exact {
+                    test.miss_support = exact_fact.map(RelatedTestMissSupport::from_fact);
                     Some(RelatedTestMiss::MissingExactAssertion)
                 } else if row_unconfirmed {
                     Some(RelatedTestMiss::ObservationUnconfirmed)
@@ -437,6 +480,10 @@ fn exact_oracle_aligns_with_sink(
     else {
         return false;
     };
+    // #9175: a row whose relation the reveal pass refused to credit (a
+    // name-only relation while another related test reaches the owner) may
+    // be retained for display but cannot align an exact oracle either.
+    let credits = oracle_crediting_relations(related_tests);
     evidence.related_tests.iter().any(|related| {
         let Some(oracle) = related.oracle.as_deref() else {
             return false;
@@ -444,7 +491,7 @@ fn exact_oracle_aligns_with_sink(
         if related.oracle_strength != OracleStrength::Strong {
             return false;
         }
-        let Some((test, _)) = related_tests
+        let Some((test, reason)) = related_tests
             .iter()
             .find(|(summary, _)| summary.name == related.name)
         else {
@@ -452,6 +499,9 @@ fn exact_oracle_aligns_with_sink(
             // changed owner; fail closed instead of crediting token overlap.
             return false;
         };
+        if !credits(*reason) {
+            return false;
+        }
         oracle_text_aligns_with_sink(
             &probe.expression,
             &sink.kind,
@@ -674,16 +724,16 @@ fn refused_assertion_next_step(
 #[cfg(test)]
 mod tests {
     use super::{
-        Unconfirmed, annotate_related_test_misses, bound_identifiers_from_owner_calls,
-        exact_oracle_aligns_with_sink, oracle_binds_sink_identity, oracle_text_aligns_with_sink,
-        sink_kind_corresponds,
+        ActivationEvidence, Unconfirmed, annotate_related_test_misses,
+        bound_identifiers_from_owner_calls, exact_oracle_aligns_with_sink,
+        oracle_binds_sink_identity, oracle_text_aligns_with_sink, sink_kind_corresponds,
     };
     use crate::analysis::classifier::evidence::ClassifiedProbeEvidence;
     use crate::analysis::rust_index::TestSummary;
     use crate::domain::{
-        ActivationEvidence, Confidence, DeltaKind, FlowSinkFact, FlowSinkKind, OracleKind,
-        OracleStrength, Probe, ProbeFamily, ProbeId, RelatedTest, RelationReason, RevealEvidence,
-        RiprEvidence, SourceLocation, StageEvidence, StageState, SymbolId,
+        Confidence, DeltaKind, FlowSinkFact, FlowSinkKind, OracleKind, OracleStrength, Probe,
+        ProbeFamily, ProbeId, RelatedTest, RelationReason, RevealEvidence, RiprEvidence,
+        SourceLocation, StageEvidence, StageState, SymbolId,
     };
     use std::path::PathBuf;
 
@@ -698,6 +748,8 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         }
     }
 
@@ -778,6 +830,8 @@ mod tests {
         let mut rows = vec![
             RelatedTest {
                 miss: Some(crate::domain::RelatedTestMiss::AssertionNotObserving),
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::ExaminedOnly,
                 relation_reason: Some(RelationReason::SameTestFile),
                 ..matched_row("examined_only", OracleStrength::None)
             },
@@ -836,6 +890,12 @@ mod tests {
         let row = |name: &str, reason: RelationReason, miss| RelatedTest {
             relation_reason: Some(reason),
             miss,
+            // The reveal producer pairs examined-only rows with this miss.
+            role: if miss == Some(crate::domain::RelatedTestMiss::AssertionNotObserving) {
+                crate::domain::RelatedTestRole::ExaminedOnly
+            } else {
+                crate::domain::RelatedTestRole::Contributing
+            },
             ..matched_row(name, OracleStrength::None)
         };
         let mut rows = vec![
@@ -936,6 +996,79 @@ mod tests {
         );
     }
 
+    /// #5564: Rust assigns `missing_input` / `missing_exact_assertion` to
+    /// every eligible row from one finding-wide fact, so it attaches that
+    /// same typed fact to each row it assigns, and only to those rows. The
+    /// miss itself is unchanged by the support (control 9).
+    #[test]
+    fn rust_attaches_the_universal_fact_only_to_rows_it_assigns_the_miss() {
+        use crate::domain::{MissingDiscriminatorFact, RelatedTestMiss, RelatedTestMissSupport};
+        let fact = |value: &str| MissingDiscriminatorFact {
+            value: value.to_string(),
+            reason: "no related test passes the boundary".to_string(),
+            flow_sink: None,
+        };
+        let rows = || {
+            vec![
+                matched_row("strong_a", OracleStrength::Strong),
+                matched_row("weak_b", OracleStrength::Weak),
+                matched_row("strong_c", OracleStrength::Medium),
+            ]
+        };
+        let run = |family: &ProbeFamily, facts: Vec<MissingDiscriminatorFact>| {
+            let mut rows = rows();
+            let activation = ActivationEvidence {
+                missing_discriminators: facts,
+                ..ActivationEvidence::default()
+            };
+            annotate_related_test_misses(
+                &mut rows,
+                &crate::domain::ExposureClass::WeaklyExposed,
+                true,
+                family,
+                &activation,
+                Unconfirmed::Confirmed,
+                &Default::default(),
+            );
+            rows
+        };
+        let support = |value: &str| {
+            Some(RelatedTestMissSupport {
+                value: value.to_string(),
+                flow_sink: None,
+            })
+        };
+
+        let boundary = run(&ProbeFamily::Predicate, vec![fact("len == 0")]);
+        assert_eq!(
+            boundary.iter().map(|row| row.miss).collect::<Vec<_>>(),
+            vec![
+                Some(RelatedTestMiss::MissingInput),
+                Some(RelatedTestMiss::WeakAssertion),
+                Some(RelatedTestMiss::MissingInput),
+            ]
+        );
+        assert_eq!(
+            boundary
+                .iter()
+                .map(|row| row.miss_support.clone())
+                .collect::<Vec<_>>(),
+            vec![support("len == 0"), None, support("len == 0")]
+        );
+
+        let exact = run(&ProbeFamily::ErrorPath, vec![fact("CalcError::TooLarge")]);
+        assert_eq!(exact[0].miss, Some(RelatedTestMiss::MissingExactAssertion));
+        assert_eq!(exact[0].miss_support, support("CalcError::TooLarge"));
+        // The weak row keeps its own reason and no support.
+        assert_eq!(exact[1].miss_support, None);
+
+        // No fact: the verdict-side miss assignment is the same shape as
+        // before, with no support to carry.
+        let none = run(&ProbeFamily::Predicate, Vec::new());
+        assert!(none.iter().all(|row| row.miss_support.is_none()));
+        assert_eq!(none[0].miss, None);
+    }
+
     #[test]
     fn unverified_observation_marks_every_matched_row_unconfirmed() {
         let mut rows = vec![
@@ -991,6 +1124,8 @@ mod tests {
             relation_reason: Some(RelationReason::DirectOwnerCall),
             relation_confidence: Some(crate::domain::RelationConfidence::High),
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         }
     }
 
@@ -1120,6 +1255,48 @@ mod tests {
                 "let err = validate(\"aaaaaaaaaaaa\").unwrap_err();"
             )],
         ));
+    }
+
+    /// #9175: a demoted (name-only) row retained for display cannot align an
+    /// exact oracle while another related test reaches the owner, exactly
+    /// the rule the reveal pass applies to oracle credit.
+    #[test]
+    fn name_only_relation_cannot_align_an_exact_oracle_beside_a_reaching_test() {
+        let probe = probe(ProbeFamily::ReturnValue, "amount");
+        let evidence = evidence(
+            vec![sink(FlowSinkKind::ReturnValue, "amount")],
+            vec![related(
+                "amount_pinned",
+                "assert_eq!(amount, 3)",
+                OracleStrength::Strong,
+            )],
+        );
+        let pinned = test_summary("amount_pinned", "let amount = calculate(5);");
+        let reaching = test_summary("reaches_owner", "calculate(1);");
+        let aligns = |reason: RelationReason, with_reaching: bool| {
+            let mut paired = vec![(&pinned, reason)];
+            if with_reaching {
+                paired.push((&reaching, RelationReason::DirectOwnerCall));
+            }
+            exact_oracle_aligns_with_sink(&probe, Some("calculate"), &paired, &evidence)
+        };
+        assert!(aligns(RelationReason::DirectOwnerCall, true), "setup");
+        assert!(
+            !aligns(RelationReason::WeakTokenSubstring, true),
+            "a demoted row beside a reaching test must not align"
+        );
+        assert!(
+            !aligns(RelationReason::WeakTokenSubstring, false),
+            "a name-token row never aligns, even alone (#9169)"
+        );
+        assert!(
+            !aligns(RelationReason::OwnerNamedTest, true),
+            "an owner-named row beside a reaching test must not align"
+        );
+        assert!(
+            aligns(RelationReason::OwnerNamedTest, false),
+            "with no reaching test the owner-named credit rule is unchanged"
+        );
     }
 
     #[test]

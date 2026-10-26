@@ -1,0 +1,12 @@
+diff --git a/reads/audit.py b/reads/audit.py
+--- a/reads/audit.py
++++ b/reads/audit.py
+@@ -5,7 +5,7 @@ log = logging.getLogger("reads.audit")
+ 
+ def low_balance(balance):
+     if balance < 10:
+-        log.warning("low balance: %s", balance)
++        log.warning("balance low: %s", balance)
+         return False
+     return True
+ 

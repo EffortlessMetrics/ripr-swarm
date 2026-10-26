@@ -1,0 +1,56 @@
+{
+  "case_id": "perl-testdeep-tag-list-bag",
+  "subject_id": "authored-perl-testdeep-inventory",
+  "diff": "cases/perl-testdeep-tag-list-bag.diff",
+  "anchor": {
+    "file": "lib/Inventory.pm",
+    "line": 22
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "ordering",
+  "test_shape": "testdeep_bag_ignores_order",
+  "hard_case": "bag() ignores order, so an order change survives but a changed membership does not.",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "prove -l t",
+    "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43, Test::Deep 1.204, Moose 2.2207",
+    "mutants": [
+      {
+        "replacement": "[reverse sort @tags]",
+        "mutated_line": "return [reverse sort @tags];",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the order reverses"
+      },
+      {
+        "replacement": "[sort @tags, 'z']",
+        "mutated_line": "return [sort @tags, 'z'];",
+        "outcome": "tests_failed",
+        "failing_test": "t/inventory.t: tags are the same set",
+        "equivalence_review": "not equivalent: an extra tag appears"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "cmp_deeply(tag_list(qw(b a c)), bag(qw(a b c))) catches an extra element but not a reversed order. Spec cells: RIPR-SPEC-0064 oracle strength (bag).",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "reachable_unrevealed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "perl_facts": {
+    "packet": "packets/perl-testdeep-tag-list-bag.json",
+    "sha256": "4eb26defc41c67eee8f1159941223a7211f8693f529dd14d1d9cec25947ad141",
+    "provenance": "producer"
+  }
+}

@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -6,7 +6,7 @@ pub fn fits_edge(width: usize, limit: usize) -> bool {
+ }
+ 
+ pub fn fits_semicolon(width: usize, limit: usize) -> bool {
+-    width <= limit
++    limit >= width
+ }
+ 
+ pub fn fits_far(width: usize, limit: usize) -> bool {

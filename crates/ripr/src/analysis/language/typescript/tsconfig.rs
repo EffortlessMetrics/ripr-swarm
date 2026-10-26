@@ -232,6 +232,48 @@ impl TsAliasMapLoadGap {
 }
 
 impl TsAliasMap {
+    /// Deterministic content digest for cache keys (the export-facts cache
+    /// keys its entries by every input that can change resolution
+    /// outcomes). `literal_entries` iterates in sorted order because
+    /// `HashMap` iteration order is not stable; the remaining fields are
+    /// order-stable (`Vec`, `BTreeMap`, `BTreeSet`) and hash directly.
+    pub(crate) fn cache_digest(&self) -> (u64, u64) {
+        use std::hash::{Hash, Hasher};
+        let mut first = std::collections::hash_map::DefaultHasher::new();
+        let mut second = std::collections::hash_map::DefaultHasher::new();
+        first.write_u8(0xA7);
+        second.write_u8(0x5C);
+        self.root.hash(&mut first);
+        self.base_url.hash(&mut first);
+        self.base_url_absolute.hash(&mut first);
+        self.tsconfig_loaded.hash(&mut first);
+        let mut literals: Vec<(&String, &Option<String>)> = self.literal_entries.iter().collect();
+        literals.sort();
+        for (key, value) in literals {
+            key.hash(&mut first);
+            value.hash(&mut first);
+        }
+        for glob in &self.glob_entries {
+            format!("{glob:?}").hash(&mut first);
+        }
+        format!("{:?}", self.packages).hash(&mut first);
+        format!("{:?}", self.packages).hash(&mut second);
+        for glob in &self.glob_entries {
+            format!("{glob:?}").hash(&mut second);
+        }
+        let mut literals: Vec<(&String, &Option<String>)> = self.literal_entries.iter().collect();
+        literals.sort();
+        for (key, value) in literals {
+            key.hash(&mut second);
+            value.hash(&mut second);
+        }
+        self.tsconfig_loaded.hash(&mut second);
+        self.base_url_absolute.hash(&mut second);
+        self.base_url.hash(&mut second);
+        self.root.hash(&mut second);
+        (first.finish(), second.finish())
+    }
+
     /// A map that resolves only in-workspace package names: the tsconfig
     /// alias flag is explicitly false or its config did not load (#4554).
     pub(crate) fn workspace_packages_only(

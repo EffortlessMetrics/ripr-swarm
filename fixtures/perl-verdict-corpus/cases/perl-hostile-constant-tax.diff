@@ -1,0 +1,13 @@
+diff --git a/lib/Hostile.pm b/lib/Hostile.pm
+index 505b49c..a24637a 100644
+--- a/lib/Hostile.pm
++++ b/lib/Hostile.pm
+@@ -24,7 +24,7 @@ sub new {
+ 
+ sub tax {
+     my ($amount) = @_;
+-    return $amount * RATE;
++    return RATE * $amount;
+ }
+ 
+ sub greet {

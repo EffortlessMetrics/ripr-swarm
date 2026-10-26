@@ -68,8 +68,12 @@ fs2 = "0.4"
 # Cargo's canonical safe resolver includes OS-home fallback and treats empty
 # CARGO_HOME as fallback; configuration identity must use the same premise (#7573).
 home = "=0.5.12"
+# Block-aware code ranges let comment prose preserve Markdown formatting while
+# neutralizing HTML/mentions outside actual code. No HTML renderer or CLI needed.
+pulldown-cmark = { version = "0.13.5", default-features = false }
 oxc_allocator = { version = "0.130", optional = true }
 oxc_ast = { version = "0.130", optional = true }
+oxc_ast_visit = { version = "=0.130.0", optional = true }
 oxc_parser = { version = "0.130", optional = true }
 oxc_span = { version = "0.130", optional = true }
 ra_ap_syntax = { version = "0.0.349", optional = true }
@@ -137,7 +141,7 @@ process-wrap = { version = "10.0.1", default-features = false, features = [
 [features]
 default = ["lang-rust", "lang-typescript", "lang-python"]
 lang-rust = ["dep:ra_ap_syntax", "dep:unicode-ident"]
-lang-typescript = ["dep:oxc_allocator", "dep:oxc_ast", "dep:oxc_parser", "dep:oxc_span"]
+lang-typescript = ["dep:oxc_allocator", "dep:oxc_ast", "dep:oxc_ast_visit", "dep:oxc_parser", "dep:oxc_span"]
 lang-python = ["dep:rustpython-parser"]
 lang-perl = []
 

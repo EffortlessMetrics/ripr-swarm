@@ -10,6 +10,7 @@ use crate::output;
 
 pub(in crate::cli) fn capabilities(args: &[String]) -> Result<(), String> {
     let mut json_output = false;
+    let mut markdown_output = false;
     let mut language: Option<LanguageId> = None;
     let mut arguments = args.iter();
     while let Some(arg) = arguments.next() {
@@ -19,6 +20,7 @@ pub(in crate::cli) fn capabilities(args: &[String]) -> Result<(), String> {
                 return Ok(());
             }
             "--json" => json_output = true,
+            "--markdown" => markdown_output = true,
             "--language" => {
                 let value = match arguments.next().map(String::as_str) {
                     Some("--help" | "-h" | "--json" | "--language") | None => {
@@ -46,7 +48,15 @@ pub(in crate::cli) fn capabilities(args: &[String]) -> Result<(), String> {
             }
         }
     }
-    if json_output {
+    if markdown_output {
+        if json_output || language.is_some() {
+            return Err(
+                "capabilities --markdown prints the whole-table docs block; it cannot be combined with --json or --language. Run `ripr capabilities --help`."
+                    .to_string(),
+            );
+        }
+        print!("{}", output::language_capabilities::render_markdown());
+    } else if json_output {
         print!("{}", output::language_capabilities::render_json(language));
     } else {
         print!("{}", output::language_capabilities::render_human(language));
@@ -67,6 +77,7 @@ mod tests {
     fn help_and_valid_languages_succeed() {
         assert_eq!(run(&["--help"]), Ok(()));
         assert_eq!(run(&["--language", "python", "--json"]), Ok(()));
+        assert_eq!(run(&["--markdown"]), Ok(()));
     }
 
     #[test]
@@ -84,6 +95,13 @@ mod tests {
         assert!(twice.contains("at most one --language"), "{twice}");
         let unknown = run(&["--language", "cobol"]).err().unwrap_or_default();
         assert!(unknown.contains("cobol"), "{unknown}");
+        for combined in [
+            &["--markdown", "--json"][..],
+            &["--markdown", "--language", "rust"][..],
+        ] {
+            let refused = run(combined).err().unwrap_or_default();
+            assert!(refused.contains("whole-table"), "{refused}");
+        }
         let option = run(&["--bogus"]).err().unwrap_or_default();
         assert!(option.contains("capabilities"), "{option}");
         let positional = run(&["rust"]).err().unwrap_or_default();

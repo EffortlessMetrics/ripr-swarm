@@ -42,9 +42,11 @@ Weakness
 
 Stop reasons:
   - static_probe_unknown — ripr could not model this change well enough to classify it
+    Next: Add a test that calls the changed code and asserts an exact result.
 
 Static limitation
   opaque_custom_assertion_helper — A custom assertion helper hides what is checked, so ripr cannot confirm the assertion would discriminate this change.
+  Next: Assert inline on the changed value with the framework's own assertion (`assert_eq!`, `assert`, `expect`), or make the helper call one ripr can see.
 Drill in:
   ripr explain --root <cwd>/fixtures/python_unittest_list_equal_derived_result/input --diff <cwd>/fixtures/python_unittest_list_equal_derived_result/diff.patch --mode fast probe:src_labels.py:python_preview:6f48e65a
   ripr context --root <cwd>/fixtures/python_unittest_list_equal_derived_result/input --diff <cwd>/fixtures/python_unittest_list_equal_derived_result/diff.patch --mode fast --at probe:src_labels.py:python_preview:6f48e65a

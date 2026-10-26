@@ -1,0 +1,11 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,6 +1,6 @@
+ //! The binding that held the boundary call's result is overwritten before the assertion.
+ 
+-pub fn gate(input: u32) -> bool { input >= 10 }
++pub fn gate(input: u32) -> bool { 10 <= input }
+ 
+ #[cfg(test)]
+ mod tests {

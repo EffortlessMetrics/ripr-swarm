@@ -97,14 +97,15 @@ pub(crate) fn explain_finding_with_config_navigation_mode_and_progress(
         config,
         selector,
     ) {
-        FindingSelection::Unique(finding) => {
-            Ok(output::human::render_finding_with_context_command(
+        FindingSelection::Unique(finding) => Ok(
+            output::human::render_finding_with_context_command_and_files(
                 finding,
                 config,
                 &navigation.context_command(selector),
                 &output.root,
-            ))
-        }
+                output.source_value_files(finding),
+            ),
+        ),
         FindingSelection::Ambiguous(candidates) => Err(ambiguous_finding_match(
             selector,
             &candidates,
@@ -157,6 +158,8 @@ pub(crate) fn no_finding_matched(
     }
     let syntax_hint = if super::selector::location_selector_needs_syntax_hint(selector) {
         " for a file location, use file:line with a nonempty path and a positive decimal line number without leading zeros (for example src/lib.rs:12);"
+    } else if !selector.contains(':') {
+        " a selector is a finding id or a file:line location (for example src/lib.rs:12);"
     } else {
         ""
     };
@@ -567,6 +570,30 @@ mod tests {
             message.contains("`ripr repair 0123456789abcdef`"),
             "{message}"
         );
+    }
+
+    /// #9244 item 10: a bare word with no colon names neither a finding id
+    /// nor a location, so the miss says what a selector looks like. Ids and
+    /// well-formed `file:line` selectors keep their existing wording.
+    #[test]
+    fn bare_word_selector_miss_names_the_accepted_selector_forms() {
+        let message = no_finding_matched("nocolon", "ripr check --json", None);
+        assert!(
+            message.contains("a selector is a finding id or a file:line location"),
+            "{message}"
+        );
+        assert!(message.contains("src/lib.rs:12"), "{message}");
+        assert!(
+            message.contains("to list available finding ids"),
+            "{message}"
+        );
+        for selector in ["probe:not-a-real-id", "src/lib.rs:12"] {
+            let message = no_finding_matched(selector, "ripr check --json", None);
+            assert!(
+                !message.contains("a selector is a finding id"),
+                "{selector}: {message}"
+            );
+        }
     }
 
     #[test]

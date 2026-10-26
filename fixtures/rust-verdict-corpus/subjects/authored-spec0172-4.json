@@ -1,0 +1,41 @@
+{
+  "subject_id": "authored-spec0172-4",
+  "origin": "authored",
+  "version_label": "authored 2026-10-24 for RIPR-SPEC-0168, 0171 and 0172 acceptance examples",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "993c7de768f3ca3b0c7cd87be61d7ea591ec0778b0da9039864fa9687e687ffe"
+    },
+    {
+      "path": "crate_c/Cargo.toml",
+      "sha256": "c232f1d7c79ff2796eb411149b453d80ccb7862cd9b84962d4167fa035688e45"
+    },
+    {
+      "path": "crate_c/src/lib.rs",
+      "sha256": "b795210e85a82ac48643f6485080038da21a94ecd2904c72956a72f13ff2276c"
+    },
+    {
+      "path": "crate_c/tests/crate_c.rs",
+      "sha256": "907ef1fe905d105acc86d12151acb77ce56935a5e603065dc007eea8c4bd1b0a"
+    },
+    {
+      "path": "crates/outer/Cargo.toml",
+      "sha256": "bffe5d652952c54f050e75f010b2cc0883841fbf37af91dc09ffada2f0ba6cb9"
+    },
+    {
+      "path": "crates/outer/inner/Cargo.toml",
+      "sha256": "a38c734696d67ac2fe9adcadbf925c83fd2f8b81ecbe8cd77658ee7420ca4e4d"
+    },
+    {
+      "path": "crates/outer/inner/src/lib.rs",
+      "sha256": "75d8e96520a68a47e1d1b3411c29daf9f6f8c15f55d7b4145cfe4138ee3fcdae"
+    },
+    {
+      "path": "crates/outer/src/lib.rs",
+      "sha256": "7a7d94171877a2f6a65d59097988f74712eb6bbdc6fc304b9ccbca8aad5b9460"
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+diff --git a/shop/fees.py b/shop/fees.py
+--- a/shop/fees.py
++++ b/shop/fees.py
+@@ -15,6 +15,6 @@
+ 
+ 
+ def pos_fee(x):
+-    return x * 3
++    return x * 3 + 0.5
+ 
+ 

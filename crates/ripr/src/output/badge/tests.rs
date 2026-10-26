@@ -89,12 +89,15 @@ fn related_test(name: &str, file: &str, line: usize) -> RelatedTest {
         relation_reason: None,
         relation_confidence: None,
         miss: None,
+        miss_support: None,
+        role: crate::domain::RelatedTestRole::Contributing,
     }
 }
 
 fn check_output(findings: Vec<Finding>) -> CheckOutput {
     let defaults = CheckInput::default();
     CheckOutput {
+        value_origins: Default::default(),
         harness_projections: Vec::new(),
         schema_version: "0.1".to_string(),
         tool: "ripr".to_string(),
@@ -2053,6 +2056,7 @@ fn check_output_with_preview_advisory(
 ) -> CheckOutput {
     let defaults = CheckInput::default();
     CheckOutput {
+        value_origins: Default::default(),
         harness_projections: Vec::new(),
         schema_version: "0.1".to_string(),
         tool: "ripr".to_string(),

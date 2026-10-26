@@ -30,6 +30,9 @@ use super::{
 };
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::rust_index::{FunctionSummary, RustIndex, TestSummary};
+use crate::analysis::sync_memo::SyncMemo;
+use std::collections::BTreeMap;
+use std::sync::Arc;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum FmtTrait {
@@ -77,6 +80,7 @@ pub(super) fn body_may_dispatch_fmt(body: &str) -> bool {
 
 /// Facts about the owner's type and the workspace that hold for every test
 /// of one owner, computed once per owner and probe instead of per test.
+#[derive(Debug)]
 pub(super) struct FmtContext {
     /// Exactly one type named like the owner's self type is declared.
     type_declared_once: bool,
@@ -120,6 +124,66 @@ impl FmtContext {
             competing_to_string,
             shadowed_macros,
         })
+    }
+}
+
+/// Run-scoped memo of [`FmtContext`] by owner slot. The context depends only
+/// on `(index, owner)`, so every probe of one owner shares one build instead
+/// of re-masking the workspace per probe. Bound to the first index it serves:
+/// an owner outside that index, or a query against another index, builds
+/// fresh and is never cached, so a key can only name the same context.
+#[derive(Clone, Debug, Default)]
+pub(in crate::analysis) struct FmtContextMemo {
+    index_identity: SyncMemo<Option<(usize, usize, u64)>>,
+    by_owner_slot: SyncMemo<BTreeMap<usize, Arc<Option<FmtContext>>>>,
+    /// `FmtContext::new` runs through this memo, so a test can tell a hit
+    /// from a rebuild.
+    #[cfg(test)]
+    builds: SyncMemo<usize>,
+}
+
+impl FmtContextMemo {
+    pub(super) fn context(
+        &self,
+        index: &RustIndex,
+        owner: &FunctionSummary,
+    ) -> Arc<Option<FmtContext>> {
+        let Some(slot) = self.slot_key(index, owner) else {
+            return Arc::new(self.build(index, owner));
+        };
+        if let Some(cached) = self.by_owner_slot.borrow().get(&slot) {
+            return Arc::clone(cached);
+        }
+        // Built outside the lock: other owners keep reading while the
+        // workspace is masked. A concurrent duplicate build is identical.
+        let built = Arc::new(self.build(index, owner));
+        Arc::clone(self.by_owner_slot.borrow_mut().entry(slot).or_insert(built))
+    }
+
+    fn build(&self, index: &RustIndex, owner: &FunctionSummary) -> Option<FmtContext> {
+        #[cfg(test)]
+        {
+            *self.builds.borrow_mut() += 1;
+        }
+        FmtContext::new(index, owner)
+    }
+
+    #[cfg(test)]
+    pub(super) fn builds_for_test(&self) -> usize {
+        *self.builds.borrow()
+    }
+
+    fn slot_key(&self, index: &RustIndex, owner: &FunctionSummary) -> Option<usize> {
+        let identity = index.storage_identity();
+        {
+            let mut guard = self.index_identity.borrow_mut();
+            match *guard {
+                None => *guard = Some(identity),
+                Some(bound_identity) if bound_identity != identity => return None,
+                Some(_) => {}
+            }
+        }
+        index.function_slot(owner)
     }
 }
 
@@ -801,8 +865,15 @@ fn binding_has_type(scope: Scope<'_>, binding: &str, self_type: &str) -> bool {
     };
     let pattern = &statement[..eq];
     if let Some(colon) = pattern.find(':') {
-        return type_head(&pattern[colon + 1..])
-            .is_some_and(|(segments, _)| segments.last() == Some(&self_type));
+        // A path-qualified annotation (`other_crate::Merge`) may name a type
+        // of another crate or module that merely shares the local type's
+        // name; only an in-crate prefix keeps the annotation the local type.
+        return type_head(&pattern[colon + 1..]).is_some_and(|(segments, _)| {
+            segments.last() == Some(&self_type)
+                && segments[..segments.len() - 1]
+                    .iter()
+                    .all(|segment| matches!(*segment, "crate" | "self" | "super"))
+        });
     }
     let init = statement[eq + 1..].trim();
     initializer_is_one_head_expr(init)
@@ -1005,6 +1076,279 @@ mod tests {
         reasons
             .iter()
             .any(|(test, reason)| test == name && *reason == RelationReason::DirectOwnerCall)
+    }
+
+    /// Two `fmt` owners (`Alpha`, `Beta`) and one test per type, indexed once.
+    fn two_owner_index() -> RustIndex {
+        let source = "pub struct Alpha;\npub struct Beta;\n";
+        let mut files = std::collections::BTreeMap::new();
+        files.insert(
+            PathBuf::from("src/error.rs"),
+            FileFacts {
+                path: PathBuf::from("src/error.rs"),
+                source: source.into(),
+                ..FileFacts::default()
+            },
+        );
+        RustIndex::from_owned(OwnedRustIndex {
+            functions: vec![
+                fmt_function("src/error.rs", "fmt::Display for Alpha"),
+                fmt_function("src/error.rs", "fmt::Display for Beta"),
+            ],
+            tests: vec![
+                test_with_body("ta", "assert_eq!(Alpha.to_string(), \"a\");"),
+                test_with_body("tb", "assert_eq!(Beta.to_string(), \"b\");"),
+            ],
+            files,
+            ..Default::default()
+        })
+    }
+
+    fn related_names(
+        index: &RustIndex,
+        candidates: &super::super::RelatedTestCandidateIndex,
+        owner: &FunctionSummary,
+    ) -> Vec<String> {
+        super::super::find_related_tests_with_candidate_index(
+            &probe(),
+            Some(owner),
+            index,
+            true,
+            None,
+            None,
+            candidates,
+        )
+        .into_iter()
+        .filter(|(_, reason)| *reason == RelationReason::DirectOwnerCall)
+        .map(|(test, _)| test.name.clone())
+        .collect()
+    }
+
+    #[test]
+    fn fmt_context_is_built_once_per_owner_across_probes() {
+        let index = two_owner_index();
+        let candidates = super::super::RelatedTestCandidateIndex::new(&index);
+        let memo = candidates.fmt_contexts();
+        let owners: Vec<&FunctionSummary> = index.functions().iter().collect();
+        assert_eq!(owners.len(), 2, "fixture must index both fmt owners");
+        assert_eq!(memo.builds_for_test(), 0);
+
+        // Several probes of the Alpha owner share one build.
+        for _ in 0..4 {
+            assert_eq!(related_names(&index, &candidates, owners[0]), ["ta"]);
+        }
+        assert_eq!(memo.builds_for_test(), 1, "four probes, one owner");
+
+        // A different owner builds its own context and stays independent.
+        for _ in 0..3 {
+            assert_eq!(related_names(&index, &candidates, owners[1]), ["tb"]);
+        }
+        assert_eq!(memo.builds_for_test(), 2, "two owners, two builds");
+
+        // Interleaved re-queries of both owners hit the cache.
+        assert_eq!(related_names(&index, &candidates, owners[0]), ["ta"]);
+        assert_eq!(related_names(&index, &candidates, owners[1]), ["tb"]);
+        assert_eq!(memo.builds_for_test(), 2);
+    }
+
+    #[test]
+    fn fmt_context_memo_never_serves_another_index_or_foreign_owner() {
+        let index = two_owner_index();
+        let other = two_owner_index();
+        let candidates = super::super::RelatedTestCandidateIndex::new(&index);
+        let memo = candidates.fmt_contexts();
+        let owners: Vec<&FunctionSummary> = index.functions().iter().collect();
+        assert_eq!(owners.len(), 2, "fixture must index both fmt owners");
+        let owner = owners[0];
+        assert!(memo.context(&index, owner).is_some());
+        // A clone of the owner is not an element of the index: built fresh.
+        let foreign = owner.clone();
+        assert!(memo.context(&index, &foreign).is_some());
+        assert_eq!(memo.builds_for_test(), 2, "foreign owner is not cached");
+        assert!(memo.context(&other, owner).is_some());
+        assert_eq!(memo.builds_for_test(), 3, "another index is not cached");
+        assert!(memo.context(&index, owner).is_some());
+        assert_eq!(memo.builds_for_test(), 3, "bound index still hits");
+    }
+
+    /// Related tests of a helper `sanitize_label` whose one caller is the
+    /// `fmt` of `impls[0]`, reached through a one-hop helper chain (#8999).
+    fn helper_reasons(impls: &[&str], bodies: &[&str]) -> Vec<(String, RelationReason)> {
+        helper_reasons_via(impls, bodies, &[(true, false)])
+    }
+
+    /// Like `helper_reasons`, with the chain given from the helper upward as
+    /// `(is_fmt_hop, through_macro)`. A non-fmt hop is a free `wrapper`.
+    fn helper_reasons_via(
+        impls: &[&str],
+        bodies: &[&str],
+        hops: &[(bool, bool)],
+    ) -> Vec<(String, RelationReason)> {
+        use crate::analysis::classify::helper_transfer::{HelperChain, HelperHop};
+        let mut files = std::collections::BTreeMap::new();
+        let source = "pub struct Merge;\npub struct Other;\n";
+        files.insert(
+            PathBuf::from("src/error.rs"),
+            FileFacts {
+                path: PathBuf::from("src/error.rs"),
+                source: source.into(),
+                ..FileFacts::default()
+            },
+        );
+        let mut helper = fmt_function("src/error.rs", "unused");
+        helper.id = SymbolId("src/error.rs::sanitize_label".to_string());
+        helper.name = "sanitize_label".to_string();
+        let fmts: Vec<FunctionSummary> = impls
+            .iter()
+            .map(|header| fmt_function("src/error.rs", header))
+            .collect();
+        let chain = HelperChain {
+            hops: hops
+                .iter()
+                .map(|&(is_fmt, through_macro)| {
+                    let mut caller = fmts[0].clone();
+                    if !is_fmt {
+                        caller.id = SymbolId("src/error.rs::wrapper".to_string());
+                        caller.name = "wrapper".to_string();
+                    }
+                    HelperHop {
+                        caller,
+                        call_text: "sanitize_label(l)".to_string(),
+                        arguments: vec!["l".to_string()],
+                        receiver: None,
+                        through_macro,
+                    }
+                })
+                .collect(),
+            stop_above: None,
+        };
+        let mut functions = vec![helper.clone()];
+        functions.extend(fmts);
+        let tests: Vec<TestSummary> = bodies
+            .iter()
+            .enumerate()
+            .map(|(at, body)| test_with_body(&format!("t{at}"), body))
+            .collect();
+        let index = RustIndex::from_owned(OwnedRustIndex {
+            functions,
+            tests,
+            files,
+            ..Default::default()
+        });
+        let mut probe = probe();
+        probe.owner = Some(helper.id.clone());
+        probe.expression = "s.replace('\\n', \" \")".to_string();
+        find_related_tests(&probe, Some(&helper), &index, true, Some(&chain), None)
+            .into_iter()
+            .map(|(test, reason)| (test.name.clone(), reason))
+            .collect()
+    }
+
+    #[test]
+    fn a_helper_called_only_by_display_fmt_is_reached_by_formatting_the_type() {
+        let reasons = helper_reasons(
+            &["fmt::Display for Merge"],
+            &[
+                "let merge: Merge = Merge::new(vec![]);\nassert_eq!(\n    merge.to_string(),\n    \"a\"\n);",
+                "let merge = Merge { labels: vec![] };\nassert_eq!(format!(\"{}\", merge), \"a\");",
+                // Refused: another type, the other trait's placeholder, an
+                // untyped factory, and a test that never formats the value.
+                "let other = Other;\nassert_eq!(other.to_string(), \"a\");",
+                "let merge = Merge;\nassert_eq!(format!(\"{:?}\", merge), \"a\");",
+                "let merge = Merge::new(vec![]);\nassert_eq!(merge.to_string(), \"a\");",
+                "let merge = Merge;\nassert_eq!(merge.len(), 0);",
+                // A path-qualified annotation names the local type only with
+                // an in-crate prefix.
+                "let merge: crate::Merge = Merge;\nassert_eq!(merge.to_string(), \"a\");",
+                "let merge: other_crate::Merge = Merge;\nassert_eq!(merge.to_string(), \"a\");",
+                "let merge: shared::Merge = Merge;\nassert_eq!(merge.to_string(), \"a\");",
+            ],
+        );
+        let helper_calls: Vec<&str> = reasons
+            .iter()
+            .filter(|(_, reason)| *reason == RelationReason::HelperOwnerCall)
+            .map(|(name, _)| name.as_str())
+            .collect();
+        assert_eq!(helper_calls, ["t0", "t1", "t6"], "{reasons:?}");
+        assert!(
+            !reasons
+                .iter()
+                .any(|(_, reason)| *reason == RelationReason::DirectOwnerCall),
+            "reaching a helper through fmt is never a direct owner call: {reasons:?}"
+        );
+    }
+
+    #[test]
+    fn a_macro_argument_hop_carries_no_formatting_reach() {
+        let body = "let merge: Merge = Merge::new(vec![]);\nassert_eq!(merge.to_string(), \"a\");";
+        let direct = helper_reasons_via(&["fmt::Display for Merge"], &[body], &[(true, false)]);
+        assert!(
+            direct
+                .iter()
+                .any(|(_, reason)| *reason == RelationReason::HelperOwnerCall),
+            "premise: the same test reaches through a call hop: {direct:?}"
+        );
+        let through_macro =
+            helper_reasons_via(&["fmt::Display for Merge"], &[body], &[(true, true)]);
+        // The macro hop sits below the fmt hop: the helper is only named as a
+        // macro token argument of `wrapper`, which `fmt` calls.
+        let below = helper_reasons_via(
+            &["fmt::Display for Merge"],
+            &[body],
+            &[(false, true), (true, false)],
+        );
+        assert!(
+            !below
+                .iter()
+                .any(|(_, reason)| *reason == RelationReason::HelperOwnerCall),
+            "{below:?}"
+        );
+        let above = helper_reasons_via(
+            &["fmt::Display for Merge"],
+            &[body],
+            &[(false, false), (true, false)],
+        );
+        assert!(
+            above
+                .iter()
+                .any(|(_, reason)| *reason == RelationReason::HelperOwnerCall),
+            "premise: direct hops below the fmt hop keep the reach: {above:?}"
+        );
+        assert!(
+            !through_macro
+                .iter()
+                .any(|(_, reason)| *reason == RelationReason::HelperOwnerCall),
+            "{through_macro:?}"
+        );
+    }
+
+    #[test]
+    fn a_helper_chain_entry_that_is_not_a_fmt_owner_is_not_reached_by_formatting() {
+        // The chain entry is `fmt` of a trait other than Display/Debug.
+        let reasons = helper_reasons(
+            &["fmt::LowerHex for Merge"],
+            &["let merge = Merge;\nassert_eq!(merge.to_string(), \"a\");"],
+        );
+        assert!(
+            !reasons
+                .iter()
+                .any(|(_, reason)| *reason == RelationReason::HelperOwnerCall),
+            "{reasons:?}"
+        );
+    }
+
+    #[test]
+    fn two_display_impls_for_the_entry_type_fail_closed() {
+        let reasons = helper_reasons(
+            &["fmt::Display for Merge", "fmt::Display for Merge"],
+            &["let merge = Merge;\nassert_eq!(merge.to_string(), \"a\");"],
+        );
+        assert!(
+            !reasons
+                .iter()
+                .any(|(_, reason)| *reason == RelationReason::HelperOwnerCall),
+            "{reasons:?}"
+        );
     }
 
     #[test]

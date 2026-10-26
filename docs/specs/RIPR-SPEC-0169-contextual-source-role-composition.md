@@ -94,6 +94,19 @@ file occurrence under a closed rule set:
   in `facts/role_composition.rs`. Non-claim: crate-root detection (`CrateRoots`) ignores
   `autobins`/`autotests`/`autobenches`/`autoexamples = false`, so a disabled
   autodiscovered layout file is still treated as a root.
+- **Role agreement is not unique execution context.** Retain every approved
+  module parent in a request-local graph before choosing the deterministic
+  role-explanation chain. Assertion admission checks every resolved ancestor
+  declaration and relevant macro context, including descendants of a shared
+  file. Crate-root-dependent positive owner attribution requires a unique
+  established root; independently established same-source local identity stays
+  supported. Possible shadow checks include all possible roots and remain conservative when
+  placement is unknown. Qualified macro and trusted-import certification cannot
+  use only a recorded subset while unresolved syntax disables complete routing.
+  This does not expand the role exemption or grant new Cargo target roles.
+  Missing/deserialized graph authority, missing ancestors, cycles and the
+  existing depth bound refuse trust until composition rebuilds the graph;
+  file-fact serialization and source-role provenance stay unchanged.
 - **Exclusive cfg alternatives are one owner.** Exactly two `mod name;`
   declarations in one parent file that resolve to the same child, have the same
   declared name and test requirement, and carry complementary simple guards

@@ -602,12 +602,15 @@ Performance:
 "#;
 pub(super) const CAPABILITIES_HELP: &str = r#"Show what ripr can establish per language, framework and mode.
 
-Usage: ripr capabilities [--language NAME] [--json]
+Usage: ripr capabilities [--language NAME] [--json | --markdown]
 
 Options:
   --language NAME  Narrow to one language: rust, typescript, javascript,
                    python or perl.
   --json           Emit the versioned machine-readable registry.
+  --markdown       Emit the generated registry block for
+                   docs/status/SUPPORT_TIERS.md (whole table; not with
+                   --json or --language).
 
 Each cell names a language, framework, mode (diff or repo) and family
 (static_facts or repair_routing) with one closed support state, a tier

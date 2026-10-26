@@ -221,7 +221,7 @@ pub(super) fn add_canonical_group_data(
                         "miss": test.miss.map(|miss| miss.as_str()),
                         "why": crate::output::related_test_miss::related_test_miss_reason(
                             test,
-                            &finding.activation.missing_discriminators,
+                            &finding.probe.family,
                         ),
                     }))
                     .collect::<Vec<_>>(),
@@ -1202,7 +1202,7 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
     // client has persisted, through the same canonical path as
     // `ripr check --worktree`. Document quarantine remains the independent
     // authority that prevents unsaved buffers from being served as current.
-    let (output, origins, consumed_sources) =
+    let (output, origins, consumed_sources, language_view) =
         match check_workspace_worktree_with_sources_open_rust_paths_and_progress(
             input,
             config.repo_config(),
@@ -1505,6 +1505,7 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
         unavailable_adapter: super::state::UnavailableAdapterCoverage::from_preview_advisories(
             &output.preview_language_advisories,
         ),
+        language_view,
     };
     Ok(WorkspaceDiagnostics { snapshot, batches })
 }
@@ -1707,6 +1708,7 @@ fn git_timeout_limited_diagnostics(
         component_outcomes,
         out_of_scope_test_file_findings: 0,
         unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
+        language_view: None,
     };
     WorkspaceDiagnostics {
         snapshot,
@@ -1812,6 +1814,7 @@ pub(super) fn oversized_diff_limited_diagnostics(
         component_outcomes,
         out_of_scope_test_file_findings: 0,
         unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
+        language_view: None,
     };
     WorkspaceDiagnostics { snapshot, batches }
 }
@@ -3370,7 +3373,7 @@ fn examined_test_related_information(
         .filter_map(|test| {
             let why = crate::output::related_test_miss::related_test_miss_reason(
                 test,
-                &finding.activation.missing_discriminators,
+                &finding.probe.family,
             )?;
             related_information_row(
                 root,
@@ -5217,6 +5220,8 @@ mod seam_diagnostic_tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         };
 
         let path = absolute_related_test_path(Path::new("/repo"), &test);
@@ -5235,6 +5240,8 @@ mod seam_diagnostic_tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         };
 
         let path = absolute_related_test_path(Path::new("/repo"), &test);
@@ -5572,6 +5579,8 @@ mod diagnostic_policy_tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         });
 
         let message = lsp_message(&finding);
@@ -5603,6 +5612,8 @@ mod diagnostic_policy_tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         });
 
         let grouped = finding_diagnostics_by_uri_with_profile(
@@ -5655,6 +5666,8 @@ mod diagnostic_policy_tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             });
             finding
         };
@@ -6308,7 +6321,10 @@ mod diagnostic_policy_tests {
         // message names the current profile, so the agent can see it is not
         // "full".
         let outcome = seam_inventory_not_enabled_outcome(&LspAnalysisConfig::default());
-        let payload = outcome.status_payload(Some("snapshot:1"));
+        let payload = outcome.status_payload(
+            Some("snapshot:1"),
+            &crate::lsp::client_features::ClientFeatureProfile::unsupported(),
+        );
         if payload["state"].as_str() != Some("unavailable")
             || payload["kind"].as_str() != Some("seam_diagnostics_not_enabled")
         {
@@ -6343,7 +6359,10 @@ mod diagnostic_policy_tests {
             enable_seam_diagnostics: false,
             ..LspAnalysisConfig::default()
         };
-        let payload = seam_inventory_not_enabled_outcome(&config).status_payload(Some("s:2"));
+        let payload = seam_inventory_not_enabled_outcome(&config).status_payload(
+            Some("s:2"),
+            &crate::lsp::client_features::ClientFeatureProfile::unsupported(),
+        );
         let recovery = payload["recovery"].as_str().unwrap_or_default();
         if !recovery.contains("seam_diagnostics = true") {
             return Err(format!(
@@ -6359,7 +6378,10 @@ mod diagnostic_policy_tests {
             ..LspAnalysisConfig::default()
         };
         config.repo_config.languages.enabled = vec![LanguageId::TypeScript];
-        let payload = seam_inventory_not_enabled_outcome(&config).status_payload(Some("s:3"));
+        let payload = seam_inventory_not_enabled_outcome(&config).status_payload(
+            Some("s:3"),
+            &crate::lsp::client_features::ClientFeatureProfile::unsupported(),
+        );
         let recovery = payload["recovery"].as_str().unwrap_or_default();
         if !recovery.contains("rust") {
             return Err(format!(
@@ -6374,7 +6396,10 @@ mod diagnostic_policy_tests {
             session_options: Some(serde_json::json!({ "diagnosticProfile": "actionable" })),
             ..LspAnalysisConfig::default()
         };
-        let payload = seam_inventory_not_enabled_outcome(&config).status_payload(Some("s:4"));
+        let payload = seam_inventory_not_enabled_outcome(&config).status_payload(
+            Some("s:4"),
+            &crate::lsp::client_features::ClientFeatureProfile::unsupported(),
+        );
         let recovery = payload["recovery"].as_str().unwrap_or_default();
         if !recovery.contains("session setting") || !recovery.contains("ripr.diagnosticProfile") {
             return Err(format!(
@@ -6401,7 +6426,10 @@ mod diagnostic_policy_tests {
             session_options: Some(serde_json::json!({ "seamDiagnostics": false })),
             ..LspAnalysisConfig::default()
         };
-        let payload = seam_inventory_not_enabled_outcome(&config).status_payload(Some("s:5"));
+        let payload = seam_inventory_not_enabled_outcome(&config).status_payload(
+            Some("s:5"),
+            &crate::lsp::client_features::ClientFeatureProfile::unsupported(),
+        );
         let recovery = payload["recovery"].as_str().unwrap_or_default();
         if !recovery.contains("session setting") || !recovery.contains("ripr.seamDiagnostics") {
             return Err(format!(
@@ -6515,6 +6543,8 @@ mod lsp_next_step_parity_tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             }],
             recommended_next_step: Some(
                 "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `amount == threshold`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.".to_string(),
@@ -6713,6 +6743,7 @@ mod delivery_tests {
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
+            language_view: None,
         })
     }
 

@@ -236,6 +236,7 @@ const RIPR_CLIENT_COMMANDS: readonly string[] = [
   'ripr.openRelatedTest',
   'ripr.openReport',
   'ripr.openSettings',
+  'ripr.refreshDiagnostics',
   'ripr.restartServer',
   'ripr.selectWorkspaceRoot',
   'ripr.showOutput',

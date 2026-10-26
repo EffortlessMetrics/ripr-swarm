@@ -181,7 +181,7 @@ A test that calls a function only through a simple local alias, such as
 `let from_isoywd = NaiveDate::from_isoywd_opt; from_isoywd(..)`, gains one
 call fact for the aliased function, spelled as the aliased path call
 (`NaiveDate::from_isoywd_opt(..)`) from the alias call's own bytes. It is
-reach evidence only: it never strengthens an oracle, and argument and
+reach evidence only: the call fact never strengthens an oracle, and argument and
 free-function readers see the call exactly as if the path had been written.
 The alias is accepted only when all of these hold, and otherwise adds nothing:
 
@@ -194,8 +194,22 @@ The alias is accepted only when all of these hold, and otherwise adds nothing:
   nested `fn`, macro or field mention, or passing the alias along);
 - the call's parentheses close on the same line.
 
-Block scope is not modeled, so any same-named mention disables the alias for
-the whole body; at most 64 aliases are considered per body. The path is
+Under #9478 the same reader also accepts an explicit safe Rust `fn(..)`
+pointer annotation on an unattributed immutable identifier declaration in the
+test's root statement list. No other declaration may bind that identifier,
+including a raw spelling, and body-local glob imports refuse the alias.
+A bare target then additionally requires that the parsed
+body bind no value of its name; this excludes a local closure, function or
+pointer parameter. Unsafe/ABI pointer types, casts and type aliases remain
+unresolved. Every mutation, shadow, forwarding and use-bound above still
+applies. RIPR-SPEC-0197 separately admits a literal whole-value assertion of
+such a pointer's scalar free-function result; the call fact alone grants no
+oracle credit.
+
+Legacy untyped aliases keep their body-wide mention rule. Typed aliases use the
+root declaration bounds above; pins additionally require the adjacent original
+root assertion under RIPR-SPEC-0197. At most 64 aliases are considered per body;
+typed candidates also consume that parse budget when refused. The path is
 matched by its last segment name only and is never resolved to a definition.
 
 ## Non-Goals

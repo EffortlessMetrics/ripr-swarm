@@ -36,7 +36,7 @@
 //!
 //! PR C projection: the same pass also emits the public `Finding`s
 //! ([`PythonRepoEvidence::findings`]) by running the diff-mode classifier
-//! (`classify_change_with_context`) over each representative behavior line,
+//! (`classify_change_with_value_origins`) over each representative behavior line,
 //! so repo-mode findings are indistinguishable in shape from diff-mode
 //! findings and retain native Python identity. [`partial_disclosure`]
 //! renders the typed partial/capped run state for the pipeline's shared
@@ -50,7 +50,7 @@
 //! [`PythonRepoLimitation::ParseFailure`] rows today.
 
 use super::super::assertion_selection::PythonAssertionFocus;
-use super::super::classify::{PythonNoBehaviorContext, classify_change_with_context};
+use super::super::classify::{PythonNoBehaviorContext, classify_change_with_value_origins};
 use super::super::probe_shape::{canonical_python_gap_for, classify_probe_shape};
 use super::super::reexports::apply_package_reexports_from;
 use super::super::related_tests::{
@@ -64,7 +64,7 @@ use super::super::source_facts::{
 };
 use super::super::source_utils::normalized_path;
 use super::super::static_limits::{
-    implicit_dunder_dispatch_limit, static_limit_for_focused_change,
+    implicit_dunder_dispatch_limit, module_object_rebind_limit, static_limit_for_focused_change,
 };
 use super::super::workspace::owner_for_changed_line;
 use super::super::{PythonFramework, PythonOwner, PythonTest};
@@ -87,6 +87,7 @@ use std::path::{Path, PathBuf};
 /// disagree about what the run analyzed.
 #[derive(Clone, Debug, PartialEq)]
 pub(in crate::analysis::language::python) struct PythonRepoEvidence {
+    pub(in crate::analysis::language::python) value_origins: crate::value_origins::ValueOrigins,
     /// Post-analysis run status. Only [`PythonRepoRunStatus::Complete`] can
     /// back a full-denominator claim.
     pub(in crate::analysis::language::python) status: PythonRepoRunStatus,
@@ -108,7 +109,7 @@ pub(in crate::analysis::language::python) struct PythonRepoEvidence {
     pub(in crate::analysis::language::python) limitations: Vec<PythonRepoLimitation>,
     /// Public `Finding` projection over the production behavior items,
     /// in production-file order and ascending line order within each file.
-    /// Built by `classify_change_with_context` — the same classifier diff
+    /// Built by `classify_change_with_value_origins` — the same classifier diff
     /// mode uses — so findings are shape-identical to diff-mode findings
     /// with native Python identity (`language: python`, preview status,
     /// `gap:python:` canonical gaps); no Rust `SeamKind` bridge (#3039).
@@ -265,6 +266,7 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
     let mut limitations = Vec::new();
     let mut owners = Vec::new();
     let mut findings = Vec::new();
+    let mut value_origins = crate::value_origins::ValueOrigins::default();
 
     // No-subject and disabled runs analyze nothing: an honest zero with the
     // status reason, never fabricated limitations (#3554).
@@ -273,6 +275,7 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
         PythonRepoRunStatus::NoPythonSource | PythonRepoRunStatus::Disabled
     ) {
         return PythonRepoEvidence {
+            value_origins,
             status: input.status.clone(),
             counts,
             working_set_limit: input.working_set_limit,
@@ -291,6 +294,7 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
     // Conftests with implicit setup, and every conftest actually read
     // (#6657): a chain conftest that was not read cannot be ruled out.
     let mut implicit_conftests: BTreeSet<PathBuf> = BTreeSet::new();
+    let mut reach_conftests: BTreeSet<PathBuf> = BTreeSet::new();
     let mut read_conftests: BTreeSet<PathBuf> = BTreeSet::new();
 
     // Evidence sources first, so production items can relate against the
@@ -310,6 +314,9 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
                         read_conftests.insert(relative.clone());
                         if facts.conftest_implicit_setup {
                             implicit_conftests.insert(relative.clone());
+                        }
+                        if facts.conftest_declares_fixture_or_hook {
+                            reach_conftests.insert(relative.clone());
                         }
                     }
                     files.push(PythonRepoFileRecord {
@@ -346,6 +353,19 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
         &implicit_conftests,
         |conftest| !read_conftests.contains(conftest) && root.join(conftest).is_file(),
     );
+    super::super::fixtures::mark_implicit_reach_by_conftest(
+        &mut all_tests,
+        &reach_conftests,
+        |conftest| !read_conftests.contains(conftest) && root.join(conftest).is_file(),
+    );
+    super::super::fixtures::taint_admission_by_conftest_declarations(
+        &mut all_tests,
+        &reach_conftests,
+        |conftest| !read_conftests.contains(conftest) && root.join(conftest).is_file(),
+    );
+    super::super::fixtures::record_bare_sibling_imports(&mut all_tests, |path| {
+        root.join(path).exists()
+    });
 
     // Production subjects: owners + behavior items, related against the
     // evidence pool built above. The public Finding projection is built in
@@ -418,6 +438,7 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
                     &all_tests,
                     &mut limitations,
                     &mut findings,
+                    &mut value_origins,
                 );
                 let behavior_item_count = owner_evidence
                     .iter()
@@ -496,6 +517,7 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
     };
 
     PythonRepoEvidence {
+        value_origins,
         status,
         counts,
         working_set_limit: input.working_set_limit,
@@ -580,7 +602,7 @@ fn load_facts_with_source(
 /// with relations matched once per owner against the evidence pool.
 ///
 /// The public `Finding`s are built in the same pass by
-/// [`classify_change_with_context`] — the same classifier diff mode runs on
+/// [`classify_change_with_value_origins`] — the same classifier diff mode runs on
 /// a changed line — so repo-mode findings are shape-identical to diff-mode
 /// findings (#3554 PR C). `old_line_text` is `None` (repo mode has no diff
 /// side); the classifier's currentness derivation then records
@@ -591,6 +613,7 @@ fn build_production_file_evidence(
     all_tests: &[PythonTest],
     limitations: &mut Vec<PythonRepoLimitation>,
     findings: &mut Vec<Finding>,
+    value_origins: &mut crate::value_origins::ValueOrigins,
 ) -> Vec<PythonRepoOwnerEvidence> {
     let file_owners = &facts.owners;
     let mut items_per_owner: Vec<Vec<PythonRepoBehaviorItem>> = vec![Vec::new(); file_owners.len()];
@@ -634,7 +657,8 @@ fn build_production_file_evidence(
             });
         }
         items_per_owner[index].push(item);
-        if let Some(mut finding) = classify_change_with_context(
+        let mut finding_origins = crate::value_origins::ValueOrigins::default();
+        if let Some(mut finding) = classify_change_with_value_origins(
             relative,
             line,
             &text,
@@ -646,7 +670,9 @@ fn build_production_file_evidence(
             // the guarded-arm gate (#7392) stays off, matching diff mode
             // before this fix and keeping repo verdicts unchanged.
             None,
+            &mut finding_origins,
         ) {
+            let original_probe = finding.probe.clone();
             // Repo mode classifies every representative behavior line, so
             // identical statements under one owner produce identical probe
             // ids. Suffix the duplicates (.2, .3, ...) the way the repo
@@ -669,6 +695,8 @@ fn build_production_file_evidence(
                 finding.id = suffixed.clone();
                 finding.probe.id.0 = suffixed;
             }
+            finding_origins.rebind_probe(&original_probe, &finding.probe);
+            value_origins.extend(finding_origins);
             // Scope stamp (#5531): consumers holding only a `Finding` look the
             // capability cell up from this, so repo-mode evidence can never
             // borrow the diff-mode repair-routing cell.
@@ -728,13 +756,27 @@ fn build_behavior_item(
     let focus = PythonAssertionFocus::for_change(family.clone(), text, None);
     let related = related_tests_for_candidates(candidates, Some(&focus));
     let related = related.as_slice();
-    let static_limit = static_limit_for_focused_change(text, None, &focus, owner, candidates)
-        .or_else(|| implicit_dunder_dispatch_limit(owner, all_tests, candidates))
-        .map(|limit| limit.kind);
+    let alignment =
+        classify_sink_alignment_with_old(owner, text, None, related, all_tests, false, None);
+    // The same credited test the finding classifier sees, so a live reader
+    // beside a rebinding test is not limited here while its finding is
+    // exposed (#10354).
+    let static_limit =
+        static_limit_for_focused_change(text, None, None, &focus, owner, "", candidates)
+            .or_else(|| {
+                module_object_rebind_limit(
+                    text,
+                    None,
+                    owner,
+                    candidates,
+                    alignment.credited.as_ref().filter(|_| alignment.observes()),
+                )
+            })
+            .or_else(|| implicit_dunder_dispatch_limit(owner, all_tests, candidates))
+            .map(|limit| limit.kind);
     let canonical_gap = static_limit
         .is_none()
         .then(|| canonical_python_gap_for(relative, owner, &family, text));
-    let alignment = classify_sink_alignment_with_old(owner, text, None, related, all_tests);
     let strongest = related
         .iter()
         .max_by_key(|test| test.oracle_strength.rank())
@@ -1312,6 +1354,48 @@ mod tests {
             OracleStrength::Unknown
         );
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn module_object_write_is_limited_by_a_rebinding_test_unless_a_live_reader_credits_it()
+    -> Result<(), String> {
+        let route = "from types import SimpleNamespace\n\nresponse = SimpleNamespace(status_code=200)\n\n\ndef checkout(expired):\n    response.status_code = 400\n";
+        let live = "from route import checkout, response\n\n\ndef test_live():\n    checkout(True)\n    assert response.status_code == 400\n";
+        let reload = "import importlib\nimport route\nfrom route import checkout, response\n\n\ndef test_reload():\n    importlib.reload(route)\n    checkout(True)\n    assert response.status_code == 400\n";
+        let limits =
+            |label: &str, tests: &[(&str, &str)]| -> Result<Vec<Option<StaticLimitKind>>, String> {
+                let root = unique_test_root(label);
+                std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+                write_file(&root.join("route.py"), route)?;
+                for (name, body) in tests {
+                    write_file(&root.join(name), body)?;
+                }
+                let input = super::super::select_repo_input_with_limit(&root, default_limit());
+                let evidence = build_repo_evidence(&input, &root);
+                let checkout = find_owner(&evidence, "checkout")?;
+                let kinds = checkout
+                    .behavior_items
+                    .iter()
+                    .map(|item| item.static_limit)
+                    .collect();
+                std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+                Ok(kinds)
+            };
+        // The rebinding test alone limits the write.
+        assert_eq!(
+            limits("rebind-only", &[("test_reload.py", reload)])?,
+            vec![Some(StaticLimitKind::MockedModule)]
+        );
+        // A live reader beside it credits the write, so the item is not
+        // limited, matching the finding classifier.
+        assert_eq!(
+            limits(
+                "rebind-live",
+                &[("test_reload.py", reload), ("test_live.py", live)]
+            )?,
+            vec![None]
+        );
         Ok(())
     }
 

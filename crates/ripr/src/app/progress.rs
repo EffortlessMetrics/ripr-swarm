@@ -72,6 +72,14 @@ impl AnalysisProgressEvent {
 /// A sink failure, including a panic, cannot change the check result.
 pub(crate) trait AnalysisProgressSink {
     fn emit(&self, event: AnalysisProgressEvent);
+
+    /// Called immediately before a `Failed` terminal when the failure is a
+    /// user-fixable input problem (unresolvable base, missing diff file,
+    /// unusable root or config) that the caller reports as its own error
+    /// (#9922). A human-facing sink may suppress the `failed` projection so
+    /// it does not read like an internal crash; the `Failed` event is still
+    /// delivered, so protocol sinks keep their terminal. Default: no-op.
+    fn user_fixable_failure(&self) {}
 }
 
 pub(crate) struct ProgressRun<'a> {
@@ -99,6 +107,18 @@ impl<'a> ProgressRun<'a> {
             return;
         }
         self.emit_now(stage);
+    }
+
+    /// Close the run as failed because of a user-fixable input problem
+    /// (#9922). See [`AnalysisProgressSink::user_fixable_failure`].
+    pub(crate) fn fail_user_fixable(&mut self) {
+        if self.terminal {
+            return;
+        }
+        if let Some(sink) = self.sink {
+            let _ = catch_unwind(AssertUnwindSafe(|| sink.user_fixable_failure()));
+        }
+        self.finish(AnalysisProgressStage::Failed);
     }
 
     pub(crate) fn complete(&mut self) {
@@ -550,6 +570,41 @@ mod tests {
             ]
         );
         assert!(token.abort_kind().is_none());
+    }
+
+    #[test]
+    fn missing_diff_file_flags_user_fixable_failure_before_failed_terminal() -> Result<(), String> {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        struct Flagging {
+            flagged: AtomicBool,
+            flagged_at_failed: AtomicBool,
+        }
+        impl AnalysisProgressSink for Flagging {
+            fn emit(&self, event: AnalysisProgressEvent) {
+                if event.stage == AnalysisProgressStage::Failed {
+                    self.flagged_at_failed
+                        .store(self.flagged.load(Ordering::SeqCst), Ordering::SeqCst);
+                }
+            }
+            fn user_fixable_failure(&self) {
+                self.flagged.store(true, Ordering::SeqCst);
+            }
+        }
+        let sink = Flagging {
+            flagged: AtomicBool::new(false),
+            flagged_at_failed: AtomicBool::new(false),
+        };
+        let mut input = sample_diff_input();
+        input.diff_file = Some(PathBuf::from("/nonexistent-ripr-9922/missing.diff"));
+        let result = check_with_progress(
+            input,
+            &RiprConfig::default(),
+            AnalysisProgressScope::Diff,
+            Some(&sink),
+        );
+        assert!(result.is_err(), "a missing diff file must fail the check");
+        assert!(sink.flagged_at_failed.load(Ordering::SeqCst));
+        Ok(())
     }
 
     #[test]

@@ -26,9 +26,20 @@ use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
 mod diff_aggregate;
-#[cfg(test)]
+mod reconcile;
+mod view;
 pub(crate) use diff_aggregate::DiffCompleteness;
 pub(crate) use diff_aggregate::DiffLanguageAggregate;
+pub(crate) use diff_aggregate::LanguageAggregate;
+use diff_aggregate::repo_static_facts_limit;
+pub(crate) use reconcile::reconcile;
+pub(crate) use view::LanguageCompletenessView;
+pub(crate) use view::LanguageDisclosure;
+// Fixture inputs for the cross-surface agreement tests in `output`.
+#[cfg(test)]
+pub(crate) use crate::analysis::language::{
+    LanguageDiffResult as FixtureDiffResult, LanguageRepoResult as FixtureRepoResult,
+};
 
 pub(crate) const LANGUAGE_ANALYSIS_OUTCOME_SCHEMA_VERSION: &str = "1";
 
@@ -187,11 +198,38 @@ impl LanguageAnalysisOutcomeV1 {
         limitations.extend(extra_partial_reason);
         let status = if !limitations.is_empty() {
             LanguageOutcomeStatus::Partial
-        } else if result.findings.is_empty() {
-            LanguageOutcomeStatus::CompleteZero
-        } else {
+        } else if !result.findings.is_empty() {
             LanguageOutcomeStatus::Complete
+        } else if result.production_files == 0 {
+            // No production file was positively discovered, so "found
+            // nothing" has no boundary behind it: an empty or stub run is
+            // nothing in scope, never `CompleteZero` (#6470).
+            LanguageOutcomeStatus::NoCurrentScope
+        } else {
+            LanguageOutcomeStatus::CompleteZero
         };
+        // A zero-finding run over a repo capability cell that does not
+        // establish capability reports that exact limit. `Unsupported` has no
+        // compatibility row, so the public projection is unchanged.
+        if result.findings.is_empty()
+            && status != LanguageOutcomeStatus::Partial
+            && let Some(limit) = repo_static_facts_limit(language)
+        {
+            limitations = vec![limit.to_string()];
+            return Self::new(
+                language.as_str().to_string(),
+                OutcomeMode::Repo,
+                None,
+                LanguageOutcomeStatus::Unsupported,
+                BTreeMap::new(),
+                LanguageResourceObservations {
+                    files_skipped: Some(result.skipped_files),
+                    production_files: Some(result.production_files),
+                    files: result.file_accounting,
+                },
+                limitations,
+            );
+        }
         let resources = LanguageResourceObservations {
             files_skipped: Some(result.skipped_files),
             production_files: Some(result.production_files),
@@ -205,6 +243,40 @@ impl LanguageAnalysisOutcomeV1 {
             count_findings(&result.findings),
             resources,
             limitations,
+        )
+    }
+
+    /// Builds the outcome of a repo-mode adapter that returned `Err`. The
+    /// reason is the single limitation, so the derived compatibility
+    /// `LanguageRun` carries exactly the string the pipeline recorded before.
+    pub(crate) fn from_repo_err(
+        language: LanguageId,
+        reason: String,
+        run_status: LanguageRunStatus,
+    ) -> Self {
+        Self::new(
+            language.as_str().to_string(),
+            OutcomeMode::Repo,
+            None,
+            LanguageOutcomeStatus::from_err_run_status(run_status),
+            BTreeMap::new(),
+            LanguageResourceObservations::default(),
+            vec![reason],
+        )
+    }
+
+    /// A language present in the repository whose adapter is disabled or not
+    /// compiled in. Already surfaced as a typed advisory, so no compatibility
+    /// row.
+    pub(crate) fn repo_not_selected(language: &str, files: usize, reason: &str) -> Self {
+        Self::new(
+            language.to_string(),
+            OutcomeMode::Repo,
+            None,
+            LanguageOutcomeStatus::NotSelected,
+            BTreeMap::new(),
+            LanguageResourceObservations::default(),
+            vec![format!("{files} file(s) not analyzed: {reason}")],
         )
     }
 
@@ -495,5 +567,9 @@ fn count_findings(findings: &[Finding]) -> BTreeMap<String, usize> {
 
 #[cfg(test)]
 mod diff_tests;
+#[cfg(test)]
+mod reconcile_tests;
+#[cfg(test)]
+mod repo_tests;
 #[cfg(test)]
 mod tests;

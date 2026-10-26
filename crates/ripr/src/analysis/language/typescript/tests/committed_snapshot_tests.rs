@@ -186,6 +186,59 @@ fn committed_jest_snapshot_entry_reads_strong() -> Result<(), String> {
     Ok(())
 }
 
+/// #10017: the extraction is cached by (path, bytes), but promotion reads the
+/// snapshot file on every run. An unchanged test file must see a snapshot
+/// entry added, changed or removed between two runs, and promotion on a
+/// clone must not leak into the cached tests.
+#[test]
+fn cached_extraction_still_sees_snapshot_file_changes() -> Result<(), String> {
+    let root = ts_unique_tempdir("snap-cached")?;
+    ts_write_file(&root.join(".git/HEAD"), "x\n")?;
+    ts_write_file(&root.join("test/price.test.ts"), PRICE_TEST)?;
+    let relative = Path::new("test/price.test.ts");
+    let strength_now = |root: &Path| {
+        let cached = super::super::extraction_cache::test_extraction_cached(relative, PRICE_TEST);
+        let mut tests = cached.0.clone();
+        promote_committed_snapshots(root, relative, PRICE_TEST, &mut tests);
+        let strengths: Vec<OracleStrength> = tests
+            .iter()
+            .flat_map(|test| &test.assertions)
+            .map(|assertion| assertion.oracle_strength.clone())
+            .collect();
+        let unpromoted: Vec<OracleStrength> = cached
+            .0
+            .iter()
+            .flat_map(|test| &test.assertions)
+            .map(|assertion| assertion.oracle_strength.clone())
+            .collect();
+        (strengths, unpromoted)
+    };
+    let (without_snapshot, unpromoted) = strength_now(&root);
+    assert!(
+        without_snapshot
+            .iter()
+            .all(|strength| *strength != OracleStrength::Strong),
+        "no committed entry yet: {without_snapshot:?}"
+    );
+    ts_write_file(&root.join(SNAP_PATH), &jest_snap(&[("price 1", "140")]))?;
+    let (with_snapshot, still_unpromoted) = strength_now(&root);
+    assert_eq!(with_snapshot, vec![OracleStrength::Strong]);
+    assert_eq!(
+        unpromoted, still_unpromoted,
+        "promotion on a clone must not change the cached tests"
+    );
+    ts_write_file(&root.join(SNAP_PATH), &jest_snap(&[("other 1", "1")]))?;
+    let (after_removal, _) = strength_now(&root);
+    let _ = std::fs::remove_dir_all(&root);
+    assert!(
+        after_removal
+            .iter()
+            .all(|strength| *strength != OracleStrength::Strong),
+        "the entry was replaced, so the cached extraction must not keep it strong: {after_removal:?}"
+    );
+    Ok(())
+}
+
 #[test]
 fn committed_snapshot_keys_join_describe_titles_per_runner() -> Result<(), String> {
     let test = "describe(\"price\", () => {\n  it(\"caps\", () => {\n    expect(price(150)).toMatchSnapshot();\n  });\n});\n";
@@ -1485,6 +1538,473 @@ fn quoted_combined_and_escaped_script_flags_stay_medium() -> Result<(), String> 
             )?,
             vec![OracleStrength::Strong],
             "{package}"
+        );
+    }
+    Ok(())
+}
+
+/// `true` when a git hook (or wrapper) exported a repository selector. The
+/// tracked-file check reports "unknown" then (it must not answer for another
+/// repository), and the fixture repositories below would be created in the
+/// wrong place, so the tests that need real tracking return early.
+fn git_selector_env_present() -> bool {
+    [
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_COMMON_DIR",
+        "GIT_INDEX_FILE",
+    ]
+    .iter()
+    .any(|name| std::env::var_os(name).is_some())
+}
+
+/// Run `git` in `root` for a test fixture.
+fn fixture_git(root: &Path, args: &[&str]) -> Result<(), String> {
+    let output = crate::git::run_git_output_with_deadline(
+        root,
+        args,
+        Some(std::time::Duration::from_mins(1)),
+    )?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "git {} failed: {}",
+            args.first().copied().unwrap_or_default(),
+            String::from_utf8_lossy(&output.stderr)
+        ))
+    }
+}
+
+/// A real repository holding the price test and its `.snap` file. `track`
+/// stages the snapshot (tracked by the index); `ignore` lists `*.snap` in
+/// `.gitignore` first.
+fn snapshot_repo(label: &str, track: bool, ignore: bool) -> Result<PathBuf, String> {
+    let root = ts_unique_tempdir(label)?;
+    fixture_git(&root, &["init", "--initial-branch=main"])?;
+    ts_write_file(&root.join("test/price.test.ts"), PRICE_TEST)?;
+    ts_write_file(&root.join(SNAP_PATH), &jest_snap(&[("price 1", "140")]))?;
+    if ignore {
+        ts_write_file(&root.join(".gitignore"), "*.snap\n")?;
+        fixture_git(&root, &["add", ".gitignore"])?;
+    }
+    fixture_git(&root, &["add", "test/price.test.ts"])?;
+    if track {
+        fixture_git(&root, &["add", "--force", SNAP_PATH])?;
+    }
+    Ok(root)
+}
+
+/// #7708 item 3: a `--worktree` run installs no overlay, so a `.snap` file
+/// that the repository does not track (untracked, or ignored) is a local file
+/// CI never sees, and its entry no longer pins the value. A tracked file
+/// (committed or staged) keeps the credit.
+#[test]
+fn untracked_or_ignored_snapshot_file_stays_medium() -> Result<(), String> {
+    if git_selector_env_present() {
+        return Ok(());
+    }
+    for (label, track, ignore, expected) in [
+        ("snap-tracked", true, false, OracleStrength::Strong),
+        ("snap-untracked", false, false, OracleStrength::Medium),
+        ("snap-ignored", false, true, OracleStrength::Medium),
+        // Force-added despite `.gitignore`: the repository tracks it.
+        (
+            "snap-ignored-but-tracked",
+            true,
+            true,
+            OracleStrength::Strong,
+        ),
+    ] {
+        let root = snapshot_repo(label, track, ignore)?;
+        let got = strengths_at(&root);
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(got, vec![expected], "{label}");
+    }
+    Ok(())
+}
+
+/// With no repository at all (an export, or a tree git cannot read) the
+/// `.snap` file is read as before; the tracked check only refuses when the
+/// repository positively lists its snapshot files without this one.
+#[test]
+fn snapshot_file_outside_a_repository_is_read_as_before() -> Result<(), String> {
+    let root = ts_unique_tempdir("snap-no-repo")?;
+    ts_write_file(&root.join("test/price.test.ts"), PRICE_TEST)?;
+    ts_write_file(&root.join(SNAP_PATH), &jest_snap(&[("price 1", "140")]))?;
+    ts_write_file(&root.join(".git/HEAD"), "x\n")?;
+    let got = strengths_at(&root);
+    let _ = std::fs::remove_dir_all(&root);
+    assert_eq!(got, vec![OracleStrength::Strong]);
+    Ok(())
+}
+
+/// #7708 item 5: the config walk and the tracked-file list are memoized for
+/// one analysis run. Inside a `DirectoryModuleCacheScope` a config edited
+/// between two test files is not re-read, while outside any scope, and in a
+/// later scope, the files are read again, so no verdict leaks across runs.
+#[test]
+fn config_walk_and_tracked_list_are_memoized_per_run_only() -> Result<(), String> {
+    if git_selector_env_present() {
+        return Ok(());
+    }
+    let root = snapshot_repo("snap-memo", true, false)?;
+    ts_write_file(&root.join("jest.config.js"), "module.exports = {};")?;
+    let (first, cached_config, cached_tracked) = {
+        let _run = DirectoryModuleCacheScope::open();
+        let first = strengths_at(&root);
+        ts_write_file(&root.join("jest.config.js"), RESOLVER_CONFIG)?;
+        fixture_git(&root, &["rm", "--cached", "-q", SNAP_PATH])?;
+        // The edited config and the untracked snapshot are both unseen.
+        (first, strengths_at(&root), strengths_at(&root))
+    };
+    let unscoped = strengths_at(&root);
+    let next_run = {
+        let _run = DirectoryModuleCacheScope::open();
+        strengths_at(&root)
+    };
+    let _ = std::fs::remove_dir_all(&root);
+    assert_eq!(first, vec![OracleStrength::Strong]);
+    assert_eq!(cached_config, vec![OracleStrength::Strong], "memoized");
+    assert_eq!(cached_tracked, vec![OracleStrength::Strong], "memoized");
+    assert_eq!(unscoped, vec![OracleStrength::Medium], "no scope, no cache");
+    assert_eq!(next_run, vec![OracleStrength::Medium], "a new run re-reads");
+    Ok(())
+}
+
+/// The memo keys include the directory, so a refusing ancestor is shared by
+/// every test directory beneath it and a clean sibling is not refused by it.
+#[test]
+fn memoized_config_verdict_is_per_directory() -> Result<(), String> {
+    let root = ts_unique_tempdir("snap-memo-dirs")?;
+    ts_write_file(&root.join(".git/HEAD"), "x\n")?;
+    ts_write_file(&root.join("a/jest.config.js"), RESOLVER_CONFIG)?;
+    ts_write_file(&root.join("b/jest.config.js"), "module.exports = {};")?;
+    let (a_first, b, a_again) = {
+        let _run = DirectoryModuleCacheScope::open();
+        let walk = |dir: &str| runner_configs_within(&root, Path::new(dir), 16).is_some();
+        (walk("a"), walk("b"), walk("a"))
+    };
+    let _ = std::fs::remove_dir_all(&root);
+    assert!(!a_first, "a refuses");
+    assert!(b, "b is clean");
+    assert!(!a_again, "a still refuses from the memo");
+    Ok(())
+}
+
+/// A repository that tracks nothing under the analysis root (a scratch copy,
+/// a repository with nothing staged yet) cannot say which snapshot files CI
+/// would see, so the file is read as before; once any file under the root is
+/// tracked, an untracked snapshot file refuses.
+#[test]
+fn repository_tracking_nothing_under_root_is_unknown() -> Result<(), String> {
+    if git_selector_env_present() {
+        return Ok(());
+    }
+    let root = ts_unique_tempdir("snap-nothing-tracked")?;
+    fixture_git(&root, &["init", "--initial-branch=main"])?;
+    ts_write_file(&root.join("test/price.test.ts"), PRICE_TEST)?;
+    ts_write_file(&root.join(SNAP_PATH), &jest_snap(&[("price 1", "140")]))?;
+    let nothing_tracked = strengths_at(&root);
+    fixture_git(&root, &["add", "test/price.test.ts"])?;
+    let something_tracked = strengths_at(&root);
+    let _ = std::fs::remove_dir_all(&root);
+    assert_eq!(nothing_tracked, vec![OracleStrength::Strong]);
+    assert_eq!(something_tracked, vec![OracleStrength::Medium]);
+    Ok(())
+}
+
+/// #10139: a `projects` array whose elements are all inline object literals
+/// names no other config, so the walk reads the committed entry. A path,
+/// glob, identifier, spread or call element, a project that sets
+/// `rootDir`/`roots`/`root`, a second `projects`, a template placeholder and
+/// a member assignment keep the reading at medium.
+#[test]
+fn vitest_string_values_are_not_keys_but_real_keys_still_refuse() -> Result<(), String> {
+    let vitest = format!("{VITEST_HEADER}{}", entry("price 1", "140"));
+    for (config, text, expected) in [
+        (
+            "vitest.config.ts",
+            "export default { test: { name: \"root\" } };",
+            OracleStrength::Strong,
+        ),
+        (
+            "vitest.config.ts",
+            "export default { test: { root: \"./x\" } };",
+            OracleStrength::Medium,
+        ),
+        (
+            "vitest.config.ts",
+            "export default { test: { \"root\": \"./x\" } };",
+            OracleStrength::Medium,
+        ),
+    ] {
+        assert_eq!(
+            strengths(
+                "snap-vitest-string-values",
+                PRICE_TEST,
+                &[(SNAP_PATH, &vitest), (config, text)]
+            )?,
+            vec![expected],
+            "{config}: {text}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn plain_inline_projects_keep_the_credit_and_every_other_spelling_refuses() -> Result<(), String> {
+    let jest = jest_snap(&[("price 1", "140")]);
+    for (text, expected) in [
+        (
+            "module.exports = { projects: [{ displayName: \"projects\" }] };",
+            OracleStrength::Strong,
+        ),
+        (
+            "module.exports = { projects: [{ displayName: \"a...b\" }] };",
+            OracleStrength::Strong,
+        ),
+        (
+            "module.exports = { projects: [{ displayName: \"my root\", name: 'workspace' }] };",
+            OracleStrength::Strong,
+        ),
+        (
+            "module.exports = { displayName: \"root\", testEnvironment: \"node\" };",
+            OracleStrength::Strong,
+        ),
+        (
+            "module.exports = { name: `it's`, root: ', x' };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { re: /'/, root: ', x' };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { name: \"a\\\"b\", root: \"./other\" };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { k: a ? /\"/ : 1, projects: ['./o'], sep: \",\", z: '\"', w: 1, q: ' };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ displayName: \"\u{2028}\u{2028}\u{2028}\u{2028}\", x: 1 }, { rootDir: 'x' }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "Object.defineProperty(module.exports, 'root', { value: './other' });",
+            OracleStrength::Medium,
+        ),
+        (
+            "const k = 'projects', v = 1; module.exports = { v };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ displayName: \"projects\" }], projects: [\"./other\"] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ displayName: \"a\", \"root\": \"./other\" }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ displayName: \"a\", [\"root\"]: \"./other\" }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ displayName: \"unit\", preset: \"ts-jest\", testMatch: [\"<rootDir>/test/**/*.test.ts\"] }] };",
+            OracleStrength::Strong,
+        ),
+        (
+            "module.exports = { projects: [ // two\n  { displayName: \"a\" }, /* b */ { displayName: \"b\" },\n] };",
+            OracleStrength::Strong,
+        ),
+        (
+            "module.exports = { projects: [\"<rootDir>/config/app.jest.js\"] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ root: \"x\" }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ workspace: \"x\" }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ displayName: \"a\" }].concat([\"./other\"]) };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ displayName: \"a\" }].map(load) };",
+            OracleStrength::Medium,
+        ),
+        (
+            "const base = {};\nmodule.exports = { projects: [{ ...base, displayName: \"a\" }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ ...require(\"./base\") }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ displayName: load(\"a\") }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ preset: \"./preset.js\" }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ ['preset']: \"../x\" }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "const preset = \"../x\";\nmodule.exports = { projects: [{ preset }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ preset: base }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ preset: \"ts-jest\" }], testTimeout: 5000 };",
+            OracleStrength::Strong,
+        ),
+        (
+            "module.exports = { projects: [{ preset: \"ts-jest/presets/js-with-ts\" }] };",
+            OracleStrength::Strong,
+        ),
+        (
+            "module.exports = { projects: [{ displayName: \"a\", globals: { tag: /a(b)[)/]/i } }] };",
+            OracleStrength::Strong,
+        ),
+        (
+            "module.exports = { projects: [{ globals: { tag: /a(b)/ }, rootDir: \"pkg\" }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ globals: { tag: /a(b) } }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ globals: { tag: f(/a/) } }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{}], // first\r projects: [\"./other.config.js\"] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{}], // first\u{2028} projects: [\"./other.config.js\"] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{}], // first\u{2029} projects: [\"./other.config.js\"] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ globals: { tag: /a(b)\r/ } }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ preset: \"ts-jest\" && \"./custom-preset.js\" }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ preset: \"ts-jest\" + \"/../../p.js\" }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ preset: \"ts-jest\" , displayName: \"a\" }] };",
+            OracleStrength::Strong,
+        ),
+        (
+            "module.exports = { projects: [{ preset: \"review-snapshot-preset\" }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ preset: \"@scope/jest-preset\" }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ preset: \"ts-jest/../evil\" }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { \"projects\": [{ displayName: \"unit\" }] };",
+            OracleStrength::Strong,
+        ),
+        (
+            "module.exports = { 'projects': [{ displayName: 'unit' }] };",
+            OracleStrength::Strong,
+        ),
+        (
+            "// unit projects\nmodule.exports = { projects: [{ displayName: \"unit\" }] };",
+            OracleStrength::Strong,
+        ),
+        (
+            "module.exports = { \"projects\": [\"<rootDir>/pkg\"] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "/* projects: [] */ module.exports = { projects: [\"<rootDir>/pkg\"] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ displayName: \"a\" }] }; // trailing",
+            OracleStrength::Strong,
+        ),
+        (
+            "module.exports = { projects: [{ displayName: \"a\" }, \"<rootDir>/pkg\"] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "const unit = {};\nmodule.exports = { projects: [unit] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "const unit = {};\nmodule.exports = { projects: [{ displayName: \"a\" }, ...[unit]] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ rootDir: \"pkg\" }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ roots: [\"<rootDir>/pkg\"] }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ displayName: `a${dir}` }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{}], other: { projects: [{}] } };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{}], workspace: \"./packages\" };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ snapshotResolver: \"<rootDir>/r.js\" }] };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { projects: [{ displayName: \"a\" ",
+            OracleStrength::Medium,
+        ),
+    ] {
+        assert_eq!(
+            strengths(
+                "snap-inline-projects",
+                PRICE_TEST,
+                &[(SNAP_PATH, &jest), ("jest.config.js", text)]
+            )?,
+            vec![expected],
+            "{text}"
         );
     }
     Ok(())

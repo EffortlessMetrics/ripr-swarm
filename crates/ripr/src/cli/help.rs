@@ -2309,7 +2309,11 @@ fn parse_demo<'a>(xs: &'a str) {
             ),
             ("gate", GATE_HELP, &["--pr-guidance", "--mode"]),
             ("doctor", DOCTOR_HELP, &["--root", "--json", "--profile"]),
-            ("capabilities", CAPABILITIES_HELP, &["--language", "--json"]),
+            (
+                "capabilities",
+                CAPABILITIES_HELP,
+                &["--language", "--json", "--markdown"],
+            ),
             ("config validate", CONFIG_HELP, &["--root"]),
             (
                 "pilot",

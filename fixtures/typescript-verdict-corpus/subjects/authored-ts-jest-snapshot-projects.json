@@ -1,0 +1,45 @@
+{
+  "subject_id": "authored-ts-jest-snapshot-projects",
+  "origin": "authored",
+  "version_label": "authored@2026-10-24",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "config/jest.project.js",
+      "sha256": "7c86b285211175f5fe53ed874a9cc3c8cee05503da397b32e0d99c5282b2dba0"
+    },
+    {
+      "path": "config/snapshotResolver.js",
+      "sha256": "e3263272a9d03026473c8381a2f10aeb7081b92664d1440daae0f8f7f2b5d2e4"
+    },
+    {
+      "path": "jest.config.js",
+      "sha256": "eaee61f89eada1c64d0014c8fc9d856ac2de897ab0844fd18a529dc1cb1f2b4c"
+    },
+    {
+      "path": "package.json",
+      "sha256": "bd721d8a487cfe3c930940cc5a765fa1861a35d7c0b79f85bb4bc08b2cfe3cb6"
+    },
+    {
+      "path": "ripr.toml",
+      "sha256": "27f3758ca9cce54d063a7f0daddc95f0940433563d4869a9e5a7c622ae961381"
+    },
+    {
+      "path": "src/priceSnapProjects.ts",
+      "sha256": "05863e3addfb6f5942d95f526bed36aea1356fa29ce1e8a229b17f3a570574d5"
+    },
+    {
+      "path": "test/__snapshots__/priceSnapProjects.test.ts.snap",
+      "sha256": "ec58019e311a32adb57ecd1de75e927c24ae5186bfcc6d96aa9c83a48bbbdfd4"
+    },
+    {
+      "path": "test/priceSnapProjects.test.ts",
+      "sha256": "c6ec4c0cb334c628932cbd768f9ec5ecd5231a18b4e78995afd19dc2ef38d852"
+    },
+    {
+      "path": "tsconfig.json",
+      "sha256": "f6cc3423554323dafa1e27b7726571abbb8f612680393f198b11ce352aace598"
+    }
+  ]
+}

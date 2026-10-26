@@ -82,6 +82,24 @@ The seam inventory should be deterministic: two runs over the same source tree
 with the same analyzer version and configuration must produce the same seam IDs
 in the same order.
 
+When competing methods need receiver identity, a compact impl type name does
+not establish the module of a qualified initializer or type annotation
+(#8782). `foreign::Type { .. }`, `foreign::Type(..)`,
+`foreign::Type::new(..)` and `let x: foreign::Type = ..` remain unresolved
+in that matcher. Rust lexical whitespace, including non-ASCII line separators
+and direction marks, and raw identifiers cannot erase the qualifier.
+Bare type heads and enum variants retain their existing bounded handling;
+an independent supported local call can still establish the relation.
+Bare generic annotations retain function-pointer, associated-type and
+const-expression arguments; punctuation inside those arguments cannot truncate
+the type or hide a qualified trailing path.
+Owner-aware direct call paths keep their existing authority. Only the
+conventional constructors `Type::new(..)`, `Type::default()` and
+`Type::from(..)` read as that type; `new_*`, `from_*` and `with_*` spellings
+are a naming convention, not a return type, and stay unresolved (#8782). This
+rule adds no general type resolution, factory-return inference, unique-name
+receiver proof or borrowed-helper context expansion.
+
 When the analyzed root is the repository root, repo automation and fixture data
 are outside the product seam surface. The walker excludes `xtask/` and the
 top-level `fixtures/` tree so repo-scoped public signals describe the published
@@ -146,6 +164,13 @@ not restore the disproven relation.
 Full evidence carries the indexed test target. Compact evidence intentionally
 omits target details and preserves the five stage states and contradiction count.
 Classified full and compact cache generations change with these semantics.
+Persisted entries also bind the producing analyzer's source identity and compiled
+language feature set. Equal numeric generations do not authorize reuse between
+different repair builds or language configurations. Admission checks that identity
+inside file-fact envelopes, classified envelopes, shard manifests and individual
+shards, even if old bytes are copied into a current key's location. A matching
+current entry remains reusable; old schema generations still invalidate
+independently of analyzer identity.
 Local binding/shadowing and duplicate-import residuals remain separate open work
 on #4680; these controls do not establish general extraction invariance or the
 closure of follow-on #4681 through #4683.

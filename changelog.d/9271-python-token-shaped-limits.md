@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Python: the static-limit checks now read names, not substrings (RIPR-SPEC-0238 rule 8). `content_type(x)` is no longer `type(` metaprogramming, the word `lambda` inside a string on a plain line is no longer lambda syntax, and `client.patch("/x")` (an HTTP request) is no longer a mocked module; any other `patch` receiver, and any test that mentions a mock, still is. `py-spec0233-ex26-call-named-type`, `ex28-lambda-in-string` and `ex29-client-patch` move from abstained to credited (#9271).

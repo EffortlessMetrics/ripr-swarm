@@ -1,0 +1,35 @@
+#[macro_export]
+macro_rules! exported_table {
+    ($($name:ident($width:expr, $limit:expr, $want:expr))*) => {
+        $(
+            #[test]
+            fn $name() {
+                assert_eq!(fits_exported($width, $limit), $want);
+            }
+        )*
+    };
+}
+
+#[macro_export]
+macro_rules! shadowed_table {
+    ($($name:ident($width:expr, $limit:expr, $want:expr))*) => {
+        $(
+            #[test]
+            fn $name() {
+                assert_eq!(fits_shadowed($width, $limit), $want);
+            }
+        )*
+    };
+}
+
+#[macro_export]
+macro_rules! crate_called_table {
+    ($($name:ident($width:expr, $limit:expr, $want:expr))*) => {
+        $(
+            #[test]
+            fn $name() {
+                assert_eq!(fits_crate_call($width, $limit), $want);
+            }
+        )*
+    };
+}

@@ -34,7 +34,8 @@ use super::guard_activation::{
 };
 use super::module_constants::mentions_identifier;
 use super::related_tests::PythonRelatedCandidate;
-use crate::domain::{OracleStrength, OwnerKind, ValueContext, ValueFact};
+use crate::domain::{OracleStrength, OwnerKind, ValueContext};
+use crate::value_origins::LocatedValueFact;
 
 /// Whether one row reaches the changed expression; `Some(true)` means the row
 /// provably never evaluates it, `None` that static evidence cannot tell.
@@ -141,7 +142,7 @@ pub(super) fn python_unreached_arm_gap(
         .as_ref()
         .map(|arm| arm.subject.as_str())
         .or(default.as_ref().map(|default| default.key.as_str()));
-    let mut observed_values: Vec<ValueFact> = rows
+    let mut observed_values: Vec<LocatedValueFact> = rows
         .iter()
         .flat_map(|row| {
             row.bindings
@@ -149,8 +150,8 @@ pub(super) fn python_unreached_arm_gap(
                 .filter(|(parameter, binding)| {
                     !binding.from_default && subject.is_some_and(|name| name == parameter.as_str())
                 })
-                .map(|(parameter, binding)| ValueFact {
-                    file: None,
+                .map(|(parameter, binding)| LocatedValueFact {
+                    file: Some(row.file.clone()),
                     line: row.line,
                     text: row.text.clone(),
                     value: format!("{parameter} = {}", binding.value),

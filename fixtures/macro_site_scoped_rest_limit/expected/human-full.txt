@@ -40,6 +40,7 @@ Stop reasons:
   - gap_evidence_unresolved — ripr could not establish the evidence a gap needs for this change, so it does not claim one
 Static limitation
   rust_assertion_context_unresolved — A related Rust test has an `assert_eq!`, but ripr could not read whether it runs as the standard macro on the path that reaches this change (for example the file did not parse, the test carries a feature `cfg`, or a glob import may rebind the macro). ripr does not claim a gap; this is a named limitation, not a coverage claim.
+  Next: Add an ungated test that uses the standard assertion macro on the changed value, and remove any glob import that rebinds that macro.
 Limitation detail
   last established edge: related tests `pins` (tests/buf_tests.rs:10)
   first unresolved edge: whether the refused related assertions run as the standard `assert_eq!`
@@ -73,6 +74,7 @@ Stop reasons:
   - gap_evidence_unresolved — ripr could not establish the evidence a gap needs for this change, so it does not claim one
 Static limitation
   rust_assertion_context_unresolved — A related Rust test has an `assert_eq!`, but ripr could not read whether it runs as the standard macro on the path that reaches this change (for example the file did not parse, the test carries a feature `cfg`, or a glob import may rebind the macro). ripr does not claim a gap; this is a named limitation, not a coverage claim.
+  Next: Add an ungated test that uses the standard assertion macro on the changed value, and remove any glob import that rebinds that macro.
 Limitation detail
   last established edge: related tests `pins` (tests/buf_tests.rs:10)
   first unresolved edge: whether the refused related assertions run as the standard `assert_eq!`
