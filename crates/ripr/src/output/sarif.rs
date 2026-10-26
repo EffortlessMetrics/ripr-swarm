@@ -1352,7 +1352,7 @@ mod tests {
         assert_eq!(result["properties"]["finding_id"], "finding:discount");
         assert_eq!(
             result["partialFingerprints"]["riprFingerprintV1"],
-            "ripr.finding.weakly_exposed|finding:discount|probe:src/pricing.rs:88:predicate|src/pricing.rs|88"
+            "ripr.finding.weakly_exposed|finding:discount|probe:src/pricing.rs:88:predicate|src/pricing.rs"
         );
         Ok(())
     }
