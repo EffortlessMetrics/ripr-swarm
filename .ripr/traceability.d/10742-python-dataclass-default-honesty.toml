@@ -7,5 +7,4 @@ fixtures = [
   "fixtures/python_dataclass_default_call_default_async",
   "fixtures/python_dataclass_default_classvar_rebound",
   "fixtures/python_dataclass_default_unknown_method_decorator",
-  "fixtures/python_dataclass_default_fixture_request_test",
 ]
