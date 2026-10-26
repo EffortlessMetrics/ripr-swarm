@@ -25,6 +25,8 @@ enum Kind {
 struct Case {
     label: &'static str,
     kind: Kind,
+    /// Methods placed inside the iterator impl, after `next`.
+    in_impl: &'static str,
     /// Extra items placed after the impl (inherent methods, another type).
     extra_items: &'static str,
     /// Source of `src/macros.rs`, a second workspace file.
@@ -46,6 +48,7 @@ fn changed_lines(case: &Case) -> (&'static str, &'static str) {
 
 fn source(case: &Case) -> String {
     let (_, new_line) = changed_lines(case);
+    let in_impl = case.in_impl;
     let item = match case.kind {
         Kind::Iterator => format!(
             "#[derive(Debug)]
@@ -60,7 +63,7 @@ impl Iterator for Countdown {{
         self.0 -= 1;
 {new_line}
     }}
-}}
+{in_impl}}}
 
 pub struct Other(pub u32);
 
@@ -190,6 +193,7 @@ index 1111111..2222222 100644
 const ITERATOR: Case = Case {
     label: "iterator",
     kind: Kind::Iterator,
+    in_impl: "",
     extra_items: "",
     sibling: "",
     test_body: "assert_eq!(Countdown(3).collect::<Vec<_>>(), vec![3, 2, 1]);",
@@ -198,6 +202,7 @@ const ITERATOR: Case = Case {
 const DROP: Case = Case {
     label: "drop",
     kind: Kind::Drop,
+    in_impl: "",
     extra_items: "",
     sibling: "",
     test_body: "let counter = Rc::new(Cell::new(0));\n        {\n            let _g = Guard(counter.clone());\n        }\n        assert_eq!(counter.get(), 1);",
@@ -546,4 +551,82 @@ fn a_relation_no_assertion_confirms_is_withheld_not_a_gap() -> Result<(), String
         }
     }
     Ok(())
+}
+
+#[test]
+fn an_adaptor_the_iterator_impl_overrides_does_not_run_next() -> Result<(), String> {
+    // `count` is provided by `Iterator`, but this impl replaces it, so the
+    // call never reaches `next`. `collect` beside it still does.
+    let overridden = Case {
+        label: "overridden_count",
+        in_impl: "    fn count(self) -> usize {\n        99\n    }\n",
+        test_body: "assert_eq!(Countdown(3).count(), 99);",
+        ..ITERATOR
+    };
+    check_all(&[overridden], &[])?;
+    let beside_collect = Case {
+        label: "overridden_count_beside_collect",
+        test_body: "assert_eq!(Countdown(3).collect::<Vec<_>>(), vec![3, 2, 1]);",
+        ..overridden
+    };
+    check_all(&[beside_collect], &["syntax_under_test"])
+}
+
+#[test]
+fn syntax_that_may_never_run_in_the_test_relates_nothing() -> Result<(), String> {
+    let cases = [
+        with_body(
+            ITERATOR,
+            "closure_never_called",
+            "let f = || {\n            for _n in Countdown(3) {}\n        };\n        assert_eq!(1, 1);\n        let _ = f;",
+        ),
+        with_body(
+            ITERATOR,
+            "nested_fn_never_called",
+            "fn helper() {\n            for _n in Countdown(3) {}\n        }\n        assert_eq!(1, 1);",
+        ),
+        with_body(
+            ITERATOR,
+            "dead_branch",
+            "if 1 == 2 {\n            for _n in Countdown(3) {}\n        }\n        assert_eq!(1, 1);",
+        ),
+        with_body(
+            DROP,
+            "closure_never_called_scope",
+            "let counter = Rc::new(Cell::new(0));\n        let f = || {\n            {\n                let _g = Guard(counter.clone());\n            }\n        };\n        assert_eq!(counter.get(), 0);\n        let _ = f;",
+        ),
+        with_body(
+            DROP,
+            "dead_branch_scope",
+            "let counter = Rc::new(Cell::new(0));\n        if counter.get() == 99 {\n            counter.set(1);\n            {\n                let _g = Guard(counter.clone());\n            }\n        }\n        assert_eq!(counter.get(), 0);",
+        ),
+    ];
+    check_all(&cases, &[])
+}
+
+#[test]
+fn a_by_value_method_may_move_the_value_out_of_the_block() -> Result<(), String> {
+    let stash = Case {
+        label: "by_value_method",
+        extra_items: "
+impl Guard {
+    pub fn stash(self) {
+        std::mem::drop(Some(self));
+    }
+    pub fn peek(&self) -> u32 {
+        self.0.get()
+    }
+}
+",
+        test_body: "let counter = Rc::new(Cell::new(0));\n        {\n            let g = Guard(counter.clone());\n            g.stash();\n        }\n        assert_eq!(counter.get(), 1);",
+        ..DROP
+    };
+    check_all(&[stash], &[])?;
+    // A `&self` method of the same type does not move the value.
+    let peek = Case {
+        label: "by_ref_method",
+        test_body: "let counter = Rc::new(Cell::new(0));\n        {\n            let g = Guard(counter.clone());\n            let _seen = g.peek();\n        }\n        assert_eq!(counter.get(), 1);",
+        ..stash
+    };
+    check_all(&[peek], &["syntax_under_test"])
 }

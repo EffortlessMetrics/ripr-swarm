@@ -58,3 +58,60 @@ pub(super) fn test_reaches_owner(
         }
     }
 }
+
+/// Whether byte `at` of a masked test body sits at the body's own top level,
+/// not inside a closure, a nested `fn`, an `if`, a loop or any other block that
+/// may never run when the test does. The body may begin with its `fn` header,
+/// whose brace is then the top level.
+pub(super) fn at_test_top_level(masked: &str, at: usize) -> bool {
+    let depth_at = |end: usize| {
+        masked[..end]
+            .bytes()
+            .fold(0isize, |depth, byte| match byte {
+                b'{' => depth + 1,
+                b'}' => depth - 1,
+                _ => depth,
+            })
+    };
+    let base = match masked.find('{') {
+        Some(open) if masked[..open].split_whitespace().any(|word| word == "fn") => 1,
+        _ => 0,
+    };
+    depth_at(at) == base
+}
+
+/// Whether the impl that defines `owner` also defines a method called `name`:
+/// an overridden provided method (`fn count(self)` inside `impl Iterator`) is
+/// what the call runs, not the trait's default that drives `next`.
+pub(super) fn impl_overrides(index: &RustIndex, owner: &FunctionSummary, name: &str) -> bool {
+    let Some((impl_prefix, _)) = owner.id.0.rsplit_once("::") else {
+        return false;
+    };
+    index.functions().iter().any(|function| {
+        function.name == name
+            && function
+                .id
+                .0
+                .rsplit_once("::")
+                .is_some_and(|(prefix, _)| prefix == impl_prefix)
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::at_test_top_level;
+
+    #[test]
+    fn only_the_body_top_level_is_top_level() {
+        let body = "fn t() {\n    a();\n    if x { b(); }\n    let f = || { c(); };\n    d();\n}";
+        // Offset of the first `needle`; a missing one lands at the end, which
+        // is the body's closing depth and fails the asserts below.
+        let offset = |text: &str, needle: &str| text.split(needle).next().map_or(0, str::len);
+        let at = |needle: &str| at_test_top_level(body, offset(body, needle));
+        assert!(at("a()") && at("d()"));
+        assert!(!at("b()") && !at("c()"));
+        let bare = "a(); { b(); }";
+        assert!(at_test_top_level(bare, 0));
+        assert!(!at_test_top_level(bare, offset(bare, "b()")));
+    }
+}

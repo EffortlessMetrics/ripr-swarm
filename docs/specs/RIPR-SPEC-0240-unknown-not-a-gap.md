@@ -549,7 +549,8 @@ comments and strings masked, matches:
   after a unary `-` or `!`. A `-` that is `->` or `-=`, a doubled `&&`/`||`,
   a closure parameter list and a macro bang are not operators. `PartialOrd`
   is also reached through `partial_cmp`, `max`, `min`, `sort` and `clamp`.
-  `Drop` needs `drop(` or an inner block; the iterator traits need an
+  For the withholding gate (not the relation rule below), `Drop` needs `drop(`
+  or an inner block; the iterator traits need an
   iterating `for`, any method call (a terminal adapter such as `any`, `len` or
   `next_back` consumes the value) or a path call into an iterator trait; `Deref` has no
   syntax to inspect. A workspace declaration of a trait with an operator
@@ -754,7 +755,7 @@ as for operators. An unconfirmed credit stays withheld; an assertion-free test
 stays a real `weakly_exposed` gap.
 
 `Drop` and `Iterator::next` are related the same narrow way (#10553) but never
-credited. The observed value (a counter behind a shared cell, a `collected`
+credited. The observed value (a counter behind a shared cell, a collected
 vector) shares no token with the changed line, so crediting the relation would
 read `weakly_exposed` on a test that pins the effect (#9567). A test relates to
 a `drop` only when it drops an owned value of the impl's type before an
@@ -765,7 +766,11 @@ when a `for` loop or a consuming adaptor (`collect`, `sum`, `product`, `count`,
 `last`, `fold`, `reduce`, `for_each`, `any`, `all`, `find`, `position`, `nth`)
 drives an owned value of the impl's type; a lazy adaptor, an inherent method of
 the same name, a redeclared type, or a macro that may add an impl relates
-nothing. A related test with an exact assertion leaves the finding
+nothing. The site must sit at the test body's top level (not in a closure, a
+nested `fn`, a branch or a loop body, which may never run), a by-value method
+of the type called on the value in a scope block (`g.stash()`) may move it out
+and relates nothing, and an adaptor the iterator impl itself overrides
+(`fn count(self)` inside `impl Iterator`) does not run `next`. A related test with an exact assertion leaves the finding
 `static_unknown`; confirming that an assertion reads the carrier of the effect
 (and so crediting) is the remaining work of #10553.
 

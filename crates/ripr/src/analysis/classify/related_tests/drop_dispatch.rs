@@ -33,6 +33,7 @@ use super::equality_dispatch::{
     associated_fn_returns_self, impl_header, operand_has_type, plain_type_name,
     std_trait_is_unshadowed, type_scope_is_clear,
 };
+use super::implicit_dispatch::at_test_top_level;
 use super::operator_dispatch::{
     bound_as_parameter_or_pattern, file_is_clear, is_reference_operand, stringified_ranges,
 };
@@ -115,16 +116,23 @@ pub(super) fn test_drops_owner_value(
             && !is_reference_operand(text, &masked[..before])
             && operand_has_type(text, impl_type, &masked[..before], &returns_self)
     };
+    // A by-value method of the type may move `self` somewhere the test cannot
+    // see (a thread-local, a wrapper), so the value is not dropped at block end.
+    let by_value_method = |name: &str| takes_self_by_value(index, impl_type, name);
     let by_call = explicit_drops(&masked)
         .into_iter()
         .any(|(at, start, close, text)| {
-            evaluated(at) && asserts_after(&masked, close) && owned_value(start, text)
+            evaluated(at)
+                && at_test_top_level(&masked, at)
+                && asserts_after(&masked, close)
+                && owned_value(start, text)
         });
     let by_scope = || {
         scope_blocks(&masked).into_iter().any(|(open, close)| {
             evaluated(open)
+                && at_test_top_level(&masked, open)
                 && asserts_after(&masked, close)
-                && scope_binds_owned_value(&masked, open, close, &owned_value)
+                && scope_binds_owned_value(&masked, open, close, &owned_value, &by_value_method)
         })
     };
     if !(by_call || by_scope()) || !type_scope_is_clear(test, owner, source, impl_type, index) {
@@ -260,6 +268,34 @@ fn scope_blocks(masked: &str) -> Vec<(usize, usize)> {
     blocks
 }
 
+/// The identifier that starts `text` (a field or method name after `.`).
+fn method_after(text: &str) -> &str {
+    let len = text.bytes().take_while(|&byte| is_ident_byte(byte)).count();
+    &text[..len]
+}
+
+/// Whether some method called `name` of an `impl` for `impl_type` takes `self`
+/// by value, or its signature cannot be read. A field access has no such method.
+fn takes_self_by_value(index: &RustIndex, impl_type: &str, name: &str) -> bool {
+    index.functions().iter().any(|function| {
+        function.name == name
+            && function.item.has_self_param
+            && super::impl_self_type_name(&function.id.0).as_deref() == Some(impl_type)
+            && !index
+                .files()
+                .get(&function.file)
+                .and_then(|file| {
+                    file.data()
+                        .source
+                        .as_ref()
+                        .lines()
+                        .nth(function.start_line.saturating_sub(1))
+                        .map(|line| line.contains("&self") || line.contains("&mut self"))
+                })
+                .unwrap_or(false)
+    })
+}
+
 /// Whether the block `open..close` has a `let [mut] name` of the owner's type
 /// whose name appears nowhere else except as the receiver of a method call or
 /// field access, so the value is not moved out of the block before it ends.
@@ -268,6 +304,7 @@ fn scope_binds_owned_value(
     open: usize,
     close: usize,
     owned_value: &dyn Fn(usize, &str) -> bool,
+    by_value_method: &dyn Fn(&str) -> bool,
 ) -> bool {
     let body = &masked[open + 1..close];
     let bytes = body.as_bytes();
@@ -288,7 +325,9 @@ fn scope_binds_owned_value(
                 && bytes.get(end).is_none_or(|&byte| !is_ident_byte(byte));
             let is_binding = body[..use_at].trim_end().ends_with("let")
                 || body[..use_at].trim_end().ends_with("let mut");
-            let receiver = body[end..].starts_with('.') && !body[end..].starts_with("..");
+            let receiver = body[end..].starts_with('.')
+                && !body[end..].starts_with("..")
+                && !by_value_method(method_after(&body[end + 1..]));
             !whole || is_binding || receiver
         });
         only_receiver && owned_value(close, name)

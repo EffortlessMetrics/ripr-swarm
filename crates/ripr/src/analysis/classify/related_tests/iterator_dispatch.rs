@@ -31,6 +31,7 @@ use super::equality_dispatch::{
     associated_fn_returns_self, impl_header, operand_has_type, plain_type_name,
     std_trait_is_unshadowed, type_scope_is_clear,
 };
+use super::implicit_dispatch::{at_test_top_level, impl_overrides};
 use super::operator_dispatch::{
     bound_as_parameter_or_pattern, file_is_clear, is_reference_operand, operand_before,
     stringified_ranges,
@@ -123,14 +124,21 @@ pub(super) fn test_drives_owner(
     };
     let by_loop = for_loop_operands(&masked)
         .into_iter()
-        .any(|(at, start, text)| evaluated(at) && owned_value(start, text));
+        .any(|(at, start, text)| {
+            evaluated(at) && at_test_top_level(&masked, at) && owned_value(start, text)
+        });
     let by_adaptor = || {
         adaptor_receivers(&masked)
             .into_iter()
             // `T::count` or `T::sum` of the type's own wins over the trait's.
             .filter(|(_, name, _, _)| !has_inherent_method(index, impl_type, name))
+            // An override in the impl itself (`fn count(self)`) is what runs.
+            .filter(|(_, name, _, _)| !impl_overrides(index, owner, name))
             .any(|(at, _, start, text)| {
-                evaluated(at) && result_is_used(&masked, at) && owned_value(start, text)
+                evaluated(at)
+                    && at_test_top_level(&masked, at)
+                    && result_is_used(&masked, at)
+                    && owned_value(start, text)
             })
     };
     if !(by_loop || by_adaptor()) || !type_scope_is_clear(test, owner, source, impl_type, index) {
