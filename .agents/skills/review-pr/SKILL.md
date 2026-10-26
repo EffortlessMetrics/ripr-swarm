@@ -107,7 +107,7 @@ A differently named reviewer is optional. Use another agent when it changes the 
 
 Retain valid historical reviews with their original subject and scope. Refresh affected or newly requested review dimensions; reviewer location alone does not require retroactive replay. A warm context can support selective challenge without replacing independent review when it is required.
 
-Advisory providers such as `ub-review` or ClawSweeper are supplemental capacity, not assumed prerequisites. Unavailable advisory output remains missing evidence for that provider, never a pass; use an adequate permitted substantive review path. Actual required checks, approvals and substantive review requirements remain binding.
+Advisory providers such as `ub-review` or ClawSweeper are supplemental capacity, not assumed prerequisites. Unavailable advisory output remains missing evidence for that provider, never a pass; use a sufficient permitted substantive review path. Actual required checks, approvals and substantive review requirements remain binding.
 
 # Procedure
 
