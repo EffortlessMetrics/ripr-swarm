@@ -1146,6 +1146,26 @@ rejected alternative. Any can be reversed later without touching the rest.
     the twins show that call does not discriminate. Revisit with a
     fixture-backed state evaluator under its own spec, as Decision 9 of
     RIPR-SPEC-0246 does for mocha hooks.
+17. **A test defined under a platform guard, or asserted inside a
+    callback wrapper, is limited by design.** Adopted (2026-10-26, #9619).
+    `py-trap-platform-matched` defines its test under
+    `if sys.platform != "win32"`, which holds where the corpus was labeled
+    and fails on Windows, where ripr also runs; a verdict that depends on
+    the host would differ between machines for the same diff.
+    `py-trap-wrapped-through` asserts inside a lambda handed to a local
+    wrapper that re-raises, while its twin `py-trap-wrapped-swallow` hands
+    the same lambda to a wrapper that swallows the failure. Telling them
+    apart needs a rule that reads the wrapper's handlers, and a misread
+    credits a pin the runner never sees. Both rows keep ideal `credited`
+    and accepted `limited`, and stay in `missed-credit.toml` with this
+    Decision as the reason. The twins `py-trap-platform-guarded` and
+    `py-trap-wrapped-swallow` already hold the negatives: each is a
+    `not_discriminated` row that must stay `gap` or `limited`. Rejected:
+    credit by guard polarity, because that reads the host platform.
+    Rejected: credit any lambda passed to a local helper, because the
+    swallowing twin is the same shape. Revisit with a bounded wrapper rule
+    (a test-file local whose every handler ends in a bare `raise`) under
+    its own spec, and a platform-independent reading of the guard.
 
 ## Required Evidence
 
@@ -1458,6 +1478,9 @@ and the test is `tests/test_subject.py`, which imports each owner from
   `a_module_that_binds_len_is_not_read`,
   `an_escape_in_the_docstring_source_drops_it`,
   `a_trailing_comment_on_the_example_line_does_not_hide_the_comparison`.
+- Existing: corpus rows `py-trap-platform-guarded` and
+  `py-trap-wrapped-swallow` (`cargo xtask verdict-corpus check --language
+  python`): Decision 17's negatives, which must never credit.
 - Existing: corpus rows `py-shapes-decorator-retry-count-slack` and
   `py-shapes-decorator-loop-bound-slack` (`cargo xtask verdict-corpus
   check --language python`): Decision 16's negatives, which must never
