@@ -350,15 +350,15 @@ pub(in crate::analysis) fn changes_only_string_literals(
     {
         return false;
     }
-    let mut changed = text_before
+    // Exactly one fixed fragment differs by written source. A change confined
+    // to line-continuation bytes rides the fragment it joins, so it counts as a
+    // spelling-only edit of that fragment.
+    text_before
         .iter()
         .zip(&text_after)
-        .filter(|(a, b)| a.source != b.source);
-    // A continuation-only edit has no fixed output value to pin.
-    matches!(
-        (changed.next(), changed.next()),
-        (Some((a, b)), None) if !(a.decoded.is_empty() && b.decoded.is_empty())
-    )
+        .filter(|(a, b)| a != b)
+        .count()
+        == 1
 }
 
 /// Original literal-only lexical boundary, retained as an admission ceiling.
@@ -453,20 +453,6 @@ fn format_template(text: &str) -> Option<(String, Vec<(char, String)>)> {
     Some((kept, template?))
 }
 
-/// A fixed output fragment: its written source and the text it prints.
-#[derive(Default, PartialEq)]
-struct Fragment {
-    source: String,
-    decoded: String,
-}
-
-impl Fragment {
-    fn push(&mut self, source: &str, decoded: char) {
-        self.source.push_str(source);
-        self.decoded.push(decoded);
-    }
-}
-
 /// Ordered groups and fixed fragments as source spellings, with doubled braces
 /// reading as literal braces. A group or fragment is compared by the source it
 /// is written in, so re-spelling a placeholder (`{}` as `\u{7b}\u{7d}`) is an
@@ -474,18 +460,18 @@ impl Fragment {
 /// fragment. Comparing one changed fragment avoids cancellation across
 /// placeholders (e.g. `1{}` to `{}1` for the value 1). This does not interpret
 /// the full Rust format-specifier grammar.
-fn format_fragments(template: &[(char, String)]) -> Option<(Vec<String>, Vec<Fragment>)> {
+fn format_fragments(template: &[(char, String)]) -> Option<(Vec<String>, Vec<String>)> {
     let mut groups = Vec::new();
     let mut fragments = Vec::new();
-    let mut fragment = Fragment::default();
+    let mut fragment = String::new();
     let mut at = 0;
     while at < template.len() {
         let (c, source) = (&template[at].0, &template[at].1);
         at += 1;
         match c {
             '{' if template.get(at).map(|next| next.0) == Some('{') => {
-                fragment.push(source, '{');
-                fragment.push(&template[at].1, '{');
+                fragment.push_str(source);
+                fragment.push_str(&template[at].1);
                 at += 1;
             }
             '{' => {
@@ -518,12 +504,12 @@ fn format_fragments(template: &[(char, String)]) -> Option<(Vec<String>, Vec<Fra
                 groups.push(group);
             }
             '}' if template.get(at).map(|next| next.0) == Some('}') => {
-                fragment.push(source, '}');
-                fragment.push(&template[at].1, '}');
+                fragment.push_str(source);
+                fragment.push_str(&template[at].1);
                 at += 1;
             }
             '}' => return None,
-            _ => fragment.push(source, *c),
+            _ => fragment.push_str(source),
         }
     }
     fragments.push(fragment);
@@ -1737,6 +1723,16 @@ mod tests {
         assert!(same(
             r#"write!(f, "{} C", "a}")"#,
             r#"write!(f, "{} F", "a}")"#
+        ));
+        // Nested width/precision arguments (`{:{}}`) are valid syntax this reader
+        // does not interpret: a named conservative gap that withholds credit.
+        assert!(!same(
+            r#"write!(f, "{:{}}C", self.0, w)"#,
+            r#"write!(f, "{:{}}F", self.0, w)"#
+        ));
+        assert!(!same(
+            r#"write!(f, "{:.{}}C", self.0, w)"#,
+            r#"write!(f, "{:.{}}F", self.0, w)"#
         ));
         // A lone brace is not format text ripr reads.
         assert!(!same("write!(f, \"a}\")", "write!(f, \"b}\")"));

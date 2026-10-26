@@ -116,7 +116,10 @@ all are required:
   while re-spelling a placeholder is a group edit and withholds.
   Cancelling edits across multiple fragments, argument-string edits
   that precision can hide, malformed literals/groups and raw strings withhold
-  credit. This is withhold-only and does not interpret the full format-specifier
+  credit. Nested argument replacements in a width or precision (`{:{}}`,
+  `{:.{}}`) are valid format syntax this reader does not interpret: they
+  withhold credit as a named conservative gap, not as malformed input.
+  This is withhold-only and does not interpret the full format-specifier
   grammar. Public API controls and the real-producer honesty fixture discriminate
   the original placeholder false-credit case.
 
