@@ -32,7 +32,7 @@
       "limited"
     ]
   },
-  "reasoning": "The stored code throws TypeError(\"empty\"); toThrow(TypeError) pins only the class, so changing the message to \"blank\" survives. ripr now reports weakly_exposed with a broad_error oracle and the missing discriminator `throws TypeError matching \"blank\"`, a correct gap. The labeling-time reading was exposed with exact_error_variant / strong, a false exposure against runtime truth. Spec cells: RIPR-SPEC-0243 example 13 (TypeError variant)",
+  "reasoning": "The stored code throws TypeError(\"empty\"); toThrow(TypeError) pins only the class, so changing the message to \"blank\" survives. ripr now reports weakly_exposed: the observe leg reads broad_error and names the missing discriminator `throws TypeError matching \"blank\"`, a correct gap, although the finding's own oracle_kind is still exact_error_variant / strong. The labeling-time reading was exposed, a false exposure against runtime truth. Spec cells: RIPR-SPEC-0243 example 13 (TypeError variant)",
   "labeling_observation": {
     "ripr_commit": "1273096",
     "full_checkout_verdict": "credited",
