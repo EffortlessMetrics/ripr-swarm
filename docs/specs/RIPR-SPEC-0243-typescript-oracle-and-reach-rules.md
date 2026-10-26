@@ -1697,7 +1697,13 @@ receiver object; the test file contains only trusted imports and one direct,
 two-argument `test` registration with a literal title. Extra setup/imports,
 suites and sibling functions/tests are outside this bounded witness.
 Nonreceiver arguments must be primitive literals; owner statements cannot
-replace the receiver or invoke opaque code. This does not change generic
+replace the receiver or invoke opaque code. Removed-call identifier arguments
+must be initialized parameters or admitted earlier locals at the unique changed
+statement; unknown and later bindings withhold credit. The selected mocked
+method must exist exactly once. A default spy admits only a synchronous,
+nonthrowing no-op original (no default/destructured/rest parameters or opaque
+statements); an explicit admitted no-op replacement can bypass the original
+body check, but cannot supply a missing method. This does not change generic
 call-count oracle projection (#10174).
 
 ## Test Mapping
@@ -1709,7 +1715,11 @@ call-count oracle projection (#10174).
   The same module's remaining tests pin early returns/default parameters,
   opaque reads, export aliases, mock API replacement and registration argument
   effects; `counted_removal_retained_corpus_shape_is_exposed` reuses the retained
-  corpus source and test without rewriting their spy.
+  corpus source and test without rewriting their spy. The target-method and
+  removed-argument regressions pin throwing/absent/duplicate methods, imported
+  and parameter receivers, valid explicit replacements, and earlier/later local
+  bindings. Three dedicated call-removal fixtures also pin `weakly_exposed` in
+  the cross-language evidence-promotion-honesty corpus.
 
 - #9683 (rule 11, empty table): `tests/table_loop_tests.rs` pins that an empty
   `const` table holds no assertions and a `let` table does not. Corpus row

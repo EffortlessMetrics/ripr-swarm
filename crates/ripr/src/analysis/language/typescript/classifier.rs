@@ -6095,10 +6095,10 @@ pub(crate) fn classify_resolved_owner(
     // have been established together. Generic oracle projection is unchanged.
     let counted_removal = !probe_shape.specific
         && super::call_removal_guard::removed_method_call(line_text, old_line_text).is_some_and(
-            |(receiver, method)| {
+            |removed| {
                 super::call_removal_guard::call_count_pins_removed_call(
-                    &receiver,
-                    &method,
+                    &removed,
+                    line_text,
                     owner,
                     related_candidates,
                     alias_map,

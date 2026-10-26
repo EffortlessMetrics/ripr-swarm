@@ -3,8 +3,14 @@
 
 use super::*;
 
+pub(crate) struct RemovedMethodCall {
+    pub(crate) receiver: String,
+    pub(crate) method: String,
+    argument_names: Vec<String>,
+}
+
 /// Read a whole removed method-call statement and its replacement discard.
-pub(crate) fn removed_method_call(new: &str, old: Option<&str>) -> Option<(String, String)> {
+pub(crate) fn removed_method_call(new: &str, old: Option<&str>) -> Option<RemovedMethodCall> {
     let new_len = new.len();
     let combined = format!("{new}\n{}", old?);
     super::parse::parse_on_worker(
@@ -60,7 +66,18 @@ pub(crate) fn removed_method_call(new: &str, old: Option<&str>) -> Option<(Strin
             }) {
                 return None;
             }
-            Some((receiver.name.to_string(), member.property.name.to_string()))
+            Some(RemovedMethodCall {
+                receiver: receiver.name.to_string(),
+                method: member.property.name.to_string(),
+                argument_names: call
+                    .arguments
+                    .iter()
+                    .filter_map(|argument| match argument.as_expression() {
+                        Some(Expression::Identifier(id)) => Some(id.name.to_string()),
+                        _ => None,
+                    })
+                    .collect(),
+            })
         },
     )
     .ok()
@@ -140,19 +157,25 @@ fn imported(test: &TypeScriptTest, local: &str, module: &str, name: &str) -> boo
 /// Aliases, context mocks, async callbacks, resets/restores and nested control
 /// flow are intentionally outside this witness.
 pub(crate) fn call_count_pins_removed_call(
-    receiver: &str,
-    method: &str,
+    removed: &RemovedMethodCall,
+    changed_line: &str,
     owner: &TypeScriptOwner,
     candidates: &[TypeScriptRelatedCandidate<'_>],
     alias_map: Option<&TsAliasMap>,
     workspace_root: Option<&Path>,
 ) -> bool {
-    if owner.arity != Some(owner.params.len()) || !straight_line_owner(owner, receiver) {
+    let receiver = removed.receiver.as_str();
+    let method = removed.method.as_str();
+    if owner.arity != Some(owner.params.len())
+        || !straight_line_owner(owner, receiver, &removed.argument_names, changed_line)
+    {
         return false;
     }
-    if !module_bindings_are_exported(owner, receiver, workspace_root) {
+    let Some(module_method_is_noop) =
+        module_bindings_are_exported(owner, receiver, method, workspace_root)
+    else {
         return false;
-    }
+    };
     candidates
         .iter()
         .filter(|candidate| candidate.relation.uses_oracle())
@@ -258,7 +281,7 @@ pub(crate) fn call_count_pins_removed_call(
                     &callback.body.statements,
                     source,
                     test,
-                    (&receiver, &method),
+                    (&receiver, &method, module_method_is_noop),
                     &owned_owner,
                     alias_map.as_ref(),
                     workspace_root.as_deref(),
@@ -276,12 +299,12 @@ fn sequence_pins(
     statements: &[Statement<'_>],
     source: &str,
     test: &TypeScriptTest,
-    removed: (&str, &str),
+    removed: (&str, &str, bool),
     owner: &TypeScriptOwner,
     alias_map: Option<&TsAliasMap>,
     workspace_root: Option<&Path>,
 ) -> bool {
-    let (receiver, method) = removed;
+    let (receiver, method, module_method_is_noop) = removed;
     let mut locals = Vec::new();
     let mut spy: Option<(String, String)> = None;
     let mut invoked = false;
@@ -297,7 +320,7 @@ fn sequence_pins(
             let Some(local) = super::owners::binding_identifier_name(&declaration.id) else {
                 return false;
             };
-            if locals.iter().any(|name| name == local)
+            if locals.iter().any(|(name, _)| name == local)
                 || ["mock", "assert", "test", owner.name.as_str()].contains(&local)
             {
                 return false;
@@ -310,7 +333,7 @@ fn sequence_pins(
                     if !plain_object(object) {
                         return false;
                     }
-                    locals.push(local.to_string());
+                    locals.push((local.to_string(), object_method_witness(object, method)));
                 }
                 Expression::CallExpression(call) => {
                     let Expression::StaticMemberExpression(member) = &call.callee else {
@@ -339,30 +362,41 @@ fn sequence_pins(
                     }
                     let target = target.name.as_str();
                     let parameter = owner.params.iter().any(|param| param == receiver);
-                    if parameter {
-                        if !locals.iter().any(|name| name == target) {
+                    let original_is_noop = if parameter {
+                        let Some((_, Some(original_is_noop))) =
+                            locals.iter().find(|(name, _)| name == target)
+                        else {
+                            return false;
+                        };
+                        *original_is_noop
+                    } else {
+                        if target != receiver
+                            || shadowed(test, receiver)
+                            || locals.iter().any(|(name, _)| name == receiver)
+                            || test
+                                .written_locals_in_file
+                                .iter()
+                                .any(|name| name == receiver)
+                            || !test.imports_in_file.iter().any(|import| {
+                                !import.namespace
+                                    && import.local == receiver
+                                    && import.imported.as_deref() == Some(receiver)
+                                    && owner_import_matches(
+                                        import,
+                                        &test.file,
+                                        owner,
+                                        alias_map,
+                                        workspace_root,
+                                    )
+                            })
+                        {
                             return false;
                         }
-                    } else if target != receiver
-                        || shadowed(test, receiver)
-                        || locals.iter().any(|name| name == receiver)
-                        || test
-                            .written_locals_in_file
-                            .iter()
-                            .any(|name| name == receiver)
-                        || !test.imports_in_file.iter().any(|import| {
-                            !import.namespace
-                                && import.local == receiver
-                                && import.imported.as_deref() == Some(receiver)
-                                && owner_import_matches(
-                                    import,
-                                    &test.file,
-                                    owner,
-                                    alias_map,
-                                    workspace_root,
-                                )
-                        })
-                    {
+                        module_method_is_noop
+                    };
+                    // Installing a replacement still requires an existing method.
+                    // Without one, the selected original must finish normally.
+                    if call.arguments.len() == 2 && !original_is_noop {
                         return false;
                     }
                     spy = Some((local.to_string(), target.to_string()));
@@ -457,7 +491,12 @@ fn sequence_pins(
 
 /// Keep the removed call on an unconditional path without another call or
 /// write that could replace its receiver before the deleted statement.
-fn straight_line_owner(owner: &TypeScriptOwner, receiver: &str) -> bool {
+fn straight_line_owner(
+    owner: &TypeScriptOwner,
+    receiver: &str,
+    argument_names: &[String],
+    changed_line: &str,
+) -> bool {
     let Some(source) = owner.source_text.as_deref() else {
         return false;
     };
@@ -467,29 +506,42 @@ fn straight_line_owner(owner: &TypeScriptOwner, receiver: &str) -> bool {
         .unwrap_or(source.trim());
     let owned_owner = owner.clone();
     let receiver = receiver.to_string();
+    let argument_names = argument_names.to_vec();
+    let changed_line = changed_line.trim().to_string();
     super::parse::parse_on_worker(&owner.file, source, move |_, source, allocator| {
-    let owner = &owned_owner;
-    let receiver = receiver.as_str();
-    let parsed = Parser::new(allocator, source, SourceType::ts()).parse();
-    if !parsed.errors.is_empty() || parsed.program.body.len() != 1 { return false; }
-    let Statement::FunctionDeclaration(function) = &parsed.program.body[0] else { return false; };
-    if function.r#async || function.generator || function.params.items.iter().any(|param| param.initializer.is_some()) { return false; }
-    let Some(body) = &function.body else { return false; };
-    let mut known = owner.params.clone();
-    body.statements.iter().enumerate().all(|(index, statement)| match statement {
-        Statement::VariableDeclaration(declaration) => declaration.declarations.iter().all(|declaration| {
-            let Some(local) = super::owners::binding_identifier_name(&declaration.id) else { return false; };
-            if local == receiver || known.iter().any(|name| name == local)
-                || !declaration.init.as_ref().is_some_and(|value| pure_value(value, owner, receiver, &known)) { return false; }
-            known.push(local.to_string());
-            true
-        }),
-        Statement::ExpressionStatement(statement) => matches!(&statement.expression,
-            Expression::UnaryExpression(unary) if unary.operator == oxc_ast::ast::UnaryOperator::Void
-                && matches!(&unary.argument, Expression::Identifier(id) if known.iter().any(|name| name == id.name.as_str()))),
-        Statement::ReturnStatement(statement) => index + 1 == body.statements.len() && statement.argument.as_ref().is_none_or(|value| pure_value(value, owner, receiver, &known)),
-        _ => false,
-    })
+        let owner = &owned_owner;
+        let receiver = receiver.as_str();
+        let parsed = Parser::new(allocator, source, SourceType::ts()).parse();
+        if !parsed.errors.is_empty() || parsed.program.body.len() != 1 { return false; }
+        let Statement::FunctionDeclaration(function) = &parsed.program.body[0] else { return false; };
+        if function.r#async || function.generator || function.params.items.iter().any(|param| param.initializer.is_some()) { return false; }
+        let Some(body) = &function.body else { return false; };
+        let mut known = owner.params.clone();
+        let mut changed_matches = 0;
+        let straight = body.statements.iter().enumerate().all(|(index, statement)| match statement {
+            Statement::VariableDeclaration(declaration) => declaration.declarations.iter().all(|declaration| {
+                let Some(local) = super::owners::binding_identifier_name(&declaration.id) else { return false; };
+                if local == receiver || known.iter().any(|name| name == local)
+                    || !declaration.init.as_ref().is_some_and(|value| pure_value(value, owner, receiver, &known)) { return false; }
+                known.push(local.to_string());
+                true
+            }),
+            Statement::ExpressionStatement(statement) => {
+                let span = statement.span();
+                if source.get(span.start as usize..span.end as usize).map(str::trim) == Some(changed_line.as_str()) {
+                    changed_matches += 1;
+                    // The deleted arguments are evaluated at this position, not
+                    // after later declarations in the replacement owner.
+                    if !argument_names.iter().all(|name| known.contains(name)) { return false; }
+                }
+                matches!(&statement.expression,
+                    Expression::UnaryExpression(unary) if unary.operator == oxc_ast::ast::UnaryOperator::Void
+                        && matches!(&unary.argument, Expression::Identifier(id) if known.iter().any(|name| name == id.name.as_str())))
+            },
+            Statement::ReturnStatement(statement) => index + 1 == body.statements.len() && statement.argument.as_ref().is_none_or(|value| pure_value(value, owner, receiver, &known)),
+            _ => false,
+        });
+        straight && changed_matches == 1
     }).unwrap_or(false)
 }
 
@@ -534,70 +586,82 @@ fn shadowed(test: &TypeScriptTest, local: &str) -> bool {
 fn module_bindings_are_exported(
     owner: &TypeScriptOwner,
     receiver: &str,
+    method: &str,
     root: Option<&Path>,
-) -> bool {
-    let Some(root) = root else {
-        return false;
-    };
-    let Some(source) = admitted_source(root, &owner.file) else {
-        return false;
-    };
+) -> Option<bool> {
+    let source = admitted_source(root?, &owner.file)?;
     if !owner
         .source_text
         .as_deref()
         .is_some_and(|text| source.contains(text))
     {
-        return false;
+        return None;
     }
     let require_receiver = !owner.params.iter().any(|param| param == receiver);
     let owner_name = owner.name.clone();
     let owner_source = owner.source_text.clone().unwrap_or_default();
     let receiver = receiver.to_string();
+    let method = method.to_string();
     super::parse::parse_on_worker(&owner.file, &source, move |_, source, allocator| {
         let parsed = Parser::new(allocator, source, SourceType::ts()).parse();
         if !parsed.errors.is_empty() {
-            return false;
+            return None;
         }
         let mut owner_exported = false;
-        let mut receiver_exported = !require_receiver;
+        // Parameter receivers are established by the test-local object instead.
+        let mut receiver_method = (!require_receiver).then_some(true);
         for statement in &parsed.program.body {
             let Statement::ExportNamedDeclaration(export) = statement else {
-                return false;
+                return None;
             };
             match &export.declaration {
                 Some(Declaration::FunctionDeclaration(function)) => {
                     let span = function.span();
-                    if function.id.as_ref().is_none_or(|id| id.name != owner_name.as_str()) { return false; }
-                    owner_exported |= function
+                    if function
                         .id
                         .as_ref()
-                        .is_some_and(|id| id.name == owner_name.as_str())
-                        && source.get(span.start as usize..span.end as usize)
-                            == Some(
-                                owner_source
-                                    .trim()
-                                    .strip_prefix("export ")
-                                    .unwrap_or(owner_source.trim()),
-                            );
+                        .is_none_or(|id| id.name != owner_name.as_str())
+                    {
+                        return None;
+                    }
+                    owner_exported |= source.get(span.start as usize..span.end as usize)
+                        == Some(
+                            owner_source
+                                .trim()
+                                .strip_prefix("export ")
+                                .unwrap_or(owner_source.trim()),
+                        );
                 }
                 Some(Declaration::VariableDeclaration(declaration))
                     if declaration.kind == oxc_ast::ast::VariableDeclarationKind::Const =>
                 {
-                    if declaration.declarations.len() != 1 { return false; }
-                    let exported_receiver = declaration.declarations.iter().any(|declaration| {
-                        super::owners::binding_identifier_name(&declaration.id)
-                            == Some(receiver.as_str())
-                            && matches!(&declaration.init, Some(Expression::ObjectExpression(object)) if plain_object(object))
-                    });
-                    if !exported_receiver { return false; }
-                    receiver_exported = true;
+                    let [declaration] = declaration.declarations.as_slice() else {
+                        return None;
+                    };
+                    if super::owners::binding_identifier_name(&declaration.id)
+                        != Some(receiver.as_str())
+                    {
+                        return None;
+                    }
+                    let Some(Expression::ObjectExpression(object)) = &declaration.init else {
+                        return None;
+                    };
+                    if !plain_object(object) {
+                        return None;
+                    }
+                    receiver_method = Some(object_method_witness(object, &method)?);
                 }
-                _ => return false,
+                _ => return None,
             }
         }
-        owner_exported && receiver_exported
+        if owner_exported {
+            receiver_method
+        } else {
+            None
+        }
     })
-    .unwrap_or(false)
+    .ok()
+    .flatten()
 }
 
 fn noop_replacement(argument: &Argument<'_>) -> bool {
@@ -629,4 +693,68 @@ fn plain_object(object: &oxc_ast::ast::ObjectExpression<'_>) -> bool {
     object.properties.iter().all(|property| matches!(property,
         ObjectPropertyKind::ObjectProperty(property) if property.kind == oxc_ast::ast::PropertyKind::Init
             && !property.computed && property.method && matches!(&property.value, Expression::FunctionExpression(_))))
+}
+
+/// The selected property must exist exactly once. The bool records whether a
+/// default spy can call its original without running opaque/throwing code;
+/// an admitted explicit no-op replacement may bypass only that body check.
+fn object_method_witness(
+    object: &oxc_ast::ast::ObjectExpression<'_>,
+    method: &str,
+) -> Option<bool> {
+    let mut selected = None;
+    for property in &object.properties {
+        let ObjectPropertyKind::ObjectProperty(property) = property else {
+            return None;
+        };
+        if property.key.static_name().as_deref() != Some(method) {
+            continue;
+        }
+        if selected.is_some() {
+            return None;
+        }
+        let Expression::FunctionExpression(function) = &property.value else {
+            return None;
+        };
+        selected = Some(noop_method(function));
+    }
+    selected
+}
+
+fn noop_method(function: &oxc_ast::ast::Function<'_>) -> bool {
+    if function.r#async || function.generator || function.params.rest.is_some() {
+        return false;
+    }
+    let mut known = Vec::new();
+    for parameter in &function.params.items {
+        if parameter.initializer.is_some() {
+            return false;
+        }
+        let Some(name) = super::owners::binding_identifier_name(&parameter.pattern) else {
+            return false;
+        };
+        known.push(name);
+    }
+    let Some(body) = &function.body else {
+        return false;
+    };
+    body.statements.iter().enumerate().all(|(index, statement)| match statement {
+        Statement::ExpressionStatement(statement) => matches!(&statement.expression,
+            Expression::UnaryExpression(unary) if unary.operator == oxc_ast::ast::UnaryOperator::Void
+                && noop_method_value(&unary.argument, &known)),
+        Statement::ReturnStatement(statement) => index + 1 == body.statements.len()
+            && statement.argument.as_ref().is_none_or(|value| noop_method_value(value, &known)),
+        _ => false,
+    })
+}
+
+fn noop_method_value(value: &Expression<'_>, known: &[&str]) -> bool {
+    match value {
+        Expression::Identifier(id) => known.contains(&id.name.as_str()),
+        Expression::StringLiteral(_)
+        | Expression::NumericLiteral(_)
+        | Expression::BooleanLiteral(_)
+        | Expression::NullLiteral(_) => true,
+        _ => false,
+    }
 }

@@ -53,6 +53,17 @@ fn control(
     imports: &str,
     exposed: bool,
 ) -> Result<(), String> {
+    control_with_removed_call(label, source, body, imports, exposed, "sink.write(event);")
+}
+
+fn control_with_removed_call(
+    label: &str,
+    source: &str,
+    body: &str,
+    imports: &str,
+    exposed: bool,
+    removed_call: &str,
+) -> Result<(), String> {
     let test = format!(
         "import {{ mock, test }} from 'node:test';\nimport assert from 'node:assert/strict';\n{imports}\ntest('writes once', () => {{\n{body}\n}});\n"
     );
@@ -62,7 +73,7 @@ fn control(
         .ok_or("missing discard")?
         + 1;
     let diff = format!(
-        "diff --git a/src/audit.ts b/src/audit.ts\n--- a/src/audit.ts\n+++ b/src/audit.ts\n@@ -{line},1 +{line},1 @@\n-  sink.write(event);\n+  void event;\n"
+        "diff --git a/src/audit.ts b/src/audit.ts\n--- a/src/audit.ts\n+++ b/src/audit.ts\n@@ -{line},1 +{line},1 @@\n-  {removed_call}\n+  void event;\n"
     );
     let finding = finding_for(
         label,
@@ -322,7 +333,10 @@ fn counted_removal_refuses_registration_argument_effects() -> Result<(), String>
 #[test]
 fn counted_removal_refuses_arguments_that_can_throw() {
     let new = "void event;";
-    let read = |old: &str| super::call_removal_guard::removed_method_call(new, Some(old));
+    let read = |old: &str| {
+        super::call_removal_guard::removed_method_call(new, Some(old))
+            .map(|removed| (removed.receiver, removed.method))
+    };
     for old in [
         "sink.write(event);",
         "sink.write(event, 'a', 1, true, null);",
@@ -347,4 +361,117 @@ fn counted_removal_refuses_arguments_that_can_throw() {
     ] {
         assert_eq!(read(old), None, "{old}");
     }
+}
+
+#[test]
+fn counted_removal_refuses_unusable_target_methods() -> Result<(), String> {
+    for (label, object) in [
+        (
+            "throwing-target",
+            "{ write(event: string) { throw new Error('boom'); } }",
+        ),
+        ("missing-target", "{ other(event: string) { void event; } }"),
+        (
+            "duplicate-target",
+            "{ write(event: string) { void event; }, write(event: string) { throw new Error('boom'); } }",
+        ),
+    ] {
+        control(
+            label,
+            PARAM,
+            &format!("const sink = {object}; {SPY} emit(sink, 'a'); {PIN}"),
+            PARAM_IMPORT,
+            false,
+        )?;
+    }
+    // A replacement bypasses the original body, but cannot create a missing method.
+    for (label, object, exposed) in [
+        (
+            "replaced-throwing-target",
+            "{ write(event: string) { throw new Error('boom'); } }",
+            true,
+        ),
+        (
+            "replaced-missing-target",
+            "{ other(event: string) { void event; } }",
+            false,
+        ),
+    ] {
+        control(
+            label,
+            PARAM,
+            &format!(
+                "const sink = {object}; const write = mock.method(sink, 'write', () => undefined); emit(sink, 'a'); {PIN}"
+            ),
+            PARAM_IMPORT,
+            exposed,
+        )?;
+    }
+    for (label, source, spy, exposed) in [
+        (
+            "imported-throwing-target",
+            MODULE.replace(
+                "write(event: string) { void event; }",
+                "write(event: string) { throw new Error('boom'); }",
+            ),
+            SPY,
+            false,
+        ),
+        (
+            "imported-missing-target",
+            MODULE.replace("write(event: string)", "other(event: string)"),
+            SPY,
+            false,
+        ),
+        (
+            "imported-replaced-target",
+            MODULE.replace(
+                "write(event: string) { void event; }",
+                "write(event: string) { throw new Error('boom'); }",
+            ),
+            "const write = mock.method(sink, 'write', () => undefined);",
+            true,
+        ),
+    ] {
+        control(
+            label,
+            &source,
+            &format!("{spy} record('a'); {PIN}"),
+            MODULE_IMPORT,
+            exposed,
+        )?;
+    }
+    Ok(())
+}
+
+#[test]
+fn counted_removal_pins_removed_arguments_before_the_statement() -> Result<(), String> {
+    let body = format!("const sink = {OBJECT}; {SPY} emit(sink, 'a'); {PIN}");
+    control_with_removed_call(
+        "unbound-removed-argument",
+        PARAM,
+        &body,
+        PARAM_IMPORT,
+        false,
+        "sink.write(missing);",
+    )?;
+    let later = PARAM.replace("  void event;", "  void event;\n  const later = 'value';");
+    control_with_removed_call(
+        "later-removed-argument",
+        &later,
+        &body,
+        PARAM_IMPORT,
+        false,
+        "sink.write(later);",
+    )?;
+    let earlier = PARAM.replace("  void event;", "  const line = event;\n  void event;");
+    control_with_removed_call(
+        "earlier-removed-argument",
+        &earlier,
+        &body,
+        PARAM_IMPORT,
+        true,
+        "sink.write(line);",
+    )?;
+    Ok(())
 }

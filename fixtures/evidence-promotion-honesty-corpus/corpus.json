@@ -5,6 +5,75 @@
   "description": "Cross-language pinned adversarial corpus: evidence may not promote to exposed/strong unless it structurally matches the seam.",
   "cases": [
     {
+      "id": "typescript_call_removal_unbound_argument",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_call_removal_unbound_argument",
+      "vector": "removed_argument_reads_unbound_identifier_before_count",
+      "assertions": [
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "typescript_call_removal_absent_method",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_call_removal_absent_method",
+      "vector": "missing_selected_method_prevents_spy_installation",
+      "assertions": [
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "typescript_call_removal_throwing_method",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_call_removal_throwing_method",
+      "vector": "default_spy_calls_throwing_original_before_count",
+      "assertions": [
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
       "id": "rust_wrapper_boolean_return_discarded",
       "language": "rust",
       "tier": "pure",
