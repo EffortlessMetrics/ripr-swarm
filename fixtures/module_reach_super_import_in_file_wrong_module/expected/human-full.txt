@@ -1,0 +1,107 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/module_reach_super_import_in_file_wrong_module/input
+
+Summary: 2 probe(s), 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 1 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
+
+WARNING ./src/lib.rs:2
+  id: probe:src_lib.rs:predicate:41e056ec
+
+Changed
+  before: qty >= 10
+  after:  10 <= qty
+
+Probe
+  family: predicate
+  delta:  control
+  owner:  src/lib.rs::is_bulk
+  canonical gap: gap:rust:src/lib.rs:is_bulk:predicate_boundary:predicate:10==qty
+
+Static exposure
+  infection_unknown (warning, confidence 0.66)
+
+Evidence
+  - reach weak: No test is seen calling is_bulk; tests share only its file or a name token: discount_boundary
+  - infection unknown: Changed boundary input is unresolved: call identity does not resolve to the owner, so ripr cannot establish the boundary inputs; activation/infection is unknown
+  - propagation yes: Changed behavior appears to influence returned value: 10 <= qty
+  - observation yes: A related test observes a value or effect near the changed behavior
+  - discriminator not established (infection_unknown); related oracle: Strong oracle found: exact value or pattern assertion
+  - local flow reaches returned value: 10 <= qty (line 2)
+  - related test src/lib.rs:19 discount_boundary uses strong exact value oracle: assert_eq!(order_discount(10), 5); misses: no established call path to the changed code; linked by file location only
+  - related test src/lib.rs:19 discount_boundary uses strong exact value oracle: assert_eq!(order_discount(9), 4); misses: no established call path to the changed code; linked by file location only
+  - source assertion argument value 10 at line 20
+  - source assertion argument value 5 at line 20
+  - source assertion argument value 4 at line 21
+  - source assertion argument value 9 at line 21
+
+Weakness
+  - Changed boundary input is unresolved: call identity does not resolve to the owner, so ripr cannot establish the boundary inputs; activation/infection is unknown
+  - No detected boundary input for the changed predicate
+
+Stop reasons:
+  - infection_evidence_unknown — ripr could not tell whether a test input reaches a value that makes the change matter
+    Next: Add a test input that reaches the changed value, such as a boundary value, then assert on the result.
+
+Next step
+  Open the related test and trace its input through the local or computed operand (including default and empty cases) to see which side of the changed condition it exercises, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown
+Drill in:
+  ripr explain --root <cwd>/fixtures/module_reach_super_import_in_file_wrong_module/input --diff <cwd>/fixtures/module_reach_super_import_in_file_wrong_module/diff.patch --mode fast probe:src_lib.rs:predicate:41e056ec
+  ripr context --root <cwd>/fixtures/module_reach_super_import_in_file_wrong_module/input --diff <cwd>/fixtures/module_reach_super_import_in_file_wrong_module/diff.patch --mode fast --at probe:src_lib.rs:predicate:41e056ec
+
+WARNING ./src/lib.rs:2
+  id: probe:src_lib.rs:return_value:cc17bcd3
+
+Changed
+  before: qty >= 10
+  after:  10 <= qty
+
+Probe
+  family: return_value
+  delta:  value
+  owner:  src/lib.rs::is_bulk
+
+Static exposure
+  weakly_exposed (warning, confidence 0.66)
+
+Evidence
+  - reach weak: No test is seen calling is_bulk; tests share only its file or a name token: discount_boundary
+  - infection yes: Reachable tests can plausibly activate this changed behavior
+  - propagation yes: Complete propagation witness reaches returned value: 10 <= qty
+  - observation yes: A related test observes a value or effect near the changed behavior
+  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression
+  - local flow reaches returned value: 10 <= qty (line 2)
+  - related test src/lib.rs:19 discount_boundary uses strong exact value oracle: assert_eq!(order_discount(10), 5); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - related test src/lib.rs:19 discount_boundary uses strong exact value oracle: assert_eq!(order_discount(9), 4); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - source assertion argument value 10 at line 20
+  - source assertion argument value 5 at line 20
+  - source assertion argument value 4 at line 21
+  - source assertion argument value 9 at line 21
+
+Weakness
+  - A test may reach this change through an internal helper-call chain ripr cannot fully trace (macros, generics, trait dispatch, or depth greater than 5). This is a named limitation, not a coverage claim
+
+Stop reasons:
+  - transitive_reach_unresolved — a candidate test path exists but passes through calls ripr only matched by name
+    Next: Call the changed owner directly from a test if tests can name it; if the path runs through private helpers ripr only matched by name, the edge can stay unresolved even with an exact assertion.
+
+Static limitation
+  rust_transitive_reach_unresolved — A test may reach this change through an internal helper-call chain ripr cannot fully trace (macros, generics, trait dispatch, or depth greater than 5). This is a named limitation, not a coverage claim.
+  Next: Call the changed owner directly from a test if tests can name it; if it is a private helper, ripr cannot finish the call chain, so this limitation can remain even when an assertion through the public API is exact.
+
+Where to look
+  For example, the test `discount_boundary` (src/lib.rs:19) calls `order_discount`, an entry point that may lead here. Inspect it to judge whether this change is observed.
+
+Limitation detail
+  last established edge: test `discount_boundary` (src/lib.rs:19) -> entry `order_discount`
+  first unresolved edge: entry `order_discount` -> owner `is_bulk` through a transitive Rust helper path
+  analyzer route: analysis/rust-public-api-transitive-reach
+  non-claim: named limitation only; ripr cannot confirm or deny that this path observes the change
+
+Next step
+  Check whether `discount_boundary`, which may reach `is_bulk` through `order_discount`, asserts on the changed behavior; ripr does not trace that path, so this limitation does not establish a missing test
+Drill in:
+  ripr explain --root <cwd>/fixtures/module_reach_super_import_in_file_wrong_module/input --diff <cwd>/fixtures/module_reach_super_import_in_file_wrong_module/diff.patch --mode fast probe:src_lib.rs:return_value:cc17bcd3
+  ripr context --root <cwd>/fixtures/module_reach_super_import_in_file_wrong_module/input --diff <cwd>/fixtures/module_reach_super_import_in_file_wrong_module/diff.patch --mode fast --at probe:src_lib.rs:return_value:cc17bcd3

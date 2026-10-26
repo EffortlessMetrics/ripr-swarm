@@ -59,3 +59,16 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — module_reach_super_import_in_file_wrong_module (6)
+
+Reason:
+RIPR-SPEC-0197: retain the full-human counterpart required by the explicit infection_unknown corpus invariant; no classification or input change.
+
+Command:
+`cargo xtask goldens bless module_reach_super_import_in_file_wrong_module --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
