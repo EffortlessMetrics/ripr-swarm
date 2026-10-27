@@ -1,0 +1,45 @@
+{
+  "case_id": "spec0048-flow-pattern-shadow",
+  "subject_id": "authored-spec0048-const-flow-shapes",
+  "diff": "cases/spec0048-flow-pattern-shadow.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 6
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "behavior_selector_const",
+  "test_shape": "selector_const_name_shadowed_by_pattern",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "pub const CEILING: u32 = 51;",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "the edit itself: the reader binds CEILING in an if-let pattern and never reads tuning::CEILING, so the edit changes nothing the test can see"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The reader binds a pattern variable named like the constant and never reads tuning::CEILING. The same-file reader rule must not read a pattern binding as a read of the constant.",
+  "labeling_observation": {
+    "ripr_commit": "01097634",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": []
+}
