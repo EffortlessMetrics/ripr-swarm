@@ -211,8 +211,11 @@ Test discovery:
   link is not counted either when it aliases a directory the walk already
   visits (#10829): its canonical target is a listable directory inside the
   canonical root with no excluded component (`.tools/skills ->
-  ../.agent/skills`), so its files are indexed at their real path. A directory
-  link that leaves the root, points into an excluded directory or at a
+  ../.agent/skills`), so its files are indexed at their real path, unless an
+  indexed file has a relative quoted specifier that resolves through the link
+  (`../alias/sum` with `alias -> src`): that import names a path the walk never
+  indexes, so the alias is counted (an unreadable or oversized indexed file
+  counts as importing). A directory link that leaves the root, points into an excluded directory or at a
   directory the walk cannot list, a source-named link, a dangling link and a
   link whose target cannot be read stay counted.
 - a file named `*.d.ts`, `*.d.mts` or `*.d.cts` is parsed as a TypeScript

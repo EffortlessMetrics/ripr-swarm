@@ -182,6 +182,7 @@ pub(crate) fn visit_workspace_with_handwritten(
     let mut visited = 0usize;
     let mut truncated = false;
     let mut skipped_links = 0usize;
+    let mut alias_links: Vec<PathBuf> = Vec::new();
     let mut stack: Vec<PathBuf> = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -226,8 +227,12 @@ pub(crate) fn visit_workspace_with_handwritten(
                 // path, so it is skipped without a disclosure. Anything
                 // else (a directory, a source-named link, a dangling or
                 // unreadable target) stays counted.
-                if !symlink_cannot_hide_sources(&path, root) {
-                    skipped_links += 1;
+                match classify_symlink(&path, root) {
+                    LinkKind::Harmless => {}
+                    LinkKind::DirectoryAlias => {
+                        alias_links.push(path.strip_prefix(root).unwrap_or(&path).to_path_buf());
+                    }
+                    LinkKind::MayHideSources => skipped_links += 1,
                 }
                 continue;
             }
@@ -272,11 +277,82 @@ pub(crate) fn visit_workspace_with_handwritten(
         }
     }
     out.sort();
+    if !alias_links.is_empty() {
+        skipped_links += alias_links
+            .iter()
+            .filter(|alias| any_file_imports_through(root, &out, alias))
+            .count();
+    }
     WorkspaceScan {
         files: out,
         truncated,
         skipped_links,
     }
+}
+
+/// Largest indexed file read when checking for imports through an alias; a
+/// bigger file cannot be shown free of one, so it counts as traversing.
+const ALIAS_IMPORT_SCAN_MAX_BYTES: u64 = 4 * 1024 * 1024;
+
+/// `true` when an indexed file has a relative quoted specifier that resolves,
+/// lexically, to or below the alias link. The import then names the link
+/// path, which the walk never indexes, so the link hides the module the
+/// import means; an unread or oversized file fails closed.
+fn any_file_imports_through(root: &Path, files: &[PathBuf], alias: &Path) -> bool {
+    files.iter().any(|file| {
+        let full = root.join(file);
+        let Ok(metadata) = std::fs::metadata(&full) else {
+            return true;
+        };
+        if metadata.len() > ALIAS_IMPORT_SCAN_MAX_BYTES {
+            return true;
+        }
+        let Ok(text) = std::fs::read_to_string(&full) else {
+            return true;
+        };
+        let dir = file.parent().unwrap_or(Path::new(""));
+        quoted_relative_specifiers(&text)
+            .into_iter()
+            .any(|specifier| lexically_resolve(dir, specifier).starts_with(alias))
+    })
+}
+
+/// Quoted strings that begin `./` or `../` (single, double or backtick).
+fn quoted_relative_specifiers(text: &str) -> Vec<&str> {
+    let bytes = text.as_bytes();
+    let mut found = Vec::new();
+    let mut index = 0;
+    while index < bytes.len() {
+        let quote = bytes[index];
+        if matches!(quote, b'\'' | b'"' | b'`') {
+            let start = index + 1;
+            let rest = &text[start..];
+            let len = rest
+                .find(|c: char| c == char::from(quote) || c == '\n')
+                .unwrap_or(rest.len());
+            let candidate = &rest[..len];
+            if candidate.starts_with("./") || candidate.starts_with("../") {
+                found.push(candidate);
+            }
+            index = start + len;
+        }
+        index += 1;
+    }
+    found
+}
+
+fn lexically_resolve(dir: &Path, specifier: &str) -> PathBuf {
+    let mut resolved = dir.to_path_buf();
+    for part in specifier.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                resolved.pop();
+            }
+            other => resolved.push(other),
+        }
+    }
+    resolved
 }
 
 /// `true` when the symlink at `path` hides nothing the walk would index.
@@ -293,15 +369,32 @@ pub(crate) fn visit_workspace_with_handwritten(
 /// `.tools/skills -> ../.agent/skills`). A target outside the root, in an
 /// excluded directory, a dangling link or a failed stat is "could hide
 /// sources" and stays disclosed.
-fn symlink_cannot_hide_sources(path: &Path, root: &Path) -> bool {
+fn classify_symlink(path: &Path, root: &Path) -> LinkKind {
     let Ok(metadata) = std::fs::metadata(path) else {
-        return false;
+        return LinkKind::MayHideSources;
     };
     if metadata.is_file() {
-        return !TypeScriptAdapter.accepts_path(path)
-            || is_detectable_generated_typescript_path(path);
+        return if !TypeScriptAdapter.accepts_path(path)
+            || is_detectable_generated_typescript_path(path)
+        {
+            LinkKind::Harmless
+        } else {
+            LinkKind::MayHideSources
+        };
     }
-    metadata.is_dir() && directory_link_aliases_walked_directory(path, root)
+    if metadata.is_dir() && directory_link_aliases_walked_directory(path, root) {
+        LinkKind::DirectoryAlias
+    } else {
+        LinkKind::MayHideSources
+    }
+}
+
+enum LinkKind {
+    Harmless,
+    /// Aliases a directory the walk indexes under its real path; hides
+    /// nothing unless an indexed file imports through the link.
+    DirectoryAlias,
+    MayHideSources,
 }
 
 fn directory_link_aliases_walked_directory(path: &Path, root: &Path) -> bool {
@@ -839,6 +932,26 @@ mod tests {
             "the alias is not followed into the index: {:?}",
             scan.files
         );
+        Ok(())
+    }
+
+    /// An alias an indexed file imports through (`../alias/sum`) names a path
+    /// the walk never indexes, so it is counted; the same alias that nothing
+    /// imports through is not (#10829 review).
+    #[cfg(unix)]
+    #[test]
+    fn discovery_counts_an_alias_that_an_indexed_file_imports_through() -> std::io::Result<()> {
+        use std::os::unix::fs::symlink;
+        let workspace = TempWorkspace::new("link-alias-import");
+        workspace.write("src/sum.ts", "export const sum = 1;\n");
+        workspace.write(
+            "tests/sum.test.ts",
+            "import { sum } from '../alias/sum';\ntest('s', () => { expect(sum).toBe(1); });\n",
+        );
+        symlink("../src", workspace.0.join("alias"))?;
+        let scan =
+            visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        assert_eq!(scan.skipped_links, 1, "{:?}", scan.files);
         Ok(())
     }
 
