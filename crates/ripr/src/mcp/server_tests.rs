@@ -1322,7 +1322,7 @@ fn resource_id_document_resolves_raw_decoded_and_ambiguous_spellings() -> Result
     }
 
     // Non-miss failures pass through untouched.
-    match resource_id_document("gap:rust:src/lib.rs:owner", |_id| {
+    match resource_id_document::<Value>("gap:rust:src/lib.rs:owner", |_id| {
         Err(workspace::AttemptFailure::new(
             workspace::CODE_ANALYSIS_FAILED,
             "instrument failure",
