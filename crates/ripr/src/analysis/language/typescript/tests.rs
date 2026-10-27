@@ -15736,6 +15736,67 @@ fn branch_return_expressions_refuses_a_changed_if_in_a_nested_function() {
     }
 }
 
+/// #10776: a changed `if` inside an object-literal or class method belongs to
+/// that method's returns, not the owner's. Method shorthand carries neither
+/// `=>` nor `function`, so the signature itself is what marks the body.
+#[test]
+fn branch_return_expressions_refuses_a_changed_if_in_a_method_shorthand() {
+    for header in [
+        "    const o = { pick(n: number) {",
+        "    const o = { pick(n: number): number {",
+        "    const o = { async pick(n: number) {",
+        "    const o = { get pick() {",
+        "    const o = { *pick(n: number) {",
+        "    const o = { pick<T>(n: T) {",
+    ] {
+        let lines: Vec<&str> = [
+            "export function f(s: number): number {",
+            header,
+            "        if (n === 404) {",
+            "            return 1;",
+            "        }",
+            "        return 2;",
+            "    } };",
+            "    return o.pick(s);",
+            "}",
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(branch_return_expressions(&lines, 2), None, "{header}");
+    }
+}
+
+/// #10776 controls: a control head (`for`, `while`, `switch`, `catch`) or a
+/// call that passes an object is not a method, so the scan still reads the
+/// enclosing owner's returns.
+#[test]
+fn branch_return_expressions_keeps_control_heads_and_object_arguments() {
+    for header in [
+        "    for (const k of keys) {",
+        "    while (go(s)) {",
+        "    try {",
+        "    } catch (e) {",
+        "    run(s, {",
+        "    const o = {",
+        "    f(s) < limit {",
+    ] {
+        let lines: Vec<&str> = [
+            "export function f(s: number): number {",
+            header,
+            "        if (s === 404) {",
+            "            return 1;",
+            "        }",
+            "        return 2;",
+            "    }",
+            "    return 3;",
+            "}",
+        ]
+        .into_iter()
+        .collect();
+        assert!(branch_return_expressions(&lines, 2).is_some(), "{header}");
+    }
+}
+
 /// #7433 controls: a multi-line `if` nested in a plain block, an arrow owner,
 /// and braces or `=>` inside earlier strings and comments keep the scan.
 #[test]
@@ -15870,6 +15931,109 @@ fn expected_side_is_live_withholds_a_changed_if_in_a_nested_function() {
         expected_side_is_live(
             &owner,
             "        if (n === 404) {",
+            "n",
+            "404",
+            &["404".to_string()],
+            "1",
+        ),
+        Some(false)
+    );
+}
+
+/// #10776 control: a statement without a trailing `;` stays in the text before
+/// the next block head, but the call is not that block's signature, so the
+/// block is plain and the scan still reads the owner's returns. A decorator on
+/// its own line does not hide the method it decorates.
+#[test]
+fn branch_return_expressions_reads_a_block_after_a_semicolon_less_call() {
+    let after_call: Vec<&str> = [
+        "export function f(s: number): number {",
+        "    log(s)",
+        "    while (go(s)) {",
+        "        if (s === 404) {",
+        "            return 1;",
+        "        }",
+        "        return 2;",
+        "    }",
+        "    return 3;",
+        "}",
+    ]
+    .into_iter()
+    .collect();
+    assert!(branch_return_expressions(&after_call, 3).is_some());
+    let decorated: Vec<&str> = [
+        "export function f(s: number): number {",
+        "    class C {",
+        "        @Get()",
+        "        pick(n: number) {",
+        "            if (n === 404) {",
+        "                return 1;",
+        "            }",
+        "            return 2;",
+        "        }",
+        "    }",
+        "    return new C().pick(s);",
+        "}",
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(branch_return_expressions(&decorated, 4), None);
+    // A multi-line parameter list and a brace on its own line keep the name.
+    for (header, changed) in [
+        (
+            vec!["        pick(", "            n: number", "        ) {"],
+            5,
+        ),
+        (vec!["        pick(n: number)", "        {"], 4),
+    ] {
+        let mut lines: Vec<&str> =
+            vec!["export function f(s: number): number {", "    const o = {"];
+        lines.extend(header);
+        lines.extend([
+            "            if (n === 404) {",
+            "                return 1;",
+            "            }",
+            "            return 2;",
+            "        }",
+            "    };",
+            "    return o.pick(s);",
+            "}",
+        ]);
+        assert_eq!(
+            branch_return_expressions(&lines, changed),
+            None,
+            "{lines:?}"
+        );
+    }
+}
+
+/// #10776: a changed `if` inside a class method is withheld the same way.
+#[test]
+fn expected_side_is_live_withholds_a_changed_if_in_a_method_shorthand() {
+    let owner = TypeScriptOwner {
+        source_text: Some(
+            concat!(
+                "export function f(s: number): number {\n",
+                "    const o = {\n",
+                "        async pick(n: number): Promise<number> {\n",
+                "            if (n === 404) {\n",
+                "                return 1;\n",
+                "            }\n",
+                "            return 2;\n",
+                "        },\n",
+                "    };\n",
+                "    return o.pick(s);\n",
+                "}",
+            )
+            .to_string(),
+        ),
+        params: vec!["s".to_string()],
+        ..boundary_witness_owner()
+    };
+    assert_eq!(
+        expected_side_is_live(
+            &owner,
+            "            if (n === 404) {",
             "n",
             "404",
             &["404".to_string()],
