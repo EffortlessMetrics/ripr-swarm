@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `ripr repair` in a repo whose changed code is Python or TypeScript now says the seam inventory behind it covers Rust files only and points to `ripr check`'s finding (test node, verify command and, for a complete packet, the gap-bound start), instead of "analyze the workspace ... Next: `ripr pilot`", which looped back to `check`. The TypeScript "repair packet is complete and delegatable" next step now names `ripr context --at <finding-id>` and the Rust-only scope of seam-based `ripr repair` (#10682).

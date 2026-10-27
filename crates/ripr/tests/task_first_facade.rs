@@ -324,6 +324,40 @@ fn repair_without_actionable_item_creates_no_attempt() -> Result<(), String> {
     Ok(())
 }
 
+/// #10682: when the changed code is Python or TypeScript, `ripr repair` says
+/// repair start covers Rust only and points at `ripr check`'s manual route
+/// instead of looping through `ripr pilot`.
+#[test]
+fn repair_with_changed_non_rust_code_says_rust_only() -> Result<(), String> {
+    let fixture = Fixture::empty("facade-nonrust")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    std::fs::write(root.join("pricing.ts"), "export const t = 10;\n").map_err(|e| e.to_string())?;
+    std::fs::write(root.join("pricing.py"), "T = 10\n").map_err(|e| e.to_string())?;
+    run_git(root, &["add", "pricing.ts", "pricing.py"])?;
+    git_commit(root, "add non-rust sources")?;
+    std::fs::write(root.join("pricing.ts"), "export const t = 11;\n").map_err(|e| e.to_string())?;
+    std::fs::write(root.join("pricing.py"), "T = 11\n").map_err(|e| e.to_string())?;
+    let repair = run_ripr(root, &["repair", "--root", &root_arg])?;
+    assert_exit(&repair, 3, "repair with changed non-Rust code");
+    let stderr = stderr_text(&repair);
+    assert!(
+        stderr.contains("is Python and TypeScript, and the seam inventory behind `ripr repair` covers Rust files only"),
+        "must say plainly that repair start is Rust only:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("`ripr check --root")
+            && stderr.contains("verify command")
+            && stderr.contains("gap-bound start"),
+        "must point at the check finding's route:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("analyze the workspace") && !stderr.contains("ripr pilot"),
+        "must not loop back through pilot:\n{stderr}"
+    );
+    Ok(())
+}
+
 /// Control 2: exactly one current actionable item — `ripr repair` creates
 /// exactly one attempt and returns the same card as the canonical route.
 #[test]

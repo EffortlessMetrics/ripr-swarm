@@ -1052,6 +1052,42 @@ fn non_rust_language(file: &Path) -> Option<&'static str> {
     }
 }
 
+/// Display names of the non-Rust languages whose files differ from HEAD in
+/// the working tree under `root` (#10682). Best effort: an unreadable diff
+/// reads as no such languages, so the caller keeps its generic message.
+pub(crate) fn changed_non_rust_languages(root: &Path) -> Vec<&'static str> {
+    let Ok(names) = crate::git::run_git(root, &["diff", "--name-only", "HEAD"]) else {
+        return Vec::new();
+    };
+    let mut languages: Vec<&'static str> = names
+        .lines()
+        .filter_map(|line| non_rust_language(Path::new(line.trim())))
+        .collect();
+    languages.sort_unstable();
+    languages.dedup();
+    languages
+}
+
+/// The `ripr repair` zero-seam message when the changed code is non-Rust
+/// (#10682): the seam inventory behind `ripr repair` covers Rust only, so
+/// "analyze the workspace" would loop through `ripr pilot` and `ripr check`.
+/// Names the gap-bound start for TypeScript and Python (#10373) and the
+/// manual route otherwise.
+pub(crate) fn non_rust_repair_guidance(root_display: &str, languages: &[&str]) -> String {
+    let start = if languages
+        .iter()
+        .any(|language| !gap_bound_start_pointer(language).is_empty())
+    {
+        "; when the finding's repair packet is complete, `ripr check --base <base>` prints a gap-bound start (`ripr agent repair --gap-id <gap> --base <base> --phase before`) that runs the delegated loop by gap instead of by seam"
+    } else {
+        ""
+    };
+    format!(
+        "the changed code under {root_display} is {}, and the seam inventory behind `ripr repair` covers Rust files only, so there is no seam to start from here. Run `ripr check --root {root_display}`: its finding prints the test node and verify command to use by hand{start}",
+        languages.join(" and ")
+    )
+}
+
 /// Display name of the non-Rust language a repair item names, or `None` for
 /// any other item: a canonical gap id (`gap:<language>:<file>:...`) or the
 /// preview-adapter finding id `ripr check` prints

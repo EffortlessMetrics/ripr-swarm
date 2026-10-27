@@ -6630,7 +6630,7 @@ mod lsp_next_step_parity_tests {
         let finding = complete_ts_finding();
         let message = lsp_message(&finding);
         assert!(
-            message.contains("the repair packet is complete and delegatable (advisory)"),
+            message.contains("the repair packet is complete (advisory: `ripr context --at <finding-id>` prints it; the seam-based `ripr repair` covers Rust files only)"),
             "LSP diagnostic must contain reconciled next-step for complete packet; got: {message}"
         );
         assert!(
@@ -6650,7 +6650,7 @@ mod lsp_next_step_parity_tests {
             "LSP diagnostic must preserve blocked-case disclosure for incomplete packet; got: {message}"
         );
         assert!(
-            !message.contains("the repair packet is complete and delegatable"),
+            !message.contains("the repair packet is complete (advisory"),
             "LSP diagnostic must NOT say actionable for blocked packet; got: {message}"
         );
     }

@@ -660,10 +660,18 @@ fn no_eligible_seam_message(
     reasons: &[String],
     reasons_total: usize,
 ) -> String {
+    let changed_languages = if total_seams == 0 {
+        crate::app::task_first::changed_non_rust_languages(root)
+    } else {
+        Vec::new()
+    };
     let root = crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(
         &root.to_string_lossy(),
     ));
     if total_seams == 0 {
+        if !changed_languages.is_empty() {
+            return crate::app::task_first::non_rust_repair_guidance(&root, &changed_languages);
+        }
         return format!(
             "no seams visible under {root}; analyze the workspace before starting a repair. Next: `ripr pilot --root {root}`"
         );
