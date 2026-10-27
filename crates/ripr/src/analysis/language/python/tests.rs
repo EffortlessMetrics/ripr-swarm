@@ -6080,7 +6080,11 @@ fn classify_change_returns_no_static_path_without_related_test() -> Result<(), S
     // generic guidance — the ordered add-test / native-verifier / refresh
     // route — while classification, confidence, and related-test evidence
     // stay put.
-    assert_eq!(finding.confidence, 0.4);
+    assert!(
+        (finding.confidence - 0.4).abs() < f32::EPSILON,
+        "no-static-path confidence stays 0.4; got {}",
+        finding.confidence
+    );
     assert!(finding.static_limit_kind.is_none());
     assert!(finding.related_tests.is_empty());
     let step = finding
@@ -6198,6 +6202,63 @@ fn transitive_reach_witness_silences_with_no_link_guidance() -> Result<(), Strin
         "witnessed limitation must not claim no tests were found: {:?}",
         finding.missing
     );
+    Ok(())
+}
+
+#[test]
+fn typer_sibling_helper_keeps_guidance_but_registered_command_stays_silent() -> Result<(), String> {
+    // #10708 Devin thread 1 (executable-confirmed): a Typer app elsewhere in
+    // the module must not silence an unrelated plain helper; a function the
+    // decorator registers as a command stays silent.
+    let source = "import typer\n\napp = typer.Typer()\n\ndef calculate_total(x):\n    return x + 2\n\n@app.command()\ndef serve(port):\n    return port\n";
+    let owners = extract_owners(Path::new("src/billing.py"), source);
+    let tests = extract_tests(
+        Path::new("tests/test_other.py"),
+        "def test_other():\n    assert True\n",
+    );
+    let helper_changed = "    return x + 2";
+    let helper_line = source
+        .lines()
+        .position(|line| line == helper_changed)
+        .ok_or_else(|| "fixture source must contain the helper line".to_string())?
+        + 1;
+    let Some(helper) = classify_change(
+        Path::new("src/billing.py"),
+        helper_line,
+        helper_changed,
+        &owners,
+        &tests,
+    ) else {
+        return Err("helper change should classify".to_string());
+    };
+    assert_eq!(helper.class, ExposureClass::NoStaticPath);
+    assert!(helper.related_tests.is_empty());
+    assert!(helper.static_limit_kind.is_none());
+    let step = helper
+        .recommended_next_step
+        .as_deref()
+        .ok_or_else(|| "plain helper beside a Typer app must carry guidance".to_string())?;
+    assert!(
+        step.contains("no statically linked test calls `calculate_total(`"),
+        "guidance must name the helper; got: {step}"
+    );
+    let command_changed = "    return port";
+    let command_line = source
+        .lines()
+        .position(|line| line == command_changed)
+        .ok_or_else(|| "fixture source must contain the command line".to_string())?
+        + 1;
+    let Some(command) = classify_change(
+        Path::new("src/billing.py"),
+        command_line,
+        command_changed,
+        &owners,
+        &tests,
+    ) else {
+        return Err("command change should classify".to_string());
+    };
+    assert_eq!(command.class, ExposureClass::NoStaticPath);
+    assert!(command.recommended_next_step.is_none());
     Ok(())
 }
 

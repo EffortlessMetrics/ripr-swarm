@@ -777,7 +777,15 @@ Otherwise it is the `<expected value>` placeholder
 claimed. These facts are evidence only until a later
 repair-card contract supplies the test shape, verify command, receipt command,
 and edit boundaries. Heuristic-only links, no related-test paths, and static
-limits must not emit repair guidance.
+limits must not emit repair guidance. "Repair guidance" here means an
+actionable repair target: a repair card, agent packet, placement, test node,
+or verify/receipt command. It does not preclude generic non-repair-ready
+advice: for a directly resolvable plain-function owner with no statically
+linked test call, the adapter may name the owner and the honest ordered
+route (add a relevant test/assertion, run the project's native verifier,
+then refresh) while repair readiness stays suppressed (#10708). A decorated,
+routed, command-registered, or otherwise indirected owner stays silent, and a
+later transitive-reach limitation silences the advice again.
 
 ### Sink alignment visibility
 

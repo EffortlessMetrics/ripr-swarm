@@ -657,10 +657,14 @@ fn python_unlinked_owner_next_step(
     if owner.is_module_owner() || owner.owner_kind != Some(OwnerKind::Function) {
         return None;
     }
+    // Command-registered functions stay silent: a Typer `@app.command()` (or
+    // any decorator) makes the owner a CLI entry, not a directly callable
+    // helper under test. A plain helper that merely shares a module with a
+    // Typer app keeps guidance — the file-wide receiver list is not evidence
+    // the helper itself is registered.
     if !owner.decorators.is_empty()
         || !owner.route_paths.is_empty()
         || !owner.dynamic_route_decorators.is_empty()
-        || !owner.cli_receiver_names.is_empty()
     {
         return None;
     }
