@@ -26,6 +26,37 @@ exercised boundary from a missing one.
   generic call or macro (`std::env::var("WHO").unwrap_or_default()`,
   `make_name("Bob")`) is that call's operand, so the call contributes no row and
   a boundary that depends on it reads as the result of a call.
+  Arithmetic over the test's own literal bindings is the number it computes, so
+  it is a row (`score(base + 1)` after `let base = 9;`): the argument is only
+  decimal literals and at least one binding, `+ - * / %` and parentheses, and every binding
+  is declared by exactly one pattern in the test body (the `let`), which
+  ends before the first place the argument is written, is not `mut`, is never
+  assigned, and has a plain decimal initializer (a suffixed,
+  separated, signed, fractional, text or computed initializer is not read).
+  The shared evaluator folds it and fails closed on a leading sign, overflow,
+  underflow, division by zero or a value at or above `i32::MAX`. A call,
+  method, cast, macro, reference or bound that is not a literal binding
+  keeps the argument unread. A binding that a `for` pattern, a closure
+  parameter, an `if let` or a match arm reuses is a second pattern and is
+  not folded.
+  Two operands outside the test body fold when the test's own file pins them
+  down: an upper-case `const` or `static` the file declares exactly once,
+  with a plain decimal initializer, not `static mut`, not named by a `use`
+  line and not declared again anywhere in the file (a second declaration in
+  the test body counts), and a nullary helper call `name()` whose one
+  declaration in the file is a free `fn name() -> <integer type> { <decimal
+  literal> }` with no parameters, generics, qualifiers beyond visibility,
+  statements or computed body, outside any `impl` or `trait` block, not named
+  by a `use` line, and not rebound by a pattern in the test (a local
+  closure). The declaration must be one the test can see: in the test's own
+  module, or in its parent module when `use super::*` is the file's only glob
+  import. A sibling module's item, an item inside another function, and a
+  name that another glob import may bind instead keep the argument unread.
+  The call is the helper's literal exactly as the literal would
+  have been; a path, method or other qualified call, a call with arguments, a
+  helper declared twice (a test-module copy that shadows the outer one), or
+  a file the index does not hold keeps the argument unread. Both operands
+  combine with literals and bindings under the same arithmetic rules.
 - The value lattice is typed (`Str`, `Char`, `Bool`, `Index`, option
   forms, `CharSeq`); every exact result carries per-step provenance
   (operation family, receiver/argument rendering, chain depth) and the
@@ -365,9 +396,43 @@ exercised boundary from a missing one.
     that transforms the result (`method-hop-transformed-result`) and a
     helper that drops it (`method-hop-unobserved-result`), both
     `propagation_unknown`.
+21. Accept: `let base = 9;` with `score(base + 1)` and `score(base)` against
+    `10 <= qty` reached through `order_discount`: the first argument folds to
+    `10`, the second reads `9`, and the boundary is observed
+    (`grid-bindings-computed-arg`).
+22. Reject: a binding that may hold another value at the call: `mut`, a second
+    `let`, a `for` pattern, a closure parameter, an `if let` and an assignment
+    each keep the argument unread (`spec0158-fold-mutable-binding`,
+    `spec0158-fold-shadowed-binding`).
+23. Reject: an operand that is not a plain decimal binding or literal: a call,
+    a method, a cast, a suffixed literal, a text or fractional or computed
+    initializer, an unbound name, or arithmetic that underflows keeps the
+    argument unread (`spec0158-fold-call-operand`).
+
+24. Accept: an argument that computes over a same-file `const` or a
+    nullary literal helper: `BASE + 1` and `BASE` against `10 <= qty`, and
+    `big()` and `small()` against the same boundary, the helpers returning `10`
+    and `9` (`spec0158-modfold-const-operand`,
+    `spec0158-modfold-helper-call`, `old-surcharge-call-expression-input`).
+25. Reject: a helper or constant the file does not pin down to one literal: a
+    helper whose body computes, takes a parameter, or is declared a second
+    time by a test-module copy that returns another value, a `const`
+    declared again in the test body, and a helper declared only in a sibling
+    module while the test glob-imports the name from elsewhere, keep the
+    argument unread (`spec0158-modfold-helper-shadowed`,
+    `spec0158-modfold-helper-computes`, `spec0158-modfold-const-shadowed`,
+    `spec0158-modfold-helper-glob-import`).
+26. Reject: a call shape that is not the bare helper: a path, a method call, a
+    call with arguments or a cast around it keeps the argument unread
+    (`argument_fold` unit tests).
 
 ## Test Mapping
 
+`analysis/classify/argument_fold.rs` `tests` (every fold and refusal above);
+`rust-verdict-corpus` cases `spec0158-modfold-const-operand`,
+`spec0158-modfold-helper-call`, `spec0158-modfold-helper-shadowed`,
+`spec0158-modfold-helper-computes`, `spec0158-modfold-const-shadowed` and
+`spec0158-modfold-helper-glob-import`;
 `analysis/classify/value_transfer.rs` `tests`;
 `analysis/classify/activation.rs`
 `activation_evidence_resolves_computed_local_boundary_operands`,
@@ -410,6 +475,10 @@ the #3295 family fixtures.
 ## Implementation Mapping
 
 - `analysis/classify/value_transfer.rs` — the typed evaluator.
+- `analysis/classify/argument_fold.rs` — the test-side argument fold and its
+  `FoldScope` (the test's own file, for `const` operands and nullary
+  helpers); the row reader (`owner_row_argument_values`) and same-test
+  pairing consume it.
 - `analysis/classify/activation.rs` — exact operand resolution and the
   boundary/missing-discriminator wiring; char-literal extraction in
   `scalar_values`; the method hop's receiver cell and `self.<index>`

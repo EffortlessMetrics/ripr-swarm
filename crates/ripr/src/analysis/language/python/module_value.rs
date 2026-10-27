@@ -182,27 +182,32 @@ impl<'a> ForeignIndex<'a> {
         // order: word ownership and the word cap behave as before, and a
         // tripped word cap stops parsing within one batch (#10441).
         let sources: Vec<(&'a Path, &'a str)> = sources.collect();
-        let tables: std::collections::BTreeSet<String> = sources
-            .iter()
-            .flat_map(|(_, source)| dict_literal_names(source))
-            .collect();
         let token = crate::analysis::cancellation::current_token();
+        // Every per-file scan below lexes or parses the whole source, so all
+        // of them run inside the parallel stage; only word ownership and the
+        // word cap stay in the sequential fold (#10441, #10735).
+        let tables: std::collections::BTreeSet<String> = sources
+            .par_iter()
+            .map(|(_, source)| {
+                crate::analysis::cancellation::with_optional_token(token.as_ref(), || {
+                    dict_literal_names(source)
+                })
+            })
+            .reduce(std::collections::BTreeSet::new, |mut all, names| {
+                all.extend(names);
+                all
+            });
         for batch in sources.chunks(FOREIGN_PARSE_BATCH_FILES) {
-            let parsed: Vec<Option<Vec<String>>> = batch
+            let scanned: Vec<(bool, IndexedSource<'a>)> = batch
                 .par_iter()
-                .map(|(_, source)| {
+                .map(|&(file, source)| {
                     crate::analysis::cancellation::with_optional_token(token.as_ref(), || {
-                        assigned_attributes(source)
+                        scan_source(file, source, &tables)
                     })
                 })
                 .collect();
-            for (&(file, source), assigned) in batch.iter().zip(parsed) {
-                hidden_import |= DYNAMIC_LOADERS
-                    .iter()
-                    .any(|loader| mentions_identifier(source, loader))
-                    || source.contains("sys.modules")
-                    || (file.file_name().is_some_and(|name| name == "__init__.py")
-                        && mentions_identifier(source, "__all__"));
+            for (&(file, source), (hides_import, indexed)) in batch.iter().zip(scanned) {
+                hidden_import |= hides_import;
                 for word in source_words(source) {
                     let first = references.entry(word).or_insert(Some(file));
                     if first.is_some_and(|first| first != file) {
@@ -220,45 +225,7 @@ impl<'a> ForeignIndex<'a> {
                 }
                 #[cfg(test)]
                 FOREIGN_PARSES.with(|parses| parses.set(parses.get() + 1));
-                let dynamic = assigned.is_none()
-                    || DYNAMIC_WRITERS
-                        .iter()
-                        .any(|writer| mentions_identifier(source, writer))
-                    || source.contains("sys.modules");
-                let table_unsafe = if tables.is_empty()
-                    || !source_words(source).any(|word| tables.contains(word))
-                {
-                    Vec::new()
-                } else {
-                    unsafe_table_uses(source, &|word| tables.contains(word), None)
-                        .into_iter()
-                        .collect()
-                };
-                // Reflection reaches a module's dict without naming it, or
-                // with a name built at runtime (`getattr(module, n)`,
-                // `dir(module)`, `inspect.getmembers`, `locals()`,
-                // `fn.__globals__`).
-                let reflective = !tables.is_empty()
-                    && REFLECTIVE_SPELLINGS
-                        .iter()
-                        .any(|spelling| mentions_identifier(source, spelling));
-                files.push(IndexedSource {
-                    file,
-                    assigned,
-                    dynamic_words: dynamic.then(|| source_words(source).collect()),
-                    table_unsafe,
-                    reflective_words: reflective.then(|| source_words(source).collect()),
-                    import_words: if tables.is_empty() {
-                        Vec::new()
-                    } else {
-                        import_words(source)
-                    },
-                    reflective_opaque: reflective
-                        && (source.contains("sys.modules")
-                            || MODULE_LOADERS
-                                .iter()
-                                .any(|loader| mentions_identifier(source, loader))),
-                });
+                files.push(indexed);
             }
         }
         let reflective_reach = reflective_reaches(&files);
@@ -421,6 +388,61 @@ const MODULE_LOADERS: [&str; 11] = [
 /// lexer ends a statement, so a parenthesis or backslash continuation reads
 /// whole (`from . import (\n    settings as hub,\n)`) while a bracket inside
 /// a comment or string does not. A lexing error reads every word.
+/// One file's foreign-index facts, plus whether it hides an import from the
+/// static graph. A pure function of the file and the workspace's dict-literal
+/// names, so [`ForeignIndex::build`] runs it in parallel.
+fn scan_source<'a>(
+    file: &'a Path,
+    source: &'a str,
+    tables: &std::collections::BTreeSet<String>,
+) -> (bool, IndexedSource<'a>) {
+    let hides_import = DYNAMIC_LOADERS
+        .iter()
+        .any(|loader| mentions_identifier(source, loader))
+        || source.contains("sys.modules")
+        || (file.file_name().is_some_and(|name| name == "__init__.py")
+            && mentions_identifier(source, "__all__"));
+    let assigned = assigned_attributes(source);
+    let dynamic = assigned.is_none()
+        || DYNAMIC_WRITERS
+            .iter()
+            .any(|writer| mentions_identifier(source, writer))
+        || source.contains("sys.modules");
+    let table_unsafe =
+        if tables.is_empty() || !source_words(source).any(|word| tables.contains(word)) {
+            Vec::new()
+        } else {
+            unsafe_table_uses(source, &|word| tables.contains(word), None)
+                .into_iter()
+                .collect()
+        };
+    // Reflection reaches a module's dict without naming it, or with a name
+    // built at runtime (`getattr(module, n)`, `dir(module)`,
+    // `inspect.getmembers`, `locals()`, `fn.__globals__`).
+    let reflective = !tables.is_empty()
+        && REFLECTIVE_SPELLINGS
+            .iter()
+            .any(|spelling| mentions_identifier(source, spelling));
+    let indexed = IndexedSource {
+        file,
+        assigned,
+        dynamic_words: dynamic.then(|| source_words(source).collect()),
+        table_unsafe,
+        reflective_words: reflective.then(|| source_words(source).collect()),
+        import_words: if tables.is_empty() {
+            Vec::new()
+        } else {
+            import_words(source)
+        },
+        reflective_opaque: reflective
+            && (source.contains("sys.modules")
+                || MODULE_LOADERS
+                    .iter()
+                    .any(|loader| mentions_identifier(source, loader))),
+    };
+    (hides_import, indexed)
+}
+
 fn import_words(source: &str) -> Vec<&str> {
     use rustpython_parser::{Mode, Tok, lexer::lex};
     let mut words = Vec::new();
@@ -1336,7 +1358,7 @@ pub(super) fn constant_spellings(
     keep_unshadowed(test, spellings)
 }
 
-fn reader_spellings(test: &PythonTest, owner: &PythonOwner) -> Vec<String> {
+pub(super) fn reader_spellings(test: &PythonTest, owner: &PythonOwner) -> Vec<String> {
     keep_unshadowed(test, owner_module_callees(test, owner))
 }
 

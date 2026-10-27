@@ -15,6 +15,10 @@ mod process_observation;
 #[cfg(feature = "lang-rust")]
 #[path = "support/mcp_scope_contract.rs"]
 mod scope_contract;
+
+#[cfg(feature = "lang-rust")]
+#[path = "support/mcp_worktree_recovery.rs"]
+mod worktree_recovery;
 use process_observation::Observation;
 
 fn workspace_root() -> Result<PathBuf, String> {
@@ -1065,17 +1069,24 @@ fn pre_call_contract_discloses_committed_scope_on_wire_and_help() -> Result<(), 
     let help = String::from_utf8(help.stdout).map_err(|error| error.to_string())?;
     // Literal acceptance expectations, independent of descriptor constants.
     // Test the delivered surfaces before any analysis call, even on a clean root.
+    // #10541: the detailed scope routes stay pinned on the INSTRUCTIONS-bearing
+    // surfaces and the help; the tools/list description names the boundary and
+    // points at INSTRUCTIONS instead of duplicating the routes into every
+    // session's payload.
     let mut failures = Vec::new();
+    let normalized = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
     for (surface, text) in [
         ("initialize", instructions),
-        ("tools/list ripr_refresh", description),
         ("server/discover", discover_instructions),
         ("mcp --help", help.as_str()),
     ] {
-        let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        let text = normalized(text);
         for required in [
             "committed default-branch diff",
+            "By default",
             "staged and unstaged tracked edits and untracked files are outside",
+            "source: \"worktree\"",
+            "unsaved buffers and untracked files remain outside",
             "`ripr check` defaults to the working tree when staged or unstaged tracked edits exist",
             "shared check authority does not mean identical input",
             "`ripr check --committed`",
@@ -1084,9 +1095,30 @@ fn pre_call_contract_discloses_committed_scope_on_wire_and_help() -> Result<(), 
                 failures.push(format!("{surface} omitted {required:?}"));
             }
         }
+        if text.contains("Scope: committed input only") {
+            failures.push(format!(
+                "{surface} unconditionally excludes the advertised worktree input"
+            ));
+        }
         if text.contains("the same analysis `ripr check`") {
             failures.push(format!("{surface} promises identical CLI input"));
         }
+    }
+    let description = normalized(description);
+    for required in [
+        "By default: committed input only",
+        "source: \"worktree\"",
+        "INSTRUCTIONS",
+    ] {
+        if !description.contains(required) {
+            failures.push(format!("tools/list ripr_refresh omitted {required:?}"));
+        }
+    }
+    if description.contains("Scope: committed input only") {
+        failures.push("refresh unconditionally excludes its advertised worktree input".to_string());
+    }
+    if description.contains("the same analysis `ripr check`") {
+        failures.push("tools/list ripr_refresh promises identical CLI input".to_string());
     }
     if !failures.is_empty() {
         return Err(failures.join("\n"));

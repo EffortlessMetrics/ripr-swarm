@@ -1,0 +1,12 @@
+# Registers the unsettled `indirect=` fixture-limit reading (#10685) under RIPR-SPEC-0238.
+[[extend]]
+id = "RIPR-SPEC-0238"
+tests = [
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::an_indirect_parametrize_argname_is_an_unresolved_fixture",
+]
+code = [
+  "crates/ripr/src/analysis/language/python/parametrize.rs",
+]
+fixtures = [
+  "fixtures/python_unsettled_indirect_parametrize",
+]

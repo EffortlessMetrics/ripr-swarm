@@ -47,3 +47,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — module_reach_super_import_in_file_tests (5)
+
+Reason:
+RIPR-SPEC-0122: plain-language repair-route refusal names the missing evidence without internal fact codes (#10644)
+
+Command:
+`cargo xtask goldens bless module_reach_super_import_in_file_tests --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

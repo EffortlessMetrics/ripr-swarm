@@ -4800,7 +4800,10 @@ pub(super) fn balanced_close_offset(inner: &str) -> Option<usize> {
 /// `Some(false)` when it provably cannot (a dead test whose expectation is
 /// wrong under both behaviors, or equal under both); `None` when the check is not
 /// statically determinable (no owner body, unresolvable branches or bindings,
-/// non-numeric expectation) — the witness decision then stands unchanged.
+/// non-numeric expectation) — the witness decision then stands unchanged. The
+/// one exception is a changed `if` statement whose branch pair this scan cannot
+/// read (one-line, or nested in an arrow or `function`): that withholds
+/// (`Some(false)`), because a pin that cannot be shown live must not stand.
 ///
 /// The semantics are derived only from statically resolvable facts: the
 /// changed comparison's operator, the observed argument values bound to the
@@ -4836,6 +4839,25 @@ pub(crate) fn expected_side_is_live(
     let start = matching.next()?;
     if matching.next().is_some() {
         return None;
+    }
+    // A one-line or nested changed `if` has no branch pair this scan can read.
+    // The witness above already credited the pin, and a pair that cannot be
+    // read cannot show the pin is live, so withhold rather than let a dead pin
+    // stand (#10776). Only a plain `if` statement that opens a brace is held to
+    // this: a changed ternary, `else if` or other expression keeps the previous
+    // behavior.
+    let head = lines[start].trim_start();
+    // `else if` heads are left to the scan as before: their own closer sits on
+    // the same line, so the net-brace test here does not describe them.
+    let is_if_statement = ["if (", "if("].iter().any(|form| head.starts_with(form));
+    // A brace-less `if (c) return 1;` (#10463) never reached the brace scan and
+    // keeps its previous behavior, as does a condition that continues onto the
+    // next line: only a line that opens a brace is read wrongly by the scan.
+    if is_if_statement
+        && head.contains('{')
+        && changed_if_opens_its_own_body(&lines, start) != Some(true)
+    {
+        return Some(false);
     }
     let (true_expr, false_expr) = branch_return_expressions(&lines, start)?;
     let lhs = comparison_operand_value(left, owner, arguments)?;
@@ -4925,7 +4947,7 @@ fn observed_argument_bindings(owner: &TypeScriptOwner, arguments: &[String]) -> 
 /// value the intervening statement already changed. Only closing braces at
 /// the branch's own depth are recognized as branch closers.
 pub(crate) fn branch_return_expressions(lines: &[&str], start: usize) -> Option<(String, String)> {
-    if !lines.get(start)?.contains('{') {
+    if !changed_if_opens_its_own_body(lines, start)? {
         return None;
     }
     enum Phase {
@@ -5019,6 +5041,56 @@ pub(crate) fn branch_return_expressions(lines: &[&str], start: usize) -> Option<
         (Some(true_expr), Some(false_expr)) => Some((true_expr, false_expr)),
         _ => None,
     }
+}
+
+/// Whether the changed line at `start` leaves exactly one brace open (its own
+/// if-body) and sits directly in the owner's body (#7433). The scan below
+/// starts at depth 1, so a one-line `if (c) { return 1; }` would read the
+/// enclosing block's next `return` as the true branch, and a changed `if`
+/// inside a nested arrow or `function` would read that inner function's
+/// returns instead of the owner's (method shorthand carries neither token and
+/// is not recognized). Braces in strings and comments are blanked
+/// first; `None` means the text could not be lined up, which also fails the scan.
+fn changed_if_opens_its_own_body(lines: &[&str], start: usize) -> Option<bool> {
+    lines.get(start)?;
+    let masked = super::tests_extract::mask_comments_and_strings_text(&lines[..=start].join("\n"));
+    let masked_lines: Vec<&str> = masked.split('\n').collect();
+    if masked_lines.len() != start + 1 {
+        return None;
+    }
+    let changed = masked_lines[start].trim();
+    let net_open = changed.matches('{').count() as i64 - changed.matches('}').count() as i64;
+    if !changed.ends_with('{') || net_open != 1 {
+        return Some(false);
+    }
+    // One entry per brace still open before the changed line: whether that
+    // brace opens a function body. The first entry is the owner's own body,
+    // whatever it is declared with. A brace is a function body when the text
+    // since the previous `{`, `}` or `;` ends with `=>` or names `function`, so
+    // an ordinary block that merely shares its line with an arrow expression
+    // stays an ordinary block.
+    let mut opened_by_function: Vec<bool> = Vec::new();
+    let mut segment = String::new();
+    for line in &masked_lines[..start] {
+        for c in line.chars().chain(std::iter::once('\n')) {
+            match c {
+                '{' => {
+                    let names_function = segment
+                        .split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
+                        .any(|token| token == "function");
+                    opened_by_function.push(segment.trim_end().ends_with("=>") || names_function);
+                    segment.clear();
+                }
+                '}' => {
+                    opened_by_function.pop();
+                    segment.clear();
+                }
+                ';' => segment.clear(),
+                _ => segment.push(c),
+            }
+        }
+    }
+    Some(!opened_by_function.iter().skip(1).any(|nested| *nested))
 }
 
 /// The expression of a single-line `return <expr>;` statement, when `trimmed`

@@ -124,8 +124,11 @@ pub(in crate::analysis) fn withhold_pinned_shape_gap(
     }
     // The accumulator's walked argument, so an empty literal elsewhere in the
     // call does not make the pin degenerate.
-    let walked = loop_accumulator_at(&owner.body, changed_line - owner.start_line)
+    let accumulator = loop_accumulator_at(&owner.body, changed_line - owner.start_line);
+    let walked = accumulator
+        .as_ref()
         .map(|accumulator| accumulator.walked_position);
+    let call_term = accumulator.is_some_and(|accumulator| accumulator.term.is_some());
     let labels: Vec<String> = finding
         .related_tests
         .iter()
@@ -136,7 +139,10 @@ pub(in crate::analysis) fn withhold_pinned_shape_gap(
                     && test.file == related.file
                     && test.start_line == related.line
             })?;
-            pins_owner_exactly(test, &owner.name, shape, walked).then(|| {
+            // A call term's value is a function ripr may not read, so a related
+            // direct test that does not credit it never reports a gap (the
+            // pin check below is for the plain term).
+            (call_term || pins_owner_exactly(test, &owner.name, shape, walked)).then(|| {
                 format!(
                     "`{}` ({}:{})",
                     related.name,
@@ -149,11 +155,18 @@ pub(in crate::analysis) fn withhold_pinned_shape_gap(
     if labels.is_empty() {
         return false;
     }
-    let next_step = format!(
-        "{} pins this code's whole result with an exact `assert_eq!`, but {}, so ripr does not report a gap. Check that the pinned input runs the changed code and that its expected value differs between the old and the new behavior; add a test only if either fails.",
-        labels.join(", "),
-        shape.advice()
-    );
+    let next_step = if call_term {
+        format!(
+            "{} reaches this code, but the changed statement adds the value of a function call into a local the call returns, and ripr cannot read that the pinned input folds through that function to a value its neighbours do not share, so ripr does not report a gap. Check that the pinned input runs the changed code and that its expected value differs between the old and the new behavior; add a test only if either fails.",
+            labels.join(", ")
+        )
+    } else {
+        format!(
+            "{} pins this code's whole result with an exact `assert_eq!`, but {}, so ripr does not report a gap. Check that the pinned input runs the changed code and that its expected value differs between the old and the new behavior; add a test only if either fails.",
+            labels.join(", "),
+            shape.advice()
+        )
+    };
     withhold_gap(finding, LIMIT, FIRST_UNRESOLVED_EDGE, next_step, &labels);
     true
 }

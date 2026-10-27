@@ -1595,3 +1595,454 @@ fn return_value_behind_a_receiver_tuple_index_keeps_its_reading() -> Result<(), 
     assert_ne!(finding["classification"], "infection_unknown", "{finding}");
     Ok(())
 }
+
+// #9638: a test reaches an inherent owner method through a same-impl
+// forwarder method it calls with a receiver (`pool.grow(4)` for
+// `fn grow(&mut self, ..) { self.try_grow(..) }`).
+//
+// The owner `try_grow` is line 8 of the source (the edited `wanted >= 4`).
+const FORWARDER_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -5,7 +5,7 @@\n }\n impl Pool {\n     pub fn try_grow(&mut self, wanted: usize) -> Result<bool, Overflow> {\n-        if wanted > 4 {\n+        if wanted >= 4 {\n             self.spilled = true;\n             return Ok(true);\n         }\n";
+
+fn forwarder_source(extra_items: &str, forwarder: &str, tests: &str) -> String {
+    format!(
+        "#[derive(Debug, PartialEq)]\npub struct Overflow;\npub struct Pool {{\n    spilled: bool,\n}}\nimpl Pool {{\n    pub fn try_grow(&mut self, wanted: usize) -> Result<bool, Overflow> {{\n        if wanted >= 4 {{\n            self.spilled = true;\n            return Ok(true);\n        }}\n        Ok(false)\n    }}\n\n{forwarder}\n}}\n{extra_items}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn grow_pins_the_boundary() {{\n        let mut pool = Pool {{ spilled: false }};\n{tests}\n    }}\n}}\n"
+    )
+}
+
+const FORWARDING_METHOD: &str = "    pub fn grow(&mut self, wanted: usize) -> Result<bool, Overflow> {\n        self.try_grow(wanted)\n    }";
+const GROW_TESTS: &str =
+    "        assert_eq!(pool.grow(3), Ok(false));\n        assert_eq!(pool.grow(4), Ok(true));";
+
+fn forwarder_finding(extra_items: &str, forwarder: &str, tests: &str) -> Result<Value, String> {
+    let finding = predicate_finding(
+        &forwarder_source(extra_items, forwarder, tests),
+        FORWARDER_DIFF,
+    )?;
+    assert_eq!(finding["probe"]["expression"], "wanted >= 4", "{finding}");
+    Ok(finding)
+}
+
+#[test]
+fn forwarder_method_relates_and_pairs_its_boundary_pin() -> Result<(), String> {
+    let finding = forwarder_finding("", FORWARDING_METHOD, GROW_TESTS)?;
+    assert_eq!(
+        relation_of(&finding, "grow_pins_the_boundary"),
+        Some("helper_owner_call"),
+        "{finding}"
+    );
+    assert_eq!(finding["ripr"]["reach"]["state"], "yes", "{finding}");
+    assert_eq!(finding["classification"], "exposed", "{finding}");
+    Ok(())
+}
+
+#[test]
+fn forwarder_method_that_drops_or_transforms_the_result_is_not_credited() -> Result<(), String> {
+    for forwarder in [
+        "    pub fn grow(&mut self, wanted: usize) -> bool {\n        let _ = self.try_grow(wanted);\n        true\n    }",
+        "    pub fn grow(&mut self, wanted: usize) -> bool {\n        self.try_grow(wanted).is_ok()\n    }",
+        "    pub fn grow(&mut self, wanted: usize) -> bool {\n        self.try_grow(wanted).unwrap_or(false) || wanted > 100\n    }",
+    ] {
+        let tests = "        assert!(pool.grow(3) || !pool.grow(4));";
+        let finding = forwarder_finding("", forwarder, tests)?;
+        assert_ne!(
+            finding["classification"], "exposed",
+            "{forwarder}: {finding}"
+        );
+        assert_ne!(
+            finding["classification"], "weakly_exposed",
+            "{forwarder}: {finding}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn forwarder_method_name_shared_with_another_type_is_not_related() -> Result<(), String> {
+    let other = "pub struct Fin;\nimpl Fin {\n    pub fn grow(&mut self, wanted: usize) -> Result<bool, Overflow> {\n        Ok(wanted > 1)\n    }\n}";
+    let finding = forwarder_finding(other, FORWARDING_METHOD, GROW_TESTS)?;
+    assert_ne!(
+        relation_of(&finding, "grow_pins_the_boundary"),
+        Some("helper_owner_call"),
+        "{finding}"
+    );
+    assert_ne!(finding["classification"], "exposed", "{finding}");
+    Ok(())
+}
+
+#[test]
+fn forwarder_method_to_an_owner_name_with_two_candidates_is_not_related() -> Result<(), String> {
+    let other = "pub struct Fin;\nimpl Fin {\n    pub fn try_grow(&mut self, wanted: usize) -> Result<bool, Overflow> {\n        Ok(wanted > 1)\n    }\n}";
+    let finding = forwarder_finding(other, FORWARDING_METHOD, GROW_TESTS)?;
+    assert_ne!(
+        relation_of(&finding, "grow_pins_the_boundary"),
+        Some("helper_owner_call"),
+        "{finding}"
+    );
+    assert_ne!(finding["classification"], "exposed", "{finding}");
+    Ok(())
+}
+
+#[test]
+fn forwarder_method_shadowed_in_the_test_is_not_related() -> Result<(), String> {
+    let tests = "        fn grow(_pool: &mut Pool, wanted: usize) -> Result<bool, Overflow> {\n            Ok(wanted >= 4)\n        }\n        assert_eq!(grow(&mut pool, 3), Ok(false));\n        assert_eq!(pool.grow(4), Ok(true));";
+    let finding = forwarder_finding("", FORWARDING_METHOD, tests)?;
+    assert_ne!(
+        relation_of(&finding, "grow_pins_the_boundary"),
+        Some("helper_owner_call"),
+        "{finding}"
+    );
+    assert_ne!(finding["classification"], "exposed", "{finding}");
+    Ok(())
+}
+
+#[test]
+fn forwarder_method_called_by_path_or_value_is_not_related() -> Result<(), String> {
+    for tests in [
+        "        assert_eq!(Pool::grow(&mut pool, 4), Ok(true));",
+        "        let call = Pool::grow;\n        assert_eq!(call(&mut pool, 4), Ok(true));",
+    ] {
+        let finding = forwarder_finding("", FORWARDING_METHOD, tests)?;
+        assert_ne!(
+            relation_of(&finding, "grow_pins_the_boundary"),
+            Some("helper_owner_call"),
+            "{tests}: {finding}"
+        );
+        assert_ne!(finding["classification"], "exposed", "{tests}: {finding}");
+    }
+    Ok(())
+}
+
+fn forwarder_named(name: &str) -> String {
+    format!(
+        "    pub fn {name}(&mut self, wanted: usize) -> Result<bool, Overflow> {{\n        self.try_grow(wanted)\n    }}"
+    )
+}
+
+fn assert_forwarder_not_related(finding: &Value, label: &str) {
+    assert_ne!(
+        relation_of(finding, "grow_pins_the_boundary"),
+        Some("helper_owner_call"),
+        "{label}: {finding}"
+    );
+    assert_ne!(finding["classification"], "exposed", "{label}: {finding}");
+}
+
+// #9638 review F1: a method name is not type identity. A forwarder named like
+// a std method is entered only by a receiver the test built as the owner's own
+// type, never by `Vec::len`, `HashSet::insert`, `String::is_empty` or an
+// iterator's `next`.
+#[test]
+fn forwarder_method_named_like_a_std_method_is_not_entered_by_a_std_receiver() -> Result<(), String>
+{
+    for (name, tests) in [
+        (
+            "len",
+            "        let v = vec![1, 2];\n        assert_eq!(v.len(), 2);",
+        ),
+        (
+            "insert",
+            "        let mut set = std::collections::HashSet::new();\n        assert!(set.insert(4));",
+        ),
+        ("is_empty", "        assert!(String::new().is_empty());"),
+        (
+            "next",
+            "        let mut it = vec![1].into_iter();\n        assert_eq!(it.next(), Some(1));",
+        ),
+        ("len", "        assert_eq!(vec![1, 2].len(), 2);"),
+    ] {
+        let finding = forwarder_finding("", &forwarder_named(name), tests)?;
+        assert_forwarder_not_related(&finding, &format!("{name}: {tests}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn forwarder_method_named_like_a_std_method_is_entered_by_the_real_owner_type() -> Result<(), String>
+{
+    for constructor in [
+        "        let mut pool = Pool { spilled: false };",
+        "        let mut pool: Pool = Pool { spilled: false };",
+    ] {
+        let tests = format!(
+            "{constructor}\n        assert_eq!(pool.len(3), Ok(false));\n        assert_eq!(pool.len(4), Ok(true));"
+        );
+        let finding = forwarder_finding("", &forwarder_named("len"), &tests)?;
+        assert_eq!(
+            relation_of(&finding, "grow_pins_the_boundary"),
+            Some("helper_owner_call"),
+            "{finding}"
+        );
+        assert_eq!(finding["classification"], "exposed", "{finding}");
+    }
+    Ok(())
+}
+
+#[test]
+fn forwarder_method_receiver_of_an_unestablished_type_is_not_related() -> Result<(), String> {
+    for tests in [
+        // A parameter-typed or rebound receiver is not built as a `Pool` here.
+        "        let mut pool = std::collections::HashSet::<usize>::new();\n        assert!(pool.grow(4).is_ok());",
+        "        let mut pool = make_pool();\n        assert_eq!(pool.grow(4), Ok(true));",
+        "        let mut pool = Pool { spilled: false };\n        let mut pool = vec![1];\n        assert_eq!(pool.grow(4), Ok(true));",
+    ] {
+        let finding = forwarder_finding(
+            "fn make_pool() -> Pool { Pool { spilled: false } }",
+            FORWARDING_METHOD,
+            tests,
+        )?;
+        assert_forwarder_not_related(&finding, tests);
+    }
+    Ok(())
+}
+
+// Review: pin each production-side guard of the method entry.
+#[test]
+fn forwarder_method_entry_guards_each_refuse_their_shape() -> Result<(), String> {
+    let cfg_test_impl = "#[cfg(test)]\nimpl Pool {\n    pub fn grow(&mut self, wanted: usize) -> Result<bool, Overflow> {\n        self.try_grow(wanted)\n    }\n}";
+    let cfg_test_module = "#[cfg(test)]\nmod helpers {\n    use super::*;\n    impl Pool {\n        pub fn grow(&mut self, wanted: usize) -> Result<bool, Overflow> {\n            self.try_grow(wanted)\n        }\n    }\n}";
+    for (label, extra, forwarder) in [
+        ("cfg(test) impl", cfg_test_impl, ""),
+        ("cfg(test) module", cfg_test_module, ""),
+        (
+            "associated fn without self",
+            "",
+            "    pub fn grow(wanted: usize) -> Result<bool, Overflow> {\n        Pool { spilled: false }.try_grow(wanted)\n    }",
+        ),
+        (
+            "self by value",
+            "",
+            "    pub fn grow(mut self, wanted: usize) -> Result<bool, Overflow> {\n        self.try_grow(wanted)\n    }",
+        ),
+        (
+            "typed self",
+            "",
+            "    pub fn grow(self: &mut Self, wanted: usize) -> Result<bool, Overflow> {\n        self.try_grow(wanted)\n    }",
+        ),
+    ] {
+        let finding = forwarder_finding(extra, forwarder, GROW_TESTS)?;
+        assert_forwarder_not_related(&finding, label);
+    }
+    Ok(())
+}
+
+const MACRO_HOP_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -7,3 +7,3 @@\n pub fn base_rate() -> u32 {\n-    7\n+    3 + 4\n }\n";
+
+#[test]
+fn forwarder_method_above_a_macro_argument_hop_is_not_related() -> Result<(), String> {
+    let source = "macro_rules! twice {\n    ($f:ident) => { $f() * 2 };\n}\n\npub fn other_rate() -> u32 { 5 }\n\npub fn base_rate() -> u32 {\n    3 + 4\n}\n\npub fn doubled_rate() -> u32 {\n    twice!(base_rate)\n}\n\npub struct Meter {\n    n: u32,\n}\nimpl Meter {\n    pub fn read(&self) -> u32 {\n        doubled_rate()\n    }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn read_is_pinned() {\n        let meter = Meter { n: 0 };\n        assert_eq!(meter.read(), 14);\n    }\n}\n";
+    let finding = family_finding(source, MACRO_HOP_DIFF, "return_value")?;
+    assert_ne!(
+        relation_of(&finding, "read_is_pinned"),
+        Some("helper_owner_call"),
+        "{finding}"
+    );
+    assert_ne!(finding["classification"], "exposed", "{finding}");
+    Ok(())
+}
+
+// A test in another package cannot use the receiver-call entry: the method
+// entry never bypasses the package guard.
+#[test]
+fn forwarder_method_called_from_another_package_is_not_related() -> Result<(), String> {
+    let scratch = Scratch::create()?;
+    let root = &scratch.0;
+    let write = |path: &str, text: &str| -> Result<(), String> {
+        let full = root.join(path);
+        if let Some(parent) = full.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        std::fs::write(full, text).map_err(|error| error.to_string())
+    };
+    write(
+        "Cargo.toml",
+        "[workspace]\nmembers = [\"owner\", \"user\"]\nresolver = \"2\"\n",
+    )?;
+    write(
+        "owner/Cargo.toml",
+        "[package]\nname = \"owner\"\nversion = \"0.1.0\"\nedition = \"2021\"\npublish = false\n",
+    )?;
+    write(
+        "user/Cargo.toml",
+        "[package]\nname = \"user\"\nversion = \"0.1.0\"\nedition = \"2021\"\npublish = false\n\n[dependencies]\nowner = { path = \"../owner\" }\n",
+    )?;
+    let lib = forwarder_source("", FORWARDING_METHOD, "")
+        .split("#[cfg(test)]")
+        .next()
+        .unwrap_or_default()
+        .to_string();
+    write("owner/src/lib.rs", &lib)?;
+    write(
+        "user/src/lib.rs",
+        "#[cfg(test)]\nmod tests {\n    use owner::{Overflow, Pool};\n\n    #[test]\n    fn grow_from_elsewhere() {\n        let mut pool = Pool { spilled: false };\n        assert_eq!(pool.grow(4), Ok(true));\n        let _: Option<Overflow> = None;\n    }\n}\n",
+    )?;
+    let diff = FORWARDER_DIFF
+        .replace("a/src/lib.rs", "a/owner/src/lib.rs")
+        .replace("b/src/lib.rs", "b/owner/src/lib.rs");
+    let diff_file = root.join("change.diff");
+    std::fs::write(&diff_file, diff).map_err(|error| error.to_string())?;
+    let report = check_workspace(CheckInput {
+        root: root.clone(),
+        diff_file: Some(diff_file),
+        mode: Mode::Fast,
+        format: OutputFormat::Json,
+        include_unchanged_tests: true,
+        ..CheckInput::default()
+    })?;
+    let json: Value = serde_json::from_str(&render_check(&report, &OutputFormat::Json)?)
+        .map_err(|error| error.to_string())?;
+    let finding = json["findings"]
+        .as_array()
+        .ok_or("missing findings")?
+        .iter()
+        .find(|finding| finding["probe"]["family"] == "predicate")
+        .cloned()
+        .ok_or_else(|| format!("no predicate finding: {json}"))?;
+    assert_ne!(
+        relation_of(&finding, "grow_from_elsewhere"),
+        Some("helper_owner_call"),
+        "{finding}"
+    );
+    Ok(())
+}
+
+#[test]
+fn forwarder_method_of_an_external_trait_impl_is_not_related() -> Result<(), String> {
+    let trait_impl = "impl std::ops::AddAssign<usize> for Pool {\n    fn add_assign(&mut self, wanted: usize) {\n        let _ = self.try_grow(wanted);\n    }\n}";
+    let tests =
+        "        pool.add_assign(3);\n        pool.add_assign(4);\n        assert!(pool.spilled);";
+    let finding = forwarder_finding(trait_impl, "", tests)?;
+    assert_forwarder_not_related(&finding, "external trait impl");
+    Ok(())
+}
+
+// #9638 re-review F2: identity is the declaration, not the bare name. A
+// sibling-module type of the same name, imported into the test, is not the
+// forwarder's `Pool`, even when it has no forwarder of its own (it derefs to
+// `Vec`, whose `reserve` is the call).
+const ALT_POOL: &str = "pub mod alt {\n    pub struct Pool {\n        pub v: Vec<usize>,\n    }\n    impl std::ops::Deref for Pool {\n        type Target = Vec<usize>;\n        fn deref(&self) -> &Vec<usize> {\n            &self.v\n        }\n    }\n    impl std::ops::DerefMut for Pool {\n        fn deref_mut(&mut self) -> &mut Vec<usize> {\n            &mut self.v\n        }\n    }\n}";
+
+#[test]
+fn forwarder_method_receiver_of_a_same_named_sibling_type_is_not_related() -> Result<(), String> {
+    let reserve = forwarder_named("reserve");
+    for tests in [
+        "        use super::alt::Pool;\n        let mut pool = Pool { v: vec![1] };\n        pool.reserve(4);\n        assert!(pool.capacity() >= 4);",
+        "        use super::alt::Pool;\n        assert_eq!(Pool { v: vec![1] }.len(), 1);\n        let mut pool = Pool { v: vec![1] };\n        pool.reserve(4);",
+    ] {
+        let finding = forwarder_finding(ALT_POOL, &reserve, tests)?;
+        assert_forwarder_not_related(&finding, tests);
+    }
+    Ok(())
+}
+
+#[test]
+fn forwarder_method_receiver_of_a_same_named_type_in_an_integration_test_is_not_related()
+-> Result<(), String> {
+    let scratch = Scratch::create()?;
+    let root = &scratch.0;
+    std::fs::create_dir_all(root.join("tests")).map_err(|error| error.to_string())?;
+    std::fs::write(root.join("Cargo.toml"), MANIFEST).map_err(|error| error.to_string())?;
+    let lib = forwarder_source(ALT_POOL, &forwarder_named("reserve"), "")
+        .split("#[cfg(test)]")
+        .next()
+        .unwrap_or_default()
+        .to_string();
+    std::fs::write(root.join("src/lib.rs"), lib).map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("tests/alt.rs"),
+        "use wrapper_reach::alt::Pool;\n\n#[test]\nfn reserve_on_the_vec() {\n    let mut pool = Pool { v: vec![1] };\n    pool.reserve(4);\n    assert!(pool.capacity() >= 4);\n}\n",
+    )
+    .map_err(|error| error.to_string())?;
+    let diff_file = root.join("change.diff");
+    std::fs::write(&diff_file, FORWARDER_DIFF).map_err(|error| error.to_string())?;
+    let report = check_workspace(CheckInput {
+        root: root.clone(),
+        diff_file: Some(diff_file),
+        mode: Mode::Fast,
+        format: OutputFormat::Json,
+        include_unchanged_tests: true,
+        ..CheckInput::default()
+    })?;
+    let json: Value = serde_json::from_str(&render_check(&report, &OutputFormat::Json)?)
+        .map_err(|error| error.to_string())?;
+    let finding = json["findings"]
+        .as_array()
+        .ok_or("missing findings")?
+        .iter()
+        .find(|finding| finding["probe"]["family"] == "predicate")
+        .cloned()
+        .ok_or_else(|| format!("no predicate finding: {json}"))?;
+    assert_ne!(
+        relation_of(&finding, "reserve_on_the_vec"),
+        Some("helper_owner_call"),
+        "{finding}"
+    );
+    assert_ne!(finding["classification"], "exposed", "{finding}");
+    Ok(())
+}
+
+// A root-package owner has no package prefix, so the receiver-call entry must
+// not admit a workspace member's test by default.
+#[test]
+fn forwarder_method_called_from_a_member_of_a_root_package_is_not_related() -> Result<(), String> {
+    let scratch = Scratch::create()?;
+    let root = &scratch.0;
+    let write = |path: &str, text: &str| -> Result<(), String> {
+        let full = root.join(path);
+        if let Some(parent) = full.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        std::fs::write(full, text).map_err(|error| error.to_string())
+    };
+    write(
+        "Cargo.toml",
+        &format!("{MANIFEST}\n[workspace]\nmembers = [\"user\"]\n\n[dependencies]\n"),
+    )?;
+    write(
+        "user/Cargo.toml",
+        "[package]\nname = \"user\"\nversion = \"0.1.0\"\nedition = \"2021\"\npublish = false\n\n[dependencies]\nwrapper_reach = { path = \"..\" }\n",
+    )?;
+    let lib = forwarder_source("", FORWARDING_METHOD, "")
+        .split("#[cfg(test)]")
+        .next()
+        .unwrap_or_default()
+        .to_string();
+    write("src/lib.rs", &lib)?;
+    write(
+        "user/tests/main.rs",
+        "use wrapper_reach::Pool;\n\n#[test]\nfn grow_from_a_member() {\n    let mut pool = Pool { spilled: false };\n    assert_eq!(pool.grow(4), Ok(true));\n}\n",
+    )?;
+    write(
+        "tests/root.rs",
+        "use wrapper_reach::Pool;\n\n#[test]\nfn grow_from_the_root_package() {\n    let mut pool = Pool { spilled: false };\n    assert_eq!(pool.grow(4), Ok(true));\n}\n",
+    )?;
+    let diff_file = root.join("change.diff");
+    std::fs::write(&diff_file, FORWARDER_DIFF).map_err(|error| error.to_string())?;
+    let report = check_workspace(CheckInput {
+        root: root.clone(),
+        diff_file: Some(diff_file),
+        mode: Mode::Fast,
+        format: OutputFormat::Json,
+        include_unchanged_tests: true,
+        ..CheckInput::default()
+    })?;
+    let json: Value = serde_json::from_str(&render_check(&report, &OutputFormat::Json)?)
+        .map_err(|error| error.to_string())?;
+    let finding = json["findings"]
+        .as_array()
+        .ok_or("missing findings")?
+        .iter()
+        .find(|finding| finding["probe"]["family"] == "predicate")
+        .cloned()
+        .ok_or_else(|| format!("no predicate finding: {json}"))?;
+    assert_ne!(
+        relation_of(&finding, "grow_from_a_member"),
+        Some("helper_owner_call"),
+        "{finding}"
+    );
+    assert_eq!(
+        relation_of(&finding, "grow_from_the_root_package"),
+        Some("helper_owner_call"),
+        "{finding}"
+    );
+    Ok(())
+}

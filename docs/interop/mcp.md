@@ -339,6 +339,21 @@ id-aware response budget, the call fails closed with the typed
 `result_too_large` refusal and that tool's recovery route (#7768) instead
 of silently dropping `structuredContent`.
 
+Single-item gap overflow uses one captured-input recovery across the raw
+document, tool envelope and resource envelope. Its CLI command retains the
+captured repository root, effective base and explicit `--committed` or
+`--worktree` source; a later failed request does not relabel that route. The
+command analyzes current repository state, not immutable snapshot bytes. CLI
+JSON remains bounded: related tests are capped and a large finding array may
+omit findings. If the complete recovery exceeds its 4096-byte recovery-text budget,
+the refusal explains that literal recovery is unavailable; it never emits a
+truncated command.
+
+Failed worktree refreshes preserve `source: "worktree"` in their MCP retry
+examples, including default-base, explicit invalid-base and configuration-repair recovery. Correct
+the base without silently changing the source. Ordinary committed requests
+retain omission semantics.
+
 `ripr_get_gap` (and the equivalent resource `ripr://gap/{canonical_id}`)
 returns one canonical item's complete bounded evidence bound to its snapshot
 identity: identity and location, the changed behavior (expression,

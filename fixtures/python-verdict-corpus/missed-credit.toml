@@ -9,10 +9,6 @@ case = "py-bands-positional-band-outside"
 reason = "Measured row that abstains while its tests discriminate; accepted when main added it (migrated from the retired ceiling, #10222)."
 
 [[entry]]
-case = "py-fixtures-fee-boundary"
-reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
-
-[[entry]]
 case = "py-hostile-dynamic-dispatch"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
@@ -26,15 +22,11 @@ reason = "Measured row that abstains while its tests discriminate; accepted when
 
 [[entry]]
 case = "py-shapes-decorator-loop-bound"
-reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+reason = "Limited by design (RIPR-SPEC-0238 Decision 16, #9619): the oracle depends on module state across calls, and its equivalent twin must not credit. Delete this entry when a fixture-backed state evaluator credits the row."
 
 [[entry]]
 case = "py-shapes-decorator-retry-count"
-reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
-
-[[entry]]
-case = "py-shapes-relative-import-quote"
-reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+reason = "Limited by design (RIPR-SPEC-0238 Decision 16, #9619): the oracle depends on module state across calls, and its equivalent twin must not credit. Delete this entry when a fixture-backed state evaluator credits the row."
 
 [[entry]]
 case = "py-shapes-relative-import-table"
@@ -74,11 +66,7 @@ reason = "RIPR-SPEC-0238 example 33 requires a `dynamic_dispatch` abstention for
 
 [[entry]]
 case = "py-trap-platform-matched"
-reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
-
-[[entry]]
-case = "py-trap-wrapped-through"
-reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+reason = "Limited by design (RIPR-SPEC-0238 Decision 17, #9619): crediting would read the host platform or a callback wrapper, and the paired trap row must not credit. Delete this entry when a bounded rule credits the row."
 
 [[entry]]
 case = "unnum-0028-ex3-decorator-indirection"

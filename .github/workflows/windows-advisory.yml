@@ -92,10 +92,16 @@ jobs:
     name: windows-advisory
     if: ${{ !inputs.runner_probe_only && (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'windows-ci') || contains(github.event.pull_request.labels.*.name, 'full-ci')) }}
     runs-on: windows-latest
-    # Above the sum of the cargo step deadlines below (15+45+15+15+75+75, including the runner build), so the
-    # cargo steps alone cannot exhaust it. Checkout, toolchain, cache, summary
+    # Above the sum of the cargo step deadlines below (15+45+15+15+75+75+25, including the runner build and the
+    # real-ACL step), so the cargo steps alone cannot exhaust it. Checkout, toolchain, cache, summary
     # compilation and the manual isolation repeats have no deadline of their own.
     timeout-minutes: 270
+    env:
+      # Tests that need a real `icacls (AD)` deny cannot establish their precondition under
+      # Git for Windows bash, whose backup/restore privileges bypass the deny, so the bash
+      # test steps skip them and a pwsh step runs them (#10621, #9272). Names are libtest
+      # substrings: the three doctor cache probes and the xtask unreadable-subtree sweep.
+      ACL_SKIPS: --skip denies_creation --skip denying_subdirectories --skip real_unreadable_subtree
 
     steps:
       # Full history, like the Linux test lanes (ci, routed-rust, rust-gates):
@@ -164,7 +170,7 @@ jobs:
         timeout-minutes: 45
         shell: bash
         run: |
-          mkdir -p target; target/advisory-run/xtask.exe windows-advisory-run --timeout-minutes 40 --log target/nofeatures-test.log --status target/nofeatures-test.status -- cargo test -p ripr --no-default-features --features lang-rust --no-fail-fast || echo "windows-advisory-run failed ($?); the missing status is reported by the summarizer"; exit 0
+          mkdir -p target; target/advisory-run/xtask.exe windows-advisory-run --timeout-minutes 40 --log target/nofeatures-test.log --status target/nofeatures-test.status -- cargo test -p ripr --no-default-features --features lang-rust --no-fail-fast -- $ACL_SKIPS || echo "windows-advisory-run failed ($?); the missing status is reported by the summarizer"; exit 0
 
       - name: Check --all-features (advisory)
         if: ${{ !cancelled() }}
@@ -193,14 +199,35 @@ jobs:
         timeout-minutes: 75
         shell: bash
         run: |
-          mkdir -p target; target/advisory-run/xtask.exe windows-advisory-run --timeout-minutes 70 --log target/windows-run1.log --status target/windows-run1.status -- cargo test --workspace --no-fail-fast || echo "windows-advisory-run failed ($?); the missing status is reported by the summarizer"; exit 0
+          mkdir -p target; target/advisory-run/xtask.exe windows-advisory-run --timeout-minutes 70 --log target/windows-run1.log --status target/windows-run1.status -- cargo test --workspace --no-fail-fast -- $ACL_SKIPS || echo "windows-advisory-run failed ($?); the missing status is reported by the summarizer"; exit 0
 
       - name: Run workspace tests (advisory, run 2)
         if: ${{ !cancelled() }}
         timeout-minutes: 75
         shell: bash
         run: |
-          mkdir -p target; target/advisory-run/xtask.exe windows-advisory-run --timeout-minutes 70 --log target/windows-run2.log --status target/windows-run2.status -- cargo test --workspace --no-fail-fast || echo "windows-advisory-run failed ($?); the missing status is reported by the summarizer"; exit 0
+          mkdir -p target; target/advisory-run/xtask.exe windows-advisory-run --timeout-minutes 70 --log target/windows-run2.log --status target/windows-run2.status -- cargo test --workspace --no-fail-fast -- $ACL_SKIPS || echo "windows-advisory-run failed ($?); the missing status is reported by the summarizer"; exit 0
+
+      # pwsh starts with SeBackupPrivilege and SeRestorePrivilege disabled and its children
+      # inherit that, so the deny is enforced and these tests establish their precondition.
+      # Test outcomes stay advisory; the evidence is not. A status file alone cannot tell
+      # these four tests from a renamed filter that matched nothing (#4938), and the runner
+      # writes a status even when cargo could not start, so the guard re-reads both files
+      # and fails the step when the status or log is missing or unreadable, the runner
+      # reported spawn status 127, or an expected test is missing, duplicated or ignored
+      # in the log. The guard is the step's last command, so its refusal is the step's
+      # own exit status.
+      - name: Run the real-ACL tests outside bash (advisory, #10621)
+        if: ${{ !cancelled() }}
+        timeout-minutes: 25
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force target | Out-Null
+          target/advisory-run/xtask.exe windows-advisory-run --timeout-minutes 20 --log target/windows-acl.log --status target/windows-acl.status -- cargo test --workspace --no-fail-fast -- denies_creation denying_subdirectories real_unreadable_subtree
+          $status = if (Test-Path target/windows-acl.status) { (Get-Content target/windows-acl.status -Raw).Trim() } else { 'missing' }
+          $rows = if (Test-Path target/windows-acl.log) { Select-String -Path target/windows-acl.log -Pattern '^test .* \.\.\. (ok|FAILED|ignored)' | ForEach-Object { $_.Line } } else { @() }
+          Add-Content $env:GITHUB_STEP_SUMMARY "### Real-ACL tests (pwsh)`n`ncargo test exit status: $status`n`n``````n$($rows -join "`n")`n``````"
+          target/advisory-run/xtask.exe windows-advisory-acl-evidence --log target/windows-acl.log --status target/windows-acl.status --expect cli::commands::doctor::tests::probe_creatable_dir_reports_a_directory_that_denies_creation --expect cli::commands::doctor::tests::cache_unwritable_reason_reports_existing_sharded_dir_denying_subdirectories --expect cli::commands::doctor::tests::cache_unwritable_reason_reports_key_dir_denying_subdirectories --expect reports::eval_sweep_refresh::python_eval_sweep_refresh::real_unreadable_subtree_marks_corpus_selection_incomplete
 
       - name: Summarize environment
         if: ${{ !cancelled() }}
@@ -309,6 +336,8 @@ jobs:
             target/windows-run2.log
             target/windows-run1.status
             target/windows-run2.status
+            target/windows-acl.log
+            target/windows-acl.status
             target/ripr/reports/file-policy.md
             target/nofeatures-check.log
             target/nofeatures-check.status

@@ -47,3 +47,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — same_crate_trait_impl_same_leaf_doctest_control (5)
+
+Reason:
+RIPR-SPEC-0122: plain-language repair-route refusal names the missing evidence without internal fact codes (#10644)
+
+Command:
+`cargo xtask goldens bless same_crate_trait_impl_same_leaf_doctest_control --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

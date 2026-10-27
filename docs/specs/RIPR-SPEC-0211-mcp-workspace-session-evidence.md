@@ -211,9 +211,10 @@ official SDK transport:
     `repair_cards: "withheld"`. Because no consumed-source commitment spans
     the findings and the later live-file seam inventory, a worktree refresh
     gathers no inventory and binds no card producers: every item's
-    `repair_packet_ready` is false with the typed
-    `worktree_source_not_committed` reason (`ripr_prepare_repair` therefore
-    creates no attempt), and `ripr_get_repair_card` refuses with the
+    `repair_packet_ready` is false. Otherwise-ready items receive the typed
+    `worktree_source_not_committed` reason; existing finding-level refusal
+    reasons retain precedence. `ripr_prepare_repair` therefore creates no
+    attempt, and `ripr_get_repair_card` refuses with the
     existing `incomplete_inventory` code and a detail naming the
     tracked-worktree source. Findings, list and gap evidence are served as
     for a committed snapshot. Committing the change and refreshing without
@@ -652,3 +653,18 @@ unknown route into a recognized one.
   snapshot resource)
 - zero committed snapshots for `unsupported_input` / `analysis_failed`
   outcomes (negative invariant)
+
+## Source-preserving recovery follow-up (#10799)
+
+Single-gap overflow recovery is captured with its evidence snapshot and reused
+at the raw-document, tool-envelope and resource-envelope boundaries. The CLI
+renderer binds the captured root, effective base and explicit source; a newer
+failed request cannot relabel it. The route is a bounded current-state rerun,
+not immutable replay. The 4096-byte recovery-text budget refuses an oversized complete route
+with an explicit non-command limitation rather than truncating executable text.
+
+For failed saved-worktree refresh, MCP retry examples retain the requested
+worktree source when the operator corrects or omits a base. Discovery states
+the committed default separately from opt-in saved tracked edits. Unsaved and
+untracked exclusions, withheld worktree cards/readiness and the consumed-source
+commitment limitation remain unchanged.
