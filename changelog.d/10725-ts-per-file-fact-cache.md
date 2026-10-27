@@ -1,2 +1,2 @@
-<!-- section: Performance -->
+<!-- section: Fixed -->
 - `ripr check` on a TypeScript workspace now persists per-file facts (owners, export facts, phase-2 facts, and test extractions) in a content-keyed on-disk store under the seam-cache base: a warm run over unchanged input serves untouched files from the cache instead of re-parsing the whole tree, and `-v` reports the real reuse counts (`typescript per-file facts: N reused, M recomputed, K stored`). A same-length mtime-preserving rewrite still misses (the key is the content hash, never a stat tuple), a tampered entry is corrupt-ignored and recomputed, and the Python adapter is unchanged in this slice (#10725).
