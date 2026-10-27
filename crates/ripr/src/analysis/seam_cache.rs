@@ -553,7 +553,11 @@ pub(crate) struct CachedSeamLimitInfo {
 /// (`t += double(*x).await * 1`) is a `return_value` change credited by a pin
 /// whose run folds through that function (RIPR-SPEC-0360, #9478). Old entries
 /// keep the update's `static_unknown` probe.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.114";
+/// `1.115`: the row's inputs are substituted into the returned expression
+/// (#10797); `1.114` credited a coincident row.
+/// `1.116`: a `let` literal that a tuple, struct, `for` or other pattern
+/// rebinds is not the owner call's argument (#10819); `1.115` paired it.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.116";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -714,7 +718,9 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.114";
 /// `0.119`: same arrow-row table splitting as full `1.112` (#10298).
 /// `0.120`: same arrow-row oracle as full `1.113` (#9619).
 /// `0.121`: same call-in-term accumulator as full `1.114` (#9478).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.121";
+/// `0.122`: same row-input oracle as full `1.115` (#10797).
+/// `0.123`: same rebound-let rule as full `1.116` (#10819).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.123";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -877,7 +883,9 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.121";
 /// `0.119`: same arrow-row table splitting as full `1.112` (#10298).
 /// `0.120`: same arrow-row oracle as full `1.113` (#9619).
 /// `0.121`: same call-in-term accumulator as full `1.114` (#9478).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.121";
+/// `0.122`: same row-input oracle as full `1.115` (#10797).
+/// `0.123`: same rebound-let rule as full `1.116` (#10819).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.123";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -1070,7 +1078,9 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// facts have no oracle for it.
 /// `1.49`: an accumulator update with a call term is probed as
 /// `return_value` (RIPR-SPEC-0360, #9478); `1.48` facts keep it unmapped.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.49";
+/// `1.50`: the row's literal arguments are substituted into the returned
+/// expression (#10797); `1.49` facts keep the unsubstituted row.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.50";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -4903,7 +4913,8 @@ mod tests {
         // 1.46 -> 1.47: `cfg_attr(<known-true>, test)` marks a test (#9442).
         // 1.47 -> 1.48: arrow-row oracles (RIPR-SPEC-0231 rule 9, #9619).
         // 1.48 -> 1.49: call-in-term accumulator probe (RIPR-SPEC-0360, #9478).
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.49");
+        // 1.49 -> 1.50: arrow row inputs substituted (RIPR-SPEC-0231 rule 9, #10797).
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.50");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -5041,7 +5052,9 @@ mod tests {
         // 1.111 -> 1.112: arrow-separated macro table rows (#10298).
         // 1.112 -> 1.113: arrow-row oracles (RIPR-SPEC-0231 rule 9, #9619).
         // 1.113 -> 1.114: call-in-term accumulator (RIPR-SPEC-0360, #9478).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.114");
+        // 1.114 -> 1.115: arrow row inputs substituted (RIPR-SPEC-0231 rule 9, #10797).
+        // 1.115 -> 1.116: rebound let literal is not the argument (#10819).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.116");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5142,8 +5155,10 @@ mod tests {
         // 0.118 -> 0.119: same arrow-row transition as full 1.112.
         // 0.119 -> 0.120: same arrow-row oracle as full 1.113.
         // 0.120 -> 0.121: same call-in-term accumulator as full 1.114.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.121");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.121");
+        // 0.121 -> 0.122: same row-input oracle as full 1.115.
+        // 0.122 -> 0.123: same rebound-let rule as full 1.116.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.123");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.123");
     }
 
     #[test]

@@ -176,6 +176,24 @@ fn gap_start_tokens(text: &str) -> Option<(String, String)> {
     Some((value_after("--gap-id")?, value_after("--base")?))
 }
 
+/// The quoting `shell_arg` applies to a plain path argument: bare when every
+/// character is unambiguous, otherwise single-quoted (double-quoted on
+/// Windows consoles).
+fn printed_shell_arg(value: &str) -> String {
+    if !value.is_empty()
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '/' | '_' | '-' | ':'))
+    {
+        return value.to_string();
+    }
+    if cfg!(windows) {
+        format!("\"{}\"", value.replace('"', "\"\""))
+    } else {
+        format!("'{}'", value.replace('\'', "'\\''"))
+    }
+}
+
 /// Moves the materialized repository onto a feature branch whose default
 /// comparison base (`main`) is the base commit, so a plain `ripr check --root`
 /// (the command pilot routes to, which carries no `--base`) analyzes the head
@@ -697,8 +715,21 @@ fn typescript_literal_threshold_packet_is_complete_and_controls_fail_closed() ->
     std::fs::write(&production, format!("{original}\n// dirty\n"))
         .map_err(|error| format!("dirty production: {error}"))?;
     let (dirty_ok, dirty) = ripr(&decoy, &gap_start_args)?;
+    // #10698: while the production file is dirty, check names the commit step
+    // before the start that the refusal above proves it would refuse.
+    let (dirty_check_ok, dirty_check) =
+        ripr(&decoy, &["check", "--root", &root_arg, "--base", "HEAD~1"])?;
     std::fs::write(&production, &original)
         .map_err(|error| format!("restore production: {error}"))?;
+    expect_exit(dirty_check_ok, true, "dirty check")?;
+    need(
+        &dirty_check,
+        &format!(
+            "git -C {} --literal-pathspecs commit -m \"<message>\" -- src/pricing.ts",
+            printed_shell_arg(&root_arg)
+        ),
+        "check names the commit step on a dirty tree",
+    )?;
     expect_exit(dirty_ok, false, "dirty production start")?;
     need(
         &dirty,

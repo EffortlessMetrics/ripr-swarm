@@ -5,6 +5,6 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests.rs::branch_return_expressions_refuses_a_one_line_changed_if",
   "crates/ripr/src/analysis/language/typescript/tests.rs::branch_return_expressions_refuses_a_changed_if_in_a_nested_function",
   "crates/ripr/src/analysis/language/typescript/tests.rs::branch_return_expressions_keeps_plain_nesting_and_blanked_literals",
-  "crates/ripr/src/analysis/language/typescript/tests.rs::expected_side_is_live_gives_up_on_a_one_line_changed_if",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::expected_side_is_live_withholds_a_one_line_changed_if",
   "crates/ripr/src/analysis/language/typescript/tests.rs::expected_side_is_live_keeps_a_block_that_shares_a_line_with_an_arrow",
 ]

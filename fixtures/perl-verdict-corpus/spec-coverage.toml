@@ -743,6 +743,11 @@ scope = "out"
 reason = "Rust/Cargo analyzer behavior; a Perl case cannot label it"
 
 [[spec]]
+id = "RIPR-SPEC-0361"
+scope = "out"
+reason = "Pipeline diff-scope line-budget guard behavior; not a perl verdict example"
+
+[[spec]]
 id = "RIPR-SPEC-0362"
 scope = "out"
 reason = "Gate/ledger refusal-admission behavior; not an exposure-verdict example a Perl case labels"
