@@ -200,7 +200,7 @@ Test discovery:
   tsconfig path, workspace package or the root package name could resolve, a
   `~`, `#`, `$`, `/` or `@/` specifier, a `baseUrl`, `rootDirs`, an uninspected
   `extends` (including an npm package base, after JSONC key decoding), a
-  package-level `paths`, any bundler, transpiler or test-runner config that
+  project `references` entry, a package-level `paths`, any bundler, transpiler or test-runner config that
   declares an alias or module directory, a Rust change related through the Bun
   bridge, and a closure over 400 files. The conditional
   assertion credit and owner-extraction disclosures keep their own scopes.
