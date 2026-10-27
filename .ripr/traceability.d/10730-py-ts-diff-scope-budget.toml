@@ -40,3 +40,6 @@ code = [
 outputs = [
   "docs/OUTPUT_SCHEMA.md",
 ]
+metrics = [
+  "unit_test_pass_rate",
+]
