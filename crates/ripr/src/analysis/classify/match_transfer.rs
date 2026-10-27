@@ -288,12 +288,9 @@ fn without_test_modules(source: &str) -> String {
         .filter_map(ast::Module::cast)
     {
         let gated = module.attrs().any(|attr| {
-            attr.syntax()
-                .text()
-                .to_string()
-                .split_whitespace()
-                .collect::<String>()
-                == "#[cfg(test)]"
+            crate::analysis::facts::cfg_predicates::attribute_is_plain_test_gate(
+                &attr.syntax().text().to_string(),
+            )
         });
         let Some(body) = module.item_list().filter(|_| gated) else {
             continue;

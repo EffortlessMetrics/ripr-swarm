@@ -9283,7 +9283,10 @@ assert_eq!(input.amount, 100);"#
             replaced("if label == \"alpha\" {", "if label == \"beta\" {"),
             Some("\"alpha\"".to_string())
         );
-        assert_eq!(replaced("if n == 5 {", "if n == 6 {"), Some("5".to_string()));
+        assert_eq!(
+            replaced("if n == 5 {", "if n == 6 {"),
+            Some("5".to_string())
+        );
         assert_eq!(
             replaced("if label != \"alpha\" {", "if label != \"beta\" {"),
             Some("\"alpha\"".to_string())
