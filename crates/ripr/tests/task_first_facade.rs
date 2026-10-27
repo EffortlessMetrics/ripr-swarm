@@ -342,18 +342,137 @@ fn repair_with_changed_non_rust_code_says_rust_only() -> Result<(), String> {
     assert_exit(&repair, 3, "repair with changed non-Rust code");
     let stderr = stderr_text(&repair);
     assert!(
-        stderr.contains("is Python and TypeScript, and the seam inventory behind `ripr repair` covers Rust files only"),
+        stderr.contains("is Python and TypeScript, and `ripr repair` works from Rust seams only"),
         "must say plainly that repair start is Rust only:\n{stderr}"
     );
     assert!(
         stderr.contains("`ripr check --root")
             && stderr.contains("verify command")
-            && stderr.contains("gap-bound start"),
+            && stderr.contains("--phase before"),
         "must point at the check finding's route:\n{stderr}"
     );
     assert!(
         !stderr.contains("analyze the workspace") && !stderr.contains("ripr pilot"),
         "must not loop back through pilot:\n{stderr}"
+    );
+    Ok(())
+}
+
+/// Shared setup for the #10682 non-Rust guidance tests: a base branch, then a
+/// feature branch the test commits to.
+fn nonrust_repair_stderr(root: &Path, root_arg: &str) -> Result<String, String> {
+    let repair = run_ripr(root, &["repair", "--root", root_arg])?;
+    assert_exit(&repair, 3, "repair with non-Rust change");
+    Ok(stderr_text(&repair))
+}
+
+/// #10682: a clean branch whose change is committed (no dirty tree) reads the
+/// same committed diff `ripr check` analyzes, not just `git diff HEAD`.
+#[test]
+fn repair_with_committed_only_non_rust_change_says_rust_only() -> Result<(), String> {
+    let fixture = Fixture::empty("facade-nonrust-committed")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    std::fs::write(root.join("pricing.ts"), "export const t = 10;\n").map_err(|e| e.to_string())?;
+    run_git(root, &["add", "pricing.ts"])?;
+    git_commit(root, "add ts")?;
+    run_git(root, &["branch", "base-for-10682"])?;
+    run_git(root, &["checkout", "-q", "-b", "feature"])?;
+    std::fs::write(root.join("pricing.ts"), "export const t = 11;\n").map_err(|e| e.to_string())?;
+    run_git(root, &["add", "pricing.ts"])?;
+    git_commit(root, "change ts")?;
+    let stderr = nonrust_repair_stderr(root, &root_arg)?;
+    assert!(
+        stderr.contains("is TypeScript, and `ripr repair` works from Rust seams only"),
+        "committed-only change must be named:\n{stderr}"
+    );
+    assert!(!stderr.contains("ripr pilot"), "no pilot loop:\n{stderr}");
+    Ok(())
+}
+
+/// #10682: a C-quoted (non-ASCII) filename is still recognised by extension.
+#[test]
+fn repair_with_quoted_non_rust_filename_says_rust_only() -> Result<(), String> {
+    let fixture = Fixture::empty("facade-nonrust-quoted")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    std::fs::write(root.join("café.ts"), "export const t = 10;\n").map_err(|e| e.to_string())?;
+    run_git(root, &["add", "."])?;
+    git_commit(root, "add quoted ts")?;
+    std::fs::write(root.join("café.ts"), "export const t = 11;\n").map_err(|e| e.to_string())?;
+    let stderr = nonrust_repair_stderr(root, &root_arg)?;
+    assert!(
+        stderr.contains("is TypeScript, and `ripr repair` works from Rust seams only"),
+        "quoted filename must still be recognised:\n{stderr}"
+    );
+    Ok(())
+}
+
+/// #10682: a sibling package's edit is not this root's change.
+#[test]
+fn repair_ignores_non_rust_change_in_a_sibling_package() -> Result<(), String> {
+    let fixture = Fixture::empty("facade-nonrust-sibling")?;
+    let root = &fixture.root;
+    std::fs::create_dir_all(root.join("sibling")).map_err(|e| e.to_string())?;
+    std::fs::write(root.join("sibling/pricing.ts"), "export const t = 10;\n")
+        .map_err(|e| e.to_string())?;
+    run_git(root, &["add", "."])?;
+    git_commit(root, "add sibling ts")?;
+    std::fs::write(root.join("sibling/pricing.ts"), "export const t = 11;\n")
+        .map_err(|e| e.to_string())?;
+    let package_root = root.to_string_lossy().into_owned();
+    // Explicit root is the Rust package dir; the ts edit lives outside it.
+    std::fs::create_dir_all(root.join("pkg/src")).map_err(|e| e.to_string())?;
+    std::fs::write(root.join("pkg/Cargo.toml"), FIXTURE_CARGO_TOML).map_err(|e| e.to_string())?;
+    std::fs::write(root.join("pkg/src/lib.rs"), "// none\n").map_err(|e| e.to_string())?;
+    run_git(root, &["add", "pkg"])?;
+    git_commit(root, "add pkg")?;
+    std::fs::write(root.join("sibling/pricing.ts"), "export const t = 12;\n")
+        .map_err(|e| e.to_string())?;
+    let pkg = format!("{package_root}/pkg");
+    let stderr = nonrust_repair_stderr(root, &pkg)?;
+    assert!(
+        !stderr.contains("TypeScript"),
+        "sibling package edit must not be attributed to this root:\n{stderr}"
+    );
+    Ok(())
+}
+
+/// #10682: a deletion-only change gets no `check` finding, so the message
+/// does not promise one.
+#[test]
+fn repair_with_deletion_only_non_rust_change_does_not_promise_a_finding() -> Result<(), String> {
+    let fixture = Fixture::empty("facade-nonrust-deletion")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    std::fs::write(
+        root.join("pricing.ts"),
+        "export const a = 1;\nexport const b = 2;\n",
+    )
+    .map_err(|e| e.to_string())?;
+    run_git(root, &["add", "pricing.ts"])?;
+    git_commit(root, "add ts")?;
+    std::fs::write(root.join("pricing.ts"), "export const a = 1;\n").map_err(|e| e.to_string())?;
+    let stderr = nonrust_repair_stderr(root, &root_arg)?;
+    assert!(
+        stderr.contains("only removes code") && !stderr.contains("verify command"),
+        "deletion-only must not promise a finding:\n{stderr}"
+    );
+    Ok(())
+}
+
+/// #10682 negative control: a Rust-only change keeps the generic message.
+#[test]
+fn repair_with_rust_only_change_keeps_the_generic_message() -> Result<(), String> {
+    let fixture = Fixture::empty("facade-rust-only")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    std::fs::write(root.join("src/lib.rs"), "// still no public behavior\n")
+        .map_err(|e| e.to_string())?;
+    let stderr = nonrust_repair_stderr(root, &root_arg)?;
+    assert!(
+        stderr.contains("no seams visible") && !stderr.contains("Rust seams only"),
+        "Rust-only change must keep the generic message:\n{stderr}"
     );
     Ok(())
 }
