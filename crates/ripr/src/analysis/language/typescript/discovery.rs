@@ -280,12 +280,13 @@ pub(crate) fn visit_workspace_with_handwritten(
 }
 
 /// `true` when the symlink at `path` is a file link whose own name the
-/// TypeScript adapter does not accept, so nothing indexable can sit behind it
+/// TypeScript adapter does not index (not a source extension, or a generated
+/// or minified name the walk refuses), so nothing indexable can sit behind it
 /// (h3's `docs/5.migration/0.index.md` link made every h3 analysis partial).
 /// Only the target's file-ness is read, never its content; a directory, a
 /// dangling link or a failed stat is "could hide sources" and stays disclosed.
 fn symlink_cannot_hide_sources(path: &Path) -> bool {
-    !TypeScriptAdapter.accepts_path(path)
+    (!TypeScriptAdapter.accepts_path(path) || is_detectable_generated_typescript_path(path))
         && std::fs::metadata(path).is_ok_and(|metadata| metadata.is_file())
 }
 
@@ -731,6 +732,16 @@ mod tests {
         assert_eq!(
             scan.skipped_links, 0,
             "a markdown file link hides no source and must not be disclosed"
+        );
+
+        symlink(
+            root.join("README.md"),
+            root.join("docs/bundle.generated.ts"),
+        )?;
+        let scan = visit_workspace_with_handwritten(root, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        assert_eq!(
+            scan.skipped_links, 0,
+            "a generated-named file link is a name the walk never indexes"
         );
 
         symlink(
