@@ -1111,7 +1111,7 @@ fn gate_refusal_admission_keeps_complete_and_advisory_controls() -> Result<(), S
     assert_eq!(zero_parsed["status"], "no_records");
     let zero_path = dir.join("zero-ledger.json");
     fs::write(&zero_path, zero_json).map_err(|error| format!("write zero ledger: {error}"))?;
-    let (_zero_fixture, mut zero_input) = fixture_input(GateMode::VisibleOnly)?;
+    let (_zero_fixture, mut zero_input) = fixture_input(GateMode::Acknowledgeable)?;
     zero_input.pr_guidance = None;
     zero_input.gap_ledger = Some(zero_path);
     let zero_report = build_gate_decision_report(&zero_input)?;
@@ -1154,7 +1154,7 @@ fn gate_refusal_admission_keeps_complete_and_advisory_controls() -> Result<(), S
     let advisory_path = dir.join("advisory-ledger.json");
     fs::write(&advisory_path, advisory_json)
         .map_err(|error| format!("write advisory ledger: {error}"))?;
-    let (_advisory_fixture, mut advisory_input) = fixture_input(GateMode::VisibleOnly)?;
+    let (_advisory_fixture, mut advisory_input) = fixture_input(GateMode::Acknowledgeable)?;
     advisory_input.pr_guidance = None;
     advisory_input.gap_ledger = Some(advisory_path);
     let advisory_report = build_gate_decision_report(&advisory_input)?;
