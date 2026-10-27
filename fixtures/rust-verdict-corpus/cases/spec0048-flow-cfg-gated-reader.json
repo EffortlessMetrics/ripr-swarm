@@ -1,6 +1,6 @@
 {
   "case_id": "spec0048-flow-cfg-gated-reader",
-  "subject_id": "authored-spec0048-const-flow-shapes",
+  "subject_id": "authored-spec0048-shape-kit",
   "diff": "cases/spec0048-flow-cfg-gated-reader.diff",
   "anchor": {
     "file": "src/lib.rs",

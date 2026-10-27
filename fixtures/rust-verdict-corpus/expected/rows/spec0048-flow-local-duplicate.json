@@ -1,6 +1,6 @@
 {
   "case_id": "spec0048-flow-local-duplicate",
-  "subject_id": "authored-spec0048-const-flow-shapes",
+  "subject_id": "authored-spec0048-shape-kit",
   "origin": "authored",
   "anchor": "src/lib.rs:35",
   "behavior_family": "behavior_selector_const",

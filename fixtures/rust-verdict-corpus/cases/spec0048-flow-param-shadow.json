@@ -1,6 +1,6 @@
 {
   "case_id": "spec0048-flow-param-shadow",
-  "subject_id": "authored-spec0048-const-flow-shapes",
+  "subject_id": "authored-spec0048-shape-kit",
   "diff": "cases/spec0048-flow-param-shadow.diff",
   "anchor": {
     "file": "src/lib.rs",
