@@ -408,15 +408,3 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
-
-## Pending — recursive_controls (34)
-
-Reason:
-RIPR-SPEC-0122: plain-language wording for the default and human-full check views (#10691); human text only, check.json unchanged
-
-Command:
-`cargo xtask goldens bless recursive_controls --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`

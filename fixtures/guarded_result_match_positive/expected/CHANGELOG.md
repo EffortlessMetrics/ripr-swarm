@@ -300,15 +300,3 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
-
-## Pending — guarded_result_match_positive (26)
-
-Reason:
-RIPR-SPEC-0122: plain-language wording for the default and human-full check views (#10691); human text only, check.json unchanged
-
-Command:
-`cargo xtask goldens bless guarded_result_match_positive --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`

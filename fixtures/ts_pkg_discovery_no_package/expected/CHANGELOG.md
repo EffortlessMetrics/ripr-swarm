@@ -590,15 +590,3 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
-
-## Pending — ts_pkg_discovery_no_package (30)
-
-Reason:
-RIPR-SPEC-0122: plain-language wording for the default and human-full check views (#10691); human text only, check.json unchanged
-
-Command:
-`cargo xtask goldens bless ts_pkg_discovery_no_package --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`

@@ -581,15 +581,3 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
-
-## Pending — all_no_path_disclosure (32)
-
-Reason:
-RIPR-SPEC-0122: plain-language wording for the default and human-full check views (#10691); human text only, check.json unchanged
-
-Command:
-`cargo xtask goldens bless all_no_path_disclosure --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`

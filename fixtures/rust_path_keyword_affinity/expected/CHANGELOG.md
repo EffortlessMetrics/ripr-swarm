@@ -71,15 +71,3 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
-
-## Pending — rust_path_keyword_affinity (7)
-
-Reason:
-RIPR-SPEC-0122: plain-language wording for the default and human-full check views (#10691); human text only, check.json unchanged
-
-Command:
-`cargo xtask goldens bless rust_path_keyword_affinity --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`

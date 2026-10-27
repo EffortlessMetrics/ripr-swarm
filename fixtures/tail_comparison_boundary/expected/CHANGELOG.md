@@ -444,15 +444,3 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
-
-## Pending — tail_comparison_boundary (38)
-
-Reason:
-RIPR-SPEC-0122: plain-language wording for the default and human-full check views (#10691); human text only, check.json unchanged
-
-Command:
-`cargo xtask goldens bless tail_comparison_boundary --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
