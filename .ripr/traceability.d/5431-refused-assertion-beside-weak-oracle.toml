@@ -1,0 +1,6 @@
+# Registers the mixed refused/admitted assertion withholding (#5431) under RIPR-SPEC-0240.
+[[extend]]
+id = "RIPR-SPEC-0240"
+tests = [
+  "crates/ripr/tests/refused_assertion_beside_weak_oracle.rs::an_analyzer_limit_refusal_beside_a_weak_oracle_is_not_a_gap",
+]

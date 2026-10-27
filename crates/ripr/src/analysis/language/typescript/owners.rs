@@ -1358,7 +1358,7 @@ pub(crate) fn contains_jsx_like_return(slice: &str) -> bool {
 pub(crate) fn extract_imports_from_statements(
     statements: &[Statement<'_>],
 ) -> Vec<TypeScriptImport> {
-    extract_imports_from_statements_inner(statements, true)
+    extract_imports_from_statements_inner(statements, true, true)
 }
 
 /// Imports for a TEST file (#7507): `export { x } from './y'` re-exports are
@@ -1370,12 +1370,13 @@ pub(crate) fn extract_imports_from_statements(
 pub(crate) fn extract_imports_for_test_file(
     statements: &oxc_allocator::Vec<'_, Statement<'_>>,
 ) -> Vec<TypeScriptImport> {
-    extract_imports_from_statements_inner(statements, false)
+    extract_imports_from_statements_inner(statements, false, true)
 }
 
 fn extract_imports_from_statements_inner(
     statements: &[Statement<'_>],
     include_reexports: bool,
+    resolve_require_scope: bool,
 ) -> Vec<TypeScriptImport> {
     let mut out: Vec<TypeScriptImport> = Vec::new();
     // A file that binds its own `require` (`const require = ...`,
@@ -1389,16 +1390,25 @@ fn extract_imports_from_statements_inner(
     super::tests_extract::collect_registration_scope_names(statements, &mut top_level_names, false);
     // ES imports hoist, so the loader predicate sees all of them whatever their
     // position relative to `const require = createRequire(...)`.
-    let require_is_ambient = !top_level_names.iter().any(|name| name == "require") || {
-        let es_imports: Vec<TypeScriptImport> = statements
-            .iter()
-            .filter(|statement| matches!(statement, Statement::ImportDeclaration(_)))
-            .flat_map(|statement| {
-                extract_imports_from_statements_inner(std::slice::from_ref(statement), false)
-            })
-            .collect();
-        super::admission::program_require_is_known(statements, &es_imports, false)
-    };
+    // `resolve_require_scope` is false only for the single-import-declaration
+    // slices collected below: they hold no `require()` call, and re-deriving
+    // the scope from them would recurse on `import require from "./b"`
+    // without end (#10724).
+    let require_is_ambient =
+        !resolve_require_scope || !top_level_names.iter().any(|name| name == "require") || {
+            let es_imports: Vec<TypeScriptImport> = statements
+                .iter()
+                .filter(|statement| matches!(statement, Statement::ImportDeclaration(_)))
+                .flat_map(|statement| {
+                    extract_imports_from_statements_inner(
+                        std::slice::from_ref(statement),
+                        false,
+                        false,
+                    )
+                })
+                .collect();
+            super::admission::program_require_is_known(statements, &es_imports, false)
+        };
     // Names the file assigns to anywhere (computed on the first mutable
     // `require()` binding).
     let mut written_names: Option<std::collections::HashSet<String>> = None;
