@@ -1890,24 +1890,18 @@ pub(crate) fn chain_entry_pin_admits(
             _ => {}
         }
     }
-    // The entry pin is the method-hop claim (#5352): a free-function
-    // wrapper chain keeps its documented no-return-credit reading
-    // (RIPR-SPEC-0159), so every hop must be an identity-bound method
-    // call site.
+    // The entry pin is the method-hop claim (#5352), or a chain of free
+    // direct calls whose bare-name identity is established (#9638).
     let every_hop_is_a_method_site = chain.hops.iter().enumerate().all(|(step, hop)| {
-        let callee = match step.checked_sub(1) {
-            None => owner_name,
-            Some(below) => match chain.hops.get(below) {
-                Some(lower) => lower.caller.name.as_str(),
-                None => return false,
-            },
-        };
-        method_call_site(&hop.call_text, callee).is_some()
+        hop_callee(chain, owner_name, step)
+            .is_some_and(|callee| method_call_site(&hop.call_text, callee).is_some())
     });
-    if !every_hop_is_a_method_site {
+    if !every_hop_is_a_method_site
+        && !free_call_chain_is_identity_bound(owner_name, chain, related_tests, index)
+    {
         return false;
     }
-    if !chain_forwards_to_observed_hops(owner_name, chain, related_tests, index) {
+    if !chain_forwards_return_to_observed_hops(owner_name, chain, related_tests, index) {
         return false;
     }
     let Some(entry) = chain.hops.last() else {
@@ -2404,6 +2398,156 @@ pub(crate) fn chain_forwards_to_observed_hops(
         || asserting_method_entry(owner_name, hops, index).is_some()
 }
 
+/// The function the hop at `step` calls: the owner for the first hop, the
+/// previous hop's caller above it.
+fn hop_callee<'a>(chain: &'a HelperChain, owner_name: &'a str, step: usize) -> Option<&'a str> {
+    match step.checked_sub(1) {
+        None => Some(owner_name),
+        Some(below) => chain
+            .hops
+            .get(below)
+            .map(|lower| lower.caller.name.as_str()),
+    }
+}
+
+/// Whether every observed hop of `chain` is a plain free call whose bare name
+/// can only mean the chain's function (#9638): the callee is the one
+/// workspace function of its name, declared in the caller's own file and
+/// module scope outside any `impl`, is not imported, macro-defined, rebound
+/// or passed in as a parameter of its caller, and no hop is a method call or
+/// a macro argument.
+fn free_call_chain_is_identity_bound(
+    owner_name: &str,
+    chain: &HelperChain,
+    related_tests: &[(
+        &crate::analysis::facts::TestSummary,
+        crate::domain::RelationReason,
+    )],
+    index: &RustIndex,
+) -> bool {
+    let observed = observed_hops(chain, related_tests);
+    !observed.is_empty()
+        && observed.iter().enumerate().all(|(step, hop)| {
+            hop.receiver.is_none()
+                && !hop.through_macro
+                && hop_callee(chain, owner_name, step).is_some_and(|callee| {
+                    is_direct_call_site(&hop.call_text, callee)
+                        && !super::activation::function_parameters(&hop.caller)
+                            .iter()
+                            .any(|parameter| parameter == callee)
+                        && callee_declared_beside_caller(callee, &hop.caller, index)
+                })
+        })
+        && hops_call_the_indexed_callees(owner_name, observed, index)
+}
+
+/// Whether the one workspace function `callee_name` is declared in the same
+/// file and the same module scope as `caller`, neither inside an `impl`, so a
+/// bare call of its name from `caller` can only mean that item (a `use`, glob
+/// import or other module's function of the name cannot take its place).
+fn callee_declared_beside_caller(
+    callee_name: &str,
+    caller: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
+    let Some(callee) = index
+        .functions()
+        .iter()
+        .find(|function| function.name == callee_name)
+    else {
+        return false;
+    };
+    if callee.file != caller.file {
+        return false;
+    }
+    let Some(file) = index.files().get(&caller.file) else {
+        return false;
+    };
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(&file.source);
+    let scopes = |function: &FunctionSummary| {
+        scopes_enclosing_fn(&masked, function.start_line, &function.name)
+    };
+    match (scopes(callee), scopes(caller)) {
+        (Some(callee_scopes), Some(caller_scopes)) => callee_scopes == caller_scopes,
+        _ => false,
+    }
+}
+
+/// [`chain_forwards_to_observed_hops`] for a return-value owner, where a hop
+/// may also hand the call's result on shifted by a decimal integer literal
+/// (`inner(x) + 1`, `1 + inner(x)`, `inner(x) - 1`) when the owner and every
+/// observed hop caller declare a builtin integer return type (#9638). Adding
+/// or subtracting a constant is injective on an integer type, wrapping or
+/// panicking on overflow, so an exact value at the entry still moves with the
+/// owner's. A custom type (`impl Add<i32>`), a float, a string, any other
+/// operator and any other operand keep the strict reading.
+pub(crate) fn chain_forwards_return_to_observed_hops(
+    owner_name: &str,
+    chain: &HelperChain,
+    related_tests: &[(
+        &crate::analysis::facts::TestSummary,
+        crate::domain::RelationReason,
+    )],
+    index: &RustIndex,
+) -> bool {
+    if chain_forwards_to_observed_hops(owner_name, chain, related_tests, index) {
+        return true;
+    }
+    let hops = observed_hops(chain, related_tests);
+    hops_forward_owner_result_with(owner_name, hops, true)
+        && owner_and_hops_return_builtin_integers(owner_name, hops, index)
+        && free_call_chain_is_identity_bound(owner_name, chain, related_tests, index)
+}
+
+/// The owner and every hop caller declare a builtin integer return type that
+/// no workspace type of that name shadows.
+fn owner_and_hops_return_builtin_integers(
+    owner_name: &str,
+    hops: &[HelperHop],
+    index: &RustIndex,
+) -> bool {
+    const INTEGERS: &[&str] = &[
+        "u8", "u16", "u32", "u64", "u128", "usize", "i8", "i16", "i32", "i64", "i128", "isize",
+    ];
+    let integer_return = |function: &FunctionSummary| {
+        super::owner_pin::declared_return_type(&function.body).is_some_and(|returned| {
+            INTEGERS.contains(&returned.trim())
+                && super::owner_pin::workspace_type_name_count(returned.trim(), index) == 0
+        })
+    };
+    // Uniqueness of each name is the identity check's, which callers AND in.
+    index
+        .functions()
+        .iter()
+        .find(|function| function.name == owner_name)
+        .is_some_and(integer_return)
+        && hops.iter().all(|hop| integer_return(&hop.caller))
+}
+
+/// `text` (masked) is one exact direct call of `callee` with a decimal
+/// integer literal added or subtracted: `call + 1`, `1 + call`, `call - 1`.
+fn is_integer_offset_of_call(text: &str, callee: &str) -> bool {
+    let is_literal = |operand: &str| {
+        let operand = operand.trim();
+        !operand.is_empty()
+            && operand.starts_with(|ch: char| ch.is_ascii_digit())
+            && operand.chars().all(|ch| ch.is_ascii_digit() || ch == '_')
+    };
+    let text = text.trim();
+    if direct_call_paren(text, callee) == Some(0) {
+        let Some(close) = matching_close(text, callee.len()) else {
+            return false;
+        };
+        let rest = text[close + 1..].trim_start();
+        return ["+", "-"].iter().any(|op| {
+            rest.strip_prefix(op)
+                .is_some_and(|operand| !operand.starts_with(['=', '>']) && is_literal(operand))
+        });
+    }
+    text.split_once('+')
+        .is_some_and(|(literal, call)| is_literal(literal) && is_exact_call(call.trim(), callee))
+}
+
 /// The returned-ledger proof covers only the first caller. It may replace that
 /// hop's ordinary dropped-result explanation only when no higher hop is observed.
 /// Keep higher forwarding failures visible until their identity is established.
@@ -2653,6 +2797,14 @@ fn hops_call_the_indexed_callees(owner_name: &str, hops: &[HelperHop], index: &R
 }
 
 fn hops_forward_owner_result(owner_name: &str, hops: &[HelperHop]) -> bool {
+    hops_forward_owner_result_with(owner_name, hops, false)
+}
+
+fn hops_forward_owner_result_with(
+    owner_name: &str,
+    hops: &[HelperHop],
+    integer_offset: bool,
+) -> bool {
     !hops.is_empty()
         && hops.iter().enumerate().all(|(step, hop)| {
             // #6614: a macro-argument hop is not expanded; whether the
@@ -2674,6 +2826,7 @@ fn hops_forward_owner_result(owner_name: &str, hops: &[HelperHop]) -> bool {
                 callee,
                 &hop.call_text,
                 &hop.diverging_handlers,
+                integer_offset,
             )
                 // #10284: a caller that binds its callee's name
                 // (`let is_bulk = |_| true;`) calls the binding, and a
@@ -3351,6 +3504,7 @@ fn caller_tail_forwards_call(
     callee: &str,
     call_text: &str,
     diverging_handlers: &[String],
+    integer_offset: bool,
 ) -> bool {
     let body: &str = &caller.body;
     let masked = crate::analysis::language::mask_rust_comments_and_strings(body);
@@ -3407,6 +3561,9 @@ fn caller_tail_forwards_call(
         None => tail,
     };
     if is_exact_call(tail, callee) {
+        return true;
+    }
+    if integer_offset && is_integer_offset_of_call(tail, callee) {
         return true;
     }
     // #5352: the identity-bound method hop forwards when the tail is

@@ -524,9 +524,11 @@ fn return_value_behind_a_dropping_or_transforming_wrapper_is_not_credited() -> R
             "    let _ = unit_cents(qty);\n    qty",
             "        assert_eq!(order_cents(2), 2);",
         ),
+        // `+ 1` over integers is the one admitted shift (#9638,
+        // `free_call_return_pin`); a product is still a transform.
         (
-            "    unit_cents(qty) + 1",
-            "        assert_eq!(order_cents(2), 9);",
+            "    unit_cents(qty) * 2",
+            "        assert_eq!(order_cents(2), 16);",
         ),
     ] {
         let finding = family_finding(&unit_source(wrapper, tests), UNIT_DIFF, "return_value")?;
