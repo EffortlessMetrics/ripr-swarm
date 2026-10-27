@@ -696,6 +696,13 @@ const COMPOUND_HEADERS: [&str; 14] = [
 /// compound statement's header colon. Comments are dropped, a string
 /// literal becomes `""`, and a backslash continuation joins its lines.
 fn simple_statements(source: &str) -> Vec<String> {
+    // Python reads `\r\n` and a lone `\r` as a newline, so a backslash
+    // continuation before either joins lines too.
+    let source = if source.contains('\r') {
+        std::borrow::Cow::Owned(source.replace("\r\n", "\n").replace('\r', "\n"))
+    } else {
+        std::borrow::Cow::Borrowed(source)
+    };
     let mut statements = Vec::new();
     let mut current = String::new();
     let mut depth = 0usize;
