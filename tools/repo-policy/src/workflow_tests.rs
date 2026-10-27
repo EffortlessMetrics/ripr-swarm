@@ -1519,7 +1519,7 @@ fn advisory_review_prepares_locked_fixture_before_sensors() -> Result<(), String
 }
 
 const PINNED_CODECOV: &str =
-    "codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v6.0.2";
+    "codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1";
 
 fn repo_workflow(name: &str) -> Result<String, String> {
     let root = crate::test_support::workspace_root()?;

@@ -366,3 +366,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — binding_predicate_positions (27)
+
+Reason:
+RIPR-SPEC-0122: plain-language repair-route refusal names the missing evidence without internal fact codes (#10644)
+
+Command:
+`cargo xtask goldens bless binding_predicate_positions --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

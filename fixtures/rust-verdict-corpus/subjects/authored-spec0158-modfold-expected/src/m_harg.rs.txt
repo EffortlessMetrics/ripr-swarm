@@ -1,0 +1,22 @@
+pub fn tier_harg(qty: u32) -> u32 {
+    if 10 <= qty {
+        5
+    } else {
+        0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pad(plus: u32) -> u32 {
+        14 + plus
+    }
+
+    #[test]
+    fn the_padded_helper_is_fifteen_and_fourteen_m_harg() {
+        assert_eq!(tier_harg(pad(1)), 5);
+        assert_eq!(tier_harg(pad(0)), 5);
+    }
+}

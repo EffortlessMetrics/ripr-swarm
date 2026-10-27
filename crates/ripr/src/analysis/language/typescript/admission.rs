@@ -612,6 +612,8 @@ fn verified_namespace_member_registrations(
     if super::tests_extract::file_is_opaque(&code) {
         return Vec::new();
     }
+    // Scanned on the first pick only, so a file with no pick scans no writes.
+    let writes = std::cell::OnceCell::new();
     let mut result = Vec::new();
     for namespace in namespaces {
         // The one declaration of the namespace.
@@ -725,7 +727,20 @@ fn verified_namespace_member_registrations(
             continue;
         }
         for (member, local, span) in picks {
-            if local == namespace.local || !picked_local_is_only_called(&code, &local, span) {
+            if local == namespace.local {
+                continue;
+            }
+            let writes = writes.get_or_init(|| FileWrites::scan(&code));
+            let only_called = picked_local_is_only_called(&code, writes, &local, span);
+            // Equivalence control (#10646): the one-scan verdict must equal the
+            // per-pick cut-and-rescan it replaced, for every pick any test makes.
+            #[cfg(test)]
+            assert_eq!(
+                only_called,
+                picked_local_is_only_called_by_recut(&code, &local, span),
+                "namespace pick `{local}` diverged from the cut-and-rescan reference"
+            );
+            if !only_called {
                 continue;
             }
             result.push(TypeScriptImport {
@@ -747,19 +762,57 @@ fn active_runner_member(name: &str) -> bool {
     (TEST_ROOTS.contains(&name) || DESCRIBE_ROOTS.contains(&name)) && !name.starts_with('x')
 }
 
+/// Every write the loose and strict scans find in a whole masked file, indexed
+/// by name. One scan serves every pick: a pick's own declarator is the only
+/// text its verdict excludes, and cutting a balanced declarator out of a
+/// statement list never creates or hides a write, so a write counts when its
+/// offset lies outside the declarator. (#10646; the per-pick cut-and-rescan
+/// reference is kept under test as the equivalence control.)
+struct FileWrites {
+    offsets: std::collections::HashMap<String, Vec<usize>>,
+}
+
+impl FileWrites {
+    fn scan(code: &str) -> Self {
+        let mut offsets: std::collections::HashMap<String, Vec<usize>> =
+            std::collections::HashMap::new();
+        for (name, at) in super::tests_extract::identifier_writes(code)
+            .into_iter()
+            .chain(super::tests_extract::strict_identifier_writes(code))
+        {
+            offsets.entry(name).or_default().push(at);
+        }
+        Self { offsets }
+    }
+
+    fn written_outside(&self, name: &str, declarator: std::ops::Range<usize>) -> bool {
+        self.offsets
+            .get(name)
+            .is_some_and(|at| at.iter().any(|at| !declarator.contains(at)))
+    }
+}
+
 /// A picked local is trustworthy as a runner only when its declarator comes
 /// first, nothing writes it (strictly: wrapped, update, compound, loop and
 /// destructuring targets, or an assignment to one of its members), and every
 /// other use calls it, optionally through a member chain (`test.only(...)`).
 /// A bare value use could hand it to code that replaces it, so it refuses.
-fn picked_local_is_only_called(code: &str, local: &str, declarator: oxc_span::Span) -> bool {
+fn picked_local_is_only_called(
+    code: &str,
+    writes: &FileWrites,
+    local: &str,
+    declarator: oxc_span::Span,
+) -> bool {
     let (start, end) = (declarator.start as usize, declarator.end as usize);
-    let outside = format!("{}{}", &code[..start], &code[end..]);
-    if super::tests_extract::identifier_written_in(&outside, local)
-        || super::tests_extract::identifier_written_strictly(&outside, local)
-    {
+    if writes.written_outside(local, start..end) {
         return false;
     }
+    local_uses_are_calls(code, local, declarator)
+}
+
+/// Every use of `local` outside its declarator comes after it and calls it.
+fn local_uses_are_calls(code: &str, local: &str, declarator: oxc_span::Span) -> bool {
+    let (start, end) = (declarator.start as usize, declarator.end as usize);
     super::tests_extract::identifier_occurrences(code, local)
         .filter(|at| !(start..end).contains(at))
         .all(|at| {
@@ -793,6 +846,21 @@ fn picked_local_is_only_called(code: &str, local: &str, declarator: oxc_span::Sp
             // Called, and the call is not itself an assignment target.
             rest.starts_with('(')
         })
+}
+
+/// The pre-#10646 write check: cut the declarator out of the file and rescan
+/// the remainder for this one local. Kept only as the equivalence reference.
+#[cfg(test)]
+fn picked_local_is_only_called_by_recut(
+    code: &str,
+    local: &str,
+    declarator: oxc_span::Span,
+) -> bool {
+    let (start, end) = (declarator.start as usize, declarator.end as usize);
+    let outside = format!("{}{}", &code[..start], &code[end..]);
+    let written = super::tests_extract::identifier_written_in(&outside, local)
+        || super::tests_extract::identifier_written_strictly(&outside, local);
+    !written && local_uses_are_calls(code, local, declarator)
 }
 
 /// Visible spellings of top-level re-exports (`export { x } from './y'`),
@@ -948,6 +1016,22 @@ pub(super) fn classify_for_test(source: &str, test_dir: &[String]) -> &'static s
         ImportClass::TestSupport => "test_support",
         ImportClass::Package => "package",
     }
+}
+
+/// The locals a file's require() namespaces pick into known registrations,
+/// in source order (#10646 regression subject).
+#[cfg(test)]
+pub(super) fn namespace_pick_locals_for_test(source: &str, file: &Path) -> Vec<String> {
+    let allocator = oxc_allocator::Allocator::default();
+    let ret = oxc_parser::Parser::new(&allocator, source, super::source_type_for(file)).parse();
+    let imports = super::extract_imports_for_test_file(&ret.program.body);
+    let context = TypeScriptAdmissionContext::of_program(&ret.program, &imports, file);
+    context
+        .registration_imports
+        .into_iter()
+        .filter(|import| !import.namespace && import.source == "node:test")
+        .map(|import| import.local)
+        .collect()
 }
 
 /// The segments of `specifier` resolved against the test file's directory.
