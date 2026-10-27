@@ -3706,23 +3706,41 @@ mod tests {
         let old = line(&format!("{} so there is no seam", transitional::NO_SEAM));
         let untied = line(&format!("{}<reason>", transitional::SEAMS_UNTIED));
         let gripped = line(&format!("{} but", transitional::SEAM_GRIPPED));
-        let gripped_surface = "match_arm_blind";
-        let untied_surface = "assertion_shaped_control_production_caller";
-        let applies = |fixture: &str, actual: &str| {
-            transitional_refusal_aliases_apply(fixture, "human.txt", &old, actual)
+        let untied_list = transitional::NO_SEAM_UNTIED_SURFACES;
+        let gripped_list = transitional::NO_SEAM_GRIPPED_SURFACES;
+        if untied_list.len() != 43 || gripped_list.len() != 93 {
+            return Err(format!(
+                "expected 43 untied and 93 gripped surfaces, got {} and {}",
+                untied_list.len(),
+                gripped_list.len()
+            ));
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        for key in untied_list.iter().chain(gripped_list) {
+            if !seen.insert(*key) {
+                return Err(format!("`{key}` is listed more than once or in both lists"));
+            }
+        }
+        let split = |key: &str| -> Result<(String, String), String> {
+            key.split_once('/')
+                .map(|(f, sfc)| (f.to_string(), sfc.to_string()))
+                .ok_or_else(|| format!("malformed surface key `{key}`"))
         };
-        if !applies(gripped_surface, &gripped) || !applies(untied_surface, &untied) {
-            return Err("a listed surface must approve its own new opening".to_string());
+        for (list, own, other) in [
+            (untied_list, &untied, &gripped),
+            (gripped_list, &gripped, &untied),
+        ] {
+            for key in list {
+                let (fixture, surface) = split(key)?;
+                if !transitional_refusal_aliases_apply(&fixture, &surface, &old, own) {
+                    return Err(format!("`{key}` must approve its own new opening"));
+                }
+                if transitional_refusal_aliases_apply(&fixture, &surface, &old, other) {
+                    return Err(format!("`{key}` must reject the other new opening"));
+                }
+            }
         }
-        if applies(gripped_surface, &untied) {
-            return Err("a gripped-target surface must not approve the untied opening".to_string());
-        }
-        if applies(untied_surface, &gripped) {
-            return Err(
-                "an untied-target surface must not approve the gripped opening".to_string(),
-            );
-        }
-        if transitional_refusal_aliases_apply(gripped_surface, "check.json", &old, &gripped) {
+        if transitional_refusal_aliases_apply("match_arm_blind", "check.json", &old, &gripped) {
             return Err("an unlisted surface stays strict".to_string());
         }
         Ok(())

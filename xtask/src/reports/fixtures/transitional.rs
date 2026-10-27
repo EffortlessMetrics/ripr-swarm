@@ -29,7 +29,7 @@ pub(super) struct Migration {
 /// new opening each actually produces (taken from unaliased output), so a wrong
 /// target on a listed surface is still drift. The untied-seams opening: `check`
 /// reads a gap or limit and no strongly gripped seam names the finding.
-const NO_SEAM_UNTIED_SURFACES: &[&str] = &[
+pub(super) const NO_SEAM_UNTIED_SURFACES: &[&str] = &[
     "assertion_shaped_control_production_caller/human.txt",
     "atomic_ordering_swap_strong_object_oracle/human.txt",
     "binding_predicate_scope_controls/human.txt",
@@ -78,7 +78,7 @@ const NO_SEAM_UNTIED_SURFACES: &[&str] = &[
 /// The gripped-seam opening: `check` reads a gap or limit on a seam the
 /// whole-seam view grips (a strongly gripped seam has no canonical gap id, so
 /// the id-keyed join could not bind it).
-const NO_SEAM_GRIPPED_SURFACES: &[&str] = &[
+pub(super) const NO_SEAM_GRIPPED_SURFACES: &[&str] = &[
     "cross_crate_trait_impl_direct_owner_positive/human.txt",
     "effect_assertion_std_qualified_live/human.txt",
     "field_match_unexecuted_assertion/human.txt",
