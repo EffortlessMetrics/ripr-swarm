@@ -168,3 +168,30 @@ fn declaration_files_parse_ambient_const_without_an_initializer() {
         "a real syntax error in a declaration file is still disclosed"
     );
 }
+
+/// #10812 at run level: an ambient `const` in a declaration file leaves the
+/// run without a `language_scope_unsupported` limitation, while a real syntax
+/// error in the same kind of file still discloses one.
+#[test]
+fn declaration_file_run_reports_no_limitation_unless_the_syntax_is_broken() -> Result<(), String> {
+    let valid = analyze(
+        "dts-valid-run",
+        &[("types/api.d.ts", "export const $: Runner<{}>;\n")],
+        changed("types/api.d.ts", &[(1, "export const $: Runner<{}>;")]),
+    )?;
+    assert!(
+        valid.limitations.is_empty(),
+        "a valid ambient const is not a limitation: {:?}",
+        valid.limitations
+    );
+    let broken = analyze(
+        "dts-broken-run",
+        &[("types/api.d.ts", "export const = ;\n")],
+        changed("types/api.d.ts", &[(1, "export const = ;")]),
+    )?;
+    assert!(
+        !broken.limitations.is_empty(),
+        "a real syntax error in a declaration file stays disclosed"
+    );
+    Ok(())
+}
