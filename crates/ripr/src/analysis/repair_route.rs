@@ -37,6 +37,11 @@ const SAFE_TEST_TARGET_EVIDENCE: &str = "safe test target";
 /// through unchanged rather than inventing a taxonomy.
 pub(crate) fn humanize_evidence(evidence: &str) -> String {
     const FACT_PREFIX: &str = "producer-owned missing discriminator fact: ";
+    // #10691: the internal "observable sink" noun becomes plain words on the
+    // human screens; the machine list keeps the stable code.
+    if evidence == "observable sink localization" {
+        return "a way to follow the changed value to something a test can check".to_string();
+    }
     if let Some(kind) = evidence.strip_prefix(FACT_PREFIX) {
         let phrase = match kind {
             "boundary_value" => "a test assertion that pins the changed boundary value exactly",
@@ -265,6 +270,54 @@ pub(crate) fn is_boundary_value_discriminator_evidence(item: &str) -> bool {
         }
         .as_str(),
     )
+}
+
+/// The seam-side twin of `check`'s boundary-observed weak-oracle gate (#10683;
+/// `domain::boundary_input_observed_with_weak_oracle` is the finding side): a
+/// weakly gripped predicate boundary whose activation is observed, with no
+/// missing boundary fact left to name, and whose only credited related oracle
+/// is a weak check on a direct, admitted existing Rust test. Returns that test:
+/// the remaining work is strengthening its assertion, not writing a new test.
+/// Guidance only; repair eligibility is decided by `repair_packet_eligibility`
+/// and stays fail-closed (this seam has no discriminator fact, so it is never
+/// repair-ready).
+pub(crate) fn boundary_observed_weak_oracle_test(
+    entry: &ClassifiedSeam,
+) -> Option<&RelatedTestGrip> {
+    let evidence = &entry.evidence;
+    if entry.seam.kind() != SeamKind::PredicateBoundary
+        || entry.class != SeamGripClass::WeaklyGripped
+        || evidence.activate.state != StageState::Yes
+        || !evidence.missing_discriminators.is_empty()
+        // Parity with the finding-side gate: the discriminate stage must
+        // itself grade the oracle weak.
+        || evidence.discriminate.state != StageState::Weak
+        || cross_language_oracle_visibility_unresolved(entry)
+        || cross_language_test_target_unresolved(entry)
+        // The activation stage aggregates observed boundary values across all
+        // related tests, so with several related tests the observer of the
+        // boundary input may not be the weakly asserting one. Name a test only
+        // when it is the sole related test, so the observer is unambiguous;
+        // otherwise withhold the claim (previous guidance applies).
+        || evidence.related_tests.len() != 1
+        || evidence.related_tests.iter().any(|test| {
+            matches!(
+                test.oracle_strength,
+                OracleStrength::Strong | OracleStrength::Medium
+            )
+        })
+    {
+        return None;
+    }
+    evidence
+        .related_tests
+        .iter()
+        .find(|test| {
+            test.relation_reason == RelationReason::DirectOwnerCall
+                && test.test_target.is_some()
+                && test.oracle_strength == OracleStrength::Weak
+        })
+        .map(Arc::as_ref)
 }
 
 fn value_route_readiness(seam: &RepoSeam, evidence: &TestGripEvidence) -> RepairRouteReadiness {
@@ -987,6 +1040,11 @@ mod tests {
             (
                 "producer-owned missing discriminator fact: call_site",
                 "a test that reaches the changed call",
+            ),
+            // #10691: the internal "observable sink" noun is rendered in words.
+            (
+                "observable sink localization",
+                "a way to follow the changed value to something a test can check",
             ),
         ];
         for (internal, plain) in cases {

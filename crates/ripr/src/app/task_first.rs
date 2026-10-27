@@ -212,6 +212,15 @@ fn repair_refusal(
                 // hunting for what to strengthen (#9604). The parenthetical
                 // matches the agent card's readiness line so both surfaces
                 // read the same way.
+                // #10683: when a related test already reaches the boundary and
+                // only its assertion is weak, reuse `check`'s wording and point
+                // at that test: no internal evidence jargon, no new test.
+                if let [only] = eligibility.readiness.missing_evidence.as_slice()
+                    && is_boundary_value_discriminator(only)
+                    && let Some(guidance) = weak_oracle_guidance(entry)
+                {
+                    return (RefusalKind::RouteNotReady, format!("{label}: {guidance}"));
+                }
                 // #10644: the refusal reads on a human surface, so name each
                 // missing fact in plain words; the machine readiness strings
                 // behind it stay internal.
@@ -268,6 +277,20 @@ fn repair_refusal(
 /// producer's own format (`analysis/repair_route.rs`), not by parsing text here.
 pub(super) fn is_boundary_value_discriminator(item: &str) -> bool {
     crate::analysis::repair_route::is_boundary_value_discriminator_evidence(item)
+}
+
+/// `check`'s boundary-observed weak-oracle wording (the one domain constant)
+/// followed by the existing related test, when the seam is in that case
+/// (#10683). Shared by the repair refusal and `agent stub`.
+pub(crate) fn weak_oracle_guidance(entry: &crate::analysis::ClassifiedSeam) -> Option<String> {
+    let test = crate::analysis::repair_route::boundary_observed_weak_oracle_test(entry)?;
+    Some(format!(
+        "{} Related test: {}:{} {}",
+        crate::domain::BOUNDARY_OBSERVED_WEAK_ORACLE_NEXT_STEP,
+        crate::analysis::stable_path_text(&test.file),
+        test.line,
+        test.test_name
+    ))
 }
 
 /// Plain-language rendering of one route missing-evidence string for human
@@ -1897,7 +1920,14 @@ pub(crate) mod tests {
             relation_reason: crate::domain::RelationReason::DirectOwnerCall,
             relation_confidence: crate::analysis::test_grip_evidence::RelationConfidence::High,
         };
-        let boundary_only = gate_entry(SeamGripClass::WeaklyGripped, vec![targeted]);
+        let mut boundary_only = gate_entry(SeamGripClass::WeaklyGripped, vec![targeted.clone()]);
+        // Activation not observed: the boundary input is what is missing, so
+        // the stub route applies (an observed boundary is #10683, below).
+        boundary_only.evidence.activate = crate::domain::StageEvidence::new(
+            crate::domain::StageState::Unknown,
+            crate::domain::Confidence::Low,
+            "test stage",
+        );
         let refusal = repair_start_refusal_for_entry(root, &boundary_only, policy)
             .ok_or("a boundary-only not-ready seam must be refused")?;
         // `/repo` gains a drive on Windows and is console-quoted when it needs
@@ -1923,6 +1953,60 @@ pub(crate) mod tests {
         let bare = repair_start_refusal_for_entry(root, &also_missing_target, policy)
             .ok_or("a target-missing not-ready seam must be refused")?;
         assert!(!bare.reason.contains("--kind predicate"), "{}", bare.reason);
+
+        // #10683: activation observed and only a weak oracle on an admitted
+        // direct test: reuse `check`'s wording, name that test, no stub route
+        // and no internal jargon. Eligibility stays fail-closed.
+        let mut observed = gate_entry(SeamGripClass::WeaklyGripped, vec![targeted.clone()]);
+        // The discriminate stage grades the oracle weak (finding-side parity).
+        observed.evidence.discriminate = crate::domain::StageEvidence::new(
+            crate::domain::StageState::Weak,
+            crate::domain::Confidence::High,
+            "Only relational oracle found",
+        );
+        assert!(!repair_packet_eligibility(&observed).eligible());
+        let refusal = repair_start_refusal_for_entry(root, &observed, policy)
+            .ok_or("a weak-oracle boundary seam must be refused")?;
+        assert_eq!(
+            refusal.reason,
+            format!(
+                "repair route not ready: {} Related test: src/lib.rs:14 it_works",
+                crate::domain::BOUNDARY_OBSERVED_WEAK_ORACLE_NEXT_STEP
+            )
+        );
+        assert!(
+            !refusal.reason.contains("producer-owned")
+                && !refusal.reason.contains("agent stub")
+                && !refusal.reason.contains("boundary test"),
+            "{}",
+            refusal.reason
+        );
+
+        // Discriminating negative: a credited strong oracle elsewhere is a
+        // different gap, so the weak-oracle wording must not apply.
+        let mut not_weak = observed.clone();
+        not_weak.evidence.discriminate = crate::domain::StageEvidence::new(
+            crate::domain::StageState::Unknown,
+            crate::domain::Confidence::Low,
+            "test stage",
+        );
+        assert!(super::weak_oracle_guidance(&observed).is_some());
+        assert!(super::weak_oracle_guidance(&not_weak).is_none());
+        // Several related tests: the boundary observer is ambiguous.
+        let mut two = observed.clone();
+        let mut other = targeted.clone();
+        other.test_name = "other".to_string();
+        two.evidence.related_tests.push(std::sync::Arc::new(other));
+        assert!(super::weak_oracle_guidance(&two).is_none());
+
+        let mut strong = targeted;
+        strong.test_name = "pinned".to_string();
+        strong.oracle_strength = crate::domain::OracleStrength::Strong;
+        let mixed = gate_entry(
+            SeamGripClass::WeaklyGripped,
+            vec![weak_related_test(), strong],
+        );
+        assert!(super::weak_oracle_guidance(&mixed).is_none());
         Ok(())
     }
 

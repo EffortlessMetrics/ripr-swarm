@@ -159,7 +159,7 @@ impl RepairRouteRefusal {
         let gate = || format!("run `{full_gate_command}` for the full gate's answer");
         match self {
             Self::NoCanonicalGap => {
-                "no repair start offered: this finding has no canonical gap, so there is \
+                "no repair start offered: this finding has no gap ID, so there is \
                  no seam to start a repair from; follow the Next step above"
                     .to_string()
             }
@@ -885,7 +885,7 @@ mod tests {
         let no_gap = RepairRouteRefusal::NoCanonicalGap.advisory(gate);
         assert_eq!(
             no_gap,
-            "no repair start offered: this finding has no canonical gap, so there is no \
+            "no repair start offered: this finding has no gap ID, so there is no \
              seam to start a repair from; follow the Next step above"
         );
         assert!(
