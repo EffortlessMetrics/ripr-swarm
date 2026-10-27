@@ -2714,6 +2714,7 @@ fn checks_helper() {
                 assert!(borrowed.contains("\"source_lines\":[1,2]"), "{path}");
             }
         }
+        assert!(with_foreign_shared > 0, "no source had a second function");
         assert!(
             with_probe_shapes > 0,
             "no source reached the probe-shape branches"
