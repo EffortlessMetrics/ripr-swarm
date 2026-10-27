@@ -296,6 +296,9 @@ fn given_a_parametrize_the_literal_parser_gives_up_on_then_the_argname_is_still_
         "IND = False\n\n\n@pytest.mark.parametrize('out', ['abc'], indirect=IND)",
         "NAME = 'out'\n\n\n@pytest.mark.parametrize('out', ['abc'], indirect=[NAME])",
         "IND = True\nIND = False\n\n\n@pytest.mark.parametrize('out', ['abc'], indirect=IND)",
+        // A canonical spelling whose root another library binds may be
+        // pytest's mark or not: no edge, and the limit still counts it.
+        "from mylib import mark\n\n\n@mark.parametrize('out', ['abc'])",
         "@pytest.mark.parametrize('out, other', [('a', 'b')])",
         "@pytest.mark.parametrize(('out', 'other'), [('a', 'b')])",
         "@pytest.mark.parametrize(['other', 'out'], [('a', 'b')])",

@@ -423,11 +423,17 @@ This order is the existing behavior and is normative:
   root resolves through the imports in effect at the definition
   (`import pytest as pt`, `from pytest import mark as m`) or, with no import
   binding the root, is spelled `pytest.mark.parametrize` or
-  `mark.parametrize`. A bare decorator name (`@cases`), the mark's callee
+  `mark.parametrize`. An import root counts only when the module binds it
+  exactly once (that import) and the enclosing class body does not bind
+  it; a canonical spelling whose root is not pinned that way (another
+  library's `mark`, a rebound or class-local root) leaves every argname
+  unsettled. A bare decorator name (`@cases`), the mark's callee
   (`parametrize = pytest.mark.parametrize`), argnames and `indirect` may
   each be one module-scope `NAME = <value>` binding that nothing in the
   module rebinds, bound before the test and not shadowed by the enclosing
-  class body; any other name leaves the mark unread, so its argnames count
+  class body; argnames and `indirect` read through a name only a constant
+  or a tuple, since a module list may be changed in place before
+  collection. Any other name leaves the mark unread, so its argnames count
   as fixtures (#10685). A fixture is resolved, and does not
   count, when it hands a module-level test a fresh literal-built instance
   of a method owner's class (#9619, `py-fixtures-deposit`). The fixture

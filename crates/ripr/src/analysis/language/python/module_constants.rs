@@ -89,17 +89,33 @@ pub(super) struct PythonModuleValue<'a> {
     pub(super) offset: usize,
 }
 
-/// The module-scope names bound once by a plain `NAME = <value>` and never
-/// rebound, under the same conditions as [`module_literal_constants`]. A
-/// decorator reads them (`@cases`, `parametrize(NAMES, ...)`, #10685).
-pub(super) fn module_stable_values<'a>(
+/// The module-scope names a decorator may lean on (#10685).
+#[derive(Clone, Debug, Default)]
+pub(super) struct PythonModuleNames<'a> {
+    /// Plain `NAME = <value>` bindings nothing rebinds.
+    pub(super) values: Vec<PythonModuleValue<'a>>,
+    /// Every name bound exactly once at module scope (an import counts) and
+    /// never rebound, under the same conditions as [`module_literal_constants`].
+    pub(super) stable: std::collections::BTreeSet<String>,
+}
+
+impl PythonModuleNames<'_> {
+    pub(super) fn holds(&self, name: &str) -> bool {
+        self.stable.contains(name)
+    }
+}
+
+/// The module-scope names bound once and never rebound, and the plain
+/// `NAME = <value>` bindings among them. A decorator reads them (`@cases`,
+/// `parametrize(NAMES, ...)`, an `import pytest as pt` root, #10685).
+pub(super) fn module_stable_names<'a>(
     source: &SourceText<'_>,
     statements: &'a [Stmt],
-) -> Vec<PythonModuleValue<'a>> {
+) -> PythonModuleNames<'a> {
     let Some(stable) = StableNames::of(source, statements) else {
-        return Vec::new();
+        return PythonModuleNames::default();
     };
-    statements
+    let values = statements
         .iter()
         .filter_map(|stmt| match stmt {
             Stmt::Assign(assign) => match assign.targets.as_slice() {
@@ -113,7 +129,16 @@ pub(super) fn module_stable_values<'a>(
             _ => None,
         })
         .filter(|value| stable.holds(value.name))
-        .collect()
+        .collect();
+    PythonModuleNames {
+        values,
+        stable: stable
+            .counts
+            .keys()
+            .filter(|name| stable.holds(name))
+            .cloned()
+            .collect(),
+    }
 }
 
 /// Every name a class body binds in its own scope, nested `def` and `class`

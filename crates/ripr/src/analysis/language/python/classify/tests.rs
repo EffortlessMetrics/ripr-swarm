@@ -1490,6 +1490,24 @@ fn a_parametrize_mark_read_through_a_name_supplies_a_direct_value() -> Result<()
             "import pytest\n\nIND = True",
             "pytest.mark.parametrize(\"quantity\", [50], indirect=IND)",
         ),
+        // A module list may change before the decorator runs.
+        (
+            "import pytest\n\nIND = []\nIND.append(\"quantity\")",
+            "pytest.mark.parametrize(\"quantity\", [50], indirect=IND)",
+        ),
+        (
+            "import pytest\n\nNAMES = [\"quantity\"]",
+            "pytest.mark.parametrize(NAMES, [(50,)])",
+        ),
+        // The alias root is rebound after its import (Devin review).
+        (
+            "import pytest as pt\nimport other\n\npt = other",
+            "pt.mark.parametrize(\"quantity\", [50])",
+        ),
+        (
+            "from pytest import mark as m\nfrom other import mark as m",
+            "m.parametrize(\"quantity\", [50])",
+        ),
     ];
     for (prelude, decorator) in limited {
         for (shape, tests) in [
@@ -1504,9 +1522,11 @@ fn a_parametrize_mark_read_through_a_name_supplies_a_direct_value() -> Result<()
             );
         }
     }
-    // A class-body name shadows the module's mark for the methods it
-    // decorates, and a module binding after the test is not yet bound.
+    // A class-body name shadows the module's mark (or its import root) for
+    // the methods it decorates, and a module binding after the test is not
+    // yet bound.
     for tests in [
+        "import pytest as pt\nimport other\nfrom src.subject import bulk_discount\n\nclass TestBulk:\n    pt = other\n\n    @pt.mark.parametrize(\"quantity\", [50])\n    def test_bulk_discount(self, quantity):\n        assert bulk_discount(quantity) == 0.0\n",
         "import pytest\nfrom src.subject import bulk_discount\n\ncases = pytest.mark.parametrize(\"quantity\", [50])\n\nclass TestBulk:\n    cases = pytest.mark.slow\n\n    @cases\n    def test_bulk_discount(self, quantity):\n        assert bulk_discount(quantity) == 0.0\n",
         "import pytest\nfrom src.subject import bulk_discount\n\n@cases\ndef test_bulk_discount(quantity):\n    assert bulk_discount(quantity) == 0.0\n\ncases = pytest.mark.parametrize(\"quantity\", [50])\n",
     ] {

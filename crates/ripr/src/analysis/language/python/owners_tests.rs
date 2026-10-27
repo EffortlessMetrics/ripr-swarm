@@ -2,7 +2,7 @@ use super::PythonFramework;
 use super::admission::{PythonAdmissionContext, PythonTestFunction, assertion_admission};
 use super::conditional_defs::live_conditional_functions;
 use super::module_constants::{
-    PythonModuleConstant, PythonModuleValue, constants_visible_in_function, python_test_rebinding,
+    PythonModuleConstant, PythonModuleNames, constants_visible_in_function, python_test_rebinding,
 };
 use super::parametrize::{ParametrizeScope, parametrize_cases};
 #[cfg(test)]
@@ -442,7 +442,7 @@ pub(super) struct TestImportContext<'a> {
     pub(super) definition: &'a [PythonImport],
     /// The module's never-rebound `NAME = <value>` bindings a parametrize
     /// decorator may name (#10685).
-    pub(super) module_values: &'a [PythonModuleValue<'a>],
+    pub(super) module_values: &'a PythonModuleNames<'a>,
     pub(super) admission: &'a PythonAdmissionContext,
     pub(super) standard_unittest_list: bool,
     /// Another local class lists this one as a base, so a subclass may replace

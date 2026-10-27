@@ -19,7 +19,7 @@
 //! caller keeps today's unresolved behavior. A case value is kept as source
 //! text; the caller decides whether it is a literal.
 
-use super::module_constants::{PythonModuleValue, body_bound_names};
+use super::module_constants::{PythonModuleNames, body_bound_names};
 use super::source_utils::text_for_range;
 use super::{PythonImport, expr_full_name};
 use rustpython_parser::ast::{self, Expr, Ranged};
@@ -119,12 +119,13 @@ enum Routing {
 
 /// The names a test's parametrize decorators may lean on (#10685): the
 /// imports in effect where the test is defined, the module's never-rebound
-/// `NAME = <value>` bindings, and the names the enclosing class body binds
-/// (empty at module scope; a class body is looked up before the module).
-#[derive(Clone, Copy, Default)]
+/// names and `NAME = <value>` bindings, and the names the enclosing class
+/// body binds (empty at module scope; a class body is looked up before the
+/// module).
+#[derive(Clone, Copy)]
 pub(super) struct ParametrizeScope<'a> {
     pub(super) imports: &'a [PythonImport],
-    pub(super) module_values: &'a [PythonModuleValue<'a>],
+    pub(super) module_values: &'a PythonModuleNames<'a>,
     pub(super) class_names: &'a [String],
     /// The enclosing class body binds names the walk cannot enumerate.
     pub(super) class_opaque: bool,
@@ -134,13 +135,20 @@ impl<'a> ParametrizeScope<'a> {
     /// The module value a bare name in a decorator evaluates to: bound once,
     /// before the decorator runs, and not shadowed by the class body.
     fn module_value(&self, name: &str, use_offset: usize) -> Option<&'a Expr> {
-        if self.class_opaque || self.class_names.iter().any(|bound| bound == name) {
+        if self.class_shadows(name) {
             return None;
         }
         self.module_values
+            .values
             .iter()
             .find(|value| value.name == name && value.offset < use_offset)
             .map(|value| value.value)
+    }
+
+    /// The enclosing class body binds `name` (or binds names the walk
+    /// cannot enumerate), so it is looked up there, not in the module.
+    fn class_shadows(&self, name: &str) -> bool {
+        self.class_opaque || self.class_names.iter().any(|bound| bound == name)
     }
 
     /// `expr` with one bare-name indirection read through the module.
@@ -156,27 +164,49 @@ impl<'a> ParametrizeScope<'a> {
         }
     }
 
-    /// Whether `func` names pytest's own `parametrize`, read through the
-    /// import that binds its root (`import pytest as pt`, `from pytest
-    /// import mark as m`) or a module alias (`parametrize =
-    /// pytest.mark.parametrize`). A root no import binds keeps the canonical
-    /// spellings [`is_parametrize_name`] accepts.
-    fn is_pytest_parametrize(&self, func: &Expr) -> bool {
+    /// [`Self::resolve`] for argnames and `indirect`, which pytest reads
+    /// when the decorator runs: a module list (or other mutable display)
+    /// may have changed by then (`IND = []; IND.append("q")`), so only a
+    /// constant or a tuple is read through the name.
+    fn resolve_value<'e>(&self, expr: &'e Expr) -> &'e Expr
+    where
+        'a: 'e,
+    {
+        match self.resolve(expr) {
+            value @ (Expr::Constant(_) | Expr::Tuple(_)) => value,
+            _ => expr,
+        }
+    }
+
+    /// Whether `func` names pytest's own `parametrize`. A root an import
+    /// binds (`import pytest as pt`, `from pytest import mark as m`)
+    /// resolves through it when the module binds the root only there and
+    /// the class body does not rebind it; a module alias of the callee
+    /// (`parametrize = pytest.mark.parametrize`) reads through once. A root
+    /// no import binds keeps the canonical spellings
+    /// [`is_parametrize_name`] accepts.
+    fn parametrize_kind(&self, func: &Expr) -> Option<MarkKind> {
         let func = self.resolve(func);
         if !matches!(func, Expr::Name(_) | Expr::Attribute(_)) {
-            return false;
+            return None;
         }
-        let Some(name) = expr_full_name(func) else {
-            return false;
-        };
+        let name = expr_full_name(func)?;
+        let canonical = is_parametrize_name(&name);
+        // A spelling pytest's own mark could have, whose root the read
+        // cannot pin: its argnames still count toward the fixture limit
+        // and make no fixture edge.
+        let unsettled = canonical.then_some(MarkKind::Unsettled);
         let (root, tail) = name.split_once('.').unwrap_or((name.as_str(), ""));
+        if self.class_shadows(root) {
+            return unsettled;
+        }
         let Some(import) = self
             .imports
             .iter()
             .rev()
             .find(|import| import.alias == root)
         else {
-            return is_parametrize_name(&name);
+            return canonical.then_some(MarkKind::Pytest);
         };
         let mut resolved = if import.source_module.is_empty() {
             import.imported.clone()
@@ -187,21 +217,37 @@ impl<'a> ParametrizeScope<'a> {
             resolved.push('.');
             resolved.push_str(tail);
         }
-        resolved == "pytest.mark.parametrize"
+        if resolved != "pytest.mark.parametrize" {
+            return unsettled;
+        }
+        if self.module_values.holds(root) {
+            Some(MarkKind::Pytest)
+        } else {
+            Some(MarkKind::Unsettled)
+        }
     }
 
-    /// The pytest parametrize call a decorator applies: the decorator
-    /// itself, or the call a module name holds (`cases =
-    /// pytest.mark.parametrize(...)`; `@cases`).
-    fn parametrize_call<'e>(&self, decorator: &'e Expr) -> Option<&'e ast::ExprCall>
+    /// The pytest parametrize call a decorator applies, and how certain
+    /// the read is: the decorator itself, or the call a module name holds
+    /// (`cases = pytest.mark.parametrize(...)`; `@cases`).
+    fn parametrize_call<'e>(&self, decorator: &'e Expr) -> Option<(&'e ast::ExprCall, MarkKind)>
     where
         'a: 'e,
     {
         match self.resolve(decorator) {
-            Expr::Call(call) if self.is_pytest_parametrize(&call.func) => Some(call),
+            Expr::Call(call) => Some((call, self.parametrize_kind(&call.func)?)),
             _ => None,
         }
     }
+}
+
+/// Whether a parametrize decorator is pytest's own mark.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MarkKind {
+    Pytest,
+    /// It may be pytest's mark or another `parametrize`: every argname is
+    /// [`Routing::Unsettled`].
+    Unsettled,
 }
 
 /// Whether any decorator applies pytest's parametrize through an alias or a
@@ -219,7 +265,7 @@ pub(super) fn applies_parametrize(decorators: &[Expr], scope: ParametrizeScope<'
 fn argname_routings(decorators: &[Expr], scope: ParametrizeScope<'_>) -> Vec<(String, Routing)> {
     let mut found = Vec::new();
     for decorator in decorators {
-        let Some(call) = scope.parametrize_call(decorator) else {
+        let Some((call, kind)) = scope.parametrize_call(decorator) else {
             continue;
         };
         let mut argnames = call.args.first();
@@ -236,15 +282,16 @@ fn argname_routings(decorators: &[Expr], scope: ParametrizeScope<'_>) -> Vec<(St
                 _ => {}
             }
         }
-        let Some((names, _)) = argnames.and_then(|expr| argnames_list(scope.resolve(expr))) else {
+        let Some((names, _)) = argnames.and_then(|expr| argnames_list(scope.resolve_value(expr)))
+        else {
             continue;
         };
         for name in names {
-            let routing = if splat {
+            let routing = if splat || kind == MarkKind::Unsettled {
                 Routing::Unsettled
             } else {
                 indirect.map_or(Routing::Direct, |value| {
-                    indirect_routing(scope.resolve(value), &name)
+                    indirect_routing(scope.resolve_value(value), &name)
                 })
             };
             found.push((name, routing));
