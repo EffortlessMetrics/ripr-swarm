@@ -4084,13 +4084,9 @@ pub(crate) fn workspace_graph_provenance(root: &Path) -> WorkspaceGraphProvenanc
     feature_facts.sort();
     path_dep_edges.sort();
     path_dep_edges.dedup();
-    let workspace_member_patterns = workspace_member_patterns(&parsed_manifests);
+    let graph_context = UnparsedManifestContext::new(&parsed_manifests, &path_dep_edges);
     for (manifest, detail) in unparsed_manifests {
-        if unparsed_manifest_is_outside_graph(
-            &manifest,
-            &workspace_member_patterns,
-            &path_dep_edges,
-        ) {
+        if graph_context.proves_outside_graph(&manifest) {
             continue;
         }
         path_dep_limitations.push(PathDependencyLimitation {
@@ -4119,73 +4115,125 @@ pub(crate) fn workspace_graph_provenance(root: &Path) -> WorkspaceGraphProvenanc
 /// Repo-relative, `/`-separated directory text of a manifest path, or `None`
 /// when the path is not valid UTF-8 (the supported-path boundary: no lossy
 /// conversion). The root manifest's directory is the empty string.
-/// `(workspace root directory, member patterns)` for every parsed manifest
-/// with a `[workspace]` table; `None` patterns mean `members` is present but
-/// not a plain string array and so cannot be evaluated.
-type WorkspaceMemberPatterns = Vec<(String, Option<Vec<String>>)>;
-
-fn workspace_member_patterns(
-    parsed_manifests: &[(&PathBuf, String, toml::Value)],
-) -> WorkspaceMemberPatterns {
-    parsed_manifests
-        .iter()
-        .filter_map(|(path, _, value)| {
-            let workspace = value.get("workspace").and_then(toml::Value::as_table)?;
-            let dir = portable_manifest_dir_text(path)?;
-            let patterns = match workspace.get("members") {
-                None => Some(Vec::new()),
-                Some(members) => members.as_array().and_then(|items| {
-                    items
-                        .iter()
-                        .map(|item| item.as_str().map(str::to_string))
-                        .collect::<Option<Vec<_>>>()
-                }),
-            };
-            Some((dir, patterns))
-        })
-        .collect()
+/// What the parsed manifests prove about where an unparsed manifest can sit.
+struct UnparsedManifestContext {
+    /// `(workspace root directory, member patterns)` for every parsed manifest
+    /// with a `[workspace]` table; `None` patterns mean `members` is present
+    /// but not a plain string array and so cannot be evaluated.
+    workspaces: Vec<(String, Option<Vec<String>>)>,
+    /// Directories of every parsed manifest.
+    parsed_dirs: Vec<String>,
+    /// Directories named as a path-dependency, `[patch]` or `[replace]` target.
+    targets: BTreeSet<String>,
 }
 
-/// True when an unparsed manifest provably cannot be part of the
-/// path-dependency graph: no captured edge targets its directory, and some
-/// ancestor workspace root enumerates `members` with patterns this matcher
-/// fully understands, none of which select it. Cargo refuses a workspace whose
-/// member or path-dependency target fails to parse, so a stray fixture
-/// manifest (for example a deliberately invalid `Cargo.toml` under a test
-/// directory) is outside the graph and must not mark the inventory partial.
-/// Anything unproven stays a limitation (fail closed).
-fn unparsed_manifest_is_outside_graph(
-    manifest: &str,
-    workspaces: &WorkspaceMemberPatterns,
-    edges: &[PathDependencyEdge],
-) -> bool {
-    let dir = manifest.rsplit_once('/').map_or("", |(dir, _)| dir);
-    if edges
-        .iter()
-        .any(|edge| edge.resolved_path.as_deref() == Some(dir))
-    {
-        return false;
-    }
-    workspaces.iter().any(|(root_dir, patterns)| {
-        let Some(patterns) = patterns else {
-            return false;
-        };
-        let relative = if root_dir.is_empty() {
-            dir
-        } else {
-            match dir
-                .strip_prefix(root_dir.as_str())
-                .and_then(|rest| rest.strip_prefix('/'))
-            {
-                Some(rest) => rest,
-                None => return false,
+impl UnparsedManifestContext {
+    fn new(
+        parsed_manifests: &[(&PathBuf, String, toml::Value)],
+        edges: &[PathDependencyEdge],
+    ) -> Self {
+        let mut workspaces = Vec::new();
+        let mut parsed_dirs = Vec::new();
+        let mut targets: BTreeSet<String> = edges
+            .iter()
+            .filter_map(|edge| edge.resolved_path.clone())
+            .collect();
+        for (path, _, value) in parsed_manifests {
+            let Some(dir) = portable_manifest_dir_text(path) else {
+                continue;
+            };
+            if let Some(workspace) = value.get("workspace").and_then(toml::Value::as_table) {
+                let patterns = match workspace.get("members") {
+                    None => Some(Vec::new()),
+                    Some(members) => members.as_array().and_then(|items| {
+                        items
+                            .iter()
+                            .map(|item| item.as_str().map(str::to_string))
+                            .collect::<Option<Vec<_>>>()
+                    }),
+                };
+                workspaces.push((dir.clone(), patterns));
             }
-        };
-        !relative.is_empty()
-            && patterns
+            // `[patch.<source>]` and `[replace]` entries are graph members
+            // that the edge inventory does not capture.
+            let mut patched = Vec::new();
+            if let Some(patch) = value.get("patch").and_then(toml::Value::as_table) {
+                patched.extend(patch.values().filter_map(toml::Value::as_table));
+            }
+            if let Some(replace) = value.get("replace").and_then(toml::Value::as_table) {
+                patched.push(replace);
+            }
+            for entries in patched {
+                for entry in entries.values() {
+                    if let Some(declared) = entry
+                        .as_table()
+                        .and_then(|table| table.get("path"))
+                        .and_then(toml::Value::as_str)
+                    {
+                        let declared = declared.replace('\\', "/");
+                        targets.insert(resolve_repo_relative(&dir, &declared).0);
+                    }
+                }
+            }
+            parsed_dirs.push(dir);
+        }
+        Self {
+            workspaces,
+            parsed_dirs,
+            targets,
+        }
+    }
+
+    /// True when an unparsed manifest provably cannot be part of the
+    /// path-dependency graph: no path-dependency, `[patch]` or `[replace]`
+    /// target is its directory, no parsed manifest lives beneath it (it could
+    /// be a workspace root whose members inherit from it), and at least one
+    /// ancestor workspace exists, every ancestor workspace enumerates
+    /// `members` with patterns this matcher fully understands, and none
+    /// selects it. Cargo refuses a workspace whose member or path-dependency
+    /// target fails to parse, so a stray fixture manifest (for example a
+    /// deliberately invalid `Cargo.toml` under a test directory) is outside
+    /// the graph and must not mark the inventory partial. Anything unproven
+    /// stays a limitation (fail closed).
+    fn proves_outside_graph(&self, manifest: &str) -> bool {
+        let dir = manifest.rsplit_once('/').map_or("", |(dir, _)| dir);
+        if dir.is_empty() || self.targets.contains(dir) {
+            return false;
+        }
+        let beneath = format!("{dir}/");
+        if self
+            .parsed_dirs
+            .iter()
+            .any(|parsed| parsed.starts_with(&beneath))
+        {
+            return false;
+        }
+        let mut ancestors = 0usize;
+        for (root_dir, patterns) in &self.workspaces {
+            let relative = if root_dir.is_empty() {
+                dir
+            } else {
+                match dir
+                    .strip_prefix(root_dir.as_str())
+                    .and_then(|rest| rest.strip_prefix('/'))
+                {
+                    Some(rest) => rest,
+                    None => continue,
+                }
+            };
+            ancestors += 1;
+            let Some(patterns) = patterns else {
+                return false;
+            };
+            if !patterns
                 .iter()
                 .all(|pattern| matches!(member_pattern_selects(pattern, relative), Some(false)))
-    })
+            {
+                return false;
+            }
+        }
+        ancestors > 0
+    }
 }
 
 /// Evaluate one `[workspace] members` pattern against a root-relative
@@ -8248,6 +8296,74 @@ mod tests {
             manifests,
             vec!["crates/broken/Cargo.toml", "vendor/dep/Cargo.toml"]
         );
+
+        ignore_remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn unparsed_manifest_stays_a_limitation_when_any_boundary_is_unproven() -> Result<(), String> {
+        let root = isolated_dir("path-dep-unparsed-unproven");
+        ignore_remove_dir_all(&root);
+        write_manifest(
+            &root,
+            "Cargo.toml",
+            "[workspace]\nmembers = [\"crates/*\"]\n\n\
+             [patch.crates-io]\npatched = { path = \"vendor/patched\" }\n",
+        )?;
+        write_manifest(
+            &root,
+            "crates/app/Cargo.toml",
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n",
+        )?;
+        // Nested workspace that selects `m` although the root does not.
+        write_manifest(
+            &root,
+            "tools/ws/Cargo.toml",
+            "[workspace]\nmembers = [\"m\"]\n",
+        )?;
+        write_manifest(&root, "tools/ws/m/Cargo.toml", "[package\nname = ")?;
+        // `[patch]` target.
+        write_manifest(&root, "vendor/patched/Cargo.toml", "[package\nname = ")?;
+        // Unparsed manifest that may itself be a workspace root.
+        write_manifest(&root, "sub/Cargo.toml", "[workspace\nmembers = ")?;
+        write_manifest(
+            &root,
+            "sub/inner/Cargo.toml",
+            "[package]\nname = \"inner\"\nversion = \"0.1.0\"\n",
+        )?;
+        let provenance = workspace_graph_provenance(&root);
+        let manifests: Vec<&str> = provenance
+            .path_dependency_limitations
+            .iter()
+            .map(|limitation| limitation.manifest.as_str())
+            .collect();
+        assert_eq!(
+            manifests,
+            vec![
+                "sub/Cargo.toml",
+                "tools/ws/m/Cargo.toml",
+                "vendor/patched/Cargo.toml"
+            ]
+        );
+
+        ignore_remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn unparsed_manifest_without_any_ancestor_workspace_stays_a_limitation() -> Result<(), String> {
+        let root = isolated_dir("path-dep-unparsed-no-workspace");
+        ignore_remove_dir_all(&root);
+        write_manifest(
+            &root,
+            "app/Cargo.toml",
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n",
+        )?;
+        write_manifest(&root, "other/Cargo.toml", "[package\nname = ")?;
+
+        let provenance = workspace_graph_provenance(&root);
+        assert_eq!(provenance.path_dependency_limitations.len(), 1);
 
         ignore_remove_dir_all(&root);
         Ok(())
