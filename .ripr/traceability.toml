@@ -12606,6 +12606,13 @@ tests = [
   "xtask/src/reports/python_repair_verification.rs::python_repair_verification_semantics::malformed_shapes_fail_with_the_field_named",
   "xtask/src/reports/python_repair_verification.rs::python_repair_verification_semantics::not_run_is_never_a_pass",
   "xtask/src/reports/python_repair_verification.rs::python_repair_verification_semantics::invalid_only_receipts_fail_closed_as_inconsistent",
+  "crates/ripr/src/edit_cage/mod.rs::tests::python_cache_exemption_does_not_hide_a_production_edit",
+  "crates/ripr/src/edit_cage/mod.rs::tests::python_cache_exemption_does_not_hide_importable_or_misplaced_files",
+  "crates/ripr/src/edit_cage/mod.rs::tests::python_cache_exemption_covers_coverage_variants_nested_caches_and_pyo",
+  "crates/ripr/src/edit_cage/mod.rs::tests::python_cache_exemption_ignores_deleting_an_untracked_cache_file",
+  "crates/ripr/src/edit_cage/mod.rs::tests::python_cache_exemption_keeps_tracked_cache_named_files_observed",
+  "crates/ripr/src/edit_cage/mod.rs::tests::python_cache_exemption_normalizes_legacy_baselines",
+  "crates/ripr/src/edit_cage/mod.rs::tests::python_cache_exemption_does_not_apply_to_a_rust_repair",
 ]
 fixtures = []
 code = [
@@ -12616,6 +12623,7 @@ code = [
   "crates/ripr/src/app/python_repair_verification.rs",
   "crates/ripr/src/app/running_binary.rs",
   "crates/ripr/src/app/repair_attempt/mod.rs",
+  "crates/ripr/src/edit_cage/mod.rs",
 ]
 outputs = [
 ]

@@ -1283,6 +1283,17 @@ fn delta_from_repository_states(
         {
             continue;
         }
+        // A baseline saved before the Python cache exemption (#10699) still
+        // lists untracked cache files that the filtered after-capture omits,
+        // so they would read as deletions. Apply the same exemption to both
+        // sides; a tracked path is never exempt.
+        if untracked(old)
+            && untracked(new)
+            && before.policy.expects_python_tool_caches()
+            && is_python_tool_cache(&path)
+        {
+            continue;
+        }
         changed_symlink |= old
             .map(|state| matches!(state.worktree_identity, WorktreeIdentity::Symlink(_)))
             .unwrap_or(false)
@@ -3616,6 +3627,57 @@ mod tests {
         write_fixture_file(&fixture, "tests/__pycache__/fixture.pyc", "v2")?;
         let verdict = evaluate_repository_edit_cage(&baseline)?;
         assert_violates(&verdict, &["tests/__pycache__/fixture.pyc"]);
+        Ok(())
+    }
+
+    /// A baseline saved by a binary that predates the exemption still lists
+    /// untracked cache files; the filtered after-capture omits them, which must
+    /// not read as deletions (#10699). A tracked cache-shaped file deleted
+    /// stays a violation.
+    #[test]
+    fn python_cache_exemption_normalizes_legacy_baselines() -> Result<(), String> {
+        let (fixture, policy) = python_fixture("python-cache-legacy", "")?;
+        write_fixture_file(&fixture, "tests/__pycache__/tracked.pyc", "v1")?;
+        git_ok(&fixture.root, &["add", "-f", "."])?;
+        git_ok(&fixture.root, &["commit", "-qm", "track pyc"])?;
+        write_fixture_file(&fixture, ".pytest_cache/v/cache/lastfailed", "{}")?;
+        write_fixture_file(&fixture, "__pycache__/x.cpython-313.pyc", "cache")?;
+        // Old-style capture: a non-Python target keeps the cache entries.
+        let mut legacy_policy = policy.clone();
+        legacy_policy.selected_target = CagePathRule::exact("tests/pricing.rs")?;
+        let mut baseline = capture_attempt_baseline(&fixture.root, &legacy_policy)?;
+        assert!(
+            baseline
+                .paths
+                .contains_key(".pytest_cache/v/cache/lastfailed")
+        );
+        assert!(baseline.paths.contains_key("__pycache__/x.cpython-313.pyc"));
+        baseline.policy = policy;
+        let baseline: AttemptBaseline = serde_json::from_str(
+            &serde_json::to_string(&baseline).map_err(|err| format!("serialize: {err}"))?,
+        )
+        .map_err(|err| format!("deserialize: {err}"))?;
+
+        fs::remove_file(fixture.root.join(".pytest_cache/v/cache/lastfailed"))
+            .map_err(|err| format!("remove: {err}"))?;
+        fs::remove_file(fixture.root.join("__pycache__/x.cpython-313.pyc"))
+            .map_err(|err| format!("remove: {err}"))?;
+        write_fixture_file(
+            &fixture,
+            "tests/test_pricing.py",
+            "def test_a():\n    assert 1\n",
+        )?;
+        let verdict = evaluate_repository_edit_cage(&baseline)?;
+        assert_eq!(
+            verdict.status,
+            EditCageVerdictStatus::Compliant,
+            "{verdict:?}"
+        );
+
+        fs::remove_file(fixture.root.join("tests/__pycache__/tracked.pyc"))
+            .map_err(|err| format!("remove tracked: {err}"))?;
+        let verdict = evaluate_repository_edit_cage(&baseline)?;
+        assert_violates(&verdict, &["tests/__pycache__/tracked.pyc"]);
         Ok(())
     }
 
