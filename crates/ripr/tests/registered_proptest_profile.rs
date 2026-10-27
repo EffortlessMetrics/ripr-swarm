@@ -1,7 +1,6 @@
 //! #10839: actual provider/registration/failure controls for the #6643 slice.
 //! The ordinary analyzer runs in a child so runner-configuration changes do
 //! not mutate the concurrent Rust test process's environment.
-use ripr::{CheckInput, Mode, OutputFormat, check_workspace, render_check};
 use serde_json::Value;
 use std::ffi::OsStr;
 use std::io::Read;
@@ -19,6 +18,7 @@ const ORDINARY: &str = "#[test]\nfn exact_boundary() {\n    assert_eq!(lib_propt
 const PROBE_ROOT: &str = "RIPR_PROPTEST_PROFILE_PROBE_ROOT";
 const PROBE_REPO: &str = "RIPR_PROPTEST_PROFILE_REPO";
 const REPORT: &str = "RIPR_PROPERTY_REPORT=";
+const REPORT_END: &str = "RIPR_PROPERTY_REPORT_END";
 
 struct Fixture(PathBuf);
 impl Fixture {
@@ -152,30 +152,38 @@ fn property_profile_probe_child() -> Result<(), String> {
         return Ok(());
     };
     let repository = std::env::var_os(PROBE_REPO).is_some();
-    let format = if repository {
-        OutputFormat::RepoExposureJson
-    } else {
-        OutputFormat::Json
-    };
-    let input = CheckInput {
-        root: root.clone(),
-        diff_file: Some(root.join("diff.patch")),
-        mode: Mode::Fast,
-        format,
-        include_unchanged_tests: true,
-        ..CheckInput::default()
-    };
-    let report = if repository {
-        ripr::app::repo_seam_inventory_input(input)
-    } else {
-        check_workspace(input)?
-    };
-    let json: Value = serde_json::from_str(&render_check(&report, &format)?)
-        .map_err(|error| error.to_string())?;
-    println!(
-        "{REPORT}{}",
-        serde_json::to_string(&json).map_err(|error| error.to_string())?
-    );
+    // The public API defaults do not load ripr.toml. Use the ordinary CLI
+    // loader for both producers so the policy controls exercise the file
+    // they write, including its classified-cache identity.
+    let mut args = vec![
+        "ripr".to_string(),
+        "check".to_string(),
+        "--root".to_string(),
+        root.to_str().ok_or("probe root is not UTF-8")?.to_string(),
+        "--mode".to_string(),
+        "fast".to_string(),
+        "--format".to_string(),
+        if repository {
+            "repo-exposure-json"
+        } else {
+            "json"
+        }
+        .to_string(),
+        "--quiet".to_string(),
+    ];
+    if !repository {
+        args.push("--diff".to_string());
+        args.push(
+            root.join("diff.patch")
+                .to_str()
+                .ok_or("probe diff path is not UTF-8")?
+                .to_string(),
+        );
+    }
+    println!("{REPORT}");
+    ripr::cli::run(args)
+        .map_err(|error| format!("ripr check failed (exit {}): {error}", error.exit_code()))?;
+    println!("\n{REPORT_END}");
     Ok(())
 }
 
@@ -219,16 +227,16 @@ fn report(
         ));
     }
     let stdout = String::from_utf8(output.stdout).map_err(|error| error.to_string())?;
-    let reports = stdout
-        .lines()
-        .filter_map(|line| line.split_once(REPORT).map(|(_, report)| report))
-        .collect::<Vec<_>>();
-    let [report] = reports.as_slice() else {
+    if stdout.matches(REPORT).count() != 1 || stdout.matches(REPORT_END).count() != 1 {
         return Err(format!(
             "{label}: expected exactly one marked analyzer report: {stdout}"
         ));
-    };
-    let report = serde_json::from_str(report).map_err(|error| error.to_string())?;
+    }
+    let report = stdout
+        .split_once(REPORT)
+        .and_then(|(_, marked)| marked.split_once(REPORT_END).map(|(report, _)| report))
+        .ok_or_else(|| format!("{label}: malformed analyzer report framing: {stdout}"))?;
+    let report = serde_json::from_str(report.trim()).map_err(|error| error.to_string())?;
     Ok((report, String::from_utf8_lossy(&output.stderr).into_owned()))
 }
 
