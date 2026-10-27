@@ -23,6 +23,7 @@ use std::sync::OnceLock;
 
 mod observation_tail_return;
 mod preparation;
+mod transitional;
 
 /// Result of a single fixture run: violation lines + optional run output.
 type FixtureResult = Result<(Vec<String>, Option<FixtureRun>), String>;
@@ -941,7 +942,12 @@ struct GoldenRunSet {
 pub(crate) fn run_fixture(path: &Path) -> Result<FixtureRun, String> {
     let run = run_fixture_outputs(path)?;
     let expected = path.join("expected");
+    let fixture_name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
     let comparisons = fixture_golden_comparisons(
+        &fixture_name,
         &expected,
         &run.check_json,
         &run.human_txt,
@@ -1274,6 +1280,7 @@ pub(crate) fn run_fixture_check(
 }
 
 fn fixture_golden_comparisons(
+    fixture: &str,
     expected: &Path,
     check_json: &Path,
     human_txt: &Path,
@@ -1281,6 +1288,7 @@ fn fixture_golden_comparisons(
 ) -> Result<Vec<GoldenComparison>, String> {
     let mut comparisons = Vec::new();
     comparisons.push(compare_golden(
+        fixture,
         "check.json",
         &expected.join("check.json"),
         check_json,
@@ -1288,11 +1296,17 @@ fn fixture_golden_comparisons(
 
     let expected_human = expected.join("human.txt");
     if expected_human.exists() {
-        comparisons.push(compare_golden("human.txt", &expected_human, human_txt)?);
+        comparisons.push(compare_golden(
+            fixture,
+            "human.txt",
+            &expected_human,
+            human_txt,
+        )?);
     }
     let expected_human_full = expected.join("human-full.txt");
     if expected_human_full.exists() {
         comparisons.push(compare_golden(
+            fixture,
             "human-full.txt",
             &expected_human_full,
             human_full_txt,
@@ -1302,6 +1316,7 @@ fn fixture_golden_comparisons(
 }
 
 fn compare_golden(
+    fixture: &str,
     surface: &'static str,
     expected: &Path,
     actual: &Path,
@@ -1322,7 +1337,12 @@ fn compare_golden(
     let normalized_expected = normalize_golden_text(&expected_text);
     let normalized_actual = normalize_golden_text(&actual_text);
     let aliased = surface != "check.json"
-        && transitional_refusal_aliases_apply(&normalized_expected, &normalized_actual);
+        && transitional_refusal_aliases_apply(
+            fixture,
+            surface,
+            &normalized_expected,
+            &normalized_actual,
+        );
     Ok(GoldenComparison {
         surface,
         expected: expected.to_path_buf(),
@@ -1529,40 +1549,34 @@ fn mask_repair_refusal_reason(value: &str) -> String {
     masked
 }
 
-/// Opening of the "seams exist in the file but none is tied to the changed
-/// line" variant once its seam count is masked (#10702).
-const SEAMS_UNTIED_OPENING: &str =
-    "ripr found <n> seams in this finding's file, but none is tied to this finding's changed line";
-const EXPOSED_OPENING: &str = "nothing to repair here";
-
-/// TRANSITIONAL (#10702): old variant opening -> new openings it may become
-/// while the check-side change is re-blessed in batches. An old opening
-/// becoming anything not listed is still drift. Remove entries as fixtures are
-/// re-blessed; the table should end empty and be deleted.
-const TRANSITIONAL_REFUSAL_ALIASES: &[(&str, &[&str])] = &[
-    ("this finding has no canonical gap", &[EXPOSED_OPENING]),
-    (
-        "ripr found no seam in this finding's file to bind it to",
-        &[EXPOSED_OPENING, SEAMS_UNTIED_OPENING],
-    ),
-    (
-        "the seam inventory behind `ripr repair`",
-        &[EXPOSED_OPENING],
-    ),
-    (
-        "ripr cannot build a repair packet for this finding yet because it is still missing: ",
-        &[EXPOSED_OPENING],
-    ),
-];
+const SEAMS_UNTIED_OPENING: &str = transitional::SEAMS_UNTIED;
 
 /// Whether `actual` differs from `expected` (both already refusal-masked) only
-/// by refusal openings that `TRANSITIONAL_REFUSAL_ALIASES` allows to change.
-fn transitional_refusal_aliases_apply(expected: &str, actual: &str) -> bool {
+/// by refusal openings approved for this exact `fixture/surface` in
+/// `transitional::MIGRATIONS`. A migration to the exposed opening also needs
+/// the expected golden to say `Static exposure: exposed` itself.
+fn transitional_refusal_aliases_apply(
+    fixture: &str,
+    surface: &str,
+    expected: &str,
+    actual: &str,
+) -> bool {
+    let key = format!("{fixture}/{surface}");
+    let approved: Vec<&transitional::Migration> = transitional::MIGRATIONS
+        .iter()
+        .filter(|migration| migration.surfaces.contains(&key.as_str()))
+        .collect();
+    if approved.is_empty() {
+        return false;
+    }
     let expected_lines: Vec<&str> = expected.split('\n').collect();
     let actual_lines: Vec<&str> = actual.split('\n').collect();
     if expected_lines.len() != actual_lines.len() {
         return false;
     }
+    let exposed_in_expected = expected_lines
+        .iter()
+        .any(|line| line.trim_start().starts_with("Static exposure: exposed"));
     expected_lines.iter().zip(&actual_lines).all(|(old, new)| {
         if old == new {
             return true;
@@ -1573,8 +1587,10 @@ fn transitional_refusal_aliases_apply(expected: &str, actual: &str) -> bool {
         ) else {
             return false;
         };
-        TRANSITIONAL_REFUSAL_ALIASES.iter().any(|(from, to)| {
-            old_body.starts_with(from) && to.iter().any(|opening| new_body.starts_with(opening))
+        approved.iter().any(|migration| {
+            old_body.starts_with(migration.old)
+                && new_body.starts_with(migration.new)
+                && (migration.new != transitional::EXPOSED || exposed_in_expected)
         })
     })
 }
@@ -1591,8 +1607,9 @@ fn normalize_seam_count(body: &str) -> Option<String> {
     let after = after
         .strip_prefix(" seams")
         .or_else(|| after.strip_prefix(" seam"))?;
-    after
-        .strip_prefix(" in this finding's file, but none is tied to this finding's changed line")?;
+    after.strip_prefix(
+        " in this finding's file, but could not tie one to this finding's changed line",
+    )?;
     Some(format!("{SEAMS_UNTIED_OPENING}<reason>"))
 }
 
@@ -3391,7 +3408,7 @@ mod tests {
             &line("this finding has no canonical gap, so there is no seam"),
         )?;
         let matches = |actual: &Path, surface: &'static str| -> Result<bool, String> {
-            Ok(compare_golden(surface, &expected, actual)?.matches)
+            Ok(compare_golden("unlisted_fixture", surface, &expected, actual)?.matches)
         };
         assert!(matches(&reworded, "human.txt")?, "reworded prose is masked");
         assert!(
@@ -3403,38 +3420,123 @@ mod tests {
         assert!(!matches(&reworded, "check.json")?, "check.json is unmasked");
         assert!(matches(&expected, "check.json")?);
 
-        // Transitional aliases (#10702): a listed old->new opening passes in
-        // human goldens only; an unlisted new opening, or check.json, fails.
-        let exposed = write(
-            "exposed.txt",
-            &line("nothing to repair here; the related tests already notice this change (exposed)"),
-        )?;
-        let old_no_seam = write(
+        // Transitional migrations (#10702): only an approved fixture/surface
+        // with an approved old -> new opening passes.
+        let exposed_header = "Static exposure: exposed (severity: info)\n";
+        let write_exposed = |name: &str, reason: &str| -> Result<std::path::PathBuf, String> {
+            write(name, &format!("{exposed_header}{}", line(reason)))
+        };
+        let exposed_line =
+            "nothing to repair here; the related tests already notice this change (exposed)";
+        let untied_line = "ripr found 4 seams in this finding's file, but could not tie one to this finding's changed line, so y";
+        let one_seam_line = "ripr found 1 seam in this finding's file, but could not tie one to this finding's changed line, so z";
+        let old_no_seam = write_exposed(
             "old_no_seam.txt",
+            "ripr found no seam in this finding's file to bind it to, so x",
+        )?;
+        let exposed = write_exposed("exposed.txt", exposed_line)?;
+        let untied = write_exposed("untied.txt", untied_line)?;
+        let one_seam = write_exposed("one_seam.txt", one_seam_line)?;
+        let compare = |fixture: &str,
+                       exp: &Path,
+                       act: &Path,
+                       surface: &'static str|
+         -> Result<bool, String> {
+            Ok(compare_golden(fixture, surface, exp, act)?.matches)
+        };
+        // Real approved identities, one per migration.
+        let no_seam_exposed = "asserting_same_file_test_positive_control";
+        let no_seam_untied = "assertion_shaped_control_production_caller";
+        let missing_exposed = "assertion_shaped_control_production_owner";
+        let inventory_exposed = "currentness_matrix_python_deleted_statement";
+        let no_gap_exposed = "currentness_matrix_typescript_deleted_statement";
+        assert!(compare(
+            no_seam_exposed,
+            &old_no_seam,
+            &exposed,
+            "human.txt"
+        )?);
+        assert!(compare(no_seam_untied, &old_no_seam, &untied, "human.txt")?);
+        assert!(
+            compare(no_seam_untied, &old_no_seam, &one_seam, "human.txt")?,
+            "singular seam"
+        );
+        let inventory = write_exposed(
+            "inventory.txt",
+            "the seam inventory behind `ripr repair` and `ripr agent repair --phase before` could not be built",
+        )?;
+        assert!(
+            compare(inventory_exposed, &inventory, &exposed, "human.txt")?,
+            "inventory -> exposed"
+        );
+        let no_gap = write_exposed(
+            "no_gap.txt",
+            "this finding has no canonical gap, so there is no seam",
+        )?;
+        assert!(
+            compare(no_gap_exposed, &no_gap, &exposed, "human.txt")?,
+            "no canonical gap -> exposed"
+        );
+        let missing = write_exposed(
+            "missing.txt",
+            "ripr cannot build a repair packet for this finding yet because it is still missing: a; b; follow the Next step above",
+        )?;
+        assert!(
+            compare(missing_exposed, &missing, &exposed, "human.txt")?,
+            "still missing -> exposed"
+        );
+        // Negatives: an unapproved fixture, the wrong surface, check.json, an
+        // approved fixture with a pair it is not approved for, and pairs that
+        // are not aliases at all.
+        assert!(
+            !compare("unlisted_fixture", &old_no_seam, &exposed, "human.txt")?,
+            "unapproved fixture"
+        );
+        assert!(
+            !compare(no_seam_exposed, &old_no_seam, &exposed, "human-full.txt")?,
+            "unapproved surface"
+        );
+        assert!(
+            !compare(no_seam_exposed, &old_no_seam, &exposed, "check.json")?,
+            "check.json"
+        );
+        assert!(
+            !compare(no_seam_exposed, &old_no_seam, &untied, "human.txt")?,
+            "approved fixture, other pair"
+        );
+        assert!(
+            !compare(inventory_exposed, &inventory, &untied, "human.txt")?,
+            "inventory -> untied"
+        );
+        assert!(
+            !compare(no_seam_untied, &untied, &exposed, "human.txt")?,
+            "new -> new"
+        );
+        assert!(
+            !compare(no_seam_exposed, &exposed, &untied, "human.txt")?,
+            "exposed is not an alias source"
+        );
+        assert!(!compare(
+            no_seam_exposed,
+            &old_no_seam,
+            &other_variant,
+            "human.txt"
+        )?);
+        // The exposed target also needs the expected golden to say exposed.
+        let old_no_seam_not_exposed = write(
+            "old_no_seam_not_exposed.txt",
             &line("ripr found no seam in this finding's file to bind it to, so x"),
         )?;
-        let untied = write(
-            "untied.txt",
-            &line(
-                "ripr found 4 seams in this finding's file, but none is tied to this finding's changed line, so y",
-            ),
-        )?;
-        let compare = |exp: &Path, act: &Path, surface: &'static str| -> Result<bool, String> {
-            Ok(compare_golden(surface, exp, act)?.matches)
-        };
-        assert!(compare(&old_no_seam, &exposed, "human.txt")?);
-        assert!(compare(&old_no_seam, &untied, "human.txt")?);
-        assert!(!compare(&old_no_seam, &exposed, "check.json")?);
-        // Discriminating negatives: not listed for this old opening.
+        let exposed_no_header = write("exposed_no_header.txt", &line(exposed_line))?;
         assert!(
-            !compare(&untied, &exposed, "human.txt")?,
-            "new->new is not aliased"
+            !compare(
+                no_seam_exposed,
+                &old_no_seam_not_exposed,
+                &exposed_no_header,
+                "human.txt"
+            )?,
+            "expected must say exposed"
         );
-        assert!(
-            !compare(&expected, &untied, "human.txt")?,
-            "missing-list -> untied is not listed"
-        );
-        assert!(!compare(&old_no_seam, &other_variant, "human.txt")?);
         std::fs::remove_dir_all(&dir).map_err(|err| err.to_string())?;
         Ok(())
     }

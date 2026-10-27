@@ -188,7 +188,7 @@ impl RepairRouteRefusal {
             }
             Self::NoBindingSeam { seams_in_file } => format!(
                 "no repair start offered: ripr found {seams_in_file} {} in this finding's \
-                 file, but none is tied to this finding's changed line, so it cannot pick one \
+                 file, but could not tie one to this finding's changed line, so it cannot pick one \
                  for you; `ripr pilot` lists them, or follow the Next step above",
                 if *seams_in_file == 1 { "seam" } else { "seams" }
             ),
@@ -196,11 +196,11 @@ impl RepairRouteRefusal {
                  the related tests already notice this change (exposed)"
                 .to_string(),
             Self::SeamGrippedFindingNot => "no repair start offered: `ripr check` reads a gap \
-                 or limit for this change, but the whole-repository view `ripr repair` uses \
-                 already counts the seam it touches as gripped (exposed), so repair has no gap \
-                 to start from. The two read different evidence (your changed lines versus the \
-                 whole seam) and ripr does not start a repair on conflicting evidence; follow \
-                 the Next step above"
+                 or limit for this change, but `ripr repair` judges the whole seam and finds \
+                 its tests already notice changes there (exposed), so it has no gap to start \
+                 from. The two read different evidence (your changed lines versus the whole \
+                 seam) and ripr does not start a repair on conflicting evidence; follow the \
+                 Next step above"
                 .to_string(),
             Self::SeveralBindingSeams => {
                 "no repair start offered: several seams bind this finding \

@@ -644,13 +644,15 @@ every rewording into one re-blessed line in hundreds of fixtures (#10702). A
 repair start that flips to a refusal, a refusal that appears or disappears, and
 a change of variant or missing-evidence list are still drift.
 
-Transitional (#10702): `TRANSITIONAL_REFUSAL_ALIASES` in the same file lets a
-human golden whose expected refusal opens with one of four retired openings
-(no canonical gap, no binding seam, seam inventory, still missing) now read
-"nothing to repair here" or "found N seams … none is tied to … changed line",
-so the check-side change does not need ~250 re-blessed fixtures in one PR over
-the admission file cap. Any other opening change is still drift. Follow-up
-batches re-bless fixtures and shrink the table; it is removed once empty.
+Transitional (#10702): `xtask/src/reports/fixtures/transitional.rs` lists the
+exact `fixture/surface` human goldens (253) whose expected refusal opening is
+one of four retired openings (no canonical gap, no binding seam, seam
+inventory, still missing) and may now open "nothing to repair here" (only when
+the expected golden itself says `Static exposure: exposed`) or "found N seams …
+could not tie one … changed line". An unlisted fixture, another surface, another
+pair and `check.json` are still compared strictly. This keeps the check-side
+change under the admission file cap; each follow-up re-bless batch deletes its
+entries and the file is removed once empty.
 
 `golden-drift` writes the same advisory drift reports without failing merely
 because output drift exists. It still reports fixture execution errors as

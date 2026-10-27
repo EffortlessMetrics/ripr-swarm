@@ -22,9 +22,10 @@ impl Repo {
             std::process::id(),
             SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ));
-        std::fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
-        std::fs::create_dir_all(root.join("tests")).map_err(|e| e.to_string())?;
+        std::fs::create_dir(&root).map_err(|e| e.to_string())?;
         let repo = Self(root);
+        std::fs::create_dir_all(repo.0.join("src")).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(repo.0.join("tests")).map_err(|e| e.to_string())?;
         repo.write(".gitignore", "/target/\n")?;
         repo.write("Cargo.toml", CARGO_TOML)?;
         repo.write("src/lib.rs", old_src)?;
@@ -133,7 +134,7 @@ fn check_never_reports_no_seam_where_repair_lists_seams_in_the_file() -> Result<
     );
     assert!(
         check.contains(
-            "seams in this finding's file, but none is tied to this finding's changed line"
+            "seams in this finding's file, but could not tie one to this finding's changed line"
         ),
         "check must name the one reason it cannot bind a seam:\n{check}"
     );

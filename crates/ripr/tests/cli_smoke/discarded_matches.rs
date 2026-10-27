@@ -127,6 +127,11 @@ fn bounded_legend_capture_projection_is_exact_and_preserves_evidence() -> Result
 /// historical capture keeps its original bytes:
 ///
 /// - NoBindingSeam (old capture or current producer text) becomes a fixed slot.
+///   Since #10702 the same check-side no-start line may also read the exposed
+///   opening ("nothing to repair here ... (exposed)") or the counted
+///   "ripr found N seam(s) in this finding's file, but could not tie one"
+///   opening; exactly those known openings share the slot, any other
+///   advisory stays byte-exact.
 /// - Not-ready (RouteNotReady) keeps its producer-owned missing-evidence list:
 ///   the old `(missing evidence: LIST); run ...` form and the current
 ///   `still missing: LIST; follow ...` form both become
@@ -136,10 +141,23 @@ fn bounded_legend_capture_projection_is_exact_and_preserves_evidence() -> Result
 /// Every other advisory line stays byte-exact. Returns the projected bytes and
 /// how many lines were normalized.
 fn normalize_moved_repair_advisories(bytes: &[u8]) -> (Vec<u8>, usize) {
-    const NO_BINDING: [&str; 2] = [
+    const NO_BINDING: [&str; 3] = [
         "  no repair start offered: no seam in the finding's file binds this finding;",
         "  no repair start offered: ripr found no seam in this finding's file to bind it to,",
+        "  no repair start offered: nothing to repair here; the related tests already notice this change (exposed)",
     ];
+    const COUNTED_START: &str = "  no repair start offered: ripr found ";
+    const COUNTED_REST: &str =
+        " in this finding's file, but could not tie one to this finding's changed line,";
+    let counted_untied = |line: &str| -> bool {
+        line.strip_prefix(COUNTED_START).is_some_and(|rest| {
+            let digits = rest.chars().take_while(char::is_ascii_digit).count();
+            let after = &rest[digits..];
+            digits > 0
+                && (after.starts_with(&format!(" seam{COUNTED_REST}"))
+                    || after.starts_with(&format!(" seams{COUNTED_REST}")))
+        })
+    };
     const OLD_NOT_READY: &str =
         "  no repair start offered: repair route not ready (missing evidence: ";
     const OLD_LIST_END: &str = "); run `";
@@ -157,7 +175,9 @@ fn normalize_moved_repair_advisories(bytes: &[u8]) -> (Vec<u8>, usize) {
     let projected = String::from_utf8_lossy(bytes)
         .split_inclusive('\n')
         .map(|line| {
-            let replacement = if NO_BINDING.iter().any(|prefix| line.starts_with(prefix)) {
+            let replacement = if NO_BINDING.iter().any(|prefix| line.starts_with(prefix))
+                || counted_untied(line)
+            {
                 Some("  no repair start offered: <no-binding-seam advisory>\n".to_string())
             } else {
                 list_between(line, OLD_NOT_READY, OLD_LIST_END)
