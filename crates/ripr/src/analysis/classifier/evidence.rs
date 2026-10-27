@@ -211,6 +211,16 @@ impl ClassifiedProbeEvidence {
         })
         .or_else(|| {
             context.owner_fn.and_then(|owner| {
+                crate::analysis::classify::result_map_witness(
+                    context.probe,
+                    owner,
+                    context.index,
+                    &flow_sinks,
+                )
+            })
+        })
+        .or_else(|| {
+            context.owner_fn.and_then(|owner| {
                 crate::analysis::classify::format_tail_witness(
                     context.probe,
                     owner,
@@ -793,11 +803,34 @@ impl ClassifiedProbeEvidence {
                 })
             })
         };
+        let map_callback_pin_required = matches!(
+            &propagation_witness,
+            Some(PropagationWitnessDiagnostic::Valid(witness))
+                if witness.limitations.iter().any(|limit| limit == "result_map_callback_payload")
+        );
+        let direct_owner_pin_admits = |test: &TestSummary, assertion: &OracleFact| {
+            owner_return_pin.as_ref().is_some_and(|pin| {
+                pin.admits(
+                    test,
+                    assertion,
+                    context.index,
+                    &|file, name| {
+                        context.index.files().get(file).is_some_and(|facts| {
+                            context.test_file_imports_foreign_callee_name(file, &facts.source, name)
+                        })
+                    },
+                    pin_syntax,
+                )
+            })
+        };
         let owner_pin_admits = |test: &TestSummary, assertion: &OracleFact| {
             // Refuses every owner-pin route, not only token overlap: none of them
             // observes the written output without an admitted display pin.
             if fmt_write_tail && !fmt_literal_edit {
                 return false;
+            }
+            if map_callback_pin_required {
+                return direct_owner_pin_admits(test, assertion);
             }
             // #5352: an exact assertion on the helper chain's entry pins
             // the owner's returned value when every observed hop
@@ -824,23 +857,7 @@ impl ClassifiedProbeEvidence {
                 || fallible_checks.iter().any(|receipt| {
                     receipt.valid_for(context.probe) && receipt.admits(test, assertion)
                 })
-                || owner_return_pin.as_ref().is_some_and(|pin| {
-                    pin.admits(
-                        test,
-                        assertion,
-                        context.index,
-                        &|file, name| {
-                            context.index.files().get(file).is_some_and(|facts| {
-                                context.test_file_imports_foreign_callee_name(
-                                    file,
-                                    &facts.source,
-                                    name,
-                                )
-                            })
-                        },
-                        pin_syntax,
-                    )
-                })
+                || direct_owner_pin_admits(test, assertion)
         };
         let fallback_expansion = crate::analysis::classify::ImplicitExpansionMemo::default();
         let expansion = crate::analysis::classify::ImplicitExpansionContext::new(
@@ -880,6 +897,7 @@ impl ClassifiedProbeEvidence {
                         )
                     }),
                 owner_return_pin: &owner_pin_admits,
+                owner_return_pin_required: map_callback_pin_required,
                 wrapper_return_pin: &|test, assertion| {
                     wrapper_boundary_probe.is_some()
                         && context.related_tests.iter().any(|(related, reason)| {
