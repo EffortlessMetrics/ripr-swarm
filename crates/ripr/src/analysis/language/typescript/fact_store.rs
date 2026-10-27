@@ -506,11 +506,8 @@ mod tests {
         bytes[flip] = bytes[flip].wrapping_add(1);
         // A tampered entry must not be served, whether the flip breaks the
         // JSON outright (a decode refusal) or leaves a digest mismatch.
-        match serde_json::from_slice::<TypeScriptFileFactEnvelope>(&bytes) {
-            Ok(decoded) => {
-                assert!(!decoded.matches_key(&key) || decoded.validate_integrity().is_err())
-            }
-            Err(_) => {}
+        if let Ok(decoded) = serde_json::from_slice::<TypeScriptFileFactEnvelope>(&bytes) {
+            assert!(!decoded.matches_key(&key) || decoded.validate_integrity().is_err())
         }
         Ok(())
     }
