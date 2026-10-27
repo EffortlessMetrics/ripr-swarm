@@ -498,8 +498,7 @@ files stay observed everywhere; `.pyc`/`.pyo` outside `__pycache__` stay
 observed; a Rust attempt gets no exemption. The same predicate is applied to
 both sides of the comparison, so a baseline saved before the exemption (which
 still lists cache files) does not read as deleting them. Accepted residuals: a
-forged `__pycache__` `.pyc` matching its source's mtime and size could change
-behavior unobserved, and the 10,000-path inventory cap is applied before the
+a `__pycache__` `.pyc` can be forged outside the path filter: a hash-based pyc is loaded when its source hash matches (checked-hash) or with no source check at all (unchecked-hash), so an agent could compile modified production source into `__pycache__` and leave the `.py` untouched, invisible to the cage (and an mtime/size-matching timestamp pyc has the same effect), and the 10,000-path inventory cap is applied before the
 cache filter (tracked in #10801).
 
 ## Test Mapping

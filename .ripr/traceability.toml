@@ -12636,6 +12636,9 @@ tests = [
   "crates/ripr/src/edit_cage/mod.rs::tests::python_cache_exemption_keeps_tracked_cache_named_files_observed",
   "crates/ripr/src/edit_cage/mod.rs::tests::python_cache_exemption_normalizes_legacy_baselines",
   "crates/ripr/src/edit_cage/mod.rs::tests::python_cache_exemption_does_not_apply_to_a_rust_repair",
+  "crates/ripr/src/edit_cage/mod.rs::tests::python_cache_exemption_skip_gate_observes_a_force_added_cache_file",
+  "crates/ripr/src/edit_cage/mod.rs::tests::python_cache_exemption_test_run_caches_are_not_an_attempt_edit",
+  "crates/ripr/src/edit_cage/mod.rs::tests::python_cache_exemption_stub_selected_target_also_expects_test_run_caches",
 ]
 fixtures = []
 code = [

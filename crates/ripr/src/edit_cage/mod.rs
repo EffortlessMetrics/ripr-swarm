@@ -1040,6 +1040,11 @@ fn collect_nul_records(bytes: &[u8], records: &mut BTreeSet<Vec<u8>>) {
 /// with a cache-like name is never exempted. Importable source never matches:
 /// a `.py`/`.pyi` file anywhere (including inside a cache directory), and a
 /// sourceless `.pyc` outside `__pycache__` (Python imports it directly).
+///
+/// Accepted residual (#10801): a hash-based pyc is loaded when its source hash
+/// matches (checked-hash) or with no source check (unchecked-hash), so an agent
+/// could compile modified production source into `__pycache__` and leave the
+/// `.py` untouched, invisible to the cage.
 fn is_python_tool_cache(path: &str) -> bool {
     const TOOL_CACHE_DIRS: [&str; 3] = [".pytest_cache", ".mypy_cache", ".ruff_cache"];
     let components = path.split('/').collect::<Vec<_>>();
@@ -3423,7 +3428,7 @@ mod tests {
     /// `ripr continue` writes caches that are not an attempt edit, whether or
     /// not the repository ignores them.
     #[test]
-    fn python_test_run_caches_are_not_an_attempt_edit() -> Result<(), String> {
+    fn python_cache_exemption_test_run_caches_are_not_an_attempt_edit() -> Result<(), String> {
         let ignores = "__pycache__/\n.pytest_cache/\n.mypy_cache/\n.ruff_cache/\n.coverage\n";
         for (name, gitignore) in [("ignored", ignores), ("not-ignored", "target/\n")] {
             let (fixture, policy) = python_fixture(&format!("python-cache-{name}"), gitignore)?;
@@ -3454,7 +3459,8 @@ mod tests {
     /// A `.pyi` selected target is a Python repair too: the same caches are
     /// expected output.
     #[test]
-    fn python_stub_selected_target_also_expects_test_run_caches() -> Result<(), String> {
+    fn python_cache_exemption_stub_selected_target_also_expects_test_run_caches()
+    -> Result<(), String> {
         let (fixture, mut policy) = python_fixture("python-cache-pyi", "")?;
         write_fixture_file(
             &fixture,
@@ -3678,6 +3684,42 @@ mod tests {
             .map_err(|err| format!("remove tracked: {err}"))?;
         let verdict = evaluate_repository_edit_cage(&baseline)?;
         assert_violates(&verdict, &["tests/__pycache__/tracked.pyc"]);
+        Ok(())
+    }
+
+    /// The delta-level skip gate (#10699) applies only to paths untracked on
+    /// both sides: a cache-shaped file untracked at baseline that the agent
+    /// then force-adds to the index is observed, and a modified legacy cache
+    /// file is not reported either.
+    #[test]
+    fn python_cache_exemption_skip_gate_observes_a_force_added_cache_file() -> Result<(), String> {
+        let (fixture, policy) = python_fixture("python-cache-force-add", "")?;
+        write_fixture_file(&fixture, ".pytest_cache/v/cache/lastfailed", "{}")?;
+        write_fixture_file(&fixture, "__pycache__/legacy.cpython-313.pyc", "v1")?;
+        let mut legacy_policy = policy.clone();
+        legacy_policy.selected_target = CagePathRule::exact("tests/pricing.rs")?;
+        let mut baseline = capture_attempt_baseline(&fixture.root, &legacy_policy)?;
+        baseline.policy = policy;
+
+        write_fixture_file(&fixture, "__pycache__/legacy.cpython-313.pyc", "v2")?;
+        write_fixture_file(
+            &fixture,
+            "tests/test_pricing.py",
+            "def test_a():\n    assert 1\n",
+        )?;
+        let verdict = evaluate_repository_edit_cage(&baseline)?;
+        assert_eq!(
+            verdict.status,
+            EditCageVerdictStatus::Compliant,
+            "{verdict:?}"
+        );
+
+        git_ok(
+            &fixture.root,
+            &["add", "-f", ".pytest_cache/v/cache/lastfailed"],
+        )?;
+        let verdict = evaluate_repository_edit_cage(&baseline)?;
+        assert_violates(&verdict, &[".pytest_cache/v/cache/lastfailed"]);
         Ok(())
     }
 
