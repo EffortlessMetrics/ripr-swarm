@@ -265,3 +265,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — recursive_positive (23)
+
+Reason:
+RIPR-SPEC-0032: evidence text only, observed-value facts also list the row on the replaced constant; classification stays exposed
+
+Command:
+`cargo xtask goldens bless recursive_positive --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
