@@ -182,7 +182,7 @@ performance rule already requires. These are improvements without a cache.
 ## First implementation: index-read observations
 
 Set `RIPR_PROBE_READ_TRACE=1` before starting the process to enable bounded
-stderr JSON lines prefixed `ripr_probe_read_trace `. Presence enables the
+stderr JSON lines with the prefix `ripr_probe_read_trace` followed by one space. Presence enables the
 trace, like the existing latency-trace knob; the process reads this setting
 once. No new command or result cache is introduced.
 
