@@ -2432,3 +2432,84 @@ fn unwrap_tail_caller_nested_in_a_function_with_a_local_handler_is_not_credited(
         "        assert_eq!(pool.grow2(3), false);\n        assert_eq!(pool.grow2(4), true);";
     assert_shadowed_handler_not_credited(&extra, "", tests)
 }
+
+// #9638 re-review: an enclosing function keeps its scope however its
+// signature or name spells `impl`, and a handler in another (one-line)
+// module is not the caller's.
+fn nested_grow2_extra(outer_head: &str) -> String {
+    format!(
+        "{DIVERGING_DIE}{outer_head} {{\n    const die: fn(Overflow) -> bool = |_| false;\n    impl Pool {{\n        pub fn grow2(&mut self, wanted: usize) -> bool {{\n            self.try_grow(wanted).unwrap_or_else(die)\n        }}\n    }}\n}}\n"
+    )
+}
+
+const GROW2_TESTS: &str =
+    "        assert_eq!(pool.grow2(3), false);\n        assert_eq!(pool.grow2(4), true);";
+
+#[test]
+fn unwrap_tail_caller_in_a_function_whose_spelling_contains_impl_is_not_credited()
+-> Result<(), String> {
+    for head in [
+        "fn outer(_a: impl Copy)",
+        "fn outer() -> impl Copy",
+        "fn implode()",
+        "fn simple_impl()",
+        "pub unsafe fn outer()",
+    ] {
+        assert_shadowed_handler_not_credited(&nested_grow2_extra(head), "", GROW2_TESTS)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn unwrap_tail_handler_in_the_callers_own_module_stays_credited() -> Result<(), String> {
+    let extra = format!(
+        "mod m {{\n    use super::*;\n{}\n    impl Pool {{\n        pub fn grow2(&mut self, wanted: usize) -> bool {{\n            self.try_grow(wanted).unwrap_or_else(die)\n        }}\n    }}\n}}\n",
+        DIVERGING_DIE.replace("fn die", "pub fn die")
+    );
+    let finding = forwarder_finding(&extra, "", GROW2_TESTS)?;
+    assert_eq!(finding["classification"], "exposed", "{finding}");
+    Ok(())
+}
+
+#[test]
+fn unwrap_tail_handler_in_a_one_line_sibling_module_is_not_credited() -> Result<(), String> {
+    for extra in [
+        "mod a { pub fn die<T>(_: super::Overflow) -> T { panic!(\"overflow\") } }\nimpl Pool {\n    pub fn grow2(&mut self, wanted: usize) -> bool {\n        self.try_grow(wanted).unwrap_or_else(die)\n    }\n}\n",
+        "mod a { pub fn die<T>(_: super::Overflow) -> T { panic!(\"overflow\") } } impl Pool { pub fn grow2(&mut self, wanted: usize) -> bool { self.try_grow(wanted).unwrap_or_else(die) } }\n",
+    ] {
+        assert_shadowed_handler_not_credited(extra, "", GROW2_TESTS)?;
+    }
+    Ok(())
+}
+
+// #9638 review lead: a qualifier or `std` path must really denote the
+// workspace type / the standard library.
+#[test]
+fn unwrap_tail_type_qualified_handler_on_a_different_or_ambiguous_type_is_not_credited()
+-> Result<(), String> {
+    // `Self::die` from an impl of a different type than the one defining it.
+    let other = "pub struct Other;\nimpl Other {\n    pub fn die<T>(_: Overflow) -> T {\n        panic!(\"overflow\")\n    }\n}\n";
+    let forwarder = unwrapping_forwarder("self.try_grow(wanted).unwrap_or_else(Self::die)");
+    assert_shadowed_handler_not_credited(other, &forwarder, UNWRAP_TESTS)?;
+    // `Pool::die` when two workspace types are named `Pool` (the second in
+    // another module, with the inherent `die`).
+    let twin = "mod alt {\n    pub struct Pool;\n    impl Pool {\n        pub fn die<T>(_: super::Overflow) -> T {\n            panic!(\"overflow\")\n        }\n    }\n}\n";
+    let forwarder = unwrapping_forwarder("self.try_grow(wanted).unwrap_or_else(Pool::die)");
+    assert_shadowed_handler_not_credited(twin, &forwarder, UNWRAP_TESTS)?;
+    Ok(())
+}
+
+#[test]
+fn unwrap_tail_process_exit_handler_with_a_rebound_std_is_not_credited() -> Result<(), String> {
+    let abort_die = "fn die<T>(_: Overflow) -> T {\n    std::process::abort()\n}\n";
+    let forwarder = unwrapping_forwarder("self.try_grow(wanted).unwrap_or_else(die)");
+    for rebinding in [
+        "mod std {\n    pub mod process {\n        pub fn abort() {}\n    }\n}\n",
+        "use other_crate as std;\n",
+        "extern crate other_crate as std;\n",
+    ] {
+        let extra = format!("{abort_die}{rebinding}");
+        assert_shadowed_handler_not_credited(&extra, &forwarder, UNWRAP_TESTS)?;
+    }
+    Ok(())
+}

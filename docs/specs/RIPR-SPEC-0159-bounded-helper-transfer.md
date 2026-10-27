@@ -131,13 +131,15 @@ can only hint that a caller "may lead here" without changing anything.
   the type) in the caller's file, no other mention of the name in the caller
   (a parameter, nested `fn`/`const`/`static`/`let` or a glob import in its
   body), defined in the caller's own file, inline module and enclosing
-  function scope, with a `Type::` qualifier that is the workspace type and
+  function scope (read by whole-word item parsing, so a function whose
+  signature or name spells `impl` still opens its own scope), with a `Type::` qualifier that is the workspace type and
   not a generic parameter, local item or import of the same name, called on a
   hop whose callee declares `Result<..>` or `Option<..>` with no workspace
   type of that name, and its whole body must be one
   unconditional `panic!`, `unreachable!`, `unimplemented!`, `todo!` (none
   rebound by a user macro or import) or `std::process::abort()` /
-  `std::process::exit(..)`. Everything else keeps the abstention: a
+  `std::process::exit(..)` (with no item or import named `std` anywhere in
+  the workspace). Everything else keeps the abstention: a
   closure (even one that panics), a substituting handler (`unwrap_or(..)`,
   `unwrap_or_default()`, `|_| false`), a handler that sometimes returns, a
   module-qualified, generic or external path, `.ok()`, `.is_ok()`,
