@@ -4843,13 +4843,20 @@ pub(crate) fn expected_side_is_live(
     // A one-line or nested changed `if` has no branch pair this scan can read.
     // The witness above already credited the pin, and a pair that cannot be
     // read cannot show the pin is live, so withhold rather than let a dead pin
-    // stand (#10776). Only a plain `if` statement is held to this: a changed
-    // ternary, `else if` or other expression keeps the previous behavior.
+    // stand (#10776). Only a plain `if` statement that opens a brace is held to
+    // this: a changed ternary, `else if` or other expression keeps the previous
+    // behavior.
     let head = lines[start].trim_start();
     // `else if` heads are left to the scan as before: their own closer sits on
     // the same line, so the net-brace test here does not describe them.
     let is_if_statement = ["if (", "if("].iter().any(|form| head.starts_with(form));
-    if is_if_statement && changed_if_opens_its_own_body(&lines, start) != Some(true) {
+    // A brace-less `if (c) return 1;` (#10463) never reached the brace scan and
+    // keeps its previous behavior, as does a condition that continues onto the
+    // next line: only a line that opens a brace is read wrongly by the scan.
+    if is_if_statement
+        && head.contains('{')
+        && changed_if_opens_its_own_body(&lines, start) != Some(true)
+    {
         return Some(false);
     }
     let (true_expr, false_expr) = branch_return_expressions(&lines, start)?;

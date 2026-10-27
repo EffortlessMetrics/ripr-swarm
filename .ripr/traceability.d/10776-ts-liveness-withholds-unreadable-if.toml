@@ -6,4 +6,5 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests.rs::expected_side_is_live_withholds_a_changed_if_in_a_nested_function",
   "crates/ripr/src/analysis/language/typescript/tests.rs::expected_side_is_live_leaves_a_changed_ternary_alone",
   "crates/ripr/src/analysis/language/typescript/tests.rs::expected_side_is_live_leaves_an_else_if_head_to_the_scan",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::expected_side_is_live_leaves_a_braceless_if_alone",
 ]

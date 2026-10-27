@@ -15891,6 +15891,36 @@ fn expected_side_is_live_leaves_an_else_if_head_to_the_scan() {
     );
 }
 
+/// #10776 control: a brace-less one-line `if (c) return 1;` (#10463) never
+/// reached the brace scan, so it keeps its previous behavior (`None`).
+#[test]
+fn expected_side_is_live_leaves_a_braceless_if_alone() {
+    let owner = TypeScriptOwner {
+        source_text: Some(
+            concat!(
+                "export function f(s: number): number {\n",
+                "    if (s >= 404) return 1;\n",
+                "    return 2;\n",
+                "}",
+            )
+            .to_string(),
+        ),
+        params: vec!["s".to_string()],
+        ..boundary_witness_owner()
+    };
+    assert_eq!(
+        expected_side_is_live(
+            &owner,
+            "    if (s >= 404) return 1;",
+            "s",
+            "404",
+            &["404".to_string()],
+            "1",
+        ),
+        None
+    );
+}
+
 /// #10776 control: a changed ternary is not an `if` statement. It has no
 /// branch pair to read, and its credit stands as before (`None`).
 #[test]
