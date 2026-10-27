@@ -1,0 +1,45 @@
+{
+  "case_id": "spec0048-flow-lookup-default",
+  "subject_id": "authored-spec0048-const-flow",
+  "diff": "cases/spec0048-flow-lookup-default.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 8
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "behavior_selector_const",
+  "test_shape": "selector_const_read_through_table_lookup",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "pub const LOOKUP_DEFAULT: u32 = 11;",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "the edit itself: the constant is only the miss default of a table read, and the test asks for a key that is in the table, so no value of lookup_default changes the result"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The constant is only the miss default of a table read, and the test asks for a key that is in the table, so no value of LOOKUP_DEFAULT changes the result. RIPR-SPEC-0048 same-file direct reader row: a lookup stays opaque_config_lookup.",
+  "labeling_observation": {
+    "ripr_commit": "01097634",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": []
+}

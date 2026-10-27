@@ -1,0 +1,45 @@
+{
+  "case_id": "spec0048-flow-other-file-reader",
+  "subject_id": "authored-spec0048-const-flow",
+  "diff": "cases/spec0048-flow-other-file-reader.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 37
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "behavior_selector_const",
+  "test_shape": "selector_const_read_in_another_file",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "pub const OTHER_FILE_LIMIT: u32 = 101;",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "the edit itself: the only reader sits in reader"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The only reader sits in reader.rs and the test uses a value far from the boundary, so no value from 2 up changes the result. A reader in another file stays a limitation.",
+  "labeling_observation": {
+    "ripr_commit": "01097634",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": []
+}
