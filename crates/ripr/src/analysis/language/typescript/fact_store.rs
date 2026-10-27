@@ -213,8 +213,17 @@ pub(crate) struct TypeScriptFileFactStore {
 
 impl TypeScriptFileFactStore {
     pub(crate) fn at(workspace_root: &Path) -> Self {
-        let dir = seam_cache::cache_layer_dir(workspace_root, CacheLayer::TypeScriptFileFacts)
-            .join(TYPESCRIPT_FILE_FACT_SCHEMA_VERSION);
+        Self::at_base(&seam_cache::cache_base_dir(workspace_root))
+    }
+
+    /// Base-anchored constructor for cache maintenance (mirrors seam_cache's
+    /// `at_base` family): `base` is the already-resolved cache base.
+    pub(crate) fn at_base(base: &Path) -> Self {
+        let dir = seam_cache::cache_layer_versioned_dir(
+            base,
+            CacheLayer::TypeScriptFileFacts,
+            TYPESCRIPT_FILE_FACT_SCHEMA_VERSION,
+        );
         // `{base}/typescript-file-facts/{version}`: the base is two
         // components up, derived lexically as seam_cache's `at` does.
         let base = dir
@@ -233,10 +242,17 @@ impl TypeScriptFileFactStore {
 
     /// The entry directory this cache writes into, with whether storing
     /// there also creates subdirectories. Entry files are written directly
-    /// in `dir` (mirrors `RepoFileFactCache::entry_dir`).
-    #[cfg(test)]
+    /// in `dir` (mirrors `RepoFileFactCache::entry_dir`). Production
+    /// (seam_cache `production_entry_dirs`, doctor's writability probe) and
+    /// the constructor pin both call this — never a hand-written copy.
     pub(crate) fn entry_dir(&self) -> (PathBuf, bool) {
         (self.dir.clone(), false)
+    }
+
+    /// Borrow of the versioned entry directory (`entry_dir` without the flag),
+    /// for the layer-inventory pin in seam_cache's tests.
+    pub(crate) fn dir_path(&self) -> &Path {
+        &self.dir
     }
 
     /// Entry file for `(relative, source)` — the test seam that locates an

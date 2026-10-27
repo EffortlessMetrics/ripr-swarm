@@ -80,6 +80,7 @@ mod enum_member_guard;
 mod error_payload_guard;
 mod extraction_cache;
 mod fact_store;
+pub(crate) use fact_store::TypeScriptFileFactStore;
 #[cfg(test)]
 mod fact_store_tests;
 mod field_update_guard;

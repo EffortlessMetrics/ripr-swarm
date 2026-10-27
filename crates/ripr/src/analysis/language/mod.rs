@@ -33,6 +33,8 @@ mod rust;
 pub(crate) use rust::producer_gap_names_seam_shape;
 #[cfg(feature = "lang-typescript")]
 mod typescript;
+#[cfg(feature = "lang-typescript")]
+pub(crate) use typescript::TypeScriptFileFactStore;
 
 pub(crate) use adapter::{
     LanguageAdapter, LanguageDiffResult, LanguageRepoResult, PreviewFactCacheStats, RepoCapFired,
