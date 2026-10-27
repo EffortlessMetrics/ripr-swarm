@@ -308,9 +308,12 @@ fn directory_link_aliases_walked_directory(path: &Path, root: &Path) -> bool {
     let (Ok(target), Ok(root)) = (std::fs::canonicalize(path), std::fs::canonicalize(root)) else {
         return false;
     };
-    target
-        .strip_prefix(&root)
-        .is_ok_and(|relative| !crate::config::is_detectable_excluded_typescript_path(relative))
+    // The walk silently skips a directory it cannot list, so an alias of one
+    // would hide sources the walk never saw.
+    std::fs::read_dir(&target).is_ok()
+        && target
+            .strip_prefix(&root)
+            .is_ok_and(|relative| !crate::config::is_detectable_excluded_typescript_path(relative))
 }
 
 /// `true` for directory entry types that are neither directories, regular
@@ -836,6 +839,29 @@ mod tests {
             "the alias is not followed into the index: {:?}",
             scan.files
         );
+        Ok(())
+    }
+
+    /// A directory the walk cannot list hides its sources, so a link aliasing
+    /// it stays counted (#10829). Skipped when the process can read it anyway
+    /// (running as root).
+    #[cfg(unix)]
+    #[test]
+    fn discovery_counts_an_alias_of_a_directory_it_cannot_list() -> std::io::Result<()> {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        let workspace = TempWorkspace::new("link-unlistable");
+        workspace.write("src/keep.ts", "export const keep = 1;\n");
+        workspace.write("private/lost.test.ts", "test('x', () => {});\n");
+        let private = workspace.0.join("private");
+        fs::set_permissions(&private, fs::Permissions::from_mode(0o300))?;
+        symlink(&private, workspace.0.join("alias.md"))?;
+        let unlistable = fs::read_dir(&private).is_err();
+        let scan =
+            visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        fs::set_permissions(&private, fs::Permissions::from_mode(0o700))?;
+        if unlistable {
+            assert_eq!(scan.skipped_links, 1, "{:?}", scan.files);
+        }
         Ok(())
     }
 
