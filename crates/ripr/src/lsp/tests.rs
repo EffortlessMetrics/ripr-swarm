@@ -28525,21 +28525,6 @@ fn framed_lsp_zero_git_timeout_commits_limited_once_and_recovers() -> Result<(),
             diff["recovery"],
             "retry ripr.refresh (workspace/executeCommand)"
         );
-        let ends = limited
-            .iter()
-            .filter(|message| {
-                message["method"] == "$/progress" && message["params"]["value"]["kind"] == "end"
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(
-            ends.len(),
-            1,
-            "one accepted limited refresh must end exactly once"
-        );
-        assert_eq!(
-            ends[0]["params"]["value"]["message"],
-            "analysis completed with limited evidence"
-        );
         write_lsp_message(
             &mut client_write,
             serde_json::json!({
@@ -28548,7 +28533,42 @@ fn framed_lsp_zero_git_timeout_commits_limited_once_and_recovers() -> Result<(),
             }),
         )
         .await?;
-        let workspace_status = read_lsp_response(&mut client_read, 3).await?;
+        // The transport interleaves responses with server-sent messages, so
+        // the refresh's `$/progress` End may follow its response on the wire
+        // (#10768 shard 3). The next response is the barrier: the End was
+        // queued before the refresh answered.
+        let (workspace_status, settled) = read_lsp_response_with_notifications_and_progress(
+            &mut client_read,
+            &mut client_write,
+            3,
+        )
+        .await?;
+        let progress_of = |kind: &str| {
+            limited
+                .iter()
+                .chain(&settled)
+                .filter(|message| {
+                    message["method"] == "$/progress" && message["params"]["value"]["kind"] == kind
+                })
+                .count()
+        };
+        // A zero git deadline can also end the attempt before this client
+        // answers `workDoneProgress/create`; that token stays silent, with no
+        // Begin and no End (#1971). A token that began ends exactly once.
+        let (begins, ends) = (progress_of("begin"), progress_of("end"));
+        assert!(begins <= 1, "one refresh announces at most once");
+        assert_eq!(
+            ends, begins,
+            "one accepted limited refresh must end exactly once"
+        );
+        if let Some(end) = limited.iter().chain(&settled).find(|message| {
+            message["method"] == "$/progress" && message["params"]["value"]["kind"] == "end"
+        }) {
+            assert_eq!(
+                end["params"]["value"]["message"],
+                "analysis completed with limited evidence"
+            );
+        }
         assert_eq!(workspace_status["result"]["diagnostics"]["findings"], 0);
         assert_eq!(workspace_status["result"]["run_status"], "limited");
 
