@@ -431,6 +431,53 @@ pub(crate) struct SafeGatePredicate {
     pub(crate) static_unknown_only: bool,
 }
 
+/// #10733: the saved ledger's schema keeps no `analysis_scope`, so a refusal
+/// disclosed only under the source's `analysis_scope` would be lost in the
+/// saved document and the gate would read a healthy ledger. Stamp the
+/// explicit `downstream_consumable: false` marker into the propagated
+/// `run_limitations` position the gate's generic non-consumable check reads.
+/// Producer entries keep their members; only the marker is added, and only
+/// when no propagated entry already carries an explicit false. Typed
+/// entries naming the refusal are stamped; with no typed status (or no
+/// matching entry) a marker-only record is appended, so the retention is
+/// visible as retention rather than a silent edit of producer diagnostics.
+fn retain_non_consumable_marker(run_limitations: &mut Option<Value>, refusal_status: Option<&str>) {
+    let has_marker = |entries: &[Value]| {
+        entries
+            .iter()
+            .any(|entry| entry.get("downstream_consumable").and_then(Value::as_bool) == Some(false))
+    };
+    match run_limitations {
+        Some(Value::Array(entries)) => {
+            if has_marker(entries) {
+                return;
+            }
+            let mut stamped = false;
+            if let Some(status) = refusal_status {
+                for entry in entries.iter_mut() {
+                    let names_refusal = entry.get("category").and_then(Value::as_str)
+                        == Some(status)
+                        || entry.get("run_status").and_then(Value::as_str) == Some(status);
+                    if names_refusal && let Some(object) = entry.as_object_mut() {
+                        object.insert("downstream_consumable".to_string(), Value::Bool(false));
+                        stamped = true;
+                    }
+                }
+            }
+            if !stamped {
+                entries.push(serde_json::json!({"downstream_consumable": false}));
+            }
+        }
+        // A non-array run_limitations member is malformed producer data; it
+        // cannot carry the marker honestly and is left for the downstream
+        // validators to reject.
+        Some(_) => {}
+        None => {
+            *run_limitations = Some(serde_json::json!([{"downstream_consumable": false}]));
+        }
+    }
+}
+
 pub(crate) fn build_gap_decision_ledger_report(
     input: GapDecisionLedgerInput,
 ) -> GapDecisionLedgerReport {
@@ -495,22 +542,55 @@ pub(crate) fn build_gap_decision_ledger_report(
     // is not a healthy empty run — nothing was analyzed. Admitting it as
     // `no_records` lets a saved refusal ride into a gate pass as an empty
     // denominator; refuse admission with the typed reason and land on
-    // `blocked`, the ledger's existing rejected-input status. Bounded and
-    // partial documents keep their existing handling: the gate refuses them
-    // by their own typed names, so only the refusal statuses are admitted
-    // here (the generic non-consumable record check stays gate-side).
-    if let Some(status) = source_value_snapshot
+    // `blocked`, the ledger's existing rejected-input status. The marker
+    // counts from EITHER position the check schema opens for it —
+    // `analysis_scope` or `run_limitations[]` — and it must be explicit: a
+    // known refusal status without the flag is the healthy complete shape
+    // (RIPR-SPEC-0362 identity) and keeps its ordinary admission. Bounded,
+    // partial and incomplete documents keep their existing handling: the
+    // gate refuses them by their own typed names, so the ledger does not
+    // steal that vocabulary (a bounded envelope also carries an explicit
+    // false flag, which is exactly why the exclusion is required here).
+    let refusal_status = source_value_snapshot
         .as_ref()
-        .and_then(crate::output::gate::refusal_run_status)
+        .and_then(crate::output::gate::refusal_run_status);
+    let refuses_typed_handling = source_value_snapshot.as_ref().is_some_and(|value| {
+        crate::output::gate::discloses_limited_findings_bound(value)
+            || crate::output::gate::discloses_limited_partial_scope(value)
+            || crate::output::gate::discloses_incomplete_analysis_outcome(value)
+    });
+    if !refuses_typed_handling
+        && source_value_snapshot
+            .as_ref()
+            .is_some_and(crate::output::gate::discloses_non_consumable_record)
     {
-        warnings.push(format!(
-            "gap decision ledger input {} is a producer refusal (run_status: {status}, \
-             downstream_consumable: false): nothing was analyzed, so no gap records can be \
-             derived; follow the refusal's repair_route (narrower diff or scope budget), \
-             re-run the check, and rebuild this ledger before gating",
-            input.records_path,
-        ));
+        match refusal_status {
+            Some(status) => {
+                warnings.push(format!(
+                    "gap decision ledger input {} is a producer refusal (run_status: {status}, \
+                     downstream_consumable: false): nothing was analyzed, so no gap records can \
+                     be derived; follow the refusal's repair_route (narrower diff or scope \
+                     budget), re-run the check, and rebuild this ledger before gating",
+                    input.records_path,
+                ));
+            }
+            None => {
+                warnings.push(format!(
+                    "gap decision ledger input {} discloses a non-consumable producer record \
+                     (downstream_consumable: false) with no known typed run status: nothing \
+                     was analyzed, so no gap records can be derived; follow its repair_route \
+                     and re-run before gating",
+                    input.records_path,
+                ));
+            }
+        }
         parsed_cleanly = false;
+        // The saved ledger's schema keeps no `analysis_scope`, so a refusal
+        // disclosed only there would be lost in the saved document — the
+        // gate would read a healthy ledger and pass it. Retain the marker in
+        // the propagated `run_limitations` position the gate's generic
+        // non-consumable check reads, whichever source position disclosed it.
+        retain_non_consumable_marker(&mut run_limitations, refusal_status);
     }
 
     if input.source_kind == GapDecisionLedgerSourceKind::CheckOutput {

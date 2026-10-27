@@ -1677,7 +1677,17 @@ pub(crate) fn discloses_non_consumable_record(value: &Value) -> bool {
 /// record. Runs after the typed bounded/partial/incomplete checks so those
 /// keep their own named repairs; the generic check also sees partial and
 /// bounded envelopes, which is exactly why the order matters.
+///
+/// RIPR-SPEC-0362 identity: the explicit `downstream_consumable: false` is
+/// required — from either the `analysis_scope` or the `run_limitations[]`
+/// position. A known refusal status WITHOUT the explicit flag is the healthy
+/// complete shape (a complete producer never writes the member), so it is
+/// admitted here, exactly like any other consumable document; refusing it
+/// would report a refusal the document does not disclose.
 pub(crate) fn refusal_input_error(value: &Value, path: &Path, role: &str) -> Option<String> {
+    if !discloses_non_consumable_record(value) {
+        return None;
+    }
     if let Some(status) = refusal_run_status(value) {
         Some(format!(
             "gate input {} discloses a producer refusal (run_status: {status}, \
