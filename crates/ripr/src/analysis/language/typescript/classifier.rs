@@ -5118,14 +5118,22 @@ fn opens_method_body(segment: &str) -> bool {
         "if", "else", "for", "while", "switch", "catch", "with", "do", "return", "new", "function",
         "class",
     ];
+    // A statement without a trailing `;` stays in `segment`, so the signature
+    // is only the text after the last newline outside a parameter list
+    // (`log(x)\nwhile (go) {` must not read `log(x)` as a method head).
     let mut depth = 0i64;
     let mut closed_a_list = false;
-    for c in segment.chars() {
+    let mut head_start = 0;
+    for (index, c) in segment.char_indices() {
         match c {
             '(' => depth += 1,
             ')' => {
                 depth -= 1;
                 closed_a_list = true;
+            }
+            '\n' if depth == 0 => {
+                head_start = index + 1;
+                closed_a_list = false;
             }
             _ => {}
         }
@@ -5133,7 +5141,10 @@ fn opens_method_body(segment: &str) -> bool {
     if depth != 0 || !closed_a_list {
         return false;
     }
-    let mut rest = segment.trim_start().trim_start_matches('*').trim_start();
+    let mut rest = segment[head_start..]
+        .trim_start()
+        .trim_start_matches('*')
+        .trim_start();
     loop {
         let word_end = rest
             .find(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
@@ -5151,8 +5162,54 @@ fn opens_method_body(segment: &str) -> bool {
         if word.is_empty() || NOT_A_NAME.contains(&word) {
             return false;
         }
-        return after.starts_with('(') || after.starts_with('<');
+        return signature_tail(after).is_some_and(|tail| tail.is_empty() || tail.starts_with(':'));
     }
+}
+
+/// The text after a method's optional `<...>` type-parameter list and its
+/// balanced `(...)` parameter list, trimmed; `None` when `text` does not open
+/// with them. `pick<T>(n)` is a head and a comparison like `f(s) < limit` has
+/// trailing text that is not a return type.
+fn signature_tail(text: &str) -> Option<&str> {
+    let mut rest = text;
+    if rest.starts_with('<') {
+        let mut depth = 0i64;
+        let mut previous = ' ';
+        let mut end = None;
+        for (index, c) in rest.char_indices() {
+            match c {
+                '<' => depth += 1,
+                // `=>` inside a type argument is an arrow, not a closing bracket.
+                '>' if previous != '=' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = Some(index + 1);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+            previous = c;
+        }
+        rest = rest[end?..].trim_start();
+    }
+    if !rest.starts_with('(') {
+        return None;
+    }
+    let mut depth = 0i64;
+    for (index, c) in rest.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(rest[index + 1..].trim());
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// The expression of a single-line `return <expr>;` statement, when `trimmed`

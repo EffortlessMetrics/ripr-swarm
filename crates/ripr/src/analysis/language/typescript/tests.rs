@@ -15778,6 +15778,7 @@ fn branch_return_expressions_keeps_control_heads_and_object_arguments() {
         "    } catch (e) {",
         "    run(s, {",
         "    const o = {",
+        "    f(s) < limit {",
     ] {
         let lines: Vec<&str> = [
             "export function f(s: number): number {",
@@ -15937,6 +15938,44 @@ fn expected_side_is_live_withholds_a_changed_if_in_a_nested_function() {
         ),
         Some(false)
     );
+}
+
+/// #10776 control: a statement without a trailing `;` stays in the text before
+/// the next block head, but the call is not that block's signature, so the
+/// block is plain and the scan still reads the owner's returns. A decorator on
+/// its own line does not hide the method it decorates.
+#[test]
+fn branch_return_expressions_reads_a_block_after_a_semicolon_less_call() {
+    let after_call: Vec<&str> = [
+        "export function f(s: number): number {",
+        "    log(s)",
+        "    while (go(s)) {",
+        "        if (s === 404) {",
+        "            return 1;",
+        "        }",
+        "        return 2;",
+        "    }",
+        "    return 3;",
+        "}",
+    ]
+    .into_iter()
+    .collect();
+    assert!(branch_return_expressions(&after_call, 3).is_some());
+    let decorated: Vec<&str> = [
+        "export function f(s: number): number {",
+        "    const o = { @Get()",
+        "    pick(n: number) {",
+        "        if (n === 404) {",
+        "            return 1;",
+        "        }",
+        "        return 2;",
+        "    } };",
+        "    return o.pick(s);",
+        "}",
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(branch_return_expressions(&decorated, 3), None);
 }
 
 /// #10776: a changed `if` inside a class method is withheld the same way.
