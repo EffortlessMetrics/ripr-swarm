@@ -2317,3 +2317,57 @@ fn multiline_imports_and_evaluated_code_withhold_credit() -> Check {
     }
     Ok(())
 }
+
+// Class-creation and construction effects the model does not evaluate (#9619).
+#[test]
+fn a_dataclass_whose_creation_or_construction_may_raise_is_not_credited() -> Check {
+    let base = dc_default();
+    let factory = "from dataclasses import dataclass, field\n\n\n@dataclass\nclass Invoice:\n    amount: int\n    tax_rate: float = 0.25\n    tags: list = field(default_factory=fail)\n\n    def total(self):\n        return round(self.amount * (1 + self.tax_rate))\n";
+    for (label, source, test) in [
+        ("failing default_factory", factory.to_string(), DC_TEST),
+        (
+            "call default on an async method",
+            format!("{base}\n    async def other(self, extra=boom()):\n        return 1\n"),
+            DC_TEST,
+        ),
+        (
+            "call evaluated at class creation as a parameter default",
+            format!("{base}\n    def other(self, extra=boom()):\n        return 1\n"),
+            DC_TEST,
+        ),
+        (
+            "builtin annotation rebound to a marker",
+            base.replace("\n\n\n@dataclass", "\nfloat = ClassVar\n\n\n@dataclass"),
+            DC_TEST,
+        ),
+        (
+            "unknown decorator on another method",
+            format!("{base}\n    @tweak\n    def other(self):\n        return 1\n"),
+            DC_TEST,
+        ),
+        (
+            "test takes a fixture that may patch the class",
+            base.clone(),
+            "from hostile.settings import Invoice\n\n\ndef test_it(rate):\n    assert Invoice(100).total() == 120\n",
+        ),
+    ] {
+        let finding = classify_dc(&source, DC_NEW, &[], test)?;
+        assert_lambda_withheld(&finding, label);
+    }
+    // A directly parametrized argument is not a fixture request.
+    let parametrized = "import pytest\nfrom hostile.settings import Invoice\n\n\n@pytest.mark.parametrize(\"case\", [1])\ndef test_it(case):\n    assert Invoice(100).total() == 120\n";
+    let finding = classify_dc(&base, DC_NEW, &[], parametrized)?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    // Builtin descriptors and `list`/`dict` factories keep the credit.
+    let plain = format!(
+        "{}\n    @property\n    def big(self):\n        return self.amount >= 1000\n",
+        base.replace(
+            "    amount: int\n",
+            "    amount: int\n    tags: list = field(default_factory=list)\n"
+        )
+        .replace("import dataclass", "import dataclass, field")
+    );
+    let finding = classify_dc(&plain, DC_NEW, &[], DC_TEST)?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}

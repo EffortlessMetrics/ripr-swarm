@@ -1,0 +1,10 @@
+# Registers the dataclass-default honesty fixtures (#10742) under RIPR-SPEC-0028.
+[[extend]]
+id = "RIPR-SPEC-0028"
+fixtures = [
+  "fixtures/python_dataclass_default_failing_factory",
+  "fixtures/python_dataclass_default_call_default_sync",
+  "fixtures/python_dataclass_default_call_default_async",
+  "fixtures/python_dataclass_default_classvar_rebound",
+  "fixtures/python_dataclass_default_unknown_method_decorator",
+]

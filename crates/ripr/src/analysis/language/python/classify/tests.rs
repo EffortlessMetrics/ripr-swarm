@@ -1295,13 +1295,12 @@ fn parametrize_case_on_boundary_stays_exposed() -> Result<(), String> {
 }
 
 /// Shapes whose cases are not statically certain keep the pre-#4559
-/// unresolved verdict: argvalues named by a variable, `indirect=`, and an
-/// argname the test body rebinds before the call.
+/// unresolved verdict: argvalues named by a variable and an argname the test
+/// body rebinds before the call.
 #[test]
 fn uncertain_parametrize_cases_stay_unresolved() -> Result<(), String> {
     for tests in [
         "import pytest\nfrom src.subject import bulk_discount\n\nCASES = [(50, 0.0)]\n\n@pytest.mark.parametrize(\"quantity, rate\", CASES)\ndef test_bulk_discount(quantity, rate):\n    assert bulk_discount(quantity) == rate\n",
-        "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"quantity\", [50], indirect=True)\ndef test_bulk_discount(quantity):\n    assert bulk_discount(quantity) == 0.0\n",
         "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"quantity\", [50])\ndef test_bulk_discount(quantity):\n    quantity = quantity * 2\n    assert bulk_discount(quantity) == 0.0\n",
     ] {
         let finding = classify_case(
@@ -1321,6 +1320,69 @@ fn uncertain_parametrize_cases_stay_unresolved() -> Result<(), String> {
             "{tests}: {:?}",
             finding.evidence
         );
+    }
+    Ok(())
+}
+
+/// `indirect=True` routes the case value through a fixture of that name, so
+/// the test reads whatever the fixture returns: the fixture limit applies as
+/// it does to any unread fixture, and a parametrize mark does not lift it
+/// (#9619).
+#[test]
+fn an_indirect_parametrize_argname_is_an_unresolved_fixture() -> Result<(), String> {
+    let module = |mark: &str| {
+        format!(
+            "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"quantity\", [50]{mark})\ndef test_bulk_discount(quantity):\n    assert bulk_discount(quantity) == 0.0\n"
+        )
+    };
+    let class = |mark: &str| {
+        format!(
+            "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"quantity\", [50]{mark})\nclass TestBulk:\n    def test_bulk_discount(self, quantity):\n        assert bulk_discount(quantity) == 0.0\n"
+        )
+    };
+    let limit = |tests: &str| -> Result<_, String> {
+        Ok(classify_case(
+            DISCOUNT_SOURCE,
+            tests,
+            2,
+            "    if quantity > 100:",
+            "    if quantity >= 100:",
+        )?
+        .static_limit_kind)
+    };
+    // A value the read cannot settle (#10685) may route the name too, and so
+    // may a positional `indirect` or a splat that can carry one.
+    for mark in [
+        ", indirect=True",
+        ", indirect=IND",
+        ", indirect=[\"quantity\"]",
+        ", indirect=[NAME]",
+        ", indirect=routes()",
+        ", indirect=1",
+        ", True",
+        ", IND",
+        ", **{\"indirect\": True}",
+        ", *REST",
+    ] {
+        for (shape, tests) in [("module", module(mark)), ("class", class(mark))] {
+            assert_eq!(
+                limit(&tests)?,
+                Some(crate::domain::StaticLimitKind::UnresolvedPytestFixture),
+                "{shape}{mark}"
+            );
+        }
+    }
+    // Control: values that leave the name direct keep it a pytest value.
+    for mark in [
+        ", indirect=False",
+        ", indirect=None",
+        ", indirect=[\"other\"]",
+        ", indirect=()",
+        ", False",
+    ] {
+        for (shape, tests) in [("module", module(mark)), ("class", class(mark))] {
+            assert_eq!(limit(&tests)?, None, "{shape}{mark}");
+        }
     }
     Ok(())
 }

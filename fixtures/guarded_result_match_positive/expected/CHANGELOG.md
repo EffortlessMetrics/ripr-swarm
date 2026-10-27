@@ -276,3 +276,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — guarded_result_match_positive (24)
+
+Reason:
+RIPR-SPEC-0122: plain-language repair-route refusal names the missing evidence without internal fact codes (#10644)
+
+Command:
+`cargo xtask goldens bless guarded_result_match_positive --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

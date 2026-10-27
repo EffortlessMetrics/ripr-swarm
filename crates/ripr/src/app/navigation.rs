@@ -65,6 +65,34 @@ pub(crate) struct GapRepairRoute {
     pub(crate) finding_id: String,
     pub(crate) gap_id: String,
     pub(crate) base: String,
+    /// Tracked production files that differ from HEAD in the analyzed tree
+    /// (#10698). The start refuses to begin while any exist, so the check
+    /// screen prints their commit before the start. Empty on a clean tree.
+    pub(crate) uncommitted_files: Vec<String>,
+}
+
+impl GapRepairRoute {
+    /// The commit step that must precede the gap-bound start when the analyzed
+    /// tree has uncommitted production edits (#10698). `None` on a clean tree.
+    ///
+    /// The command runs from any directory: `git -C <root>` anchors it at the
+    /// analyzed root, `--literal-pathspecs` keeps names like `src/[ab].py`
+    /// literal, and the files are shell-quoted and spelled relative to that root.
+    pub(crate) fn commit_prerequisite(&self, root_display: &str) -> Option<String> {
+        if self.uncommitted_files.is_empty() {
+            return None;
+        }
+        let files = self
+            .uncommitted_files
+            .iter()
+            .map(|file| shell_arg(file))
+            .collect::<Vec<_>>()
+            .join(" ");
+        Some(format!(
+            "git -C {} --literal-pathspecs commit -m \"<message>\" -- {files}",
+            shell_arg(root_display)
+        ))
+    }
 }
 
 /// Why the check pipeline offered no repair start for its selected finding
@@ -164,10 +192,12 @@ impl RepairRouteRefusal {
                 if observed_boundary {
                     // #10622: the input is already there; only the assertion
                     // is weak, so do not say the boundary evidence is missing.
-                    let others: Vec<&str> = missing
+                    // #10644: plain phrases for the human reader; the machine
+                    // `missing` list stays internal.
+                    let others: Vec<String> = missing
                         .iter()
                         .filter(|item| !super::task_first::is_boundary_value_discriminator(item))
-                        .map(|item| item.as_str())
+                        .map(|item| super::task_first::humanize_route_evidence(item))
                         .collect();
                     let also = if others.is_empty() {
                         String::new()
@@ -186,11 +216,17 @@ impl RepairRouteRefusal {
                      safe test target; follow the Next step above, then rerun `ripr check`"
                         .to_string()
                 } else {
+                    // #10644: name each missing fact in plain words on this
+                    // human screen; the underlying list keeps internal codes.
+                    let plain: Vec<String> = missing
+                        .iter()
+                        .map(|item| super::task_first::humanize_route_evidence(item))
+                        .collect();
                     format!(
                         "no repair start offered: ripr cannot build a repair packet for this \
                          finding yet because it is still missing: {}; follow the Next step \
                          above, then rerun `ripr check`",
-                        missing.join("; ")
+                        plain.join("; ")
                     )
                 }
             }
@@ -224,6 +260,8 @@ pub(crate) struct FindingNavigation {
     list_prefix: String,
     stub_prefix: String,
     repair_suffix: String,
+    /// The analyzed root as the printed commands spell it (`.` for legacy).
+    root_display: String,
     /// The `ripr agent stub` decision the check pipeline computed for its
     /// selected finding (#5471). Absent means no route is printed.
     stub_route: Option<StubRoute>,
@@ -248,6 +286,7 @@ impl FindingNavigation {
             list_prefix: "ripr check".to_string(),
             stub_prefix: "ripr agent stub".to_string(),
             repair_suffix: String::new(),
+            root_display: ".".to_string(),
             stub_route: None,
             repair_route: None,
             gap_repair_route: None,
@@ -304,6 +343,13 @@ impl FindingNavigation {
             shell_arg(&route.base),
             self.repair_suffix
         )
+    }
+
+    /// The commit step that must precede the gap-bound start when check
+    /// analyzed uncommitted production edits (#10698): the start refuses
+    /// while tracked production files differ from HEAD.
+    pub(crate) fn gap_repair_prerequisite(&self, route: &GapRepairRoute) -> Option<String> {
+        route.commit_prerequisite(&self.root_display)
     }
 
     /// The `ripr repair` start for one seam identity. Repair reads the live
@@ -398,6 +444,7 @@ pub(crate) fn finding_navigation_with_worktree(
             " --root {}",
             shell_arg(&bound_root(&input.root.display().to_string()))
         ),
+        root_display: bound_root(&input.root.display().to_string()),
         stub_route: None,
         repair_route: None,
         gap_repair_route: None,
@@ -480,6 +527,87 @@ mod tests {
     use super::super::task_first::RefusalKind;
     use super::*;
     use std::path::PathBuf;
+
+    /// #10698: the printed commit step works from an unrelated working
+    /// directory and commits a tracked file whose name looks like a glob.
+    #[test]
+    fn commit_prerequisite_commits_literal_paths_from_a_decoy_directory() -> Result<(), String> {
+        use crate::testing::fixture_git::fixture_git_ok as run_git;
+
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| format!("test clock failed: {error}"))?
+            .as_nanos();
+        let base =
+            std::env::temp_dir().join(format!("ripr-commit-hint-{}-{stamp}", std::process::id()));
+        let root = base.join("repo with space");
+        let decoy = base.join("decoy");
+        std::fs::create_dir_all(root.join("src")).map_err(|error| format!("mkdir: {error}"))?;
+        std::fs::create_dir_all(&decoy).map_err(|error| format!("mkdir: {error}"))?;
+        let result = (|| -> Result<(), String> {
+            run_git(&root, &["init"])?;
+            run_git(
+                &root,
+                &["config", "user.email", "ripr-test@example.invalid"],
+            )?;
+            run_git(&root, &["config", "user.name", "RIPR Test"])?;
+            for file in ["src/[ab].py", "src/a.py", "src/b.py"] {
+                std::fs::write(root.join(file), "x = 1\n").map_err(|e| format!("write: {e}"))?;
+            }
+            run_git(&root, &["add", "."])?;
+            run_git(&root, &["commit", "--no-gpg-sign", "-m", "initial"])?;
+            for file in ["src/[ab].py", "src/a.py", "src/b.py"] {
+                std::fs::write(root.join(file), "x = 2\n").map_err(|e| format!("write: {e}"))?;
+            }
+            let route = GapRepairRoute {
+                finding_id: "f".to_string(),
+                gap_id: "gap-1".to_string(),
+                base: "HEAD".to_string(),
+                uncommitted_files: vec!["src/[ab].py".to_string()],
+            };
+            let root_text = root.display().to_string();
+            let command = route
+                .commit_prerequisite(&root_text)
+                .ok_or("no commit step")?;
+            assert!(
+                command.starts_with("git -C '") && command.contains("--literal-pathspecs commit"),
+                "{command}"
+            );
+            assert!(command.ends_with("-- 'src/[ab].py'"), "{command}");
+            let command = command.replace("<message>", "hint");
+            let status = std::process::Command::new("sh")
+                .arg("-c")
+                .arg(&command)
+                .current_dir(&decoy)
+                .env("GIT_AUTHOR_NAME", "t")
+                .env("GIT_AUTHOR_EMAIL", "t@example.invalid")
+                .env("GIT_COMMITTER_NAME", "t")
+                .env("GIT_COMMITTER_EMAIL", "t@example.invalid")
+                .output()
+                .map_err(|error| format!("run commit: {error}"))?;
+            assert!(
+                status.status.success(),
+                "{command}: {}",
+                String::from_utf8_lossy(&status.stderr)
+            );
+            let porcelain = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&root)
+                .args(["status", "--porcelain"])
+                .output()
+                .map_err(|error| format!("status: {error}"))?;
+            let text = String::from_utf8_lossy(&porcelain.stdout).into_owned();
+            // Only the literal file was committed; the glob siblings stay dirty.
+            assert!(!text.contains("[ab].py"), "{text}");
+            assert!(
+                text.contains("src/a.py") && text.contains("src/b.py"),
+                "{text}"
+            );
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&base);
+        result
+    }
 
     /// The `--root` value a drill-in prints for a typed root: the resolved
     /// repository, quoted for the shell.
@@ -672,9 +800,9 @@ mod tests {
         .advisory(gate);
         assert!(
             unobserved.contains(
-                "still missing: producer-owned missing discriminator fact: boundary_value"
-            ),
-            "unobserved boundary keeps the generic wording: {unobserved}"
+                "still missing: a test assertion that pins the changed boundary value exactly"
+            ) && !unobserved.contains("producer-owned missing discriminator fact"),
+            "unobserved boundary renders the plain phrase, not the internal code: {unobserved}"
         );
         let observed = RepairRouteRefusal::Ineligible {
             reason: "repair route not ready".to_string(),

@@ -495,11 +495,16 @@ fn count_name_tokens(text: &str, name: &str) -> usize {
 }
 
 /// Whether `current` and `baseline` fold to different values at some call
-/// over a small grid of integer arguments (every parameter takes each of
-/// [`SEPARATION_GRID`]). More than [`SEPARATION_MAX_PARAMETERS`] parameters
-/// are not searched.
+/// over a grid of integer arguments (every parameter takes each of
+/// [`SEPARATION_SMALL_GRID`]; a single parameter also takes the wider
+/// [`SEPARATION_WIDE_GRID`], so a change a divisor or a saturation hides below
+/// the small values still counts as a real difference). More than
+/// [`SEPARATION_MAX_PARAMETERS`] parameters are not searched.
 fn versions_differ_on_small_inputs(current: &str, baseline: &str) -> bool {
-    const SEPARATION_GRID: [i128; 8] = [0, 1, 2, 3, 5, 6, 7, 10];
+    const SEPARATION_SMALL_GRID: [i128; 8] = [0, 1, 2, 3, 5, 6, 7, 10];
+    const SEPARATION_WIDE_GRID: [i128; 16] = [
+        0, 1, 2, 3, 5, 6, 7, 10, 16, 31, 64, 100, 255, 1000, 4096, 65536,
+    ];
     const SEPARATION_MAX_PARAMETERS: usize = 3;
     let Some(parameters) = parse_clean_source_file(current)
         .and_then(|parse| {
@@ -517,11 +522,16 @@ fn versions_differ_on_small_inputs(current: &str, baseline: &str) -> bool {
     if parameters == 0 || parameters > SEPARATION_MAX_PARAMETERS {
         return false;
     }
-    let mut arguments = vec![SEPARATION_GRID[0]; parameters];
+    let grid: &[i128] = if parameters == 1 {
+        &SEPARATION_WIDE_GRID
+    } else {
+        &SEPARATION_SMALL_GRID
+    };
+    let mut arguments = vec![grid[0]; parameters];
     let mut counters = vec![0usize; parameters];
     loop {
         for (argument, counter) in arguments.iter_mut().zip(&counters) {
-            *argument = SEPARATION_GRID[*counter];
+            *argument = grid[*counter];
         }
         if let (Some(changed), Some(unchanged)) = (
             fold_function_text(current, &arguments),
@@ -537,7 +547,7 @@ fn versions_differ_on_small_inputs(current: &str, baseline: &str) -> bool {
                 return false;
             };
             *counter += 1;
-            if *counter < SEPARATION_GRID.len() {
+            if *counter < grid.len() {
                 break;
             }
             *counter = 0;
@@ -718,7 +728,8 @@ fn fold_function_text(body: &str, arguments: &[i128]) -> Option<i128> {
     let masked =
         crate::analysis::extract::mask_comments_and_strings(&block.syntax().text().to_string());
     let tokens = tokenize(&masked)?;
-    fold_block(&tokens, &environment, fold_range)
+    let uniform = fold_range.filter(|range| widths.iter().all(|width| *width == Some(*range)));
+    fold_block(&tokens, &environment, fold_range, uniform)
 }
 
 /// The inclusive value range a recognized Rust integer type admits, or
@@ -768,6 +779,26 @@ fn tokenize(text: &str) -> Option<Vec<Token>> {
             index += 1;
             continue;
         }
+        // `0xF0`, `0b1010`: radix literals, for the masks and shifts the fold
+        // evaluates. A type suffix after one is left to fail the fold.
+        if byte == b'0'
+            && let Some(radix) = match bytes.get(index + 1) {
+                Some(b'x') => Some(16),
+                Some(b'b') => Some(2),
+                _ => None,
+            }
+        {
+            let start = index + 2;
+            let mut end = start;
+            while end < bytes.len() && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_') {
+                end += 1;
+            }
+            let digits = text[start..end].replace('_', "");
+            let value = i128::from_str_radix(&digits, radix).ok()?;
+            tokens.push(Token::Int(value));
+            index = end;
+            continue;
+        }
         if byte.is_ascii_digit() {
             let start = index;
             while index < bytes.len() && (bytes[index].is_ascii_digit() || bytes[index] == b'_') {
@@ -807,6 +838,8 @@ fn tokenize(text: &str) -> Option<Vec<Token>> {
             [b'>', b'='] => ">=",
             [b'&', b'&'] => "&&",
             [b'|', b'|'] => "||",
+            [b'<', b'<'] => "<<",
+            [b'>', b'>'] => ">>",
             _ => "",
         };
         let symbol = if index + 2 <= bytes.len() {
@@ -827,6 +860,9 @@ fn tokenize(text: &str) -> Option<Vec<Token>> {
                 b'*' => "*",
                 b'/' => "/",
                 b'%' => "%",
+                b'&' => "&",
+                b'|' => "|",
+                b'^' => "^",
                 b'!' => "!",
                 b'(' => "(",
                 b')' => ")",
@@ -871,9 +907,22 @@ struct Parser<'a> {
     /// the declared width, so a mathematical value outside the range does
     /// not describe a value the owner can return.
     range: Option<(i128, i128)>,
+    /// The shared declared range when every parameter and the return type
+    /// are the same recognized integer type. The shifts and the saturating
+    /// methods depend on the operand's own width, which the return range
+    /// stands for only then: a comparison or a differently typed parameter
+    /// can hold a value of another width.
+    uniform: Option<(i128, i128)>,
 }
 
 impl<'a> Parser<'a> {
+    /// The bit width of the uniform integer type, when there is one.
+    fn uniform_bits(&self) -> Option<u32> {
+        let (low, high) = self.uniform?;
+        let magnitude = 128 - u128::try_from(high).ok()?.leading_zeros();
+        Some(if low < 0 { magnitude + 1 } else { magnitude })
+    }
+
     fn check_range(&self, value: i128) -> Option<i128> {
         match self.range {
             Some((low, high)) if !(low..=high).contains(&value) => None,
@@ -998,11 +1047,20 @@ impl<'a> Parser<'a> {
     }
 
     fn skip_comparison(&mut self) -> Option<()> {
-        self.skip_additive()?;
+        self.skip_bitwise()?;
         if matches!(
             self.peek_symbol(),
             Some("==" | "!=" | "<" | "<=" | ">" | ">=")
         ) {
+            self.position += 1;
+            self.skip_bitwise()?;
+        }
+        Some(())
+    }
+
+    fn skip_bitwise(&mut self) -> Option<()> {
+        self.skip_additive()?;
+        while matches!(self.peek_symbol(), Some("|" | "^" | "&" | "<<" | ">>")) {
             self.position += 1;
             self.skip_additive()?;
         }
@@ -1084,7 +1142,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_comparison(&mut self) -> Option<Value> {
-        let left = self.parse_additive()?;
+        let left = self.parse_bit_or()?;
         let Some(op) = self.peek_symbol() else {
             return Some(left);
         };
@@ -1092,7 +1150,7 @@ impl<'a> Parser<'a> {
             return Some(left);
         }
         self.position += 1;
-        let right = self.parse_additive()?;
+        let right = self.parse_bit_or()?;
         match (left, right) {
             (Value::Int(left), Value::Int(right)) => {
                 let result = match op {
@@ -1114,6 +1172,66 @@ impl<'a> Parser<'a> {
             }
             _ => None,
         }
+    }
+
+    /// One left-associative integer level of the bitwise operators, between
+    /// comparison and addition in Rust's precedence: `|` below `^` below `&`
+    /// below the shifts. `next` parses the tighter level.
+    fn parse_bit_level(
+        &mut self,
+        symbols: &[&'static str],
+        next: fn(&mut Self) -> Option<Value>,
+    ) -> Option<Value> {
+        let mut left = next(self)?;
+        loop {
+            let Some(op) = self.peek_symbol().filter(|symbol| symbols.contains(symbol)) else {
+                return Some(left);
+            };
+            self.position += 1;
+            let right = next(self)?;
+            let (Value::Int(left_value), Value::Int(right_value)) = (left, right) else {
+                return None;
+            };
+            let value = match op {
+                "|" => left_value | right_value,
+                "^" => left_value ^ right_value,
+                "&" => left_value & right_value,
+                // A shift past the integer's width panics in a debug build
+                // and loses bits in a release build; an amount at or past the
+                // width, or a left shift whose result overflows the declared
+                // width, is not a value the owner returns. The width is known
+                // only for a uniform integer type.
+                "<<" | ">>" => {
+                    let bits = self.uniform_bits()?;
+                    let amount = u32::try_from(right_value)
+                        .ok()
+                        .filter(|amount| *amount < bits)?;
+                    if op == "<<" {
+                        left_value.checked_mul(1i128.checked_shl(amount)?)?
+                    } else {
+                        left_value >> amount
+                    }
+                }
+                _ => return None,
+            };
+            left = Value::Int(self.check_range(value)?);
+        }
+    }
+
+    fn parse_bit_or(&mut self) -> Option<Value> {
+        self.parse_bit_level(&["|"], Self::parse_bit_xor)
+    }
+
+    fn parse_bit_xor(&mut self) -> Option<Value> {
+        self.parse_bit_level(&["^"], Self::parse_bit_and)
+    }
+
+    fn parse_bit_and(&mut self) -> Option<Value> {
+        self.parse_bit_level(&["&"], Self::parse_shift)
+    }
+
+    fn parse_shift(&mut self) -> Option<Value> {
+        self.parse_bit_level(&["<<", ">>"], Self::parse_additive)
     }
 
     fn parse_additive(&mut self) -> Option<Value> {
@@ -1196,11 +1314,39 @@ impl<'a> Parser<'a> {
         let Value::Int(argument) = self.parse_expression()? else {
             return None;
         };
+        let upper = if name == "clamp" {
+            self.expect_symbol(",")?;
+            let Value::Int(upper) = self.parse_expression()? else {
+                return None;
+            };
+            Some(upper)
+        } else {
+            None
+        };
         self.expect_symbol(")")?;
+        // The saturating forms clamp at the receiver's own range, known only
+        // when every parameter and the return type share one integer type.
         let value = match name.as_str() {
             "pow" => receiver.checked_pow(u32::try_from(argument).ok()?)?,
             "min" => receiver.min(argument),
             "max" => receiver.max(argument),
+            // `clamp` panics when the bounds are inverted.
+            "clamp" => {
+                let upper = upper?;
+                if argument > upper {
+                    return None;
+                }
+                receiver.clamp(argument, upper)
+            }
+            "saturating_add" | "saturating_sub" => {
+                let (low, high) = self.uniform?;
+                let exact = if name == "saturating_add" {
+                    receiver.checked_add(argument)?
+                } else {
+                    receiver.checked_sub(argument)?
+                };
+                exact.clamp(low, high)
+            }
             _ => return None,
         };
         Some(Value::Int(self.check_range(value)?))
@@ -1316,6 +1462,7 @@ fn fold_expression(text: &str, environment: &BTreeMap<String, i128>) -> Option<i
         position: 0,
         environment,
         range: None,
+        uniform: None,
     };
     let value = parser.parse_expression()?;
     if parser.position != tokens.len() {
@@ -1333,12 +1480,14 @@ fn fold_block(
     tokens: &[Token],
     environment: &BTreeMap<String, i128>,
     range: Option<(i128, i128)>,
+    uniform: Option<(i128, i128)>,
 ) -> Option<i128> {
     let mut parser = Parser {
         tokens,
         position: 0,
         environment,
         range,
+        uniform,
     };
     let value = parser.parse_block_value()?;
     if parser.position != tokens.len() {
@@ -1861,6 +2010,68 @@ mod tests {
         assert_eq!(fold_text("fn f(a: u32) -> u32 { a.pow(-1) }", &[1]), None);
         assert_eq!(fold_text("fn f(a: u32) -> u32 { a * 0.85 }", &[1]), None);
         assert_eq!(fold_text("fn f(a: u32) -> u8 { 3u8.pow(a) }", &[9]), None);
+    }
+
+    #[test]
+    fn bitwise_shift_clamp_and_saturating_forms_fold_with_rust_precedence() {
+        let fold = |expression: &str, argument: i128| {
+            fold_text(
+                &format!("fn f(a: u32) -> u32 {{ {expression} }}"),
+                &[argument],
+            )
+        };
+        // `&` binds tighter than `^`, which binds tighter than `|`.
+        assert_eq!(fold("a | 4 ^ 6 & 3", 1), Some(1 | (4 ^ (6 & 3))));
+        // Shifts bind tighter than `&` and looser than `+`.
+        assert_eq!(fold("a + 1 << 2 & 0xF0", 7), Some(((7 + 1) << 2) & 0xF0));
+        assert_eq!(fold("(a * 3) >> 4", 40), Some(7));
+        assert_eq!(fold("a & 0b101", 7), Some(5));
+        // Comparison is looser than the bitwise operators.
+        assert_eq!(
+            fold_text("fn f(a: u32) -> bool { a & 1 == 1 }", &[3]),
+            None,
+            "a bool-returning body is not an integer fold"
+        );
+        assert_eq!(fold("a.clamp(2, 5)", 9), Some(5));
+        assert_eq!(fold("a.clamp(2, 5)", 0), Some(2));
+        assert_eq!(fold("a.saturating_sub(10)", 4), Some(0));
+        assert_eq!(fold("a.saturating_add(10)", 4), Some(14));
+    }
+
+    #[test]
+    fn unsound_bitwise_shift_clamp_and_saturating_forms_stay_not_evaluable() {
+        // A shift amount past the width, a left shift that overflows the
+        // declared width, inverted clamp bounds, a saturating form with no
+        // declared return width and a stray `|` (a closure bar) fail the fold.
+        assert_eq!(fold_text("fn f(a: u32) -> u32 { a >> 200 }", &[1]), None);
+        assert_eq!(fold_text("fn f(a: u32) -> u32 { a >> 32 }", &[1]), None);
+        assert_eq!(
+            fold_text("fn f(a: u32) -> u32 { a >> 31 }", &[1 << 31]),
+            Some(1)
+        );
+        // The operand's width is unknown unless parameters and return agree.
+        assert_eq!(fold_text("fn f(a: u8) -> u32 { a >> 1 }", &[4]), None);
+        assert_eq!(fold_text("fn f(a: usize) -> usize { a << 63 }", &[2]), None);
+        assert_eq!(
+            fold_text(
+                "fn f(a: u8) -> i32 { if a.saturating_sub(5) == 0 { 1 } else { 0 } }",
+                &[3]
+            ),
+            None
+        );
+        assert_eq!(fold_text("fn f(a: u8) -> u8 { a << 7 }", &[3]), None);
+        assert_eq!(
+            fold_text("fn f(a: u32) -> u32 { a.clamp(5, 2) }", &[1]),
+            None
+        );
+        assert_eq!(
+            fold_text("fn f(a: u32) -> bool { a.saturating_sub(1) > 0 }", &[3]),
+            None
+        );
+        assert_eq!(
+            fold_text("fn f(a: u32) -> u32 { a.min(|b| b) }", &[3]),
+            None
+        );
     }
 
     fn invisible(owner: &str, before: &str, after: &str, test: &str) -> Result<bool, String> {

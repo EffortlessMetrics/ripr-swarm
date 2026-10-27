@@ -8564,6 +8564,47 @@ fn release_server_manifest_rejects_prerelease_version_before_descriptor() -> Res
     Ok(())
 }
 
+/// The `ripr` binary this test run was built against, as an absolute path.
+/// Resolve-only: a nested `cargo build` would contend on the build lock the
+/// outer test run holds. Order: the `RIPR_TEST_BINARY` override (a runner that
+/// keeps its binaries outside `target/`, such as an archived run, sets it),
+/// then the active `CARGO_TARGET_DIR`, then the repository `target/`, in the
+/// profile this test build itself uses (`--release` places it under `release`).
+pub(crate) fn ripr_worktree_binary() -> Result<String, String> {
+    let profile = if cfg!(debug_assertions) {
+        "debug"
+    } else {
+        "release"
+    };
+    let file_name = format!("ripr{}", std::env::consts::EXE_SUFFIX);
+    let mut candidates = Vec::new();
+    if let Ok(override_path) = std::env::var("RIPR_TEST_BINARY") {
+        candidates.push(PathBuf::from(override_path));
+    }
+    if let Ok(target_root) = std::env::var("CARGO_TARGET_DIR") {
+        candidates.push(Path::new(&target_root).join(profile).join(&file_name));
+    }
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or("xtask manifest has no repository parent")?;
+    candidates.push(root.join("target").join(profile).join(&file_name));
+    for candidate in &candidates {
+        if candidate.is_file() {
+            return std::path::absolute(candidate)
+                .map(|path| path.to_string_lossy().into_owned())
+                .map_err(|error| format!("resolve worktree ripr binary: {error}"));
+        }
+    }
+    let attempted = candidates
+        .iter()
+        .map(|candidate| candidate.display().to_string())
+        .collect::<Vec<_>>()
+        .join("`, `");
+    Err(format!(
+        "no built ripr binary found (looked at `{attempted}`); run `cargo build -p ripr` first (tests resolve the binary and never spawn a nested build)"
+    ))
+}
+
 pub(crate) fn with_temp_cwd<T>(name: &str, f: impl FnOnce(&Path) -> T) -> T {
     let lock = acquire_test_cwd_write_guard();
     let old = std::env::current_dir().unwrap();
@@ -12197,8 +12238,8 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
         routed_rust_ready_event_contract_violations(&any_label_request)
     );
     let skippable_result = workflow.replace(
-        "    if: always()\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    steps:\n      - name: Summarize routed result",
-        "    if: success()\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    steps:\n      - name: Summarize routed result",
+        "    if: always()\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    steps:\n      - name: Recheck initially admitted eligibility",
+        "    if: success()\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    steps:\n      - name: Recheck initially admitted eligibility",
     );
     assert_ne!(
         skippable_result, workflow,
@@ -51369,18 +51410,194 @@ fn vscode_verify_vsix_reuses_sealed_archive_license_check() -> Result<(), String
     let mit = String::from_utf8(notices.mit.clone()).map_err(|err| err.to_string())?;
     let apache = String::from_utf8(notices.apache.clone()).map_err(|err| err.to_string())?;
     with_temp_cwd("vscode-verify-vsix-reuse", |root| {
-        let good = root.join("good.vsix");
+        let good = root.join("ripr-0.11.0.vsix");
         let license_txt = packaged_license_txt(&mit, &apache);
-        write_packaging_test_vsix(&good, &[("extension/LICENSE.txt", &license_txt)])?;
+        let versioned = |version: &str| {
+            (
+                format!("{{\"name\":\"ripr\",\"version\":\"{version}\"}}"),
+                format!(
+                    "<PackageManifest><Metadata><Identity Language=\"en-US\" Id=\"ripr\" Version=\"{version}\" Publisher=\"EffortlessMetrics\" /></Metadata></PackageManifest>"
+                ),
+            )
+        };
+        let (package_json, vsixmanifest) = versioned("0.11.0");
+        write_packaging_test_vsix(
+            &good,
+            &[
+                ("extension/LICENSE.txt", &license_txt),
+                ("extension/package.json", &package_json),
+                ("extension.vsixmanifest", &vsixmanifest),
+            ],
+        )?;
         super::vscode_verify_vsix(&[good.to_string_lossy().into_owned()])?;
 
-        let pointer = root.join("pointer.vsix");
+        // #10731: a stale 0.8.0 extension under a 0.10.0 name must fail.
+        let stale = root.join("ripr-0.10.0.vsix");
+        let (package_json, vsixmanifest) = versioned("0.8.0");
+        write_packaging_test_vsix(
+            &stale,
+            &[
+                ("extension/LICENSE.txt", &license_txt),
+                ("extension/package.json", &package_json),
+                ("extension.vsixmanifest", &vsixmanifest),
+            ],
+        )?;
+        let Err(error) = super::vscode_verify_vsix(&[stale.to_string_lossy().into_owned()]) else {
+            return Err("vscode-verify-vsix must reject a stale extension version".to_string());
+        };
+        assert!(
+            error.contains("named for version 0.10.0") && error.contains("0.8.0"),
+            "{error}"
+        );
+
+        // A matching Identity inside a comment or CDATA must not mask the real, stale one.
+        let masked = root.join("ripr-0.11.2.vsix");
+        let masked_manifest = "<PackageManifest><!-- <Identity Version=\"0.11.2\" /> --><Metadata><![CDATA[<Identity Version=\"0.11.2\" />]]><Identity Language=\"en-US\" Id=\"ripr\" Version=\"0.8.0\" Publisher=\"EffortlessMetrics\" /></Metadata></PackageManifest>";
+        write_packaging_test_vsix(
+            &masked,
+            &[
+                ("extension/LICENSE.txt", &license_txt),
+                ("extension/package.json", "{\"version\":\"0.11.2\"}"),
+                ("extension.vsixmanifest", masked_manifest),
+            ],
+        )?;
+        let Err(error) = super::vscode_verify_vsix(&[masked.to_string_lossy().into_owned()]) else {
+            return Err("an Identity-like comment must not mask a stale Identity".to_string());
+        };
+        assert!(error.contains("Identity Version \"0.8.0\""), "{error}");
+        assert_eq!(
+            super::vsixmanifest_identity_version(
+                "<PackageManifest><Metadata><Identity Id='ripr' Version='0.11.2'/></Metadata></PackageManifest>"
+            ),
+            "0.11.2"
+        );
+
+        let pointer = root.join("ripr-0.11.1.vsix");
         write_packaging_test_vsix(&pointer, &[("extension/LICENSE.txt", POINTER_LICENSE)])?;
         let Err(error) = super::vscode_verify_vsix(&[pointer.to_string_lossy().into_owned()])
         else {
             return Err("vscode-verify-vsix must reject a pointer-only LICENSE.txt".to_string());
         };
         assert!(error.contains("extension/LICENSE.txt"), "{error}");
+        Ok(())
+    })
+}
+
+#[test]
+fn verify_packaged_vsix_version_binds_each_member_to_the_file_name() -> Result<(), String> {
+    let manifest = |version: &str| {
+        format!(
+            "<PackageManifest><Metadata><Identity Language=\"en-US\" Id=\"ripr\" Version=\"{version}\" Publisher=\"EffortlessMetrics\" /></Metadata></PackageManifest>"
+        )
+    };
+    let package = |version: &str| format!("{{\"name\":\"ripr\",\"version\":\"{version}\"}}");
+    with_temp_cwd("verify-vsix-version-members", |root| {
+        let write = |name: &str, members: &[(&str, &str)]| -> Result<PathBuf, String> {
+            let path = root.join(name);
+            write_packaging_test_vsix(&path, members)?;
+            Ok(path)
+        };
+        let reject = |path: &Path| -> Result<String, String> {
+            match super::verify_packaged_vsix_version(path) {
+                Ok(()) => Err(format!("{} must be rejected", path.display())),
+                Err(error) => Ok(error),
+            }
+        };
+
+        let aligned = write(
+            "ripr-0.10.0.vsix",
+            &[
+                ("extension/package.json", &package("0.10.0")),
+                ("extension.vsixmanifest", &manifest("0.10.0")),
+            ],
+        )?;
+        super::verify_packaged_vsix_version(&aligned)?;
+
+        // Only extension/package.json is stale.
+        let only_package = write(
+            "ripr-0.10.1.vsix",
+            &[
+                ("extension/package.json", &package("0.8.0")),
+                ("extension.vsixmanifest", &manifest("0.10.1")),
+            ],
+        )?;
+        let error = reject(&only_package)?;
+        assert!(error.contains("package.json version \"0.8.0\""), "{error}");
+        assert!(error.contains("Identity Version \"0.10.1\""), "{error}");
+
+        // Only extension.vsixmanifest is stale.
+        let only_manifest = write(
+            "ripr-0.10.2.vsix",
+            &[
+                ("extension/package.json", &package("0.10.2")),
+                ("extension.vsixmanifest", &manifest("0.8.0")),
+            ],
+        )?;
+        let error = reject(&only_manifest)?;
+        assert!(error.contains("package.json version \"0.10.2\""), "{error}");
+        assert!(error.contains("Identity Version \"0.8.0\""), "{error}");
+
+        // Both stale and different: both observed values are reported.
+        let both = write(
+            "ripr-0.10.3.vsix",
+            &[
+                ("extension/package.json", &package("0.8.0")),
+                ("extension.vsixmanifest", &manifest("0.9.0")),
+            ],
+        )?;
+        let error = reject(&both)?;
+        assert!(error.contains("named for version 0.10.3"), "{error}");
+        assert!(error.contains("package.json version \"0.8.0\""), "{error}");
+        assert!(error.contains("Identity Version \"0.9.0\""), "{error}");
+
+        // Absent or malformed version fields never match the file name.
+        let no_version = write(
+            "ripr-0.10.4.vsix",
+            &[
+                ("extension/package.json", r#"{"name":"ripr"}"#),
+                (
+                    "extension.vsixmanifest",
+                    "<PackageManifest><Identity Id=\"ripr\" /></PackageManifest>",
+                ),
+            ],
+        )?;
+        let error = reject(&no_version)?;
+        assert!(error.contains("package.json version \"\""), "{error}");
+        assert!(error.contains("Identity Version \"\""), "{error}");
+        let non_string = write(
+            "ripr-0.10.5.vsix",
+            &[
+                ("extension/package.json", r#"{"version":10}"#),
+                ("extension.vsixmanifest", &manifest("0.10.5")),
+            ],
+        )?;
+        reject(&non_string)?;
+        let bad_json = write(
+            "ripr-0.10.6.vsix",
+            &[
+                ("extension/package.json", "not json"),
+                ("extension.vsixmanifest", &manifest("0.10.6")),
+            ],
+        )?;
+        let error = reject(&bad_json)?;
+        assert!(error.contains("is not JSON"), "{error}");
+
+        // Missing members and a non-conforming file name fail closed.
+        let no_manifest = write(
+            "ripr-0.10.7.vsix",
+            &[("extension/package.json", &package("0.10.7"))],
+        )?;
+        let error = reject(&no_manifest)?;
+        assert!(error.contains("extension.vsixmanifest"), "{error}");
+        let misnamed = write(
+            "good.vsix",
+            &[
+                ("extension/package.json", &package("0.10.0")),
+                ("extension.vsixmanifest", &manifest("0.10.0")),
+            ],
+        )?;
+        let error = reject(&misnamed)?;
+        assert!(error.contains("ripr-<version>.vsix"), "{error}");
         Ok(())
     })
 }

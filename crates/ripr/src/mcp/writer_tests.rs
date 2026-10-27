@@ -21,7 +21,7 @@ fn readable_giant_id_cannot_escape_the_output_cap() -> Result<(), String> {
 /// #7768: the semantic layers compare envelopes against
 /// `MAX_RESPONSE_BYTES` minus the request ID minus
 /// `OUTER_RESPONSE_OVERHEAD_BYTES`. That reserve is honest only while the
-/// pinned SDK (rmcp 3.5.1) adds no more than the reserve around the
+/// pinned SDK (rmcp 3.7.0) adds no more than the reserve around the
 /// semantically measured envelope when it serializes the complete
 /// response. Measure both negotiated shapes through the real encoder: the
 /// fixed frame fields are exactly 33 payload bytes
