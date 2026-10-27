@@ -29,8 +29,19 @@ fn job(name: &str) -> TestResult<&str> {
     Ok(&tail[..end])
 }
 
+fn result_step() -> TestResult<&'static str> {
+    let (_, step) = job("result")?
+        .split_once("      - name: Summarize routed result\n")
+        .ok_or("production summary step exists")?;
+    Ok(step)
+}
+
 fn shell(name: &str) -> TestResult<String> {
-    let source = job(name)?;
+    let source = if name == "result" {
+        result_step()?
+    } else {
+        job(name)?
+    };
     assert_eq!(source.matches("        run: |\n").count(), 1);
     let (_, body) = source.split_once("        run: |\n").ok_or("shell block")?;
     let script = body
@@ -509,7 +520,7 @@ fn routed_result_admitted(
     heavy: &str,
     (admission_result, admission_status): (&str, &str),
 ) -> TestResult<bool> {
-    let source = job("result")?;
+    let source = result_step()?;
     let (setup, _) = source.split_once("        run: |\n").ok_or("result step")?;
     let (_, bindings) = setup.split_once("        env:\n").ok_or("result env")?;
     let mut env = bindings
@@ -552,6 +563,16 @@ fn routed_result_admitted(
         // The hosted route runs its nextest step in the sharded job (#10507); a
         // green hosted gates job stands for a green sharded job in these fixtures.
         ("GITHUB_TESTS_RESULT", heavy),
+        // This fixture isolates aggregate selection. The actual late shell and
+        // its changing API inputs run in routed_dispatch_result.rs.
+        (
+            "ELIGIBILITY_RESULT",
+            if admission_result == "success" && admission_status == "admitted" {
+                "success"
+            } else {
+                "skipped"
+            },
+        ),
         ("ADMISSION_RESULT", admission_result),
         ("ADMISSION_STATUS", admission_status),
     ]);
@@ -575,7 +596,9 @@ fn actual_result_block_treats_other_labels_as_a_nonrequest_that_never_qualifies(
     // The step keeps the label-aware nonrequest branch ahead of every
     // qualification decision; the job name (policy-pinned) then differs from
     // the required context, so this pass can never satisfy branch protection.
-    let (_, run) = source.split_once("        run: |\n").ok_or("result step")?;
+    let (_, run) = result_step()?
+        .split_once("        run: |\n")
+        .ok_or("result step")?;
     let first_decision = run
         .lines()
         .find(|line| line.trim_start().starts_with("if ["))
@@ -635,7 +658,7 @@ fn actual_result_block_requires_successful_detection_and_selected_proof() -> Tes
             (result, status)
         )?);
     }
-    assert!(routed_result_admitted(
+    assert!(!routed_result_admitted(
         &fixture,
         "pull_request",
         "success",

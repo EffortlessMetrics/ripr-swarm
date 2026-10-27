@@ -185,10 +185,60 @@ jobs:
       changed_files: ${{ steps.candidate.outputs.changed_files }}
       changed_lines: ${{ steps.candidate.outputs.changed_lines }}
       labels: ${{ steps.entry.outputs.labels }}
+      pr: ${{ steps.entry.outputs.pr }}
+      head: ${{ steps.entry.outputs.head }}
+      queue_entry: ${{ steps.entry.outputs.queue_entry }}
+      request: ${{ steps.entry.outputs.request }}
     steps:
       - uses: actions/checkout@v6
+      - name: Select trusted admission source
+        id: trusted
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          EVENT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          case "$EVENT_NAME" in
+            pull_request) sha="$PR_BASE_SHA" ;;
+            merge_group) sha="$GROUP_BASE_SHA" ;;
+            push|workflow_dispatch) sha="$EVENT_SHA" ;;
+            *) echo "::error::trusted admission source is undefined for this event"; exit 1 ;;
+          esac
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::trusted admission source SHA is missing or invalid"; exit 1; }
+          if [ -e "$GITHUB_WORKSPACE/.admission-trusted" ] || [ -L "$GITHUB_WORKSPACE/.admission-trusted" ]; then
+            echo "::error::trusted admission destination is present in the candidate checkout"
+            exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - name: Check out trusted admission bundle
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.trusted.outputs.sha }}
+          path: .admission-trusted
+          sparse-checkout: .github/actions/pr-candidate-admission
+          persist-credentials: false
+      - name: Verify trusted admission bundle
+        shell: bash
+        env:
+          TRUSTED_ADMISSION_SHA: ${{ steps.trusted.outputs.sha }}
+        run: |
+          set -euo pipefail
+          refuse() { echo "::error::trusted admission bundle is missing or differs from the immutable source"; exit 1; }
+          trusted="$GITHUB_WORKSPACE/.admission-trusted"
+          [[ "$TRUSTED_ADMISSION_SHA" =~ ^[0-9a-f]{40}$ ]] || refuse
+          [ "$(git -C "$trusted" rev-parse HEAD)" = "$TRUSTED_ADMISSION_SHA" ] || refuse
+          for name in action.yml candidate_admission.py release_cut_admission.py; do
+            path=".github/actions/pr-candidate-admission/$name"
+            [ -f "$trusted/$path" ] && [ ! -L "$trusted/$path" ] || refuse
+            expected="$(git -C "$trusted" rev-parse "$TRUSTED_ADMISSION_SHA:$path")" || refuse
+            actual="$(git hash-object --no-filters "$trusted/$path")" || refuse
+            [ "$actual" = "$expected" ] || refuse
+          done
       - name: Exercise admission discriminators
-        uses: ./.github/actions/pr-candidate-admission
+        uses: ./.admission-trusted/.github/actions/pr-candidate-admission
         with:
           mode: self-test
           max-changed-files: '160'
@@ -207,7 +257,7 @@ jobs:
           GROUP_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
         run: |
           set -euo pipefail
-          pr="$PR_NUMBER" head="$PR_HEAD_SHA" labels="$PR_LABELS"
+          pr="$PR_NUMBER" head="$PR_HEAD_SHA" labels="$PR_LABELS" queue_entry=""
           if [ "$EVENT_NAME" = "merge_group" ]; then
             # The queue branch is named .../pr-<number>-<sha>. The PR comes from
             # the name; the exact head is the PR's live head, which must match
@@ -237,12 +287,14 @@ jobs:
             # A group's base is the parent of its first commit, so a one-entry
             # group has base == the queued commit's parent; a batch does not.
             { [ "$parents" = "1" ] && [ "$parent" = "$GROUP_BASE_SHA" ] && [[ "$subject" == *"(#${pr})" ]]; } || { echo "::error::queued commit is not a single squash commit of PR #${pr} ($parents parents, parent $parent, base $GROUP_BASE_SHA: $subject); candidate admission requires exactly one queued PR per group"; exit 1; }
+            queue=$(gh api graphql -f query='query($number:Int!){repository(owner:"EffortlessMetrics",name:"ripr-swarm"){pullRequest(number:$number){headRefOid mergeQueueEntry{id}}}}' -F number="$pr")
+            queue_entry=$(jq -er --arg head "$head" 'select(.errors == null) | .data.repository.pullRequest | select(.headRefOid == $head) | .mergeQueueEntry.id | select(type == "string" and length > 0)' <<<"$queue")
             labels="$(jq -r '[.labels[].name] | join(",")' <<<"$current")"
           fi
-          { echo "pr=$pr"; echo "head=$head"; echo "labels=$labels"; } >> "$GITHUB_OUTPUT"
+          { echo "pr=$pr"; echo "head=$head"; echo "labels=$labels"; echo "queue_entry=$queue_entry"; echo "request=$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"; } >> "$GITHUB_OUTPUT"
       - name: Admit exact candidate
         id: candidate
-        uses: ./.github/actions/pr-candidate-admission
+        uses: ./.admission-trusted/.github/actions/pr-candidate-admission
         with:
           token: ${{ github.token }}
           repository: ${{ github.repository }}
@@ -413,7 +465,57 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Recheck initially admitted eligibility
+        id: eligibility
+        if: needs.admission.result == 'success' && needs.admission.outputs.status == 'admitted' && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.label.name == 'merge-ready'))
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ needs.admission.outputs.pr }}
+          EXPECTED_HEAD: ${{ needs.admission.outputs.head }}
+          EXPECTED_REQUEST: ${{ needs.admission.outputs.request }}
+          EXPECTED_QUEUE_ENTRY: ${{ needs.admission.outputs.queue_entry }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          # Bind live eligibility to initial admission, never a newly adopted H.
+          # This does not authenticate the caller or establish G's composition.
+          current_eligibility() {
+            local pr frame cursor=null more page=0
+            [ "$REPOSITORY" = EffortlessMetrics/ripr-swarm ] || return 1
+            [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]*$ && "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]] || return 1
+            [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ && "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]] || return 1
+            [[ "$EXPECTED_REQUEST" == "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" ]] || return 1
+            read_pr() {
+              pr=$(gh api "repos/$REPOSITORY/pulls/$PR_NUMBER") || return
+              jq -e --arg repo "$REPOSITORY" --arg head "$EXPECTED_HEAD" --argjson number "$PR_NUMBER" --arg event "$EVENT_NAME" '
+                .number == $number and .state == "open" and .draft == false and
+                .head.sha == $head and .head.repo.full_name == $repo and
+                .base.ref == "main" and .base.repo.full_name == $repo and
+                ($event != "pull_request" or (.labels | type == "array" and any(.name == "merge-ready")))
+              ' <<<"$pr" >/dev/null
+            }
+            read_pr || return
+            while :; do
+              page=$((page + 1)); [ "$page" -le 100 ] || return 1
+              frame=$(gh api graphql -f query='query($number:Int!,$cursor:String){repository(owner:"EffortlessMetrics",name:"ripr-swarm"){pullRequest(number:$number){headRefOid reviewDecision mergeQueueEntry{id} reviewThreads(first:100,after:$cursor){nodes{isResolved}pageInfo{hasNextPage endCursor}}}}}' -F number="$PR_NUMBER" -F cursor="$cursor") || return
+              jq -e --arg head "$EXPECTED_HEAD" --arg event "$EVENT_NAME" --arg entry "$EXPECTED_QUEUE_ENTRY" '
+                .errors == null and (.data.repository.pullRequest |
+                  has("reviewDecision") and .headRefOid == $head and
+                  (.reviewDecision as $decision | [null,"APPROVED","REVIEW_REQUIRED"] | index($decision) != null) and
+                  ($event != "merge_group" or ($entry != "" and .mergeQueueEntry.id == $entry)) and
+                  (.reviewThreads.nodes | type == "array" and all(.isResolved == true)) and
+                  (.reviewThreads.pageInfo.hasNextPage | type == "boolean"))
+              ' <<<"$frame" >/dev/null || return
+              more=$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage' <<<"$frame") || return
+              [ "$more" = true ] || break
+              cursor=$(jq -er '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor | select(type == "string" and length > 0)' <<<"$frame") || return
+            done
+            read_pr
+          }
+          current_eligibility
       - name: Summarize routed result
+        if: always()
         env:
           ADMISSION_RESULT: ${{ needs.admission.result }}
           ADMISSION_STATUS: ${{ needs.admission.outputs.status }}
@@ -456,9 +558,9 @@ jobs:
           DOCS_ONLY: ${{ needs.detect-docs-only.outputs.docs_only }}
           DOCS_GATE_RESULT: ${{ needs.docs-gate.result }}
           WORKFLOW_REF: ${{ github.ref }}
+          ELIGIBILITY_RESULT: ${{ steps.eligibility.outcome }}
         run: |
-          status=pass
-          message="selected implementation job succeeded"
+          status=pass message="selected implementation job succeeded"
           if [ "$EVENT_NAME" = "pull_request" ] && [ "${LABEL_NAME,,}" != "merge-ready" ]; then message="not a merge-ready request; named Merge-ready Nonrequest, never the required context"
           elif [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$WORKFLOW_REF" != "refs/heads/main" ] && [ "$WORKFLOW_REF" != "refs/heads/master" ]; then
             status=fail
@@ -466,6 +568,7 @@ jobs:
           elif [ "$ADMISSION_CUT_STATUS" = "refused" ] && [ "$ADMISSION_STATUS" != "refused" ] && { [ "$ADMISSION_STATUS" = "admitted" ] || [ "$ADMISSION_RESULT" = "success" ]; }; then status=fail; message="hard-cut admission refused: ${ADMISSION_CUT_REASON:-unknown} — ${ADMISSION_CUT_DETAIL:-the active cut is frozen; only a packet-only #5114/#2766 control update may qualify before #1609}"
           elif [ "$ADMISSION_RESULT" != "success" ]; then status=fail; message="candidate admission result was $ADMISSION_RESULT: ${ADMISSION_REASON:-unknown} — ${ADMISSION_DETAIL:-refresh the exact PR/head evidence and retry}"
           elif [ "$ADMISSION_STATUS" != "admitted" ] && [ "$ADMISSION_STATUS" != "not_applicable" ]; then status=fail; message="candidate admission status was ${ADMISSION_STATUS:-missing}: ${ADMISSION_REASON:-unknown} — ${ADMISSION_DETAIL:-refresh the exact PR/head evidence and retry}"
+          elif { [ "$EVENT_NAME" = pull_request ] || [ "$EVENT_NAME" = merge_group ]; } && [ "$ELIGIBILITY_RESULT" != success ]; then status=fail; message="live eligibility no longer established for the initially admitted head/request"
           elif [ "$DOCS_DETECT_RESULT" != "success" ]; then
             status=fail
             message="docs-surface detection result was $DOCS_DETECT_RESULT"

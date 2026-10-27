@@ -1,4 +1,4 @@
-use forwarder_hop::{Fin, Gate, Lane, Pool, Right};
+use forwarder_hop::{Bay, Fin, Gate, Lane, Pool, Right, Slip};
 
 #[test]
 fn grow_keeps_four_inline_and_spills_five() {
@@ -38,4 +38,18 @@ fn gate_insert_pins_the_boundary() {
     let mut gate = Gate::default();
     assert_eq!(gate.insert(4), Ok(false));
     assert_eq!(gate.insert(5), Ok(true));
+}
+
+#[test]
+fn bay_dock_pins_the_boundary() {
+    let mut bay = Bay::default();
+    assert_eq!(bay.dock(4), false);
+    assert_eq!(bay.dock(5), true);
+}
+
+#[test]
+fn slip_answers_for_every_outcome() {
+    let mut slip = Slip::default();
+    assert!(slip.slip(4));
+    assert!(slip.slip(5));
 }

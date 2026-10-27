@@ -205,7 +205,8 @@ impl SourceSnapshot {
     /// The owner-independent answer for one name, computed outside the lock
     /// so a slow parse never stalls a reader of another name. The answer is
     /// pure in the snapshot's source and the key, so two workers that miss
-    /// together agree and the first insert wins.
+    /// together agree and the first insert wins; the memo bounds repeated
+    /// work to the workers that race on one first miss, not to exactly one.
     pub(crate) fn root_shadow(
         &self,
         base: &str,

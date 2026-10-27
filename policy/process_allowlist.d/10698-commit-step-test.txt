@@ -1,0 +1,1 @@
+crates/ripr/src/app/navigation.rs|Command::new|2|cli-tests|Unit test only: runs the printed `git -C <root> --literal-pathspecs commit` step through `sh -c` from a decoy directory in an isolated temp repository, then reads `git status --porcelain`. No network or user-repository mutation (#10698).

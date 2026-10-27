@@ -359,7 +359,10 @@ renamed fixture (`name=`) and a test that rebinds the parameter name make no
 edge, nor does a parameter that a pytest `parametrize` names as an argname,
 read syntactically (variable argvalues, `pytest.param(marks=...)` and
 unreadable `indirect` values still count) unless `indirect=` is the literal
-`True` or a literal list naming it. A class-level `parametrize` (on the test's
+`True` or a literal list naming it, directly or through one never-rebound
+module `NAME = <value>` binding (#10685). The mark, its argnames and its
+`indirect` are read through imports and module names as RIPR-SPEC-0238 L8
+describes. A class-level `parametrize` (on the test's
 class or a local ancestor) counts the same way. When a file defines the same
 fixture name twice the last definition wins, and the analyzer attaches at most
 eight fixture definitions to one test (an implementation limit, not a pytest
@@ -727,7 +730,15 @@ Another decorator named `parametrize` (a plugin or project helper) records
 no cases. Argvalues named by a variable, `indirect=`, starred rows, a `pytest.param`
 with any keyword but `id=` (a `marks=` skip or xfail case may never run), a
 unittest method (pytest does not parametrize it), and an argname the test
-body may rebind leave the call unresolved. A rebinding is read from the
+body may rebind leave the call unresolved. A test whose first statement after
+a docstring unpacks one argname (`quantity, rate = case`, alone on its lines)
+reads as parametrized by the target names, each case's row split by arity,
+and the unpack is not a rebinding (#10832). Every row must be a tuple of
+scalar literals (a bare target also takes a scalar literal) and every
+decorator a pytest mark; a list row (mutable, so a fixture may change it), a
+row naming a value (which may shadow the owner), a row of another arity, a
+target that is another parameter, and a later statement that names the
+argname or rebinds a target keep the argname's cases as they are. A rebinding is read from the
 parsed test body: any assignment, tuple, loop, `with` or `except` target, an
 import or `del` of the argname drops it from the cases, and a nested `def` or
 `class`, a `match` or a star import drops all cases. Any `lambda` in the test,

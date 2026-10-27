@@ -39,8 +39,7 @@ Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/assertion_form_parity_err_guard/input --diff <cwd>/fixtures/assertion_form_parity_err_guard/diff.patch --mode fast probe:src_lib.rs:predicate:c80557eb
   ripr context --root <cwd>/fixtures/assertion_form_parity_err_guard/input --diff <cwd>/fixtures/assertion_form_parity_err_guard/diff.patch --mode fast --at probe:src_lib.rs:predicate:c80557eb
   no repair start offered: a related test already reaches the changed boundary input, but ripr grades its assertion as a weak check, so ripr cannot build a repair packet for this finding yet. Follow the Next step above, then rerun `ripr check`
-Write a test for it:
-  ripr agent stub --root <cwd>/fixtures/assertion_form_parity_err_guard/input --at src/lib.rs:2 --kind predicate
+No test stub here: A related test already reaches the boundary input, but ripr grades its assertion as a weak check; write it as an exact-value assertion ripr can credit, for example assert_eq!(result, expected), so the old and changed behavior differ. Related test: tests/pricing.rs:4 boundary_matches_expected
 
 Hidden:
   2 lower-priority finding(s) omitted from default human output.
