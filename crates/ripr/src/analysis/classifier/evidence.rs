@@ -10,13 +10,13 @@ use crate::analysis::classify::{
     direct_call_name, direct_collection_mutation_receiver, expected_operand_value,
     fallible_check_receipt, fallible_literal_witness, function_returns_value, getter_plainly_reads,
     getter_plainly_reads_key, has_same_test_boundary_oracle_pairing, helper_only_reach,
-    helper_pins_owner_call, infection_evidence_for_owner, local_flow_sinks, method_cannot_store,
-    observes_returned_element_field, operand_only_pin, oracle_crediting_relations,
-    outer_imported_names, owner_touches_field_only_at, package_prefix, parameter_rebound,
-    propagation_evidence_with_witness, pushed_collection_compared_whole, pushed_literal_path,
-    reach_evidence, reveal_outcome, same_test_pairing_missing_summary, setter_plainly_writes,
-    signature_parameters, unconditional_owner_insert_field, unexercised_mask_bits,
-    wrapper_return_boundary_pinned,
+    helper_pins_owner_call, infection_evidence_for_owner, is_drop_destructor, local_flow_sinks,
+    method_cannot_store, observes_returned_element_field, operand_only_pin,
+    oracle_crediting_relations, outer_imported_names, owner_touches_field_only_at, package_prefix,
+    parameter_rebound, propagation_evidence_with_witness, pushed_collection_compared_whole,
+    pushed_literal_path, reach_evidence, reveal_outcome, same_test_pairing_missing_summary,
+    setter_plainly_writes, signature_parameters, unconditional_owner_insert_field,
+    unexercised_mask_bits, wrapper_return_boundary_pinned,
 };
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::facts::{FunctionSummary, OracleFact, RustIndex, TestSummary};
@@ -207,6 +207,16 @@ impl ClassifiedProbeEvidence {
         .or_else(|| {
             context.owner_fn.and_then(|owner| {
                 crate::analysis::classify::constant_tail_witness(context.probe, owner, &flow_sinks)
+            })
+        })
+        .or_else(|| {
+            context.owner_fn.and_then(|owner| {
+                crate::analysis::classify::result_map_witness(
+                    context.probe,
+                    owner,
+                    context.index,
+                    &flow_sinks,
+                )
             })
         })
         .or_else(|| {
@@ -773,7 +783,30 @@ impl ClassifiedProbeEvidence {
             context.probe.before.as_deref(),
             context.probe.after.as_deref(),
         );
+        let map_callback_pin_required = matches!(
+            &propagation_witness,
+            Some(PropagationWitnessDiagnostic::Valid(witness))
+                if witness.limitations.iter().any(|limit| limit == "result_map_callback_payload")
+        );
+        let direct_owner_pin_admits = |test: &TestSummary, assertion: &OracleFact| {
+            owner_return_pin.as_ref().is_some_and(|pin| {
+                pin.admits(
+                    test,
+                    assertion,
+                    context.index,
+                    &|file, name| {
+                        context.index.files().get(file).is_some_and(|facts| {
+                            context.test_file_imports_foreign_callee_name(file, &facts.source, name)
+                        })
+                    },
+                    pin_syntax,
+                )
+            })
+        };
         let owner_pin_admits = |test: &TestSummary, assertion: &OracleFact| {
+            if map_callback_pin_required {
+                return direct_owner_pin_admits(test, assertion);
+            }
             // #5352: an exact assertion on the helper chain's entry pins
             // the owner's returned value when every observed hop
             // forwards it (the entry form of the owner-return pin).
@@ -807,23 +840,7 @@ impl ClassifiedProbeEvidence {
                 || fallible_checks.iter().any(|receipt| {
                     receipt.valid_for(context.probe) && receipt.admits(test, assertion)
                 })
-                || owner_return_pin.as_ref().is_some_and(|pin| {
-                    pin.admits(
-                        test,
-                        assertion,
-                        context.index,
-                        &|file, name| {
-                            context.index.files().get(file).is_some_and(|facts| {
-                                context.test_file_imports_foreign_callee_name(
-                                    file,
-                                    &facts.source,
-                                    name,
-                                )
-                            })
-                        },
-                        pin_syntax,
-                    )
-                })
+                || direct_owner_pin_admits(test, assertion)
         };
         let fallback_expansion = crate::analysis::classify::ImplicitExpansionMemo::default();
         let expansion = crate::analysis::classify::ImplicitExpansionContext::new(
@@ -859,6 +876,7 @@ impl ClassifiedProbeEvidence {
                     crate::analysis::classify::returned_closure_pin_required(context.probe, owner)
                 }),
                 owner_return_pin: &owner_pin_admits,
+                owner_return_pin_required: map_callback_pin_required,
                 wrapper_return_pin: &|test, assertion| {
                     wrapper_boundary_probe.is_some()
                         && context.related_tests.iter().any(|(related, reason)| {
@@ -890,7 +908,12 @@ impl ClassifiedProbeEvidence {
                                         .activation
                                     });
                                 wrapper_return_boundary_pinned(
-                                    owner, assertion, chain, activation, test,
+                                    owner,
+                                    assertion,
+                                    chain,
+                                    activation,
+                                    test,
+                                    context.index,
                                 )
                             })
                 },
@@ -903,6 +926,11 @@ impl ClassifiedProbeEvidence {
                         return None;
                     }
                     let owner = context.owner_fn?;
+                    // A destructor runs at scope end, which the shared-sink
+                    // authority below has no reading for; never confirm it.
+                    if is_drop_destructor(owner, context.index) {
+                        return Some(false);
+                    }
                     let reach =
                         owner_reach.get_or_init(|| proximity_reach.owner_reach(&owner.name));
                     reach
