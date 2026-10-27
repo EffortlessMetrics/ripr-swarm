@@ -79,6 +79,8 @@ mod dropped_term_guard;
 mod enum_member_guard;
 mod error_payload_guard;
 mod extraction_cache;
+#[cfg(test)]
+mod fact_store_tests;
 mod field_update_guard;
 mod fixture_receivers;
 mod gap_reach;
