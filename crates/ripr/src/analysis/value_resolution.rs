@@ -660,9 +660,17 @@ pub(crate) fn test_let_bound_literal(body: &str, ident: &str) -> Option<String> 
     } else {
         format!("fn __test() {{\n{body}\n}}")
     };
+    // `has_match_arm_binding` is not used: it reads a one-line `match n { .. }`
+    // scrutinee as an arm pattern, and the parser already counts real arms.
+    let lexical_rebind = cleaned.lines().any(|line| {
+        has_for_binding(line, ident)
+            || has_let_pattern_binding(line, "if let ", ident)
+            || has_let_pattern_binding(line, "while let ", ident)
+            || has_closure_param_binding(line, ident)
+    });
     if crate::analysis::syntax::fn_name_binding_count(&source, ident) != Some(1)
         || !non_simple_let_shadowing_lines(&cleaned, ident, 0).is_empty()
-        || !non_let_shadowing_lines(&cleaned, ident, 0).is_empty()
+        || lexical_rebind
     {
         return None;
     }

@@ -89,6 +89,18 @@ fn a_single_literal_binding_at_the_boundary_is_credited() -> Result<(), String> 
 }
 
 #[test]
+fn a_match_scrutinee_naming_the_binding_does_not_rebind_it() -> Result<(), String> {
+    let found = TempRepo::create(
+        "#[test]\nfn t() {\n    let n = 10;\n    match n { 10 => {}, _ => {} }\n    assert_eq!(gate(n), 0);\n}\n",
+    )?
+    .classes()?;
+    if !found.contains(&ExposureClass::Exposed) {
+        return Err(format!("the unshadowed binding must credit: {found:?}"));
+    }
+    Ok(())
+}
+
+#[test]
 fn a_pattern_that_rebinds_the_name_is_not_credited() -> Result<(), String> {
     for (label, body) in [
         (
