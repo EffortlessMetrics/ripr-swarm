@@ -94,6 +94,15 @@ pub(in crate::analysis) fn destructor_credit_established(
     ) {
         return false;
     }
+    // A row cut from the display cannot be checked, so "every strong row is
+    // confirmed" does not hold (the cut check `reached_only_through_syntax`
+    // makes, #10551).
+    if finding
+        .related_tests_matched_total
+        .is_some_and(|total| finding.related_tests.len() < total)
+    {
+        return false;
+    }
     let memo = super::ImplicitExpansionMemo::default();
     let expansion = ImplicitExpansionContext::new(index, &memo);
     let mut credited = false;

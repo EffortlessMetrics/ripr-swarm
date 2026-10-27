@@ -21,6 +21,17 @@ pub(in crate::analysis) use scope_end::{
 fn compact(text: &str) -> String {
     text.chars().filter(|c| !c.is_whitespace()).collect()
 }
+/// The trait path of an impl without its generic arguments, compacted.
+fn impl_trait_text(item: &ast::Impl) -> Option<String> {
+    item.trait_()
+        .map(|t| compact(&t.syntax().text().to_string()))
+        .map(|path| path.split('<').next().unwrap_or(&path).to_string())
+}
+
+fn is_drop_trait(name: &str) -> bool {
+    name == "Drop" || name.ends_with("::Drop")
+}
+
 fn known_builtin_attribute(attr: &ast::Attr) -> bool {
     let text = compact(&attr.syntax().text().to_string());
     let Some(inner) = text.strip_prefix("#[").and_then(|s| s.strip_suffix(']')) else {
@@ -233,10 +244,7 @@ impl ExpansionSurface {
                     );
                 }
                 if let Some(item) = ast::Impl::cast(node) {
-                    let trait_text = item
-                        .trait_()
-                        .map(|t| compact(&t.syntax().text().to_string()))
-                        .map(|path| path.split('<').next().unwrap_or(&path).to_string());
+                    let trait_text = impl_trait_text(&item);
                     if trait_text
                         .as_deref()
                         .is_some_and(|name| !DISPATCH_TRAITS.contains(&name))
@@ -247,10 +255,7 @@ impl ExpansionSurface {
                             .next()
                             .unwrap_or("")
                             .to_owned();
-                        if trait_text
-                            .as_deref()
-                            .is_some_and(|name| name == "Drop" || name.ends_with("::Drop"))
-                        {
+                        if trait_text.as_deref().is_some_and(is_drop_trait) {
                             surface.drop_impl_types.push(receiver.clone());
                             surface.excluded_receivers.insert(receiver);
                         } else {
@@ -343,19 +348,11 @@ impl ExpansionSurface {
             // A `Drop` impl makes the general bounded proof unknown, since a
             // destructor runs when the consumed receiver leaves scope and may
             // write the same sink. Only the scope-end carrier admits one.
-            let has_drop_impl =
-                tree.syntax()
-                    .descendants()
-                    .filter_map(ast::Impl::cast)
-                    .any(|item| {
-                        let trait_text = item
-                            .trait_()
-                            .map(|t| compact(&t.syntax().text().to_string()))
-                            .map(|path| path.split('<').next().unwrap_or(&path).to_string());
-                        trait_text
-                            .as_deref()
-                            .is_some_and(|name| name == "Drop" || name.ends_with("::Drop"))
-                    });
+            let has_drop_impl = tree
+                .syntax()
+                .descendants()
+                .filter_map(ast::Impl::cast)
+                .any(|item| impl_trait_text(&item).as_deref().is_some_and(is_drop_trait));
             surface.bounded &= bounded && !has_drop_impl;
             surface.bounded_apart_from_drop &= bounded;
         }
