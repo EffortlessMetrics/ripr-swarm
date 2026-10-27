@@ -440,6 +440,11 @@ fn contradiction_rules_fire_only_on_self_inconsistent_rows() -> Result<(), Strin
             "{reaching}"
         );
     }
+    // A capped window can hide a reaching test ranked behind the listed ones.
+    let capped = json!({"seams": [{"file": "e.rs", "line": 5, "evidence": {"reach": "no"},
+        "related_tests_total": 9,
+        "related_tests": vec![json!({"name": "t", "relation_reason": "same_test_file"}); 8]}]});
+    assert_eq!(repo_exposure_contradictions(&capped).0, 1);
     // A relation this scan cannot read is not read as clean.
     assert_eq!(
         repo_exposure_contradictions(&listed("brand_new_relation")).0,

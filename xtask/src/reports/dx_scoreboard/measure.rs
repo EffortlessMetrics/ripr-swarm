@@ -746,7 +746,8 @@ pub(crate) fn git(cwd: Option<&Path>, args: &[&str]) -> Result<String, String> {
 /// Self-contradiction rules over one pilot `repo-exposure.json`:
 /// `R1` a seam says reach is `no` while it lists a related test whose
 /// relation establishes reach. Proximity relations (`same_test_file`,
-/// `same_module`, `assertion_target_affinity` on a function owner) are listed
+/// `same_module`, `assertion_target_affinity` on a function owner, and the
+/// other non-reaching relations) are listed
 /// as suggestions beside `reach: no` by design (#5335, #6866), so they are
 /// not a contradiction. A listed relation this scan cannot read, or a total
 /// with no listed window to inspect, still counts: unknown is not clean.
@@ -780,7 +781,11 @@ fn listed_relation_may_establish_reach(seam: &Value) -> bool {
     let window = seam["related_tests"]
         .as_array()
         .map_or(&[][..], Vec::as_slice);
+    // The listed window is capped below the total and ranked by confidence
+    // before relation, so an unlisted test may still be a reaching one.
+    let total = seam["related_tests_total"].as_u64().unwrap_or(0);
     window.is_empty()
+        || total > window.len() as u64
         || window.iter().any(|test| {
             serde_json::from_value::<RelationReason>(test["relation_reason"].clone())
                 .map_or(true, |reason| reason.establishes_reach(true))

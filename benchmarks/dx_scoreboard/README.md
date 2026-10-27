@@ -67,7 +67,9 @@ release ripr first, because developers run release builds.
   does not exist, run from an unrelated directory. Each should exit nonzero.
 - **Self-contradictions.** Rules over the pilot `repo-exposure.json` and the
   warm check JSON:
-  - `R1` a seam says reach is `no` while it lists related tests;
+  - `R1` a seam says reach is `no` while it lists a related test whose
+    relation establishes reach (proximity-only relations are listed beside
+    `reach: no` by design), or a listed window that cannot be fully inspected;
   - `R2` a finding is `no_static_path` while it lists related tests;
   - `R3` a finding's evidence says related tests were found while it lists
     none.
