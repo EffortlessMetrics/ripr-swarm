@@ -1977,25 +1977,6 @@ fn candidate_lines_from_findings(findings: &[Finding]) -> usize {
         .len()
 }
 
-/// Collapses the `javascript` compat row into the `typescript` one when both
-/// were published with identical status and reason (#10546). The two ids share
-/// one adapter result, so identical rows are one fact. Passes that disagree
-/// (one clean or errored, the other partial) keep both rows, so a degradation
-/// is never dropped. Order-independent; a single-id run is untouched.
-fn dedupe_typescript_family_runs(runs: Vec<LanguageRun>) -> Vec<LanguageRun> {
-    let typescript: Vec<(LanguageRunStatus, Option<String>)> = runs
-        .iter()
-        .filter(|run| run.language == "typescript")
-        .map(|run| (run.status, run.reason.clone()))
-        .collect();
-    runs.into_iter()
-        .filter(|run| {
-            !(run.language == "javascript"
-                && typescript.contains(&(run.status, run.reason.clone())))
-        })
-        .collect()
-}
-
 fn limitations_from_language_runs(
     language_runs: &[LanguageRun],
 ) -> Result<Vec<AnalysisLimitation>, String> {
@@ -2159,11 +2140,11 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
                 // and JSON output render the limitation and gates fail
                 // closed on the partial denominator (#3554, #2109).
                 let outcome = LanguageAnalysisOutcomeV1::from_repo_result(*language, &result, None);
+                language_runs.extend(outcome.compat_run());
+                repo_language_aggregate.record(outcome);
                 let repeat_typescript_pass =
                     matches!(language, LanguageId::TypeScript | LanguageId::JavaScript)
                         && std::mem::replace(&mut typescript_family_merged, true);
-                language_runs.extend(outcome.compat_run());
-                repo_language_aggregate.record(outcome);
                 if !repeat_typescript_pass {
                     value_origins.extend(result.value_origins);
                     findings.extend(result.findings);
@@ -2200,9 +2181,6 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
         }
     }
 
-    // One public compat row per adapter family (#10546): both ids share one
-    // adapter result, so identical rows collapse; divergent passes keep both.
-    let language_runs = dedupe_typescript_family_runs(language_runs);
     // Detect preview-language files anywhere in the workspace regardless of
     // adapter enablement, so a repo-scope clean result is never silently
     // presented as Rust-grade clean when TypeScript/JavaScript/Python files
@@ -5655,6 +5633,79 @@ mod tests {
         Ok(())
     }
 
+    /// #10546: one compat row per selected label is intentional. Both ids
+    /// share one partial adapter result, so each publishes the same Partial
+    /// row (typescript, then javascript) in either id order, and a
+    /// label-matching consumer (the preview advisory's `analyzed` check)
+    /// reports a degraded run for either label.
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn repo_pipeline_both_typescript_ids_publish_a_compat_row_per_label() -> Result<(), String> {
+        let files = [
+            (
+                "src/price.ts",
+                "export function price(amount: number): number {\n  return amount > 10 ? 1 : 2;\n}\n",
+            ),
+            (
+                "src/price.test.ts",
+                "import { price } from './price';\ntest('p', () => { expect(price(20)).toBe(1); });\n",
+            ),
+            (
+                "src/tax.js",
+                "export function tax(amount) {\n  return amount > 5 ? 1 : 2;\n}\n",
+            ),
+            (
+                "src/tax.test.js",
+                "import { tax } from './tax';\ntest('t', () => { expect(tax(9)).toBe(1); });\n",
+            ),
+            ("src/broken.ts", "export function (((( {\n"),
+        ];
+        let (single, _) =
+            run_repo_aggregate("repo-label-single", &files, &[LanguageId::TypeScript])?;
+        // Fixture construction: the single-id run is one Partial row.
+        assert_eq!(single.language_runs.len(), 1, "{:?}", single.language_runs);
+        let typescript = single.language_runs[0].clone();
+        assert_eq!(typescript.language, "typescript");
+        assert_eq!(typescript.status, super::LanguageRunStatus::Partial);
+        assert!(
+            typescript
+                .reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("parser error(s)")),
+            "{typescript:?}"
+        );
+        let javascript = LanguageRun {
+            language: "javascript".to_string(),
+            ..typescript.clone()
+        };
+        for (label, order) in [
+            ("both", [LanguageId::TypeScript, LanguageId::JavaScript]),
+            ("reversed", [LanguageId::JavaScript, LanguageId::TypeScript]),
+        ] {
+            let (run, _) = run_repo_aggregate(&format!("repo-label-{label}"), &files, &order)?;
+            // Rows follow the selected id order; the vector is exact.
+            let expected = if label == "both" {
+                vec![typescript.clone(), javascript.clone()]
+            } else {
+                vec![javascript.clone(), typescript.clone()]
+            };
+            assert_eq!(run.language_runs, expected, "{label}");
+            // The advisory check matches rows by label, so the degraded run
+            // is never read as analyzed for either label.
+            let advisory = run
+                .preview_language_advisories
+                .iter()
+                .find(|advisory| advisory.language == "typescript")
+                .ok_or_else(|| format!("{label}: expected a typescript advisory"))?;
+            assert!(advisory.enabled, "{label}");
+            assert!(!advisory.analyzed(&run.language_runs), "{label}");
+            let mut js_advisory = advisory.clone();
+            js_advisory.language = "javascript".to_string();
+            assert!(!js_advisory.analyzed(&run.language_runs), "{label}: js");
+        }
+        Ok(())
+    }
+
     /// #10013: both TypeScript-family ids run the shared repo adapter, but its
     /// findings and file counts are retained once, as in a single-id run, and
     /// do not depend on which id is listed first.
@@ -5725,98 +5776,6 @@ mod tests {
             ("reversed", &reversed, &reversed_aggregate),
         ] {
             assert_eq!(run.summary.findings, single.summary.findings, "{label}");
-            assert!(aggregate.outcomes.contains_key("typescript"), "{label}");
-            assert!(aggregate.outcomes.contains_key("javascript"), "{label}");
-        }
-        Ok(())
-    }
-
-    fn family_run(language: &str, status: LanguageRunStatus, reason: &str) -> LanguageRun {
-        LanguageRun {
-            language: language.to_string(),
-            status,
-            reason: Some(reason.to_string()),
-        }
-    }
-
-    /// #10546: identical typescript/javascript rows collapse to the typescript
-    /// row in either order; rows that differ in status or reason keep both so a
-    /// divergent pass never loses its degradation; other languages and
-    /// single-id runs are untouched.
-    #[test]
-    fn dedupe_typescript_family_runs_collapses_only_identical_rows() {
-        use super::dedupe_typescript_family_runs as dedupe;
-        let partial = LanguageRunStatus::Partial;
-        let ts = family_run("typescript", partial, "r");
-        let js = family_run("javascript", partial, "r");
-        assert_eq!(dedupe(vec![ts.clone(), js.clone()]), vec![ts.clone()]);
-        assert_eq!(dedupe(vec![js.clone(), ts.clone()]), vec![ts.clone()]);
-        // TS clean (no row) + JS partial keeps the javascript degradation.
-        assert_eq!(dedupe(vec![js.clone()]), vec![js.clone()]);
-        // TS Err + JS partial: statuses differ, both kept.
-        let ts_err = family_run("typescript", LanguageRunStatus::Unavailable, "r");
-        assert_eq!(
-            dedupe(vec![ts_err.clone(), js.clone()]),
-            vec![ts_err, js.clone()]
-        );
-        // Same status, different reason: both kept.
-        let ts_other = family_run("typescript", partial, "other");
-        assert_eq!(
-            dedupe(vec![ts_other.clone(), js.clone()]),
-            vec![ts_other, js]
-        );
-        // Single-id and unrelated rows are untouched.
-        let py = family_run("python", partial, "r");
-        assert_eq!(dedupe(vec![py.clone(), ts.clone()]), vec![py, ts]);
-    }
-
-    /// #10546: both TypeScript-family ids share one adapter result, so a
-    /// partial run publishes exactly one compat `language_runs` row (the
-    /// canonical `typescript` label) in either id order, equal to the
-    /// single-id run. Per-label outcomes are still recorded for both ids.
-    #[cfg(feature = "lang-typescript")]
-    #[test]
-    fn repo_pipeline_both_typescript_ids_publish_one_compat_row() -> Result<(), String> {
-        let files = [
-            (
-                "src/price.ts",
-                "export function price(amount: number): number {\n  return amount > 10 ? 1 : 2;\n}\n",
-            ),
-            (
-                "src/price.test.ts",
-                "import { price } from './price';\ntest('p', () => { expect(price(20)).toBe(1); });\n",
-            ),
-            (
-                "src/tax.js",
-                "export function tax(amount) {\n  return amount > 5 ? 1 : 2;\n}\n",
-            ),
-            (
-                "src/tax.test.js",
-                "import { tax } from './tax';\ntest('t', () => { expect(tax(9)).toBe(1); });\n",
-            ),
-            ("src/broken.ts", "export function (((( {\n"),
-        ];
-        let (single, _) =
-            run_repo_aggregate("repo-compat-single", &files, &[LanguageId::TypeScript])?;
-        // Fixture construction: the single run is partial with a reason.
-        assert_eq!(single.language_runs.len(), 1, "{:?}", single.language_runs);
-        let expected = &single.language_runs[0];
-        assert_eq!(expected.language, "typescript");
-        assert_eq!(expected.status, super::LanguageRunStatus::Partial);
-        assert!(
-            expected
-                .reason
-                .as_deref()
-                .is_some_and(|reason| reason.contains("parser error(s)")),
-            "{expected:?}"
-        );
-        for (label, order) in [
-            ("both", [LanguageId::TypeScript, LanguageId::JavaScript]),
-            ("reversed", [LanguageId::JavaScript, LanguageId::TypeScript]),
-        ] {
-            let (run, aggregate) =
-                run_repo_aggregate(&format!("repo-compat-{label}"), &files, &order)?;
-            assert_eq!(run.language_runs, vec![expected.clone()], "{label}");
             assert!(aggregate.outcomes.contains_key("typescript"), "{label}");
             assert!(aggregate.outcomes.contains_key("javascript"), "{label}");
         }

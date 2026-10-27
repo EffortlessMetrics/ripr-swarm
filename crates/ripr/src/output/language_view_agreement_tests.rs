@@ -508,65 +508,6 @@ fn an_extra_run_for_a_known_label_is_tolerated() -> Result<(), String> {
 }
 
 #[test]
-fn one_typescript_run_covers_the_shared_javascript_row_only_when_identical_in_repo_mode()
--> Result<(), String> {
-    let run = |language: &str, status, reason: &str| crate::analysis::LanguageRun {
-        language: language.to_string(),
-        status,
-        reason: Some(reason.to_string()),
-    };
-    let failed = LanguageRunStatus::Failed;
-    let repo_child =
-        |language| LanguageAnalysisOutcomeV1::from_repo_err(language, "boom".to_string(), failed);
-    let mut both = LanguageAggregate::new_repo();
-    both.record(repo_child(LanguageId::TypeScript));
-    both.record(repo_child(LanguageId::JavaScript));
-    let view = LanguageCompletenessView::from_aggregate(&both.finish());
-    view.reconcile_public_runs(&[run("typescript", failed, "boom")])?;
-    // A different reason or status does not cover the javascript row.
-    assert!(
-        view.reconcile_public_runs(&[run("typescript", failed, "other")])
-            .is_err()
-    );
-    assert!(
-        view.reconcile_public_runs(&[run("typescript", LanguageRunStatus::Partial, "boom")])
-            .is_err()
-    );
-    // A javascript-only run does not cover a hidden typescript degradation.
-    assert!(
-        view.reconcile_public_runs(&[run("javascript", failed, "boom")])
-            .is_err()
-    );
-    assert!(view.reconcile_public_runs(&[]).is_err());
-    // Without a typescript row the family exemption does not apply.
-    let mut lone = LanguageAggregate::new_repo();
-    lone.record(repo_child(LanguageId::JavaScript));
-    let view = LanguageCompletenessView::from_aggregate(&lone.finish());
-    assert!(
-        view.reconcile_public_runs(&[run("typescript", failed, "boom")])
-            .is_err()
-    );
-    view.reconcile_public_runs(&[run("javascript", failed, "boom")])?;
-    Ok(())
-}
-
-#[test]
-fn the_shared_row_exemption_never_applies_in_diff_mode() -> Result<(), String> {
-    let mut both = LanguageAggregate::new("full".to_string());
-    for language in [LanguageId::TypeScript, LanguageId::JavaScript] {
-        both.record(err_child(language, LanguageRunStatus::Failed));
-    }
-    let view = LanguageCompletenessView::from_aggregate(&both.finish());
-    let only_typescript = vec![crate::analysis::LanguageRun {
-        language: "typescript".to_string(),
-        status: LanguageRunStatus::Failed,
-        reason: Some("boom".to_string()),
-    }];
-    assert!(view.reconcile_public_runs(&only_typescript).is_err());
-    Ok(())
-}
-
-#[test]
 fn disclosure_is_a_fixed_table_over_every_mode_and_status() {
     use LanguageDisclosure::{AdvisoryOnly, PublicRun, Silent, TypedLimitation};
     use LanguageOutcomeStatus as S;
