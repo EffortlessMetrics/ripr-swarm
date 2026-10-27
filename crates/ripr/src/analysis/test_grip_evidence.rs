@@ -458,6 +458,7 @@ fn evidence_for_seam_with_context(
     if let Some(fact) = return_value_missing_discriminator(
         seam,
         &related_tests,
+        &related,
         path_established.then_some(&discriminate),
         statically_contradicted_related_tests,
         owner_fn,
@@ -504,6 +505,7 @@ fn evidence_for_seam_with_context(
 fn return_value_missing_discriminator(
     seam: &RepoSeam,
     related_tests: &[Arc<RelatedTestGrip>],
+    related_summaries: &[&TestSummary],
     discriminate: Option<&StageEvidence>,
     statically_contradicted_related_tests: usize,
     owner_fn: Option<&FunctionSummary>,
@@ -528,6 +530,18 @@ fn return_value_missing_discriminator(
         &related_identities,
         index,
     ) {
+        return None;
+    }
+    // `check` credits a lone equality between an owner call and an owner-free
+    // expected value (`assert!(f(x) == lit)`, or the terminal Err-return guard
+    // twin `if f(x) != lit { return Err(..) }`) through the owner-return pin,
+    // while the seam-level oracle grade stays weak. Such a test already pins
+    // the changed value, so repair must not start on it either; the check is
+    // syntactic and errs toward withholding.
+    if related_summaries
+        .iter()
+        .any(|test| test_pins_owner_call_by_equality(test, &owner_fn.name, index))
+    {
         return None;
     }
     // `discriminate` is `None` unless reach, activation and propagation are
@@ -561,6 +575,39 @@ fn return_value_missing_discriminator(
         value: description.clone(),
         reason: reason.to_string(),
         flow_sink: None,
+    })
+}
+
+/// Whether one of `test`'s assertions is a lone top-level equality with a call
+/// to `owner_name` on one side (RIPR-SPEC-0197 / RIPR-SPEC-0154 shapes).
+fn test_pins_owner_call_by_equality(
+    test: &TestSummary,
+    owner_name: &str,
+    index: &RustIndex,
+) -> bool {
+    let call = format!("{owner_name}(");
+    // A terminal Err-return guard is a pin only through the prelude `Err`; a
+    // file that binds `Err` as a value (`fn Err`, `const Err`) makes the guard
+    // an ordinary statement (RIPR-SPEC-0197), so it is not read as a pin.
+    let err_shadowed = index.files().get(&test.file).is_none_or(|facts| {
+        facts.source.lines().any(|line| {
+            let line = line.trim_start();
+            [
+                "fn Err",
+                "const Err",
+                "static Err",
+                "let Err",
+                "let mut Err",
+            ]
+            .iter()
+            .any(|binding| line.contains(binding))
+        })
+    });
+    test.assertions.iter().any(|oracle| {
+        let guard = crate::analysis::extract::err_return_guard_twin(&oracle.text).is_some();
+        (!guard || !err_shadowed)
+            && crate::analysis::classify::equality_condition_operands(&oracle.text)
+                .is_some_and(|operands| operands.iter().any(|operand| operand.contains(&call)))
     })
 }
 

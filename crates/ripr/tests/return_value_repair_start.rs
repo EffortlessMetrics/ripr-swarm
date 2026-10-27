@@ -246,15 +246,135 @@ fn executor_helper_async_call_stays_fail_closed_with_a_plain_reason() -> Result<
     )
 }
 
+const DBL_OLD: &str = "pub fn dbl(x: i32) -> i32 {\n    x * 2\n}\n";
+const DBL_NEW: &str = "pub fn dbl(x: i32) -> i32 {\n    x * 3\n}\n";
+
+/// A case that must not start a repair: `check` prints no `ripr repair <id>`
+/// start and an unfiltered `repair` refuses, never claiming `repair_ready`.
+fn assert_no_start(case: &str, old_src: &str, new_src: &str, test: &str) -> Result<Repo, String> {
+    let repo = Repo::create(old_src, new_src, test)?;
+    let check = repo.check_text()?;
+    assert!(
+        printed_repair_seam(&check).is_none(),
+        "{case}: check must not print a repair start:\n{check}"
+    );
+    let (ok, repair) = repo.repair_text(&[])?;
+    assert!(!ok, "{case}: repair must refuse:\n{repair}");
+    assert!(
+        !repair.contains("repair_ready=true"),
+        "{case}: repair must not be ready:\n{repair}"
+    );
+    Ok(repo)
+}
+
+/// The seam id `check` prints for the weak `dbl` change, used to address the
+/// same seam when other tests make it strong.
+fn weak_dbl_seam() -> Result<String, String> {
+    let repo = Repo::create(
+        DBL_OLD,
+        DBL_NEW,
+        "use ar::dbl;\n\n#[test]\nfn dbl_positive() {\n    assert!(dbl(2) > 0);\n}\n",
+    )?;
+    let check = repo.check_text()?;
+    printed_repair_seam(&check).ok_or_else(|| format!("no weak repair start:\n{check}"))
+}
+
 #[test]
 fn strong_exact_assert_is_not_a_repair_start() -> Result<(), String> {
-    let repo = Repo::create(
-        "pub fn dbl(x: i32) -> i32 {\n    x * 2\n}\n",
-        "pub fn dbl(x: i32) -> i32 {\n    x * 3\n}\n",
+    let seam = weak_dbl_seam()?;
+    let repo = assert_no_start(
+        "exact",
+        DBL_OLD,
+        DBL_NEW,
         "use ar::dbl;\n\n#[test]\nfn exact() {\n    assert_eq!(dbl(2), 6);\n}\n",
     )?;
-    let (ok, repair) = repo.repair_text(&[])?;
+    // Address the very seam the weak case started: the refusal must come from
+    // the seam being pinned, not from nothing being selected.
+    let (ok, repair) = repo.repair_text(&[&seam])?;
     assert!(!ok, "{repair}");
+    assert!(
+        repair.contains(&seam),
+        "refusal must name the seam: {repair}"
+    );
     assert!(!repair.contains("repair_ready=true"), "{repair}");
     Ok(())
+}
+
+#[test]
+fn equality_assert_pinning_the_owner_is_not_a_repair_start() -> Result<(), String> {
+    assert_no_start(
+        "assert-eq-operator",
+        DBL_OLD,
+        DBL_NEW,
+        "use ar::dbl;\n\n#[test]\nfn pinned() {\n    assert!(dbl(2) == 6);\n}\n",
+    )?;
+    Ok(())
+}
+
+#[test]
+fn terminal_err_return_guard_pinning_the_owner_is_not_a_repair_start() -> Result<(), String> {
+    assert_no_start(
+        "err-return-guard",
+        DBL_OLD,
+        DBL_NEW,
+        "use ar::dbl;\n\n#[test]\nfn guarded() -> Result<(), String> {\n    if dbl(2) != 6 {\n        return Err(format!(\"dbl(2) was {}\", dbl(2)));\n    }\n    Ok(())\n}\n",
+    )?;
+    Ok(())
+}
+
+#[test]
+fn function_value_reach_is_not_a_repair_start() -> Result<(), String> {
+    assert_no_start(
+        "function-value",
+        DBL_OLD,
+        DBL_NEW,
+        "use ar::dbl;\n\n#[test]\nfn mapped() {\n    let v: Vec<i32> = vec![1, 2].into_iter().map(dbl).collect();\n    assert!(!v.is_empty());\n}\n",
+    )?;
+    Ok(())
+}
+
+#[test]
+fn statically_contradicted_assertion_is_not_a_repair_start() -> Result<(), String> {
+    // `dbl(2)` is 6 after the change, so `== 5` fails today: the failing test
+    // is not evidence for repair to strengthen.
+    assert_no_start(
+        "contradicted",
+        DBL_OLD,
+        DBL_NEW,
+        "use ar::dbl;\n\n#[test]\nfn wrong() {\n    assert_eq!(dbl(2), 5);\n}\n",
+    )?;
+    Ok(())
+}
+
+#[test]
+fn indirect_call_without_a_direct_owner_call_is_not_a_repair_start() -> Result<(), String> {
+    assert_no_start(
+        "no-direct-call",
+        DBL_OLD,
+        DBL_NEW,
+        "use ar::dbl;\n\nfn helper() -> i32 {\n    dbl(2)\n}\n\n#[test]\nfn via_helper() {\n    assert!(helper() > 0);\n}\n",
+    )?;
+    Ok(())
+}
+
+const ASYNC_OLD: &str = "pub async fn dbl(x: i32) -> i32 {\n    x * 2\n}\n";
+const ASYNC_NEW: &str = "pub async fn dbl(x: i32) -> i32 {\n    x * 3\n}\n";
+
+/// The executor-helper control differs from the awaited positive in exactly
+/// one respect (`block_on(dbl(2))` versus `dbl(2).await`), so only the
+/// indirect-reach check can explain the different outcomes.
+#[test]
+fn executor_helper_differs_from_the_awaited_call_only_by_indirect_reach() -> Result<(), String> {
+    assert_repair_ready(
+        "awaited-twin",
+        ASYNC_OLD,
+        ASYNC_NEW,
+        "use ar::dbl;\n\n#[tokio::test]\nasync fn dbl_positive() {\n    let v = dbl(2).await;\n    assert!(v > 0);\n}\n",
+    )?;
+    assert_plain_reason(
+        "executor-twin",
+        ASYNC_OLD,
+        ASYNC_NEW,
+        "use ar::dbl;\n\n#[tokio::test]\nasync fn dbl_positive() {\n    let v = block_on(dbl(2));\n    assert!(v > 0);\n}\nfn block_on<T>(_f: impl std::future::Future<Output = T>) -> T {\n    unimplemented!()\n}\n",
+    )
 }

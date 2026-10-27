@@ -257,7 +257,6 @@ fn repair_refusal(
                 if let [missing] = eligibility.readiness.missing_evidence.as_slice()
                     && let Some(kind) =
                         crate::analysis::repair_route::stub_kind_for_missing_evidence(missing)
-                    && kind != "predicate"
                     && matches!(
                         (entry.seam.kind(), kind),
                         (crate::analysis::seams::SeamKind::ReturnValue, "return_value")

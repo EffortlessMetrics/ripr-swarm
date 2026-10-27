@@ -10418,6 +10418,19 @@ tests = [
   "crates/ripr/src/output/json/mod.rs::tests::findings_byte_budget_keeps_actionable_findings_over_file_order",
   "crates/ripr/src/output/json/mod.rs::tests::findings_priority_next_step_breaks_class_ties_before_sort_order",
   "crates/ripr/src/output/json/mod.rs::tests::findings_priority_ties_keep_sort_order_and_name_extra_files",
+  "crates/ripr/tests/return_value_repair_start.rs::arithmetic_return_with_relational_assert_reaches_repair",
+  "crates/ripr/tests/return_value_repair_start.rs::string_return_with_weak_assert_reaches_repair",
+  "crates/ripr/tests/return_value_repair_start.rs::awaited_async_return_with_weak_assert_reaches_repair",
+  "crates/ripr/tests/return_value_repair_start.rs::err_variant_with_is_err_assert_reaches_repair",
+  "crates/ripr/tests/return_value_repair_start.rs::return_value_with_no_test_gives_one_plain_reason_in_both_commands",
+  "crates/ripr/tests/return_value_repair_start.rs::executor_helper_async_call_stays_fail_closed_with_a_plain_reason",
+  "crates/ripr/tests/return_value_repair_start.rs::strong_exact_assert_is_not_a_repair_start",
+  "crates/ripr/tests/return_value_repair_start.rs::equality_assert_pinning_the_owner_is_not_a_repair_start",
+  "crates/ripr/tests/return_value_repair_start.rs::terminal_err_return_guard_pinning_the_owner_is_not_a_repair_start",
+  "crates/ripr/tests/return_value_repair_start.rs::function_value_reach_is_not_a_repair_start",
+  "crates/ripr/tests/return_value_repair_start.rs::statically_contradicted_assertion_is_not_a_repair_start",
+  "crates/ripr/tests/return_value_repair_start.rs::indirect_call_without_a_direct_owner_call_is_not_a_repair_start",
+  "crates/ripr/tests/return_value_repair_start.rs::executor_helper_differs_from_the_awaited_call_only_by_indirect_reach",
 ]
 fixtures = ["fixtures/human_full_shared_parse_port"]
 code = [
