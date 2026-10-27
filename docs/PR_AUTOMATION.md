@@ -627,12 +627,22 @@ reason to cite an existing `RIPR-SPEC-NNNN` under `docs/specs/`, then records
 the explicit blessing reason, updates expected JSON and human outputs, and
 appends the fixture expected-output changelog.
 
-Human goldens compare the line `no repair start offered: <reason>` by its
-presence and position, not by the wording of the reason. The reason is
-plain-language prose with focused tests of its own, and comparing it verbatim
-turned every rewording into one re-blessed line in hundreds of fixtures
-(#10702). A repair start that flips to a refusal, or a refusal that appears or
-disappears, is still drift.
+Human goldens (`human.txt`, `human-full.txt`) mask only the explanatory prose
+of the line `no repair start offered: <reason>`. Pinned: the line's presence and
+position, the fixed opening that identifies the refusal variant (no canonical
+gap, no seam or no binding seam, several binding seams, Rust files only, seam
+budget, unreadable config, classification failure, static evidence incomplete,
+still missing, related test already reaches the boundary), and the
+`still missing:` / `It is also still missing:` evidence lists. Masked as
+`<reason>`: the wording around those pins, such as the trailing "follow the Next
+step" advice, the Rust-files-only explanation and the boundary-variant
+explanation. A reason that matches no known variant opening is compared
+verbatim, so a new or heavily reworded variant is drift to re-bless and add to
+`REPAIR_REFUSAL_RULES` in `xtask/src/reports/fixtures.rs`. `check.json` is never
+masked. The prose has focused tests of its own, and comparing it verbatim turned
+every rewording into one re-blessed line in hundreds of fixtures (#10702). A
+repair start that flips to a refusal, a refusal that appears or disappears, and
+a change of variant or missing-evidence list are still drift.
 
 `golden-drift` writes the same advisory drift reports without failing merely
 because output drift exists. It still reports fixture execution errors as
