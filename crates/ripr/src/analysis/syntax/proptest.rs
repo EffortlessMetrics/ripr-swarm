@@ -6,8 +6,11 @@
 //! Err return is safe only in this proved runner callback.
 
 use super::local_test_macros::{inner_elements, is_item_position};
-use super::{parse_clean_source_file, supported_targeted_item_context};
-use ra_ap_syntax::ast::{self, HasArgList, HasAttrs};
+use super::{
+    NameScope, NameScopes, name_scope_for_items, name_scopes_for_fn, parse_clean_source_file,
+    supported_targeted_item_context,
+};
+use ra_ap_syntax::ast::{self, HasArgList, HasAttrs, HasModuleItem};
 use ra_ap_syntax::{AstNode, SyntaxKind, SyntaxNode};
 
 const MAX_MACRO_BYTES: usize = 64 * 1024;
@@ -20,6 +23,7 @@ pub(crate) struct ProptestExpansion {
     /// The original function keyword line. Local expansion line 2 maps here.
     pub(crate) function_line: usize,
     pub(crate) source: String,
+    pub(crate) name_scopes: NameScopes,
 }
 
 /// File-root canonical paths, one typed-integer/bool Just domain, exact #[test],
@@ -32,6 +36,7 @@ pub(crate) fn proptest_expansions(source: &str) -> Vec<ProptestExpansion> {
     if !closed_binding_context(root.syntax()) {
         return Vec::new();
     }
+    let file_scope = name_scope_for_items(&root.items().collect::<Vec<_>>());
     let lines = super::ra::LineIndex::new(source);
     let mut expansions = Vec::new();
     for call in root.syntax().descendants().filter_map(ast::MacroCall::cast) {
@@ -56,7 +61,7 @@ pub(crate) fn proptest_expansions(source: &str) -> Vec<ProptestExpansion> {
         if usize::from(tree.syntax().text_range().len()) > MAX_MACRO_BYTES {
             continue;
         }
-        let Some(mut properties) = expand_functions(tree.syntax(), &lines) else {
+        let Some(mut properties) = expand_functions(tree.syntax(), &lines, &file_scope) else {
             continue;
         };
         let macro_line = lines.line(call.syntax().text_range().start());
@@ -132,6 +137,7 @@ fn closed_binding_context(root: &SyntaxNode) -> bool {
 fn expand_functions(
     tree: &SyntaxNode,
     lines: &super::ra::LineIndex,
+    file_scope: &NameScope,
 ) -> Option<Vec<ProptestExpansion>> {
     let elements = inner_elements(tree);
     if elements.is_empty()
@@ -163,11 +169,30 @@ fn expand_functions(
         }
         let (parameter, literal) = singleton_parameter(parameters)?;
         let body = lower_body(&body.text().to_string(), &parameter, &literal)?;
+        let source = format!("#[test]\nfn {name}() {body}");
+        let mut name_scopes = name_scopes_for_fn(&source, 2, &name)?;
+        let [body_scope, root_scope] = name_scopes.scopes.as_mut_slice() else {
+            return None;
+        };
+        if !body_scope.fn_body
+            || root_scope.fn_body
+            || !body_scope.modules.is_empty()
+            || !root_scope.modules.is_empty()
+        {
+            return None;
+        }
+        // Only the callback body is synthesized. Its namespace still comes
+        // from the original file root, including module/type/const shadows
+        // of an owner-looking crate path. A short synthetic file alone would
+        // erase those bindings and could lend inputs to the wrong owner.
+        *root_scope = file_scope.clone();
+        root_scope.defines.insert(name.clone());
         result.push(ProptestExpansion {
             macro_line: 0,
             macro_name: String::new(),
             function_line,
-            source: format!("#[test]\nfn {name}() {body}"),
+            source,
+            name_scopes,
         });
     }
     Some(result)
@@ -416,6 +441,21 @@ mod tests {
                 .position(|line| line.contains("assert_eq!")),
             Some(2)
         );
+    }
+
+    #[test]
+    fn generated_body_retains_original_file_root_bindings() {
+        let source =
+            format!("mod local_library {{}}\nstruct LibraryType;\nconst OWNER: u8 = 1;\n{SOURCE}");
+        let expanded = proptest_expansions(&source);
+        assert_eq!(expanded.len(), 1);
+        let scopes = &expanded[0].name_scopes.scopes;
+        assert_eq!(scopes.len(), 2);
+        assert!(scopes[0].fn_body);
+        assert!(scopes[1].child_modules.contains("local_library"));
+        assert!(scopes[1].defines.contains("LibraryType"));
+        assert!(scopes[1].defines.contains("OWNER"));
+        assert!(scopes[1].defines.contains("boundary"));
     }
 
     #[test]

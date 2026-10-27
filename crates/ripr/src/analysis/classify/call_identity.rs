@@ -597,6 +597,9 @@ impl OwnerCallIdentity {
     }
 
     fn name_scopes(&self, test: &TestSummary, index: &RustIndex) -> Option<Arc<NameScopes>> {
+        if let Some(scopes) = index.proptest_name_scopes(test) {
+            return Some(scopes);
+        }
         index
             .source_syntax
             .get(index, &test.file)?

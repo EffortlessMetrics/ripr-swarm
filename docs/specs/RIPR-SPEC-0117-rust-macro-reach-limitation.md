@@ -494,7 +494,11 @@ ordinary-assertion interpretation, with original source lines retained. It
 does **not** make `prop_assert*` non-returning macros outside this callback.
 A generation-owned receipt binds the exact generated TestFact and its local
 interpretation; raw cached or deserialized facts cannot manufacture it. The
-existing owner identity, operand, equality-dispatch, activation, propagation
+receipt also retains the normalized function-body scope and the original
+file-root bindings. Qualified owner-call input rows use the existing resolver
+with those scopes: a generated function has no original AST function, while a
+standalone synthetic file would incorrectly erase root module/type shadows.
+The existing owner identity, operand, equality-dispatch, activation, propagation
 and discriminator rules still decide the result. In particular, registration
 of a nonzero/inequality check does not make it an exact discriminator.
 

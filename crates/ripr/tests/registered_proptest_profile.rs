@@ -288,6 +288,20 @@ fn classified_cache_revokes_nested_target_configuration_and_preserves_revert() -
 }
 
 #[test]
+fn ordinary_qualified_typed_boundary_uses_the_same_discriminator() -> Result<(), String> {
+    let fixture = Fixture::new()?;
+    fixture.write(
+        "tests/boundary.rs",
+        "#[test]\nfn exact_boundary() {\n    assert_eq!(lib_proptest::discounted_total(100i32, 100), 90);\n}\n",
+    )?;
+    assert_eq!(
+        finding(&fixture, "ordinary-typed-boundary", None)?["classification"],
+        "exposed"
+    );
+    Ok(())
+}
+
+#[test]
 fn canonical_property_is_exposed_and_revokes_warm_configuration_and_target_receipts()
 -> Result<(), String> {
     let fixture = Fixture::new()?;
@@ -389,6 +403,8 @@ fn unsupported_property_shapes_never_borrow_direct_assertion_credit() -> Result<
         ("diagnostic-return", PROPERTY.replace(", 90);", ", 90, \"{}\", { return Ok(()); \"discarded\" });")),
         ("callee-shadow", PROPERTY.replace("amount in", "discounted_total in").replace("lib_proptest::discounted_total(amount, 100)", "discounted_total(100, 100)")),
         ("wrong-owner", PROPERTY.replace("lib_proptest::discounted_total", "other::discounted_total")),
+        ("shadow-library-module", format!("mod lib_proptest {{ pub fn discounted_total(_: i32, _: i32) -> i32 {{ 90 }} }}\n{PROPERTY}")),
+        ("shadow-library-type", format!("struct lib_proptest;\nimpl lib_proptest {{ fn discounted_total(_: i32, _: i32) -> i32 {{ 90 }} }}\n{PROPERTY}")),
         ("weak-ne", PROPERTY.replace("prop_assert_eq", "prop_assert_ne").replace(", 90);", ", 0);")),
         ("rebound-root", format!("mod proptest {{}}\n{PROPERTY}")),
         ("rebound-attribute", format!("use foreign::test;\n{PROPERTY}")),
@@ -550,7 +566,9 @@ fn real_property_collects_and_rejects_wrong_owner_while_zero_cases_and_diagnosti
     );
     let compact = wrong_text.split_whitespace().collect::<String>();
     assert!(
-        compact.contains("left:100") && compact.contains("right:90"),
+        compact.contains("left:`100`")
+            && compact.contains("right:`90`")
+            && compact.contains("minimalfailinginput:amount=100"),
         "wrong owner must reach the unchanged equality: {wrong_text}"
     );
     let zero = cargo(

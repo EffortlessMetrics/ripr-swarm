@@ -4,10 +4,12 @@ id = "RIPR-SPEC-0117"
 code = [
   "crates/ripr/src/analysis/syntax/proptest.rs",
   "crates/ripr/src/analysis/facts/proptest.rs",
+  "crates/ripr/src/analysis/classify/call_identity.rs",
   "crates/ripr/src/analysis/workspace/assertion_dependency/registry.rs",
 ]
 tests = [
   "crates/ripr/tests/registered_proptest_profile.rs::canonical_property_is_exposed_and_revokes_warm_configuration_and_target_receipts",
+  "crates/ripr/tests/registered_proptest_profile.rs::ordinary_qualified_typed_boundary_uses_the_same_discriminator",
   "crates/ripr/tests/registered_proptest_profile.rs::classified_cache_revokes_nested_target_configuration_and_preserves_revert",
   "crates/ripr/tests/registered_proptest_profile.rs::unsupported_property_shapes_never_borrow_direct_assertion_credit",
   "crates/ripr/tests/registered_proptest_profile.rs::substituted_provider_and_lock_changes_revoke_the_profile",

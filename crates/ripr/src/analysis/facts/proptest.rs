@@ -15,6 +15,7 @@ pub(super) struct ProptestReceipt {
     pub(super) test: TestFact,
     pub(super) source: Arc<str>,
     pub(super) line_offset: usize,
+    pub(super) name_scopes: Arc<crate::analysis::syntax::NameScopes>,
 }
 
 pub(super) fn register_proptest_tests(
@@ -80,6 +81,7 @@ pub(super) fn register_proptest_tests(
                         test,
                         source: Arc::from(expansion.source),
                         line_offset: offset,
+                        name_scopes: Arc::new(expansion.name_scopes),
                     })
                 })
                 .collect::<Option<Vec<_>>>();

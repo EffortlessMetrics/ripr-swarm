@@ -472,10 +472,24 @@ impl RustIndex {
     /// A generation-owned interpretation of an exact provider-bound property.
     /// Raw/cached/deserialized TestFacts cannot manufacture this authority.
     pub(crate) fn proptest_source(&self, test: &TestFact) -> Option<(&str, usize)> {
+        self.proptest_receipt(test)
+            .map(|receipt| (receipt.source.as_ref(), receipt.line_offset))
+    }
+
+    /// The normalized body keeps the original file-root namespace. This is
+    /// the same private registration receipt used for assertion admission.
+    pub(crate) fn proptest_name_scopes(
+        &self,
+        test: &TestFact,
+    ) -> Option<std::sync::Arc<crate::analysis::syntax::NameScopes>> {
+        self.proptest_receipt(test)
+            .map(|receipt| std::sync::Arc::clone(&receipt.name_scopes))
+    }
+
+    fn proptest_receipt(&self, test: &TestFact) -> Option<&super::proptest::ProptestReceipt> {
         self.proptest_receipts
             .get(&(test.file.clone(), test.start_line, test.name.clone()))
             .filter(|receipt| &receipt.test == test)
-            .map(|receipt| (receipt.source.as_ref(), receipt.line_offset))
     }
 
     /// Crate names whose glob imports the trusted-macro scan treats as
