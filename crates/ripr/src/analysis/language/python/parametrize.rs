@@ -103,14 +103,26 @@ pub(super) fn parametrize_cases(
     (any && !product.is_empty()).then_some(PythonParametrizeCases { cases: product })
 }
 
-/// Argnames a pytest parametrize decorator supplies directly to the test,
-/// read syntactically and independent of the literal-cases parser (which
-/// gives up on variable argvalues, `pytest.param(marks=...)`, large products
-/// and any `indirect=`). An argname is excluded only when `indirect=` is the
-/// literal `True` or a literal list naming it; any other `indirect` value is
-/// treated as not routing to a fixture, so the name is not resolved as one.
-pub(super) fn direct_argnames(decorators: &[Expr]) -> Vec<String> {
-    let mut direct = Vec::new();
+/// How a parametrize argname reaches the test, read from `indirect=`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Routing {
+    /// pytest passes the value to the test (no `indirect=`, literal `False`
+    /// or `None`, or a literal string list that omits the name).
+    Direct,
+    /// Literal `True` or a literal string list naming it: the value goes to
+    /// the fixture of that name.
+    Routed,
+    /// A value the read cannot settle (`indirect=IND`, a computed list, a
+    /// non-boolean constant): either may happen (#10685).
+    Unsettled,
+}
+
+/// Each argname of the test's pytest parametrize decorators with its
+/// routing, read syntactically and independent of the literal-cases parser
+/// (which gives up on variable argvalues, `pytest.param(marks=...)`, large
+/// products and any `indirect=`).
+fn argname_routings(decorators: &[Expr]) -> Vec<(String, Routing)> {
+    let mut found = Vec::new();
     for decorator in decorators {
         let Expr::Call(call) = decorator else {
             continue;
@@ -119,11 +131,16 @@ pub(super) fn direct_argnames(decorators: &[Expr]) -> Vec<String> {
             continue;
         }
         let mut argnames = call.args.first();
-        let mut indirect = None;
+        // `indirect` is the third positional parameter of
+        // `parametrize(argnames, argvalues, indirect, ids, scope)`.
+        let mut indirect = call.args.get(2);
+        // A `*args` or `**kwargs` splat may carry `indirect` unseen.
+        let mut splat = call.args.iter().any(|arg| matches!(arg, Expr::Starred(_)));
         for keyword in &call.keywords {
             match keyword.arg.as_ref().map(|arg| arg.as_str()) {
                 Some("argnames") => argnames = Some(&keyword.value),
                 Some("indirect") => indirect = Some(&keyword.value),
+                None => splat = true,
                 _ => {}
             }
         }
@@ -131,24 +148,54 @@ pub(super) fn direct_argnames(decorators: &[Expr]) -> Vec<String> {
             continue;
         };
         for name in names {
-            if !indirect.is_some_and(|value| indirect_routes(value, &name)) {
-                direct.push(name);
-            }
+            let routing = if splat {
+                Routing::Unsettled
+            } else {
+                indirect.map_or(Routing::Direct, |value| indirect_routing(value, &name))
+            };
+            found.push((name, routing));
         }
     }
-    direct
+    found
 }
 
-/// Whether a literal `indirect=` value routes `name` to its fixture.
-fn indirect_routes(value: &Expr, name: &str) -> bool {
-    let listed = |elements: &[Expr]| {
-        string_elements(elements).is_some_and(|names| names.iter().any(|listed| listed == name))
+/// Argnames not definitely routed to a fixture. They are never resolved as
+/// fixtures, so a fixture of the same name makes no `fixture_owner_call`
+/// edge unless `indirect=` literally routes to it (RIPR-SPEC-0028).
+pub(super) fn direct_argnames(decorators: &[Expr]) -> Vec<String> {
+    argname_routings(decorators)
+        .into_iter()
+        .filter(|(_, routing)| *routing != Routing::Routed)
+        .map(|(name, _)| name)
+        .collect()
+}
+
+/// Argnames whose `indirect=` value the read cannot settle. pytest may pass
+/// them through a fixture that changes the value, so they still count
+/// toward `unresolved_pytest_fixture` (RIPR-SPEC-0238 L8, #10685).
+pub(super) fn unsettled_indirect_argnames(decorators: &[Expr]) -> Vec<String> {
+    argname_routings(decorators)
+        .into_iter()
+        .filter(|(_, routing)| *routing == Routing::Unsettled)
+        .map(|(name, _)| name)
+        .collect()
+}
+
+fn indirect_routing(value: &Expr, name: &str) -> Routing {
+    let listed = |elements: &[Expr]| match string_elements(elements) {
+        Some(names) if names.iter().any(|listed| listed == name) => Routing::Routed,
+        Some(_) => Routing::Direct,
+        None => Routing::Unsettled,
     };
     match value {
-        Expr::Constant(constant) => matches!(constant.value, ast::Constant::Bool(true)),
+        Expr::Constant(constant) => match constant.value {
+            ast::Constant::Bool(true) => Routing::Routed,
+            ast::Constant::Bool(false) | ast::Constant::None => Routing::Direct,
+            _ => Routing::Unsettled,
+        },
         Expr::List(list) => listed(&list.elts),
         Expr::Tuple(tuple) => listed(&tuple.elts),
-        _ => false,
+        _ => Routing::Unsettled,
     }
 }
 
@@ -162,6 +209,10 @@ fn is_parametrize_name(name: &str) -> bool {
 
 /// The cases of one `parametrize(argnames, argvalues, ...)` call.
 fn decorator_cases(source: &str, call: &ast::ExprCall) -> Option<Vec<Vec<(String, String)>>> {
+    // A third positional argument is `indirect`; a splat may hide one.
+    if call.args.len() > 2 || call.args.iter().any(|arg| matches!(arg, Expr::Starred(_))) {
+        return None;
+    }
     let mut argnames = call.args.first();
     let mut argvalues = call.args.get(1);
     for keyword in &call.keywords {

@@ -131,7 +131,7 @@ map is:
 | `ripr agent card --json` and the `RepairCardV1` DTO (RIPR-SPEC-0192, RIPR-SPEC-0194; `ripr agent card` is the default CLI handoff, #4667) | `schema_version` | `repair_card.v1` |
 | `RepairCardV1` detail references and overflow disclosure (RIPR-SPEC-0193, #4666) | `budget_version` | `repair-card-budget-v1` |
 | `ripr agent card --json` refusal stdout envelope (`agent_card_refusal`; RIPR-SPEC-0202, #5007) | `schema_version` | `0.1` |
-| `ripr agent stub --json` document and its refusal stdout envelope (`kind: rust_test_stub`, `state: ready` or `refused`; #7762; ready-document `next_repair` is additive on `0.3`, #8727) | `schema_version` | `0.3` |
+| `ripr agent stub --json` document and its refusal stdout envelope (`kind: rust_test_stub`, `state: ready` or `refused`; `next_repair` added in `0.3`, #8727; `unsupported_language` refusal added in `0.4`, #10716) | `schema_version` | `0.4` |
 
 The MCP tool envelopes carry the schema-versioned document as
 `structuredContent` in every successful response; a result whose complete
@@ -307,7 +307,7 @@ no witness-producing finding still renders its card with the `unavailable`
 instruction (RIPR-SPEC-0194 acceptance) — that in-band card state is typed
 already and is not a refusal.
 
-## Agent stub (`rust_test_stub`, schema `0.3`)
+## Agent stub (`rust_test_stub`, schema `0.4`)
 
 `ripr agent stub --json` emits one `rust_test_stub` document on stdout when
 the producer yields a stub (`state: ready`, exit 0). A producer refusal
@@ -324,6 +324,18 @@ paths or seam IDs to choose; the unresolved identity and disclosure fields
 stay `null` and `warnings` stays `[]`. Both selector refusals keep exit 3,
 the JSON on stdout, and the human decision prose on stderr. If the stdout
 write itself fails, no document was delivered and the command exits `2`.
+
+Schema `0.4` keeps the existing field set and adds the selector refusal
+`unsupported_language` (#10716). An `--at` path that does not route to Rust
+is refused before Rust seam analysis, including under `--write`. Its reason
+names the source language when recognized and the manual test route: use the
+check finding's test file/node and verify command when available, edit the
+test, run the native test command, then refresh with `ripr check`. It does not
+claim that a finding is absent or that the file failed to parse as Rust.
+The unresolved identity and disclosure fields remain `null`, `warnings` stays
+`[]`, and exit 3 / stdout JSON / stderr prose behavior is unchanged. Consumers
+must recognize `0.4` and distinguish this capability limit from a selector
+that can be corrected or re-listed. No new stub language is supported.
 
 Schema `0.3` is additive on `0.2` (#8727): the ready document may carry a
 `next_repair` block naming the repair journey the stub feeds — the
@@ -3570,6 +3582,14 @@ The JSON report is repo automation output with schema version `"0.1"`:
 Policy reports are advisory unless `--mode fail-on-new-warning` is used.
 
 ## Context Packet
+
+Fresh `context`/`explain` selector misses remain usage-class failures: exit 2,
+empty stdout, and the selector guidance and retry command on stderr. When the
+fresh check carries detected-but-unanalyzed language advisories or non-success
+language runs, stderr also names those run-scope limitations and their existing
+producer recovery. The notice does not establish the cause of this selector's
+miss. Recorded `--from` lookups do not reconstruct absent advisory facts from
+ambient configuration; no packet field or schema version changes (#10720).
 
 `ripr context --json` emits compact test intent for agents:
 
@@ -18690,7 +18710,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.115",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.116",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. This is the existing
@@ -19458,7 +19478,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.115",
+      "schema_version": "1.116",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

@@ -1,0 +1,55 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/python_unsettled_indirect_parametrize/input
+config: <cwd>/fixtures/python_unsettled_indirect_parametrize/input/ripr.toml
+
+Summary: 1 probe(s), 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 1 static_unknown; 1 of 1 finding(s) unsuppressed
+
+Changed file(s) by language: python = 1
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
+
+NOTE discount.py:2
+  id: probe:discount.py:python_preview:5ee0ee5a
+
+Changed
+  after:      if quantity > 100:
+
+Probe
+  family: predicate
+  delta:  control
+  owner:  python:discount.py::bulk_discount
+
+Language
+  language: python
+  status: preview
+  owner kind: function
+
+Static exposure
+  static_unknown (note, confidence 0.20)
+
+Evidence
+  - reach yes: 1 related Python test(s) found for owner `bulk_discount`
+  - infection unknown: Static limit `unresolved_pytest_fixture` prevents a safe Python infection claim
+  - propagation unknown: Static limit `unresolved_pytest_fixture` prevents a safe Python propagation claim
+  - observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)
+  - discriminator unknown: Static limit `unresolved_pytest_fixture` prevents a safe Python discriminator claim
+  - related test tests/test_discount.py:9 test_bulk_discount_at_threshold uses strong exact value oracle: assert bulk_discount(quantity) == 0.1
+
+Weakness
+  - Static limit `unresolved_pytest_fixture`: a related pytest test depends on fixture-sourced values; syntax-first preview evidence cannot prove whether the fixture supplies the changed discriminator or expected value
+
+Stop reasons:
+  - static_probe_unknown — ripr could not model this change well enough to classify it
+    Next: Add a test that calls the changed code and asserts an exact result.
+
+Static limitation
+  unresolved_pytest_fixture — A pytest fixture could not be resolved, so ripr cannot statically connect the test setup to this change.
+  Next: Define the fixture by a static name in the test file or its `conftest.py`, or pass the input value inline in the test.
+Drill in:
+  ripr explain --root <cwd>/fixtures/python_unsettled_indirect_parametrize/input --diff <cwd>/fixtures/python_unsettled_indirect_parametrize/diff.patch --mode fast probe:discount.py:python_preview:5ee0ee5a
+  ripr context --root <cwd>/fixtures/python_unsettled_indirect_parametrize/input --diff <cwd>/fixtures/python_unsettled_indirect_parametrize/diff.patch --mode fast --at probe:discount.py:python_preview:5ee0ee5a
+
+
+Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

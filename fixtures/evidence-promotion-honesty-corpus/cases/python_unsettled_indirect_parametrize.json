@@ -1,0 +1,23 @@
+{
+  "id": "python_unsettled_indirect_parametrize",
+  "language": "python",
+  "tier": "pure",
+  "source_fixture": "fixtures/python_unsettled_indirect_parametrize",
+  "vector": "unsettled_indirect_routes_value_through_fixture",
+  "assertions": [
+    {
+      "type": "expected_finding_count",
+      "count": 1
+    },
+    {
+      "type": "expected_class",
+      "class": "static_unknown"
+    },
+    {
+      "type": "must_not_promote"
+    },
+    {
+      "type": "must_not_report_clean"
+    }
+  ]
+}

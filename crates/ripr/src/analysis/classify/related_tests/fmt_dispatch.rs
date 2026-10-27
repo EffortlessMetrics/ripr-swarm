@@ -1218,6 +1218,7 @@ mod tests {
                         receiver: None,
                         through_macro,
                         transparent_macros_rebound: false,
+                        diverging_handlers: Vec::new(),
                     }
                 })
                 .collect(),
