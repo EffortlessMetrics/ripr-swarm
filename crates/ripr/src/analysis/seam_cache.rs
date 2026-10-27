@@ -1634,6 +1634,19 @@ impl WorkspaceKeyContext<'_> {
         } else {
             workspace_manifests_hash
         };
+        let workspace_manifests_hash =
+            if super::workspace::eligible_proptest_root(self.workspace_root) {
+                let identity = super::workspace::verified_proptest_identity(self.workspace_root)
+                    .map_or_else(
+                        || "unverified".to_string(),
+                        |receipt| receipt.validation_digest,
+                    );
+                hash_str(&format!(
+                    "{workspace_manifests_hash}:proptest-1.11-singleton:{identity}"
+                ))
+            } else {
+                workspace_manifests_hash
+            };
         // The registered-harness premise is producer-owned Cargo metadata.
         // Raw configuration, including malformed bytes and absence, changes
         // that premise independently of Rust sources, HEAD and ripr.toml.

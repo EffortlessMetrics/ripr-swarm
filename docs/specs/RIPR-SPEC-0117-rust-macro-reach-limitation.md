@@ -437,6 +437,90 @@ inline test module stay test evidence. Only `macro_rules!` is covered (including
 raw-identifier names); macros 2.0 are not. An unclosed definition runs to the
 end of the file, which is an approximation for an edit in progress.
 
+## Audited proptest singleton profile (#10839, partial #6643)
+
+The #5051 quarantine remains the default. One separate positive producer may
+admit a function-form property only when all of the following are established:
+
+1. The importing package's actual resolved Cargo edge selects crates.io
+   `proptest 1.11.0`, with lock checksum
+   `4b45fcc2344c680f5025fe57779faef368840d0bd1f42f216291f0dc4ace4744`.
+   The existing registry/configuration receipt owner supplies this proof.
+   Renaming, path/git/substituted providers, optional/conditional edges,
+   nondefault dependency declarations and unaudited feature unions refuse.
+   Cargo executable and ordinary registry-cache integrity remain instrument
+   assumptions; a manifest or lockfile spelling alone supplies no authority.
+2. The file is a current Cargo `lib` or integration `test` target root with
+   ordinary test collection. Harness/test disabling, required-feature targets,
+   custom target layouts that cannot be established, and proc-macro libraries
+   refuse. The macro is an item at the source file's root, outside inline
+   modules. Generated functions have no original AST function; line-based
+   scope fallback cannot establish a same-line module's value namespace.
+   The property carries exactly `#[test]`; source-role provenance also holds.
+3. Calls use canonical `proptest::proptest!`, `proptest::strategy::Just` and
+   `proptest::prop_assert`/`proptest::prop_assert_eq` paths (optionally leading
+   `::`). The initial closed
+   source binding context excludes imports, macro definitions, out-of-line
+   modules, root/attribute rebinding and unknown item attributes/expansions.
+   Each property has one simple bool or explicitly suffixed primitive integer
+   literal `Just` parameter (a negative literal requires a signed suffix), a
+   one-line declaration header and one-line assertion invocations. At most 32
+   properties per 64 KiB macro and 16 statements per body are read.
+   Unsuffixed integers refuse: copying a single inferred parameter into
+   multiple call/comparison contexts could select different numeric types.
+4. The source uses the audited default runner configuration. Every ambient
+   `PROPTEST_*` override and every applicable Cargo `[env]` property override
+   refuses, including nonzero overrides: function macros call
+   `contextualize_config` after cloning the source configuration. A literal
+   `with_cases` alone would not prove a nonzero run. Config/lock/environment
+   identity participates in classified-cache lookup, including every resolved
+   in-root lib/test target's source-directory configuration consulted at
+   admission. Nested `tests/.cargo` and member-local configuration cannot
+   retain a stale favorable classified result. Property admission is recomputed
+   from raw cached facts when an index is reconstructed or reused.
+5. The body is straight-line direct `prop_assert!` on a bool owner call (or its
+   negation), or `prop_assert_eq!` with one owner-call operand
+   and one independent integer/bool literal or the known `Just` value. Call
+   arguments are those same literals. Exact arity is required; diagnostics can
+   execute on failure and return `Ok(())`, so they are not discarded silently.
+   A parameter shadowing the callee, a self-comparison, model expression,
+   helper result, closure, loop, early return, filter or other strategy refuses.
+   `prop_assert_ne!` remains unsupported: it evaluates `!=`, whereas
+   `std::assert_ne!` negates `==`; custom `PartialEq::ne` can distinguish them.
+
+The provider's function macro wraps the body in a result-returning callback
+and turns runner failure into test failure. That audited path permits a short
+ordinary-assertion interpretation, with original source lines retained. It
+does **not** make `prop_assert*` non-returning macros outside this callback.
+A generation-owned receipt binds the exact generated TestFact and its local
+interpretation; raw cached or deserialized facts cannot manufacture it. The
+existing owner identity, operand, equality-dispatch, activation, propagation
+and discriminator rules still decide the result. In particular, registration
+of a nonzero/inequality check does not make it an exact discriminator.
+
+Admission is atomic for a macro's properties. Refused properties retain the
+existing `rust_macro_reach_unresolved` limitation, and a supported ordinary
+assertion beside them remains available. CLI, JSON and MCP consume the same
+facts and evidence; the Rust capability limit describes this exact profile.
+No new repair route or support-tier promotion follows from it.
+
+The retained integration fixture and
+`crates/ripr/tests/registered_proptest_profile.rs` enforce provider/target/
+environment currentness, cold/warm behavior, independent ordinary evidence,
+classified-cache hit/edit/cold-parity/revert behavior, same-line module shadow
+and custom inequality refusals, and native original/wrong-owner, zero-cases,
+diagnostic-return and weak-check controls. Native runtime truth stays separate
+from static exposure.
+
+This is a foundational subset with **no unchanged real-repository positive
+established**. The real Perl-LSP position property at
+`6ffb36a1d2eff471407badf15721452696850d68` uses `proptest::prelude::*`, string
+strategies, model helpers and loops. Its recorded runtime witness does not
+qualify this source profile. Prelude/import authority, ranges and strings,
+relational/model flow, the non-macro bool-helper corpus row, QuickCheck,
+`TestRunner::run/run_one`, repair and installed daily-use acceptance remain
+open under #6643 and its supporting issues.
+
 ## Wire Format
 
 | Field | Value when fires | Value when not fires |

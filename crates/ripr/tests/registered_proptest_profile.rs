@@ -1,0 +1,610 @@
+//! #10839: actual provider/registration/failure controls for the #6643 slice.
+//! The ordinary analyzer runs in a child so runner-configuration changes do
+//! not mutate the concurrent Rust test process's environment.
+use ripr::{CheckInput, Mode, OutputFormat, check_workspace, render_check};
+use serde_json::Value;
+use std::ffi::OsStr;
+use std::io::Read;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
+
+const SOURCE: &str = include_str!("fixtures/proptest_singleton/input/src/lib.rs");
+const PROPERTY: &str = include_str!("fixtures/proptest_singleton/input/tests/boundary.rs");
+const MANIFEST: &str = include_str!("fixtures/proptest_singleton/input/Cargo.toml");
+const LOCK: &str = include_str!("fixtures/proptest_singleton/input/Cargo.lock");
+const DIFF: &str = include_str!("fixtures/proptest_singleton/diff.patch");
+const PROBE_ROOT: &str = "RIPR_PROPTEST_PROFILE_PROBE_ROOT";
+const PROBE_REPO: &str = "RIPR_PROPTEST_PROFILE_REPO";
+const REPORT: &str = "RIPR_PROPERTY_REPORT=";
+
+struct Fixture(PathBuf);
+impl Fixture {
+    fn new() -> Result<Self, String> {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let temporary = std::env::temp_dir();
+        std::fs::create_dir_all(&temporary).map_err(|error| error.to_string())?;
+        let root = temporary.join(format!(
+            "ripr-proptest-profile-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir(&root).map_err(|error| error.to_string())?;
+        let fixture = Self(root);
+        std::fs::create_dir(fixture.0.join("src")).map_err(|error| error.to_string())?;
+        std::fs::create_dir(fixture.0.join("tests")).map_err(|error| error.to_string())?;
+        fixture.write("src/lib.rs", SOURCE)?;
+        fixture.write("tests/boundary.rs", PROPERTY)?;
+        fixture.write("Cargo.toml", MANIFEST)?;
+        fixture.write("Cargo.lock", LOCK)?;
+        fixture.write("diff.patch", DIFF)?;
+        Ok(fixture)
+    }
+    fn write(&self, path: &str, value: &str) -> Result<(), String> {
+        std::fs::write(self.0.join(path), value).map_err(|error| error.to_string())
+    }
+}
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            eprintln!("retained failed property fixture {}", self.0.display());
+        } else if let Err(error) = std::fs::remove_dir_all(&self.0) {
+            eprintln!("property fixture cleanup {}: {error}", self.0.display());
+        }
+    }
+}
+
+fn read_stream(path: &Path) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .map_err(|error| error.to_string())?
+        .take(256 * 1024 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| error.to_string())?;
+    if bytes.len() > 256 * 1024 {
+        return Err("property proof stream exceeds 256 KiB".into());
+    }
+    Ok(bytes)
+}
+
+fn run(
+    fixture: &Fixture,
+    program: &OsStr,
+    arguments: &[&OsStr],
+    label: &str,
+    cases: Option<&str>,
+    probe: bool,
+    repository_cache: Option<&Path>,
+) -> Result<Output, String> {
+    let stdout = fixture.0.join(format!("{label}.stdout"));
+    let stderr = fixture.0.join(format!("{label}.stderr"));
+    let mut command = Command::new(program);
+    command
+        .current_dir(&fixture.0)
+        .args(arguments)
+        .stdin(Stdio::null())
+        .stdout(std::fs::File::create(&stdout).map_err(|error| error.to_string())?)
+        .stderr(std::fs::File::create(&stderr).map_err(|error| error.to_string())?)
+        .env("CARGO_TARGET_DIR", fixture.0.join("native-target"))
+        .env("CARGO_BUILD_JOBS", "1")
+        .env("CARGO_INCREMENTAL", "0");
+    for (name, _) in std::env::vars_os() {
+        if name
+            .to_string_lossy()
+            .to_ascii_uppercase()
+            .starts_with("PROPTEST_")
+        {
+            command.env_remove(name);
+        }
+    }
+    if let Some(cases) = cases {
+        command.env("PROPTEST_CASES", cases);
+    }
+    if probe {
+        command.env(PROBE_ROOT, &fixture.0);
+        if let Some(cache) = repository_cache {
+            command
+                .env(PROBE_REPO, "1")
+                .env("RIPR_CACHE_DIR", cache)
+                .env("RIPR_REPO_EXPOSURE_LATENCY_TRACE", "1");
+        } else {
+            command
+                .env_remove(PROBE_REPO)
+                .env("RIPR_CACHE_DIR", fixture.0.join("target/diff-cache"));
+        }
+    } else {
+        command.env_remove(PROBE_ROOT);
+        command.env_remove(PROBE_REPO);
+        // Fixed for every native variant: an earlier wrong run must not add
+        // a persisted replay to the deliberately zero-generated-cases row.
+        command.env("PROPTEST_DISABLE_FAILURE_PERSISTENCE", "1");
+    }
+    command.env("RUSTUP_AUTO_INSTALL", "0");
+    let mut child =
+        ripr::process_owner::OwnedProcess::spawn(command).map_err(|error| error.to_string())?;
+    let started = Instant::now();
+    let status = loop {
+        if let Some(status) = child.try_wait().map_err(|error| error.to_string())? {
+            break status;
+        }
+        if started.elapsed() > Duration::from_secs(300) {
+            child.terminate_tree()?;
+            return Err(format!(
+                "{label}: bounded property proof timed out; process reaped"
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    Ok(Output {
+        status,
+        stdout: read_stream(&stdout)?,
+        stderr: read_stream(&stderr)?,
+    })
+}
+
+/// An instrumentation entry, not a standalone positive. The parent requires
+/// the marked report and its nonempty exact finding before accepting a run.
+#[test]
+fn property_profile_probe_child() -> Result<(), String> {
+    let Some(root) = std::env::var_os(PROBE_ROOT).map(PathBuf::from) else {
+        return Ok(());
+    };
+    let repository = std::env::var_os(PROBE_REPO).is_some();
+    let format = if repository {
+        OutputFormat::RepoExposureJson
+    } else {
+        OutputFormat::Json
+    };
+    let input = CheckInput {
+        root: root.clone(),
+        diff_file: Some(root.join("diff.patch")),
+        mode: Mode::Fast,
+        format,
+        include_unchanged_tests: true,
+        ..CheckInput::default()
+    };
+    let report = if repository {
+        ripr::app::repo_seam_inventory_input(input)
+    } else {
+        check_workspace(input)?
+    };
+    let json: Value = serde_json::from_str(&render_check(&report, &format)?)
+        .map_err(|error| error.to_string())?;
+    println!(
+        "{REPORT}{}",
+        serde_json::to_string(&json).map_err(|error| error.to_string())?
+    );
+    Ok(())
+}
+
+fn finding(fixture: &Fixture, label: &str, cases: Option<&str>) -> Result<Value, String> {
+    let (report, _) = report(fixture, label, cases, None)?;
+    let findings = report["findings"].as_array().ok_or("missing findings")?;
+    let [finding] = findings.as_slice() else {
+        return Err(format!(
+            "{label}: expected the one changed threshold: {report}"
+        ));
+    };
+    Ok(finding.clone())
+}
+
+fn report(
+    fixture: &Fixture,
+    label: &str,
+    cases: Option<&str>,
+    repository_cache: Option<&Path>,
+) -> Result<(Value, String), String> {
+    let executable = std::env::current_exe().map_err(|error| error.to_string())?;
+    let output = run(
+        fixture,
+        executable.as_os_str(),
+        &[
+            OsStr::new("--exact"),
+            OsStr::new("property_profile_probe_child"),
+            OsStr::new("--nocapture"),
+        ],
+        label,
+        cases,
+        true,
+        repository_cache,
+    )?;
+    if !output.status.success() {
+        return Err(format!(
+            "{label}: analyzer instrumentation failed: {}\n{}\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    let stdout = String::from_utf8(output.stdout).map_err(|error| error.to_string())?;
+    let reports = stdout
+        .lines()
+        .filter_map(|line| line.split_once(REPORT).map(|(_, report)| report))
+        .collect::<Vec<_>>();
+    let [report] = reports.as_slice() else {
+        return Err(format!(
+            "{label}: expected exactly one marked analyzer report: {stdout}"
+        ));
+    };
+    let report = serde_json::from_str(report).map_err(|error| error.to_string())?;
+    Ok((report, String::from_utf8_lossy(&output.stderr).into_owned()))
+}
+
+#[test]
+fn classified_cache_revokes_nested_target_configuration_and_preserves_revert() -> Result<(), String>
+{
+    let fixture = Fixture::new()?;
+    let cache = fixture.0.join("target/repository-cache");
+    let boundary = |report: &Value| -> Result<Value, String> {
+        assert_eq!(report["run_status"], "complete", "{report}");
+        let matching = report["seams"]
+            .as_array()
+            .ok_or("missing repository seams")?
+            .iter()
+            .filter(|seam| {
+                seam["owner"] == "src/lib.rs::discounted_total"
+                    && seam["kind"] == "predicate_boundary"
+            })
+            .collect::<Vec<_>>();
+        let [seam] = matching.as_slice() else {
+            return Err(format!("expected one owned predicate boundary: {report}"));
+        };
+        Ok((*seam).clone())
+    };
+    let (cold, _) = report(&fixture, "repo-cold", None, Some(&cache))?;
+    assert_eq!(boundary(&cold)?["grip_class"], "strongly_gripped");
+    let (warm, trace) = report(&fixture, "repo-warm", None, Some(&cache))?;
+    assert_eq!(warm["seams"], cold["seams"]);
+    assert!(
+        trace.contains("cache_hit"),
+        "classified cache was not reused: {trace}"
+    );
+
+    // This configuration is not an analysis-root/ancestor input. It is a
+    // target-directory premise consulted by the property admission owner.
+    // Keep Rust bytes, manifests and lockfile unchanged across this edit.
+    std::fs::create_dir(fixture.0.join("tests/.cargo")).map_err(|error| error.to_string())?;
+    fixture.write("tests/.cargo/config.toml", "[env]\nPROPTEST_CASES='0'\n")?;
+    let (changed, _) = report(&fixture, "repo-nested-warm", None, Some(&cache))?;
+    let (independent, _) = report(
+        &fixture,
+        "repo-nested-cold",
+        None,
+        Some(&fixture.0.join("target/repository-independent")),
+    )?;
+    assert_ne!(boundary(&independent)?["grip_class"], "strongly_gripped");
+    assert_eq!(changed["seams"], independent["seams"]);
+    std::fs::remove_file(fixture.0.join("tests/.cargo/config.toml"))
+        .map_err(|error| error.to_string())?;
+    std::fs::remove_dir(fixture.0.join("tests/.cargo")).map_err(|error| error.to_string())?;
+    let (restored, trace) = report(&fixture, "repo-restored", None, Some(&cache))?;
+    assert_eq!(restored["seams"], cold["seams"]);
+    assert!(
+        trace.contains("cache_hit"),
+        "revert must reuse preserved entry: {trace}"
+    );
+    Ok(())
+}
+
+#[test]
+fn canonical_property_is_exposed_and_revokes_warm_configuration_and_target_receipts()
+-> Result<(), String> {
+    let fixture = Fixture::new()?;
+    let cold = finding(&fixture, "cold", None)?;
+    assert_eq!(cold["classification"], "exposed", "{cold}");
+    assert!(
+        cold["related_tests"]
+            .as_array()
+            .is_some_and(|tests| tests.iter().any(|test| test["name"] == "exact_boundary")),
+        "{cold}"
+    );
+    assert_eq!(
+        finding(&fixture, "warm", None)?["classification"],
+        "exposed"
+    );
+    assert_ne!(
+        finding(&fixture, "zero-cases", Some("0"))?["classification"],
+        "exposed"
+    );
+    assert_ne!(
+        finding(&fixture, "override-cases", Some("1"))?["classification"],
+        "exposed",
+        "all overrides are outside the initial profile"
+    );
+    assert_eq!(
+        finding(&fixture, "restored-env", None)?["classification"],
+        "exposed"
+    );
+    std::fs::create_dir(fixture.0.join(".cargo")).map_err(|error| error.to_string())?;
+    fixture.write(".cargo/config.toml", "[env]\nPROPTEST_CASES='0'\n")?;
+    assert_ne!(
+        finding(&fixture, "cargo-env", None)?["classification"],
+        "exposed"
+    );
+    std::fs::remove_file(fixture.0.join(".cargo/config.toml"))
+        .map_err(|error| error.to_string())?;
+    for (name, suffix) in [
+        (
+            "harness",
+            "\n[[test]]\nname='boundary'\npath='tests/boundary.rs'\nharness=false\n",
+        ),
+        (
+            "test-off",
+            "\n[[test]]\nname='boundary'\npath='tests/boundary.rs'\ntest=false\n",
+        ),
+        (
+            "feature",
+            "\n[[test]]\nname='boundary'\npath='tests/boundary.rs'\nrequired-features=['not_enabled']\n[features]\nnot_enabled=[]\n",
+        ),
+    ] {
+        fixture.write("Cargo.toml", &format!("{MANIFEST}{suffix}"))?;
+        assert_ne!(
+            finding(&fixture, name, None)?["classification"],
+            "exposed",
+            "{name}"
+        );
+    }
+    fixture.write("Cargo.toml", MANIFEST)?;
+    // An added unrelated source must not remove the positive or let a stale
+    // registration survive its subsequent source edit.
+    fixture.write("tests/other.rs", "#[test]\nfn other() {}\n")?;
+    assert_eq!(
+        finding(&fixture, "augmented", None)?["classification"],
+        "exposed"
+    );
+    fixture.write(
+        "tests/boundary.rs",
+        &PROPERTY.replace("#[test]", "#[ignore]\n    #[test]"),
+    )?;
+    assert_ne!(
+        finding(&fixture, "ignored-warm", None)?["classification"],
+        "exposed"
+    );
+    fixture.write("tests/boundary.rs", PROPERTY)?;
+    assert_eq!(
+        finding(&fixture, "restored-source", None)?["classification"],
+        "exposed"
+    );
+    Ok(())
+}
+
+#[test]
+fn unsupported_property_shapes_never_borrow_direct_assertion_credit() -> Result<(), String> {
+    let fixture = Fixture::new()?;
+    let statement = "proptest::prop_assert_eq!(lib_proptest::discounted_total(amount, 100), 90);";
+    let cases = [
+        ("missing-registration", PROPERTY.replace("#[test]", "")),
+        ("prelude", PROPERTY.replace("proptest::proptest!", "proptest!").replace("proptest::strategy::Just", "Just").replace("proptest::prop_assert_eq", "prop_assert_eq")),
+        ("range", PROPERTY.replace("proptest::strategy::Just(100i32)", "0i32..200")),
+        ("unsuffixed-input", PROPERTY.replace("Just(100i32)", "Just(100)")),
+        ("empty-range", PROPERTY.replace("proptest::strategy::Just(100i32)", "0i32..0")),
+        ("filter", PROPERTY.replace("proptest::strategy::Just(100i32)", "proptest::strategy::Just(100i32).prop_filter(\"reject all\", |_| false)")),
+        ("custom-config", PROPERTY.replace("proptest::proptest! {", "proptest::proptest! {\n#![proptest_config(proptest::test_runner::Config::with_cases(0))]")),
+        ("closure", PROPERTY.replace(statement, &format!("let _ignored = || {{ {statement} Ok(()) }};"))),
+        ("early-ok", PROPERTY.replace(statement, &format!("return Ok(()); {statement}"))),
+        ("helper-result", PROPERTY.replace(statement, "let _ = helper(amount);")),
+        ("loop", PROPERTY.replace(statement, &format!("for _ in 0..1 {{ {statement} }}"))),
+        ("self-comparison", PROPERTY.replace(", 90);", ", lib_proptest::discounted_total(amount, 100));")),
+        ("diagnostic-return", PROPERTY.replace(", 90);", ", 90, \"{}\", { return Ok(()); \"discarded\" });")),
+        ("callee-shadow", PROPERTY.replace("amount in", "discounted_total in").replace("lib_proptest::discounted_total(amount, 100)", "discounted_total(100, 100)")),
+        ("wrong-owner", PROPERTY.replace("lib_proptest::discounted_total", "other::discounted_total")),
+        ("weak-ne", PROPERTY.replace("prop_assert_eq", "prop_assert_ne").replace(", 90);", ", 0);")),
+        ("rebound-root", format!("mod proptest {{}}\n{PROPERTY}")),
+        ("rebound-attribute", format!("use foreign::test;\n{PROPERTY}")),
+        ("inline-module", format!("mod inner {{\n{PROPERTY}\n}}")),
+        ("same-line-module", format!("  mod inner {{ {} }}", PROPERTY.replace('\n', " "))),
+    ];
+    for (name, property) in cases {
+        assert_ne!(property, PROPERTY, "{name}: negative must change a premise");
+        fixture.write("tests/boundary.rs", &property)?;
+        let result = finding(&fixture, name, None)?;
+        assert_ne!(result["classification"], "exposed", "{name}: {result}");
+    }
+    // A same-line module has a different value namespace even when the
+    // generated test's line starts outside its scope. Its const function
+    // pointer always returns 90, independently of the changed root owner.
+    fixture.write("tests/boundary.rs", "")?;
+    fixture.write("src/lib.rs", &format!("{SOURCE}\n  mod inner {{ const discounted_total: fn(i32, i32) -> i32 = |_, _| 90; proptest::proptest! {{ #[test] fn shadow(amount in proptest::strategy::Just(100i32)) {{ proptest::prop_assert_eq!(discounted_total(amount, 100), 90); }} }} }}\n"))?;
+    assert_ne!(
+        finding(&fixture, "same-line-const-shadow", None)?["classification"],
+        "exposed"
+    );
+    // Refusal must not erase a separately supported ordinary unit assertion.
+    fixture.write(
+        "src/lib.rs",
+        &format!(
+            "{SOURCE}\n#[test]\nfn ordinary() {{ assert_eq!(discounted_total(100, 100), 90); }}\n"
+        ),
+    )?;
+    fixture.write("tests/boundary.rs", &PROPERTY.replace("#[test]", ""))?;
+    assert_eq!(
+        finding(&fixture, "independent-ordinary", None)?["classification"],
+        "exposed"
+    );
+    Ok(())
+}
+
+#[test]
+fn substituted_provider_and_lock_changes_revoke_the_profile() -> Result<(), String> {
+    let fixture = Fixture::new()?;
+    assert_eq!(
+        finding(&fixture, "before-provider-change", None)?["classification"],
+        "exposed"
+    );
+    fixture.write(
+        "Cargo.lock",
+        &LOCK.replace(
+            "4b45fcc2344c680f5025fe57779faef368840d0bd1f42f216291f0dc4ace4744",
+            "0000000000000000000000000000000000000000000000000000000000000000",
+        ),
+    )?;
+    assert_ne!(
+        finding(&fixture, "lock-checksum", None)?["classification"],
+        "exposed"
+    );
+    std::fs::create_dir(fixture.0.join("fake")).map_err(|error| error.to_string())?;
+    fixture.write(
+        "fake/Cargo.toml",
+        "[package]\nname='proptest'\nversion='1.11.0'\nedition='2021'\n[lib]\npath='lib.rs'\n",
+    )?;
+    fixture.write(
+        "fake/lib.rs",
+        "#[macro_export]\nmacro_rules! proptest { ($($ignored:tt)*) => {} }\n",
+    )?;
+    fixture.write(
+        "Cargo.toml",
+        &MANIFEST.replace("proptest = \"=1.11.0\"", "proptest = { path='fake' }"),
+    )?;
+    fixture.write("Cargo.lock", "version=4\n[[package]]\nname='lib_proptest'\nversion='0.1.0'\ndependencies=['proptest']\n[[package]]\nname='proptest'\nversion='1.11.0'\n")?;
+    let result = finding(&fixture, "path-provider", None)?;
+    assert_ne!(result["classification"], "exposed", "{result}");
+    assert_eq!(
+        result["static_limit_kind"], "rust_macro_reach_unresolved",
+        "{result}"
+    );
+    Ok(())
+}
+
+fn cargo(
+    fixture: &Fixture,
+    label: &str,
+    extra: &[&str],
+    cases: Option<&str>,
+) -> Result<Output, String> {
+    let arguments = ["test", "--offline", "--locked", "--test", "boundary"]
+        .into_iter()
+        .chain(extra.iter().copied())
+        .map(OsStr::new)
+        .collect::<Vec<_>>();
+    run(
+        fixture,
+        OsStr::new("cargo"),
+        &arguments,
+        label,
+        cases,
+        false,
+        None,
+    )
+}
+
+#[test]
+fn real_property_collects_and_rejects_wrong_owner_while_zero_cases_and_diagnostics_do_not()
+-> Result<(), String> {
+    let fixture = Fixture::new()?;
+    let list = cargo(
+        &fixture,
+        "native-list",
+        &["--", "--list", "--format", "terse"],
+        None,
+    )?;
+    assert!(
+        list.status.success(),
+        "native setup: {}",
+        String::from_utf8_lossy(&list.stderr)
+    );
+    let listed = String::from_utf8_lossy(&list.stdout);
+    assert_eq!(
+        listed
+            .lines()
+            .filter(|line| line.ends_with(": test"))
+            .collect::<Vec<_>>(),
+        ["exact_boundary: test"]
+    );
+    let correct = cargo(
+        &fixture,
+        "native-correct",
+        &["exact_boundary", "--", "--exact"],
+        None,
+    )?;
+    assert!(
+        correct.status.success(),
+        "correct owner failed: {}",
+        String::from_utf8_lossy(&correct.stdout)
+    );
+    assert!(String::from_utf8_lossy(&correct.stdout).contains("1 passed; 0 failed"));
+    fixture.write(
+        "src/lib.rs",
+        &SOURCE.replace("amount >= threshold", "amount > threshold"),
+    )?;
+    let wrong = cargo(
+        &fixture,
+        "native-wrong",
+        &["exact_boundary", "--", "--exact", "--nocapture"],
+        None,
+    )?;
+    assert_eq!(
+        wrong.status.code(),
+        Some(101),
+        "{}",
+        String::from_utf8_lossy(&wrong.stderr)
+    );
+    let wrong_text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&wrong.stdout),
+        String::from_utf8_lossy(&wrong.stderr)
+    );
+    assert!(
+        wrong_text.contains("exact_boundary") && wrong_text.contains("0 passed; 1 failed"),
+        "compiler/setup failure is not discrimination: {wrong_text}"
+    );
+    let compact = wrong_text.split_whitespace().collect::<String>();
+    assert!(
+        compact.contains("left:100") && compact.contains("right:90"),
+        "wrong owner must reach the unchanged equality: {wrong_text}"
+    );
+    let zero = cargo(
+        &fixture,
+        "native-zero",
+        &["exact_boundary", "--", "--exact"],
+        Some("0"),
+    )?;
+    assert!(
+        zero.status.success(),
+        "zero cases is an intentional vacuity control"
+    );
+    assert!(String::from_utf8_lossy(&zero.stdout).contains("1 passed; 0 failed"));
+    fixture.write(
+        "tests/boundary.rs",
+        &PROPERTY.replace(", 90);", ", 90, \"{}\", { return Ok(()); \"discarded\" });"),
+    )?;
+    let discarded = cargo(
+        &fixture,
+        "native-diagnostic-return",
+        &["exact_boundary", "--", "--exact"],
+        None,
+    )?;
+    assert!(
+        discarded.status.success(),
+        "diagnostic return must demonstrate the failure-propagation counterexample: {}",
+        String::from_utf8_lossy(&discarded.stderr)
+    );
+    assert!(String::from_utf8_lossy(&discarded.stdout).contains("1 passed; 0 failed"));
+    fixture.write(
+        "tests/boundary.rs",
+        &PROPERTY
+            .replace("prop_assert_eq", "prop_assert_ne")
+            .replace(", 90);", ", 0);"),
+    )?;
+    let weak = cargo(
+        &fixture,
+        "native-weak-ne",
+        &["exact_boundary", "--", "--exact"],
+        None,
+    )?;
+    assert!(
+        weak.status.success(),
+        "a nonzero check does not distinguish 90 from 100"
+    );
+    assert!(String::from_utf8_lossy(&weak.stdout).contains("1 passed; 0 failed"));
+    fixture.write("src/lib.rs", SOURCE)?;
+    let weak_correct = cargo(
+        &fixture,
+        "native-weak-ne-correct",
+        &["exact_boundary", "--", "--exact"],
+        None,
+    )?;
+    assert!(weak_correct.status.success());
+    assert!(String::from_utf8_lossy(&weak_correct.stdout).contains("1 passed; 0 failed"));
+    Ok(())
+}

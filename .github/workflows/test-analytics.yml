@@ -52,6 +52,9 @@ jobs:
       - name: Prepare locked JSON owner-return fixture dependencies
         run: cargo fetch --locked --manifest-path fixtures/owner_return_pin_json_real_literal/input/Cargo.toml
 
+      - name: Prepare locked proptest profile dependencies
+        run: cargo fetch --locked --manifest-path crates/ripr/tests/fixtures/proptest_singleton/input/Cargo.toml
+
       - name: Run Rust tests with JUnit output
         run: cargo nextest run --workspace --all-features --profile ci
 

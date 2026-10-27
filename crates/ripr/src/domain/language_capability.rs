@@ -142,8 +142,7 @@ pub(crate) const COMMON_NON_CLAIMS: &[&str] = &[
     "no gate, badge, baseline, or RIPR Zero authority",
 ];
 
-const RUST_FALLBACK: &str =
-    "unknown stop reasons stay explicit; static findings never claim a runtime mutation outcome";
+const RUST_FALLBACK: &str = "unknown stop reasons stay explicit; static findings never claim a runtime mutation outcome; property evidence is limited to audited registry proptest 1.11.0, canonical qualified function macros at file level in ordinary Cargo lib/test roots, explicitly suffixed integer or bool Just inputs, and direct exact-arity prop_assert/prop_assert_eq with no runner overrides; unsuffixed integers, inline modules, prop_assert_ne, prelude imports, ranges, strings, model/helper propagation, QuickCheck and explicit runners remain unproved";
 const PYTHON_FACTS_LIMIT: &str = "syntax-first and advisory; static-limit, heuristic-only, no-path, and already-observed states stay out of repair packets";
 const PYTHON_REPO_LIMIT: &str = "bounded working set; capped or partial runs are disclosed on language_runs and never back a full-denominator, all-clear, badge, or baseline claim; repo-scoped seam formats render no Python seams (python_diff_first)";
 const PYTHON_REPAIR_LIMIT: &str = "selected static repair routes only: direct weak evidence, concrete missing discriminator, safe test location, and verify command; no test execution, generated tests, or production edits";
@@ -154,7 +153,7 @@ const PERL_LIMIT: &str = "requires a ripr build with Cargo feature lang-perl plu
 const PERL_REPAIR_LIMIT: &str =
     "blocked on real-repository producer proof and real Perl repository receipts";
 
-const SPEC_RUST: &[&str] = &["RIPR-SPEC-0001"];
+const SPEC_RUST: &[&str] = &["RIPR-SPEC-0001", "RIPR-SPEC-0117", "RIPR-SPEC-0197"];
 const SPEC_RUST_REPAIR: &[&str] = &["RIPR-SPEC-0001", "RIPR-SPEC-0057"];
 const SPEC_PYTHON: &[&str] = &["RIPR-SPEC-0026", "RIPR-SPEC-0028"];
 const SPEC_TS: &[&str] = &["RIPR-SPEC-0026", "RIPR-SPEC-0027"];

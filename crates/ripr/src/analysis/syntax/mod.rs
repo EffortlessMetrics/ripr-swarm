@@ -13,6 +13,8 @@ mod nesting;
 mod owner_pin;
 mod passthrough_item_macros;
 mod pattern_pin;
+mod proptest;
+pub(crate) use proptest::proptest_expansions;
 pub(crate) mod run_memo;
 mod source_snapshot;
 pub(crate) use constant_return::returns_only_a_literal;

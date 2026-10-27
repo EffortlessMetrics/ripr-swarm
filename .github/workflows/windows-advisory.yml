@@ -118,6 +118,9 @@ jobs:
       - name: Prepare locked JSON owner-return fixture dependencies
         run: cargo fetch --locked --manifest-path fixtures/owner_return_pin_json_real_literal/input/Cargo.toml
 
+      - name: Prepare locked proptest profile dependencies
+        run: cargo fetch --locked --manifest-path crates/ripr/tests/fixtures/proptest_singleton/input/Cargo.toml
+
       # The check steps below write their log with a file redirect, not
       # `| tee`; the test steps do the same job through `windows-advisory-run`
       # (see its comment), which also streams. A pipe stays open until every process holding its write end
