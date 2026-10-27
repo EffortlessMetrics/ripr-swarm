@@ -25,21 +25,25 @@ impl Fixture {
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|error| error.to_string())?
             .as_nanos();
-        let root = std::env::temp_dir().join(format!(
+        let parent = std::env::temp_dir();
+        std::fs::create_dir_all(&parent).map_err(|error| error.to_string())?;
+        let root = parent.join(format!(
             "ripr-probe-read-cli-{}-{}-{stamp}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
-        std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
-        std::fs::create_dir_all(root.join(".scratch")).map_err(|error| error.to_string())?;
-        std::fs::write(root.join("Cargo.toml"), "[package]\nname=\"probe_trace_fixture\"\nversion=\"0.0.0\"\nedition=\"2024\"\n[workspace]\n").map_err(|error| error.to_string())?;
-        std::fs::write(root.join(".gitignore"), "/target/\n/.scratch/\n")
+        std::fs::create_dir(&root).map_err(|error| error.to_string())?;
+        let fixture = Self(root);
+        std::fs::create_dir(fixture.0.join("src")).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(fixture.0.join(".scratch")).map_err(|error| error.to_string())?;
+        std::fs::write(fixture.0.join("Cargo.toml"), "[package]\nname=\"probe_trace_fixture\"\nversion=\"0.0.0\"\nedition=\"2024\"\n[workspace]\n").map_err(|error| error.to_string())?;
+        std::fs::write(fixture.0.join(".gitignore"), "/target/\n/.scratch/\n")
             .map_err(|error| error.to_string())?;
-        std::fs::write(root.join("src/lib.rs"), SOURCE).map_err(|error| error.to_string())?;
-        fixture_git_ok(&root, &["init", "-q", "-b", "main"])?;
-        fixture_git_ok(&root, &["add", "."])?;
+        std::fs::write(fixture.0.join("src/lib.rs"), SOURCE).map_err(|error| error.to_string())?;
+        fixture_git_ok(&fixture.0, &["init", "-q", "-b", "main"])?;
+        fixture_git_ok(&fixture.0, &["add", "."])?;
         fixture_git_ok(
-            &root,
+            &fixture.0,
             &[
                 "-c",
                 "user.name=RIPR fixture",
@@ -52,8 +56,8 @@ impl Fixture {
         )?;
         let changed = SOURCE.replace("qty > 10", "qty >= 10");
         assert_ne!(changed, SOURCE, "fixture must change the actual predicate");
-        std::fs::write(root.join("src/lib.rs"), changed).map_err(|error| error.to_string())?;
-        Ok(Self(root))
+        std::fs::write(fixture.0.join("src/lib.rs"), changed).map_err(|error| error.to_string())?;
+        Ok(fixture)
     }
 }
 impl Drop for Fixture {

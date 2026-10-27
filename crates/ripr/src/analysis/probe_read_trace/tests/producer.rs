@@ -8,21 +8,25 @@ struct Fixture(PathBuf);
 impl Fixture {
     fn new() -> Result<Self, Box<dyn Error>> {
         static NEXT: AtomicU64 = AtomicU64::new(0);
-        let root = std::env::temp_dir().join(format!(
+        let parent = std::env::temp_dir();
+        std::fs::create_dir_all(&parent)?;
+        let root = parent.join(format!(
             "ripr-probe-read-unit-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
-        std::fs::create_dir_all(root.join("src"))?;
+        std::fs::create_dir(&root)?;
+        let fixture = Self(root);
+        std::fs::create_dir(fixture.0.join("src"))?;
         std::fs::write(
-            root.join("Cargo.toml"),
+            fixture.0.join("Cargo.toml"),
             "[package]\nname=\"trace_fixture\"\nversion=\"0.0.0\"\nedition=\"2024\"\n[workspace]\n",
         )?;
         std::fs::write(
-            root.join("src/lib.rs"),
+            fixture.0.join("src/lib.rs"),
             "pub fn discount(total: i32) -> i32 { if total >= 10 { 90 } else { 100 } }\npub fn shipping(total: i32) -> i32 { if total >= 20 { 0 } else { 5 } }\n#[cfg(test)] mod tests { use super::*; #[test] fn boundaries() { assert_eq!(discount(10), 90); assert_eq!(shipping(20), 0); } }\n",
         )?;
-        Ok(Self(root))
+        Ok(fixture)
     }
     fn index(&self) -> Result<rust_index::RustIndex, String> {
         rust_index::build_index(&self.0, &[PathBuf::from("src/lib.rs")])
