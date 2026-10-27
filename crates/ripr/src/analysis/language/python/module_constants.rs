@@ -80,6 +80,51 @@ pub(super) fn module_object_bindings(source: &SourceText<'_>, statements: &[Stmt
         .collect()
 }
 
+/// A module-scope `NAME = <value>` binding nothing in the module rebinds,
+/// with the byte offset where its statement starts.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct PythonModuleValue<'a> {
+    pub(super) name: &'a str,
+    pub(super) value: &'a Expr,
+    pub(super) offset: usize,
+}
+
+/// The module-scope names bound once by a plain `NAME = <value>` and never
+/// rebound, under the same conditions as [`module_literal_constants`]. A
+/// decorator reads them (`@cases`, `parametrize(NAMES, ...)`, #10685).
+pub(super) fn module_stable_values<'a>(
+    source: &SourceText<'_>,
+    statements: &'a [Stmt],
+) -> Vec<PythonModuleValue<'a>> {
+    let Some(stable) = StableNames::of(source, statements) else {
+        return Vec::new();
+    };
+    statements
+        .iter()
+        .filter_map(|stmt| match stmt {
+            Stmt::Assign(assign) => match assign.targets.as_slice() {
+                [Expr::Name(name)] => Some(PythonModuleValue {
+                    name: name.id.as_str(),
+                    value: assign.value.as_ref(),
+                    offset: usize::from(assign.range.start()),
+                }),
+                _ => None,
+            },
+            _ => None,
+        })
+        .filter(|value| stable.holds(value.name))
+        .collect()
+}
+
+/// Every name a class body binds in its own scope, nested `def` and `class`
+/// names included, or None when the walk cannot enumerate them. A decorator
+/// in a class body looks a name up there before the module.
+pub(super) fn class_scope_names(body: &[Stmt]) -> Option<Vec<String>> {
+    let mut bindings = ScopeBindings::default();
+    collect_scope_bindings(body, &mut bindings);
+    (!bindings.opaque).then_some(bindings.names)
+}
+
 /// The facts that decide whether a module-scope name can still be rebound.
 struct StableNames {
     counts: std::collections::HashMap<String, usize>,

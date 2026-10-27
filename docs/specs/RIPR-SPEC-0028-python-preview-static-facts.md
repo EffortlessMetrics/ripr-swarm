@@ -359,7 +359,10 @@ renamed fixture (`name=`) and a test that rebinds the parameter name make no
 edge, nor does a parameter that a pytest `parametrize` names as an argname,
 read syntactically (variable argvalues, `pytest.param(marks=...)` and
 unreadable `indirect` values still count) unless `indirect=` is the literal
-`True` or a literal list naming it. A class-level `parametrize` (on the test's
+`True` or a literal list naming it, directly or through one never-rebound
+module `NAME = <value>` binding (#10685). The mark, its argnames and its
+`indirect` are read through imports and module names as RIPR-SPEC-0238 L8
+describes. A class-level `parametrize` (on the test's
 class or a local ancestor) counts the same way. When a file defines the same
 fixture name twice the last definition wins, and the analyzer attaches at most
 eight fixture definitions to one test (an implementation limit, not a pytest

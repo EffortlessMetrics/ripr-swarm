@@ -1387,6 +1387,138 @@ fn an_indirect_parametrize_argname_is_an_unresolved_fixture() -> Result<(), Stri
     Ok(())
 }
 
+/// #10685: pytest's parametrize reached through an import alias, a module
+/// name holding the mark, or argnames and `indirect` named by a module value
+/// still supplies the case value directly, so the argname is not an
+/// unresolved fixture. A name the read cannot pin to pytest's mark (another
+/// `mark`, a rebound or later binding, a class-body name) keeps the limit.
+#[test]
+fn a_parametrize_mark_read_through_a_name_supplies_a_direct_value() -> Result<(), String> {
+    let module = |prelude: &str, decorator: &str| {
+        format!(
+            "{prelude}\nfrom src.subject import bulk_discount\n\n@{decorator}\ndef test_bulk_discount(quantity):\n    assert bulk_discount(quantity) == 0.0\n"
+        )
+    };
+    let method = |prelude: &str, decorator: &str| {
+        format!(
+            "{prelude}\nfrom src.subject import bulk_discount\n\nclass TestBulk:\n    @{decorator}\n    def test_bulk_discount(self, quantity):\n        assert bulk_discount(quantity) == 0.0\n"
+        )
+    };
+    let class = |prelude: &str, decorator: &str| {
+        format!(
+            "{prelude}\nfrom src.subject import bulk_discount\n\n@{decorator}\nclass TestBulk:\n    def test_bulk_discount(self, quantity):\n        assert bulk_discount(quantity) == 0.0\n"
+        )
+    };
+    let limit = |tests: &str| -> Result<_, String> {
+        Ok(classify_case(
+            DISCOUNT_SOURCE,
+            tests,
+            2,
+            "    if quantity > 100:",
+            "    if quantity >= 100:",
+        )?
+        .static_limit_kind)
+    };
+    let direct = [
+        (
+            "import pytest as pt",
+            "pt.mark.parametrize(\"quantity\", [50])",
+        ),
+        (
+            "from pytest import mark as m",
+            "m.parametrize(\"quantity\", [50])",
+        ),
+        (
+            "import pytest\n\ncases = pytest.mark.parametrize(\"quantity\", [50])",
+            "cases",
+        ),
+        (
+            "import pytest as pt\n\ncases = pt.mark.parametrize(\"quantity\", [50])",
+            "cases",
+        ),
+        (
+            "import pytest\n\nparametrize = pytest.mark.parametrize",
+            "parametrize(\"quantity\", [50])",
+        ),
+        (
+            "import pytest\n\nNAMES = \"quantity\"",
+            "pytest.mark.parametrize(NAMES, [50])",
+        ),
+        (
+            "import pytest\n\nNAMES = (\"quantity\",)",
+            "pytest.mark.parametrize(NAMES, [(50,)])",
+        ),
+        (
+            "import pytest\n\nIND = False",
+            "pytest.mark.parametrize(\"quantity\", [50], indirect=IND)",
+        ),
+    ];
+    for (prelude, decorator) in direct {
+        for (shape, tests) in [
+            ("module", module(prelude, decorator)),
+            ("method", method(prelude, decorator)),
+            ("class", class(prelude, decorator)),
+        ] {
+            assert_eq!(limit(&tests)?, None, "{shape}: {tests}");
+        }
+    }
+    let limited = [
+        // Another library's `mark`, or `pt` bound to something else.
+        (
+            "from mylib import mark",
+            "mark.parametrize(\"quantity\", [50])",
+        ),
+        (
+            "import mylib as pt",
+            "pt.mark.parametrize(\"quantity\", [50])",
+        ),
+        // A module name rebound later, or `global`-rebound in a function.
+        (
+            "import pytest\n\ncases = pytest.mark.parametrize(\"quantity\", [50])\ncases = pytest.mark.slow",
+            "cases",
+        ),
+        (
+            "import pytest\n\ncases = pytest.mark.parametrize(\"quantity\", [50])\n\ndef reset():\n    global cases\n    cases = pytest.mark.slow",
+            "cases",
+        ),
+        // A module value naming a call, not the mark itself.
+        (
+            "import pytest\n\nparametrize = pytest.mark.parametrize(\"other\", [1])",
+            "parametrize(\"quantity\", [50])",
+        ),
+        (
+            "import pytest\n\nIND = True",
+            "pytest.mark.parametrize(\"quantity\", [50], indirect=IND)",
+        ),
+    ];
+    for (prelude, decorator) in limited {
+        for (shape, tests) in [
+            ("module", module(prelude, decorator)),
+            ("method", method(prelude, decorator)),
+            ("class", class(prelude, decorator)),
+        ] {
+            assert_eq!(
+                limit(&tests)?,
+                Some(crate::domain::StaticLimitKind::UnresolvedPytestFixture),
+                "{shape}: {tests}"
+            );
+        }
+    }
+    // A class-body name shadows the module's mark for the methods it
+    // decorates, and a module binding after the test is not yet bound.
+    for tests in [
+        "import pytest\nfrom src.subject import bulk_discount\n\ncases = pytest.mark.parametrize(\"quantity\", [50])\n\nclass TestBulk:\n    cases = pytest.mark.slow\n\n    @cases\n    def test_bulk_discount(self, quantity):\n        assert bulk_discount(quantity) == 0.0\n",
+        "import pytest\nfrom src.subject import bulk_discount\n\n@cases\ndef test_bulk_discount(quantity):\n    assert bulk_discount(quantity) == 0.0\n\ncases = pytest.mark.parametrize(\"quantity\", [50])\n",
+    ] {
+        assert_eq!(
+            limit(tests)?,
+            Some(crate::domain::StaticLimitKind::UnresolvedPytestFixture),
+            "{tests}"
+        );
+    }
+    Ok(())
+}
+
 /// #4612 review: an on-boundary case does not count as observed when the
 /// case may never run (`marks=` skip), when the name reaching the owner call
 /// may be another binding (a lambda parameter, a tuple or loop target), or
