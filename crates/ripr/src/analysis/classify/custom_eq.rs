@@ -484,7 +484,7 @@ mod tests {
         );
         assert!(generic_parameters("").is_empty());
         assert_eq!(
-            variant_names(" A { s: Sku }, B, #[doc = "c"] C(Sku, u8) "),
+            variant_names(" A { s: Sku }, B, #[serde(skip)] C(Sku, u8) "),
             ["A", "B", "C"]
         );
     }
