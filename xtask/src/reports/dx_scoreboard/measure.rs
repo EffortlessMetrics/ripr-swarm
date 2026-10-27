@@ -18,6 +18,7 @@ pub(crate) use check_admission::{
 pub(crate) use check_admission::{
     CheckAdmission, CheckSubject, admit_check_sample, scan_check_contradictions,
 };
+use ripr::domain::RelationReason;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::fs;
@@ -203,7 +204,13 @@ fn measure_corpus_entry(
             for metric in corpus_metrics {
                 samples.push(sample(metric, outcome.clone(), reason.clone()));
             }
-            return json!({"id": entry.id, "sha": entry.sha, "status": status, "reason": reason});
+            return json!({
+                "id": entry.id,
+                "sha": entry.sha,
+                "language": entry.language(),
+                "status": status,
+                "reason": reason,
+            });
         }
     };
 
@@ -217,6 +224,7 @@ fn measure_corpus_entry(
             "id": entry.id,
             "sha": entry.sha,
             "url": entry.url,
+            "language": entry.language(),
             "status": "failed",
             "reason": reason,
         });
@@ -393,7 +401,13 @@ fn measure_corpus_entry(
 
     let (outcome, detail) = contradiction_outcome(contradictions, &missing_sources);
     samples.push(sample("trust.self_contradictions", outcome, detail));
-    json!({"id": entry.id, "sha": entry.sha, "url": entry.url, "status": "measured"})
+    json!({
+        "id": entry.id,
+        "sha": entry.sha,
+        "url": entry.url,
+        "language": entry.language(),
+        "status": "measured",
+    })
 }
 
 /// Measured `ripr check` argv for a warm-check sample. `--mode draft` is
@@ -730,13 +744,22 @@ pub(crate) fn git(cwd: Option<&Path>, args: &[&str]) -> Result<String, String> {
 }
 
 /// Self-contradiction rules over one pilot `repo-exposure.json`:
-/// `R1` a seam says reach is `no` while it lists related tests.
+/// `R1` a seam says reach is `no` while it lists a related test whose
+/// relation establishes reach. Proximity relations (`same_test_file`,
+/// `same_module`, `assertion_target_affinity` on a function owner, and the
+/// other non-reaching relations) are listed
+/// as suggestions beside `reach: no` by design (#5335, #6866), so they are
+/// not a contradiction. A listed relation this scan cannot read, or a total
+/// with no listed window to inspect, still counts: unknown is not clean.
 pub(crate) fn repo_exposure_contradictions(exposure: &Value) -> (usize, Vec<String>) {
     let mut count = 0;
     let mut examples = Vec::new();
     for seam in exposure["seams"].as_array().into_iter().flatten() {
         let related = seam["related_tests_total"].as_u64().unwrap_or(0);
-        if seam["evidence"]["reach"].as_str() == Some("no") && related > 0 {
+        if seam["evidence"]["reach"].as_str() == Some("no")
+            && related > 0
+            && listed_relation_may_establish_reach(seam)
+        {
             count += 1;
             if examples.len() < 3 {
                 examples.push(format!(
@@ -748,6 +771,25 @@ pub(crate) fn repo_exposure_contradictions(exposure: &Value) -> (usize, Vec<Stri
         }
     }
     (count, examples)
+}
+
+/// Whether any listed related test of a seam carries a relation that the
+/// analyzer's own rule ([`RelationReason::establishes_reach`]) counts as a
+/// path to the owner. The owner is read as a function, the strictest reading
+/// for `assertion_target_affinity`; a module-level owner is not told apart.
+fn listed_relation_may_establish_reach(seam: &Value) -> bool {
+    let window = seam["related_tests"]
+        .as_array()
+        .map_or(&[][..], Vec::as_slice);
+    // The listed window is capped below the total and ranked by confidence
+    // before relation, so an unlisted test may still be a reaching one.
+    let total = seam["related_tests_total"].as_u64().unwrap_or(0);
+    window.is_empty()
+        || total > window.len() as u64
+        || window.iter().any(|test| {
+            serde_json::from_value::<RelationReason>(test["relation_reason"].clone())
+                .map_or(true, |reason| reason.establishes_reach(true))
+        })
 }
 
 /// Self-contradiction rules over one `ripr check --format json` result:

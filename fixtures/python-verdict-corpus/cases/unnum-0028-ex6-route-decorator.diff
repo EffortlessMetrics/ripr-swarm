@@ -1,0 +1,9 @@
+diff --git a/unnum/checkout_route.py b/unnum/checkout_route.py
+--- a/unnum/checkout_route.py
++++ b/unnum/checkout_route.py
+@@ -15,4 +15,4 @@ response = SimpleNamespace(status_code=200)
+ 
+ @api.post("/checkout")
+ def checkout():
+-    response.status_code = 422
++    response.status_code = 400

@@ -166,23 +166,49 @@ actionable canonical gaps.
 ### Unsupported-Flow Expansion Criteria
 
 Unsupported-flow work must be selected from audit data, then narrowed by
-fixture coverage before analyzer support changes. The next selected expansion
-target is `opaque_config_lookup`.
+fixture coverage before analyzer support changes. The first selected expansion
+target is the same-file direct reader (#9871); `opaque_config_lookup` follows it.
 
 | Flow | Current state | Expansion rule |
 | --- | --- | --- |
-| `opaque_config_lookup` | Selected next. | May move out of limitation only for a fixture-backed lookup shape that identifies the changed constant, the lookup owner, a supported output/schema/validation sink, and the observer or missing observer for that sink. |
+| same-file direct reader (#9871) | Selected before `opaque_config_lookup`. | May move out of `static_limitation` only for a changed `const`/`static` with exactly one same-file declaration, read by name by a production function in the same file whose returned or rendered value contains the constant, called by a related test. The state is `already_observed` only when that test compares the output to an expected value that is independent of the constant (a literal, not the constant or a value computed from it) and the comparison would fail for the changed value. It is `actionable` (`add_output_observer` or `add_behavior_discriminator`) only when the test reaches the reader and its assertion cannot distinguish the changed value (`is_ok`, non-empty, length, or a different field). Any other shape stays a named limitation. |
+| `opaque_config_lookup` | Selected second, after the same-file direct reader. | May move out of limitation only for a fixture-backed lookup shape that identifies the changed constant, the lookup owner, a supported output/schema/validation sink, and the observer or missing observer for that sink. |
 | generated config or schema output | Limitation. | Remains `macro_generated_config_output` or `config_policy_flow_unknown` until generated output has a fixture-backed source-to-render path and a stable observer shape. |
 | macro output | Limitation. | Remains `macro_generated_config_output` until macro expansion or a fixture-backed macro wrapper gives a stable constant owner and sink without reading generated prose as authority. |
 | dynamic dispatch or registry lookup | Limitation. | Remains `dynamic_config_dispatch` unless the dispatch target is statically resolved by a fixture-backed registry shape and the selected sink is supported. |
 | unsupported cross-file flow | Limitation. | Remains `config_policy_flow_unknown` unless the cross-file edge, sink owner, and observer candidate are fixture-backed and stable across file movement. |
 
+The same-file direct-reader row is selected first because the reach half
+already landed (#9990: tests that call a changed constant's reader are related,
+reach is `weak`, the class stays `static_unknown`). Before it may promote a
+verdict, the fixture and benchmark PR must add must-not-claim cases proving each
+of these stays a limitation or keeps its prior state:
+
+- the constant is read through a lookup, environment variable or map (the
+  `opaque_config_lookup` row);
+- the constant name is shadowed by a local, parameter or pattern binding in the
+  reader;
+- the constant is declared more than once in the file (associated consts per
+  impl, a local `const`);
+- the reader sits in another file or behind a `cfg` gate;
+- the test's expected value is the constant itself or computed from it
+  (self-computed oracle, RIPR-SPEC-0035);
+- the constant is only compared in a branch, which belongs to the predicate
+  boundary rules, not this row;
+- no production function reads the constant (unread constant keeps its
+  abstention).
+
+Each positive case needs a runtime mutant label, so the row can be measured in
+the verdict corpus (RIPR-SPEC-0219) and the Rust `missed_credit_ceiling` falls
+by exactly the rows that flip.
+
 The first implementation slice after this spec should target only the
-`opaque_config_lookup` row. Generated output, macro output, dynamic dispatch,
+same-file direct-reader row; the slice after it targets only `opaque_config_lookup`. Generated output, macro output, dynamic dispatch,
 and unsupported cross-file flow must stay named static limitations unless a
 later spec or fixture PR selects one of those rows explicitly.
 
-Before analyzer changes, the fixture and benchmark PR must add:
+Before the `opaque_config_lookup` analyzer slice, its fixture and benchmark PR
+must add:
 
 - a positive `opaque_config_lookup` case with a directly supported lookup shape;
 - a must-not-claim `opaque_config_lookup` case where helper or registry naming
@@ -333,55 +359,35 @@ not create a headline user test gap.
 
 ## Acceptance Examples
 
-Internal allowlist or policy metadata:
-
-- Given a changed constant used only by an internal allowlist, proof-lane map,
-  policy metadata table, or fixture label, RIPR emits one canonical
-  `config_or_policy_constant` item.
-- `gap_state = "internal_only"`.
-- Actionability is `no_action_internal`.
-- RIPR preserves raw findings as support and does not create user test debt.
-
-Rendered report/config label without observer:
-
-- Given a changed policy/config label that flows to a supported report, schema,
-  config-output, table, snapshot, or golden output path with no observer, RIPR
-  emits one actionable canonical item.
-- Actionability is `add_output_observer`.
-- The recommended repair names the most specific observer class known.
-
-Rendered label already observed:
-
-- Given a changed policy/config label and a supported golden, snapshot,
-  report-render, schema-render, or config-output test observing it, RIPR emits
-  an `already_observed` item.
-- No new RIPR repair action is recommended.
-
-Behavior selector without discriminator:
-
-- Given a changed threshold, routing constant, or validation selector that
-  reaches user-visible behavior but no related test observes the selected
-  behavior, RIPR emits one actionable canonical item.
-- Actionability is `add_behavior_discriminator`.
-- The repair names the missing discriminator or target assertion shape when
-  known.
-
-Opaque config lookup:
-
-- Given a changed constant whose flow passes through an unsupported helper,
-  registry, macro, generated output, dynamic dispatch, or untraceable cross-file
-  formatting, RIPR emits a static limitation.
-- The limitation category is `config_policy_flow_unknown`,
-  `opaque_config_lookup`, `macro_generated_config_output`, or
-  `dynamic_config_dispatch`.
-- RIPR does not infer output visibility or recommend mutation execution as the
-  first action.
-
-Unrelated constant:
-
-- Given a changed constant that has no supported config, policy, output,
-  schema, validation, or behavior-selector shape, RIPR does not create a
-  config/policy user action from the constant alone.
+1. Internal allowlist or policy metadata. Given a changed constant used only
+   by an internal allowlist, proof-lane map, policy metadata table, or fixture
+   label, RIPR emits one canonical `config_or_policy_constant` item with
+   `gap_state = "internal_only"` and actionability `no_action_internal`. RIPR
+   preserves raw findings as support and does not create user test debt.
+2. Rendered report/config label without observer. Given a changed
+   policy/config label that flows to a supported report, schema, config-output,
+   table, snapshot, or golden output path with no observer, RIPR emits one
+   actionable canonical item with actionability `add_output_observer`. The
+   recommended repair names the most specific observer class known.
+3. Rendered label already observed. Given a changed policy/config label and a
+   supported golden, snapshot, report-render, schema-render, or config-output
+   test observing it, RIPR emits an `already_observed` item. No new RIPR repair
+   action is recommended.
+4. Behavior selector without discriminator. Given a changed threshold, routing
+   constant, or validation selector that reaches user-visible behavior but no
+   related test observes the selected behavior, RIPR emits one actionable
+   canonical item with actionability `add_behavior_discriminator`. The repair
+   names the missing discriminator or target assertion shape when known.
+5. Opaque config lookup. Given a changed constant whose flow passes through an
+   unsupported helper, registry, macro, generated output, dynamic dispatch, or
+   untraceable cross-file formatting, RIPR emits a static limitation. The
+   limitation category is `config_policy_flow_unknown`,
+   `opaque_config_lookup`, `macro_generated_config_output`, or
+   `dynamic_config_dispatch`. RIPR does not infer output visibility or
+   recommend mutation execution as the first action.
+6. Unrelated constant. Given a changed constant that has no supported config,
+   policy, output, schema, validation, or behavior-selector shape, RIPR does
+   not create a config/policy user action from the constant alone.
 
 ## Test Mapping
 

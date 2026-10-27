@@ -7,10 +7,12 @@
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{Read as _, Seek as _, SeekFrom};
 use std::path::{Component, Path, PathBuf};
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 /// Producer-neutral inline test-module region cage (#4783), bound to the
@@ -345,11 +347,7 @@ pub(crate) fn evaluate_repository_edit_cage_with_head_movement(
     baseline: &AttemptBaseline,
     movement: HeadMovement,
 ) -> Result<(AttemptDelta, EditCageVerdict), String> {
-    let after = capture_repository_state(
-        baseline.root.clone(),
-        baseline.policy.clone(),
-        CaptureTraceLabel::Reevaluation,
-    )?;
+    let after = reevaluation_capture(baseline)?;
     let committed = match movement {
         HeadMovement::RequireBaselineHead => (baseline.head == after.head).then(Vec::new),
         HeadMovement::AdmitDescendantCommits => {
@@ -366,6 +364,93 @@ pub(crate) fn evaluate_repository_edit_cage_with_head_movement(
     }
     let verdict = evaluate_edit_cage(&baseline.policy, &delta);
     Ok((delta, verdict))
+}
+
+/// Captures taken for re-evaluations inside one [`ReevaluationMemoScope`].
+#[derive(Default)]
+struct ReevaluationMemo {
+    entries: Vec<(PathBuf, EditCagePolicy, Rc<AttemptBaseline>)>,
+    captures: usize,
+}
+
+thread_local! {
+    static REEVALUATION_MEMO: RefCell<Option<ReevaluationMemo>> = const { RefCell::new(None) };
+}
+
+/// One read-only status call's reuse of after-captures (#9823). Every finished
+/// attempt's currentness reading re-captures the same worktree; inside this
+/// scope, attempts whose captures are identical share one. The scope is the
+/// only cache: it ends with the call, so an edit made between two calls is
+/// always observed. Only a successful capture is kept, so an error recaptures,
+/// and the key is the root plus the whole policy, so a differing policy
+/// recaptures. An inner scope is inert; the outermost one owns the memo.
+pub(crate) struct ReevaluationMemoScope {
+    owner: bool,
+    /// The memo is thread-local, so the scope must drop on the thread that
+    /// opened it: a `*const ()` makes it `!Send`.
+    _same_thread: std::marker::PhantomData<*const ()>,
+}
+
+impl ReevaluationMemoScope {
+    pub(crate) fn begin() -> Self {
+        let owner = REEVALUATION_MEMO.with(|memo| {
+            let mut memo = memo.borrow_mut();
+            if memo.is_some() {
+                false
+            } else {
+                *memo = Some(ReevaluationMemo::default());
+                true
+            }
+        });
+        Self {
+            owner,
+            _same_thread: std::marker::PhantomData,
+        }
+    }
+
+    /// Repository captures this scope actually performed.
+    #[cfg(test)]
+    pub(crate) fn captures(&self) -> usize {
+        REEVALUATION_MEMO.with(|memo| memo.borrow().as_ref().map_or(0, |memo| memo.captures))
+    }
+}
+
+impl Drop for ReevaluationMemoScope {
+    fn drop(&mut self) {
+        if self.owner {
+            REEVALUATION_MEMO.with(|memo| *memo.borrow_mut() = None);
+        }
+    }
+}
+
+fn reevaluation_capture(baseline: &AttemptBaseline) -> Result<Rc<AttemptBaseline>, String> {
+    let cached = REEVALUATION_MEMO.with(|memo| {
+        memo.borrow().as_ref().and_then(|memo| {
+            memo.entries
+                .iter()
+                .find(|(root, policy, _)| *root == baseline.root && *policy == baseline.policy)
+                .map(|(_, _, state)| Rc::clone(state))
+        })
+    });
+    if let Some(state) = cached {
+        return Ok(state);
+    }
+    let state = Rc::new(capture_repository_state(
+        baseline.root.clone(),
+        baseline.policy.clone(),
+        CaptureTraceLabel::Reevaluation,
+    )?);
+    REEVALUATION_MEMO.with(|memo| {
+        if let Some(memo) = memo.borrow_mut().as_mut() {
+            memo.captures += 1;
+            memo.entries.push((
+                baseline.root.clone(),
+                baseline.policy.clone(),
+                Rc::clone(&state),
+            ));
+        }
+    });
+    Ok(state)
 }
 
 /// The confined selected target must match HEAD in both the worktree and
@@ -2301,6 +2386,89 @@ mod tests {
         Ok(())
     }
 
+    /// #9823: N re-evaluations of one worktree under one policy inside a
+    /// scope capture it once, and every reading still sees the same delta.
+    /// Negative controls: an edit made after the scope ends is observed by
+    /// the next scope (the memo never outlives a status call), a differing
+    /// policy recaptures, and with no scope every evaluation captures.
+    #[test]
+    fn reevaluation_scope_shares_one_capture_without_hiding_later_edits() -> Result<(), String> {
+        let fixture = git_fixture("reevaluation-memo")?;
+        let baseline = capture_attempt_baseline(&fixture.root, &policy()?)?;
+        let edited = "fn boundary() {}\n\n#[test]\nfn focused() {}\n";
+        let changed_paths = |baseline: &AttemptBaseline| -> Result<Vec<String>, String> {
+            let (delta, _) = evaluate_repository_edit_cage_with_delta(baseline)?;
+            Ok(delta
+                .changes
+                .iter()
+                .map(|change| change.path.display().to_string())
+                .collect())
+        };
+        {
+            let scope = ReevaluationMemoScope::begin();
+            let first = changed_paths(&baseline)?;
+            let second = changed_paths(&baseline)?;
+            let third = changed_paths(&baseline)?;
+            if scope.captures() != 1 || first != second || second != third {
+                return Err(format!(
+                    "three same-policy readings must share one capture: {} captures",
+                    scope.captures()
+                ));
+            }
+            // A second baseline for the same root and policy shares it too.
+            let other = capture_attempt_baseline(&fixture.root, &policy()?)?;
+            changed_paths(&other)?;
+            if scope.captures() != 1 {
+                return Err("an equal-policy baseline must reuse the capture".to_string());
+            }
+            // A differing policy recaptures.
+            let mut wider = policy()?;
+            wider
+                .allowed_edit_surface
+                .push(CagePathRule::exact("tests/extra.rs")?);
+            let differing = capture_attempt_baseline(&fixture.root, &wider)?;
+            changed_paths(&differing)?;
+            if scope.captures() != 2 {
+                return Err("a differing policy must recapture".to_string());
+            }
+        }
+        // The edit lands after the scope: the next scope observes it.
+        fs::write(fixture.root.join("tests/pricing.rs"), edited)
+            .map_err(|err| format!("write focused test edit: {err}"))?;
+        {
+            let scope = ReevaluationMemoScope::begin();
+            let after_edit = changed_paths(&baseline)?;
+            if scope.captures() != 1 || !after_edit.iter().any(|path| path == "tests/pricing.rs") {
+                return Err(format!(
+                    "a new scope must observe the edit, saw {after_edit:?}"
+                ));
+            }
+        }
+        // Control: with no scope, every evaluation captures on its own.
+        let outside = changed_paths(&baseline)?;
+        if !outside.iter().any(|path| path == "tests/pricing.rs") {
+            return Err("an unscoped evaluation must observe the edit".to_string());
+        }
+        Ok(())
+    }
+
+    /// #9823: a failed capture is never kept, so a scope cannot turn a
+    /// transient capture error into a cached answer.
+    #[test]
+    fn reevaluation_scope_does_not_cache_a_failed_capture() -> Result<(), String> {
+        let fixture = git_fixture("reevaluation-memo-error")?;
+        let baseline = capture_attempt_baseline(&fixture.root, &policy()?)?;
+        let scope = ReevaluationMemoScope::begin();
+        fs::remove_dir_all(&fixture.root).map_err(|err| format!("remove fixture root: {err}"))?;
+        if evaluate_repository_edit_cage_with_delta(&baseline).is_ok() {
+            return Err("a capture without a worktree must fail".to_string());
+        }
+        if scope.captures() != 0 {
+            return Err("a failed capture must not be counted or kept".to_string());
+        }
+        Ok(())
+    }
+
     /// A `core.autocrlf` line-ending flip between the before and after
     /// phases is git-invisible and names no author: the cage compares
     /// CRLF-normalized digests for the changed-path decision, so flipping a
@@ -3960,6 +4128,16 @@ mod tests {
             EditCageVerdictStatus::Incomparable
         );
         Ok(())
+    }
+
+    #[test]
+    fn inventory_flags_non_ascii_case_pairs_as_ambiguous() {
+        let (_, ambiguous) =
+            inventory_paths("\u{c9}.rs\0\u{e9}.rs\0".as_bytes(), b"", b"", 10).unwrap_or_default();
+        assert!(ambiguous);
+        let (_, distinct) =
+            inventory_paths("\u{e9}.rs\0e.rs\0".as_bytes(), b"", b"", 10).unwrap_or_default();
+        assert!(!distinct);
     }
 
     #[test]

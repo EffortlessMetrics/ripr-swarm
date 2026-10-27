@@ -1,0 +1,15 @@
+# Registers the signature/body boundary for fixture uses (#10685) under RIPR-SPEC-0238.
+[[extend]]
+id = "RIPR-SPEC-0238"
+tests = [
+  "crates/ripr/src/analysis/language/python/static_limits.rs::a_signature_declares_its_parameters_and_the_body_uses_them",
+  "crates/ripr/src/analysis/language/python/param_fixture_tests.rs::a_multi_line_signature_reads_like_a_one_line_signature",
+  "crates/ripr/src/analysis/language/python/param_fixture_tests.rs::a_one_line_body_after_the_signature_uses_the_fixture",
+]
+code = [
+  "crates/ripr/src/analysis/language/python/static_limits.rs",
+  "crates/ripr/src/analysis/language/python/source_utils.rs",
+]
+fixtures = [
+  "fixtures/python_one_line_def_body_fixture",
+]

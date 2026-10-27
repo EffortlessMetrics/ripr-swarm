@@ -1,0 +1,48 @@
+{
+  "case_id": "unnum-0028-ex4a-lru-cache-direct-pin",
+  "subject_id": "authored-py-pytest-unnum",
+  "diff": "cases/unnum-0028-ex4a-lru-cache-direct-pin.diff",
+  "anchor": {
+    "file": "unnum/year_format.py",
+    "line": 6
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "pytest_assert_eq_lru_cache_bare",
+  "hard_case": "`@lru_cache` (bare) wraps the owner, which the spec says is not decorator indirection",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return \"%03d\" % (year % 10)",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests/test_year_format.py::test_format_year_pads_the_last_two_digits",
+        "equivalence_review": "not equivalent: the edit changes the owner's observable behavior"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "`format_year` is decorated with bare `@lru_cache`. The test pins `format_year(2024) == \"024\"`; `% 10` gives `\"004\"` and fails it. RIPR-SPEC-0028 example 4: `functools` memoization is not `decorator_indirection`, and a direct exact-value test on `format_year` credits the owner.",
+  "labeling_observation": {
+    "ripr_commit": "5fc9de08",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0028#4"
+  ]
+}

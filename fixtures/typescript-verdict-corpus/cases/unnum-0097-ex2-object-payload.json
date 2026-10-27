@@ -1,0 +1,48 @@
+{
+  "case_id": "unnum-0097-ex2-object-payload",
+  "subject_id": "authored-ts-vitest-unnum",
+  "diff": "cases/unnum-0097-ex2-object-payload.diff",
+  "anchor": {
+    "file": "src/parserCode.ts",
+    "line": 3
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "error_path",
+  "test_shape": "vitest_tothrow_object_payload",
+  "hard_case": "`toThrow` is given an object, which vitest compares to the thrown value by equality",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx vitest run",
+    "toolchain": "Node.js v22.22.0, vitest 4.1.11, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "throw { code: \"EMPTY\" };",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "test/parserCode.test.ts > an empty user is rejected with its code",
+        "equivalence_review": "not equivalent: the edit changes the owner's observable behavior"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "`parseUserCode(\"\")` throws `{ code: \"EMPTY_INPUT\" }` and the test pins exactly that object with `toThrow({ code: \"EMPTY_INPUT\" })`, which vitest 4 compares by equality with the thrown value; changing the code to `EMPTY` fails it. RIPR-SPEC-0097 example 2: an exact object payload is a strong error-variant oracle.",
+  "labeling_observation": {
+    "ripr_commit": "2939c0d",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0097#2"
+  ]
+}

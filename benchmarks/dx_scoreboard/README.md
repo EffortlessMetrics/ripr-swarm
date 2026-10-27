@@ -31,8 +31,12 @@ its own row set.
 
 The corpus is a fixed list of real repositories pinned to exact commits. Each
 pin is a commit whose own change touches production Rust, so the warm
-`ripr check --base HEAD~1` measures a real small edit. Entries marked
-`heavy = true` (ripr-swarm at two sizes, cargo) run only with `--include-heavy`.
+`ripr check --base HEAD~1` measures a real small edit. The `serde-no-rust` and `cargo-no-rust` entries pin commits that touch no `.rs` file
+(a CI workflow, a changelog), so a docs-or-CI edit has its own warm-check row, memory row and
+trend; `cargo-no-rust` pins its first parent as the base because its commit is a merge. Those rows are wall time, so they gate only against a same-runner baseline; the runner-independent guard is `crates/ripr/tests/no_rust_diff_reads_no_rust.rs`, which fails on any runner if a docs-only diff indexes the workspace's Rust sources (a discarded read is outside what it observes) in `instant`, `draft` or `fast` mode. Entries marked
+`heavy = true` (ripr-swarm at two sizes, cargo, `cargo-no-rust`, `poetry-python`, `pandas-python`, `django-python`) run only with `--include-heavy`.
+
+Entries may set `language` (`rust` when absent; `python`, `typescript` or `perl`), which the report carries on each repository row so a non-Rust edit is its own population. `click-python` (small), `poetry-python` (larger), `pandas-python` (about 1500 `.py` files and 23k tests, the large-workspace row from #10750) and `django-python` (2,937 `.py` files, a 27-file edit) pin single-parent commits that edit Python and its test; all four complete under `--mode draft`. The editor-refresh samples stay `not_measured` for them, because that instrument opens a changed Rust file. Django fits under the 4,000-file Python workspace cap since #10468. `defu-typescript` pins a single-parent TypeScript edit and completes. `ky-typescript` (about 100 files) pins a single-parent edit to `source/utils/merge.ts` and its test and its warm `ripr check --base HEAD~1 --format json --mode draft` completes with findings on that diff, since the partial-extraction disclosure is scoped to test files that can reach the diff (#10436); other typed limitations can still make a different diff partial, and it has no changed Rust file, so its editor-refresh samples stay `not_measured`. `h3-typescript` pins a single-parent edit to `src/tracing.ts` and its test (a Vitest suite repository) and completes with findings now that links to non-source files (#10614) and `describe.skipIf/runIf` suites (#10629) no longer make it partial. zod and execa reported partial analysis on the commits tried, and a repository that stops short fails the completion gate even when new, so they are not pinned. Perl is blocked on its adapter and exporter not being available to the scoreboard's binary (#10338).
 Checkouts live under `target/ripr/dx-scoreboard/corpus/`; cloning is opt-in:
 
 ```bash
@@ -63,7 +67,9 @@ release ripr first, because developers run release builds.
   does not exist, run from an unrelated directory. Each should exit nonzero.
 - **Self-contradictions.** Rules over the pilot `repo-exposure.json` and the
   warm check JSON:
-  - `R1` a seam says reach is `no` while it lists related tests;
+  - `R1` a seam says reach is `no` while it lists a related test whose
+    relation establishes reach (proximity-only relations are listed beside
+    `reach: no` by design), or a listed window that cannot be fully inspected;
   - `R2` a finding is `no_static_path` while it lists related tests;
   - `R3` a finding's evidence says related tests were found while it lists
     none.
@@ -159,6 +165,8 @@ These native receipts are also accepted as-is:
   completion instead of comparing a different population.
 
 ### The ranking lane
+
+The `agent` board has no nightly lane, because the agent-as-user harness needs an agent. The committed receipt is gated instead: the xtask test `committed_agent_receipt_does_not_regress_the_agent_baseline` ingests `metrics/public-proof/agent-as-user.json` against `metrics/dx-scoreboard/agent-baseline.json` (same `--baseline`/gate comparison), and `agent_gate_fails_the_receipt_from_before_the_rerun` keeps the 2026-10-04 receipt as the negative control. After a rerun that improves a metric, rebuild the baseline with `cargo xtask dx-scoreboard --boards agent --ingest metrics/public-proof/agent-as-user.json` and copy `target/ripr/reports/dx-scoreboard.json` to `metrics/dx-scoreboard/agent-baseline.json`. A rerun is one run per target with different agents, so the margins (the larger of 25 percent of the baseline and 3 steps for commands and tool steps; no allowance for weak findings or white-box tests) absorb run-to-run variation. The test also fails when the receipt stops reporting a metric or a repository the baseline measured, because the generic gate lists missing evidence as uncompared and passes it.
 
 `.github/workflows/pilot-ranking.yml` runs nightly, on demand, and once when a
 pull request touching pilot ranking, seam grading or the answer key leaves
@@ -269,6 +277,8 @@ ingests the receipt. It gates against
 lane records the report ungated. To start gating, dispatch the workflow on
 `ubuntu-latest`, review the `dx-scoreboard.json` artifact, and commit it as the
 baseline file. Install seconds compare only against a same-runner baseline.
+
+The same workflow's `first-run-main` job walks the first-run crates with a ripr built from the checked-out commit and gates the verdict rows against `metrics/dx-scoreboard/first-run-main-baseline.json` (3 of 3 decisive verdicts on a main build, #9276). Wall-time rows in that baseline came from a local run and are skipped on `ubuntu-latest`; refresh the baseline with `cargo xtask first-run --ripr target/debug/ripr --out target/ripr/first-run-main`, then `cargo xtask dx-scoreboard --boards first_run --ingest target/ripr/first-run-main/first-run-rows.jsonl`, and copy `target/ripr/reports/dx-scoreboard.json` over the baseline when a verdict improves.
 
 ## Claim boundary
 

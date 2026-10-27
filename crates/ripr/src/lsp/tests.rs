@@ -86,7 +86,9 @@ use tower_lsp_server::ls_types::{
 use tower_lsp_server::{LspService, Server};
 
 mod analysis_thread_routing_tests;
+mod bare_cr_origin_tests;
 mod consumed_source_tests;
+mod progress_completion_tests;
 mod progress_create_liveness_tests;
 mod progress_notification_isolation_tests;
 mod shutdown_clear_tests;
@@ -2717,7 +2719,6 @@ fn witness_finding() -> Finding {
         flow_sink: None,
     }];
     finding.activation.observed_values = vec![ValueFact {
-        file: None,
         line: 12,
         text: "assert!(result.is_err())".to_string(),
         value: "result.is_err()".to_string(),
@@ -9429,9 +9430,95 @@ where
         }),
     )
     .await?;
-    Ok(log_notification_messages(
-        &read_lsp_messages_for(reader, Duration::from_secs(3)).await?,
-    ))
+    read_save_digest_logs_until_settled(reader, writer).await
+}
+
+/// The test server handles notifications serially. Its barrier log therefore
+/// follows every log from the preceding didOpen/didSave handler, including
+/// terminal refresh outcomes. Waiting for it makes absence assertions depend
+/// on completed work rather than a quiet wall-clock window.
+async fn read_save_digest_logs_until_settled<R, W>(
+    reader: &mut R,
+    writer: &mut W,
+) -> Result<Vec<String>, String>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    write_lsp_message(
+        writer,
+        serde_json::json!({"jsonrpc": "2.0", "method": SAVE_DIGEST_BARRIER_METHOD}),
+    )
+    .await?;
+    read_logs_until(reader, |message| message == SAVE_DIGEST_BARRIER_LOG).await
+}
+
+const SAVE_DIGEST_BARRIER_METHOD: &str = "test/saveDigestBarrier";
+const SAVE_DIGEST_BARRIER_LOG: &str = "test: save digest notifications settled";
+
+#[tokio::test(start_paused = true)]
+async fn save_digest_log_collection_waits_for_late_events_before_barrier() -> Result<(), String> {
+    let (client_io, mut server_io) = tokio::io::duplex(8192);
+    let (mut reader, mut writer) = tokio::io::split(client_io);
+    write_lsp_message(
+        &mut server_io,
+        serde_json::json!({"jsonrpc": "2.0", "method": "window/logMessage",
+            "params": {"type": 3, "message": "ripr didSave deduplicated"}}),
+    )
+    .await?;
+    let producer = tokio::spawn(async move {
+        // Virtual time challenges both the former 3s window and an early
+        // return at the dedup log: a forbidden queue event arrives later.
+        tokio::time::sleep(Duration::from_secs(4)).await;
+        for message in [
+            "ripr analysis refresh queued: generation=1",
+            SAVE_DIGEST_BARRIER_LOG,
+        ] {
+            write_lsp_message(
+                &mut server_io,
+                serde_json::json!({"jsonrpc": "2.0", "method": "window/logMessage",
+                    "params": {"type": 3, "message": message}}),
+            )
+            .await?;
+        }
+        Ok::<(), String>(())
+    });
+    let uri = test_uri("file:///workspace/src/lib.rs")?;
+    let logs = save_and_collect_logs(&mut reader, &mut writer, &uri, "fn same() {}").await?;
+    producer
+        .await
+        .map_err(|error| format!("log producer: {error}"))??;
+    if !logs_contain(&logs, "refresh queued")
+        || logs.last().map(String::as_str) != Some(SAVE_DIGEST_BARRIER_LOG)
+    {
+        return Err(format!(
+            "collection returned before the settled event: {logs:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[tokio::test(start_paused = true)]
+async fn save_digest_log_collection_rejects_dedup_without_barrier() -> Result<(), String> {
+    let (client_io, mut server_io) = tokio::io::duplex(8192);
+    let (mut reader, mut writer) = tokio::io::split(client_io);
+    write_lsp_message(
+        &mut server_io,
+        serde_json::json!({"jsonrpc": "2.0", "method": "window/logMessage",
+            "params": {"type": 3, "message": "ripr didSave deduplicated"}}),
+    )
+    .await?;
+    let uri = test_uri("file:///workspace/src/lib.rs")?;
+    let Err(error) = save_and_collect_logs(&mut reader, &mut writer, &uri, "fn same() {}").await
+    else {
+        return Err("a dedup log without the settled event must hit the hang guard".to_string());
+    };
+    if !error.contains("timed out waiting for expected log")
+        || !error.contains("didSave deduplicated")
+    {
+        return Err(format!("missing barrier lost timeout/log context: {error}"));
+    }
+    Ok(())
 }
 
 fn logs_contain(logs: &[String], prefix: &str) -> bool {
@@ -9473,10 +9560,31 @@ fn failed_refresh_invalidates_only_uncovered_save_digests_over_the_wire() -> Res
         let (mut client_read, mut client_write) = tokio::io::split(client_io);
         let (server_read, server_write) = tokio::io::split(server_io);
         let backend_root = root.path().to_path_buf();
-        let (service, socket) =
-            LspService::new(move |client| Backend::new(client, backend_root.clone()));
+        let mut barrier_client = None;
+        let builder = LspService::build(|client| {
+            barrier_client = Some(client.clone());
+            Backend::new(client, backend_root)
+        });
+        let barrier_client = barrier_client.ok_or_else(|| "missing barrier client".to_string())?;
+        let (service, socket) = builder
+            .custom_method(SAVE_DIGEST_BARRIER_METHOD, move |_: &Backend| {
+                let client = barrier_client.clone();
+                async move {
+                    client
+                        .log_message(
+                            tower_lsp_server::ls_types::MessageType::INFO,
+                            SAVE_DIGEST_BARRIER_LOG,
+                        )
+                        .await;
+                }
+            })
+            .finish();
         let server_task = tokio::spawn(async move {
             Server::new(server_read, server_write, socket)
+                // This witness tests sequential save-digest decisions. A
+                // test-only notification behind each save is a completion
+                // barrier only when handlers run in wire order.
+                .concurrency_level(1)
                 .serve(service)
                 .await;
         });
@@ -9511,7 +9619,11 @@ fn failed_refresh_invalidates_only_uncovered_save_digests_over_the_wire() -> Res
             )
             .await?;
         }
-        read_lsp_messages_for(&mut client_read, Duration::from_secs(3)).await?;
+        let opened =
+            read_save_digest_logs_until_settled(&mut client_read, &mut client_write).await?;
+        if !logs_contain(&opened, "outcome=published") {
+            return Err(format!("setup opens did not publish: {opened:?}"));
+        }
 
         let a_first =
             save_and_collect_logs(&mut client_read, &mut client_write, &uri_a, a1).await?;
@@ -15874,13 +15986,15 @@ fn sample_classified_seam() -> crate::analysis::ClassifiedSeam {
                 Confidence::Medium,
                 "boundary value missing",
             ),
-            observed_values: vec![ValueFact {
-                file: None,
-                line: 12,
-                text: "discounted_total(50, 100)".to_string(),
-                value: "50".to_string(),
-                context: ValueContext::FunctionArgument,
-            }],
+            observed_values: vec![
+                ValueFact {
+                    line: 12,
+                    text: "discounted_total(50, 100)".to_string(),
+                    value: "50".to_string(),
+                    context: ValueContext::FunctionArgument,
+                }
+                .into(),
+            ],
             missing_discriminators: vec![MissingDiscriminatorFact {
                 value: "discount_threshold (equality boundary)".to_string(),
                 reason: "observed values skip equality boundary".to_string(),
@@ -16094,7 +16208,6 @@ fn finding_hover_response_includes_evidence_details() -> Result<(), String> {
     }];
     finding.activation = ActivationEvidence {
         observed_values: vec![ValueFact {
-            file: None,
             line: 12,
             text: "assert_eq!".to_string(),
             value: "amount == threshold".to_string(),
@@ -28355,7 +28468,11 @@ fn framed_lsp_zero_git_timeout_commits_limited_once_and_recovers() -> Result<(),
         let (client_io, server_io) = tokio::io::duplex(64 * 1024);
         let (mut client_read, mut client_write) = tokio::io::split(client_io);
         let (server_read, server_write) = tokio::io::split(server_io);
-        let (service, socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let (builder, mut publications) =
+            progress_completion_tests::with_publication_barrier(LspService::build(|client| {
+                Backend::new(client, PathBuf::from("."))
+            }));
+        let (service, socket) = builder.finish();
         let mut server_task = tokio::spawn(async move {
             Server::new(server_read, server_write, socket)
                 .serve(service)
@@ -28386,7 +28503,21 @@ fn framed_lsp_zero_git_timeout_commits_limited_once_and_recovers() -> Result<(),
             }),
         )
         .await?;
-        let limited = run_wire_refresh_collecting(&mut client_read, &mut client_write, 2).await?;
+        let publication = progress_completion_tests::arm_publication(
+            &mut client_read,
+            &mut client_write,
+            &mut publications,
+            90,
+        )
+        .await?;
+        let (limited_generation, limited) = progress_completion_tests::run_started_refresh(
+            &mut client_read,
+            &mut client_write,
+            publication,
+            2,
+            "limited",
+        )
+        .await?;
         let statuses = analysis_status_params(&limited);
         let status = statuses
             .last()
@@ -28425,6 +28556,10 @@ fn framed_lsp_zero_git_timeout_commits_limited_once_and_recovers() -> Result<(),
             "one accepted limited refresh must end exactly once"
         );
         assert_eq!(
+            ends[0]["params"]["token"],
+            format!("ripr-analysis-{limited_generation}")
+        );
+        assert_eq!(
             ends[0]["params"]["value"]["message"],
             "analysis completed with limited evidence"
         );
@@ -28440,6 +28575,13 @@ fn framed_lsp_zero_git_timeout_commits_limited_once_and_recovers() -> Result<(),
         assert_eq!(workspace_status["result"]["diagnostics"]["findings"], 0);
         assert_eq!(workspace_status["result"]["run_status"], "limited");
 
+        let publication = progress_completion_tests::arm_publication(
+            &mut client_read,
+            &mut client_write,
+            &mut publications,
+            91,
+        )
+        .await?;
         // The real configuration notification restores the normal deadline.
         // It owns one automatic refresh; await that run instead of adding
         // another explicit request that could create a second progress token.
@@ -28451,34 +28593,15 @@ fn framed_lsp_zero_git_timeout_commits_limited_once_and_recovers() -> Result<(),
             }),
         )
         .await?;
-        let mut recovered = Vec::new();
-        tokio::time::timeout(Duration::from_mins(1), async {
-            loop {
-                let message = read_lsp_message(&mut client_read).await?;
-                if message["method"] == "window/workDoneProgress/create" {
-                    let id = message
-                        .get("id")
-                        .cloned()
-                        .ok_or("create request carried no id")?;
-                    write_lsp_message(
-                        &mut client_write,
-                        serde_json::json!({
-                            "jsonrpc": "2.0", "id": id, "result": null
-                        }),
-                    )
-                    .await?;
-                    continue;
-                }
-                let ended = message["method"] == "$/progress"
-                    && message["params"]["value"]["kind"] == "end";
-                recovered.push(message);
-                if ended {
-                    return Ok::<(), String>(());
-                }
-            }
-        })
-        .await
-        .map_err(|error| format!("normal-timeout recovery did not finish: {error}"))??;
+        let (recovered_generation, recovered) =
+            progress_completion_tests::read_started_refresh_until_settled(
+                &mut client_read,
+                &mut client_write,
+                publication,
+                None,
+                "seams_deferred",
+            )
+            .await?;
         write_lsp_message(
             &mut client_write,
             serde_json::json!({
@@ -28502,9 +28625,31 @@ fn framed_lsp_zero_git_timeout_commits_limited_once_and_recovers() -> Result<(),
             })
             .count();
         assert_eq!(recovered_ends, 1);
+        for end in recovered.iter().filter(|message| {
+            message["method"] == "$/progress" && message["params"]["value"]["kind"] == "end"
+        }) {
+            assert_eq!(
+                end["params"]["token"],
+                format!("ripr-analysis-{recovered_generation}")
+            );
+        }
         // Configuration changes request Interactive analysis. A separate
         // explicit request is required to establish a full recovered run.
-        let full = run_wire_refresh_collecting(&mut client_read, &mut client_write, 5).await?;
+        let publication = progress_completion_tests::arm_publication(
+            &mut client_read,
+            &mut client_write,
+            &mut publications,
+            92,
+        )
+        .await?;
+        let (full_generation, full) = progress_completion_tests::run_started_refresh(
+            &mut client_read,
+            &mut client_write,
+            publication,
+            5,
+            "full",
+        )
+        .await?;
         let full_statuses = analysis_status_params(&full);
         let full_status = full_statuses
             .last()
@@ -28520,6 +28665,14 @@ fn framed_lsp_zero_git_timeout_commits_limited_once_and_recovers() -> Result<(),
             full_ends, 1,
             "one explicit full refresh must end exactly once"
         );
+        for end in full.iter().filter(|message| {
+            message["method"] == "$/progress" && message["params"]["value"]["kind"] == "end"
+        }) {
+            assert_eq!(
+                end["params"]["token"],
+                format!("ripr-analysis-{full_generation}")
+            );
+        }
         write_lsp_message(
             &mut client_write,
             serde_json::json!({

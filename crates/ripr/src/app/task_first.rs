@@ -15,7 +15,9 @@ use crate::agent::loop_commands::{bound_root, shell_arg};
 use crate::analysis::canonical_gap::{
     canonical_gap_identity, probe_id_names_seam, producer_gap_id_names_seam,
 };
-use crate::analysis::repair_route::{RepairPacketIneligibility, repair_packet_eligibility};
+use crate::analysis::repair_route::{
+    RepairPacketIneligibility, humanize_evidence, repair_packet_eligibility,
+};
 use crate::app::agent_brief::AgentBriefPolicy;
 use crate::app::agent_status::{AgentAttemptStatusReport, build_agent_attempt_status};
 use crate::app::repair_attempt::{
@@ -164,8 +166,9 @@ pub(crate) fn decide_repair_start(
 fn repair_refusal_reason(
     entry: &crate::analysis::ClassifiedSeam,
     policy: AgentBriefPolicy<'_>,
+    root: Option<&Path>,
 ) -> Option<String> {
-    repair_refusal(entry, policy).map(|(_, reason)| reason)
+    repair_refusal(entry, policy, root).map(|(_, reason)| reason)
 }
 
 /// What kind of refusal the repair gate gave, so a caller never explains an
@@ -188,6 +191,7 @@ pub(crate) enum RefusalKind {
 fn repair_refusal(
     entry: &crate::analysis::ClassifiedSeam,
     policy: AgentBriefPolicy<'_>,
+    root: Option<&Path>,
 ) -> Option<(RefusalKind, String)> {
     let eligibility = repair_packet_eligibility(entry);
     if !eligibility.eligible() {
@@ -208,15 +212,47 @@ fn repair_refusal(
                 // hunting for what to strengthen (#9604). The parenthetical
                 // matches the agent card's readiness line so both surfaces
                 // read the same way.
-                let missing = eligibility.readiness.missing_evidence.join("; ");
-                if missing.is_empty() {
-                    (RefusalKind::RouteNotReady, label.to_string())
+                // #10644: the refusal reads on a human surface, so name each
+                // missing fact in plain words; the machine readiness strings
+                // behind it stay internal.
+                let missing = eligibility
+                    .readiness
+                    .missing_evidence
+                    .iter()
+                    .map(|evidence| humanize_evidence(evidence))
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                let mut label = if missing.is_empty() {
+                    label.to_string()
                 } else {
-                    (
-                        RefusalKind::RouteNotReady,
-                        format!("{label} (missing evidence: {missing})"),
-                    )
+                    format!("{label} (missing evidence: {missing})")
+                };
+                // #10622: a Rust predicate boundary whose only missing fact
+                // is the boundary discriminator has a concrete manual route —
+                // the predicate stub writes a fill-in skeleton for the changed
+                // comparison, prefilling the boundary input when it derives
+                // (a bare parameter against a literal; compound operands
+                // still leave todo!() values). Name the route instead of
+                // leaving the reader at the jargon dead end; when anything
+                // else is also missing the stub alone would not ready the
+                // route, so the bare label stays. The seam inventory this
+                // gate reads is Rust-only, so the kind check is also the
+                // language check.
+                if let [missing] = eligibility.readiness.missing_evidence.as_slice()
+                    && missing
+                        .starts_with("producer-owned missing discriminator fact: boundary_value")
+                    && entry.seam.kind() == crate::analysis::seams::SeamKind::PredicateBoundary
+                {
+                    let file = crate::analysis::stable_path_text(entry.seam.file());
+                    let at = shell_arg(&format!("{file}:{}", entry.seam.display_line()));
+                    let root_flag = root.map_or_else(String::new, |root| {
+                        format!(" --root {}", shell_arg(&bound_root(&root.to_string_lossy())))
+                    });
+                    label.push_str(&format!(
+                        ": write the boundary test by hand — `ripr agent stub{root_flag} --at {at} --kind predicate` writes a fill-in skeleton for the changed comparison; the boundary input is prefilled when it derives, otherwise fill the todo!() values, then rerun `ripr repair`"
+                    ));
                 }
+                (RefusalKind::RouteNotReady, label)
             } else {
                 (RefusalKind::Other, label.to_string())
             }
@@ -225,6 +261,20 @@ fn repair_refusal(
     policy
         .omission_reason_for_class(entry.class)
         .map(|reason| (RefusalKind::Other, reason))
+}
+
+/// Whether a readiness missing-evidence item is the boundary-value
+/// discriminator the producer could not find. Recognised through the
+/// producer's own format (`analysis/repair_route.rs`), not by parsing text here.
+pub(super) fn is_boundary_value_discriminator(item: &str) -> bool {
+    crate::analysis::repair_route::is_boundary_value_discriminator_evidence(item)
+}
+
+/// Plain-language rendering of one route missing-evidence string for human
+/// screens (#10644). The readiness list behind it keeps the stable internal
+/// codes for machine consumers; this translation is render-boundary only.
+pub(super) fn humanize_route_evidence(evidence: &str) -> String {
+    humanize_evidence(evidence)
 }
 
 fn ineligibility_label(reason: RepairPacketIneligibility) -> &'static str {
@@ -301,7 +351,7 @@ pub(crate) fn resolve_repair_start(root: &Path) -> Result<RepairStartDecision, S
     let mut eligible_ids = Vec::new();
     let mut refusal_reasons: Vec<String> = Vec::new();
     for entry in &classified {
-        match repair_refusal_reason(entry, policy) {
+        match repair_refusal_reason(entry, policy, Some(root)) {
             None => eligible_ids.push(entry.seam.id().as_str().to_string()),
             // Name the shared gate's own reason among the no-eligible
             // reasons so the limitation is diagnosable.
@@ -409,6 +459,7 @@ pub(crate) fn resolve_repair_subject_outcome(
         &classified,
         AgentBriefPolicy::from_config(&config),
         item,
+        Some(root),
     ))
 }
 
@@ -416,15 +467,19 @@ pub(crate) fn resolve_repair_subject_outcome(
 /// one explicit repair item against an already-classified seam inventory and
 /// apply the shared repair-admission gate to the one seam it names. The MCP
 /// refresh runs this over its own diff-scoped inventory so a session item's
-/// repair readiness is this exact decision, not a parallel one.
+/// repair readiness is this exact decision, not a parallel one. `root` lets
+/// the shared refusal word an emitted next command (`ripr agent stub --root`)
+/// for the workspace the inventory came from; the MCP server passes `None`
+/// because its verdicts are already relative to the server's workspace root.
 pub(crate) fn resolve_repair_subject_in(
     classified: &[crate::analysis::ClassifiedSeam],
     policy: AgentBriefPolicy<'_>,
     item: &str,
+    root: Option<&Path>,
 ) -> RepairSubjectOutcome {
     let outcome_for = |entry: &crate::analysis::ClassifiedSeam| {
         let seam_id = entry.seam.id().as_str().to_string();
-        match repair_refusal(entry, policy) {
+        match repair_refusal(entry, policy, root) {
             None => RepairSubjectOutcome::Seam(seam_id),
             Some((kind, reason)) => RepairSubjectOutcome::Ineligible {
                 seam_id,
@@ -710,7 +765,7 @@ fn repair_start_refusal_for_entry(
     entry: &crate::analysis::ClassifiedSeam,
     policy: AgentBriefPolicy<'_>,
 ) -> Option<RepairStartRefusal> {
-    let (kind, reason) = repair_refusal(entry, policy)
+    let (kind, reason) = repair_refusal(entry, policy, Some(root))
         .or_else(|| {
             (!crate::output::agent_seam_packets::recommended_test_is_repair_edit_target(entry))
                 .then(|| {
@@ -797,23 +852,28 @@ pub(crate) fn repair_start_withheld_note(
     }
 }
 
-/// The gap-bound TypeScript start admission (#9103, RIPR-SPEC-0311) for one
-/// finding of a check run: a TypeScript preview finding that is not
+/// The gap-bound start admission (#9103, RIPR-SPEC-0311; Python #10373) for
+/// one finding of a check run: a TypeScript or Python finding that is not
 /// static-limited, from a run that recorded its diff base, whose GapRecord the
 /// shared agent-packet validator accepts. This is the single admission both
 /// `ripr check` (the printed start line) and `ripr agent status` (the routed
 /// warning, #10001) consult; it forks no validator and fails closed.
-fn typescript_gap_route(
+fn gap_bound_route(
     output: &super::CheckOutput,
+    check_config: &crate::config::RiprConfig,
     finding: &crate::domain::Finding,
 ) -> Option<crate::app::GapRepairRoute> {
-    if non_rust_language(&finding.probe.location.file) != Some("TypeScript")
-        || super::gap_bound_repair::finding_is_static_limited(finding)
-    {
+    if super::gap_bound_repair::finding_is_static_limited(finding) {
         return None;
     }
     let base = output.base.as_deref()?;
-    let record = super::gap_bound_repair::startable_typescript_gap_record(finding)?;
+    let record = match non_rust_language(&finding.probe.location.file)? {
+        "TypeScript" => super::gap_bound_repair::startable_typescript_gap_record(finding)?,
+        "Python" => {
+            super::gap_bound_repair::startable_python_gap_record(output, check_config, finding)?
+        }
+        _ => return None,
+    };
     Some(crate::app::GapRepairRoute {
         finding_id: finding.id.clone(),
         gap_id: record.canonical_gap_id,
@@ -823,12 +883,12 @@ fn typescript_gap_route(
 
 /// The gap-bound start the default human `ripr check` would print for this
 /// run's selected finding, or `None` when check would print none (#10001).
-pub(crate) fn selected_typescript_gap_route(
+pub(crate) fn selected_gap_bound_route(
     output: &super::CheckOutput,
     check_config: &crate::config::RiprConfig,
 ) -> Option<crate::app::GapRepairRoute> {
     let finding = crate::output::human::selected_triage_finding(output, check_config)?;
-    typescript_gap_route(output, finding)
+    gap_bound_route(output, check_config, finding)
 }
 
 /// The repair route for the one finding the default human `ripr check`
@@ -892,9 +952,9 @@ pub(crate) fn check_repair_route(
     // agent-packet validator and starts a gap-bound attempt. The canonical
     // gap id and the base this run analyzed are the whole start. A finding
     // that does not validate, a static-limited one, and a run without a base
-    // keep the refusals below. Python and the other routed languages are
-    // unchanged.
-    if !static_limited && let Some(route) = typescript_gap_route(output, finding) {
+    // keep the refusals below. A Python finding takes the same route
+    // (#10373); the other routed languages are unchanged.
+    if !static_limited && let Some(route) = gap_bound_route(output, check_config, finding) {
         return CheckRepairRoute::GapRoute(route);
     }
     let Some(gap) = finding.canonical_gap.as_ref() else {
@@ -959,8 +1019,18 @@ pub(crate) fn check_repair_route(
     if bound.next().is_some() {
         return CheckRepairRoute::Refused(RepairRouteRefusal::SeveralBindingSeams);
     }
-    if let Some(reason) = repair_refusal_reason(entry, policy) {
-        return CheckRepairRoute::Refused(RepairRouteRefusal::Ineligible { reason });
+    if let Some((kind, reason)) = repair_refusal(entry, policy, Some(root)) {
+        // #9244: carry the typed kind and the producer-owned missing list so
+        // the check screen words a not-ready route without parsing `reason`.
+        let missing = repair_packet_eligibility(entry).readiness.missing_evidence;
+        return CheckRepairRoute::Refused(RepairRouteRefusal::Ineligible {
+            reason,
+            kind,
+            missing,
+            // #10622: a related test already reaching the boundary input
+            // makes the weak oracle, not the input, the remaining work.
+            boundary_input_observed: finding.boundary_input_observed_with_weak_oracle(),
+        });
     }
     if static_limited {
         // F3: no runnable line for a static-limited finding. The refusal
@@ -1042,11 +1112,24 @@ pub(crate) fn no_seam_inventory_reason(language: &str, file: &str) -> String {
     )
 }
 
+/// The pointer a seam-addressed refusal of a TypeScript or Python item adds
+/// (#10373): such a finding can still start the delegated loop by gap, so
+/// "terminal" must not read as "no repair start exists anywhere". Empty for
+/// the other non-Rust languages.
+pub(crate) fn gap_bound_start_pointer(language: &str) -> &'static str {
+    if matches!(language, "TypeScript" | "Python") {
+        ". When the finding's repair packet is complete, `ripr check --base <base>` prints a gap-bound start (`ripr agent repair --gap-id <gap> --base <base> --phase before`) that runs the delegated loop by gap instead of by seam"
+    } else {
+        ""
+    }
+}
+
 fn unknown_repair_item(root: &Path, item: &str) -> String {
     if let Some(language) = non_rust_item_language(item) {
         return format!(
-            "repair item `{item}` names no seam in the selected root: {}",
-            no_seam_inventory_reason(language, "")
+            "repair item `{item}` names no seam in the selected root: {}{}",
+            no_seam_inventory_reason(language, ""),
+            gap_bound_start_pointer(language)
         );
     }
     let list = format!(
@@ -1608,6 +1691,62 @@ pub(crate) mod tests {
             "{}",
             refused.reason
         );
+        Ok(())
+    }
+
+    /// #10622: a predicate boundary whose only missing evidence is the
+    /// boundary discriminator names the concrete manual route — the
+    /// predicate stub derives the boundary input from the changed
+    /// comparison — instead of leaving the reader at the jargon dead end.
+    /// A seam that also misses a safe test target keeps the bare label:
+    /// the stub alone would not ready that route.
+    #[test]
+    fn boundary_only_not_ready_names_the_stub_route() -> Result<(), String> {
+        use crate::analysis::seams::SeamGripClass;
+        let config = crate::config::RiprConfig::default();
+        let policy = AgentBriefPolicy::from_config(&config);
+        let root = Path::new("/repo");
+
+        let targeted = crate::analysis::test_grip_evidence::RelatedTestGrip {
+            test_name: "it_works".to_string(),
+            file: std::path::PathBuf::from("src/lib.rs"),
+            line: 14,
+            test_target: Some(
+                crate::analysis::test_grip_evidence::TestTargetEvidence::fixture(
+                    "it_works",
+                    std::path::Path::new("src/lib.rs"),
+                    14,
+                ),
+            ),
+            oracle_kind: crate::domain::OracleKind::RelationalCheck,
+            oracle_strength: crate::domain::OracleStrength::Weak,
+            evidence_summary: "relational assertion".to_string(),
+            relation_reason: crate::domain::RelationReason::DirectOwnerCall,
+            relation_confidence: crate::analysis::test_grip_evidence::RelationConfidence::High,
+        };
+        let boundary_only = gate_entry(SeamGripClass::WeaklyGripped, vec![targeted]);
+        let refusal = repair_start_refusal_for_entry(root, &boundary_only, policy)
+            .ok_or("a boundary-only not-ready seam must be refused")?;
+        assert!(
+            refusal
+                .reason
+                .contains("ripr agent stub --root /repo --at src/pricing.rs:88 --kind predicate")
+                && refusal
+                    .reason
+                    .contains("writes a fill-in skeleton for the changed comparison")
+                && refusal.reason.contains("prefilled when it derives")
+                && refusal.reason.contains("then rerun `ripr repair`"),
+            "{}",
+            refusal.reason
+        );
+
+        // Control: a seam that also misses a safe test target names no stub
+        // route, because the skeleton alone would not ready that route.
+        let also_missing_target =
+            gate_entry(SeamGripClass::WeaklyGripped, vec![weak_related_test()]);
+        let bare = repair_start_refusal_for_entry(root, &also_missing_target, policy)
+            .ok_or("a target-missing not-ready seam must be refused")?;
+        assert!(!bare.reason.contains("--kind predicate"), "{}", bare.reason);
         Ok(())
     }
 

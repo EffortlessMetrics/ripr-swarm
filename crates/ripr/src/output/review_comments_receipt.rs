@@ -35,6 +35,12 @@ pub(crate) struct ReviewCommentsRunReceipt {
     pub(crate) configured_timeout_ms: u64,
     pub(crate) last_completed_phase: Option<String>,
     pub(crate) active_phase: Option<String>,
+    /// The pass running inside `active_phase`, for phases that run several
+    /// (`language_facts` runs corpus admission, test-change detection and
+    /// owner attribution). Absent when the phase has no named passes, so a
+    /// timeout can say which one spent the budget (#1604).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) active_step: Option<String>,
     pub(crate) completed_artifacts: Vec<String>,
     pub(crate) missing_artifacts: Vec<String>,
     pub(crate) reusable_cache_identity: String,
@@ -85,6 +91,7 @@ impl ReviewCommentsRunReceipt {
             configured_timeout_ms: timeout_ms,
             last_completed_phase: None,
             active_phase: Some("input_validation".to_string()),
+            active_step: None,
             completed_artifacts: Vec::new(),
             missing_artifacts: expected_artifacts.to_vec(),
             reusable_cache_identity,
@@ -100,12 +107,19 @@ impl ReviewCommentsRunReceipt {
     pub(crate) fn phase(&mut self, completed: &str, active: &str) {
         self.last_completed_phase = Some(completed.to_string());
         self.active_phase = Some(active.to_string());
+        self.active_step = None;
+    }
+
+    /// Names the pass now running inside the active phase.
+    pub(crate) fn step(&mut self, active_step: &str) {
+        self.active_step = Some(active_step.to_string());
     }
 
     pub(crate) fn complete(&mut self, artifacts: &[String]) {
         self.status = "complete";
         self.last_completed_phase = Some("artifact_io".to_string());
         self.active_phase = None;
+        self.active_step = None;
         self.completed_artifacts = artifacts.to_vec();
         self.missing_artifacts.clear();
     }
@@ -316,6 +330,35 @@ mod tests {
             &["comments.json".to_string()],
             None,
         )
+    }
+
+    /// A timeout inside a multi-pass phase names the pass (#1604). The step is
+    /// absent from the serialized receipt when no pass is active, and a phase
+    /// transition or completion clears it so a stale pass is never reported.
+    #[test]
+    fn active_step_is_serialized_only_while_a_pass_is_running() -> Result<(), String> {
+        let mut receipt = sample_receipt();
+        let absent = serde_json::to_value(&receipt).map_err(|err| err.to_string())?;
+        assert!(absent.get("active_step").is_none());
+
+        receipt.phase("diff_discovery", "language_facts");
+        receipt.step("owner_attribution");
+        receipt.limited_timeout("language_facts");
+        let named = serde_json::to_value(&receipt).map_err(|err| err.to_string())?;
+        assert_eq!(named["active_phase"], "language_facts");
+        assert_eq!(named["active_step"], "owner_attribution");
+
+        let mut moved = sample_receipt();
+        moved.phase("diff_discovery", "language_facts");
+        moved.step("test_change_detection");
+        moved.phase("language_facts", "canonical_analysis");
+        assert_eq!(moved.active_step, None);
+
+        let mut finished = sample_receipt();
+        finished.step("owner_attribution");
+        finished.complete(&["comments.json".to_string()]);
+        assert_eq!(finished.active_step, None);
+        Ok(())
     }
 
     /// A real single-commit repository, so `HEAD` actually resolves and a

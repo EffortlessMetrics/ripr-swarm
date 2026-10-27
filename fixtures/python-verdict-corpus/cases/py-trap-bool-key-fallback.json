@@ -1,0 +1,44 @@
+{
+  "case_id": "py-trap-bool-key-fallback",
+  "subject_id": "authored-py-table-traps",
+  "diff": "cases/py-trap-bool-key-fallback.diff",
+  "anchor": {
+    "file": "tablekit/rates_bool.py",
+    "line": 1
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "constructor_field",
+  "test_shape": "module_dict_bool_key_get_fallback",
+  "hard_case": "False-credit trap: the test reads the edited table through a key spelling the analyzer cannot evaluate.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "BOOL_RATES = {1: 5, 2: 6}",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the fallback entry for key 2 prices at 6, but price(True) reads key 1"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "Trap: True hashes as integer key 1, so the lookup never reaches the fallback the edit changed.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

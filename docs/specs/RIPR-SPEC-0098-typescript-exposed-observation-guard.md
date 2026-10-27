@@ -213,41 +213,42 @@ already-extracted oracle metadata; no JSON schema changes).
 
 ## Acceptance Examples
 
-### Before (false-exposed)
+1. Before and after (a swallowed side effect must not stay exposed).
+   Before the guard:
 
-```
-changed:  console.log("audit", amount * 9);   // SideEffect
-related:  expect(applyDiscount(100, 10)).toBe(90);  // observed_expression = "applyDiscount(100, 10)"
-          expect(applyDiscount(50, 10)).toBe(45);   // observed_expression = "applyDiscount(50, 10)"
-result:   class: exposed  â† WRONG
-```
+   ```
+   changed:  console.log("audit", amount * 9);   // SideEffect
+   related:  expect(applyDiscount(100, 10)).toBe(90);  // observed_expression = "applyDiscount(100, 10)"
+             expect(applyDiscount(50, 10)).toBe(45);   // observed_expression = "applyDiscount(50, 10)"
+   result:   class: exposed  â† WRONG
+   ```
 
-### After (correctly downgraded)
+   After the guard:
 
-```
-changed:  console.log("audit", amount * 9);
-result:   class: weakly_exposed
-          missing: propagation_unknown: changed value sinks to a non-escaping call effect ...
-          discriminate: weak
-```
+   ```
+   changed:  console.log("audit", amount * 9);
+   result:   class: weakly_exposed
+             missing: propagation_unknown: changed value sinks to a non-escaping call effect ...
+             discriminate: weak
+   ```
 
-### Control 1 (must not over-correct: ReturnValue owner observation)
+2. Control 1 (must not over-correct: ReturnValue owner observation):
 
-```
-changed:  return amount - 12;   // ReturnValue: value branch applies
-related:  expect(applyDiscount(100, 100)).toBe(90);  // observed_expression = "applyDiscount(100, 100)"
-result:   class: exposed  â† CORRECT (observed expression names the owner)
-          discriminate: yes
-```
+   ```
+   changed:  return amount - 12;   // ReturnValue: value branch applies
+   related:  expect(applyDiscount(100, 100)).toBe(90);  // observed_expression = "applyDiscount(100, 100)"
+   result:   class: exposed  â† CORRECT (observed expression names the owner)
+             discriminate: yes
+   ```
 
-### Control 2 (must not over-correct: non-owner assertion prevents downgrade)
+3. Control 2 (must not over-correct: non-owner assertion prevents downgrade):
 
-```
-changed:  console.log("audit", amount * 9);   // SideEffect â€” guard applied
-related:  expect(applyDiscount(100, 10)).toBe(90);   // has owner name â†’ owner-return-value assertion
-          expect(sideEffectLog).toBe(true);           // no owner name â†’ potential effect observer
-result:   class: exposed  â† CORRECT (conservative: sideEffectLog might be observing the side effect)
-```
+   ```
+   changed:  console.log("audit", amount * 9);   // SideEffect â€” guard applied
+   related:  expect(applyDiscount(100, 10)).toBe(90);   // has owner name â†’ owner-return-value assertion
+             expect(sideEffectLog).toBe(true);           // no owner name â†’ potential effect observer
+   result:   class: exposed  â† CORRECT (conservative: sideEffectLog might be observing the side effect)
+   ```
 
 ## Test Mapping
 

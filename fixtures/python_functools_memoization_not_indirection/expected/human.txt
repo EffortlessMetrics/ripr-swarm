@@ -20,8 +20,9 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Canonical gap: gap:python:src/memo.py:century_index:return_value:return_value:year%1000
   Changed behavior: return year % 1000
-  Missing discriminator (1 of 2): Related Python test reaches `century_index` but the strongest extracted oracle is `unknown`; add or strengthen a focused assertion for the returned value
-  Related test: tests/test_memo.py:8 test_century_index_smoke
+  Missing discriminator (1 of 2): Related Python test reaches `century_index` but the strongest
+    extracted oracle is `unknown`; add or strengthen a focused assertion for the returned value
+  Related test: tests/test_memo.py:8 test_century_index_smoke (has no assertion)
   Suggested test file: tests/test_memo.py
   Suggested test: test_century_index_smoke
   Test node: tests/test_memo.py::test_century_index_smoke
@@ -35,6 +36,9 @@ Start here:
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
       unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;
+      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;
+      candidate line = changed line ripr considers for probes
     - reach yes: 1 related Python test(s) found for owner `century_index`
     - infection yes: Changed Python return expression can alter the owner return value: `return year % 1000`
     - 5 more detail line(s) in --format human-full

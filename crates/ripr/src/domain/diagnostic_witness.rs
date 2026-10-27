@@ -23,7 +23,7 @@ pub struct DiagnosticWitness {
     pub suggested_assertion: Option<String>,
     pub explain_command: String,
     pub confidence: DiagnosticConfidence,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub limitations: Vec<DiagnosticWitnessLimitation>,
 }
 
@@ -336,7 +336,6 @@ mod tests {
             flow_sink: None,
         }];
         finding.activation.observed_values = vec![ValueFact {
-            file: None,
             line: 12,
             text: "assert!(result.is_err())".to_string(),
             value: "result.is_err()".to_string(),

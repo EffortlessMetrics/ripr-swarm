@@ -3,20 +3,31 @@ use crate::analysis::classify::{
     ASSERTION_CONTEXT_UNESTABLISHED, ProbeContext, body_contains_owner_call,
     ensure_unknown_stop_reason, exact_error_variant, exact_oracle_gap_next_step,
     is_partial_eq_method, missing_evidence, oracle_crediting_relations, recommended_next_step,
-    stop_reasons, wrapper_error_seam_expression,
+    recommended_next_step_with_boundary, stop_reasons, wrapper_error_seam_expression,
 };
 use crate::analysis::rust_index::TestSummary;
 use crate::domain::*;
+use crate::value_origins::LocatedActivationEvidence as ActivationEvidence;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 const STATIC_UNKNOWN_UNREACHED_NEXT_STEP: &str = "No static test path reaches this change; a test may still reach it through paths ripr cannot follow.";
 const PROXIMITY_ONLY_INSPECTION_NEXT_STEP: &str = "The indexed related tests do not establish a call to the changed owner. Inspect existing tests, doctests and examples before changing assertions; they may already constrain the changed behavior. Add or strengthen a test only if that inspection finds a gap.";
 
+#[cfg(test)]
 pub(in crate::analysis) fn build_finding(
     context: &ProbeContext<'_>,
     class: ExposureClass,
+    evidence: ClassifiedProbeEvidence,
+) -> Finding {
+    build_finding_with_origins(context, class, evidence, None)
+}
+
+pub(in crate::analysis) fn build_finding_with_origins(
+    context: &ProbeContext<'_>,
+    class: ExposureClass,
     mut evidence: ClassifiedProbeEvidence,
+    origins: Option<&std::sync::Mutex<crate::value_origins::ValueOrigins>>,
 ) -> Finding {
     let missing = missing_evidence(
         context.probe,
@@ -201,11 +212,21 @@ pub(in crate::analysis) fn build_finding(
     } else if class == ExposureClass::NoStaticPath && context.unmounted_build_script {
         Some(crate::domain::BUILD_SCRIPT_NO_STATIC_PATH_NEXT_STEP.to_string())
     } else {
-        recommended_next_step(
+        recommended_next_step_with_boundary(
             context.probe,
             &class,
             context.owner_assertion_shaped,
             &stop_reasons,
+            // #10622: infection `yes` means a related test already supplies
+            // the changed boundary input; only the oracle is weak.
+            boundary_input_observed_with_weak_oracle(
+                &class,
+                &context.probe.family,
+                &evidence.infect,
+                &evidence.discriminate,
+                &related_tests,
+                &stop_reasons,
+            ),
         )
     };
     let invalid_propagation_witness = evidence.propagation_witness().is_some_and(|diagnostic| {
@@ -225,6 +246,11 @@ pub(in crate::analysis) fn build_finding(
         && evidence.refusals_are_analyzer_limits
     {
         evidence_lines.push(crate::analysis::classify::REFUSALS_ARE_ANALYZER_LIMITS.to_string());
+    }
+    // #5431: an admitted weak oracle beside a refused owner-calling
+    // `assert_eq!` whose refusal is an analyzer limit.
+    if class == ExposureClass::WeaklyExposed && evidence.mixed_refusal_is_analyzer_limit {
+        evidence_lines.push(crate::analysis::classify::MIXED_REFUSAL_IS_ANALYZER_LIMIT.to_string());
     }
     // #8051: hand the `debug_assert_eq!` pins to the gap-admission post-pass,
     // which consumes the marker.
@@ -257,7 +283,8 @@ pub(in crate::analysis) fn build_finding(
         ));
     }
 
-    Finding {
+    let (activation, files) = evidence.activation.into_public();
+    let finding = Finding {
         analysis_scope: crate::domain::AnalysisScope::Diff,
         id: context.probe.id.0.clone(),
         canonical_gap: None,
@@ -268,7 +295,7 @@ pub(in crate::analysis) fn build_finding(
         evidence: evidence_lines,
         missing,
         flow_sinks: evidence.flow_sinks,
-        activation: evidence.activation,
+        activation,
         stop_reasons,
         related_tests_matched_total: Some(evidence.related_tests_matched_total),
         related_tests,
@@ -288,7 +315,15 @@ pub(in crate::analysis) fn build_finding(
         // evidence; this constructor has none, so the disposition stays the
         // explicit unknown (#3280).
         source_currentness: crate::domain::SourceCurrentness::UnresolvedSubject,
+    };
+    let receipt =
+        origins.and_then(|_| crate::value_origins::ValueOrigins::prepare(&finding, files));
+    if let (Some(origins), Some(receipt)) = (origins, receipt)
+        && let Ok(mut origins) = origins.lock()
+    {
+        origins.insert_receipt(receipt);
     }
+    finding
 }
 
 /// Which matched rows `reveal` left without a confirmed observation of the
@@ -704,16 +739,16 @@ fn refused_assertion_next_step(
 #[cfg(test)]
 mod tests {
     use super::{
-        Unconfirmed, annotate_related_test_misses, bound_identifiers_from_owner_calls,
-        exact_oracle_aligns_with_sink, oracle_binds_sink_identity, oracle_text_aligns_with_sink,
-        sink_kind_corresponds,
+        ActivationEvidence, Unconfirmed, annotate_related_test_misses,
+        bound_identifiers_from_owner_calls, exact_oracle_aligns_with_sink,
+        oracle_binds_sink_identity, oracle_text_aligns_with_sink, sink_kind_corresponds,
     };
     use crate::analysis::classifier::evidence::ClassifiedProbeEvidence;
     use crate::analysis::rust_index::TestSummary;
     use crate::domain::{
-        ActivationEvidence, Confidence, DeltaKind, FlowSinkFact, FlowSinkKind, OracleKind,
-        OracleStrength, Probe, ProbeFamily, ProbeId, RelatedTest, RelationReason, RevealEvidence,
-        RiprEvidence, SourceLocation, StageEvidence, StageState, SymbolId,
+        Confidence, DeltaKind, FlowSinkFact, FlowSinkKind, OracleKind, OracleStrength, Probe,
+        ProbeFamily, ProbeId, RelatedTest, RelationReason, RevealEvidence, RiprEvidence,
+        SourceLocation, StageEvidence, StageState, SymbolId,
     };
     use std::path::PathBuf;
 
@@ -1142,6 +1177,7 @@ mod tests {
             reach_ruled_out: true,
             assertion_refusal: None,
             refusals_are_analyzer_limits: false,
+            mixed_refusal_is_analyzer_limit: false,
             implicit_dispatch_tests: Default::default(),
             debug_assert_eq_pins: Vec::new(),
             related_call_budget_saturated: false,

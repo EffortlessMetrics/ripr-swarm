@@ -1,0 +1,44 @@
+{
+  "case_id": "py-trap-foreign-store",
+  "subject_id": "authored-py-table-traps",
+  "diff": "cases/py-trap-foreign-store.diff",
+  "anchor": {
+    "file": "tablekit/rates_paren.py",
+    "line": 1
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "constructor_field",
+  "test_shape": "module_dict_foreign_store_restores_value",
+  "hard_case": "False-credit trap: another module overwrites the edited table entry before the assertion runs.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "PAREN_RATES = ({\"gold\": 10, \"silver\": 6})",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: silver prices at 6 until rates_store assigns 5"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "Trap: an imported module stores the original silver price back into the shared dict at import time.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

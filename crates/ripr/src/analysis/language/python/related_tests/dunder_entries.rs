@@ -25,6 +25,7 @@ use super::{
     owner_class_locals, python_callee_start_has_boundary, python_text_hides_code, text_binds_name,
 };
 use crate::domain::OwnerKind;
+use std::collections::HashMap;
 
 /// Class-level facts the entry binding reads, filled once per workspace.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -44,12 +45,21 @@ pub(in crate::analysis::language::python) struct PythonClassFacts {
     /// Trimmed text of the single-line expression statements written directly
     /// in this method's body (not nested under a guard). Set at extraction.
     pub(in crate::analysis::language::python) direct_statements: Vec<String>,
+    /// For a module-level function owner: the module-scope names bound once to
+    /// a call result and never rebound, objects the function can mutate
+    /// through an attribute write. Filled after extraction; empty when unknown.
+    pub(in crate::analysis::language::python) module_objects: Vec<String>,
+    /// For a function owner: the names its own body binds (parameters, locals,
+    /// walrus targets). None when unknown, which keeps every consumer closed.
+    pub(in crate::analysis::language::python) bound_names: Option<Vec<String>>,
 }
 
 /// Fills [`PythonClassFacts`] on each method owner from the owners that share
 /// its file and class.
 pub(in crate::analysis::language::python) fn apply_class_facts(owners: &mut [PythonOwner]) {
-    let mut grouped: Vec<(std::path::PathBuf, String, PythonClassFacts)> = Vec::new();
+    // Keyed by (file, class): a linear search per owner made this pass
+    // methods x classes on large workspaces (#10735).
+    let mut grouped: HashMap<(std::path::PathBuf, String), PythonClassFacts> = HashMap::new();
     for owner in owners.iter() {
         if owner.class_path.is_empty()
             || !matches!(
@@ -59,21 +69,9 @@ pub(in crate::analysis::language::python) fn apply_class_facts(owners: &mut [Pyt
         {
             continue;
         }
-        let at = match grouped
-            .iter()
-            .position(|(file, class, _)| *file == owner.file && *class == owner.class_path)
-        {
-            Some(at) => at,
-            None => {
-                grouped.push((
-                    owner.file.clone(),
-                    owner.class_path.clone(),
-                    PythonClassFacts::default(),
-                ));
-                grouped.len() - 1
-            }
-        };
-        let entry = &mut grouped[at].2;
+        let entry = grouped
+            .entry((owner.file.clone(), owner.class_path.clone()))
+            .or_default();
         if !entry.methods.contains(&owner.name) {
             entry.methods.push(owner.name.clone());
         }
@@ -88,10 +86,7 @@ pub(in crate::analysis::language::python) fn apply_class_facts(owners: &mut [Pyt
         }
     }
     for owner in owners.iter_mut() {
-        if let Some((_, _, class_facts)) = grouped
-            .iter()
-            .find(|(file, class, _)| *file == owner.file && *class == owner.class_path)
-        {
+        if let Some(class_facts) = grouped.get(&(owner.file.clone(), owner.class_path.clone())) {
             owner.class_facts.methods = class_facts.methods.clone();
             owner.class_facts.enter_returns_self = class_facts.enter_returns_self;
         }

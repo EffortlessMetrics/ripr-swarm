@@ -1295,13 +1295,12 @@ fn parametrize_case_on_boundary_stays_exposed() -> Result<(), String> {
 }
 
 /// Shapes whose cases are not statically certain keep the pre-#4559
-/// unresolved verdict: argvalues named by a variable, `indirect=`, and an
-/// argname the test body rebinds before the call.
+/// unresolved verdict: argvalues named by a variable and an argname the test
+/// body rebinds before the call.
 #[test]
 fn uncertain_parametrize_cases_stay_unresolved() -> Result<(), String> {
     for tests in [
         "import pytest\nfrom src.subject import bulk_discount\n\nCASES = [(50, 0.0)]\n\n@pytest.mark.parametrize(\"quantity, rate\", CASES)\ndef test_bulk_discount(quantity, rate):\n    assert bulk_discount(quantity) == rate\n",
-        "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"quantity\", [50], indirect=True)\ndef test_bulk_discount(quantity):\n    assert bulk_discount(quantity) == 0.0\n",
         "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"quantity\", [50])\ndef test_bulk_discount(quantity):\n    quantity = quantity * 2\n    assert bulk_discount(quantity) == 0.0\n",
     ] {
         let finding = classify_case(
@@ -1322,6 +1321,27 @@ fn uncertain_parametrize_cases_stay_unresolved() -> Result<(), String> {
             finding.evidence
         );
     }
+    Ok(())
+}
+
+/// `indirect=True` routes the case value through a fixture of that name, so
+/// the test reads whatever the fixture returns: the fixture limit applies as
+/// it does to any unread fixture, and a parametrize mark does not lift it
+/// (#9619).
+#[test]
+fn an_indirect_parametrize_argname_is_an_unresolved_fixture() -> Result<(), String> {
+    let finding = classify_case(
+        DISCOUNT_SOURCE,
+        "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"quantity\", [50], indirect=True)\ndef test_bulk_discount(quantity):\n    assert bulk_discount(quantity) == 0.0\n",
+        2,
+        "    if quantity > 100:",
+        "    if quantity >= 100:",
+    )?;
+    assert_eq!(finding.class, ExposureClass::StaticUnknown);
+    assert_eq!(
+        finding.static_limit_kind,
+        Some(crate::domain::StaticLimitKind::UnresolvedPytestFixture)
+    );
     Ok(())
 }
 
@@ -2216,7 +2236,17 @@ fn loop_table_that_never_varies_default_is_weakly_exposed() -> Result<(), String
     let finding = last_finding(
         "from src.subject import last\n\ndef test_default():\n    for iterable, default in [([], None), (iter([]), None)]:\n        assert last(iterable, default=default) == default\n",
     )?;
-    last_does_not_vary_default(&finding);
+    // `last(iterable, default=default) == default` hands the expected value to
+    // the call, so it is a property check (rule 25) and a weak oracle before
+    // the table analysis, which reads only strong oracles, runs.
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    assert!(
+        finding
+            .related_tests
+            .iter()
+            .all(|test| test.oracle_strength == OracleStrength::Weak),
+        "{finding:?}"
+    );
     Ok(())
 }
 
@@ -2931,6 +2961,45 @@ fn loop_header_opening_a_multiline_string_fails_open() -> Result<(), String> {
         let tests =
             format!("from src.subject import f\n\ndef test_f():\n    assert {test_call} == 2\n");
         let finding = classify_added_case(source, &tests, line, after)?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{source}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
+// A string-opening header written with a tab, no space or a parenthesized
+// condition is still a header (#9919): the keyword boundary decides, not a
+// required ASCII space after it.
+#[test]
+fn string_opening_header_with_any_keyword_boundary_fails_open() -> Result<(), String> {
+    let prefix = "def f(x):\n    if x > 0:\n        return 1\n";
+    let mut sources = Vec::new();
+    for quote in ["\"\"\"", "'''"] {
+        let string = format!("{quote}\na{quote}");
+        for head in ["for s in ", "for\ts in ", "for(s)in"] {
+            sources.push(format!(
+                "{prefix}    {head}({string},):\n        return 42\n"
+            ));
+        }
+        for gap in ["", "\t"] {
+            for keyword in ["while", "if", "elif"] {
+                sources.push(format!(
+                    "{prefix}    {keyword}{gap}(x < 0 and {string}):\n        return 42\n"
+                ));
+            }
+        }
+    }
+    for source in sources {
+        let line = source
+            .lines()
+            .position(|text| text == "        return 42")
+            .ok_or("fixture must contain the changed return")?
+            + 1;
+        let tests = "from src.subject import f\n\ndef test_f():\n    assert f(-1) == 42\n";
+        let finding = classify_added_case(&source, tests, line, "        return 42")?;
         assert_eq!(
             finding.class,
             ExposureClass::Exposed,

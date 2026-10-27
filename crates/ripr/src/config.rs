@@ -550,9 +550,10 @@ pub(crate) fn parse_config_diagnostic(text: &str) -> Result<RiprConfig, Box<Conf
     let raw: RawConfig = toml::from_str(text).map_err(|err| {
         // A valid key in the wrong table names its table (#4534). The hint is
         // built from the fixed KEY_HOME_TABLES allowlist, never from file text.
-        let err = err.to_string();
-        let hint = misplaced_key_hint(&err)
-            .or_else(|| retired_key_hint(&err))
+        // Display includes the source excerpt, whose comments or values can
+        // themselves contain `unknown field ...`. Only inspect the reason.
+        let hint = misplaced_key_hint(err.message())
+            .or_else(|| retired_key_hint(err.message()))
             .unwrap_or_default();
         Box::new(ConfigDiagnostic::structural(format!(
             "invalid ripr.toml: {err}{hint}"
@@ -587,10 +588,19 @@ const KEY_HOME_TABLES: &[(&str, &str)] = &[
 /// The table an unknown-field key belongs in, when serde rejected a real key
 /// that sits in the wrong table (for example a top-level `mode`).
 fn misplaced_key_hint(error: &str) -> Option<String> {
-    let (_, rest) = error.split_once("unknown field `")?;
-    let (key, _) = rest.split_once('`')?;
+    let key = unknown_field_key(error)?;
     let (key, table) = KEY_HOME_TABLES.iter().find(|(known, _)| *known == key)?;
     Some(format!("\n{}", misplaced_key_hint_line(key, table)))
+}
+
+/// Read a complete unknown-field reason, not a substring of a type error or
+/// a prefix of a quoted key containing backticks. Serde's expected-field list
+/// contains only the fixed raw-config field names, so the final delimiter
+/// separates it from the full rejected key.
+fn unknown_field_key(error: &str) -> Option<&str> {
+    let rest = error.strip_prefix("unknown field `")?;
+    let (key, _) = rest.rsplit_once("`, expected ")?;
+    Some(key)
 }
 
 fn misplaced_key_hint_line(key: &str, table: &str) -> String {
@@ -631,8 +641,7 @@ fn retired_key_hint(error: &str) -> Option<String> {
 /// no table, so a typo that equals a key retired from a different table could
 /// be labelled with that retirement.
 fn retired_key_hint_in(retired: &[RetiredKey], error: &str) -> Option<String> {
-    let (_, rest) = error.split_once("unknown field `")?;
-    let (key, _) = rest.split_once('`')?;
+    let key = unknown_field_key(error)?;
     let entry = retired.iter().find(|entry| entry.key == key)?;
     Some(format!("\n{}", retired_key_hint_line(entry)))
 }

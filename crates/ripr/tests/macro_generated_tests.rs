@@ -117,16 +117,221 @@ fn a_macro_generated_test_reads_like_the_hand_written_test() -> Result<(), Strin
     Ok(())
 }
 
+const TABLE: &str = "    macro_rules! gate_table {\n        ($($name:ident($input:expr, $want:expr))*) => {\n            $(\n                #[test]\n                fn $name() {\n                    assert_eq!(gate($input), $want);\n                }\n            )*\n        };\n    }\n\n";
+
 #[test]
-fn refused_shapes_and_uninvoked_generators_add_no_test() -> Result<(), String> {
-    // A repetition matcher is outside the bounded shape.
-    let repetition = TempRepo::create(
+fn a_table_generated_test_reads_like_the_hand_written_test() -> Result<(), String> {
+    let generated = TempRepo::create(&format!(
+        "{TABLE}    gate_table! {{\n        nine_is_closed(9, false)\n        ten_is_open(10, true)\n    }}\n"
+    ))?
+    .predicate()?;
+    assert_eq!(state(&generated.ripr.reach.state), "Yes", "{generated:?}");
+    assert_eq!(generated.class, ExposureClass::Exposed, "{generated:?}");
+    let mut names: Vec<_> = generated
+        .related_tests
+        .iter()
+        .map(|test| test.name.as_str())
+        .collect();
+    names.sort_unstable();
+    assert_eq!(
+        names,
+        vec!["nine_is_closed", "ten_is_open"],
+        "{generated:?}"
+    );
+
+    // Rows that never reach the edge read like the same hand-written
+    // tests: reached, but nothing at the boundary.
+    let far = TempRepo::create(&format!(
+        "{TABLE}    gate_table! {{\n        zero(0, false)\n        far(50, true)\n    }}\n"
+    ))?
+    .predicate()?;
+    assert_eq!(state(&far.ripr.reach.state), "Yes", "{far:?}");
+    assert_ne!(far.class, ExposureClass::Exposed, "{far:?}");
+    Ok(())
+}
+
+#[test]
+fn a_table_the_expander_cannot_split_exactly_adds_no_test() -> Result<(), String> {
+    for rows in [
+        // A leftover token after the last row.
+        "nine_is_closed(9, false) ten_is_open(10, true) +",
+        // A row whose group has the wrong number of arguments.
+        "nine_is_closed(9) ten_is_open(10, true)",
+    ] {
+        let refused =
+            TempRepo::create(&format!("{TABLE}    gate_table! {{ {rows} }}\n"))?.predicate()?;
+        assert!(refused.related_tests.is_empty(), "{rows}: {refused:?}");
+        assert_ne!(
+            state(&refused.ripr.reach.state),
+            "Yes",
+            "{rows}: {refused:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn an_arrow_between_row_elements_reads_like_the_hand_written_test() -> Result<(), String> {
+    let generated = TempRepo::create(
         "    macro_rules! gate_cases {\n        ($($name:ident: $input:expr => $want:expr),*) => {\n            $( #[test] fn $name() { assert_eq!(gate($input), $want); } )*\n        };\n    }\n\n    gate_cases!(nine_is_closed: 9 => false, ten_is_open: 10 => true);\n",
     )?
     .predicate()?;
-    assert!(repetition.related_tests.is_empty(), "{repetition:?}");
-    assert_ne!(state(&repetition.ripr.reach.state), "Yes", "{repetition:?}");
+    assert_eq!(state(&generated.ripr.reach.state), "Yes", "{generated:?}");
+    assert_eq!(generated.class, ExposureClass::Exposed, "{generated:?}");
+    let mut names: Vec<_> = generated
+        .related_tests
+        .iter()
+        .map(|test| test.name.as_str())
+        .collect();
+    names.sort_unstable();
+    assert_eq!(
+        names,
+        vec!["nine_is_closed", "ten_is_open"],
+        "{generated:?}"
+    );
+    Ok(())
+}
 
+#[test]
+fn a_fused_punct_token_is_one_tt_so_the_arrow_row_adds_no_test() -> Result<(), String> {
+    // rustc binds `::` as one `$t:tt`, so the required `:` is absent and the
+    // fallback arm emits nothing: no test exists to be credited.
+    let table = |separator: &str| {
+        format!(
+            "    macro_rules! gate_cases {{\n        ($($name:ident $t:tt : => ($input:expr, $want:expr))*) => {{\n            $( #[test] fn $name() {{ assert_eq!(gate($input), $want); }} )*\n        }};\n        ($($tail:tt)*) => {{}};\n    }}\n\n    gate_cases! {{ nine_is_closed {separator} => (9, false) ten_is_open {separator} => (10, true) }}\n"
+        )
+    };
+    let fused = TempRepo::create(&table("::"))?.predicate()?;
+    assert!(fused.related_tests.is_empty(), "{fused:?}");
+    assert_ne!(state(&fused.ripr.reach.state), "Yes", "{fused:?}");
+
+    // Separate `: :` puncts are two tokens: the same table does generate.
+    let spaced = TempRepo::create(&table(": :"))?.predicate()?;
+    assert_eq!(state(&spaced.ripr.reach.state), "Yes", "{spaced:?}");
+    assert_eq!(spaced.related_tests.len(), 2, "{spaced:?}");
+    Ok(())
+}
+
+#[test]
+fn a_literal_colon_and_a_fused_double_colon_are_different_tokens() -> Result<(), String> {
+    // rustc cannot match a literal `:` against the `::` token, nor a matcher
+    // `::` against `: :`, so the fallback arm emits nothing in both.
+    let table = |matcher: &str, rows: &str| {
+        format!(
+            "    macro_rules! gate_cases {{\n        ($({matcher} => ($input:expr, $want:expr))*) => {{\n            $( #[test] fn $name() {{ assert_eq!(gate($input), $want); }} )*\n        }};\n        ($($tail:tt)*) => {{}};\n    }}\n\n    gate_cases! {{ {rows} }}\n"
+        )
+    };
+    for (matcher, rows) in [
+        (
+            "$name:ident : $t:tt",
+            "nine_is_closed :: => (9, false) ten_is_open :: => (10, true)",
+        ),
+        (
+            "$name:ident ::",
+            "nine_is_closed : : => (9, false) ten_is_open : : => (10, true)",
+        ),
+    ] {
+        let refused = TempRepo::create(&table(matcher, rows))?.predicate()?;
+        assert!(refused.related_tests.is_empty(), "{matcher}: {refused:?}");
+        assert_ne!(
+            state(&refused.ripr.reach.state),
+            "Yes",
+            "{matcher}: {refused:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn an_arrow_transcriber_with_its_own_scope_adds_no_test() -> Result<(), String> {
+    // The generated test calls `decoy::gate`, never the changed `gate`, so
+    // crediting it would credit a different function.
+    let decoy = TempRepo::create(
+        "    macro_rules! gate_cases {\n        ($($name:ident => ($input:expr, $want:expr))*) => {\n            $( mod decoy { pub fn gate(_: u32) -> bool { true } } #[test] fn $name() { assert_eq!(decoy::gate($input), $want); } )*\n        };\n    }\n\n    gate_cases! { ten_is_open => (10, true) }\n",
+    )?
+    .predicate()?;
+    assert!(decoy.related_tests.is_empty(), "{decoy:?}");
+    assert_ne!(state(&decoy.ripr.reach.state), "Yes", "{decoy:?}");
+    Ok(())
+}
+
+#[test]
+fn a_scope_keyword_supplied_by_a_row_token_adds_no_test() -> Result<(), String> {
+    // `$kind:tt` brings the second `fn` (or a `mod`) in from the invocation, so
+    // the authored body alone looks scope-free.
+    for (label, body) in [
+        (
+            "a second fn",
+            "    macro_rules! gate_cases {\n        ($($kind:tt $name:ident => ($input:expr, $want:expr))*) => {\n            $( $kind gate(_: u32) -> bool { true } #[test] fn $name() { assert_eq!(gate($input), $want); } )*\n        };\n    }\n\n    gate_cases! { fn ten_is_open => (10, true) }\n",
+        ),
+        (
+            "a module",
+            "    macro_rules! gate_cases {\n        ($($scope:tt $name:ident => ($input:expr, $want:expr))*) => {\n            $( $scope $name { #[test] fn ten_is_open() { assert_eq!(crate::gate($input), $want); } } )*\n        };\n    }\n\n    gate_cases! { mod ten => (10, true) }\n",
+        ),
+    ] {
+        let predicate = TempRepo::create(body)?.predicate()?;
+        assert!(predicate.related_tests.is_empty(), "{label}: {predicate:?}");
+        assert_ne!(
+            state(&predicate.ripr.reach.state),
+            "Yes",
+            "{label}: {predicate:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_local_binding_in_an_arrow_row_adds_no_test() -> Result<(), String> {
+    // A `let` or `static` named like the owner makes the generated assertion
+    // call the local callable, never the changed `gate`.
+    for (label, body) in [
+        (
+            "a let closure",
+            "    macro_rules! gate_cases {\n        ($($name:ident => ($input:expr, $want:expr))*) => {\n            $( #[test] fn $name() { let gate = |_: u32| true; assert_eq!(gate($input), $want); } )*\n        };\n    }\n\n    gate_cases! { ten_is_open => (10, true) }\n",
+        ),
+        (
+            "a for pattern",
+            "    struct Decoy;\n    impl Decoy {\n        #[allow(non_snake_case)]\n        fn Gate(_: u32) -> bool { true }\n    }\n    macro_rules! gate_cases {\n        ($($name:ident => ($input:expr, $want:expr))*) => {\n            $( #[test] fn $name() { for gate in [Decoy::Gate] { assert_eq!(gate($input), $want); } } )*\n        };\n    }\n\n    gate_cases! { ten_is_open => (10, true) }\n",
+        ),
+        (
+            "a static supplied by a tt",
+            "    type G = fn(u32) -> bool;\n    macro_rules! gate_cases {\n        ($($kind:tt $name:ident => ($input:expr, $want:expr))*) => {\n            $( $kind gate: G = |_| true; #[test] fn $name() { assert_eq!(gate($input), $want); } )*\n        };\n    }\n\n    gate_cases! { static ten_is_open => (10, true) }\n",
+        ),
+    ] {
+        let predicate = TempRepo::create(body)?.predicate()?;
+        assert!(predicate.related_tests.is_empty(), "{label}: {predicate:?}");
+        assert_ne!(
+            state(&predicate.ripr.reach.state),
+            "Yes",
+            "{label}: {predicate:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_macro_from_another_module_in_an_arrow_row_adds_no_test() -> Result<(), String> {
+    // `shadow!` is defined outside this file and may expand to a block-local
+    // `fn gate`, so the row text alone cannot show which `gate` is called.
+    let body = "    macro_rules! gate_cases {\n        ($($name:ident => ($input:expr, $want:expr))*) => {\n            $( #[test] fn $name() { shadow!(); assert_eq!(gate($input), $want); } )*\n        };\n    }\n\n    gate_cases! { ten_is_open => (10, true) }\n";
+    let predicate = TempRepo::create(body)?.predicate()?;
+    assert!(predicate.related_tests.is_empty(), "{predicate:?}");
+    assert_ne!(state(&predicate.ripr.reach.state), "Yes", "{predicate:?}");
+    Ok(())
+}
+
+#[test]
+fn an_item_position_macro_beside_an_arrow_test_adds_no_test() -> Result<(), String> {
+    // The sibling invocation may expand to a `fn gate` the test then calls.
+    let body = "    macro_rules! gate_cases {\n        ($($name:ident => ($input:expr, $want:expr))*) => {\n            $( crate::debug_assert_eq!(); #[test] fn $name() { assert_eq!(gate($input), $want); } )*\n        };\n    }\n\n    gate_cases! { ten_is_open => (10, true) }\n";
+    let predicate = TempRepo::create(body)?.predicate()?;
+    assert!(predicate.related_tests.is_empty(), "{predicate:?}");
+    assert_ne!(state(&predicate.ripr.reach.state), "Yes", "{predicate:?}");
+    Ok(())
+}
+
+#[test]
+fn an_uninvoked_generator_adds_no_test() -> Result<(), String> {
     let uninvoked = TempRepo::create(GENERATOR)?.predicate()?;
     assert!(uninvoked.related_tests.is_empty(), "{uninvoked:?}");
     assert_ne!(state(&uninvoked.ripr.reach.state), "Yes", "{uninvoked:?}");
@@ -464,7 +669,9 @@ fn a_binding_that_could_shadow_the_callee_never_promotes_a_wrapped_test() -> Res
         ExposureClass::Exposed,
         ExposureClass::InfectionUnknown,
         ExposureClass::InfectionUnknown,
-        ExposureClass::WeaklyExposed,
+        // The twin's test mentions the owner only as a value (`let _x = gate;`),
+        // which withholds the gap (RIPR-SPEC-0240, #9442).
+        ExposureClass::StaticUnknown,
         ExposureClass::StaticUnknown,
         ExposureClass::NoStaticPath,
         ExposureClass::StaticUnknown,

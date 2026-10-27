@@ -17,7 +17,9 @@ Start here:
   Changed behavior: amount >= discount_threshold
   Missing discriminator: No strong discriminator was detected
   Related test: tests/pricing.rs:4 boundary_matches_expected (assertion too weak to tell the old behavior from the new)
-  Next step: Add boundary tests for below, equal, and above the changed threshold with exact assertions
+  Next step: A related test already reaches the boundary input, but ripr grades its assertion as a
+    weak check; write it as an exact-value assertion ripr can credit, for example assert_eq!(result,
+    expected), so the old and changed behavior differ
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
@@ -26,6 +28,9 @@ Start here:
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
       unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;
+      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;
+      candidate line = changed line ripr considers for probes
     - reach yes: Related tests appear to reach discounted_total: boundary_matches_expected
     - infection yes: Detected related test input at the changed boundary
     - 9 more detail line(s) in --format human-full
@@ -33,7 +38,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/assertion_form_parity_assert_msg/input --diff <cwd>/fixtures/assertion_form_parity_assert_msg/diff.patch --mode fast probe:src_lib.rs:predicate:c80557eb
   ripr context --root <cwd>/fixtures/assertion_form_parity_assert_msg/input --diff <cwd>/fixtures/assertion_form_parity_assert_msg/diff.patch --mode fast --at probe:src_lib.rs:predicate:c80557eb
-  no repair start offered: repair route not ready (missing evidence: producer-owned missing discriminator fact: boundary_value); run `ripr repair probe:src_lib.rs:predicate:c80557eb --root <cwd>/fixtures/assertion_form_parity_assert_msg/input` for the full gate's answer
+  no repair start offered: a related test already reaches the changed boundary input, but ripr grades its assertion as a weak check, so ripr cannot build a repair packet for this finding yet. Follow the Next step above, then rerun `ripr check`
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/assertion_form_parity_assert_msg/input --at src/lib.rs:2 --kind predicate
 

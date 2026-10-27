@@ -255,13 +255,15 @@ pub(crate) fn load_worktree_diff_with_effective_base_core(
     // shadowed by the resolved base below.
     let base_arg = base;
     // #10083: an origin the process already resolved, re-validated by ONE
-    // identity probe (`HEAD` + base commit both unchanged), replaces the
-    // three-spawn resolution (operation-marker probe, base resolve,
-    // merge-base) on every subsequent save. The diff itself always runs —
-    // the cache covers only the resolution. A miss or any unexpected probe
-    // answer falls through to the full path below, which re-probes the
-    // identity pair first so a cached origin is a pure function of the pair
-    // it is validated against. Failures are never cached.
+    // probe per save, replaces the three-spawn resolution (operation-marker
+    // probe, base resolve, merge-base) on every subsequent save. Explicit
+    // bases re-validate on the `(HEAD, base)` identity pair; a default base
+    // re-validates on the re-derived candidate-ref SELECTION (#10095), so a
+    // candidate appearing mid-session always misses. The diff itself always
+    // runs — the cache covers only the resolution. A miss or any unexpected
+    // probe answer falls through to the full path below, which re-probes the
+    // identity pair first so a cached origin is a pure function of the
+    // identities it is validated against. Failures are never cached.
     if let Some(cached) = cached_worktree_origin(root, base_arg, git_timeout) {
         let text = run_git_diff(
             root,
@@ -295,22 +297,20 @@ pub(crate) fn load_worktree_diff_with_effective_base_core(
         // base that moved A→B between them would otherwise leave the returned
         // diff naming A while its origin was derived from B — and let the
         // entry serve the stale A on every later hit (#10083 review).
-        // Store only explicit-base origins: a default-base (`None`) selection
-        // is not covered by the identity pair (see `cached_worktree_origin`),
-        // so caching it could serve a stale selection on every later save.
-        if base_arg.is_some() {
-            store_worktree_origin(
-                root,
-                base_arg,
-                WorktreeOriginCacheEntry {
-                    effective_base: base.clone(),
-                    resolved_base_commit: Some(base_sha.clone()),
-                    merge_base_origin: origin.clone(),
-                    head_sha,
-                    base_sha: base_sha.clone(),
-                },
-            );
-        }
+        // Default-base entries validate on the re-derived SELECTION (name +
+        // commit), not one ref's identity, so a candidate appearing
+        // mid-session always misses (see `cached_worktree_origin`, #10095).
+        store_worktree_origin(
+            root,
+            base_arg,
+            WorktreeOriginCacheEntry {
+                effective_base: base.clone(),
+                resolved_base_commit: Some(base_sha.clone()),
+                merge_base_origin: origin.clone(),
+                head_sha,
+                base_sha: base_sha.clone(),
+            },
+        );
         return Ok(LoadedDiff {
             text,
             effective_base: Some(base),
@@ -344,7 +344,10 @@ pub(crate) fn load_worktree_diff_with_effective_base_core(
 /// of verified identities: commit objects are immutable, so fetched objects
 /// can never move an existing merge base and a rewrite always changes a
 /// ref's sha. A ref move, branch switch, rebase, or rewritten history always
-/// misses and takes the full path.
+/// misses and takes the full path. Default-base (`None`) entries instead
+/// validate on the re-derived candidate selection (name + commit + HEAD):
+/// the selection can move when a higher-priority candidate ref appears
+/// without moving any single ref's sha (#10095).
 #[derive(Clone)]
 struct WorktreeOriginCacheEntry {
     effective_base: String,
@@ -416,37 +419,141 @@ fn rev_parse_sha_lines(stdout: &[u8]) -> Option<Vec<String>> {
     Some(lines)
 }
 
-/// Fast path: serve the cached origin only when ONE `git rev-parse` probe
-/// shows `HEAD` and the effective base at the same commits the entry was
-/// captured under. `None` on miss, probe failure, poisoned lock, or any
-/// unexpected output — every `None` falls through to the full path.
+/// Fast path: serve the cached origin only when a probe re-verifies the
+/// identities the entry was captured under. An explicit base names one ref,
+/// so ONE `git rev-parse` on the `(HEAD, base)` pair covers every change. A
+/// default base (`None`) selects the first existing candidate ref
+/// (`resolve_default_base`), and the selection can move when a
+/// higher-priority candidate APPEARS without moving any cached ref's sha — so
+/// `None` entries are validated by re-deriving the whole selection from one
+/// `git for-each-ref` plus a `HEAD` rev-parse (two spawns, still cheaper than
+/// the five-spawn full resolution). `None` on miss, probe failure, poisoned
+/// lock, or any unexpected output — every `None` falls through to the full
+/// path.
 fn cached_worktree_origin(
     root: &Path,
     base: Option<&str>,
     git_timeout: Option<Duration>,
 ) -> Option<WorktreeOriginCacheEntry> {
-    // Default-base (`None`) loads are never served from cache: the selection
-    // (`resolve_default_base`) depends on which candidate refs EXIST and
-    // their priority order, and the identity pair cannot see a
-    // higher-priority candidate appearing mid-session — a first fetch
-    // creating `origin/main` moves the selection without moving the cached
-    // ref's sha, so the probe would hit and serve a stale origin (#10083
-    // review). Explicit bases name one ref; the pair covers them exactly.
-    base?;
     let key = (root.to_path_buf(), base.map(str::to_string));
     let entry = {
         let cache = WORKTREE_ORIGIN_CACHE.lock().ok()?;
         cache.as_ref()?.get(&key)?.clone()
     };
-    let (head_sha, base_sha) =
-        probe_worktree_identity_shas(root, &entry.effective_base, git_timeout)?;
-    if head_sha == entry.head_sha && base_sha == entry.base_sha {
+    let verified = match base {
+        Some(_) => {
+            let (head_sha, base_sha) =
+                probe_worktree_identity_shas(root, &entry.effective_base, git_timeout)?;
+            head_sha == entry.head_sha && base_sha == entry.base_sha
+        }
+        None => {
+            // Re-derive the default-base selection from fresh candidate
+            // existence + commits; hit only when the selection (name AND
+            // commit) and HEAD all match what the entry was captured under.
+            let (selected, selected_sha) = probe_default_base_selection(root, git_timeout)?;
+            let head_sha = probe_head_commit_sha(root, git_timeout)?;
+            selected == entry.effective_base
+                && selected_sha == entry.base_sha
+                && head_sha == entry.head_sha
+        }
+    };
+    if verified {
         #[cfg(test)]
         WORKTREE_ORIGIN_CACHE_HITS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Some(entry)
     } else {
         None
     }
+}
+
+/// Re-derive `resolve_default_base`'s selection from ONE `git for-each-ref`
+/// over the whole `refs/remotes/origin` namespace plus the two local
+/// fallbacks (`%(symref)` replaces the symbolic-ref probe; a missing
+/// candidate simply prints no line, so candidate disappearance is as visible
+/// as appearance). The origin namespace — not just the five static
+/// candidates — must be visible because an `origin/HEAD` symref may target
+/// ANY `origin/*` branch; a probe that only listed static candidates could
+/// fall back to a different ref than `resolve_default_base` would select and
+/// falsely validate a stale entry. Returns the selected short ref name
+/// (`origin/main`, `main`, …) and its commit id, or `None` when nothing
+/// selects or the output cannot be parsed — every `None` fails closed to the
+/// full resolution path.
+fn probe_default_base_selection(
+    root: &Path,
+    git_timeout: Option<Duration>,
+) -> Option<(String, String)> {
+    let output = crate::git::run_git_output_with_deadline(
+        root,
+        &[
+            "for-each-ref",
+            "--format=%(refname)%1f%(objectname)%1f%(symref)",
+            // Prefix patterns match the namespace and its sub-paths only;
+            // unrelated refs cannot widen the query.
+            "refs/remotes/origin",
+            "refs/heads/main",
+            "refs/heads/master",
+        ],
+        git_timeout,
+    )
+    .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = std::str::from_utf8(&output.stdout).ok()?;
+    let mut refs: std::collections::HashMap<&str, (&str, Option<&str>)> =
+        std::collections::HashMap::new();
+    for line in text.lines() {
+        let mut fields = line.split('\x1f');
+        let (Some(name), Some(object), symref) = (fields.next(), fields.next(), fields.next())
+        else {
+            return None;
+        };
+        if name.is_empty() || object.is_empty() || fields.next().is_some() {
+            return None;
+        }
+        refs.insert(name, (object, symref.filter(|target| !target.is_empty())));
+    }
+    // Step 1, mirroring `resolve_default_base`: the `origin/HEAD` symref
+    // target wins while its stripped tracking ref exists.
+    if let Some((_, Some(target))) = refs.get("refs/remotes/origin/HEAD")
+        && let Some(stripped) = target.strip_prefix("refs/remotes/")
+    {
+        let full = format!("refs/remotes/{stripped}");
+        if let Some((object, _)) = refs.get(full.as_str()) {
+            return Some((stripped.to_string(), (*object).to_string()));
+        }
+    }
+    // Steps 2-5: first existing fallback.
+    for (candidate, short) in [
+        ("refs/remotes/origin/main", "origin/main"),
+        ("refs/remotes/origin/master", "origin/master"),
+        ("refs/heads/main", "main"),
+        ("refs/heads/master", "master"),
+    ] {
+        if let Some((object, _)) = refs.get(candidate) {
+            return Some((short.to_string(), (*object).to_string()));
+        }
+    }
+    None
+}
+
+/// `HEAD` peeled to a commit id, or `None` on any failure (an unborn HEAD
+/// fails closed to the full path, which names that state).
+fn probe_head_commit_sha(root: &Path, git_timeout: Option<Duration>) -> Option<String> {
+    let output = crate::git::run_git_output_with_deadline(
+        root,
+        &["rev-parse", "--verify", "--quiet", "HEAD^{commit}"],
+        git_timeout,
+    )
+    .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let shas = rev_parse_sha_lines(&output.stdout)?;
+    if shas.len() != 1 {
+        return None;
+    }
+    Some(shas[0].clone())
 }
 
 /// Probe the identity pair `(HEAD^{commit}, <base>^{commit})` in ONE git
@@ -3334,7 +3441,8 @@ mod tests {
     }
 
     #[test]
-    fn worktree_origin_cache_never_serves_a_default_base_load() -> std::io::Result<()> {
+    fn worktree_origin_cache_serves_a_default_base_load_until_the_selection_changes()
+    -> std::io::Result<()> {
         let _cache_test_guard = worktree_origin_cache_test_lock();
         let dir = unique_fixture_root("worktree-origin-cache-default-base")?;
         ignore_remove_dir_all(&dir);
@@ -3349,17 +3457,140 @@ mod tests {
         assert_eq!(first.effective_base.as_deref(), Some("main"));
         assert!(!first.text.is_empty(), "the worktree edit must appear");
 
+        // The selection is unchanged: the second save is served from the
+        // re-validated selection (name + commit + HEAD), one for-each-ref and
+        // one rev-parse instead of the five-spawn full resolution (#10095).
         let hits_before = worktree_origin_cache_hits();
         let second = load_worktree_diff_with_effective_base_core(&dir, None, None)
             .map_err(|error| std::io::Error::other(error.to_string()))?;
         assert_eq!(second.text, first.text);
         assert_eq!(
             worktree_origin_cache_hits(),
-            hits_before,
-            "default-base selection depends on which candidate refs exist and their priority; \
-             the identity pair cannot see a higher-priority candidate appear mid-session, so a \
-             None base must never be served (or stored) in the origin cache (#10083 review)"
+            hits_before + 1,
+            "an unchanged default-base selection must be served from the cache"
         );
+
+        // A higher-priority candidate APPEARS mid-session pointing at another
+        // commit. The identity-pair form could not see this (the cached ref
+        // kept its sha); the selection re-derivation must miss and re-resolve.
+        let base_tip = run_git_checked(&dir, &["rev-parse", "--verify", "--quiet", "base"])?;
+        run_git_checked(
+            &dir,
+            &["update-ref", "refs/remotes/origin/main", base_tip.as_str()],
+        )?;
+        let hits_before = worktree_origin_cache_hits();
+        let third = load_worktree_diff_with_effective_base_core(&dir, None, None)
+            .map_err(|error| std::io::Error::other(error.to_string()))?;
+        assert_eq!(
+            worktree_origin_cache_hits(),
+            hits_before,
+            "a new higher-priority candidate ref must miss the cache even though no cached \
+             ref moved (#10095)"
+        );
+        assert_eq!(
+            third.effective_base.as_deref(),
+            Some("origin/main"),
+            "the re-resolution must follow the new selection"
+        );
+        let expected_origin = run_git_checked(&dir, &["merge-base", "origin/main", "HEAD"])?;
+        assert_eq!(
+            third.merge_base_origin.as_deref(),
+            Some(expected_origin.as_str()),
+            "the re-resolved origin must match a fresh merge-base of the new selection"
+        );
+
+        // The selection is stable again under the new name: the next save
+        // hits, proving the re-stored entry validates on the selection.
+        let hits_before = worktree_origin_cache_hits();
+        let fourth = load_worktree_diff_with_effective_base_core(&dir, None, None)
+            .map_err(|error| std::io::Error::other(error.to_string()))?;
+        assert_eq!(fourth.effective_base.as_deref(), Some("origin/main"));
+        assert_eq!(
+            worktree_origin_cache_hits(),
+            hits_before + 1,
+            "a stable selection under the new name must be served from the cache"
+        );
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn worktree_origin_cache_default_base_honors_the_origin_head_symref() -> std::io::Result<()> {
+        let _cache_test_guard = worktree_origin_cache_test_lock();
+        let dir = unique_fixture_root("worktree-origin-cache-origin-head")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "main")?;
+        run_git_checked(&dir, &["branch", "base"])?;
+        // Advance HEAD past `base` so the selected commits are distinct.
+        fs::write(dir.join("SECOND"), "second\n")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "second"])?;
+        // A remote-tracking master at `base` plus an `origin/HEAD` symref
+        // pointing at it: step 1 of `resolve_default_base` selects
+        // `origin/master` even though `main` exists locally.
+        run_git_checked(
+            &dir,
+            &[
+                "update-ref",
+                "refs/remotes/origin/master",
+                run_git_checked(&dir, &["rev-parse", "--verify", "--quiet", "base"])?.as_str(),
+            ],
+        )?;
+        run_git_checked(
+            &dir,
+            &[
+                "symbolic-ref",
+                "refs/remotes/origin/HEAD",
+                "refs/remotes/origin/master",
+            ],
+        )?;
+        fs::write(dir.join("README"), "edited in the worktree\n")?;
+
+        let first = load_worktree_diff_with_effective_base_core(&dir, None, None)
+            .map_err(|error| std::io::Error::other(error.to_string()))?;
+        assert_eq!(
+            first.effective_base.as_deref(),
+            Some("origin/master"),
+            "the origin/HEAD symref target wins over local main"
+        );
+
+        // Same selection: served from cache.
+        let hits_before = worktree_origin_cache_hits();
+        load_worktree_diff_with_effective_base_core(&dir, None, None)
+            .map_err(|error| std::io::Error::other(error.to_string()))?;
+        assert_eq!(
+            worktree_origin_cache_hits(),
+            hits_before + 1,
+            "an unchanged symref selection must be served from the cache"
+        );
+
+        // Retarget the symref at a new branch that appears at the HEAD
+        // commit: the selection name changes, so the cache must miss.
+        run_git_checked(
+            &dir,
+            &[
+                "update-ref",
+                "refs/remotes/origin/other",
+                run_git_checked(&dir, &["rev-parse", "--verify", "--quiet", "HEAD"])?.as_str(),
+            ],
+        )?;
+        run_git_checked(
+            &dir,
+            &[
+                "symbolic-ref",
+                "refs/remotes/origin/HEAD",
+                "refs/remotes/origin/other",
+            ],
+        )?;
+        let hits_before = worktree_origin_cache_hits();
+        let third = load_worktree_diff_with_effective_base_core(&dir, None, None)
+            .map_err(|error| std::io::Error::other(error.to_string()))?;
+        assert_eq!(
+            worktree_origin_cache_hits(),
+            hits_before,
+            "retargeting origin/HEAD moves the selection; the cache must miss"
+        );
+        assert_eq!(third.effective_base.as_deref(), Some("origin/other"));
         ignore_remove_dir_all(&dir);
         Ok(())
     }

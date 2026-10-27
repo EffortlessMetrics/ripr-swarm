@@ -188,6 +188,7 @@ pub(super) fn analyze_repo_with_limit(
         handwritten,
     )?;
     Ok(LanguageRepoResult {
+        value_origins: Default::default(),
         findings: selection.findings,
         harness_projections: Vec::new(),
         production_files: selection.production_files,

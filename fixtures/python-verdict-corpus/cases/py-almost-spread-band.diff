@@ -1,0 +1,11 @@
+diff --git a/shop/fees.py b/shop/fees.py
+--- a/shop/fees.py
++++ b/shop/fees.py
+@@ -19,6 +19,6 @@
+ 
+ 
+ def spread_fee(x):
+-    return x * 3
++    return x * 3 + 0.4
+ 
+ 

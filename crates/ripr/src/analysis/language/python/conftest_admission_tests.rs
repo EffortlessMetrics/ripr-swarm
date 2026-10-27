@@ -69,13 +69,71 @@ fn without_conftest_the_same_test_stays_extraction_complete_no_assertion() -> Re
 }
 
 #[test]
-fn conftest_without_implicit_setup_does_not_taint() -> Result<(), String> {
-    let plain = "import pytest\n\n\n@pytest.fixture\ndef db():\n    return 1\n\n\n@pytest.fixture(autouse=False)\ndef other():\n    return 2\n\n\ndef pytest_configure(config):\n    config.addinivalue_line('markers', 'slow')\n";
+fn conftest_without_declarations_does_not_taint() -> Result<(), String> {
+    // Imports and constants run nothing and declare no fixture or hook.
+    let plain = "import pytest\n\nMARKER = 'slow'\n";
     let got = tax_admission(&[
         ("tests/conftest.py", plain),
         ("tests/test_tax.py", CALL_ONLY),
     ])?;
     assert_eq!(got, NONE);
+    Ok(())
+}
+
+#[test]
+fn conftest_fixtures_hooks_and_effects_withhold_extraction_complete_no_assertion()
+-> Result<(), String> {
+    use crate::analysis::language::python::fixtures::taint_admission_by_conftest_declarations;
+    // Any fixture or hook (a built-in override, `pytest_generate_tests`,
+    // `pytest_configure` adding `filterwarnings`) or a top-level call
+    // (`warnings.simplefilter("error")`) can change a test that names none of it.
+    for (label, conftest) in [
+        (
+            "plain fixture",
+            "import pytest\n\n\n@pytest.fixture\ndef db():\n    return 1\n",
+        ),
+        (
+            "configure hook",
+            "def pytest_configure(config):\n    config.addinivalue_line('filterwarnings', 'error')\n",
+        ),
+        (
+            "generate_tests hook",
+            "def pytest_generate_tests(metafunc):\n    metafunc.fixturenames.append('guard')\n",
+        ),
+        (
+            "session finish hook",
+            "def pytest_sessionfinish(session):\n    assert not session.testsfailed\n",
+        ),
+        (
+            "top-level effect",
+            "import warnings\n\nwarnings.simplefilter('error')\n",
+        ),
+    ] {
+        let mut tests = Vec::new();
+        let mut reach = BTreeSet::new();
+        for (path, source) in [
+            ("tests/conftest.py", conftest),
+            ("tests/test_tax.py", CALL_ONLY),
+        ] {
+            let facts = extract_source_facts(Path::new(path), source);
+            if facts.conftest_declares_fixture_or_hook {
+                reach.insert(PathBuf::from(path));
+            }
+            if is_test_file(Path::new(path)) {
+                tests.extend(facts.tests);
+            }
+        }
+        assert!(
+            !reach.is_empty(),
+            "{label}: the conftest must be in the reach set"
+        );
+        taint_admission_by_conftest_declarations(&mut tests, &reach, |_| false);
+        let got = tests
+            .first()
+            .map(|test| test.assertion_admission.as_str())
+            .ok_or("test extracted")?;
+        assert_eq!(got, UNRESOLVED, "{label}");
+    }
     Ok(())
 }
 

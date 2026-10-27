@@ -35,7 +35,16 @@ use crate::domain::*;
 /// execution/macro decision also gates predicate boundary pairing; it applies
 /// before token, strength, observation, or owner-pin confirmation.
 pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
+    /// A changed whole returned closure needs its admitted applied owner pin;
+    /// token coincidence cannot establish that the closure ran discriminatingly.
+    pub(in crate::analysis) returned_closure_pin_required: bool,
     pub(in crate::analysis) owner_return_pin: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
+    /// #9870: a Result.map callback runs only on Ok. Token coincidence in
+    /// an unrelated assertion cannot establish that callback's observation.
+    pub(in crate::analysis) owner_return_pin_required: bool,
+    /// Exact wrapper assertion observing the boundary of a private boolean
+    /// whole-return tail (#9849). Separate from direct owner-pin credit.
+    pub(in crate::analysis) wrapper_return_pin: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
     pub(in crate::analysis) assertion_admitted: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
     /// Assertion-local binding for a known typed trait dispatch. `None` means
     /// no such dispatch; `Some(false)` withholds kind-only credit even on a
@@ -83,6 +92,11 @@ pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
     /// Exact projected mutable argument read through the shared collection observer.
     pub(in crate::analysis) collection_argument_observed:
         &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
+    /// #7697: whether the assertion compares, whole, the field collection the
+    /// owner pushes the probe's literal onto
+    /// (`activation::pushed_collection_compared_whole`), the rule activation
+    /// already applies. Only consulted for `field_construction` probes.
+    pub(in crate::analysis) pushed_literal_observed: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
     /// RIPR-SPEC-0351: the owner `&mut` parameter whose call-site local the
     /// assertion reads (`format(&mut s, ..); assert_eq!(s, ..)`), or `None`.
     pub(in crate::analysis) out_parameter_read:
@@ -136,7 +150,10 @@ fn reveal_evidence(
         &|_, _| false,
         &|_, _| false,
         &ReturnOracleAdmission {
+            owner_return_pin_required: false,
+            returned_closure_pin_required: false,
             owner_return_pin: &|_, _| false,
+            wrapper_return_pin: &|_, _| false,
             assertion_admitted: &|_, _| true,
             assertion_has_known_implicit_observer: &|_, _| None,
             sibling_exclusion_admitted: &|_, _| true,
@@ -147,6 +164,7 @@ fn reveal_evidence(
             effect_state_carried: &|_, _| true,
             setter_writes_field: &|_, _, _| true,
             collection_argument_observed: &|_, _| false,
+            pushed_literal_observed: &|_, _| false,
             out_parameter_read: &|_, _| None,
             getter_reads_field: &|_, _, _| false,
             getter_reads_key: &|_, _, _| None,
@@ -178,7 +196,10 @@ fn reveal_evidence_with_exit(
         &|_, _| false,
         &ReturnOracleAdmission {
             assertion_has_known_implicit_observer: &|_, _| None,
+            owner_return_pin_required: false,
+            returned_closure_pin_required: false,
             owner_return_pin: &|_, _| false,
+            wrapper_return_pin: &|_, _| false,
             assertion_admitted: &|_, _| true,
             sibling_exclusion_admitted: &|_, _| true,
             proximity_may_reach_owner: &|_| false,
@@ -188,6 +209,7 @@ fn reveal_evidence_with_exit(
             effect_state_carried: &|_, _| true,
             setter_writes_field: &|_, _, _| true,
             collection_argument_observed: &|_, _| false,
+            pushed_literal_observed: &|_, _| false,
             out_parameter_read: &|_, _| None,
             getter_reads_field: &|_, _, _| false,
             getter_reads_key: &|_, _, _| None,
@@ -221,7 +243,10 @@ fn reveal_evidence_proximity_reach(
         &|_, _| false,
         &|_, _| false,
         &ReturnOracleAdmission {
+            owner_return_pin_required: false,
+            returned_closure_pin_required: false,
             owner_return_pin: &|_, _| false,
+            wrapper_return_pin: &|_, _| false,
             assertion_admitted: &|_, _| true,
             assertion_has_known_implicit_observer: &|_, _| None,
             sibling_exclusion_admitted: &|_, _| true,
@@ -232,6 +257,7 @@ fn reveal_evidence_proximity_reach(
             effect_state_carried: &|_, _| true,
             setter_writes_field: &|_, _, _| true,
             collection_argument_observed: &|_, _| false,
+            pushed_literal_observed: &|_, _| false,
             getter_reads_field: &|_, _, _| false,
             getter_reads_key: &|_, _, _| None,
             owner_argument_names: &[],
@@ -566,39 +592,304 @@ fn field_collection_observer_confirms(
         return false;
     }
     let plain_reads = assertion_field_collection_reads(&assertion.text, path, false, append_write);
-    assertion_field_collection_reads(&assertion.text, path, count_reads, append_write)
-        .into_iter()
-        .any(|read| {
-            // #8204: a count-only read of a map the owner inserts into
-            // cannot confirm deleting that insert when the test may
-            // already hold the inserted key: overwriting it leaves the
-            // count unchanged.
-            let count_only = !plain_reads.contains(&read);
-            !(count_only
-                && insert_key_index.is_some_and(|index| {
-                    insert_count_may_overwrite(
-                        test,
-                        owner,
-                        &read.binding,
-                        path,
-                        index,
-                        assertion.line,
-                    )
-                }))
-                && owner_call_reaches_read_unrewritten(
-                    test,
-                    &read.binding,
-                    owner.name(),
-                    assertion.line,
-                    read.getter.as_deref(),
-                    path,
-                )
-                && read.getter.as_deref().is_none_or(|getter| {
-                    owner
-                        .impl_type()
-                        .is_some_and(|impl_type| getter_reads_field(impl_type, getter, path))
-                })
+    let reads = assertion_field_collection_reads(&assertion.text, path, count_reads, append_write);
+    // #7135: `assert_eq!(c.items, d.items)` after both `c.add(..)` and
+    // `d.add(..)` compares two values the owner wrote, so a wrong owner
+    // moves both sides together. Two bindings that each ran the owner
+    // before the read observe nothing independent.
+    // Only equivalent histories are refused (same construction and same
+    // driving statements, arguments included). Differing arguments, call
+    // counts or seeding make the sides diverge when the owner changes, so
+    // the comparison can notice.
+    let mut owner_fed: std::collections::BTreeMap<&str, Option<&str>> =
+        std::collections::BTreeMap::new();
+    for read in &reads {
+        if owner_call_reaches_read_unrewritten(
+            test,
+            &read.binding,
+            owner.name(),
+            assertion.line,
+            read.getter.as_deref(),
+            path,
+        ) && read.getter.as_deref().is_none_or(|getter| {
+            owner
+                .impl_type()
+                .is_some_and(|impl_type| getter_reads_field(impl_type, getter, path))
+        }) {
+            owner_fed
+                .entry(read.binding.as_str())
+                .or_insert(read.getter.as_deref());
+        }
+    }
+    // A compared side built by chaining the owner (`let d = Bag::new().add(20)`)
+    // is owner-fed too, but its history is not comparable statement by
+    // statement: refuse rather than credit a side the owner may have written.
+    let chain_built = reads.iter().any(|read| {
+        !owner_fed.contains_key(read.binding.as_str())
+            && binding_built_through_owner(test, &read.binding, owner.name(), assertion.line)
+    });
+    if !owner_fed.is_empty() && chain_built {
+        return false;
+    }
+    if owner_fed.len() > 1 && equivalent_owner_histories(test, &owner_fed, path, assertion.line) {
+        return false;
+    }
+    reads.into_iter().any(|read| {
+        // #8204: a count-only read of a map the owner inserts into
+        // cannot confirm deleting that insert when the test may
+        // already hold the inserted key: overwriting it leaves the
+        // count unchanged.
+        let count_only = !plain_reads.contains(&read);
+        !(count_only
+            && insert_key_index.is_some_and(|index| {
+                insert_count_may_overwrite(test, owner, &read.binding, path, index, assertion.line)
+            }))
+            && owner_call_reaches_read_unrewritten(
+                test,
+                &read.binding,
+                owner.name(),
+                assertion.line,
+                read.getter.as_deref(),
+                path,
+            )
+            && read.getter.as_deref().is_none_or(|getter| {
+                owner
+                    .impl_type()
+                    .is_some_and(|impl_type| getter_reads_field(impl_type, getter, path))
+            })
+    })
+}
+
+/// `code` without plain reads of a sibling field of `binding` (`c.tag`,
+/// `c.tag.len()`, `c.tag == 1`): they neither seed nor drive the collection
+/// under test, so they are not part of its history. Method calls on the
+/// sibling and anything that could write it stay in the code.
+fn strip_sibling_field_reads(code: &str, binding: &str, path: &str) -> String {
+    let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let mut out = String::new();
+    let mut last = 0;
+    for (at, _) in code.match_indices(binding) {
+        let end = at + binding.len();
+        if at < last
+            || code[..at]
+                .chars()
+                .next_back()
+                .is_some_and(|ch| ident(ch) || ch == '.')
+        {
+            continue;
+        }
+        let Some(after) = code[end..].strip_prefix('.') else {
+            continue;
+        };
+        // `&mut c.tag` / `ref mut c.tag` is a write-capable place.
+        if code[..at].trim_end().ends_with("mut") {
+            continue;
+        }
+        let field_len = after.find(|ch: char| !ident(ch)).unwrap_or(after.len());
+        let field = &after[..field_len];
+        if field.is_empty() || field == path {
+            continue;
+        }
+        let rest = after[field_len..].trim_start();
+        let read = rest.is_empty()
+            || rest.starts_with([')', ',', ']'])
+            || rest.starts_with(".len(")
+            || rest.starts_with(".is_empty(")
+            || rest.starts_with("==")
+            || rest.starts_with("!=");
+        if read {
+            out.push_str(&code[last..at]);
+            last = end + 1 + field_len;
+        }
+    }
+    out.push_str(&code[last..]);
+    out
+}
+
+/// `code` without whitespace around `.`, so spaced and tight spellings of one
+/// field access compare equal.
+fn tighten_dots(code: &str) -> String {
+    let chars: Vec<char> = code.chars().collect();
+    let mut out = String::with_capacity(code.len());
+    for (at, &ch) in chars.iter().enumerate() {
+        if ch.is_whitespace() {
+            let prev = chars[..at].iter().rev().find(|c| !c.is_whitespace());
+            let next = chars[at..].iter().find(|c| !c.is_whitespace());
+            if prev == Some(&'.') || next == Some(&'.') {
+                continue;
+            }
+        }
+        out.push(ch);
+    }
+    out
+}
+
+/// Byte offset where the history window for a read on `read_line` ends: the
+/// `assert` on that line, so a statement earlier on the same line still counts
+/// (`d.items.clear(); assert_eq!(..)`), as the unrewritten-read guard does.
+fn read_window_end(masked: &str, start_line: usize, read_line: usize) -> usize {
+    let skipped = read_line.saturating_sub(start_line);
+    let line_start: usize = masked
+        .split_inclusive('\n')
+        .take(skipped)
+        .map(str::len)
+        .sum();
+    masked
+        .get(line_start..)
+        .and_then(|rest| rest.lines().next())
+        .and_then(|line| line.rfind("assert"))
+        .map_or(line_start, |found| line_start + found)
+}
+
+/// #7135: whether every binding in `bindings` was built and driven the same
+/// way before the read at `read_line`, so a wrong owner moves every compared
+/// side together. The history of a binding is its constructor and, in order,
+/// each statement that uses it other than as a read of the collection under
+/// test (`let _ = c.items.len()` is not setup), with the binding's own name
+/// abstracted. Different arguments, call counts, seeding or constructors make
+/// the histories differ. A constructor that cannot be found, or that names
+/// another compared binding (`let d = c.clone()`), is treated as equivalent:
+/// no independence is established.
+fn equivalent_owner_histories(
+    test: &TestSummary,
+    bindings: &std::collections::BTreeMap<&str, Option<&str>>,
+    path: &str,
+    read_line: usize,
+) -> bool {
+    let masked = mask_comments_and_strings(&test.body);
+    let offset = read_window_end(&masked, test.start_line, read_line);
+    let (Some(before_masked), Some(before)) = (masked.get(..offset), test.body.get(..offset))
+    else {
+        return true;
+    };
+    let mut statements = Vec::new();
+    let mut start = 0;
+    for (at, ch) in before_masked.char_indices() {
+        if matches!(ch, ';' | '{' | '}') {
+            statements.push((start, at));
+            start = at + 1;
+        }
+    }
+    statements.push((start, before_masked.len()));
+    let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let mentions = |text: &str, name: &str| {
+        text.match_indices(name).any(|(at, found)| {
+            !text[..at]
+                .chars()
+                .next_back()
+                .is_some_and(|ch| ident(ch) || ch == '.')
+                && !text[at + found.len()..].starts_with(ident)
         })
+    };
+    let abstracted = |text: &str, name: &str| {
+        let mut out = String::new();
+        let mut last = 0;
+        for (at, found) in text.match_indices(name) {
+            let end = at + found.len();
+            if !text[..at].chars().next_back().is_some_and(ident) && !text[end..].starts_with(ident)
+            {
+                out.push_str(&text[last..at]);
+                out.push('$');
+                last = end;
+            }
+        }
+        out.push_str(&text[last..]);
+        out.split_whitespace().collect::<Vec<_>>().join(" ")
+    };
+    let mut histories: Vec<Vec<String>> = Vec::new();
+    for (binding, getter) in bindings {
+        let mut history = Vec::new();
+        let mut constructed = false;
+        // Block conditions (`if f1 {`) are deliberately not part of the
+        // history: two conditions cannot be shown to diverge from their text
+        // (`if ready` against `if ready == true`), so a pair that matches
+        // except for its guards stays refused.
+        for &(from, to) in &statements {
+            let (Some(code), Some(text)) = (before_masked.get(from..to), before.get(from..to))
+            else {
+                return true;
+            };
+            // `c . items.len()` is the same field access as `c.items.len()`.
+            let (code, text) = (tighten_dots(code), tighten_dots(text));
+            let (code, text) = (code.as_str(), text.as_str());
+            let trimmed = code.trim_start();
+            let declared = trimmed
+                .strip_prefix("let ")
+                .map(|rest| rest.trim_start())
+                .map(|rest| rest.strip_prefix("mut ").map_or(rest, str::trim_start))
+                .is_some_and(|rest| {
+                    rest.strip_prefix(binding)
+                        .is_some_and(|after| !after.starts_with(ident))
+                });
+            let mut entry = None;
+            if declared {
+                let Some((_, rhs)) = text.split_once('=') else {
+                    return true;
+                };
+                if bindings
+                    .keys()
+                    .any(|other| other != binding && mentions(rhs, other))
+                {
+                    return true;
+                }
+                constructed = true;
+                entry = Some(format!("let {}", abstracted(rhs, binding)));
+            } else if mentions(code, binding) && {
+                let stripped = strip_sibling_field_reads(code, binding, path);
+                !only_field_reads_between(&stripped, 0, stripped.len(), binding, *getter, path)
+            } {
+                entry = Some(abstracted(text, binding));
+            }
+            if let Some(entry) = entry {
+                history.push(entry);
+            }
+        }
+        if !constructed {
+            return true;
+        }
+        histories.push(history);
+    }
+    histories.windows(2).all(|pair| pair[0] == pair[1])
+}
+
+/// #7135: whether `binding` is declared with a right-hand side that calls the
+/// owner `method` (`let d = Bag::new().add(20);`), so the owner wrote it
+/// without a bare `binding.method(..)` statement.
+fn binding_built_through_owner(
+    test: &TestSummary,
+    binding: &str,
+    method: &str,
+    read_line: usize,
+) -> bool {
+    let masked = mask_comments_and_strings(&test.body);
+    let end = read_window_end(&masked, test.start_line, read_line);
+    let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let call = format!(".{method}(");
+    // Only the declaration live at the read counts: a later `let` is not
+    // evidence about it, and a shadowing `let` replaces an earlier one.
+    masked
+        .get(..end)
+        .unwrap_or_default()
+        .match_indices("let ")
+        .filter_map(|(at, keyword)| {
+            if masked[..at].chars().next_back().is_some_and(ident) {
+                return None;
+            }
+            let rest = masked[at + keyword.len()..].trim_start();
+            let rest = rest.strip_prefix("mut ").map_or(rest, str::trim_start);
+            let after = rest.strip_prefix(binding)?;
+            if after.starts_with(ident) {
+                return None;
+            }
+            Some(
+                after
+                    .split(';')
+                    .next()
+                    .is_some_and(|stmt| stmt.contains(&call)),
+            )
+        })
+        .last()
+        .unwrap_or(false)
 }
 
 /// #8204: whether the test may already hold, in `binding.path`, the key an
@@ -1778,18 +2069,19 @@ fn analyze_related_assertions(
     // #7063: a payload-carrying construction whose variant the change kept
     // (or whose old text is unknown) may have changed only its payload.
     // A changed variant is seen by a variant pin, as before.
-    let payload_pin_required = matches!(
-        probe.family,
-        ProbeFamily::ErrorPath | ProbeFamily::ReturnValue
-    ) && error_construction_path.as_deref().is_some_and(|path| {
-        (super::text::variant_carries_payload(&probe.expression, path)
-            || super::text::variant_carries_payload(analysis_expression, path))
-            && probe
-                .before
-                .as_deref()
-                .and_then(error_path_variant_path)
-                .is_none_or(|before| variant_key(&before) == variant_key(path))
-    });
+    let owner_pin_required = return_admission.returned_closure_pin_required
+        || matches!(
+            probe.family,
+            ProbeFamily::ErrorPath | ProbeFamily::ReturnValue
+        ) && error_construction_path.as_deref().is_some_and(|path| {
+            (super::text::variant_carries_payload(&probe.expression, path)
+                || super::text::variant_carries_payload(analysis_expression, path))
+                && probe
+                    .before
+                    .as_deref()
+                    .and_then(error_path_variant_path)
+                    .is_none_or(|before| variant_key(&before) == variant_key(path))
+        });
     // The enum segment before the variant (`PayError` in
     // `PayError::Insufficient`): the shared qualifier a sibling-variant pin
     // names. See `names_only_sibling_variants`.
@@ -1875,7 +2167,7 @@ fn analyze_related_assertions(
         owner_scoped_tokens: &owner_scoped_tokens,
         owner_shadowed: false,
         sibling_excluded: false,
-        payload_pin_required,
+        owner_pin_required,
     };
     let confirm_required = needs_token_confirmation(&probe.family);
     // RIPR-SPEC-0040 builder override (#6613): the fields a changed struct
@@ -2184,6 +2476,8 @@ fn analyze_related_assertions(
             let strength_raising_pin = owner_pinned
                 && (matches!(assertion.kind, OracleKind::RelationalCheck)
                     || is_inline_expect_snapshot(assertion));
+            let wrapper_pinned = matches!(probe.family, ProbeFamily::ReturnValue)
+                && (return_admission.wrapper_return_pin)(test, assertion);
             let owner_bound = !match_context.owner_scoped_tokens.is_empty()
                 && oracle_binds_sink_identity(
                     &assertion.text,
@@ -2244,7 +2538,17 @@ fn analyze_related_assertions(
                         return_admission,
                     )
                 });
-            let field_collection_read = field_collection_read || keyed_read;
+            // #7697: a pushed field literal is confirmed by the same
+            // whole-collection comparison activation accepts, even when the
+            // other operand is a collection the test built by hand.
+            // Fail closed when the owner may leave before the push (#8051,
+            // #8205): a test that expects the collection empty, or restates
+            // what it seeded, then took the exit and never ran the literal.
+            let pushed_literal_read = matches!(probe.family, ProbeFamily::FieldConstruction)
+                && !return_admission.owner_may_exit_before_probe
+                && !test_is_should_panic(test)
+                && (return_admission.pushed_literal_observed)(test, assertion);
+            let field_collection_read = field_collection_read || keyed_read || pushed_literal_read;
             let collection_argument_read =
                 (return_admission.collection_argument_observed)(test, assertion);
             // RIPR-SPEC-0351: an `assert_eq!` on the local a direct owner
@@ -2272,7 +2576,8 @@ fn analyze_related_assertions(
             let matched = matched
                 || field_collection_read
                 || collection_argument_read
-                || out_parameter.is_some();
+                || out_parameter.is_some()
+                || wrapper_pinned;
             // A bounded assertion-local implicit witness is a matching
             // observer even beside another assertion. Keep refused kind rows
             // visible without borrowing the admitted assertion's confirmation.
@@ -2314,15 +2619,25 @@ fn analyze_related_assertions(
             // RIPR-SPEC-0035 / #5830: an equality whose expected side is
             // computed through the changed owner moves with it, so it
             // neither pins the value nor confirms observation.
+            // The owner symbol is `file::impl Type::name` for a method and
+            // `file::name` for a free function.
+            let free_owner = probe
+                .owner
+                .as_ref()
+                .is_some_and(|symbol| !symbol.0.contains("::impl "));
             let self_computed = matched
                 && match_context.owner_callee.is_some_and(|owner| {
                     expected_computed_through_owner(
                         &assertion.text,
                         owner,
+                        free_owner,
                         return_admission.expected_reaches_owner,
-                    ) || expected_operand_bound_to_owner(&assertion.text, owner, &|operand| {
-                        (return_admission.expected_operand_value)(test, operand)
-                    })
+                    ) || expected_operand_bound_to_owner(
+                        &assertion.text,
+                        owner,
+                        free_owner,
+                        &|operand| (return_admission.expected_operand_value)(test, operand),
+                    )
                 });
             // #8051: when the owner may leave before its push, a test that
             // passes expecting the written collection empty took that exit,
@@ -2434,12 +2749,21 @@ fn analyze_related_assertions(
                                 || (direct_collection_mutation_receiver(&probe.expression)
                                     .is_none()
                                     && ((has_token_match && field_write.is_none())
+                                        || wrapper_pinned
                                         || (is_effect_family(&probe.family)
                                             && effect_kind_confirms
                                             && effect_observer_confirms(assertion)
                                             && (return_admission.effect_state_carried)(
                                                 test, assertion,
-                                            )))))));
+                                            )))))))
+                    && (!return_admission.owner_return_pin_required
+                        || owner_return_pin_holds(
+                            &match_context,
+                            assertion,
+                            owner_pinned,
+                            import_defeats_owner,
+                            cross_package_defeats_owner,
+                        ));
                 proximity_confirmation_withheld |= !confirms_observation;
                 if confirm_required {
                     // Observation is confirmed when the assertion specifically
@@ -2491,9 +2815,10 @@ fn analyze_related_assertions(
                     oracle_strength: relative_strength,
                     relation_reason,
                     relation_confidence,
-                    miss: (!effect_kind_confirms
+                    miss: ((!effect_kind_confirms || return_admission.owner_return_pin_required)
                         && !observation_confirmed
-                        && (effect_observer_confirms(assertion)
+                        && (return_admission.owner_return_pin_required
+                            || effect_observer_confirms(assertion)
                             || implicit_observer == Some(false)))
                     .then_some(RelatedTestMiss::ObservationUnconfirmed),
                     miss_support: None,
@@ -2832,6 +3157,8 @@ struct RevealMatchContext<'a> {
     /// sibling exclusion on the owner call (`excludes_only_sibling_variant`
     /// under standard macro bindings), decided once per assertion.
     sibling_excluded: bool,
+    /// Returned closures require an admitted application pin before any
+    /// lexical fallback, even when numeric/type establishment refuses.
     /// #7063: the changed error construction carries a payload
     /// (`Err(E::V { line: n })`) and the change may be confined to it: the
     /// paired old text constructs the same variant, or there is none. A
@@ -2839,7 +3166,7 @@ struct RevealMatchContext<'a> {
     /// payload change, so a value or error probe confirms observation only
     /// through the owner-return pin, a whole-value equality tied to the
     /// owner call (RIPR-SPEC-0197 "Early error-variant pins").
-    payload_pin_required: bool,
+    owner_pin_required: bool,
 }
 
 /// The field a `field_construction` expression assigns: the identifier
@@ -2861,6 +3188,15 @@ fn constructed_field_name(expression: &str) -> Option<&str> {
 /// `Path::name(..)`.
 fn text_calls(text: &str, name: &str) -> bool {
     called_names(text).iter().any(|called| called == name)
+}
+
+/// Whether `text` calls the owner `owner`. A free-function owner is never
+/// called as `recv.owner(..)`, so a text whose only mentions of its name are
+/// receiver calls (`expected.to_string()` beside a free `to_string(..)`) calls
+/// some other function of that name (#9329).
+fn calls_owner(text: &str, owner: &str, free_owner: bool) -> bool {
+    text_calls(text, owner)
+        && !(free_owner && super::helper_transfer::mentions_only_as_receiver_call(text, owner))
 }
 
 /// Every identifier `text` calls (comments and strings masked), excluding
@@ -2963,18 +3299,20 @@ pub(in crate::analysis::classify) fn equality_operands(text: &str) -> Option<[St
 fn expected_operand_bound_to_owner(
     text: &str,
     owner: &str,
+    free_owner: bool,
     operand_value: &dyn Fn(&str) -> Option<String>,
 ) -> bool {
     let Some([left, right]) = equality_operands(text) else {
         return false;
     };
-    let (actual, expected) = match (text_calls(&left, owner), text_calls(&right, owner)) {
+    let calls = |operand: &str| calls_owner(operand, owner, free_owner);
+    let (actual, expected) = match (calls(&left), calls(&right)) {
         (true, false) => (left, right),
         (false, true) => (right, left),
         _ => return false,
     };
     operand_value(&expected).is_some_and(|value| {
-        text_calls(&value, owner)
+        calls(&value)
             && terms_outside_owner_calls(&actual, owner) == terms_outside_owner_calls(&value, owner)
     })
 }
@@ -2990,6 +3328,7 @@ fn expected_operand_bound_to_owner(
 fn expected_computed_through_owner(
     text: &str,
     owner: &str,
+    free_owner: bool,
     reaches_owner: &dyn Fn(Option<&str>, &str) -> bool,
 ) -> bool {
     let Some([left, right]) = equality_operands(text) else {
@@ -3001,7 +3340,10 @@ fn expected_computed_through_owner(
             .iter()
             .any(|(ty, called)| called != owner && reaches_owner(ty.as_deref(), called))
     };
-    match (text_calls(left, owner), text_calls(right, owner)) {
+    match (
+        calls_owner(left, owner, free_owner),
+        calls_owner(right, owner, free_owner),
+    ) {
         // Both sides run the owner. Unless the code around the owner calls
         // differs (`tax(250) * 2` against `tax(250) + 8` pins the owner's
         // value), the sides move together; reordering, parentheses or a
@@ -3748,7 +4090,7 @@ fn assertion_matches_probe_detail_with_literals(
         owner_scoped_tokens,
         owner_shadowed,
         sibling_excluded,
-        payload_pin_required,
+        owner_pin_required,
     } = *context;
     // #4748: use the same operand boundary as extraction, including token and
     // exact-variant matching. A genuine error oracle cannot borrow its changed
@@ -3857,7 +4199,7 @@ fn assertion_matches_probe_detail_with_literals(
     // tied to the owner call. A variant token, a `matches!` or guarded match
     // on the variant, a written-out equality not tied to the owner, or a
     // shared field name says nothing about the payload's value (fail closed).
-    let payload_observed = !payload_pin_required || owner_return_pinned;
+    let required_pin_observed = !owner_pin_required || owner_return_pinned;
     // For MatchArm probes, restrict the confirmation check to variant-only
     // tokens (post-`::`). The qualifier ("Mode" in "Mode::Frozen") is shared
     // across all arms and therefore cannot confirm this specific arm.
@@ -3911,7 +4253,7 @@ fn assertion_matches_probe_detail_with_literals(
         // touches an error (`assert_eq!(reader.len(), 10)`) cannot observe
         // it, however many identifiers it shares with the changed line.
         false
-    } else if !payload_observed {
+    } else if !required_pin_observed {
         false
     } else if matches!(assertion.kind, OracleKind::GuardedResultMatch)
         && error_construction_variant.is_some()
@@ -3947,7 +4289,7 @@ fn assertion_matches_probe_detail_with_literals(
         if sibling_excluded {
             // #7063 rule 7: excluding a sibling says nothing about the
             // changed variant's payload.
-            return (true, payload_observed);
+            return (true, required_pin_observed);
         }
         if matches!(family, ProbeFamily::ErrorPath) {
             return (false, false);
@@ -3961,7 +4303,7 @@ fn assertion_matches_probe_detail_with_literals(
         && let Some(variant) = error_construction_variant
     {
         let variant_matches = contains_as_whole_word(&assertion.text, variant);
-        let variant_confirms = variant_matches && payload_observed;
+        let variant_confirms = variant_matches && required_pin_observed;
         if matches!(family, ProbeFamily::ErrorPath) {
             return (variant_matches, variant_confirms);
         }
@@ -4031,7 +4373,7 @@ fn assertion_matches_probe_detail(
             owner_scoped_tokens: &[],
             owner_shadowed: false,
             sibling_excluded: false,
-            payload_pin_required: false,
+            owner_pin_required: false,
         },
         assertion,
         assertion_count,
@@ -4777,8 +5119,17 @@ fn finalize_related_tests_with_owner_calls(
     diff_touched: Option<&super::DiffTouchedTests>,
     owner_calls: &std::collections::BTreeSet<OwnerCallKey>,
 ) -> (Vec<RelatedTest>, usize) {
-    related.sort_by(|a, b| a.name.cmp(&b.name).then(a.line.cmp(&b.line)));
-    related.dedup_by(|a, b| a.name == b.name && a.oracle == b.oracle);
+    related.sort_by(|a, b| {
+        a.name
+            .cmp(&b.name)
+            .then_with(|| a.file.cmp(&b.file))
+            .then_with(|| a.line.cmp(&b.line))
+    });
+    // One test is its name, file and start line (#9567): a same-named test
+    // elsewhere is another test whose assertions must still be read.
+    related.dedup_by(|a, b| {
+        a.name == b.name && a.file == b.file && a.line == b.line && a.oracle == b.oracle
+    });
     // Renderers present the first entry as the primary related test, so the
     // strongest relation leads. The sort is stable: name and line order holds
     // within one confidence tier, and the dedup above is unchanged.
@@ -5732,7 +6083,10 @@ mod tests {
         };
         let admission = ReturnOracleAdmission {
             assertion_has_known_implicit_observer: &|_, _| None,
+            owner_return_pin_required: false,
+            returned_closure_pin_required: false,
             owner_return_pin: &|_, _| false,
+            wrapper_return_pin: &|_, _| false,
             assertion_admitted: &|_, _| true,
             sibling_exclusion_admitted: &|_, _| true,
             proximity_may_reach_owner: &|_| false,
@@ -5743,6 +6097,7 @@ mod tests {
             setter_writes_field: &|_, _, _| false,
             getter_reads_field: &|_, _, _| false,
             collection_argument_observed: &|_, _| false,
+            pushed_literal_observed: &|_, _| false,
             out_parameter_read: &|_, _| None,
             getter_reads_key: &|_, getter, field| {
                 (getter == "on_hand" && field == "stock")
@@ -7172,7 +7527,10 @@ mod tests {
             &|_, _| false,
             &ReturnOracleAdmission {
                 assertion_has_known_implicit_observer: &|_, _| None,
+                owner_return_pin_required: false,
+                returned_closure_pin_required: false,
                 owner_return_pin: &pin,
+                wrapper_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
@@ -7182,6 +7540,7 @@ mod tests {
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                pushed_literal_observed: &|_, _| false,
                 out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
@@ -7264,7 +7623,10 @@ mod tests {
                 &|_, _| false,
                 &ReturnOracleAdmission {
                     assertion_has_known_implicit_observer: &|_, _| None,
+                    owner_return_pin_required: false,
+                    returned_closure_pin_required: false,
                     owner_return_pin: &pin,
+                    wrapper_return_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
                     sibling_exclusion_admitted: &|_, _| true,
                     proximity_may_reach_owner: &|_| false,
@@ -7274,6 +7636,7 @@ mod tests {
                     effect_state_carried: &|_, _| true,
                     setter_writes_field: &|_, _, _| true,
                     collection_argument_observed: &|_, _| false,
+                    pushed_literal_observed: &|_, _| false,
                     out_parameter_read: &|_, _| None,
                     getter_reads_field: &|_, _, _| false,
                     getter_reads_key: &|_, _, _| None,
@@ -7442,7 +7805,10 @@ mod tests {
                 &|_, _| false,
                 &|_, _| false,
                 &ReturnOracleAdmission {
+                    owner_return_pin_required: false,
+                    returned_closure_pin_required: false,
                     owner_return_pin: &|_, _| false,
+                    wrapper_return_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
                     assertion_has_known_implicit_observer: &|_, _| None,
                     sibling_exclusion_admitted: &|_, _| true,
@@ -7453,6 +7819,7 @@ mod tests {
                     effect_state_carried: &|_, _| true,
                     setter_writes_field: &|_, _, _| true,
                     collection_argument_observed: &|_, _| false,
+                    pushed_literal_observed: &|_, _| false,
                     out_parameter_read: &|_, _| None,
                     getter_reads_field: &|_, _, _| false,
                     getter_reads_key: &|_, _, _| None,
@@ -7548,7 +7915,10 @@ mod tests {
                 import,
                 package,
                 &ReturnOracleAdmission {
+                    owner_return_pin_required: false,
+                    returned_closure_pin_required: false,
                     owner_return_pin: &pin,
+                    wrapper_return_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
                     assertion_has_known_implicit_observer: &|_, _| None,
                     sibling_exclusion_admitted: &|_, _| true,
@@ -7559,6 +7929,7 @@ mod tests {
                     effect_state_carried: &|_, _| true,
                     setter_writes_field: &|_, _, _| true,
                     collection_argument_observed: &|_, _| false,
+                    pushed_literal_observed: &|_, _| false,
                     out_parameter_read: &|_, _| None,
                     getter_reads_field: &|_, _, _| false,
                     getter_reads_key: &|_, _, _| None,
@@ -7967,7 +8338,10 @@ mod tests {
             &|_, _| false,
             &|_, _| false,
             &ReturnOracleAdmission {
+                owner_return_pin_required: false,
+                returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
+                wrapper_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -7978,6 +8352,7 @@ mod tests {
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                pushed_literal_observed: &|_, _| false,
                 out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
@@ -8055,7 +8430,10 @@ mod tests {
             &|_, _| false,
             &|_, _| false,
             &ReturnOracleAdmission {
+                owner_return_pin_required: false,
+                returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
+                wrapper_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -8066,6 +8444,7 @@ mod tests {
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                pushed_literal_observed: &|_, _| false,
                 out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
@@ -8355,7 +8734,7 @@ mod tests {
                 owner_scoped_tokens: &empty,
                 owner_shadowed: false,
                 sibling_excluded: false,
-                payload_pin_required: false,
+                owner_pin_required: false,
             };
             let (_, has_token) = assertion_matches_probe_detail_with_literals(
                 &context,
@@ -9828,7 +10207,10 @@ return Err(\"typed pin\".into());
             &|_test, callee| file_imports_foreign_callee_name(test_source, callee, &crate_names),
             &|_, _| false,
             &ReturnOracleAdmission {
+                owner_return_pin_required: false,
+                returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
+                wrapper_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -9839,6 +10221,7 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                pushed_literal_observed: &|_, _| false,
                 out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
@@ -9895,7 +10278,10 @@ return Err(\"typed pin\".into());
             &|_, callee| file_imports_foreign_callee_name(without_import, callee, &own_crate_names),
             &|_, _| false,
             &ReturnOracleAdmission {
+                owner_return_pin_required: false,
+                returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
+                wrapper_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -9906,6 +10292,7 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                pushed_literal_observed: &|_, _| false,
                 out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
@@ -9933,7 +10320,10 @@ return Err(\"typed pin\".into());
             },
             &|_, _| false,
             &ReturnOracleAdmission {
+                owner_return_pin_required: false,
+                returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
+                wrapper_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -9944,6 +10334,7 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                pushed_literal_observed: &|_, _| false,
                 out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
@@ -9990,7 +10381,10 @@ return Err(\"typed pin\".into());
             &|_, callee| file_imports_foreign_callee_name(aliased_import, callee, &crate_names),
             &|_, _| false,
             &ReturnOracleAdmission {
+                owner_return_pin_required: false,
+                returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
+                wrapper_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -10001,6 +10395,7 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                pushed_literal_observed: &|_, _| false,
                 out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
@@ -10049,7 +10444,10 @@ return Err(\"typed pin\".into());
             &|_test, callee| file_imports_foreign_callee_name(test_source, callee, &crate_names),
             &|_, _| false,
             &ReturnOracleAdmission {
+                owner_return_pin_required: false,
+                returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
+                wrapper_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -10060,6 +10458,7 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                pushed_literal_observed: &|_, _| false,
                 out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
@@ -10252,7 +10651,10 @@ return Err(\"typed pin\".into());
             &|_, _| false,
             &|_, _| true,
             &ReturnOracleAdmission {
+                owner_return_pin_required: false,
+                returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
+                wrapper_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -10263,6 +10665,7 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                pushed_literal_observed: &|_, _| false,
                 out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
@@ -10293,7 +10696,10 @@ return Err(\"typed pin\".into());
             &|_, _| false,
             &|_, _| false,
             &ReturnOracleAdmission {
+                owner_return_pin_required: false,
+                returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
+                wrapper_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -10304,6 +10710,7 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                pushed_literal_observed: &|_, _| false,
                 out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
@@ -10712,9 +11119,13 @@ return Err(\"typed pin\".into());
                         owner_argument_names: &[],
                         getter_reads_key: &|_, _, _| None,
                         collection_argument_observed: &|_, _| false,
+                        pushed_literal_observed: &|_, _| false,
                         out_parameter_read: &|_, _| None,
                         assertion_has_known_implicit_observer: &|_, _| Some(false),
+                        owner_return_pin_required: false,
+                        returned_closure_pin_required: false,
                         owner_return_pin: &|_, _| false,
+                        wrapper_return_pin: &|_, _| false,
                         assertion_admitted: &|_, _| true,
                         sibling_exclusion_admitted: &|_, _| true,
                         // The observer sibling may reach the owner (#9167).
@@ -10788,8 +11199,12 @@ return Err(\"typed pin\".into());
                     owner_argument_names: &[],
                     getter_reads_key: &|_, _, _| None,
                     collection_argument_observed: &|_, _| false,
+                    pushed_literal_observed: &|_, _| false,
+                    returned_closure_pin_required: false,
                     out_parameter_read: &|_, _| None,
+                    owner_return_pin_required: false,
                     owner_return_pin: &|_, _| false,
+                    wrapper_return_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
                     assertion_has_known_implicit_observer: &|test, _| {
                         (test.name == "implicit_observer").then_some(true)
@@ -10875,7 +11290,10 @@ return Err(\"typed pin\".into());
                 &|_, _| false,
                 &|_, _| false,
                 &ReturnOracleAdmission {
+                    owner_return_pin_required: false,
+                    returned_closure_pin_required: false,
                     owner_return_pin: &|_, _| false,
+                    wrapper_return_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
                     assertion_has_known_implicit_observer: &|_, _| None,
                     sibling_exclusion_admitted: &|_, _| true,
@@ -10886,6 +11304,7 @@ return Err(\"typed pin\".into());
                     effect_state_carried: &carried,
                     setter_writes_field: &|_, _, _| true,
                     collection_argument_observed: &|_, _| false,
+                    pushed_literal_observed: &|_, _| false,
                     out_parameter_read: &|_, _| None,
                     getter_reads_field: &|_, _, _| false,
                     getter_reads_key: &|_, _, _| None,
@@ -11162,7 +11581,10 @@ return Err(\"typed pin\".into());
             &|_, _| false,
             &|_, _| false,
             &ReturnOracleAdmission {
+                owner_return_pin_required: false,
+                returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
+                wrapper_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -11173,6 +11595,7 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                pushed_literal_observed: &|_, _| false,
                 out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
@@ -11264,7 +11687,10 @@ return Err(\"typed pin\".into());
                 &|_, _| false,
                 &|_, _| false,
                 &ReturnOracleAdmission {
+                    owner_return_pin_required: false,
+                    returned_closure_pin_required: false,
                     owner_return_pin: &|_, _| false,
+                    wrapper_return_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
                     assertion_has_known_implicit_observer: &|_, _| None,
                     sibling_exclusion_admitted: &|_, _| true,
@@ -11275,6 +11701,7 @@ return Err(\"typed pin\".into());
                     effect_state_carried: &|_, _| true,
                     setter_writes_field: &|_, _, _| true,
                     collection_argument_observed: &|_, _| false,
+                    pushed_literal_observed: &|_, _| false,
                     out_parameter_read: &|_, _| None,
                     getter_reads_field: &|_, _, _| false,
                     getter_reads_key: &|_, _, _| None,
@@ -11309,7 +11736,10 @@ return Err(\"typed pin\".into());
             &|_, _| false,
             &|_, _| false,
             &ReturnOracleAdmission {
+                owner_return_pin_required: false,
+                returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
+                wrapper_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -11320,6 +11750,7 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                pushed_literal_observed: &|_, _| false,
                 out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
@@ -11805,7 +12236,10 @@ return Err(\"typed pin\".into());
             &|_, _| false,
             &|_, _| false,
             &ReturnOracleAdmission {
+                owner_return_pin_required: false,
+                returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
+                wrapper_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -11816,6 +12250,7 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                pushed_literal_observed: &|_, _| false,
                 out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
@@ -12349,7 +12784,10 @@ return Err(\"typed pin\".into());
             &|_, _| false,
             &|_, _| false,
             &ReturnOracleAdmission {
+                owner_return_pin_required: false,
+                returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
+                wrapper_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
@@ -12360,6 +12798,7 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                pushed_literal_observed: &|_, _| false,
                 out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
@@ -12540,21 +12979,25 @@ return Err(\"typed pin\".into());
         assert!(expected_operand_bound_to_owner(
             "assert!(EXPECTED == tax(RATE));",
             "tax",
+            false,
             &held("tax(RATE)")
         ));
         assert!(expected_operand_bound_to_owner(
             "assert_eq!(tax(4), EXPECTED);",
             "tax",
+            false,
             &held("crate::tax(2)")
         ));
         assert!(!expected_operand_bound_to_owner(
             "assert_eq!(tax(RATE), tax(RATE));",
             "tax",
+            false,
             &|_| Some("tax(RATE)".to_string())
         ));
         assert!(!expected_operand_bound_to_owner(
             "assert_eq!(EXPECTED, OTHER);",
             "tax",
+            false,
             &|_| Some("tax(RATE)".to_string())
         ));
         // A value that differs outside its owner calls, or never calls the
@@ -12573,6 +13016,7 @@ return Err(\"typed pin\".into());
                 !expected_operand_bound_to_owner(
                     "assert_eq!(cart.tax(), EXPECTED);",
                     "tax",
+                    false,
                     &held(value)
                 ),
                 "{value}"
@@ -12581,7 +13025,42 @@ return Err(\"typed pin\".into());
         assert!(!expected_operand_bound_to_owner(
             "assert_eq!(tax(RATE), EXPECTED);",
             "tax",
+            false,
             &|_| None
+        ));
+    }
+
+    // #9329: a receiver call of the owner's name is not a call of a free
+    // owner (`expected.to_string()` beside a free `to_string(..)`), but it
+    // still is for a method owner.
+    #[test]
+    fn a_receiver_call_of_a_free_owners_name_is_not_a_call_of_the_owner() {
+        let reaches = |_: Option<&str>, name: &str| name == "to_string_as";
+        let text = "assert_eq!(expected.to_string(), b.to_string_as(si));";
+        assert!(expected_computed_through_owner(
+            text,
+            "to_string",
+            false,
+            &reaches
+        ));
+        assert!(!expected_computed_through_owner(
+            text,
+            "to_string",
+            true,
+            &reaches
+        ));
+        assert!(!expected_operand_bound_to_owner(
+            "assert_eq!(expected.to_string(), got);",
+            "to_string",
+            true,
+            &|_| Some("x.to_string()".to_string())
+        ));
+        // A direct call of the free owner still counts.
+        assert!(expected_computed_through_owner(
+            "assert_eq!(to_string(1, true), b.to_string_as(si));",
+            "to_string",
+            true,
+            &reaches
         ));
     }
 
@@ -12591,29 +13070,34 @@ return Err(\"typed pin\".into());
         assert!(expected_computed_through_owner(
             "assert_eq!(sub + tax(sub), invoice(3, 100));",
             "tax",
+            false,
             &reaches
         ));
         assert!(expected_computed_through_owner(
             "assert_eq!(cart.invoice(3), tax(300) + 300);",
             "tax",
+            false,
             &reaches
         ));
         // A literal expected value is independent of the owner.
         assert!(!expected_computed_through_owner(
             "assert_eq!(tax(300), 24);",
             "tax",
+            false,
             &reaches
         ));
         // `tax(` inside a message string is not a call.
         assert!(!expected_computed_through_owner(
             "assert_eq!(invoice(3, 100), 324, \"tax(sub)\");",
             "tax",
+            false,
             &reaches
         ));
         // The same owner call on both sides holds whatever it returns.
         assert!(expected_computed_through_owner(
             "assert_eq!(tax(250), tax(250));",
             "tax",
+            false,
             &|_: Option<&str>, _: &str| false
         ));
         // Different owner-dependent expressions can pin the owner's value:
@@ -12621,6 +13105,7 @@ return Err(\"typed pin\".into());
         assert!(!expected_computed_through_owner(
             "assert_eq!(tax(250) * 2, tax(250) + 8);",
             "tax",
+            false,
             &|_: Option<&str>, _: &str| false
         ));
         // Reordering, grouping and a path prefix leave the sides equal.
@@ -12631,7 +13116,9 @@ return Err(\"typed pin\".into());
             "assert_eq!(tax(250) /* same */, tax(250));",
         ] {
             assert!(
-                expected_computed_through_owner(text, "tax", &|_: Option<&str>, _: &str| false),
+                expected_computed_through_owner(text, "tax", false, &|_: Option<&str>, _: &str| {
+                    false
+                }),
                 "{text}"
             );
         }
@@ -12639,12 +13126,14 @@ return Err(\"typed pin\".into());
         assert!(!expected_computed_through_owner(
             "assert_eq!(tax(250) + base, tax(250) + other);",
             "tax",
+            false,
             &|_: Option<&str>, _: &str| false
         ));
         // Inequality is never strong in the first place.
         assert!(!expected_computed_through_owner(
             "assert_ne!(invoice(3, 100), tax(300));",
             "tax",
+            false,
             &reaches
         ));
         // RIPR-SPEC-0197: `assert!(a == b)` and an Err-return guard twin
@@ -12658,7 +13147,7 @@ return Err(\"typed pin\".into());
             "if tax(300) != invoice(3, 100) - 300 {\n    // was assert_eq!(tax(300), 24)\n    return Err(..)\n}",
         ] {
             assert!(
-                expected_computed_through_owner(text, "tax", &reaches),
+                expected_computed_through_owner(text, "tax", false, &reaches),
                 "{text}"
             );
         }
@@ -12668,7 +13157,7 @@ return Err(\"typed pin\".into());
             "assert!(tax(300) >= invoice(3, 100));",
         ] {
             assert!(
-                !expected_computed_through_owner(text, "tax", &reaches),
+                !expected_computed_through_owner(text, "tax", false, &reaches),
                 "{text}"
             );
         }
@@ -12694,17 +13183,20 @@ return Err(\"typed pin\".into());
         assert!(!expected_computed_through_owner(
             "assert_eq!(tax(100), Money::new(8));",
             "tax",
+            false,
             &reaches
         ));
         assert!(expected_computed_through_owner(
             "assert_eq!(tax(100), Invoice::new(100).tax);",
             "tax",
+            false,
             &reaches
         ));
         // A method or `Self::` call names no type, so it matches by name.
         assert!(expected_computed_through_owner(
             "assert_eq!(tax(100), cart.new(100));",
             "tax",
+            false,
             &reaches
         ));
         assert_eq!(

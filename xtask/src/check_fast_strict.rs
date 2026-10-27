@@ -483,6 +483,52 @@ mod tests {
     }
 
     #[test]
+    fn renamed_policy_paths_still_require_policy_receipts() -> Result<(), String> {
+        const POLICY: [&str; 3] = [
+            "check-covered-by",
+            "check-process-policy",
+            "check-network-policy",
+        ];
+        let (floor, _) = EMPTY_FAST_REPORT
+            .split_once("\n\nSkipped:\n")
+            .ok_or("control report lacks Skipped boundary")?;
+        for from in ["policy/moved.toml", ".ripr/moved.toml"] {
+            crate::check_fast_rename_tests::with_renamed_path(
+                from,
+                "docs/archive/moved.txt",
+                |phase, paths| {
+                    let paths = paths.iter().map(String::as_str).collect::<Vec<_>>();
+                    for omitted in [None, Some(POLICY[0]), Some(POLICY[1]), Some(POLICY[2])] {
+                        let ran = POLICY
+                            .iter()
+                            .filter(|gate| Some(**gate) != omitted)
+                            .map(|gate| format!("- {gate}"))
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        let report = format!(
+                            "{floor}\n{ran}\n\nSkipped:\n- {}\n",
+                            omitted.unwrap_or("none")
+                        );
+                        let (result, receipt) = selected_receipt(&paths, &report);
+                        if let Some(gate) = omitted {
+                            let error = result.err().ok_or_else(|| {
+                                format!("{phase}: renamed {from} accepted missing {gate}")
+                            })?;
+                            assert!(error.contains(gate), "{error}");
+                            assert!(receipt.contains("Selector: fast_report_mismatch"));
+                        } else {
+                            result?;
+                            assert!(receipt.contains("Status: pass"));
+                        }
+                    }
+                    Ok(())
+                },
+            )?;
+        }
+        Ok(())
+    }
+
+    #[test]
     fn empty_selector_requires_each_unconditional_receipt() -> Result<(), String> {
         selected_receipt(&[], EMPTY_FAST_REPORT).0?;
         let mut accepted = Vec::new();

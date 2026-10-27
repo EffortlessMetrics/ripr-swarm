@@ -108,8 +108,9 @@ cross-crate package-prefix guard, its uniqueness bypass, and the
 `workspace_index_complete` derivation keep their semantics — expansion
 participates in that derivation only through the selection it actually
 produced. No cross-crate test-oracle crediting change (#2664 owns that). No
-change to `input_changed` naming, parity decisions, or any report/JSON
-schema. No registry or external dependency resolution.
+change to `input_changed` naming, parity decisions, or the report/JSON
+schema shape (the typed limitation below reuses the existing
+`analysis_outcome.limitations` entry). No registry or external dependency resolution.
 
 ## Required Evidence
 
@@ -117,6 +118,11 @@ schema. No registry or external dependency resolution.
   dependents may be missing) or the `unavailable` boundary (expansion did
   not run, scope stays the changed packages) whenever the scope decision
   consults a graph in one of those states;
+- the same boundary as a typed `analysis_outcome.limitations` entry
+  (`producer_failure`, language-adapter stage) with a reason and a recovery
+  step, so the report is `partial_with_limitations` instead of complete
+  (#10182); a `complete` graph adds none. Emitted only where the expansion
+  runs (Draft/Fast with unchanged tests);
 - end-to-end evidence that a Draft-mode diff touching only `a` surfaces the
   dependent crate's test as related evidence through the dependency edge,
   and that the same workspace without the edge does not;
@@ -132,27 +138,27 @@ schema. No registry or external dependency resolution.
 
 ## Acceptance Examples
 
-- Workspace `a <- b <- c` (path dependencies) plus unrelated `d`: a Draft
-  diff touching only `a/src/lib.rs` brings `b`'s and `c`'s package files
-  into scope; `d` stays out; a `Draft` finding for `a`'s changed owner may
-  name `b`'s integration test as related evidence. Expanding from `c`
-  (which nothing depends on) adds nothing.
-- The same workspace without `b`'s dependency edge: `b` stays out of scope.
-- A workspace whose manifest inventory cannot be parsed fully: the graph is
-  `limited`, connected edges still participate, and the disclosure names the
-  partial inventory.
-- A directory with no `Cargo.toml` at all: the graph is `unavailable`, the
-  expansion did not run, and the disclosure says the scope stays the changed
-  packages.
-- Crate `t` declares `[lib] path = "lib/core.rs"` and crate `u` path-depends
-  on `t`: a Draft diff touching only `t/lib/core.rs` (no heuristic package
-  root) attributes the file to `t`, brings `u`'s package files into scope,
-  and may name `u`'s integration test as related evidence; a custom target
-  inside a nested package attributes to that nested package, not `t`.
-- A diff deletes dependency directory `a` while `b` still declares
-  `a = { path = "../a" }`: the edge is `TargetMissing` and disconnected,
-  and the declared-target index still brings `b`'s package files into
-  scope.
+1. Workspace `a <- b <- c` (path dependencies) plus unrelated `d`: a Draft
+   diff touching only `a/src/lib.rs` brings `b`'s and `c`'s package files
+   into scope; `d` stays out; a `Draft` finding for `a`'s changed owner may
+   name `b`'s integration test as related evidence. Expanding from `c`
+   (which nothing depends on) adds nothing.
+2. The same workspace without `b`'s dependency edge: `b` stays out of scope.
+3. A workspace whose manifest inventory cannot be parsed fully: the graph is
+   `limited`, connected edges still participate, and the disclosure names the
+   partial inventory.
+4. A directory with no `Cargo.toml` at all: the graph is `unavailable`, the
+   expansion did not run, and the disclosure says the scope stays the changed
+   packages.
+5. Crate `t` declares `[lib] path = "lib/core.rs"` and crate `u` path-depends
+   on `t`: a Draft diff touching only `t/lib/core.rs` (no heuristic package
+   root) attributes the file to `t`, brings `u`'s package files into scope,
+   and may name `u`'s integration test as related evidence; a custom target
+   inside a nested package attributes to that nested package, not `t`.
+6. A diff deletes dependency directory `a` while `b` still declares
+   `a = { path = "../a" }`: the edge is `TargetMissing` and disconnected,
+   and the declared-target index still brings `b`'s package files into
+   scope.
 
 ## Test Mapping
 
@@ -165,6 +171,18 @@ schema. No registry or external dependency resolution.
 - `crates/ripr/src/analysis/workspace/path_dependencies.rs::tests::expansion_attributes_custom_target_files_via_the_manifest_inventory`
 - `crates/ripr/src/analysis/workspace/path_dependencies.rs::tests::expansion_reaches_declared_dependents_when_the_dependency_target_is_missing`
 - `crates/ripr/src/analysis/workspace/path_dependencies.rs::tests::package_root_and_manifest_identities_round_trip`
+- `crates/ripr/src/analysis/workspace/path_dependencies.rs::tests::scope_limitation_is_typed_for_limited_and_unavailable_only`
+- `crates/ripr/tests/broken_manifest_limitation.rs::broken_manifest_is_a_limitation_not_a_complete_analysis`
+- `crates/ripr/tests/broken_manifest_limitation.rs::missing_manifest_is_a_limitation_with_unavailable_reason`
+- `crates/ripr/tests/broken_manifest_limitation.rs::parsed_single_package_manifest_adds_no_limitation`
+- `crates/ripr/tests/broken_manifest_limitation.rs::hostile_manifest_bytes_still_yield_a_bounded_limitation`
+- `crates/ripr/tests/broken_manifest_limitation.rs::human_report_does_not_read_as_plain_complete`
+- `crates/ripr/tests/broken_manifest_limitation.rs::unfollowed_workspace_redirect_is_limited_without_a_parse_claim`
+- `crates/ripr/tests/broken_manifest_limitation.rs::instant_mode_adds_no_path_dependency_limitation`
+- `crates/ripr/tests/broken_manifest_limitation.rs::inlining_the_inherited_dependency_clears_the_redirect_limitation`
+- `crates/ripr/tests/broken_manifest_limitation.rs::non_utf8_manifest_path_is_limited_with_a_utf8_path_next_step`
+- `crates/ripr/tests/no_rust_diff_reads_no_rust.rs::docs_only_diff_does_not_scan_workspace_rust_in_interactive_modes`
+- `crates/ripr/tests/no_rust_diff_reads_no_rust.rs::rust_diff_does_reach_the_sentinel_in_draft_mode`
 - `crates/ripr/src/analysis/workspace/select.rs::tests::dependent_packages_narrow_selection_without_heuristic_changed_roots`
 - `crates/ripr/src/analysis/workspace/select.rs::tests::dependent_packages_enter_draft_and_fast_selection`
 - `crates/ripr/src/analysis/workspace/select.rs::tests::empty_dependent_roots_reproduce_the_unchanged_selection`
@@ -184,7 +202,7 @@ schema. No registry or external dependency resolution.
   the provenance scan's skip list)
 - `crates/ripr/src/analysis/workspace/path_dependencies.rs` —
   `reverse_dependent_scope_expansion`, `expansion_from_provenance`,
-  `PathDependencyScopeExpansion`, package-root/manifest identity mapping
+  `PathDependencyScopeExpansion` (`scope_disclosure`, `scope_limitation`), package-root/manifest identity mapping
 - `crates/ripr/src/analysis/workspace/select.rs` —
   `select_rust_files_for_mode_with_dependent_packages`
 - `crates/ripr/src/analysis/language/rust/mod.rs` — Draft/Fast gating,

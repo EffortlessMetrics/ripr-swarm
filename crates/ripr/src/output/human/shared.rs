@@ -27,7 +27,14 @@ pub(super) struct SharedSections {
 }
 
 impl SharedReport {
+    #[cfg(test)]
     pub fn build(findings: &[&Finding]) -> Self {
+        Self::build_with_origins(findings, None)
+    }
+    pub fn build_with_origins(
+        findings: &[&Finding],
+        origins: Option<&crate::value_origins::ValueOrigins>,
+    ) -> Self {
         let mut report = Self::default();
         if findings
             .iter()
@@ -73,7 +80,11 @@ impl SharedReport {
                 *contexts.entry(key).or_insert(next)
             });
             let mut evidence = Vec::new();
-            for entry in evidence_path_entries(finding, context.is_some()) {
+            for entry in evidence_path_entries(
+                finding,
+                context.is_some(),
+                origins.and_then(|origins| origins.files(finding)),
+            ) {
                 let shared = context.zip(entry.key).map(|(context, key)| {
                     report.intern(&mut keys, (context, false, key), ordinal, &entry.text)
                 });

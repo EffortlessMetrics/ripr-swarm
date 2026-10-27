@@ -682,7 +682,7 @@ fn persist_before_repair_attempt(
     // attempt.
     commands::before_phase_stdout(
         &packet_text,
-        &agent_packet.display().to_string(),
+        &crate::output::path::human_path(&agent_packet),
         options.json,
         &continuation,
     )
@@ -980,7 +980,8 @@ mod tests {
         assert_eq!(
             run(args(&["ripr", "diff", "--format", "xml"])),
             Err(CommandError::Failure(
-                "unknown diff format \"xml\"; expected `human`, `text`, `md`, `markdown`, or `json`".to_string()
+                "unknown diff format \"xml\". Accepted: human, text, md, markdown, json."
+                    .to_string()
             ))
         );
         assert_eq!(

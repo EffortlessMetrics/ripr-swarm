@@ -28,6 +28,32 @@ pub(crate) const REPAIR_ROUTE_AUTHORITY_BOUNDARY: &str =
 const PRODUCER_DISCRIMINATOR_EVIDENCE: &str = "producer-owned missing discriminator fact";
 const SAFE_TEST_TARGET_EVIDENCE: &str = "safe test target";
 
+/// Plain-language rendering of one readiness-evidence string for human
+/// output surfaces only (#10644). A reader cannot act on the internal fact
+/// code, so each known discriminator kind maps to the test evidence the
+/// route still needs. Machine-readable readiness (card wire data, JSON
+/// records) keeps the stable internal strings; consumers of those fields
+/// never pass them through this mapping, and an unrecognized string passes
+/// through unchanged rather than inventing a taxonomy.
+pub(crate) fn humanize_evidence(evidence: &str) -> String {
+    const FACT_PREFIX: &str = "producer-owned missing discriminator fact: ";
+    if let Some(kind) = evidence.strip_prefix(FACT_PREFIX) {
+        let phrase = match kind {
+            "boundary_value" => "a test assertion that pins the changed boundary value exactly",
+            "error_variant" => "a test assertion that observes the changed error variant",
+            "return_value" => "a test assertion that checks the changed return value",
+            "field_value" => "a test assertion that checks the changed field value",
+            "effect" => "a test that observes the changed effect",
+            "match_arm_taken" => "a test assertion that pins which match arm runs",
+            "call_site" => "a test that reaches the changed call",
+            _ => "a test assertion that discriminates the changed behavior exactly",
+        };
+        phrase.to_string()
+    } else {
+        evidence.to_string()
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum RepairRouteState {
@@ -223,11 +249,27 @@ fn incomplete_stage_evidence(class: SeamGripClass) -> &'static str {
     }
 }
 
+/// The missing/required-evidence string for a discriminator kind. The one
+/// producer of this format; human refusal text that needs to recognise a kind
+/// goes through [`is_boundary_value_discriminator_evidence`] instead of parsing
+/// the string itself.
+pub(crate) fn producer_discriminator_evidence(kind: &str) -> String {
+    format!("{PRODUCER_DISCRIMINATOR_EVIDENCE}: {kind}")
+}
+
+/// Whether a readiness evidence item names the boundary-value discriminator.
+pub(crate) fn is_boundary_value_discriminator_evidence(item: &str) -> bool {
+    item == producer_discriminator_evidence(
+        RequiredDiscriminator::BoundaryValue {
+            description: String::new(),
+        }
+        .as_str(),
+    )
+}
+
 fn value_route_readiness(seam: &RepoSeam, evidence: &TestGripEvidence) -> RepairRouteReadiness {
-    let discriminator_evidence = format!(
-        "{PRODUCER_DISCRIMINATOR_EVIDENCE}: {}",
-        seam.required_discriminator().as_str()
-    );
+    let discriminator_evidence =
+        producer_discriminator_evidence(seam.required_discriminator().as_str());
     let required = vec![
         discriminator_evidence.clone(),
         SAFE_TEST_TARGET_EVIDENCE.to_string(),
@@ -799,7 +841,7 @@ mod tests {
 
     use super::{
         ClassifiedSeam, RepairPacketIneligibility, RepairTargetSelection,
-        cross_language_oracle_visibility_unresolved, discriminator_fact_matches,
+        cross_language_oracle_visibility_unresolved, discriminator_fact_matches, humanize_evidence,
         is_safe_for_repair_packet, repair_packet_eligibility, repair_packet_queue_visible,
     };
     use crate::analysis::new_test_target::{
@@ -913,6 +955,94 @@ mod tests {
             blocker: None,
             owner_inline_region: None,
         }
+    }
+
+    #[test]
+    fn humanize_evidence_maps_each_discriminator_kind_to_plain_words() -> Result<(), String> {
+        let cases = [
+            (
+                "producer-owned missing discriminator fact: boundary_value",
+                "a test assertion that pins the changed boundary value exactly",
+            ),
+            (
+                "producer-owned missing discriminator fact: error_variant",
+                "a test assertion that observes the changed error variant",
+            ),
+            (
+                "producer-owned missing discriminator fact: return_value",
+                "a test assertion that checks the changed return value",
+            ),
+            (
+                "producer-owned missing discriminator fact: field_value",
+                "a test assertion that checks the changed field value",
+            ),
+            (
+                "producer-owned missing discriminator fact: effect",
+                "a test that observes the changed effect",
+            ),
+            (
+                "producer-owned missing discriminator fact: match_arm_taken",
+                "a test assertion that pins which match arm runs",
+            ),
+            (
+                "producer-owned missing discriminator fact: call_site",
+                "a test that reaches the changed call",
+            ),
+        ];
+        for (internal, plain) in cases {
+            if humanize_evidence(internal) != plain {
+                return Err(format!(
+                    "humanize_evidence({internal:?}) must be {plain:?}, got {:?}",
+                    humanize_evidence(internal)
+                ));
+            }
+            if humanize_evidence(internal).contains("producer-owned") {
+                return Err(format!(
+                    "humanized text leaks the internal phrase: {internal}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn humanize_evidence_falls_back_and_passes_non_fact_strings_through() -> Result<(), String> {
+        let unknown = humanize_evidence("producer-owned missing discriminator fact: future_kind");
+        if unknown.contains("producer-owned") || unknown.contains("future_kind") {
+            return Err(format!(
+                "unknown kind must not leak internal spelling, got {unknown:?}"
+            ));
+        }
+        for already_plain in ["safe test target", "incomplete evidence stage: activation"] {
+            if humanize_evidence(already_plain) != already_plain {
+                return Err(format!(
+                    "non-fact evidence must pass through unchanged, got {:?}",
+                    humanize_evidence(already_plain)
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn readiness_data_keeps_internal_strings_for_machine_consumers() -> Result<(), String> {
+        // #10644 control: the humanizer is a render-boundary translation
+        // only; the producer-owned readiness vectors that JSON and card wire
+        // data carry must keep the stable internal strings.
+        let mut entry = classified_with(boundary_seam(), SeamGripClass::WeaklyGripped, Vec::new());
+        entry.evidence.new_test_target = Some(inline_unit_admission());
+        let readiness = repair_packet_eligibility(&entry).readiness;
+        if !readiness
+            .required_evidence
+            .iter()
+            .any(|evidence| evidence.starts_with("producer-owned missing discriminator fact"))
+        {
+            return Err(format!(
+                "machine readiness must keep the internal string: {:?}",
+                readiness.required_evidence
+            ));
+        }
+        Ok(())
     }
 
     #[test]

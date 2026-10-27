@@ -1,0 +1,1538 @@
+//! Public-API controls for crediting operator syntax to the operator-trait
+//! impl it runs (#9567).
+//!
+//! `a + b` runs `Add::add` of `a`'s type without naming it. A same-file test
+//! whose left operand is syntactically a value of the impl's self type reaches
+//! the changed method directly; an operand ripr cannot type to that exact
+//! type, a shadowed type or a second impl of the trait for the type does not.
+//! Relating the test never raises a class by itself.
+
+use ripr::domain::{ExposureClass, RelationReason};
+use ripr::{CheckInput, Finding, Mode, OutputFormat, check_workspace};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// One operator impl for `Money` plus the test body under study.
+struct Case {
+    label: &'static str,
+    /// Trait path as written in the impl header (`Add`, `Neg`).
+    trait_name: &'static str,
+    method: &'static str,
+    /// Signature tail after the method name, and the changed body line.
+    signature: &'static str,
+    old_line: &'static str,
+    new_line: &'static str,
+    extra_items: &'static str,
+    /// Source of `src/macros.rs`, a second workspace file.
+    sibling: &'static str,
+    test_body: &'static str,
+}
+
+fn source(case: &Case) -> String {
+    format!(
+        "use std::ops::*;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Money(pub i64);
+
+impl {trait_name} for Money {{
+    {signature} {{
+{new_line}
+    }}
+}}
+{extra}
+#[cfg(test)]
+mod tests {{
+    use super::*;
+
+    #[test]
+    fn operator_under_test() {{
+        {body}
+    }}
+}}
+",
+        trait_name = case.trait_name,
+        signature = case.signature,
+        new_line = case.new_line,
+        extra = case.extra_items,
+        body = case.test_body,
+    )
+}
+
+fn direct_tests(case: &Case) -> Result<Vec<String>, String> {
+    let findings = findings_of(case)?;
+    let mut names: Vec<String> = findings
+        .iter()
+        .flat_map(|finding| &finding.related_tests)
+        .filter(|test| test.relation_reason == Some(RelationReason::DirectOwnerCall))
+        .map(|test| test.name.clone())
+        .collect();
+    names.sort();
+    names.dedup();
+    Ok(names)
+}
+
+/// The findings on the changed line, in a throwaway workspace.
+fn findings_of(case: &Case) -> Result<Vec<Finding>, String> {
+    static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+    let root: PathBuf = std::env::temp_dir().join(format!(
+        "ripr-operator-credit-{}-{}",
+        std::process::id(),
+        SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    ));
+    let result = run(case, &root);
+    let _ = std::fs::remove_dir_all(&root);
+    result.map_err(|message| format!("{}: {message}", case.label))
+}
+
+fn run(case: &Case, root: &Path) -> Result<Vec<Finding>, String> {
+    std::fs::create_dir_all(root.join("src")).map_err(|e| format!("create dir: {e}"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"operator-credit\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\n",
+    )
+    .map_err(|e| format!("write Cargo.toml: {e}"))?;
+    let lib = source(case);
+    let line = lib
+        .lines()
+        .position(|line| line == case.new_line)
+        .map(|at| at + 1)
+        .ok_or("premise: the changed line is in the source")?;
+    if !case.sibling.is_empty() {
+        std::fs::write(root.join("src/macros.rs"), case.sibling)
+            .map_err(|e| format!("write sibling: {e}"))?;
+    }
+    std::fs::write(root.join("src/lib.rs"), &lib).map_err(|e| format!("write source: {e}"))?;
+    std::fs::write(
+        root.join("diff.patch"),
+        format!(
+            "diff --git a/src/lib.rs b/src/lib.rs
+index 1111111..2222222 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -{line},1 +{line},1 @@
+-{}
++{}
+",
+            case.old_line, case.new_line
+        ),
+    )
+    .map_err(|e| format!("write diff: {e}"))?;
+    let output = check_workspace(CheckInput {
+        root: root.to_path_buf(),
+        base: None,
+        diff_file: Some(root.join("diff.patch")),
+        mode: Mode::Ready,
+        format: OutputFormat::Json,
+        include_unchanged_tests: true,
+        ..CheckInput::default()
+    })?;
+    let findings: Vec<Finding> = output
+        .findings
+        .into_iter()
+        .filter(|finding| finding.probe.location.line == line)
+        .collect();
+    if findings.is_empty() {
+        return Err("premise: the changed line yields a finding".to_string());
+    }
+    Ok(findings)
+}
+
+const ADD: Case = Case {
+    label: "add",
+    trait_name: "Add",
+    method: "add",
+    signature: "type Output = Money;\n    fn add(self, other: Money) -> Money",
+    old_line: "        Money(self.0 + other.0)",
+    new_line: "        Money(other.0 + self.0)",
+    extra_items: "",
+    sibling: "",
+    test_body: "assert_eq!(Money(2) + Money(3), Money(5));",
+};
+
+fn with_body(case: Case, label: &'static str, test_body: &'static str) -> Case {
+    Case {
+        label,
+        test_body,
+        ..case
+    }
+}
+
+#[test]
+fn typed_operands_reach_each_operator_impl() -> Result<(), String> {
+    let cases = [
+        with_body(ADD, "add", "assert_eq!(Money(2) + Money(3), Money(5));"),
+        Case {
+            label: "sub",
+            trait_name: "Sub",
+            method: "sub",
+            signature: "type Output = Money;\n    fn sub(self, other: Money) -> Money",
+            old_line: "        Money(self.0 - other.0)",
+            new_line: "        Money(self.0 + 0 - other.0)",
+            extra_items: "",
+            sibling: "",
+            test_body: "let a = Money(5);\n        let b = Money(3);\n        assert_eq!(a - b, Money(2));",
+        },
+        Case {
+            label: "neg",
+            trait_name: "Neg",
+            method: "neg",
+            signature: "type Output = Money;\n    fn neg(self) -> Money",
+            old_line: "        Money(-self.0)",
+            new_line: "        Money(0 - self.0)",
+            extra_items: "",
+            sibling: "",
+            test_body: "let m = Money(4);\n        assert_eq!(-m, Money(-4));",
+        },
+        Case {
+            label: "not",
+            trait_name: "Not",
+            method: "not",
+            signature: "type Output = Money;\n    fn not(self) -> Money",
+            old_line: "        Money(!self.0)",
+            new_line: "        Money(!(self.0))",
+            extra_items: "",
+            sibling: "",
+            test_body: "assert_eq!(!Money(0), Money(-1));",
+        },
+        Case {
+            label: "add_assign",
+            trait_name: "AddAssign",
+            method: "add_assign",
+            signature: "fn add_assign(&mut self, other: Money)",
+            old_line: "        self.0 += other.0;",
+            new_line: "        self.0 = self.0 + other.0;",
+            extra_items: "",
+            sibling: "",
+            test_body: "let mut total = Money(1);\n        total += Money(2);\n        assert_eq!(total, Money(3));",
+        },
+    ];
+    let mut failures = Vec::new();
+    for case in &cases {
+        let direct = direct_tests(case)?;
+        if direct != ["operator_under_test"] {
+            failures.push(format!("{} ({}): got {direct:?}", case.label, case.method));
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n"))
+    }
+}
+
+/// Every binary and assigning operator in the dispatch table reaches its own
+/// impl, so a defect in one row's token or method name cannot hide behind the
+/// five representative cases above.
+#[test]
+fn every_binary_and_assigning_operator_reaches_its_impl() -> Result<(), String> {
+    let binary = [
+        ("Add", "+"),
+        ("Sub", "-"),
+        ("Mul", "*"),
+        ("Div", "/"),
+        ("Rem", "%"),
+        ("BitAnd", "&"),
+        ("BitOr", "|"),
+        ("BitXor", "^"),
+        ("Shl", "<<"),
+        ("Shr", ">>"),
+    ];
+    let leak = |text: String| -> &'static str { Box::leak(text.into_boxed_str()) };
+    let mut failures = Vec::new();
+    for (trait_name, token) in binary {
+        let method = trait_name.to_lowercase();
+        let plain = Case {
+            label: leak(method.clone()),
+            trait_name,
+            method: leak(method.clone()),
+            signature: leak(format!(
+                "type Output = Money;\n    fn {method}(self, other: Money) -> Money"
+            )),
+            old_line: leak(format!("        Money(self.0 {token} other.0)")),
+            new_line: leak(format!("        Money((self.0 {token} other.0) + 0)")),
+            extra_items: "",
+            sibling: "",
+            test_body: leak(format!(
+                "let a = Money(6);\n        let b = Money(2);\n        let r = a {token} b;\n        assert_eq!(r, Money(0));"
+            )),
+        };
+        let assign_trait = leak(format!("{trait_name}Assign"));
+        let assign_method = format!("{method}_assign");
+        let assign = Case {
+            label: leak(assign_method.clone()),
+            trait_name: assign_trait,
+            method: leak(assign_method.clone()),
+            signature: leak(format!("fn {assign_method}(&mut self, other: Money)")),
+            old_line: leak(format!("        self.0 {token}= other.0;")),
+            new_line: leak(format!("        self.0 = self.0 {token} other.0;")),
+            extra_items: "",
+            sibling: "",
+            test_body: leak(format!(
+                "let mut total = Money(6);\n        total {token}= Money(2);\n        let _ = total;"
+            )),
+        };
+        for case in [plain, assign] {
+            let direct = direct_tests(&case)?;
+            if direct != ["operator_under_test"] {
+                failures.push(format!("{} ({token}): got {direct:?}", case.label));
+            }
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n"))
+    }
+}
+
+#[test]
+fn operands_that_are_not_established_as_the_impl_type_stay_unrelated() -> Result<(), String> {
+    let bodies: [(&'static str, &'static str); 15] = [
+        ("integers", "assert_eq!(1 + 2, 3);"),
+        (
+            "parameter of a nested fn shadows the binding",
+            "let a = Money(1);\n        fn h(a: i64) -> i64 {\n            a + 1\n        }\n        assert_eq!(h(1), 2);\n        let _ = a;",
+        ),
+        (
+            "closure parameter shadows the binding",
+            "let a = Money(1);\n        let inc = |a: i64| a + 1;\n        assert_eq!(inc(1), 2);\n        let _ = a;",
+        ),
+        (
+            "untyped closure parameter shadows the binding",
+            "let a = Money(1);\n        let inc = |a| a + 1;\n        assert_eq!(inc(1), 2);\n        let _ = a;",
+        ),
+        (
+            "reference-pattern closure parameter shadows the binding",
+            "let a = Money(5);\n        let v = [1i64, 2];\n        let s: i64 = v.iter().map(|&a| (a + 1)).sum();\n        assert_eq!(s, 5);\n        let _ = a;",
+        ),
+        (
+            "tuple-pattern closure parameter shadows the binding",
+            "let a = Money(5);\n        let v = [(1i64, 2i64)];\n        let s: i64 = v.iter().map(|(x, a)| (a + x)).sum();\n        assert_eq!(s, 3);\n        let _ = a;",
+        ),
+        (
+            "array-pattern closure parameter shadows the binding",
+            "let a = Money(5);\n        let v = [[1i64, 2i64]];\n        let s: i64 = v.iter().map(|[x, a]| (a + x)).sum();\n        assert_eq!(s, 3);\n        let _ = a;",
+        ),
+        (
+            "reference operands select the impl for &Money",
+            "let a = Money(1);\n        let b = Money(2);\n        assert_eq!(&a + &b, Money(3));",
+        ),
+        (
+            "method chain result",
+            "let a = Money(1);\n        assert_eq!(a.clone() + Money(2), Money(3));",
+        ),
+        (
+            "tail of a longer expression",
+            "assert_eq!(2 * Money(1).0 + 3, 5);",
+        ),
+        (
+            "field operand",
+            "let pair = (Money(1), Money(2));\n        assert_eq!(pair.0 + pair.1, Money(3));",
+        ),
+        (
+            "binding of another type",
+            "let other = Tile(1);\n        assert_eq!(other + other, Tile(2));",
+        ),
+        (
+            "result thrown away",
+            "let _ = Money(1) + Money(2);\n        assert_eq!(Money(9).0, 9);",
+        ),
+        (
+            "untyped parameter",
+            "fn twice(m: Money) -> Money {\n            m + m\n        }\n        assert_eq!(twice(Money(1)), Money(2));",
+        ),
+        (
+            "shadowing let",
+            "let a = Money(1);\n        let a = 7;\n        assert_eq!(a + a, 14);",
+        ),
+    ];
+    let mut failures = Vec::new();
+    for (label, body) in bodies {
+        let direct = direct_tests(&with_body(ADD, label, body))?;
+        if !direct.is_empty() {
+            failures.push(format!("{label}: related by a direct call: {direct:?}"));
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n"))
+    }
+}
+
+#[test]
+fn a_second_impl_of_the_trait_for_the_type_is_not_attributed() -> Result<(), String> {
+    // `Money + i64` and `Money + Money` pick different impls by right-hand
+    // side, which ripr does not type.
+    let case = Case {
+        extra_items: "
+impl Add<i64> for Money {
+    type Output = Money;
+    fn add(self, other: i64) -> Money {
+        Money(self.0 + other)
+    }
+}
+",
+        ..with_body(
+            ADD,
+            "two impls",
+            "assert_eq!(Money(2) + Money(3), Money(5));",
+        )
+    };
+    let direct = direct_tests(&case)?;
+    if direct.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("two impls: related by a direct call: {direct:?}"))
+    }
+}
+
+#[test]
+fn a_type_the_test_redeclares_is_not_the_impl_type() -> Result<(), String> {
+    let case = with_body(
+        ADD,
+        "shadowed type",
+        "#[derive(Clone, Copy, Debug, PartialEq)]\n        struct Money(i64);\n        impl std::ops::Add for Money {\n            type Output = Money;\n            fn add(self, o: Money) -> Money {\n                Money(self.0 + o.0)\n            }\n        }\n        assert_eq!(Money(2) + Money(3), Money(5));",
+    );
+    let direct = direct_tests(&case)?;
+    if direct.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "shadowed type: related by a direct call: {direct:?}"
+        ))
+    }
+}
+
+#[test]
+fn generic_arguments_are_not_shift_operators() -> Result<(), String> {
+    let shr = Case {
+        label: "generic close after a tuple comma",
+        trait_name: "Shr",
+        method: "shr",
+        signature: "type Output = Money;\n    fn shr(self, other: Money) -> Money",
+        old_line: "        Money(self.0 >> other.0)",
+        new_line: "        Money((self.0) >> other.0)",
+        extra_items: "",
+        sibling: "",
+        test_body: "let v: Vec<Result<u8, Money>> = Vec::new();\n        assert!(v.is_empty());",
+    };
+    let direct = direct_tests(&shr)?;
+    if !direct.is_empty() {
+        return Err(format!(
+            "generic `>>`: related by a direct call: {direct:?}"
+        ));
+    }
+    let real = Case {
+        label: "a real shift",
+        test_body: "let a = Money(8);\n        assert_eq!(a >> Money(1), Money(4));",
+        ..shr
+    };
+    let direct = direct_tests(&real)?;
+    if direct != ["operator_under_test"] {
+        return Err(format!("a real `>>` was not credited: {direct:?}"));
+    }
+    // A comparison earlier in the statement opens no generic argument.
+    let after_comparison = Case {
+        label: "a real shift after a comparison",
+        test_body: "let a = Money(8);\n        assert!(1 < 2 && (a >> Money(1)).0 == 4);",
+        ..shr
+    };
+    let direct = direct_tests(&after_comparison)?;
+    if direct != ["operator_under_test"] {
+        return Err(format!(
+            "a `>>` after a comparison was not credited: {direct:?}"
+        ));
+    }
+    // A comparison `>` must not cancel a generic opener, and a `;` inside an
+    // array type must not end the statement.
+    for (label, body) in [
+        (
+            "comparison before a turbofish generic",
+            "let ok = 2 > 1 && 3 > 2 && f::<Vec<u8>, Result<u8, Money>>().is_ok();\n        assert!(ok);",
+        ),
+        (
+            "array length inside generics",
+            "let v: Vec<Vec<[Money; 2]>> = Vec::new();\n        assert!(v.is_empty());",
+        ),
+    ] {
+        let case = Case {
+            label,
+            test_body: body,
+            ..shr
+        };
+        let direct = direct_tests(&case)?;
+        if !direct.is_empty() {
+            return Err(format!("{label}: related by a direct call: {direct:?}"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn an_operator_inside_stringify_is_text_not_a_call() -> Result<(), String> {
+    let text_only = with_body(
+        ADD,
+        "stringify only",
+        "assert_eq!(stringify!(Money(1) + Money(2)), \"Money(1) + Money(2)\");",
+    );
+    let direct = direct_tests(&text_only)?;
+    if !direct.is_empty() {
+        return Err(format!("stringify! credited the impl: {direct:?}"));
+    }
+    let evaluated_too = with_body(
+        ADD,
+        "stringify beside an evaluated plus",
+        "let s = stringify!(Money(1) + Money(2));\n        assert!(!s.is_empty());\n        assert_eq!(Money(2) + Money(3), Money(5));",
+    );
+    let direct = direct_tests(&evaluated_too)?;
+    if direct == ["operator_under_test"] {
+        Ok(())
+    } else {
+        Err(format!("the evaluated `+` was not credited: {direct:?}"))
+    }
+}
+
+#[test]
+fn a_binary_minus_after_a_block_is_not_negation() -> Result<(), String> {
+    // `Money { 0: 5 } - n` runs `Sub`, not `Neg::neg` of `n`.
+    let case = Case {
+        label: "binary minus after a block",
+        trait_name: "Neg",
+        method: "neg",
+        signature: "type Output = Money;\n    fn neg(self) -> Money",
+        old_line: "        Money(-self.0)",
+        new_line: "        Money(0 - self.0)",
+        extra_items: "",
+        sibling: "",
+        test_body: "let n = Money(2);\n        let r = Money { 0: 5 } - n;\n        assert_eq!(r.0, 3);",
+    };
+    let direct = direct_tests(&case)?;
+    if direct.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("related by a direct call: {direct:?}"))
+    }
+}
+
+#[test]
+fn a_macro_that_may_generate_a_second_impl_is_not_attributed() -> Result<(), String> {
+    // The macro expands to `Add<i32> for Money`, which the index never sees.
+    let case = Case {
+        extra_items: "
+macro_rules! add_for {
+    ($t:ty) => {
+        impl Add<$t> for Money {
+            type Output = Money;
+            fn add(self, other: $t) -> Money {
+                Money(self.0 + other as i64)
+            }
+        }
+    };
+}
+add_for!(i32);
+",
+        ..with_body(
+            ADD,
+            "macro-generated impl",
+            "assert_eq!(Money(2) + Money(3), Money(5));",
+        )
+    };
+    let direct = direct_tests(&case)?;
+    if direct.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("related by a direct call: {direct:?}"))
+    }
+}
+
+#[test]
+fn a_macro_defined_in_a_sibling_file_may_generate_a_second_impl() -> Result<(), String> {
+    // `add_for!(i32)` is invoked here but defined in `src/macros.rs`.
+    let case = Case {
+        extra_items: "
+add_for!(i32);
+",
+        sibling: "macro_rules! add_for {
+    ($t:ty) => {
+        impl Add<$t> for Money {
+            type Output = Money;
+            fn add(self, other: $t) -> Money {
+                Money(self.0 + other as i64)
+            }
+        }
+    };
+}
+",
+        ..with_body(
+            ADD,
+            "sibling-file macro",
+            "assert_eq!(Money(2) + Money(3), Money(5));",
+        )
+    };
+    let direct = direct_tests(&case)?;
+    if direct.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("related by a direct call: {direct:?}"))
+    }
+}
+
+#[test]
+fn a_comparison_before_a_plus_does_not_hide_the_operator() -> Result<(), String> {
+    let case = with_body(
+        ADD,
+        "comparison then add",
+        "let n = 1;\n        assert!(n < 5, \"{:?}\", Money(1) + Money(2));",
+    );
+    let direct = direct_tests(&case)?;
+    if direct == ["operator_under_test"] {
+        Ok(())
+    } else {
+        Err(format!("expected the add credited, got {direct:?}"))
+    }
+}
+
+/// `&a + &b` runs `impl Add<&Money> for &Money`, never the owned impl.
+const REFERENCE_IMPL: &str = "
+impl Add<&Money> for &Money {
+    type Output = Money;
+    fn add(self, other: &Money) -> Money {
+        Money(self.0 + other.0)
+    }
+}
+";
+
+#[test]
+fn an_owned_operand_reaches_the_owned_impl_beside_a_reference_impl() -> Result<(), String> {
+    let case = Case {
+        extra_items: REFERENCE_IMPL,
+        ..with_body(
+            ADD,
+            "owned operands beside a reference impl",
+            "let a = Money(2);\n        let b = Money(3);\n        assert_eq!(a + b, Money(5));",
+        )
+    };
+    let direct = direct_tests(&case)?;
+    if direct.is_empty() {
+        return Err("owned operands were not credited".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn reference_operands_do_not_reach_the_owned_impl() -> Result<(), String> {
+    let bodies: [(&'static str, &'static str); 4] = [
+        (
+            "annotated reference bindings",
+            "let a: &Money = &Money(2);\n        let b = &Money(3);\n        assert_eq!(a + b, Money(5));",
+        ),
+        (
+            "unannotated reference bindings",
+            "let a = &Money(2);\n        let b = &Money(3);\n        assert_eq!(a + b, Money(5));",
+        ),
+        (
+            "reference literal operands",
+            "assert_eq!(&Money(2) + &Money(3), Money(5));",
+        ),
+        (
+            "reference annotation on a constructor",
+            "let a: &Money = &Money(2);\n        assert_eq!(a + &Money(3), Money(5));",
+        ),
+    ];
+    let mut failures = Vec::new();
+    for (label, body) in bodies {
+        let case = Case {
+            extra_items: REFERENCE_IMPL,
+            ..with_body(ADD, label, body)
+        };
+        let direct = direct_tests(&case)?;
+        if !direct.is_empty() {
+            failures.push(format!("{label}: credited the owned impl: {direct:?}"));
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n"))
+    }
+}
+
+fn classes(case: &Case) -> Result<Vec<ExposureClass>, String> {
+    Ok(findings_of(case)?
+        .into_iter()
+        .map(|finding| finding.class)
+        .collect())
+}
+
+/// Relating the test says the operator runs, not that an assertion would
+/// notice the impl change. A result built from the impl's own tokens
+/// (`Money(..)`) is observed by the test's `Money(..)` operands and reads
+/// `exposed`; one built through `Self(..)` shares no token with the assertion,
+/// so the credit is unconfirmed and the gap stays withheld rather than turning
+/// into an "add a test" signal for code the test pins.
+#[test]
+fn a_credit_no_assertion_confirms_is_withheld_not_a_gap() -> Result<(), String> {
+    let confirmed = with_body(
+        ADD,
+        "confirmed",
+        "assert_eq!(Money(2) + Money(3), Money(5));",
+    );
+    assert_eq!(classes(&confirmed)?, [ExposureClass::Exposed]);
+
+    let unconfirmed = Case {
+        label: "self_constructor",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        ..ADD
+    };
+    let findings = findings_of(&unconfirmed)?;
+    let got: Vec<_> = findings
+        .iter()
+        .map(|finding| finding.class.clone())
+        .collect();
+    if got != [ExposureClass::StaticUnknown] {
+        return Err(format!("self_constructor: got {got:?}"));
+    }
+    let limit = findings[0].static_limit_kind.map(|kind| kind.as_str());
+    assert_eq!(limit, Some("rust_implicit_call_unresolved"));
+
+    // A result bound under the method's own name is not a call: the operator
+    // still reaches the impl, no assertion confirms the changed line, and the
+    // gap stays withheld.
+    let bound_as_method_name = Case {
+        label: "bound_as_add",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        test_body: "let add = Money(2) + Money(3);\n    assert_eq!(add, Money(5));",
+        ..ADD
+    };
+    assert_eq!(
+        classes(&bound_as_method_name)?,
+        [ExposureClass::StaticUnknown]
+    );
+
+    // A second test that only exercises the operator is no more confirming.
+    let two_operator_tests = Case {
+        label: "two_operator_tests",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        extra_items: "
+#[cfg(test)]
+mod more {
+    use super::*;
+
+    #[test]
+    fn second_operator_use() {
+        let sum = Money(1) + Money(1);
+        assert_eq!(sum.0, 2);
+    }
+}
+",
+        ..ADD
+    };
+    assert_eq!(
+        classes(&two_operator_tests)?,
+        [ExposureClass::StaticUnknown]
+    );
+
+    // A test that names the method decided reach itself, so the finding is
+    // judged by its own evidence, not withheld as syntax-only.
+    let one_named_call = Case {
+        label: "one_named_call",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        extra_items: "
+#[cfg(test)]
+mod named {
+    use super::*;
+
+    #[test]
+    fn named_call() {
+        let sum = Money(1).add(Money(1));
+        assert_eq!(sum.0, 2);
+    }
+}
+",
+        ..ADD
+    };
+    assert_eq!(classes(&one_named_call)?, [ExposureClass::WeaklyExposed]);
+
+    // A path call on another type is not a call of this impl: still syntax-only (#10551).
+    let other_type_path = Case {
+        label: "other_type_path",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        extra_items: "
+#[cfg(test)]
+mod pathed {
+    use super::*;
+
+    #[test]
+    fn pathed_call() {
+        let sum = Wrapper::add(Money(1), Money(1));\n        assert_eq!(sum.0, 2);
+    }
+}
+",
+        ..ADD
+    };
+    assert_eq!(classes(&other_type_path)?, [ExposureClass::StaticUnknown]);
+
+    // A longer method name is not the owner (#10551).
+    let longer_method_path = Case {
+        label: "longer_method_path",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        extra_items: "
+#[cfg(test)]
+mod pathed {
+    use super::*;
+
+    #[test]
+    fn pathed_call() {
+        let sum = Money::address(Money(1), Money(1));\n        assert_eq!(sum.0, 2);
+    }
+}
+",
+        ..ADD
+    };
+    assert_eq!(
+        classes(&longer_method_path)?,
+        [ExposureClass::StaticUnknown]
+    );
+
+    // A type whose name merely ends in the impl type is another type (#10551).
+    let longer_type_path = Case {
+        label: "longer_type_path",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        extra_items: "
+#[cfg(test)]
+mod pathed {
+    use super::*;
+
+    #[test]
+    fn pathed_call() {
+        let sum = MyMoney::add(Money(1), Money(1));\n        assert_eq!(sum.0, 2);
+    }
+}
+",
+        ..ADD
+    };
+    assert_eq!(classes(&longer_type_path)?, [ExposureClass::StaticUnknown]);
+
+    // Another trait's `add` on the same type is not a call of this impl (#10551).
+    let other_trait_path = Case {
+        label: "other_trait_path",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        extra_items: "
+#[cfg(test)]
+mod pathed {
+    use super::*;
+
+    #[test]
+    fn pathed_call() {
+        let sum = <Money as Audit>::add(Money(1), Money(1));\n        assert_eq!(sum.0, 2);
+    }
+}
+",
+        ..ADD
+    };
+    assert_eq!(classes(&other_trait_path)?, [ExposureClass::StaticUnknown]);
+
+    // A path inside `stringify!` is text, never evaluated (#10551).
+    let stringified_path = Case {
+        label: "stringified_path",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        extra_items: "
+#[cfg(test)]
+mod pathed {
+    use super::*;
+
+    #[test]
+    fn pathed_call() {
+        let _ = stringify!(Money::add(1, 2));\n        let sum = Money(1) + Money(1);\n        assert_eq!(sum.0, 2);
+    }
+}
+",
+        ..ADD
+    };
+    assert_eq!(classes(&stringified_path)?, [ExposureClass::StaticUnknown]);
+
+    // An inherent `add` wins `Money::add(..)`, so the call is not this trait impl (#10551).
+    let inherent_method_wins = Case {
+        label: "inherent_method_wins",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        extra_items: "impl Money {\n    pub fn add(a: Money, b: Money) -> Money {\n        Money(a.0 + b.0)\n    }\n}\n
+#[cfg(test)]
+mod pathed {
+    use super::*;
+
+    #[test]
+    fn pathed_call() {
+        let sum = Money::add(Money(1), Money(1));\n        assert_eq!(sum.0, 2);
+    }
+}
+",
+        ..ADD
+    };
+    assert_eq!(
+        classes(&inherent_method_wins)?,
+        [ExposureClass::StaticUnknown]
+    );
+
+    // A module path with blanks (or a masked comment) is still another module's `Money` (#10551).
+    let blanked_module_path = Case {
+        label: "blanked_module_path",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        extra_items: "
+#[cfg(test)]
+mod pathed {
+    use super::*;
+
+    #[test]
+    fn pathed_call() {
+        let sum = crate::other:: Money::add(Money(1), Money(1));\n        assert_eq!(sum.0, 2);
+    }
+}
+",
+        ..ADD
+    };
+    assert_eq!(
+        classes(&blanked_module_path)?,
+        [ExposureClass::StaticUnknown]
+    );
+
+    // A `Money` the test imports from elsewhere is not the impl type (#10551).
+    let imported_type_path = Case {
+        label: "imported_type_path",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        extra_items: "
+#[cfg(test)]
+mod pathed {
+    use super::*;
+
+    #[test]
+    fn pathed_call() {
+        use crate::other::Money;\n        let sum = Money::add(Money(1), Money(1));\n        assert_eq!(sum.0, 2);
+    }
+}
+",
+        ..ADD
+    };
+    assert_eq!(
+        classes(&imported_type_path)?,
+        [ExposureClass::StaticUnknown]
+    );
+
+    // A `Money` the test declares itself is not the impl type (#10551).
+    let redeclared_type_path = Case {
+        label: "redeclared_type_path",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        extra_items: "
+#[cfg(test)]
+mod pathed {
+    use super::*;
+
+    #[test]
+    fn pathed_call() {
+        struct Money;\n        let sum = Money::add(1, 1);\n        assert_eq!(sum, 2);
+    }
+}
+",
+        ..ADD
+    };
+    assert_eq!(
+        classes(&redeclared_type_path)?,
+        [ExposureClass::StaticUnknown]
+    );
+
+    // A path call that asserts nothing lifts only the withholding: the finding stays an unconfirmed `weakly_exposed`, it does not borrow evidence (#10551).
+    let path_call_without_assertion = Case {
+        label: "path_call_without_assertion",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        extra_items: "
+#[cfg(test)]
+mod pathed {
+    use super::*;
+
+    #[test]
+    fn pathed_call() {
+        let _ = Money::add(Money(1), Money(1));
+    }
+}
+",
+        ..ADD
+    };
+    assert_eq!(
+        classes(&path_call_without_assertion)?,
+        [ExposureClass::WeaklyExposed]
+    );
+
+    // The related rows are capped at eight for display; a path call among the
+    // cut rows cannot be seen, so the result must not depend on test names:
+    // renaming only the path-call test leaves the class unchanged (#10551).
+    let crowded_path_call_last = Case {
+        label: "crowded_path_call_last",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        extra_items: "
+#[cfg(test)]
+mod crowded {
+    use super::*;
+
+    #[test]
+    fn a01_operator() {
+        let sum = Money(1) + Money(1);
+        assert_eq!(sum.0, 2);
+    }
+
+    #[test]
+    fn a02_operator() {
+        let sum = Money(1) + Money(1);
+        assert_eq!(sum.0, 2);
+    }
+
+    #[test]
+    fn a03_operator() {
+        let sum = Money(1) + Money(1);
+        assert_eq!(sum.0, 2);
+    }
+
+    #[test]
+    fn a04_operator() {
+        let sum = Money(1) + Money(1);
+        assert_eq!(sum.0, 2);
+    }
+
+    #[test]
+    fn a05_operator() {
+        let sum = Money(1) + Money(1);
+        assert_eq!(sum.0, 2);
+    }
+
+    #[test]
+    fn a06_operator() {
+        let sum = Money(1) + Money(1);
+        assert_eq!(sum.0, 2);
+    }
+
+    #[test]
+    fn a07_operator() {
+        let sum = Money(1) + Money(1);
+        assert_eq!(sum.0, 2);
+    }
+
+    #[test]
+    fn zz_pathed() {
+        let sum = Money::add(Money(1), Money(1));
+        assert_eq!(sum.0, 2);
+    }
+}
+",
+        ..ADD
+    };
+    assert_eq!(
+        classes(&crowded_path_call_last)?,
+        [ExposureClass::StaticUnknown]
+    );
+    let crowded_path_call_first = Case {
+        label: "crowded_path_call_first",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        extra_items: "
+#[cfg(test)]
+mod crowded {
+    use super::*;
+
+    #[test]
+    fn a01_operator() {
+        let sum = Money(1) + Money(1);
+        assert_eq!(sum.0, 2);
+    }
+
+    #[test]
+    fn a02_operator() {
+        let sum = Money(1) + Money(1);
+        assert_eq!(sum.0, 2);
+    }
+
+    #[test]
+    fn a03_operator() {
+        let sum = Money(1) + Money(1);
+        assert_eq!(sum.0, 2);
+    }
+
+    #[test]
+    fn a04_operator() {
+        let sum = Money(1) + Money(1);
+        assert_eq!(sum.0, 2);
+    }
+
+    #[test]
+    fn a05_operator() {
+        let sum = Money(1) + Money(1);
+        assert_eq!(sum.0, 2);
+    }
+
+    #[test]
+    fn a06_operator() {
+        let sum = Money(1) + Money(1);
+        assert_eq!(sum.0, 2);
+    }
+
+    #[test]
+    fn a07_operator() {
+        let sum = Money(1) + Money(1);
+        assert_eq!(sum.0, 2);
+    }
+
+    #[test]
+    fn a00_pathed() {
+        let sum = Money::add(Money(1), Money(1));
+        assert_eq!(sum.0, 2);
+    }
+}
+",
+        ..ADD
+    };
+    assert_eq!(
+        classes(&crowded_path_call_first)?,
+        [ExposureClass::StaticUnknown]
+    );
+
+    // `Type::method(..)` names the owner like `.method(..)`, so the finding is judged by that test's own evidence (#10551).
+    let type_path_call = Case {
+        label: "type_path_call",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        extra_items: "
+#[cfg(test)]
+mod pathed {
+    use super::*;
+
+    #[test]
+    fn pathed_call() {
+        let sum = Money::add(Money(1), Money(1));\n        assert_eq!(sum.0, 2);
+    }
+}
+",
+        ..ADD
+    };
+    assert_eq!(classes(&type_path_call)?, [ExposureClass::WeaklyExposed]);
+
+    // `<Type as Trait>::method(..)` names the owner too (#10551).
+    let qualified_path_call = Case {
+        label: "qualified_path_call",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        extra_items: "
+#[cfg(test)]
+mod pathed {
+    use super::*;
+
+    #[test]
+    fn pathed_call() {
+        let sum = <Money as Add>::add(Money(1), Money(1));\n        assert_eq!(sum.0, 2);
+    }
+}
+",
+        ..ADD
+    };
+    assert_eq!(
+        classes(&qualified_path_call)?,
+        [ExposureClass::WeaklyExposed]
+    );
+
+    // Same-named tests in different inline modules are different tests. The
+    // later one calls the method and observes the sum, so the finding is
+    // judged by that test too (it was once dropped as a duplicate by name).
+    let same_name_named_call_later = Case {
+        label: "same_name_named_call_later",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        extra_items: "
+#[cfg(test)]
+mod operator {
+    use super::*;
+
+    #[test]
+    fn operator_under_test() {
+        let sum = Money(1) + Money(1);
+        assert_eq!(sum.0, 2);
+    }
+}
+",
+        test_body: "let other = Money(2).add(Money(3));\n        assert_eq!(other.0, 5);",
+        ..ADD
+    };
+    assert_eq!(
+        classes(&same_name_named_call_later)?,
+        [ExposureClass::Exposed]
+    );
+
+    // The row for the later test must resolve to that test's own body: an
+    // earlier operator-only test of the same name must not stand in for a
+    // later one that calls `.add(` and confirms nothing.
+    let same_name_unconfirmed_named_call_later = Case {
+        label: "same_name_unconfirmed_named_call_later",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        extra_items: "
+#[cfg(test)]
+mod operator {
+    use super::*;
+
+    #[test]
+    fn operator_under_test() {
+        let sum = Money(1) + Money(1);
+        assert_eq!(sum.0, 2);
+    }
+}
+",
+        test_body: "let r = Money(2).add(Money(3));\n        assert_eq!(r.0, 5);",
+        ..ADD
+    };
+    assert_eq!(
+        classes(&same_name_unconfirmed_named_call_later)?,
+        [ExposureClass::WeaklyExposed]
+    );
+
+    // A finding whose infection is not read has a different missing leg: the
+    // changed line sits behind a branch the test's operands never take.
+    let branch_not_driven = Case {
+        label: "branch_not_driven",
+        signature: "type Output = Money;\n    fn add(self, other: Money) -> Money",
+        old_line: "        if self.0 > 100 { Money(self.0 + other.0) } else { Money(0) }",
+        new_line: "        if self.0 > 100 { Money(other.0 + self.0) } else { Money(0) }",
+        test_body: "assert_eq!(Money(2) + Money(3), Money(0));",
+        ..ADD
+    };
+    assert_eq!(classes(&branch_not_driven)?, [ExposureClass::WeaklyExposed]);
+
+    // The same impl is a gap when the test never exercises the operator.
+    let unexercised = Case {
+        label: "self_constructor_unexercised",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        test_body: "assert_eq!(Money(5), Money(5));",
+        ..ADD
+    };
+    let got = classes(&unexercised)?;
+    assert!(
+        !got.contains(&ExposureClass::StaticUnknown),
+        "no operator use is a real gap: {got:?}"
+    );
+    Ok(())
+}
+
+const INDEX_IMPL: &str = "impl Index<usize> for Money {
+    type Output = i64;
+    fn index(&self, _at: usize) -> &i64 {
+        &self.0
+    }
+}
+";
+
+/// `Money` implements `Index` only: the owner is `index`, reached by reads.
+const INDEX: Case = Case {
+    label: "index",
+    trait_name: "Index<usize>",
+    method: "index",
+    signature: "type Output = i64;\n    fn index(&self, _at: usize) -> &i64",
+    old_line: "        &self.0",
+    new_line: "        &(self.0)",
+    extra_items: "",
+    sibling: "",
+    test_body: "let m = Money(7);\n        assert_eq!(m[0], 7);",
+};
+
+/// `Money` implements both: the owner is `index_mut`, reached by writes.
+const INDEX_MUT: Case = Case {
+    label: "index_mut",
+    trait_name: "IndexMut<usize>",
+    method: "index_mut",
+    signature: "fn index_mut(&mut self, _at: usize) -> &mut i64",
+    old_line: "        &mut self.0",
+    new_line: "        &mut (self.0)",
+    extra_items: INDEX_IMPL,
+    sibling: "",
+    test_body: "let mut m = Money(1);\n        m[0] = 5;\n        assert_eq!(m.0, 5);",
+};
+
+/// `a[i]` reads through `Index` and writes through `IndexMut`; a site is
+/// credited to the one trait it runs, and a projection (`a[i].x`) that may
+/// borrow either way is credited to neither.
+#[test]
+fn an_index_site_reaches_the_trait_it_runs() -> Result<(), String> {
+    let reads = [
+        "let m = Money(7);\n        assert_eq!(m[0], 7);",
+        "let m = Money(7);\n        let x = &m[0];\n        assert_eq!(*x, 7);",
+    ];
+    let writes = [
+        "let mut m = Money(1);\n        m[0] = 5;\n        assert_eq!(m.0, 5);",
+        "let mut m = Money(1);\n        m[0] += 2;\n        assert_eq!(m.0, 3);",
+        "let mut m = Money(1);\n        let r = &mut m[0];\n        *r = 9;\n        assert_eq!(m.0, 9);",
+    ];
+    let mut failures = Vec::new();
+    for body in reads {
+        let credited = direct_tests(&with_body(INDEX, "index_read", body))?;
+        if credited != ["operator_under_test"] {
+            failures.push(format!("index read not credited to index: {body:?}"));
+        }
+        let wrong = direct_tests(&with_body(INDEX_MUT, "index_mut_read", body))?;
+        if !wrong.is_empty() {
+            failures.push(format!("index read credited to index_mut: {body:?}"));
+        }
+    }
+    for body in writes {
+        let credited = direct_tests(&with_body(INDEX_MUT, "index_mut_write", body))?;
+        if credited != ["operator_under_test"] {
+            failures.push(format!("index write not credited to index_mut: {body:?}"));
+        }
+        let wrong = direct_tests(&with_body(INDEX, "index_write", body))?;
+        if !wrong.is_empty() {
+            failures.push(format!("index write credited to index: {body:?}"));
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n"))
+    }
+}
+
+/// An index site whose receiver is not established as `Money`, whose trait is
+/// ambiguous, or which runs no impl, is credited to nothing.
+#[test]
+fn index_sites_that_do_not_run_the_impl_stay_unrelated() -> Result<(), String> {
+    let other_type = "
+struct Other(i64);
+impl Index<usize> for Other {
+    type Output = i64;
+    fn index(&self, _at: usize) -> &i64 {
+        &self.0
+    }
+}
+";
+    let second_impl = "
+impl Index<&str> for Money {
+    type Output = i64;
+    fn index(&self, _name: &str) -> &i64 {
+        &self.0
+    }
+}
+";
+    let shadowed = "
+mod other {
+    pub struct Money(pub i64);
+}
+";
+    let cases: [(&str, Case); 20] = [
+        (
+            "another type's impl",
+            Case {
+                extra_items: other_type,
+                test_body: "let o = Other(3);\n        assert_eq!(o[0], 3);",
+                ..INDEX
+            },
+        ),
+        (
+            "a vec of the type",
+            with_body(
+                INDEX,
+                "vec_of_money",
+                "let v = vec![Money(1)];\n        assert_eq!(v[0].0, 1);",
+            ),
+        ),
+        (
+            "an untyped array",
+            with_body(
+                INDEX,
+                "untyped_array",
+                "let m = Money(1);\n        let arr = [1, 2];\n        assert_eq!(arr[0] + m.0, 2);",
+            ),
+        ),
+        (
+            "a field receiver",
+            with_body(
+                INDEX,
+                "field_receiver",
+                "let holder = Holder { money: Money(1) };\n        assert_eq!(holder.money[0], 1);",
+            ),
+        ),
+        (
+            "a helper's return value",
+            with_body(INDEX, "helper_return", "assert_eq!(make()[0], 1);"),
+        ),
+        (
+            "a second impl of the trait for the type",
+            Case {
+                extra_items: second_impl,
+                ..INDEX
+            },
+        ),
+        (
+            "stringify",
+            with_body(
+                INDEX,
+                "stringified",
+                "let m = Money(1);\n        assert_eq!(stringify!(m[0]), \"m[0]\");",
+            ),
+        ),
+        (
+            "a read whose value is discarded",
+            with_body(
+                INDEX,
+                "discarded",
+                "let m = Money(1);\n        let _ = m[0];",
+            ),
+        ),
+        (
+            "a slice pattern",
+            with_body(
+                INDEX,
+                "slice_pattern",
+                "let m = Money(1);\n        let [a, b] = [m.0, 2];\n        assert_eq!(a + b, 3);",
+            ),
+        ),
+        (
+            "an array type",
+            with_body(
+                INDEX,
+                "array_type",
+                "let m = Money(1);\n        let grid: [i64; 2] = [m.0, 2];\n        assert_eq!(grid.len(), 2);",
+            ),
+        ),
+        (
+            "a projected read that may borrow mutably",
+            with_body(
+                INDEX,
+                "projected",
+                "let mut m = Money(1);\n        assert_eq!(m[0].abs(), 1);",
+            ),
+        ),
+        (
+            "a parenthesised place",
+            with_body(
+                INDEX,
+                "parenthesised",
+                "let mut m = Money(1);\n        (m[0]).push(1);",
+            ),
+        ),
+        (
+            "a destructuring assignment",
+            with_body(
+                INDEX,
+                "destructured",
+                "let mut m = Money(1);\n        (m[0], m[1]) = (1, 2);",
+            ),
+        ),
+        (
+            "a ref mut binding",
+            with_body(
+                INDEX,
+                "ref_mut",
+                "let mut m = Money(1);\n        let ref mut r = m[0];\n        *r = 1;",
+            ),
+        ),
+        (
+            "a parenthesised mutable borrow",
+            with_body(
+                INDEX,
+                "paren_mut_borrow",
+                "let mut m = Money(1);\n        let r = &mut (m[0]);\n        *r = 9;",
+            ),
+        ),
+        (
+            "a match scrutinee with a ref mut arm",
+            with_body(
+                INDEX,
+                "match_ref_mut",
+                "let mut m = Money(1);\n        match m[0] {\n            ref mut x => *x = 9,\n        }",
+            ),
+        ),
+        (
+            "a call on the element",
+            with_body(
+                INDEX,
+                "element_call",
+                "let mut m = Money(1);\n        m[0](1);",
+            ),
+        ),
+        (
+            "a chained index",
+            with_body(
+                INDEX,
+                "chained",
+                "let m = Money(1);\n        assert_eq!(m[0][1], 1);",
+            ),
+        ),
+        (
+            "a type the test redeclares",
+            Case {
+                test_body: "struct Money(i64);\n        let m = Money(1);\n        assert_eq!(m[0], 1);",
+                ..INDEX
+            },
+        ),
+        (
+            "a same-named type imported from another module",
+            Case {
+                extra_items: shadowed,
+                test_body: "use other::Money;\n        let m = Money(1);\n        assert_eq!(m[0], 1);",
+                ..INDEX
+            },
+        ),
+    ];
+    let mut failures = Vec::new();
+    for (what, case) in &cases {
+        let direct = direct_tests(case)?;
+        if !direct.is_empty() {
+            failures.push(format!("{what}: credited {direct:?}"));
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n"))
+    }
+}
+
+/// Crediting an index site says the impl runs, not that an assertion notices
+/// a wrong result, so an unconfirmed credit is withheld, never an actionable
+/// `weakly_exposed`.
+#[test]
+fn an_unconfirmed_index_credit_is_withheld() -> Result<(), String> {
+    let changed = Case {
+        new_line: "        &self.0.min(0)",
+        ..INDEX
+    };
+    // The changed line's finding is the one whose infection is read; the
+    // other finding comes from the unchanged signature lines.
+    let on_changed_line = |case: &Case| -> Result<Finding, String> {
+        findings_of(case)?
+            .into_iter()
+            .find(|finding| finding.ripr.infect.state == ripr::domain::StageState::Yes)
+            .ok_or_else(|| format!("{}: no finding with a read infection", case.label))
+    };
+    let withheld = on_changed_line(&changed)?;
+    assert_eq!(withheld.class, ExposureClass::StaticUnknown);
+    let limit = withheld.static_limit_kind.map(|kind| kind.as_str());
+    assert_eq!(limit, Some("rust_implicit_call_unresolved"));
+
+    // A test with no exact assertion is a real gap whatever runs the owner.
+    let weak = Case {
+        test_body: "let m = Money(7);\n        let x = m[0];\n        assert!(x > 0);",
+        ..changed
+    };
+    assert_eq!(on_changed_line(&weak)?.class, ExposureClass::WeaklyExposed);
+    Ok(())
+}
