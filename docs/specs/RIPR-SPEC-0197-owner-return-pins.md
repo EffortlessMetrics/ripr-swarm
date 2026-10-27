@@ -1523,6 +1523,40 @@ taken any other exit, because the unwrap panics on `Err`/`None`.
    written file refuses. `assert_ne!`, a different owner and a discarded
    unwrap do not pin.
 
+### Claims payload pins (#9619)
+
+claims' `assert_ok!(call)` and `assert_some!(call)` evaluate `call` once, panic
+unless it has the named variant, and yield the payload, so
+`let q = assert_ok!(owner(..)); assert_eq!(q, literal)` reads as the unwrapped
+`Ok`/`Some` pin above (`let q = owner(..).unwrap();`).
+
+1. Trusted import. `assert_ok`, `assert_err`, `assert_some` and `assert_none`
+   are trusted test-scoped macros (like `expect!`): trusted only through a
+   `use claims::{..}` import under their own name that the test's file carries
+   and whose `claims` package is a plain registry requirement on the same
+   manifest terms as `pretty_assertions` (Required Evidence below). A rename,
+   another crate's import, a local `macro_rules!`, a `path`, `git` or
+   `package` dependency or a missing dependency leaves the macro opaque, as
+   any unknown macro is.
+2. The owner call. An owner call inside a verified claims macro binds nothing,
+   so it does not trip the bare-call rebinding refusal that other macros'
+   arguments do.
+3. The payload. Only `assert_ok!`/`assert_some!` holding exactly the owner call
+   as their whole operand read as the unwrap; `assert_some!(call.ok())`, an
+   operand with anything around the call, and `assert_err!`/`assert_none!`
+   (which yield the other side) pin nothing. The binding, expected value and
+   exit-gate rules are the unwrapped pin's.
+4. Direction. The macro must match the pin's wrapper: `assert_ok!` reads only
+   an `Ok` pin and `assert_some!` only a `Some` pin. A pin on the `Err` exit
+   (`ErrVariant`, or a field gate wrapped in `Err`) is the opposite direction,
+   since the macro panics on that exit before any comparison.
+
+Accepted limitation: the import is read at file granularity, as `expect!`'s is.
+A `use claims::assert_ok;` inside one inner module admits the name for a test
+elsewhere in the file that has no such import in scope; such a subject does not
+compile, so the credit is for a test that cannot run. Scoping the import to the
+asserting test's module chain is a follow-up.
+
 ### Bool-owner pins
 
 An owner whose signature declares `-> bool` has two values, so a bare
@@ -2595,6 +2629,13 @@ assertions. This repair shares the existing callback without that larger migrati
    receiver does not confirm a change to the default.
 
 ## Test Mapping
+
+- Claims payload pins (#9619): `crates/ripr/tests/claims_payload_owner_pin.rs`
+  (single and grouped import, trailing `assert_err!`, `assert_some!`
+  positives; missing, foreign, renamed, locally redefined import, `mut`,
+  owner-derived expected value, wrapped operand, method use, converted
+  `assert_some!` operand, `path`/`package`/absent dependency and opposite-exit
+  binding negatives); verdict-corpus case `lib-claims-assert-ok-unwrap-then-eq`.
 
 - `crates/ripr/tests/result_map_callback.rs`: exact and block-tail forwarding;
   discard/recompute/constant and changed-payload refusals; receiver, binding,
