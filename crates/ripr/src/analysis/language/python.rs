@@ -433,6 +433,10 @@ struct PythonTest {
     /// Argnames a pytest parametrize decorator supplies directly (not routed
     /// to a fixture by `indirect=`); never resolved as fixtures (#4563).
     direct_parametrized: Vec<String>,
+    /// The `direct_parametrized` names whose `indirect=` value the read
+    /// cannot settle: not resolved as fixtures, but still counted toward the
+    /// fixture limit (#10685).
+    unsettled_indirect: Vec<String>,
     /// Literal `@pytest.mark.parametrize` cases, when statically certain (#4559).
     parametrize: Option<parametrize::PythonParametrizeCases>,
     /// Parameters Hypothesis `@given(...)` supplies (#6601); never fixtures.
@@ -451,6 +455,19 @@ struct PythonTest {
     /// How the test and its module can rebind names and attributes; guards
     /// module-constant boundary resolution (`boundary.rs`, #4227).
     constant_rebinding: module_constants::PythonTestRebinding,
+}
+
+impl PythonTest {
+    /// Whether pytest certainly passes `name`'s parametrize value to the
+    /// test itself: a direct argname whose `indirect=` the read settled.
+    /// Such a parameter runs no fixture code (#10685).
+    fn takes_parametrize_value(&self, name: &str) -> bool {
+        self.direct_parametrized.iter().any(|direct| direct == name)
+            && !self
+                .unsettled_indirect
+                .iter()
+                .any(|unsettled| unsettled == name)
+    }
 }
 
 /// A module-level `@pytest.fixture` function: its body is read with the same
