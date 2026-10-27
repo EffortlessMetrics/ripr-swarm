@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A diff that swaps the constant on a one-sided equality (`if label == "alpha"` to `"beta"`) now reads `exposed` when a related test pins a row on the replaced constant and asserts its result exactly, instead of reporting a missing equality-boundary discriminator; a bare lowercase match-arm binding is read as a catch-all when the file declares no item of that name. A row on neither constant, a compound predicate or a weak oracle still reads as a gap (#10304).

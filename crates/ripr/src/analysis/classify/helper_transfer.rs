@@ -79,6 +79,14 @@ impl<'a> HelperEval<'a> {
         }
     }
 
+    /// The source text of the file that holds `helper`, when the index has it.
+    pub(super) fn source_of(&self, helper: &FunctionSummary) -> Option<String> {
+        self.index
+            .files()
+            .get(&helper.file)
+            .map(|facts| facts.source.to_string())
+    }
+
     /// Enter the evaluation of `helper` over `inputs`: refuse a state
     /// already on the path (a cycle) or a path at the hop bound, and
     /// return the advanced context for the body's evaluation.
