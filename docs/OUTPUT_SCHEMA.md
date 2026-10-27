@@ -325,6 +325,23 @@ stay `null` and `warnings` stays `[]`. Both selector refusals keep exit 3,
 the JSON on stdout, and the human decision prose on stderr. If the stdout
 write itself fails, no document was delivered and the command exits `2`.
 
+A weak-oracle boundary seam instead uses `refusal.kind:
+existing_test_weak_oracle` (#10683): a single related test already supplies the
+changed predicate's boundary input and only its assertion is weak, so a second
+skeleton test would not close the gap. `refusal.reason` is `check`'s
+boundary-observed Next step followed by `Related test: <file>:<line> <name>`;
+strengthen that test's assertion instead. It exits `3`, writes the envelope to
+stdout under `--json` and the decision prose to stderr, like the other refusal
+kinds; `grip_class`, `classification` and `warnings` are populated. This
+refusal is evaluated before the stub producer's own refusals for the same seam
+(a seam with an existing reaching test needs the assertion fix first, whatever
+placement the producer would have refused). `ripr check` shows the same reason
+as `No test stub here:` instead of a `ripr agent stub` command. Schema stays
+`0.3`: the refusal object shape and every ready-document field are unchanged,
+and consumers already dispatch on `state: refused` plus an open `refusal.kind`
+string, so a new kind value is additive; consumers must treat an unrecognized
+kind as a generic refusal (exit `3`, reason as prose).
+
 Schema `0.3` is additive on `0.2` (#8727): the ready document may carry a
 `next_repair` block naming the repair journey the stub feeds — the
 `ripr agent repair --seam-id <id> --phase before` start command and the repair

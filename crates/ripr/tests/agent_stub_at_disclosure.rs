@@ -362,3 +362,36 @@ fn weak_oracle_boundary_points_at_the_existing_test_instead_of_a_new_one() -> Re
     }
     Ok(())
 }
+
+/// #10683 / activation aggregates boundary values across related tests: when
+/// one test supplies the boundary input without an assertion and another
+/// carries only a weak relational check, the weak test is not provably the
+/// boundary observer, so neither `agent stub` nor `repair` may name it.
+#[test]
+fn weak_oracle_pointer_is_withheld_when_the_boundary_input_may_come_from_another_test()
+-> Result<(), String> {
+    const LIB: &str = "pub fn discount(price: u32, qty: u32) -> u32 {\n    if qty > 10 { price * 10 / 100 } else { 0 }\n}\n";
+    const TESTS: &str = "use twotests::discount;\n#[test]\nfn near() {\n    assert!(discount(10, 9) < 1);\n}\n#[test]\nfn at_boundary() {\n    discount(10, 10);\n}\n";
+    let scratch = Scratch::create("twotests", LIB)?;
+    std::fs::create_dir_all(scratch.0.join("tests")).map_err(|error| error.to_string())?;
+    std::fs::write(scratch.0.join("tests/t.rs"), TESTS).map_err(|error| error.to_string())?;
+
+    let json = stub(&scratch.0, "src/lib.rs:2", "predicate", true)?;
+    let envelope: serde_json::Value = serde_json::from_slice(&json.stdout)
+        .map_err(|error| format!("stub stdout did not parse: {error}"))?;
+    if envelope["refusal"]["kind"] == "existing_test_weak_oracle"
+        || envelope.to_string().contains("Related test:")
+    {
+        return Err(format!("the weak test must not be named: {envelope}"));
+    }
+    let repair = ripr_command()
+        .args(["repair", "--root"])
+        .arg(&scratch.0)
+        .output()
+        .map_err(|error| format!("spawn ripr repair: {error}"))?;
+    let repair_err = String::from_utf8_lossy(&repair.stderr).to_string();
+    if repair_err.contains("Related test:") {
+        return Err(format!("repair must not name a test: {repair_err}"));
+    }
+    Ok(())
+}

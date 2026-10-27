@@ -347,7 +347,7 @@ pub(crate) enum StubRouteDecision {
     },
     /// The shared resolver refuses: print its reason instead of a command
     /// that would only refuse.
-    Refused { reason: &'static str },
+    Refused { reason: String },
 }
 
 /// A route decision bound to the finding it was computed for.
@@ -398,7 +398,21 @@ pub(crate) fn stub_route_for_finding(
             decision,
         });
     }
-    let resolution = resolve_at_location(root, config, &file, line, Some(kind), seam_index).ok()?;
+    let mut resolution =
+        resolve_at_location(root, config, &file, line, Some(kind), seam_index).ok()?;
+    // #10683: `agent stub` refuses a weak-oracle boundary seam (an existing
+    // test already reaches it); never advertise a stub command it will refuse.
+    if resolution.weak_oracle_guidance.is_none() {
+        resolution.weak_oracle_guidance =
+            inventory_entry_facts(root, config, &file, &resolution.seam_id)
+                .and_then(|(_, guidance)| guidance);
+    }
+    if let Some(guidance) = resolution.weak_oracle_guidance.take() {
+        return Some(StubRoute {
+            finding_id: finding.id.clone(),
+            decision: StubRouteDecision::Refused { reason: guidance },
+        });
+    }
     let decision = match resolution.outcome {
         // `--at` stubs the nearest gap when the finding's line holds none
         // (#6298). Print the line that stub is for, and only when asking for
@@ -414,7 +428,7 @@ pub(crate) fn stub_route_for_finding(
         }
         Ok(_) => StubRouteDecision::Stub { file, line, kind },
         Err(refusal) => StubRouteDecision::Refused {
-            reason: refusal.reason(),
+            reason: refusal.reason().to_string(),
         },
     };
     Some(StubRoute {
@@ -538,7 +552,7 @@ fn const_consumer_route(
                 }
                 Err(refusal) => {
                     first_refusal.get_or_insert(StubRouteDecision::Refused {
-                        reason: refusal.reason(),
+                        reason: refusal.reason().to_string(),
                     });
                 }
             }

@@ -93,8 +93,15 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
     // #10683: a related test already reaches the boundary and only its
     // assertion is weak. A second skeleton test would not fix that; point at
     // the existing test with `check`'s wording instead.
-    if let Some(guidance) = &resolution.weak_oracle_guidance {
-        const KIND: &str = "existing_test_weak_oracle";
+    // The weak-oracle refusal is evaluated before the stub producer's own
+    // refusals: an existing reaching test needs its assertion fixed first.
+    let refusal: Option<(&str, &str)> =
+        match (&resolution.weak_oracle_guidance, &resolution.outcome) {
+            (Some(guidance), _) => Some(("existing_test_weak_oracle", guidance.as_str())),
+            (None, Err(refusal)) => Some((refusal.as_str(), refusal.reason())),
+            (None, Ok(_)) => None,
+        };
+    if let Some((kind, reason)) = refusal {
         if options.json {
             let document = serde_json::json!({
                 "schema_version": RUST_TEST_STUB_SCHEMA_VERSION,
@@ -102,45 +109,25 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
                 "seam_id": resolution.seam_id,
                 "owner": resolution.owner,
                 "state": "refused",
-                "refusal": {"kind": KIND, "reason": guidance},
+                "refusal": {"kind": kind, "reason": reason},
                 "grip_class": disclosure.grip_class,
                 "classification": disclosure.classification,
                 "warnings": disclosure.warnings,
             });
+            // A JSON document, not report text: keep it parseable (#6309).
             write_stdout_refusal_json(render(&document)?).map_err(CommandError::Failure)?;
         }
         return Err(CommandError::Decision(refusal_message(
             &resolution.seam_id,
-            KIND,
-            guidance,
+            kind,
+            reason,
             resolution.at_note.as_deref(),
         )));
     }
-    let stub = match &resolution.outcome {
-        Ok(stub) => stub,
-        Err(refusal) => {
-            if options.json {
-                let document = serde_json::json!({
-                    "schema_version": RUST_TEST_STUB_SCHEMA_VERSION,
-                    "kind": "rust_test_stub",
-                    "seam_id": resolution.seam_id,
-                    "owner": resolution.owner,
-                    "state": "refused",
-                    "refusal": {"kind": refusal.as_str(), "reason": refusal.reason()},
-                    "grip_class": disclosure.grip_class,
-                    "classification": disclosure.classification,
-                    "warnings": disclosure.warnings,
-                });
-                // A JSON document, not report text: keep it parseable (#6309).
-                write_stdout_refusal_json(render(&document)?).map_err(CommandError::Failure)?;
-            }
-            return Err(CommandError::Decision(refusal_message(
-                &resolution.seam_id,
-                refusal.as_str(),
-                refusal.reason(),
-                resolution.at_note.as_deref(),
-            )));
-        }
+    let Ok(stub) = &resolution.outcome else {
+        return Err(CommandError::Failure(
+            "stub resolution lost its outcome".to_string(),
+        ));
     };
     // #8727: a divergent placement and `--write` cannot combine honestly.
     // Writing the stub would dirty a file outside the repair packet's

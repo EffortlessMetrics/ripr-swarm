@@ -284,8 +284,17 @@ pub(crate) fn boundary_observed_weak_oracle_test(
         || entry.class != SeamGripClass::WeaklyGripped
         || evidence.activate.state != StageState::Yes
         || !evidence.missing_discriminators.is_empty()
+        // Parity with the finding-side gate: the discriminate stage must
+        // itself grade the oracle weak.
+        || evidence.discriminate.state != StageState::Weak
         || cross_language_oracle_visibility_unresolved(entry)
         || cross_language_test_target_unresolved(entry)
+        // The activation stage aggregates observed boundary values across all
+        // related tests, so with several related tests the observer of the
+        // boundary input may not be the weakly asserting one. Name a test only
+        // when it is the sole related test, so the observer is unambiguous;
+        // otherwise withhold the claim (previous guidance applies).
+        || evidence.related_tests.len() != 1
         || evidence.related_tests.iter().any(|test| {
             matches!(
                 test.oracle_strength,

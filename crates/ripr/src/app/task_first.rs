@@ -1781,7 +1781,13 @@ pub(crate) mod tests {
         // #10683: activation observed and only a weak oracle on an admitted
         // direct test: reuse `check`'s wording, name that test, no stub route
         // and no internal jargon. Eligibility stays fail-closed.
-        let observed = gate_entry(SeamGripClass::WeaklyGripped, vec![targeted.clone()]);
+        let mut observed = gate_entry(SeamGripClass::WeaklyGripped, vec![targeted.clone()]);
+        // The discriminate stage grades the oracle weak (finding-side parity).
+        observed.evidence.discriminate = crate::domain::StageEvidence::new(
+            crate::domain::StageState::Weak,
+            crate::domain::Confidence::High,
+            "Only relational oracle found",
+        );
         assert!(!repair_packet_eligibility(&observed).eligible());
         let refusal = repair_start_refusal_for_entry(root, &observed, policy)
             .ok_or("a weak-oracle boundary seam must be refused")?;
@@ -1802,6 +1808,21 @@ pub(crate) mod tests {
 
         // Discriminating negative: a credited strong oracle elsewhere is a
         // different gap, so the weak-oracle wording must not apply.
+        let mut not_weak = observed.clone();
+        not_weak.evidence.discriminate = crate::domain::StageEvidence::new(
+            crate::domain::StageState::Unknown,
+            crate::domain::Confidence::Low,
+            "test stage",
+        );
+        assert!(super::weak_oracle_guidance(&observed).is_some());
+        assert!(super::weak_oracle_guidance(&not_weak).is_none());
+        // Several related tests: the boundary observer is ambiguous.
+        let mut two = observed.clone();
+        let mut other = targeted.clone();
+        other.test_name = "other".to_string();
+        two.evidence.related_tests.push(std::sync::Arc::new(other));
+        assert!(super::weak_oracle_guidance(&two).is_none());
+
         let mut strong = targeted;
         strong.test_name = "pinned".to_string();
         strong.oracle_strength = crate::domain::OracleStrength::Strong;
