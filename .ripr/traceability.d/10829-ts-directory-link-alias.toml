@@ -1,0 +1,8 @@
+# Registers the directory-link alias exemption (#10829) under RIPR-SPEC-0027.
+[[extend]]
+id = "RIPR-SPEC-0027"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/discovery.rs::tests::discovery_does_not_count_a_relative_alias_of_a_walked_directory",
+  "crates/ripr/src/analysis/language/typescript/discovery.rs::tests::discovery_does_not_count_non_source_file_links_but_counts_every_other_link",
+  "crates/ripr/src/analysis/language/typescript/discovery.rs::tests::discovery_counts_skipped_links_without_following",
+]

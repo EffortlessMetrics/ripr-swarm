@@ -261,17 +261,21 @@ fn truncated_discovery_walk_is_partial() -> Result<(), String> {
 fn skipped_links_disclose_even_when_production_is_selected() -> Result<(), String> {
     let root = ts_unique_tempdir("repo-links-skipped")?;
     ts_write_file(&root.join("src/lib.ts"), TS_SRC)?;
-    ts_write_file(&root.join("real_more/extra.ts"), TS_SRC)?;
+    // The target sits outside the root: a link to a directory the walk
+    // already visits is an alias and is not disclosed (#10829).
+    let outside = ts_unique_tempdir("repo-links-outside")?;
+    ts_write_file(&outside.join("real_more/extra.ts"), TS_SRC)?;
     // A link the discovery walk must not follow; sources behind it are
     // invisible, so the run must disclose the skip even though `src/lib.ts`
     // keeps the production set non-empty.
     #[cfg(unix)]
     let linked = {
         use std::os::unix::fs::symlink;
-        let target = root.join("real_more");
+        let target = outside.join("real_more");
         let link = root.join("linked_more");
         if symlink(&target, &link).is_err() {
             let _ = std::fs::remove_dir_all(&root);
+            let _ = std::fs::remove_dir_all(&outside);
             return Ok(()); // platform refused; nothing to assert here
         }
         link
@@ -279,10 +283,11 @@ fn skipped_links_disclose_even_when_production_is_selected() -> Result<(), Strin
     #[cfg(windows)]
     let linked = {
         use std::os::windows::fs::symlink_dir;
-        let target = root.join("real_more");
+        let target = outside.join("real_more");
         let link = root.join("linked_more");
         if symlink_dir(&target, &link).is_err() {
             let _ = std::fs::remove_dir_all(&root);
+            let _ = std::fs::remove_dir_all(&outside);
             return Ok(()); // privilege missing; nothing to assert here
         }
         link
@@ -293,6 +298,7 @@ fn skipped_links_disclose_even_when_production_is_selected() -> Result<(), Strin
     };
     let result = run(&root, 800);
     let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&outside);
     let result = result?;
     assert!(
         !result.findings.is_empty(),

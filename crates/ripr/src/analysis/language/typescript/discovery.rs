@@ -226,7 +226,7 @@ pub(crate) fn visit_workspace_with_handwritten(
                 // path, so it is skipped without a disclosure. Anything
                 // else (a directory, a source-named link, a dangling or
                 // unreadable target) stays counted.
-                if !symlink_cannot_hide_sources(&path) {
+                if !symlink_cannot_hide_sources(&path, root) {
                     skipped_links += 1;
                 }
                 continue;
@@ -279,15 +279,38 @@ pub(crate) fn visit_workspace_with_handwritten(
     }
 }
 
-/// `true` when the symlink at `path` is a file link whose own name the
-/// TypeScript adapter does not index (not a source extension, or a generated
-/// or minified name the walk refuses), so nothing indexable can sit behind it
-/// (h3's `docs/5.migration/0.index.md` link made every h3 analysis partial).
-/// Only the target's file-ness is read, never its content; a directory, a
-/// dangling link or a failed stat is "could hide sources" and stays disclosed.
-fn symlink_cannot_hide_sources(path: &Path) -> bool {
-    (!TypeScriptAdapter.accepts_path(path) || is_detectable_generated_typescript_path(path))
-        && std::fs::metadata(path).is_ok_and(|metadata| metadata.is_file())
+/// `true` when the symlink at `path` hides nothing the walk would index.
+///
+/// A file link whose own name the TypeScript adapter does not index (not a
+/// source extension, or a generated or minified name the walk refuses) has
+/// nothing indexable behind it (h3's `docs/5.migration/0.index.md` link made
+/// every h3 analysis partial). Only the target's file-ness is read, never its
+/// content.
+///
+/// A directory link is an alias when its canonical target is a directory
+/// inside the canonical root with no excluded component: the walk visits
+/// the target under its real path, so the link adds no file (zod's
+/// `.tools/skills -> ../.agent/skills`). A target outside the root, in an
+/// excluded directory, a dangling link or a failed stat is "could hide
+/// sources" and stays disclosed.
+fn symlink_cannot_hide_sources(path: &Path, root: &Path) -> bool {
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return false;
+    };
+    if metadata.is_file() {
+        return !TypeScriptAdapter.accepts_path(path)
+            || is_detectable_generated_typescript_path(path);
+    }
+    metadata.is_dir() && directory_link_aliases_walked_directory(path, root)
+}
+
+fn directory_link_aliases_walked_directory(path: &Path, root: &Path) -> bool {
+    let (Ok(target), Ok(root)) = (std::fs::canonicalize(path), std::fs::canonicalize(root)) else {
+        return false;
+    };
+    target
+        .strip_prefix(&root)
+        .is_ok_and(|relative| !crate::config::is_detectable_excluded_typescript_path(relative))
 }
 
 /// `true` for directory entry types that are neither directories, regular
@@ -660,8 +683,9 @@ mod tests {
             "tests/sum.test.ts",
             "import { sum } from '../src/sum';\n\ntest('adds', () => {\n  expect(sum(2, 3)).toBe(5);\n});\n",
         );
-        // A real directory holding a linked test file...
-        workspace.write(
+        // A real directory outside the root holding a linked test file...
+        let outside = TempWorkspace::new("link-skip-outside");
+        outside.write(
             "real_tests/linked.test.ts",
             "import { sum } from '../src/sum';\n\ntest('linked adds', () => {\n  expect(sum(4, 1)).toBe(5);\n});\n",
         );
@@ -669,7 +693,7 @@ mod tests {
         #[cfg(unix)]
         let linked = {
             use std::os::unix::fs::symlink;
-            let target = workspace.0.join("real_tests");
+            let target = outside.0.join("real_tests");
             let link = workspace.0.join("tests_linked");
             if symlink(&target, &link).is_err() {
                 return; // platform refused; nothing to assert here
@@ -679,7 +703,7 @@ mod tests {
         #[cfg(windows)]
         let linked = {
             use std::os::windows::fs::symlink_dir;
-            let target = workspace.0.join("real_tests");
+            let target = outside.0.join("real_tests");
             let link = workspace.0.join("tests_linked");
             if symlink_dir(&target, &link).is_err() {
                 return; // privilege missing; nothing to assert here
@@ -754,15 +778,63 @@ mod tests {
         symlink(root.join("real"), root.join("docs/real.md"))?;
         let scan = visit_workspace_with_handwritten(root, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
         assert_eq!(
+            scan.skipped_links, 1,
+            "a link to a walked in-root directory is an alias and adds no file"
+        );
+
+        let outside = TempWorkspace::new("link-nonsource-outside");
+        outside.write("pkg/other.test.ts", "test('y', () => {});\n");
+        symlink(outside.0.join("pkg"), root.join("docs/outside.md"))?;
+        let scan = visit_workspace_with_handwritten(root, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        assert_eq!(
             scan.skipped_links, 2,
-            "a directory link is counted even under a non-source name"
+            "a directory link leaving the root is counted even under a non-source name"
+        );
+
+        workspace.write("node_modules/pkg/index.test.ts", "test('z', () => {});\n");
+        symlink(root.join("node_modules/pkg"), root.join("docs/vendored.md"))?;
+        let scan = visit_workspace_with_handwritten(root, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        assert_eq!(
+            scan.skipped_links, 3,
+            "a link into an excluded directory is not a walked alias and is counted"
         );
 
         symlink(root.join("missing.md"), root.join("docs/dangling.md"))?;
         let scan = visit_workspace_with_handwritten(root, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
         assert_eq!(
-            scan.skipped_links, 3,
+            scan.skipped_links, 4,
             "a dangling link cannot be shown harmless and is counted"
+        );
+        Ok(())
+    }
+
+    /// zod's agent-tooling alias `.tools/skills -> ../.agent/skills`
+    /// (relative target, hidden directories) is a walked directory under a
+    /// second name, so it is not a skipped link (#10829).
+    #[cfg(unix)]
+    #[test]
+    fn discovery_does_not_count_a_relative_alias_of_a_walked_directory() -> std::io::Result<()> {
+        use std::os::unix::fs::symlink;
+        let workspace = TempWorkspace::new("link-alias");
+        workspace.write("src/sum.ts", "export const sum = 1;\n");
+        workspace.write(".agent/skills/triage/helper.mjs", "export const t = 1;\n");
+        workspace.write(".tools/README.md", "# codex\n");
+        symlink("../.agent/skills", workspace.0.join(".tools/skills"))?;
+        let scan =
+            visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        assert_eq!(scan.skipped_links, 0, "{:?}", scan.files);
+        assert!(
+            scan.files.iter().any(|file| file.ends_with("src/sum.ts")),
+            "the real source is still indexed: {:?}",
+            scan.files
+        );
+        assert!(
+            !scan
+                .files
+                .iter()
+                .any(|file| file.starts_with(".tools/skills")),
+            "the alias is not followed into the index: {:?}",
+            scan.files
         );
         Ok(())
     }
