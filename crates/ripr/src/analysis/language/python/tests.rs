@@ -6656,6 +6656,14 @@ fn analyze_diff_over_cap_keeps_fixture_alias_tests_for_every_import_spelling() -
             "import pytest\n\nfrom orders import (  # owners (see #1)\n    make_order as build,  # alias\n)\n\n\n@pytest.fixture\ndef order():\n    return build(3)\n",
         ),
         (
+            "diff-walk-cap-reach-fixture-decorator-alias-after-pass",
+            "pass; from pytest import fixture as fx\n\nfrom orders import make_order\n\n\n@fx\ndef order():\n    return make_order(3)\n",
+        ),
+        (
+            "diff-walk-cap-reach-fixture-decorator-alias-after-hash-string",
+            "import os; '#'; from pytest import fixture as fx\n\nfrom orders import make_order\n\n\n@fx\ndef order():\n    return make_order(3)\n",
+        ),
+        (
             "diff-walk-cap-reach-fixture-import-alias-tab",
             "import pytest\n\nfrom orders\timport make_order\tas\tbuild\n\n\n@pytest.fixture\ndef order():\n    return build(3)\n",
         ),

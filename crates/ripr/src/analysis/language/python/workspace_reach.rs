@@ -121,16 +121,6 @@ pub(super) fn admit_by_reach(
             modules.push(module);
         }
     }
-    let structural: Vec<bool> = discovered
-        .iter()
-        .enumerate()
-        .map(|(index, file)| {
-            is_changed[index]
-                || file.file_name().is_some_and(|name| name == "conftest.py")
-                || is_package_init_above_changed(file, changed_paths)
-        })
-        .collect();
-
     // Whether each file reaches. A test can also reach a changed owner only
     // through a pytest fixture it names (`fixture_owner_call`), so the
     // fixtures a reaching test module or `conftest.py` defines over the diff's
@@ -207,6 +197,32 @@ pub(super) fn admit_by_reach(
     if !settled || cancelled() {
         return None;
     }
+    // A conftest shapes the tests below it (fixtures, autouse setup, and an
+    // unread conftest withholds a clean no-assertion state), so the ones on
+    // the directory chain of a changed file or a reaching test are kept
+    // first. A conftest elsewhere matters only through a fixture over the
+    // diff's names, which makes it reaching above.
+    let mut chain_dirs: HashSet<String> = HashSet::new();
+    for (index, file) in normalized.iter().enumerate() {
+        if is_changed[index] || (reaching[index] && is_test_file(&discovered[index])) {
+            let mut dir = file.as_str();
+            while let Some((parent, _)) = dir.rsplit_once('/') {
+                chain_dirs.insert(parent.to_string());
+                dir = parent;
+            }
+            chain_dirs.insert(String::new());
+        }
+    }
+    let structural: Vec<bool> = discovered
+        .iter()
+        .enumerate()
+        .map(|(index, file)| {
+            is_changed[index]
+                || (file.file_name().is_some_and(|name| name == "conftest.py")
+                    && chain_dirs.contains(&normalized_dir(&normalized[index])))
+                || is_package_init_above_changed(file, changed_paths)
+        })
+        .collect();
     // The workspace modules a changed file, conftest, package init or
     // reaching test imports: a test's assertion helpers and a changed class's
     // bases. A reaching production module is read for its own names, not for
@@ -302,6 +318,12 @@ pub(super) fn admit_by_reach(
         refused_unreached,
         discovered,
     })
+}
+
+/// The directory part of a normalized workspace path, empty at the root.
+fn normalized_dir(path: &str) -> String {
+    path.rsplit_once('/')
+        .map_or_else(String::new, |(dir, _)| dir.to_string())
 }
 
 /// A workspace file an import statement may load.
@@ -571,6 +593,11 @@ impl ModuleNeedle {
     /// relative from inside the module's own directory.
     fn imported_by(&self, file: &Path, source: &str) -> bool {
         let inside = file.starts_with(&self.dir);
+        // Splitting statements reads the whole file; a file that holds none of
+        // the module's names and cannot import it relatively is skipped first.
+        if !inside && !self.names.iter().any(|name| source.contains(name.as_str())) {
+            return false;
+        }
         let named = |word: &str| self.names.iter().any(|name| name == word);
         import_statements(source).any(|statement| {
             let Some(rest) = statement.strip_prefix("from ") else {
@@ -646,51 +673,105 @@ fn enclosing_defs(source: &str) -> Vec<Option<String>> {
         .collect()
 }
 
-/// Import statements of a module at any indentation, with a parenthesized or
-/// backslash-continued name list joined onto its first line, `;`-separated
-/// imports split apart, and each one in [`normalize_import`]'s spelling.
+/// Import statements of a module, each in [`normalize_import`]'s spelling,
+/// read from its [`simple_statements`] so a statement after `;`, inside a
+/// compound statement's one-line body, or after a string holding `#` is
+/// found like any other.
 fn import_statements(source: &str) -> impl Iterator<Item = String> + '_ {
-    let mut lines = source.lines();
-    let mut pending: std::collections::VecDeque<String> = std::collections::VecDeque::new();
-    std::iter::from_fn(move || {
-        loop {
-            if let Some(statement) = pending.pop_front() {
-                return Some(statement);
-            }
-            let line = lines.next()?;
-            let trimmed = without_comment(line.trim_start());
-            if !is_import_statement(trimmed) {
-                continue;
-            }
-            let mut statement = trimmed.to_string();
-            let mut open = trimmed.contains('(') && !trimmed.contains(')');
-            let mut continued = trimmed.trim_end().ends_with('\\');
-            while open || continued {
-                let Some(next) = lines.next() else {
-                    break;
-                };
-                let next = without_comment(next);
-                statement.push(' ');
-                statement.push_str(next.trim());
-                open = open && !next.contains(')');
-                continued = next.trim_end().ends_with('\\');
-            }
-            pending.extend(
-                statement
-                    .split(';')
-                    .map(str::trim_start)
-                    .filter(|part| is_import_statement(part))
-                    .map(normalize_import),
-            );
-        }
-    })
+    simple_statements(source)
+        .into_iter()
+        .filter(|statement| is_import_statement(statement))
+        .map(|statement| normalize_import(&statement))
 }
 
-/// A line of an import statement up to its comment. Import syntax holds no
-/// string literal, so a `#` there always starts a comment, including inside
-/// a parenthesized name list.
-fn without_comment(line: &str) -> &str {
-    line.split_once('#').map_or(line, |(code, _)| code)
+/// Keywords whose header ends at a top-level `:` and may carry a one-line
+/// body (`try: import x`, `if TYPE_CHECKING: from y import z`).
+const COMPOUND_HEADERS: [&str; 14] = [
+    "if", "elif", "else", "try", "except", "finally", "with", "for", "while", "def", "class",
+    "async", "match", "case",
+];
+
+/// The simple statements of a Python module, split the way the tokenizer
+/// does: at a newline outside brackets and strings, at `;`, and after a
+/// compound statement's header colon. Comments are dropped, a string
+/// literal becomes `""`, and a backslash continuation joins its lines.
+fn simple_statements(source: &str) -> Vec<String> {
+    let mut statements = Vec::new();
+    let mut current = String::new();
+    let mut depth = 0usize;
+    let mut chars = source.chars().peekable();
+    let finish = |current: &mut String, statements: &mut Vec<String>| {
+        let statement = current.trim();
+        if !statement.is_empty() {
+            statements.push(statement.to_string());
+        }
+        current.clear();
+    };
+    while let Some(ch) = chars.next() {
+        match ch {
+            '#' => {
+                while chars.peek().is_some_and(|next| *next != '\n') {
+                    chars.next();
+                }
+            }
+            '\'' | '"' => {
+                let triple = chars.peek() == Some(&ch) && {
+                    let mut ahead = chars.clone();
+                    ahead.next();
+                    ahead.peek() == Some(&ch)
+                };
+                if triple {
+                    chars.next();
+                    chars.next();
+                }
+                let mut run = 0;
+                while let Some(inner) = chars.next() {
+                    if inner == '\\' {
+                        chars.next();
+                        run = 0;
+                    } else if inner == ch {
+                        run += 1;
+                        if !triple || run == 3 {
+                            break;
+                        }
+                    } else if inner == '\n' && !triple {
+                        break;
+                    } else {
+                        run = 0;
+                    }
+                }
+                current.push_str("\"\"");
+            }
+            '\\' if chars.peek() == Some(&'\n') => {
+                chars.next();
+                current.push(' ');
+            }
+            '(' | '[' | '{' => {
+                depth += 1;
+                current.push(ch);
+            }
+            ')' | ']' | '}' => {
+                depth = depth.saturating_sub(1);
+                current.push(ch);
+            }
+            '\n' if depth == 0 => finish(&mut current, &mut statements),
+            ';' if depth == 0 => finish(&mut current, &mut statements),
+            ':' if depth == 0
+                && identifier_words(&current)
+                    .next()
+                    .is_some_and(|word| COMPOUND_HEADERS.contains(&word))
+                && current
+                    .trim_start()
+                    .starts_with(|c: char| c.is_ascii_alphabetic()) =>
+            {
+                current.push(ch);
+                finish(&mut current, &mut statements);
+            }
+            _ => current.push(if ch == '\n' { ' ' } else { ch }),
+        }
+    }
+    finish(&mut current, &mut statements);
+    statements
 }
 
 /// Local names `source` binds to a needle with `import ... as`: the `b` of
@@ -1224,7 +1305,7 @@ mod tests {
 
     #[test]
     fn import_statements_read_every_spelling_python_accepts() {
-        let source = "from pytest\timport fixture as fx\nfrom  pytest  import(fixture  as  fy)\nfrom.orders import make_order as build\nimport os; from pytest import fixture as fz\nfrom pytest import \\\n    fixture as fw\nfrom pytest import (  # fixtures (and more)\n    # decorator\n    fixture as fv,  # alias\n)\nfrom_x = 1\n";
+        let source = "from pytest\timport fixture as fx\nfrom  pytest  import(fixture  as  fy)\nfrom.orders import make_order as build\nimport os; from pytest import fixture as fz\nfrom pytest import \\\n    fixture as fw\nfrom pytest import (  # fixtures (and more)\n    # decorator\n    fixture as fv,  # alias\n)\nfrom_x = 1\npass; from pytest import fixture as fu\nimport os; '#'; from pytest import fixture as ft\ntry: from pytest import fixture as fs\nexcept ImportError: pass\nNOTE = \"\"\"\nimport not_an_import\n\"\"\"\n";
         let statements: Vec<String> = import_statements(source).collect();
         assert_eq!(
             statements,
@@ -1236,11 +1317,71 @@ mod tests {
                 "from pytest import fixture as fz",
                 "from pytest import fixture as fw",
                 "from pytest import ( fixture as fv , )",
+                "from pytest import fixture as fu",
+                "import os",
+                "from pytest import fixture as ft",
+                "from pytest import fixture as fs",
             ]
         );
-        assert_eq!(fixture_aliases(source), vec!["fx", "fy", "fz", "fw", "fv"]);
+        assert_eq!(
+            fixture_aliases(source),
+            vec!["fx", "fy", "fz", "fw", "fv", "fu", "ft", "fs"]
+        );
         let needles: HashSet<String> = ["make_order".to_string()].into_iter().collect();
         assert_eq!(imported_aliases(source, &needles), vec!["build"]);
+    }
+
+    #[test]
+    fn only_conftests_on_a_changed_file_or_reaching_test_chain_are_structural() -> Result<(), String>
+    {
+        let root =
+            std::env::temp_dir().join(format!("ripr-reach-conftest-chain-{}", std::process::id()));
+        let files = [
+            (
+                "orders.py",
+                "def make_order(count):\n    if count > 2:\n        return count * 3\n    return count\n",
+            ),
+            ("tests/conftest.py", "import pytest\n"),
+            (
+                "tests/test_a.py",
+                "from orders import make_order\n\n\ndef test_a():\n    assert make_order(3) == 9\n",
+            ),
+            (
+                "other/conftest.py",
+                "import pytest\nfrom other.helpers import h\n",
+            ),
+            ("other/helpers.py", "def h():\n    return 1\n"),
+            ("other/test_b.py", "def test_b():\n    assert True\n"),
+        ];
+        for (path, text) in files {
+            let full = root.join(path);
+            if let Some(parent) = full.parent() {
+                std::fs::create_dir_all(parent).map_err(|err| format!("mkdir: {err}"))?;
+            }
+            std::fs::write(&full, text).map_err(|err| format!("write: {err}"))?;
+        }
+        let changed_files = vec![changed("orders.py", &[(2, "    if count > 2:")])];
+        let changed_paths: BTreeSet<String> = ["orders.py".to_string()].into_iter().collect();
+        let discovered = files.iter().map(|(path, _)| PathBuf::from(path)).collect();
+        let admission = admit_by_reach(
+            &root,
+            discovered,
+            &changed_files,
+            &changed_paths,
+            3,
+            1 << 20,
+        );
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove: {err}"))?;
+        let admission = admission.ok_or("reach scan fell back")?;
+        // The unrelated `other/conftest.py` neither takes a slot nor makes
+        // what it imports count as reaching.
+        assert_eq!(
+            admission.kept,
+            ["orders.py", "tests/conftest.py", "tests/test_a.py"].map(PathBuf::from)
+        );
+        assert_eq!(admission.refused_reaching, 0);
+        assert_eq!(admission.refused_unreached, 3);
+        Ok(())
     }
 
     #[test]
