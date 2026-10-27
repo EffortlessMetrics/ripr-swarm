@@ -191,8 +191,54 @@ jobs:
       request: ${{ steps.entry.outputs.request }}
     steps:
       - uses: actions/checkout@v6
+      - name: Select trusted admission source
+        id: trusted
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          EVENT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          case "$EVENT_NAME" in
+            pull_request) sha="$PR_BASE_SHA" ;;
+            merge_group) sha="$GROUP_BASE_SHA" ;;
+            push|workflow_dispatch) sha="$EVENT_SHA" ;;
+            *) echo "::error::trusted admission source is undefined for this event"; exit 1 ;;
+          esac
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::trusted admission source SHA is missing or invalid"; exit 1; }
+          if [ -e "$GITHUB_WORKSPACE/.admission-trusted" ] || [ -L "$GITHUB_WORKSPACE/.admission-trusted" ]; then
+            echo "::error::trusted admission destination is present in the candidate checkout"
+            exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - name: Check out trusted admission bundle
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.trusted.outputs.sha }}
+          path: .admission-trusted
+          sparse-checkout: .github/actions/pr-candidate-admission
+          persist-credentials: false
+      - name: Verify trusted admission bundle
+        shell: bash
+        env:
+          TRUSTED_ADMISSION_SHA: ${{ steps.trusted.outputs.sha }}
+        run: |
+          set -euo pipefail
+          refuse() { echo "::error::trusted admission bundle is missing or differs from the immutable source"; exit 1; }
+          trusted="$GITHUB_WORKSPACE/.admission-trusted"
+          [[ "$TRUSTED_ADMISSION_SHA" =~ ^[0-9a-f]{40}$ ]] || refuse
+          [ "$(git -C "$trusted" rev-parse HEAD)" = "$TRUSTED_ADMISSION_SHA" ] || refuse
+          for name in action.yml candidate_admission.py release_cut_admission.py; do
+            path=".github/actions/pr-candidate-admission/$name"
+            [ -f "$trusted/$path" ] && [ ! -L "$trusted/$path" ] || refuse
+            expected="$(git -C "$trusted" rev-parse "$TRUSTED_ADMISSION_SHA:$path")" || refuse
+            actual="$(git hash-object --no-filters "$trusted/$path")" || refuse
+            [ "$actual" = "$expected" ] || refuse
+          done
       - name: Exercise admission discriminators
-        uses: ./.github/actions/pr-candidate-admission
+        uses: ./.admission-trusted/.github/actions/pr-candidate-admission
         with:
           mode: self-test
           max-changed-files: '160'
@@ -248,7 +294,7 @@ jobs:
           { echo "pr=$pr"; echo "head=$head"; echo "labels=$labels"; echo "queue_entry=$queue_entry"; echo "request=$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"; } >> "$GITHUB_OUTPUT"
       - name: Admit exact candidate
         id: candidate
-        uses: ./.github/actions/pr-candidate-admission
+        uses: ./.admission-trusted/.github/actions/pr-candidate-admission
         with:
           token: ${{ github.token }}
           repository: ${{ github.repository }}
