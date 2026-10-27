@@ -109,6 +109,10 @@ pub(crate) struct TestStubResolution {
     /// The line of the seam this resolution stubs. It differs from a
     /// requested `--at` line when the nearest gap was substituted.
     pub(crate) seam_line: usize,
+    /// Set when a related test already reaches the boundary and only its
+    /// assertion is weak (#10683): `check`'s wording plus that test. The CLI
+    /// reports this instead of a second test skeleton.
+    pub(crate) weak_oracle_guidance: Option<String>,
 }
 
 /// The repair journey one generated stub feeds (#8727). Both placements are
@@ -177,9 +181,12 @@ pub(crate) fn resolve_test_stub(
             let mut seam_index = None;
             let mut resolution =
                 resolve_at_location(root, config, file, *line, kind.as_deref(), &mut seam_index)?;
-            if resolution.grip_class.is_none() {
-                resolution.grip_class =
-                    inventory_grip_class(root, config, file, &resolution.seam_id);
+            if let Some((class, guidance)) =
+                inventory_entry_facts(root, config, file, &resolution.seam_id)
+            {
+                resolution.grip_class.get_or_insert(class);
+                resolution.weak_oracle_guidance =
+                    resolution.weak_oracle_guidance.take().or(guidance);
             }
             Ok(resolution)
         }
@@ -318,6 +325,7 @@ impl<'a> AtCandidate<'a> {
                     // route is invented (#8727).
                     next_repair: None,
                     seam_line: seam.display_line(),
+                    weak_oracle_guidance: None,
                 }
             }
             Self::Classified(entry) => resolution_for(root, config, entry, source),
@@ -363,7 +371,7 @@ pub(crate) enum StubRouteDecision {
     },
     /// The shared resolver refuses: print its reason instead of a command
     /// that would only refuse.
-    Refused { reason: &'static str },
+    Refused { reason: String },
 }
 
 /// A route decision bound to the finding it was computed for.
@@ -414,7 +422,21 @@ pub(crate) fn stub_route_for_finding(
             decision,
         });
     }
-    let resolution = resolve_at_location(root, config, &file, line, Some(kind), seam_index).ok()?;
+    let mut resolution =
+        resolve_at_location(root, config, &file, line, Some(kind), seam_index).ok()?;
+    // #10683: `agent stub` refuses a weak-oracle boundary seam (an existing
+    // test already reaches it); never advertise a stub command it will refuse.
+    if resolution.weak_oracle_guidance.is_none() {
+        resolution.weak_oracle_guidance =
+            inventory_entry_facts(root, config, &file, &resolution.seam_id)
+                .and_then(|(_, guidance)| guidance);
+    }
+    if let Some(guidance) = resolution.weak_oracle_guidance.take() {
+        return Some(StubRoute {
+            finding_id: finding.id.clone(),
+            decision: StubRouteDecision::Refused { reason: guidance },
+        });
+    }
     let decision = match resolution.outcome {
         // `--at` stubs the nearest gap when the finding's line holds none
         // (#6298). Print the line that stub is for, and only when asking for
@@ -430,7 +452,7 @@ pub(crate) fn stub_route_for_finding(
         }
         Ok(_) => StubRouteDecision::Stub { file, line, kind },
         Err(refusal) => StubRouteDecision::Refused {
-            reason: refusal.reason(),
+            reason: refusal.reason().to_string(),
         },
     };
     Some(StubRoute {
@@ -554,7 +576,7 @@ fn const_consumer_route(
                 }
                 Err(refusal) => {
                     first_refusal.get_or_insert(StubRouteDecision::Refused {
-                        reason: refusal.reason(),
+                        reason: refusal.reason().to_string(),
                     });
                 }
             }
@@ -974,6 +996,7 @@ fn resolution_for(
         at_note: None,
         next_repair,
         seam_line: entry.seam.display_line(),
+        weak_oracle_guidance: super::task_first::weak_oracle_guidance(entry),
     }
 }
 
@@ -1033,13 +1056,14 @@ fn next_repair_for(
 
 /// Inventory class for a seam selected from a file parse (`--at --kind`).
 /// Classification is not used to pick the seam (#5471); this lookup is
-/// disclosure only. A failed or empty inventory leaves `None`.
-fn inventory_grip_class(
+/// disclosure only, plus the weak-oracle pointer (#10683). A failed or empty
+/// inventory leaves `None`.
+fn inventory_entry_facts(
     root: &Path,
     config: &RiprConfig,
     file: &str,
     seam_id: &str,
-) -> Option<SeamGripClass> {
+) -> Option<(SeamGripClass, Option<String>)> {
     let relative = scoped_file(root, file)?;
     let scoped = analysis::inventory_diff_scoped_classified_seams_at_with_config(
         root,
@@ -1052,7 +1076,7 @@ fn inventory_grip_class(
         .classified
         .iter()
         .find(|entry| entry.seam.id().as_str() == seam_id)
-        .map(|entry| entry.class)
+        .map(|entry| (entry.class, super::task_first::weak_oracle_guidance(entry)))
 }
 
 /// Exact or path-suffix match in either direction, after normalizing

@@ -145,3 +145,32 @@ fn shapes_that_do_not_expand_exactly_keep_the_macro_limitation() -> Result<(), S
     }
     Ok(())
 }
+
+/// A transcriber that calls the owner with its own input is not read as the
+/// call-line assertion: the call line carries none of that call's inputs, so
+/// the expansion would be graded against the wrong ones and an exact pin on
+/// `surcharge(5)` would read as a pin of whatever the call site wrote.
+#[test]
+fn a_transcriber_that_makes_its_own_call_is_never_credited() -> Result<(), String> {
+    for (shape, definition, call) in [
+        (
+            "a call the transcriber makes itself",
+            "    macro_rules! check_fixed {\n        ($expected:expr) => { assert_eq!(surcharge(5), $expected) };\n    }\n",
+            "check_fixed!(5);",
+        ),
+        (
+            "a call that ignores the argument written at the call",
+            "    macro_rules! check_eq {\n        ($actual:expr, $expected:expr) => { assert_eq!(surcharge(5), $expected) };\n    }\n",
+            "check_eq!(surcharge(100), 5);",
+        ),
+        (
+            "a call on a value the call site does not supply",
+            "    macro_rules! check_len {\n        ($expected:expr) => { assert_eq!(vec![surcharge(5)].len(), $expected) };\n    }\n",
+            "check_len!(1);",
+        ),
+    ] {
+        let finding = finding(&source(definition, call))?;
+        assert_ne!(class(&finding), "exposed", "{shape}: {finding}");
+    }
+    Ok(())
+}
