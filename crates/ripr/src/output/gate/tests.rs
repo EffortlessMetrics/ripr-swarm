@@ -1104,10 +1104,12 @@ fn gate_refusal_admission_keeps_complete_and_advisory_controls() -> Result<(), S
             .to_string()),
         },
     );
-    assert_eq!(zero_ledger.status, "no_records");
-    let zero_path = dir.join("zero-ledger.json");
     let zero_json =
         crate::output::gap_decision_ledger::render_gap_decision_ledger_json(&zero_ledger)?;
+    let zero_parsed: serde_json::Value =
+        serde_json::from_str(&zero_json).map_err(|error| format!("parse zero ledger: {error}"))?;
+    assert_eq!(zero_parsed["status"], "no_records");
+    let zero_path = dir.join("zero-ledger.json");
     fs::write(&zero_path, zero_json).map_err(|error| format!("write zero ledger: {error}"))?;
     let (_zero_fixture, mut zero_input) = fixture_input(GateMode::VisibleOnly)?;
     zero_input.pr_guidance = None;
@@ -1144,10 +1146,12 @@ fn gate_refusal_admission_keeps_complete_and_advisory_controls() -> Result<(), S
             .to_string()),
         },
     );
-    assert_eq!(advisory_ledger.status, "advisory");
-    let advisory_path = dir.join("advisory-ledger.json");
     let advisory_json =
         crate::output::gap_decision_ledger::render_gap_decision_ledger_json(&advisory_ledger)?;
+    let advisory_parsed: serde_json::Value = serde_json::from_str(&advisory_json)
+        .map_err(|error| format!("parse advisory ledger: {error}"))?;
+    assert_eq!(advisory_parsed["status"], "advisory");
+    let advisory_path = dir.join("advisory-ledger.json");
     fs::write(&advisory_path, advisory_json)
         .map_err(|error| format!("write advisory ledger: {error}"))?;
     let (_advisory_fixture, mut advisory_input) = fixture_input(GateMode::VisibleOnly)?;

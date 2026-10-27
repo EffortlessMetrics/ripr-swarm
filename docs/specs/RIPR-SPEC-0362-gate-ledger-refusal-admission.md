@@ -29,7 +29,8 @@ Linked PRs:
 Support-tier impact:
 
 - No tier change. Gate and ledger behavior stays fail-closed; a saved refusal
-  now keeps its refusal instead of degrading into a pass.
+  now keeps its refusal instead of degrading into a pass. Claim boundaries
+  remain governed by [support tiers](../status/SUPPORT_TIERS.md).
 
 Policy impact:
 
