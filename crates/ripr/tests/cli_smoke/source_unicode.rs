@@ -53,7 +53,7 @@ fn assert_unicode_source(name: &str, payload: &str, expected_after: &str) -> Tes
             .split_once("\nChanged\n")
             .ok_or("CLI must analyze a source finding")?
             .1
-            .split_once("\nProbe\n")
+            .split_once("\nChange type\n")
             .ok_or("finding must carry a Probe section")?
             .0;
         assert_eq!(
@@ -103,7 +103,7 @@ fn assert_unicode_source(name: &str, payload: &str, expected_after: &str) -> Tes
             .split_once("\nChanged\n")
             .ok_or("API Changed section missing")?
             .1
-            .split_once("\nProbe\n")
+            .split_once("\nChange type\n")
             .ok_or("API Probe section missing")?
             .0;
         let expected_value = expected_after
@@ -141,7 +141,7 @@ fn assert_unicode_source(name: &str, payload: &str, expected_after: &str) -> Tes
                 .split_once("\nChanged\n")
                 .ok_or("control Changed section missing")?
                 .1
-                .split_once("\nProbe\n")
+                .split_once("\nChange type\n")
                 .ok_or("control Probe section missing")?
                 .0;
             assert_eq!(changed, expected, "{name}: boundary/progress control");

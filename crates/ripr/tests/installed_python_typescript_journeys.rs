@@ -449,7 +449,7 @@ fn python_refused_variant_is_offered_no_gap_bound_start() -> Result<(), String> 
     decoy_untouched(&decoy)?;
     need(
         &check,
-        "1 no path",
+        "1 no test path",
         "the variant's finding has no static path",
     )?;
     let gap = check
