@@ -1010,6 +1010,21 @@ asserted input (`Math.min(100, ...)` to `Math.min(200, ...)`, asserted at 40)
 still reads unexercised (#9436). An operator edit changes no number, so it
 keeps the boundary-witness reading.
 
+Rule 18 also reads a changed compound assignment to state the owner returns
+(rule 15's `this.total += amount` then `return this.total`; #10850). When the
+old and new statement write the same target with the same operator, the new
+state is a function of the prior state and the operand alone, so the operands
+(`amount` and `amount * 2`) are compared exactly as the return expressions
+above, at the literal arguments of each observed call, with the same probe-grid
+separation requirement. The call is read through any plain receiver
+(`cart.add(0)`, a test-local `new Cart()`, a file-level instance or a fixture
+receiver). Because the state accumulates across calls, the test body may hold no
+call of the owner that is not one of the evaluated assertions' calls; a parameter
+reassigned in the owner, an operand the evaluator cannot read (a loop variable,
+a field, another call) or a different operator keeps the existing verdict. The
+rule only withdraws credit: a separating input such as `add(5)` pinned to `10`
+stays `exposed`.
+
 **Rule 19. A same-file assertion helper called with literals is its asserts
 (2026-10-22, #9636).** Extends decision 19(b) for literal-argument call-site
 rewrites of helpers that decision 19's pass leaves untouched (multi-statement

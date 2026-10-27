@@ -19658,3 +19658,90 @@ fn finding_resting_only_on_a_guarded_test_reads_static_unknown() -> Result<(), S
     let _ = std::fs::remove_dir_all(&root);
     Ok(())
 }
+
+fn cart_add_owner() -> TypeScriptOwner {
+    TypeScriptOwner {
+        name: "add".to_string(),
+        owner_kind: OwnerKind::Method,
+        class_name: Some("Cart".to_string()),
+        params: vec!["amount".to_string()],
+        arity: Some(1),
+        source_text: Some(
+            concat!(
+                "add(amount: number): number {\n",
+                "    this.total += amount * 2;\n",
+                "    return this.total;\n",
+                "}",
+            )
+            .to_string(),
+        ),
+        ..boundary_witness_owner()
+    }
+}
+
+/// #10850: a changed compound assignment to returned state is judged on its
+/// operand, and only when both statements use the same target and operator.
+#[test]
+fn returned_state_operands_pair_an_edited_operand_of_the_same_operator() {
+    let owner = cart_add_owner();
+    assert_eq!(
+        classifier::returned_state_operands(
+            "    this.total += amount * 2;",
+            Some("    this.total += amount;"),
+            &owner,
+        ),
+        Some(("amount", "amount * 2"))
+    );
+    // A different operator changes how the prior state combines with the operand.
+    assert_eq!(
+        classifier::returned_state_operands(
+            "    this.total -= amount * 2;",
+            Some("    this.total += amount;"),
+            &owner,
+        ),
+        None
+    );
+    // A parameter the owner rebinds is not the call's argument.
+    let rebinding = TypeScriptOwner {
+        source_text: Some(
+            concat!(
+                "add(amount: number): number {\n",
+                "    amount = amount + 1;\n",
+                "    this.total += amount * 2;\n",
+                "    return this.total;\n",
+                "}",
+            )
+            .to_string(),
+        ),
+        ..cart_add_owner()
+    };
+    assert_eq!(
+        classifier::returned_state_operands(
+            "    this.total += amount * 2;",
+            Some("    this.total += amount;"),
+            &rebinding,
+        ),
+        None
+    );
+    // An added statement has no old operand to compare.
+    assert_eq!(
+        classifier::returned_state_operands("    this.total += amount * 2;", None, &owner),
+        None
+    );
+}
+
+/// #10850: a state update is read through whatever plain receiver the test
+/// calls the method on; a chained receiver is left unnamed.
+#[test]
+fn instance_call_receivers_name_plain_receivers_only() {
+    assert_eq!(
+        classifier::instance_call_receivers("cart.add(0)", "add"),
+        vec!["cart".to_string()]
+    );
+    assert_eq!(
+        classifier::instance_call_receivers("a.add(1) + b.add(2)", "add"),
+        vec!["a".to_string(), "b".to_string()]
+    );
+    assert!(classifier::instance_call_receivers("a.b.add(1)", "add").is_empty());
+    assert!(classifier::instance_call_receivers("add(1)", "add").is_empty());
+}

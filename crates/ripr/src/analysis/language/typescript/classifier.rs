@@ -1292,6 +1292,43 @@ pub(crate) fn plain_changed_return<'t>(
     Some((old_expression, new_expression))
 }
 
+/// The plain receivers of every `<receiver>.<owner_name>(` call in `observed`.
+pub(crate) fn instance_call_receivers(observed: &str, owner_name: &str) -> Vec<String> {
+    observed
+        .match_indices(owner_name)
+        .filter_map(|(at, _)| {
+            let before = observed.get(..at)?;
+            before
+                .trim_end()
+                .ends_with('.')
+                .then(|| receiver_before_dot(before))
+        })
+        .filter(|receiver| !receiver.is_empty())
+        .collect()
+}
+
+/// The old and new operand of a changed compound assignment to returned state
+/// (#10850), when the owner declares parameters and never rebinds one, so the
+/// operand reads the call's arguments.
+pub(crate) fn returned_state_operands<'t>(
+    line_text: &'t str,
+    old_line_text: Option<&'t str>,
+    owner: &TypeScriptOwner,
+) -> Option<(&'t str, &'t str)> {
+    if owner.arity.is_none() || owner.params.is_empty() {
+        return None;
+    }
+    let source = owner.source_text.as_deref()?;
+    if owner
+        .params
+        .iter()
+        .any(|param| identifier_written_in(source, param))
+    {
+        return None;
+    }
+    returned_state_guard::ts_returned_state_operands(owner, line_text, old_line_text)
+}
+
 /// Whether the changed `return` at `line` runs for every call of a plain,
 /// synchronous owner: nothing between the signature and the return branches,
 /// returns or throws early, and the owner is neither `async` nor a generator.
@@ -1361,9 +1398,16 @@ pub(crate) fn ts_returned_expression_unexercised(
     if other_credit_present {
         return false;
     }
-    let Some((old_expression, new_expression)) =
-        plain_changed_return(line, line_text, old_line_text, owner, workspace_root)
-    else {
+    // #10850: a changed compound assignment to returned state (`this.total +=
+    // amount` to `+= amount * 2`) is judged on its operand. The state
+    // accumulates across calls, so every owner call in a test must be one of
+    // the evaluated assertions' calls.
+    let plain = plain_changed_return(line, line_text, old_line_text, owner, workspace_root);
+    let state_operands = match plain {
+        Some(_) => None,
+        None => returned_state_operands(line_text, old_line_text, owner),
+    };
+    let Some((old_expression, new_expression)) = plain.or(state_operands) else {
         return false;
     };
     let mut evaluated = false;
@@ -1374,7 +1418,7 @@ pub(crate) fn ts_returned_expression_unexercised(
         if local_identifier_declared_in_test_body(&candidate.test.body_text, &owner.name) {
             return false;
         }
-        let receivers =
+        let mut receivers =
             unshadowed_owner_namespace_receivers(candidate.test, owner, alias_map, workspace_root);
         for assertion in &candidate.test.assertions {
             if assertion.oracle_strength.rank() < OracleStrength::Strong.rank() {
@@ -1383,6 +1427,12 @@ pub(crate) fn ts_returned_expression_unexercised(
             let Some(observed) = assertion.observed_expression.as_deref() else {
                 return false;
             };
+            if state_operands.is_some() {
+                // A state update is read through an instance (`cart.add(0)`),
+                // not a namespace import. The whole-body call count below
+                // rejects a call on a receiver this reading cannot name.
+                receivers.extend(instance_call_receivers(observed, &owner.name));
+            }
             let mut argument_lists = owner_call_arguments(observed, &owner.name, &receivers);
             if argument_lists.is_empty()
                 && let Some(arguments) = ts_observed_local_owner_call_arguments(
@@ -1401,6 +1451,32 @@ pub(crate) fn ts_returned_expression_unexercised(
             // other call (`g(2)` that itself calls the owner) is opaque.
             if observed_has_other_call(observed, &owner.name) {
                 return false;
+            }
+            if state_operands.is_some() {
+                let masked_body = ts_mask_literals_and_comments(&candidate.test.body_text);
+                let owner_calls = masked_body
+                    .match_indices(owner.name.as_str())
+                    .filter(|(at, _)| {
+                        let embedded = masked_body[..*at]
+                            .chars()
+                            .next_back()
+                            .is_some_and(|c| c.is_alphanumeric() || matches!(c, '_' | '$'));
+                        !embedded
+                            && masked_body[*at + owner.name.len()..]
+                                .trim_start()
+                                .starts_with('(')
+                    })
+                    .count();
+                let asserted_calls: usize = candidate
+                    .test
+                    .assertions
+                    .iter()
+                    .filter_map(|assertion| assertion.observed_expression.as_deref())
+                    .map(|observed| owner_call_arguments(observed, &owner.name, &receivers).len())
+                    .sum();
+                if owner_calls != asserted_calls {
+                    return false;
+                }
             }
             for arguments in argument_lists {
                 match literal_eval::return_expressions_agree(
