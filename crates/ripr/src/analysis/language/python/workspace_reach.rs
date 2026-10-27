@@ -976,11 +976,17 @@ fn is_keyword(word: &str) -> bool {
 /// body names a needle: a test that takes one as a parameter reaches what it
 /// calls. A `name=` override in the decorator is kept too (its words are).
 fn fixtures_over(source: &str, needles: &HashSet<String>) -> Vec<String> {
+    let source = if source.contains('\r') {
+        std::borrow::Cow::Owned(source.replace("\r\n", "\n").replace('\r', "\n"))
+    } else {
+        std::borrow::Cow::Borrowed(source)
+    };
     let lines: Vec<&str> = source.lines().collect();
-    let aliases = fixture_aliases(source);
+    let continued = continuation_lines(&lines);
+    let aliases = fixture_aliases(&source);
     // A fixture body calls an owner by the local name this file imports it
     // as (`from orders import make_order as build`).
-    let local = imported_aliases(source, needles);
+    let local = imported_aliases(&source, needles);
     let needles: HashSet<String> = needles.iter().cloned().chain(local).collect();
     let needles = &needles;
     let mut fixtures = Vec::new();
@@ -998,8 +1004,10 @@ fn fixtures_over(source: &str, needles: &HashSet<String>) -> Vec<String> {
             continue;
         }
         let start = at;
-        // Skip the rest of the decorator stack to the `def`.
-        while at < lines.len() && defined_name(lines[at].trim_start()).is_none() {
+        // Skip the rest of the decorator stack, including a decorator's
+        // bracketed arguments, to the `def`.
+        while at < lines.len() && (continued[at] || defined_name(lines[at].trim_start()).is_none())
+        {
             at += 1;
         }
         let Some(header) = lines.get(at) else {
@@ -1009,11 +1017,19 @@ fn fixtures_over(source: &str, needles: &HashSet<String>) -> Vec<String> {
         let Some(name) = defined_name(header.trim_start()) else {
             break;
         };
+        // A line that continues a bracket, string or backslash belongs to
+        // the logical line before it: the rest of a multi-line header
+        // (`def order(\n):`) or a column-0 line of a body docstring never ends
+        // the body.
         let mut end = at + 1;
         while end < lines.len() {
             let line = lines[end];
             let body = line.trim_start();
-            if !body.is_empty() && !body.starts_with('#') && line.len() - body.len() <= indent {
+            if !continued[end]
+                && !body.is_empty()
+                && !body.starts_with('#')
+                && line.len() - body.len() <= indent
+            {
                 break;
             }
             end += 1;
@@ -1030,6 +1046,62 @@ fn fixtures_over(source: &str, needles: &HashSet<String>) -> Vec<String> {
         at = end;
     }
     fixtures
+}
+
+/// For each physical line, whether it continues the logical line before it:
+/// it starts inside an open bracket or triple-quoted string, or the line
+/// before ended with a backslash.
+fn continuation_lines(lines: &[&str]) -> Vec<bool> {
+    let mut continued = Vec::with_capacity(lines.len());
+    let mut depth = 0usize;
+    // The quote character and width of a string still open at line end.
+    let mut open: Option<(char, bool)> = None;
+    let mut joined = false;
+    for line in lines {
+        continued.push(depth > 0 || open.is_some() || joined);
+        joined = false;
+        let mut chars = line.chars().peekable();
+        while let Some(ch) = chars.next() {
+            if let Some((quote, triple)) = open {
+                if ch == '\\' {
+                    joined = chars.next().is_none();
+                } else if ch == quote
+                    && (!triple || {
+                        let mut ahead = chars.clone();
+                        ahead.next() == Some(quote) && ahead.next() == Some(quote)
+                    })
+                {
+                    if triple {
+                        chars.next();
+                        chars.next();
+                    }
+                    open = None;
+                }
+                continue;
+            }
+            match ch {
+                '#' => break,
+                '\'' | '"' => {
+                    let mut ahead = chars.clone();
+                    let triple = ahead.next() == Some(ch) && ahead.next() == Some(ch);
+                    if triple {
+                        chars.next();
+                        chars.next();
+                    }
+                    open = Some((ch, triple));
+                }
+                '\\' if chars.peek().is_none() => joined = true,
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+        }
+        // A single-quoted string cannot cross a newline unescaped.
+        if open.is_some_and(|(_, triple)| !triple) && !joined {
+            open = None;
+        }
+    }
+    continued
 }
 
 /// A route literal with its `{...}` and `<...>` placeholder segments removed.
@@ -1311,6 +1383,34 @@ mod tests {
     }
 
     #[test]
+    fn a_fixture_body_ends_at_its_logical_header_and_body() {
+        let needles: HashSet<String> = ["make_order".to_string()].into_iter().collect();
+        let multiline = "@pytest.fixture\ndef order(\nrequest,  # )\nlabel=\")\",\n):\n    \"\"\"Doc.\n\nColumn zero.\n    \"\"\"\n    return make_order(3)\n";
+        assert_eq!(
+            fixtures_over(multiline, &needles),
+            vec!["order".to_string()]
+        );
+        // The body still ends at the next logical line at the def's indent:
+        // a later plain function calling the owner is not the fixture's.
+        let ended = "@pytest.fixture(\nscope=\"module\",\n)\ndef order(\n):\n    return 3\n\n\ndef helper():\n    return make_order(1)\n";
+        assert!(fixtures_over(ended, &needles).is_empty());
+        let lines = [
+            "def f(a,  # (",
+            "b='(',",
+            "):",
+            "    s = '''x",
+            "y'''",
+            "    t = 1 \\",
+            "+ 2",
+            "z = 0",
+        ];
+        assert_eq!(
+            continuation_lines(&lines),
+            vec![false, true, true, false, true, false, true, false]
+        );
+    }
+
+    #[test]
     fn import_statements_read_every_spelling_python_accepts() {
         let source = "from pytest\timport fixture as fx\nfrom  pytest  import(fixture  as  fy)\nfrom.orders import make_order as build\nimport os; from pytest import fixture as fz\nfrom pytest import \\\n    fixture as fw\nfrom pytest import (  # fixtures (and more)\n    # decorator\n    fixture as fv,  # alias\n)\nfrom_x = 1\npass; from pytest import fixture as fu\nimport os; '#'; from pytest import fixture as ft\ntry: from pytest import fixture as fs\nexcept ImportError: pass\nNOTE = \"\"\"\nimport not_an_import\n\"\"\"\n";
         let statements: Vec<String> = import_statements(source).collect();
@@ -1388,6 +1488,33 @@ mod tests {
         );
         assert_eq!(admission.refused_reaching, 0);
         assert_eq!(admission.refused_unreached, 3);
+        Ok(())
+    }
+
+    #[test]
+    fn an_unreadable_changed_file_keeps_the_plain_cap() -> Result<(), String> {
+        // The changed file is missing from the worktree, so what it defines
+        // is unknown and admission must not claim the rest cannot reach it.
+        let root = std::env::temp_dir().join(format!(
+            "ripr-reach-unreadable-changed-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).map_err(|err| format!("mkdir: {err}"))?;
+        std::fs::write(root.join("other.py"), "def other():\n    return 1\n")
+            .map_err(|err| format!("write: {err}"))?;
+        let changed_files = vec![changed("orders.py", &[(2, "    if count > 2:")])];
+        let changed_paths: BTreeSet<String> = ["orders.py".to_string()].into_iter().collect();
+        let discovered = vec![PathBuf::from("orders.py"), PathBuf::from("other.py")];
+        let admission = admit_by_reach(
+            &root,
+            discovered,
+            &changed_files,
+            &changed_paths,
+            1,
+            1 << 20,
+        );
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove: {err}"))?;
+        assert!(admission.is_none());
         Ok(())
     }
 

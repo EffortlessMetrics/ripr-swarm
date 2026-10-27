@@ -6612,6 +6612,17 @@ fn assert_capped_fixture_test_matches_uncapped(label: &str, conftest: &str) -> R
         capped.limitations
     );
     assert_eq!(capped.findings, uncapped.findings, "{label}");
+    // Equal findings could still both miss the route under test; the capped
+    // run must relate the fixture-only test itself.
+    assert!(
+        capped
+            .findings
+            .iter()
+            .flat_map(|finding| &finding.related_tests)
+            .any(|test| test.name.ends_with("test_total")
+                && test.file.ends_with("tests/test_totals.py")),
+        "{label}: the capped run must relate test_total"
+    );
     Ok(())
 }
 
@@ -6678,6 +6689,48 @@ fn analyze_diff_over_cap_keeps_fixture_alias_tests_for_every_import_spelling() -
         (
             "diff-walk-cap-reach-fixture-import-alias-semicolon",
             "import pytest; from orders import make_order as build\n\n\n@pytest.fixture\ndef order():\n    return build(3)\n",
+        ),
+    ] {
+        assert_capped_fixture_test_matches_uncapped(label, conftest)?;
+    }
+    Ok(())
+}
+
+/// #10785: a fixture's body ends at its logical header and body, not at the
+/// first column-0 physical line, so a header split over lines (Black's
+/// `def order(\n):`), an `async def`, a header comment or string holding a
+/// bracket, a bracketed decorator, or a column-0 docstring line must not
+/// drop the fixture's owner call before the cap.
+#[test]
+fn analyze_diff_over_cap_keeps_fixture_tests_for_every_header_shape() -> Result<(), String> {
+    for (label, conftest) in [
+        (
+            "diff-walk-cap-reach-fixture-header-multiline",
+            "import pytest\n\nfrom orders import make_order\n\n\n@pytest.fixture\ndef order(\n):\n    return make_order(3)\n",
+        ),
+        (
+            "diff-walk-cap-reach-fixture-header-async",
+            "import pytest\n\nfrom orders import make_order\n\n\n@pytest.fixture\nasync def order(\nrequest,\n):\n    return make_order(3)\n",
+        ),
+        (
+            "diff-walk-cap-reach-fixture-header-comment",
+            "import pytest\n\nfrom orders import make_order\n\n\n@pytest.fixture\ndef order(  # )\nrequest,  # )\n):\n    return make_order(3)\n",
+        ),
+        (
+            "diff-walk-cap-reach-fixture-header-string",
+            "import pytest\n\nfrom orders import make_order\n\n\n@pytest.fixture\ndef order(label=\")\",\nrequest=None):\n    return make_order(3)\n",
+        ),
+        (
+            "diff-walk-cap-reach-fixture-header-decorator-arguments",
+            "import pytest\n\nfrom orders import make_order\n\n\n@pytest.fixture(\nscope=\"module\",\n)\ndef order(\n):\n    return make_order(3)\n",
+        ),
+        (
+            "diff-walk-cap-reach-fixture-body-column-zero-docstring",
+            "import pytest\n\nfrom orders import make_order\n\n\n@pytest.fixture\ndef order():\n    \"\"\"Build an order.\n\nColumn zero.\n    \"\"\"\n    return make_order(3)\n",
+        ),
+        (
+            "diff-walk-cap-reach-fixture-header-backslash",
+            "import pytest\n\nfrom orders import make_order\n\n\n@pytest.fixture\ndef order() \\\n:\n    return make_order(3)\n",
         ),
     ] {
         assert_capped_fixture_test_matches_uncapped(label, conftest)?;
@@ -6814,6 +6867,14 @@ fn analyze_diff_over_cap_keeps_every_supported_relation_route() -> Result<(), St
             capped.limitations
         );
         assert_eq!(capped.findings, uncapped.findings, "{label}");
+        assert!(
+            capped
+                .findings
+                .iter()
+                .flat_map(|finding| &finding.related_tests)
+                .any(|test| test.name.ends_with("test_a") && test.file.ends_with("test_a.py")),
+            "{label}: the capped run must relate test_a through this route"
+        );
     }
     Ok(())
 }
