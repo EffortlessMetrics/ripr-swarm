@@ -67,6 +67,7 @@ use crate::analysis::extract::{
 #[cfg(test)]
 use crate::analysis::facts::FileFactsView;
 use crate::analysis::facts::drop_in::DropInManifests;
+use crate::analysis::facts::expanded_assertion_view;
 use crate::analysis::facts::{
     DOCTEST_FUNCTION_NAME, ExecutionContext, FunctionContainer, ModulePathTarget,
     SourceRoleProvenanceEdgeKind,
@@ -1512,7 +1513,10 @@ impl OwnerPinSyntax {
         };
         self.by_file
             .get_or_build(&test.file, || {
-                owner_pin_assertions(&facts.source, &assertion_context_macros())
+                owner_pin_assertions(
+                    &expanded_assertion_view(&facts.source, facts.tests.iter()),
+                    &assertion_context_macros(),
+                )
             })
             .refusal_trusting_comparison_macros(
                 (test.start_line, test.end_line, &test.name),
@@ -1593,7 +1597,10 @@ impl OwnerPinSyntax {
         let file_refusal = self
             .by_file
             .get_or_build(&test.file, || {
-                owner_pin_assertions(&facts.source, &assertion_context_macros())
+                owner_pin_assertions(
+                    &expanded_assertion_view(&facts.source, facts.tests.iter()),
+                    &assertion_context_macros(),
+                )
             })
             .refusal(
                 (test.start_line, test.end_line, &test.name),
