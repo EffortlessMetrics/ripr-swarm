@@ -61,20 +61,22 @@ pub(super) fn pushed_element_may_compare_leniently(literal: &str, index: &RustIn
                     // unrelated struct (`foreign::Event::Shipped` beside a
                     // local `struct Shipped`).
                     defined |= depth == 0 && name == element.type_name;
-                    // The item's own generic parameters and enum variants are
-                    // not field types.
-                    let own: BTreeSet<String> = generic_parameters(item.generics)
-                        .into_iter()
-                        .chain(if item.is_enum {
-                            variant_names(item.body)
-                        } else {
-                            Vec::new()
-                        })
-                        .collect();
-                    next.extend(
-                        identifiers(item.body)
-                            .filter(|ident| is_type_like(ident) && !own.contains(ident)),
-                    );
+                    // The item's own generic parameters are not field types.
+                    // Each variant name accounts for one occurrence, its own
+                    // declaration; a further occurrence is a field type to
+                    // follow (`enum Shape { Circle(Circle) }`).
+                    let generics: BTreeSet<String> =
+                        generic_parameters(item.generics).into_iter().collect();
+                    let mut pending_variants: BTreeSet<String> = if item.is_enum {
+                        variant_names(item.body).into_iter().collect()
+                    } else {
+                        BTreeSet::new()
+                    };
+                    next.extend(identifiers(item.body).filter(|ident| {
+                        is_type_like(ident)
+                            && !generics.contains(ident)
+                            && !pending_variants.remove(ident)
+                    }));
                 }
             }
             // An embedded type that no workspace file defines and std does
@@ -470,6 +472,14 @@ mod tests {
         ));
         assert!(lenient(
             "pub enum Kind { Tagged { sku: outside::Sku } }\npub struct Line { kind: Kind }\n"
+        ));
+        // A variant that shares its name with its payload type still follows
+        // the payload.
+        assert!(lenient(
+            "pub struct Circle { r: outside::R }\npub enum Shape { Circle(Circle) }\npub struct Line { shape: Shape }\n"
+        ));
+        assert!(!lenient(
+            "pub struct Circle { r: u32 }\npub enum Shape { Circle(Circle) }\npub struct Line { shape: Shape }\n"
         ));
         // A trait object cannot derive `PartialEq`; it stays unresolved.
         assert!(lenient("pub struct Line { sku: Box<dyn Hashed> }\n"));
