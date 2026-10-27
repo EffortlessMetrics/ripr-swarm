@@ -14,7 +14,7 @@ use super::related_tests::{
     test_may_reach_owner_class,
 };
 use super::sink_alignment::CreditedAssertion;
-use super::source_utils::SourceText;
+use super::source_utils::{SourceText, signature_colon_end};
 use super::{
     PythonImport, PythonOracleShape, PythonOwner, PythonTest, expr_full_name,
     split_python_assignment,
@@ -957,15 +957,33 @@ fn is_known_auxiliary_pytest_fixture(fixture: &str) -> bool {
 }
 
 fn body_uses_identifier(body_text: &str, identifier: &str) -> bool {
+    // The test's own signature declares its parameters; it does not use them.
+    // A multi-line signature puts them on lines that do not start with `def`,
+    // and a one-line body follows the colon on the `def` line (#10685).
+    // The colon scan does not follow a triple-quoted string across lines, so
+    // a signature holding one falls back to the old line rule rather than
+    // risk starting the body past a real use.
+    let body_start = test_def_offset(body_text)
+        .and_then(|def| {
+            signature_colon_end(body_text, def).filter(|&end| {
+                let signature = &body_text[def..end];
+                !signature.contains("\"\"\"") && !signature.contains("\'\'\'")
+            })
+        })
+        .unwrap_or(0);
     let mut line_start = 0;
     for line in body_text.split_inclusive('\n') {
         let trimmed = line.trim_start();
-        if !trimmed.starts_with('@')
-            && !trimmed.starts_with("def ")
-            && !trimmed.starts_with("async def ")
+        // Inside the body, a decorator or `def` line belongs to a nested def.
+        let nested_header = line_start >= body_start
+            && (trimmed.starts_with('@')
+                || trimmed.starts_with("def ")
+                || trimmed.starts_with("async def "));
+        if !nested_header
             && line.match_indices(identifier).any(|(idx, _)| {
                 let body_idx = line_start + idx;
-                has_identifier_boundary(body_text, body_idx, identifier.len())
+                body_idx >= body_start
+                    && has_identifier_boundary(body_text, body_idx, identifier.len())
                     && !line_prefix_looks_like_comment_or_string(body_text, body_idx)
             })
         {
@@ -974,6 +992,20 @@ fn body_uses_identifier(body_text: &str, identifier: &str) -> bool {
         line_start += line.len();
     }
     false
+}
+
+/// The offset of the test's own `def` keyword: the first line past its
+/// decorators that starts with `def` or `async def`.
+fn test_def_offset(body_text: &str) -> Option<usize> {
+    let mut line_start = 0;
+    for line in body_text.split_inclusive('\n') {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("def ") || trimmed.starts_with("async def ") {
+            return Some(line_start + line.len() - trimmed.len());
+        }
+        line_start += line.len();
+    }
+    None
 }
 
 pub(super) fn has_identifier_boundary(body_text: &str, idx: usize, len: usize) -> bool {
@@ -2029,6 +2061,41 @@ pub(super) mod tests {
             "    mocker.patch.object(a, \"b\")\n",
             "patch.object(",
             &none
+        ));
+    }
+
+    #[test]
+    fn a_signature_declares_its_parameters_and_the_body_uses_them() {
+        let cases = [
+            ("def test_x(fee):\n    pass\n", false),
+            ("def test_x(\n    fee,\n):\n    pass\n", false),
+            (
+                "@mark\ndef test_x(\n    fee: dict[str, int] = {'a': 1},\n) -> None:\n    pass\n",
+                false,
+            ),
+            ("async def test_x(\n    fee,\n):\n    pass\n", false),
+            (
+                "    def test_x(\n        self,\n        fee,\n    ):\n        pass\n",
+                false,
+            ),
+            ("def test_x(\n    fee,  # ):\n):\n    pass\n", false),
+            ("def test_x(\n    fee,\n):\n    assert fee\n", true),
+            ("def test_x(fee): assert fee\n", true),
+            ("def test_x(\n    fee,\n): return fee\n", true),
+            // A triple-quoted default the colon scan cannot follow keeps the
+            // old line rule, so the body use still counts.
+            (
+                "def test_x(fee, note=\"\"\"a\nb\"\"\"):\n    assert fee\n    text = \"\"\"\n    1) step: x\n    \"\"\"\n",
+                true,
+            ),
+        ];
+        for (body, uses) in cases {
+            assert_eq!(body_uses_identifier(body, "fee"), uses, "{body:?}");
+        }
+        // A nested def's header is still not a use.
+        assert!(!body_uses_identifier(
+            "def test_x(fee):\n    def helper(fee):\n        pass\n",
+            "fee"
         ));
     }
 }
