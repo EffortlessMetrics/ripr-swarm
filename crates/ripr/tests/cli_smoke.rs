@@ -5216,7 +5216,6 @@ fn check_json_analysis_timeout_retains_requested_echo_and_bounded_recovery() -> 
         ("/input_context/requested/base", "HEAD"),
         ("/input_context/requested/analysis_mode", "draft"),
         ("/input_context/recovery/kind", "retry_with_larger_budget"),
-        ("/input_context/recovery/budget_seconds", "2"),
     ] {
         let actual = value.pointer(pointer).and_then(serde_json::Value::as_str);
         if actual != Some(expected) {
@@ -5224,6 +5223,16 @@ fn check_json_analysis_timeout_retains_requested_echo_and_bounded_recovery() -> 
                 "{pointer}: expected {expected}, got {actual:?}\n{stdout}"
             ));
         }
+    }
+    if value
+        .pointer("/input_context/recovery/budget_seconds")
+        .and_then(serde_json::Value::as_u64)
+        != Some(2)
+    {
+        return Err(format!(
+            "/input_context/recovery/budget_seconds: expected 2, got {:?}\n{stdout}",
+            value.pointer("/input_context/recovery/budget_seconds")
+        ));
     }
     if value["input_context"]["requested"]["root"].as_str() != Some(root_arg.as_str()) {
         return Err(format!(
