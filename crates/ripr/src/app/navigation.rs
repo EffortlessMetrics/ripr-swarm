@@ -116,7 +116,18 @@ pub(crate) enum RepairRouteRefusal {
     /// candidate set exceeded the configured limit.
     SeamLimit,
     /// No classified seam in the finding's file binds this finding.
-    NoBindingSeam,
+    /// `seams_in_file` is how many classified seams the file holds, so the
+    /// advisory never says "no seam" where `ripr repair` lists seams (#10702).
+    NoBindingSeam { seams_in_file: usize },
+    /// The finding itself is `exposed`: the related tests already notice the
+    /// change, so there is nothing to repair whatever the seam view says
+    /// (#10702).
+    FindingAlreadyExposed,
+    /// `check` reads a gap or limitation for this change, while the
+    /// repository-wide seam view `ripr repair` reads already counts the bound
+    /// seam as gripped. The advisory names that one difference instead of
+    /// quoting repair's "no gap remains" beside check's gap (#10702).
+    SeamGrippedFindingNot,
     /// Several classified seams bind this finding; the check screen never
     /// picks one silently.
     SeveralBindingSeams,
@@ -169,9 +180,27 @@ impl RepairRouteRefusal {
                     super::task_first::WIDEN_SEAM_BUDGET
                 )
             }
-            Self::NoBindingSeam => "no repair start offered: ripr found no seam in this \
+            Self::NoBindingSeam { seams_in_file: 0 } => {
+                "no repair start offered: ripr found no seam in this \
                  finding's file to bind it to, so there is no seam to start a repair from; \
                  follow the Next step above"
+                    .to_string()
+            }
+            Self::NoBindingSeam { seams_in_file } => format!(
+                "no repair start offered: ripr found {seams_in_file} {} in this finding's \
+                 file, but none is tied to this finding's changed line, so it cannot pick one \
+                 for you; `ripr pilot` lists them, or follow the Next step above",
+                if *seams_in_file == 1 { "seam" } else { "seams" }
+            ),
+            Self::FindingAlreadyExposed => "no repair start offered: nothing to repair here; \
+                 the related tests already notice this change (exposed)"
+                .to_string(),
+            Self::SeamGrippedFindingNot => "no repair start offered: `ripr check` reads a gap \
+                 or limit for this change, but the whole-repository view `ripr repair` uses \
+                 already counts the seam it touches as gripped (exposed), so repair has no gap \
+                 to start from. The two read different evidence (your changed lines versus the \
+                 whole seam) and ripr does not start a repair on conflicting evidence; follow \
+                 the Next step above"
                 .to_string(),
             Self::SeveralBindingSeams => {
                 "no repair start offered: several seams bind this finding \
@@ -865,7 +894,7 @@ mod tests {
         );
         // #9244: with no binding seam the advisory names the Next step
         // instead of routing back to the gate.
-        let unbound = RepairRouteRefusal::NoBindingSeam.advisory(gate);
+        let unbound = RepairRouteRefusal::NoBindingSeam { seams_in_file: 0 }.advisory(gate);
         assert_eq!(
             unbound,
             "no repair start offered: ripr found no seam in this finding's file to bind it \
@@ -874,6 +903,30 @@ mod tests {
         assert!(
             !unbound.contains("ripr repair") && !unbound.contains("full gate's answer"),
             "no-binding-seam must not route back to the gate: {unbound}"
+        );
+        // #10702: seams exist in the file, so the advisory must not claim there are none.
+        let several = RepairRouteRefusal::NoBindingSeam { seams_in_file: 3 }.advisory(gate);
+        assert!(
+            several.contains("found 3 seams in this finding's file")
+                && !several.contains("no seam in this finding's file")
+                && !several.contains("found no seam"),
+            "{several}"
+        );
+        let one = RepairRouteRefusal::NoBindingSeam { seams_in_file: 1 }.advisory(gate);
+        assert!(one.contains("found 1 seam in this finding's file"), "{one}");
+        let exposed = RepairRouteRefusal::FindingAlreadyExposed.advisory(gate);
+        assert!(
+            exposed.contains("nothing to repair here")
+                && exposed.contains("already notice this change (exposed)")
+                && !exposed.contains("missing"),
+            "{exposed}"
+        );
+        let disagree = RepairRouteRefusal::SeamGrippedFindingNot.advisory(gate);
+        assert!(
+            disagree.contains("`ripr check` reads a gap or limit")
+                && disagree.contains("conflicting evidence")
+                && !disagree.contains("no static gap remains"),
+            "{disagree}"
         );
         let config = RepairRouteRefusal::ConfigUnreadable.advisory(gate);
         assert!(

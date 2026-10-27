@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `ripr check` and `ripr repair` now agree on whether a gap remains. An `exposed` finding says "nothing to repair here; the related tests already notice this change", `check` no longer says it found no seam in a file where `ripr repair` lists seams, and when `check` reads a gap while the whole-repository seam view reads the seam as already gripped, the screen names that one difference. Bare `ripr repair` without a diff still reads repo-wide seams (#10702).
