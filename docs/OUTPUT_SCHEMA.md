@@ -1003,7 +1003,15 @@ did not run far enough to classify probes, not that the diff has no findings.
 Admission enforces the same rule (#10733): `reports gap-ledger --check-output`
 refuses a saved refusal envelope — the ledger lands on `blocked` with a warning
 naming the typed `run_status` and `downstream_consumable: false` instead of the
-benign `no_records` state, while `run_limitations` keeps propagating unchanged —
+benign `no_records` state. The marker is read from either position — a refusal
+disclosed only under `analysis_scope` is refused identically — and the saved
+ledger retains a `downstream_consumable: false` marker in the propagated
+`run_limitations` position (stamped onto the typed entry, or a marker-only
+record when no typed entry exists) so the saved document never degrades into a
+healthy ledger the gate would pass; `run_limitations` otherwise keeps
+propagating unchanged. The explicit flag is required at every admission: a
+known refusal run status without an explicit `downstream_consumable: false` is
+the healthy complete shape and is admitted, never refused —
 and `gate evaluate` refuses a refusal envelope, and any document disclosing a
 `downstream_consumable: false` record under an unknown typed status, at the
 pr-guidance, gap-ledger, and baseline inputs with a `config_error` naming the

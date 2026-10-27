@@ -67,7 +67,11 @@ refusal status — `diff_scope_oversized` or `repo_scope_oversized` in the
 standard run-status positions — and its `analysis_scope` or
 `run_limitations` disclose `downstream_consumable: false` explicitly. An
 explicit `false` is required: an absent flag is the healthy complete shape
-and never counts as a refusal. A document that discloses
+and never counts as a refusal. A document carrying a known refusal status
+WITHOUT the explicit flag is therefore admitted as the healthy complete
+shape at every admission (the ledger keeps its ordinary state, the gate
+keeps its ordinary evaluation) — neither surface may report a refusal the
+document does not disclose. A document that discloses
 `downstream_consumable: false` under a status this reader does not know is
 still refused, naming the generic flag rather than a typed status.
 
@@ -75,10 +79,20 @@ still refused, naming the generic flag rather than a typed status.
 
 `reports gap-ledger --check-output` lands a producer-refusal envelope on
 `blocked` with a warning naming the typed refusal status (or the generic
-non-consumable flag), instead of the healthy `no_records` state.
-`run_limitations` keeps propagating unchanged. Bounded and partial documents
-keep their existing ledger handling, and a complete zero-finding envelope
-keeps its healthy `no_records` ledger.
+non-consumable flag), instead of the healthy `no_records` state. The
+marker is read from EITHER position the check schema opens for it —
+`analysis_scope` or `run_limitations[]` — so a refusal disclosed only in
+`analysis_scope` is refused exactly like one disclosed in both. The saved
+ledger's schema keeps no `analysis_scope`, so when only that position
+carried the flag, admission retains the marker by stamping an explicit
+`downstream_consumable: false` into the propagated `run_limitations`
+position (the typed entry naming the refusal, or a marker-only record when
+no typed entry exists); a saved refusal must stay downstream-readable as a
+refusal, never degrade into a healthy document the gate then passes.
+`run_limitations` otherwise keeps propagating unchanged. Bounded, partial
+and incomplete documents keep their existing ledger handling — the gate
+refuses them by their own typed names — and a complete zero-finding
+envelope keeps its healthy `no_records` ledger.
 
 ### Gate admission
 
@@ -132,6 +146,16 @@ denominator.
 4. A document disclosing `downstream_consumable: false` under an unknown
    status is refused naming the generic flag; a document with no explicit
    `false` is never treated as a refusal.
+5. A refusal disclosed only in `analysis_scope` (no `run_limitations`
+   entry carrying the flag) still lands the saved ledger on `blocked`, and
+   the saved JSON retains a `downstream_consumable: false` marker that the
+   gate's generic non-consumable check reads — the saved document is never
+   downstream-readable as a healthy `no_records` ledger.
+6. A document carrying a known refusal run status with no explicit
+   `downstream_consumable: false` anywhere is admitted as the healthy
+   complete shape: the ledger stays `no_records` and the gate evaluates it
+   normally, with no refusal warning or `config_error` either surface did
+   not disclose.
 
 ## Test Mapping
 
@@ -141,11 +165,16 @@ denominator.
   `gate_refuses_saved_refusal_ledger_with_named_reason`,
   `gate_refusal_admission_keeps_complete_and_advisory_controls`,
   `producer_refusal_detection_covers_run_state_vocabulary`,
-  `non_consumable_record_detection_requires_explicit_false`.
+  `non_consumable_record_detection_requires_explicit_false`,
+  `refusal_input_error_requires_explicit_consumable_false`,
+  `gate_admits_consumable_document_with_known_refusal_status`.
 - `crates/ripr/src/output/gap_decision_ledger.rs`:
   `gap_decision_ledger_refuses_diff_scope_oversized_refusal_envelope`,
   `gap_decision_ledger_refuses_repo_scope_oversized_refusal_envelope`,
-  `gap_decision_ledger_refusal_admission_keeps_healthy_controls`.
+  `gap_decision_ledger_refusal_admission_keeps_healthy_controls`,
+  `gap_decision_ledger_refuses_refusal_flagged_only_in_analysis_scope`,
+  `gap_decision_ledger_refuses_generic_flag_retained_from_analysis_scope`,
+  `gap_decision_ledger_admits_known_status_without_explicit_false_as_healthy`.
 
 ## Implementation Mapping
 

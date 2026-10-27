@@ -15,9 +15,14 @@ tests = [
   "crates/ripr/src/output/gate/tests.rs::gate_refusal_admission_keeps_complete_and_advisory_controls",
   "crates/ripr/src/output/gate/tests.rs::producer_refusal_detection_covers_run_state_vocabulary",
   "crates/ripr/src/output/gate/tests.rs::non_consumable_record_detection_requires_explicit_false",
+  "crates/ripr/src/output/gate/tests.rs::refusal_input_error_requires_explicit_consumable_false",
+  "crates/ripr/src/output/gate/tests.rs::gate_admits_consumable_document_with_known_refusal_status",
   "crates/ripr/src/output/gap_decision_ledger.rs::gap_decision_ledger_refuses_diff_scope_oversized_refusal_envelope",
   "crates/ripr/src/output/gap_decision_ledger.rs::gap_decision_ledger_refuses_repo_scope_oversized_refusal_envelope",
   "crates/ripr/src/output/gap_decision_ledger.rs::gap_decision_ledger_refusal_admission_keeps_healthy_controls",
+  "crates/ripr/src/output/gap_decision_ledger.rs::gap_decision_ledger_refuses_refusal_flagged_only_in_analysis_scope",
+  "crates/ripr/src/output/gap_decision_ledger.rs::gap_decision_ledger_refuses_generic_flag_retained_from_analysis_scope",
+  "crates/ripr/src/output/gap_decision_ledger.rs::gap_decision_ledger_admits_known_status_without_explicit_false_as_healthy",
 ]
 code = [
   "crates/ripr/src/output/gate.rs",
