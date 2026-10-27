@@ -416,6 +416,41 @@ fn contradiction_rules_fire_only_on_self_inconsistent_rows() -> Result<(), Strin
     ]});
     assert_eq!(repo_exposure_contradictions(&exposure).0, 1);
 
+    // Proximity relations are listed beside `reach: no` by design (#6866).
+    let listed = |reason: &str| {
+        json!({"seams": [{"file": "d.rs", "line": 4, "evidence": {"reach": "no"},
+            "related_tests_total": 1,
+            "related_tests": [{"name": "t", "relation_reason": reason}]}]})
+    };
+    for proximity in ["same_test_file", "same_module", "assertion_target_affinity"] {
+        assert_eq!(
+            repo_exposure_contradictions(&listed(proximity)).0,
+            0,
+            "{proximity}"
+        );
+    }
+    for reaching in [
+        "direct_owner_call",
+        "helper_owner_call",
+        "re_export_chain_followed",
+    ] {
+        assert_eq!(
+            repo_exposure_contradictions(&listed(reaching)).0,
+            1,
+            "{reaching}"
+        );
+    }
+    // A capped window can hide a reaching test ranked behind the listed ones.
+    let capped = json!({"seams": [{"file": "e.rs", "line": 5, "evidence": {"reach": "no"},
+        "related_tests_total": 9,
+        "related_tests": vec![json!({"name": "t", "relation_reason": "same_test_file"}); 8]}]});
+    assert_eq!(repo_exposure_contradictions(&capped).0, 1);
+    // A relation this scan cannot read is not read as clean.
+    assert_eq!(
+        repo_exposure_contradictions(&listed("brand_new_relation")).0,
+        1
+    );
+
     let check = json!({"findings": [
         {"id": "p1", "classification": "no_static_path", "related_tests_total": 2, "evidence": []},
         {"id": "p2", "classification": "static_unknown", "related_tests_total": 0,
