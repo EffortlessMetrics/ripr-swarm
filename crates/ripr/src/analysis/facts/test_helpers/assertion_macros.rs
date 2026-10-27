@@ -308,12 +308,14 @@ fn expand_call(call: &LocalMacroCall) -> Option<ExpandedCall> {
     })
 }
 
-/// Whether the transcriber calls something the call's arguments do not
-/// supply: `assert_eq!(surcharge(5), $expected)` runs `surcharge(5)` whatever
-/// the call site wrote, so the call line's own inputs say nothing about what
-/// the assertion exercises and the expansion would be graded against the wrong
-/// ones. Only a constructor-like capitalised head, an assertion or nested
-/// macro, and a method on a fragment (`$value.len()`) are read.
+/// Whether the transcriber calls something whose inputs the call's arguments
+/// do not supply: `assert_eq!(surcharge(5), $expected)` runs `surcharge(5)`
+/// whatever the call site wrote, so the call line's own inputs say nothing
+/// about what the assertion exercises and the expansion would be graded
+/// against the wrong ones. A call is the call site's own when every argument
+/// holds a `$fragment` (`gate($x)`, `gate($x + 1)`); a method on a bare
+/// fragment (`$value.len()`), the `Some`/`Ok`/`Err` constructors and nested
+/// macros are read too. Any other head, capitalised or not, may be the owner.
 fn transcriber_makes_its_own_call(statement: &str, names: &[String]) -> bool {
     let masked = mask_comments_and_strings(statement);
     masked.match_indices('(').any(|(open, _)| {
@@ -321,19 +323,37 @@ fn transcriber_makes_its_own_call(statement: &str, names: &[String]) -> bool {
         let head = before
             .trim_end_matches(|character: char| character.is_alphanumeric() || character == '_');
         let callee = &before[head.len()..];
-        if callee.is_empty() || callee.starts_with(|character: char| character.is_uppercase()) {
+        if callee.is_empty() || matches!(callee, "Some" | "Ok" | "Err") {
             return false;
         }
-        // A method call is the call site's own when its receiver is a bare
-        // fragment.
-        let Some(receiver) = head.strip_suffix('.') else {
+        if let Some(receiver) = head.strip_suffix('.') {
+            let name = receiver
+                .rsplit(|character: char| !(character.is_alphanumeric() || character == '_'))
+                .next()
+                .unwrap_or_default();
+            if receiver.ends_with(&format!("${name}"))
+                && names.iter().any(|fragment| fragment == name)
+            {
+                return false;
+            }
+        }
+        let mut depth = 0usize;
+        let close = masked[open..]
+            .char_indices()
+            .find_map(|(offset, character)| {
+                match character {
+                    '(' => depth += 1,
+                    ')' => depth -= 1,
+                    _ => {}
+                }
+                (depth == 0).then_some(open + offset)
+            });
+        let Some(close) = close else {
             return true;
         };
-        let name = receiver
-            .rsplit(|character: char| !(character.is_alphanumeric() || character == '_'))
-            .next()
-            .unwrap_or_default();
-        !(receiver.ends_with(&format!("${name}")) && names.iter().any(|fragment| fragment == name))
+        let inner = &masked[open + 1..close];
+        let arguments = split_top_level(inner, inner);
+        arguments.is_empty() || arguments.iter().any(|argument| !argument.contains('$'))
     })
 }
 

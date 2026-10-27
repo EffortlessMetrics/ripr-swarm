@@ -3,4 +3,5 @@
 id = "RIPR-SPEC-0120"
 tests = [
   "crates/ripr/tests/local_macro_assertion_expansion.rs::a_transcriber_that_makes_its_own_call_is_never_credited",
+  "crates/ripr/src/analysis/facts/test_helpers/tests/assertion_macros.rs::a_transcriber_call_fed_by_the_call_site_expands",
 ]
