@@ -7673,6 +7673,62 @@ fn an_out_of_line_parent_module_shadow_of_the_receiver_refuses_the_pin() {
     );
 }
 
+/// #10809: every related test of every probe asks about the same few parent
+/// files, so the owner-independent answer for one (file, name) is computed
+/// once, and a different name is its own entry.
+#[test]
+fn a_parent_root_answer_is_computed_once_per_file_and_name() -> Result<(), String> {
+    let index = index_with_provenance(
+        &[
+            (LIB, LIB_OUT_OF_LINE),
+            (HELPERS, HELPERS_SHADOW),
+            (CHILD, CHILD_TEST),
+        ],
+        &[
+            (
+                HELPERS,
+                SourceRoleProvenance {
+                    edges: vec![module_edge(LIB, HELPERS, "helpers", 12, true)],
+                    earliest_unresolved_reason: None,
+                    ..Default::default()
+                },
+            ),
+            (
+                CHILD,
+                SourceRoleProvenance {
+                    edges: vec![
+                        module_edge(LIB, HELPERS, "helpers", 12, true),
+                        module_edge(HELPERS, CHILD, "stack_tests", 5, false),
+                    ],
+                    earliest_unresolved_reason: None,
+                    ..Default::default()
+                },
+            ),
+        ],
+    );
+    let test = index
+        .tests()
+        .iter()
+        .find(|t| t.file == Path::new(CHILD))
+        .ok_or("child test")?;
+    let owner = OwnerScope::new("depth", 6, Path::new(LIB));
+    for _ in 0..20 {
+        assert!(parent_chain_shadows_type(test, "Stack", owner, &index));
+    }
+    let helpers = index
+        .source_syntax
+        .get(&index, Path::new(HELPERS))
+        .ok_or("helpers snapshot")?;
+    assert_eq!(helpers.root_shadow_computations(), 1);
+    // A name the parent does not declare is answered without a parse, and is
+    // still its own memo entry.
+    for _ in 0..20 {
+        assert!(!parent_chain_shadows_type(test, "Gauge", owner, &index));
+    }
+    assert_eq!(helpers.root_shadow_computations(), 2);
+    Ok(())
+}
+
 /// #6950 precision: the same nested layout without the parent shadow
 /// keeps its pin. The walk skips `helpers` (no declaration) and the
 /// production root stays exempt as the owner's own scope.

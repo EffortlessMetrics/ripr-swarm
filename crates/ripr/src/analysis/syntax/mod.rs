@@ -68,4 +68,6 @@ pub(crate) use ra::{
     inline_unit_module_layout, invoked_callback_params, macro_call_columns, module_item_scopes,
     passes_call_making_closure,
 };
-pub(crate) use source_snapshot::{ItemNesting, SourceSnapshot, SourceSyntaxMemos, has_cfg_attr};
+pub(crate) use source_snapshot::{
+    ItemNesting, RootShadow, SourceSnapshot, SourceSyntaxMemos, has_cfg_attr,
+};
