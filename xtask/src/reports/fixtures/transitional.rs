@@ -25,17 +25,14 @@ pub(super) struct Migration {
     pub(super) surfaces: &'static [&'static str],
 }
 
-/// Surfaces whose old no-seam opening moved with #10702. Each is approved for
-/// the untied-seams opening and for the gripped-seam opening: where `check`
-/// reads a gap or limit on a seam the whole-seam view grips, that one named
-/// difference replaces it (a strongly gripped seam has no canonical gap id, so
-/// the id-keyed join could not bind it).
-const NO_SEAM_SURFACES: &[&str] = &[
+/// Surfaces whose old no-seam opening moved with #10702, partitioned by the one
+/// new opening each actually produces (taken from unaliased output), so a wrong
+/// target on a listed surface is still drift. The untied-seams opening: `check`
+/// reads a gap or limit and no strongly gripped seam names the finding.
+const NO_SEAM_UNTIED_SURFACES: &[&str] = &[
     "assertion_shaped_control_production_caller/human.txt",
     "atomic_ordering_swap_strong_object_oracle/human.txt",
     "binding_predicate_scope_controls/human.txt",
-    "cross_crate_trait_impl_direct_owner_positive/human.txt",
-    "effect_assertion_std_qualified_live/human.txt",
     "error_path_diagnostic_absent/human.txt",
     "error_path_diagnostic_error/human.txt",
     "error_path_diagnostic_escaped/human.txt",
@@ -52,17 +49,43 @@ const NO_SEAM_SURFACES: &[&str] = &[
     "error_path_oracle_execution_uncalled/human.txt",
     "error_path_sibling_oracle_fake_clean/human.txt",
     "exact_any_membership_oracle/human.txt",
-    "field_match_unexecuted_assertion/human.txt",
-    "gap_kept_ignored_test/human.txt",
     "guarded_result_match_fail_closed/human.txt",
-    "guarded_result_match_owner_observation/human.txt",
     "harness_dead_construction_no_exposed_credit/human.txt",
     "helper_chain_multi_hop/human.txt",
-    "human_full_shared_parse_port/human.txt",
     "infect_value_returned/human.txt",
     "infect_wildcard_discard/human.txt",
-    "invisible_change_pow_agreement/human.txt",
     "lsp_agent_protocol/human.txt",
+    "multi_hunk_removed_line_wrong_target/human.txt",
+    "owner_return_pin_json_ignored_result/human.txt",
+    "owner_return_pin_json_unrelated_equality/human.txt",
+    "propagated_error_closing_early_path/human.txt",
+    "rust_adversarial_shared_error_variant_proximity/human.txt",
+    "rust_array_element_drop_exit/human.txt",
+    "rust_array_sibling_exit_field/human.txt",
+    "rust_diverging_call_error_side/human.txt",
+    "rust_long_expression_display_bound/human.txt",
+    "rust_missing_discriminator_evidence/human.txt",
+    "rust_twin_collection_read_self_computed/human.txt",
+    "rust_where_bound_declarations/human.txt",
+    "selector_swap_try_error_arm_control/human.txt",
+    "selector_swap_try_not_error_path/human.txt",
+    "unsafe_boundary_probe/human.txt",
+    "unwrap_err_generic_is_err/human.txt",
+    "unwrap_err_sibling_variant/human.txt",
+    "weak_error_oracle/human.txt",
+];
+
+/// The gripped-seam opening: `check` reads a gap or limit on a seam the
+/// whole-seam view grips (a strongly gripped seam has no canonical gap id, so
+/// the id-keyed join could not bind it).
+const NO_SEAM_GRIPPED_SURFACES: &[&str] = &[
+    "cross_crate_trait_impl_direct_owner_positive/human.txt",
+    "effect_assertion_std_qualified_live/human.txt",
+    "field_match_unexecuted_assertion/human.txt",
+    "gap_kept_ignored_test/human.txt",
+    "guarded_result_match_owner_observation/human.txt",
+    "human_full_shared_parse_port/human.txt",
+    "invisible_change_pow_agreement/human.txt",
     "match_arm_blind/human.txt",
     "match_arm_comment_literal_no_promotion/human.txt",
     "match_arm_diagnostic_literal_no_promotion/human.txt",
@@ -76,7 +99,6 @@ const NO_SEAM_SURFACES: &[&str] = &[
     "match_arm_tuple_terminal_inherited_constructor/human.txt",
     "match_arm_type_token_blind/human.txt",
     "module_reach_control_qualified/human.txt",
-    "multi_hunk_removed_line_wrong_target/human.txt",
     "observation_verified_field_construction/human.txt",
     "observation_verified_side_effect/human.txt",
     "owner_parameter_token_coincidence/human.txt",
@@ -93,13 +115,11 @@ const NO_SEAM_SURFACES: &[&str] = &[
     "owner_return_pin_if_false/human.txt",
     "owner_return_pin_json_alternate_return/human.txt",
     "owner_return_pin_json_effectful_operand/human.txt",
-    "owner_return_pin_json_ignored_result/human.txt",
     "owner_return_pin_json_nested_literal/human.txt",
     "owner_return_pin_json_shadowed_assertion/human.txt",
     "owner_return_pin_json_shadowed_constructor/human.txt",
     "owner_return_pin_json_shadowed_owner/human.txt",
     "owner_return_pin_json_uncalled_closure/human.txt",
-    "owner_return_pin_json_unrelated_equality/human.txt",
     "owner_return_pin_macro_operand_return/human.txt",
     "owner_return_pin_macro_return/human.txt",
     "owner_return_pin_nested_test/human.txt",
@@ -121,25 +141,18 @@ const NO_SEAM_SURFACES: &[&str] = &[
     "predicate_pairing_mutably_borrowed_binding/human.txt",
     "predicate_pairing_newline_split_reassigned_binding/human.txt",
     "predicate_pairing_reassigned_binding/human.txt",
-    "propagated_error_closing_early_path/human.txt",
     "proximity_unrelated_oracle_not_credited/human.txt",
     "returned_closure_arithmetic_masking/human.txt",
     "rust_adversarial_same_method_other_type/human.txt",
-    "rust_adversarial_shared_error_variant_proximity/human.txt",
-    "rust_array_element_drop_exit/human.txt",
-    "rust_array_sibling_exit_field/human.txt",
     "rust_bool_assert_shadow_direct/human.txt",
     "rust_bool_assert_shadow_table/human.txt",
     "rust_const_expectation_self_computed/human.txt",
     "rust_constructor_field_observation/human.txt",
     "rust_constructor_field_wrong_field_observer/human.txt",
-    "rust_diverging_call_error_side/human.txt",
     "rust_field_construction_token_coincidence/human.txt",
     "rust_helper_expectation_self_computed/human.txt",
     "rust_let_literal_pattern_rebound/human.txt",
-    "rust_long_expression_display_bound/human.txt",
     "rust_lossy_post_operation_pin/human.txt",
-    "rust_missing_discriminator_evidence/human.txt",
     "rust_predicate_returned_drop_exit/human.txt",
     "rust_returned_type_drop_exit/human.txt",
     "rust_returned_type_drop_if_arm/human.txt",
@@ -150,22 +163,14 @@ const NO_SEAM_SURFACES: &[&str] = &[
     "rust_trait_default_shadow/human.txt",
     "rust_trait_impl_shadow/human.txt",
     "rust_trait_parent_shadow/human.txt",
-    "rust_twin_collection_read_self_computed/human.txt",
-    "rust_where_bound_declarations/human.txt",
     "same_name_sibling_file_test/human.txt",
-    "selector_swap_try_error_arm_control/human.txt",
-    "selector_swap_try_not_error_path/human.txt",
     "self_computed_expected_helper/human.txt",
     "self_computed_expected_value/human.txt",
     "shared_target_assertion_effect/human.txt",
     "shared_target_assertion_return/human.txt",
     "source_role_harness_suppression/human.txt",
     "split_test_boundary_oracle/human.txt",
-    "unsafe_boundary_probe/human.txt",
-    "unwrap_err_generic_is_err/human.txt",
-    "unwrap_err_sibling_variant/human.txt",
     "unwrap_err_variant_single_line/human.txt",
-    "weak_error_oracle/human.txt",
     "whole_value_string_from_shadow/human.txt",
 ];
 
@@ -289,12 +294,12 @@ pub(super) const MIGRATIONS: &[Migration] = &[
     Migration {
         old: NO_SEAM,
         new: SEAMS_UNTIED,
-        surfaces: NO_SEAM_SURFACES,
+        surfaces: NO_SEAM_UNTIED_SURFACES,
     },
     Migration {
         old: NO_SEAM,
         new: SEAM_GRIPPED,
-        surfaces: NO_SEAM_SURFACES,
+        surfaces: NO_SEAM_GRIPPED_SURFACES,
     },
     Migration {
         old: STILL_MISSING,

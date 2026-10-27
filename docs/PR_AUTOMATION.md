@@ -647,9 +647,12 @@ Transitional (#10702): `xtask/src/reports/fixtures/transitional.rs` lists the
 exact `fixture/surface` human goldens (253) whose expected refusal opening is
 one of four retired openings (no gap ID, no binding seam, seam
 inventory, still missing) and may now open "nothing to repair here" (only when
-the expected golden itself says `Static exposure: exposed`) or "found N seams …
-could not tie one … changed line". An unlisted fixture, another surface, another
-pair and `check.json` are still compared strictly. This keeps the check-side
+the expected golden itself says `Static exposure: exposed`), "found N seams …
+could not tie one … changed line" (43 no-seam surfaces) or "`ripr check` reads a
+gap or limit for this change" (93 no-seam surfaces whose seam the whole-seam view
+grips). Each listed surface approves exactly one new opening, taken from its
+unaliased output. An unlisted fixture, another surface, another pair, the other
+target on a listed surface and `check.json` are still compared strictly. This keeps the check-side
 change under the admission file cap; each follow-up re-bless batch deletes its
 entries and the file is removed once empty (tracking issue #10885).
 

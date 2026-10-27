@@ -3699,6 +3699,35 @@ mod tests {
         assert_eq!(FIXTURE_CACHE_DIR_ENV, "RIPR_CACHE_DIR");
     }
 
+    /// #10702: each listed no-seam surface approves exactly one new opening.
+    #[test]
+    fn transitional_no_seam_surface_approves_only_its_own_new_opening() -> Result<(), String> {
+        let line = |body: &str| format!("Start here:\n  {REPAIR_REFUSAL_MARKER}{body}\nEnd");
+        let old = line(&format!("{} so there is no seam", transitional::NO_SEAM));
+        let untied = line(&format!("{}<reason>", transitional::SEAMS_UNTIED));
+        let gripped = line(&format!("{} but", transitional::SEAM_GRIPPED));
+        let gripped_surface = "match_arm_blind";
+        let untied_surface = "assertion_shaped_control_production_caller";
+        let applies = |fixture: &str, actual: &str| {
+            transitional_refusal_aliases_apply(fixture, "human.txt", &old, actual)
+        };
+        if !applies(gripped_surface, &gripped) || !applies(untied_surface, &untied) {
+            return Err("a listed surface must approve its own new opening".to_string());
+        }
+        if applies(gripped_surface, &untied) {
+            return Err("a gripped-target surface must not approve the untied opening".to_string());
+        }
+        if applies(untied_surface, &gripped) {
+            return Err(
+                "an untied-target surface must not approve the gripped opening".to_string(),
+            );
+        }
+        if transitional_refusal_aliases_apply(gripped_surface, "check.json", &old, &gripped) {
+            return Err("an unlisted surface stays strict".to_string());
+        }
+        Ok(())
+    }
+
     #[test]
     fn fixtures_new_printed_bless_reason_passes_the_reason_validator() -> Result<(), String> {
         // #7398: the scaffold used to print `--reason "initial scaffold"`, which

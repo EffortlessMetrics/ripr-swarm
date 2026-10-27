@@ -1146,11 +1146,9 @@ pub(crate) fn check_repair_route(
         return CheckRepairRoute::Refused(RepairRouteRefusal::SeveralBindingSeams);
     }
     if let Some((kind, reason)) = repair_refusal(entry, policy, Some(root)) {
-        // #10702: the seam view reads already gripped while this finding is a
-        // gap or limitation: name the one difference, not repair's verdict.
-        if kind == RefusalKind::AlreadyGripped {
-            return CheckRepairRoute::Refused(RepairRouteRefusal::SeamGrippedFindingNot);
-        }
+        // A bound seam carries a canonical gap id, which a strongly gripped
+        // seam never does, so `AlreadyGripped` cannot reach here: that case is
+        // named by the location fallback above (#10702).
         // #9244: carry the typed kind and the producer-owned missing list so
         // the check screen words a not-ready route without parsing `reason`.
         let missing = repair_packet_eligibility(entry).readiness.missing_evidence;

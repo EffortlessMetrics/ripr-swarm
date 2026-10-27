@@ -1216,6 +1216,55 @@ mod tests {
         }
     }
 
+    /// #10702: the location-only join names a strongly gripped seam only when
+    /// it is the unique most-specific claimant; twins and unrelated seams do
+    /// not bind, so the caller keeps `NoBindingSeam`.
+    #[test]
+    fn location_join_names_only_a_unique_gripped_claimant() {
+        let gripped = |offset: usize, line: usize| {
+            let mut entry = spanned_twin_boundary_entry(
+                offset,
+                line,
+                crate::analysis::seams::SeamSpan {
+                    start_line: line,
+                    end_line: line,
+                    start_column: 1,
+                    end_column: 10,
+                },
+            );
+            entry.class = SeamGripClass::StronglyGripped;
+            entry
+        };
+        let mut finding = producer_gap_finding(
+            "finding:loc",
+            "gap:rust:src/pricing.rs:pricing::discounted_total:predicate_boundary:predicate",
+            "src/pricing.rs",
+            "pricing::discounted_total",
+            "predicate",
+        );
+        finding.probe.location.line = 88;
+
+        let sole = gripped(10, 88);
+        assert!(finding_names_seam_by_location(
+            &finding,
+            &sole,
+            std::slice::from_ref(&sole)
+        ));
+        // An unrelated gripped seam elsewhere in the owner does not claim it.
+        let other = gripped(20, 120);
+        assert!(!finding_names_seam_by_location(
+            &finding,
+            &other,
+            &[sole.clone(), other.clone()]
+        ));
+        // Two gripped seams with the identical span are an ambiguous collision:
+        // neither is named.
+        let twin = gripped(30, 88);
+        let pair = [sole.clone(), twin.clone()];
+        assert!(!finding_names_seam_by_location(&finding, &sole, &pair));
+        assert!(!finding_names_seam_by_location(&finding, &twin, &pair));
+    }
+
     /// The rendered packet envelope for this seam: `packets` names the seam,
     /// so the canonical packet family projects as current.
     fn packet_for(entry: &ClassifiedSeam) -> String {
