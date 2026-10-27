@@ -1046,7 +1046,7 @@ const DIFF_CHANGED_PYTHON_LINE_LIMIT: usize = 2_000;
 
 /// Env override for [`DIFF_CHANGED_PYTHON_LINE_LIMIT`]. Operators can raise
 /// it for larger runners or lower it to exercise the guard.
-const DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV: &str = "RIPR_MAX_DIFF_CHANGED_PYTHON_LINES";
+pub(crate) const DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV: &str = "RIPR_MAX_DIFF_CHANGED_PYTHON_LINES";
 
 /// Default ceiling on the number of added/removed TypeScript diff lines that
 /// may enter the TypeScript adapter (#10730). Counts the whole TS/JS source
@@ -1055,7 +1055,8 @@ const DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV: &str = "RIPR_MAX_DIFF_CHANGED_PYTHON_L
 const DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT: usize = 2_000;
 
 /// Env override for [`DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT`].
-const DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV: &str = "RIPR_MAX_DIFF_CHANGED_TYPESCRIPT_LINES";
+pub(crate) const DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV: &str =
+    "RIPR_MAX_DIFF_CHANGED_TYPESCRIPT_LINES";
 
 fn diff_changed_python_line_limit() -> Result<usize, String> {
     diff_changed_python_line_limit_from_env(diff_limit_env(DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV))
@@ -1088,11 +1089,22 @@ fn diff_changed_typescript_line_limit_from_env(
 }
 
 /// Added plus removed changed lines of `language`'s files in the parsed diff
-/// — the same measurement the Rust guard uses, per language (#10730).
-fn changed_language_line_count(changed_files: &[diff::ChangedFile], language: LanguageId) -> usize {
+/// that the adapter would actually admit — the same measurement the Rust
+/// guard uses (it counts the diff minus its generated sources before probe
+/// expansion), per language (#10730). Files the adapter's own authorities
+/// refuse before counting — detectable generated names and excluded
+/// directories, minus `handwritten_files` declarations — must not consume
+/// the budget: analysis would never probe them, so refusing over their
+/// lines would claim a scope the run never faced (Devin review, PR #10803).
+fn changed_language_line_count(
+    changed_files: &[diff::ChangedFile],
+    language: LanguageId,
+    language_config: &crate::config::LanguagesConfig,
+) -> usize {
     changed_files
         .iter()
         .filter(|file| route(&file.path) == Some(language))
+        .filter(|file| !is_excluded_from_preview_analysis(language, &file.path, language_config))
         .map(|file| {
             file.added_lines
                 .len()
@@ -1101,24 +1113,38 @@ fn changed_language_line_count(changed_files: &[diff::ChangedFile], language: La
         .sum()
 }
 
+/// Whether `language`'s adapter would count `path` at all: routed to the
+/// language and not refused by its generated-name / excluded-directory
+/// authorities ahead of counting.
+fn language_admits_changed_path(
+    path: &std::path::Path,
+    language: LanguageId,
+    language_config: &crate::config::LanguagesConfig,
+) -> bool {
+    route(path) == Some(language)
+        && !is_excluded_from_preview_analysis(language, path, language_config)
+}
+
 /// The `diff_scope_oversized` refusal for one preview language, in the same
 /// voice as the Rust guard's message. The exact `diff_scope_oversized:`
 /// prefix keeps `is_diff_scope_oversized`, the LSP limited-snapshot
-/// conversion and the CLI exit-2 path working unchanged (#10730).
+/// conversion and the CLI exit-2 path working unchanged (#10730). The named
+/// counts admit only files the adapter would probe.
 fn enforce_changed_language_line_limit(
     changed_files: &[diff::ChangedFile],
     language: LanguageId,
     language_label: &str,
     limit_env: &str,
     line_limit: usize,
+    language_config: &crate::config::LanguagesConfig,
 ) -> Result<(), String> {
-    let changed_line_count = changed_language_line_count(changed_files, language);
+    let changed_line_count = changed_language_line_count(changed_files, language, language_config);
     if changed_line_count <= line_limit {
         return Ok(());
     }
     let changed_file_count = changed_files
         .iter()
-        .filter(|file| route(&file.path) == Some(language))
+        .filter(|file| language_admits_changed_path(&file.path, language, language_config))
         .count();
     Err(format!(
         "diff_scope_oversized: {changed_line_count} changed {language_label} lines across \
@@ -1139,9 +1165,13 @@ fn enforce_changed_language_line_limit(
 /// `diff_scope_oversized` prefix handling (LSP conversion, CLI exit 2,
 /// `--json` limited artifact) keeps working. Runs after the Rust adapter so
 /// a mixed Rust+Python oversized diff keeps the Rust refusal it gets today.
+/// Counts only files each adapter would admit past its generated-name and
+/// excluded-directory authorities, so generated bulk cannot refuse a diff
+/// whose hand-written surface is small (Devin review, PR #10803).
 fn enforce_changed_preview_line_limits(
     languages: &[LanguageId],
     changed_files: &[diff::ChangedFile],
+    language_config: &crate::config::LanguagesConfig,
 ) -> Result<(), String> {
     if languages.contains(&LanguageId::Python) {
         enforce_changed_language_line_limit(
@@ -1150,6 +1180,7 @@ fn enforce_changed_preview_line_limits(
             "Python",
             DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV,
             diff_changed_python_line_limit()?,
+            language_config,
         )?;
     }
     // The one TypeScript adapter serves both the `typescript` and
@@ -1161,6 +1192,7 @@ fn enforce_changed_preview_line_limits(
             "TypeScript",
             DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV,
             diff_changed_typescript_line_limit()?,
+            language_config,
         )?;
     }
     Ok(())
@@ -1410,8 +1442,9 @@ fn run_pipeline_for_diff_text_with_language_config(
     // preview language's changed-line count exceeds its budget. The refusal
     // propagates like the Rust guard's, keeping the diff_scope_oversized
     // prefix handling (LSP conversion, CLI exit 2, --json limited artifact)
-    // intact.
-    enforce_changed_preview_line_limits(languages, &analysis_changed_files)?;
+    // intact. The count admits only files each adapter's generated-name and
+    // excluded-directory authorities would let it probe.
+    enforce_changed_preview_line_limits(languages, &analysis_changed_files, language_config)?;
     let scope_label = diff_scope_label(partial_scope.as_ref());
     if let Some(limitation) = unanalyzed_source_language_limitation(&analysis_changed_files)? {
         limitations.push(limitation);
@@ -8438,10 +8471,79 @@ index 0000000..1111111 100644
             changed_line_file("src/lib.rs", 5, 5),
         ];
 
-        let count = changed_language_line_count(&files, LanguageId::Python);
+        let count = changed_language_line_count(
+            &files,
+            LanguageId::Python,
+            &crate::config::LanguagesConfig::default(),
+        );
         if count != 3 {
             return Err(format!(
                 "expected only Python changed lines to count, got {count}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn changed_python_line_count_ignores_generated_and_excluded_paths() -> Result<(), String> {
+        // Devin review (PR #10803): generated names and excluded directories
+        // are refused by the adapter before counting, so their lines must not
+        // consume the guard budget. A `handwritten_files` declaration admits
+        // an excluded-directory path past the convention; a generated NAME
+        // stays excluded even when declared.
+        let files = vec![
+            changed_line_file("pkg/mod.py", 2, 1),
+            changed_line_file("pkg/generated_models.py", 2_001, 0),
+            changed_line_file(".venv/lib/site/dep.py", 2_001, 0),
+            changed_line_file("node_modules/handwritten.py", 2, 0),
+            changed_line_file("pkg/generated_declared.py", 2, 0),
+        ];
+        let mut declared = crate::config::LanguagesConfig::default();
+        declared.python.handwritten_files = vec![
+            "node_modules/handwritten.py".to_string(),
+            "pkg/generated_declared.py".to_string(),
+        ];
+
+        // Admitted: pkg/mod.py (3 lines) + node_modules/handwritten.py (2,
+        // declared past the excluded directory). Refused: both 2001-line
+        // files, and pkg/generated_declared.py (a generated NAME stays
+        // excluded even when declared, #7386 review).
+        let count = changed_language_line_count(&files, LanguageId::Python, &declared);
+        if count != 5 {
+            return Err(format!(
+                "expected only admitted Python lines to count, got {count}"
+            ));
+        }
+        let plain = changed_language_line_count(&files, LanguageId::Python, &Default::default());
+        if plain != 3 {
+            return Err(format!(
+                "without declarations only pkg/mod.py may count, got {plain}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn changed_typescript_line_count_ignores_generated_and_excluded_paths() -> Result<(), String> {
+        // Same admission rule for the TS/JS family: `.generated.`/minified
+        // names and excluded directories (`node_modules`, `dist`, ...) do not
+        // count; a declared handwritten path under an excluded directory does.
+        let files = vec![
+            changed_line_file("web/app.ts", 2, 1),
+            changed_line_file("web/app.generated.ts", 2_001, 0),
+            changed_line_file("web/app.min.js", 2_001, 0),
+            changed_line_file("dist/bundle.ts", 2_001, 0),
+            changed_line_file("node_modules/dep/index.ts", 2_001, 0),
+        ];
+
+        let count = changed_language_line_count(
+            &files,
+            LanguageId::TypeScript,
+            &crate::config::LanguagesConfig::default(),
+        );
+        if count != 3 {
+            return Err(format!(
+                "expected only admitted TypeScript lines to count, got {count}"
             ));
         }
         Ok(())
@@ -8464,7 +8566,11 @@ index 0000000..1111111 100644
             changed_line_file("src/lib.rs", 5, 5),
         ];
 
-        let count = changed_language_line_count(&files, LanguageId::TypeScript);
+        let count = changed_language_line_count(
+            &files,
+            LanguageId::TypeScript,
+            &crate::config::LanguagesConfig::default(),
+        );
         if count != 8 {
             return Err(format!(
                 "expected the 8 routed TS/JS extensions to count, got {count}"
@@ -8484,6 +8590,7 @@ index 0000000..1111111 100644
             "Python",
             DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV,
             2,
+            &crate::config::LanguagesConfig::default(),
         ) {
             Ok(()) => return Err("three changed Python lines should exceed limit two".to_string()),
             Err(message) => message,
@@ -8518,6 +8625,7 @@ index 0000000..1111111 100644
             "Python",
             DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV,
             2,
+            &crate::config::LanguagesConfig::default(),
         )
     }
 
@@ -8532,6 +8640,7 @@ index 0000000..1111111 100644
             "TypeScript",
             DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV,
             2,
+            &crate::config::LanguagesConfig::default(),
         ) {
             Ok(()) => {
                 return Err("three changed TypeScript lines should exceed limit two".to_string());
@@ -8568,6 +8677,7 @@ index 0000000..1111111 100644
             "TypeScript",
             DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV,
             2,
+            &crate::config::LanguagesConfig::default(),
         )
     }
 
@@ -8576,7 +8686,65 @@ index 0000000..1111111 100644
         // An at-limit diff with every guard evaluated: no refusal, so the
         // dispatch-level check stays silent on ordinary diffs.
         let files = vec![changed_line_file("pkg/mod.py", 1, 1)];
-        enforce_changed_preview_line_limits(&[LanguageId::Rust, LanguageId::Python], &files)
+        enforce_changed_preview_line_limits(
+            &[LanguageId::Rust, LanguageId::Python],
+            &files,
+            &crate::config::LanguagesConfig::default(),
+        )
+    }
+
+    #[test]
+    fn generated_bulk_does_not_refuse_a_small_admitted_python_diff() -> Result<(), String> {
+        // Devin review (PR #10803): 2,001 generated lines + 1 admitted line
+        // must pass — the adapter would probe only the admitted line.
+        let root = temp_root("py-guard-generated")?;
+        write(
+            root.join("pkg/mod.py").as_path(),
+            "def f() -> int: return 1\n",
+        )?;
+        let mut diff = oversized_preview_diff("pkg/generated_models.py", "def", 2_001);
+        diff.push_str(
+            "diff --git a/pkg/mod.py b/pkg/mod.py\n--- a/pkg/mod.py\n+++ b/pkg/mod.py\n@@ -1,1 +1,1 @@\n-def f() -> int: return 0\n+def f() -> int: return 1\n",
+        );
+        let result = run_pipeline_for_diff_text(
+            &sample_rust_diff_options(root),
+            &OraclePolicy::default(),
+            &[LanguageId::Python],
+            &crate::config::RustLanguageConfig::default(),
+            &diff,
+        )?;
+        let outcome = result
+            .analysis_outcome
+            .ok_or_else(|| "outcome must be projected".to_string())?;
+        assert_eq!(outcome.counts.changed_file_count, 2);
+        Ok(())
+    }
+
+    #[test]
+    fn generated_bulk_does_not_refuse_a_small_admitted_typescript_diff() -> Result<(), String> {
+        // Same admission rule for the TS/JS family: 2,001 generated lines +
+        // 1 admitted line pass.
+        let root = temp_root("ts-guard-generated")?;
+        write(
+            root.join("web/app.ts").as_path(),
+            "export const admitted = 1;\n",
+        )?;
+        let mut diff = oversized_preview_diff("web/app.generated.ts", "const", 2_001);
+        diff.push_str(
+            "diff --git a/web/app.ts b/web/app.ts\n--- a/web/app.ts\n+++ b/web/app.ts\n@@ -1,1 +1,1 @@\n-export const f = 0;\n+export const f = 1;\n",
+        );
+        let result = run_pipeline_for_diff_text(
+            &sample_rust_diff_options(root),
+            &OraclePolicy::default(),
+            &[LanguageId::TypeScript],
+            &crate::config::RustLanguageConfig::default(),
+            &diff,
+        )?;
+        let outcome = result
+            .analysis_outcome
+            .ok_or_else(|| "outcome must be projected".to_string())?;
+        assert_eq!(outcome.counts.changed_file_count, 2);
+        Ok(())
     }
 
     #[test]

@@ -1,0 +1,42 @@
+# Registers the preview-language changed-line budget guards (#10730) as a new
+# behavior spec: Python and TypeScript diffs get the same early, explainable
+# diff_scope_oversized refusal as Rust, counted over adapter-admitted files
+# and typed honestly in the --json limited artifact.
+[[behavior]]
+id = "RIPR-SPEC-0361"
+name = "preview diff-scope line budgets"
+spec = "docs/specs/RIPR-SPEC-0361-preview-diff-scope-line-budgets.md"
+tests = [
+  "crates/ripr/src/analysis/pipeline.rs::tests::diff_changed_python_line_limit_defaults_when_unset",
+  "crates/ripr/src/analysis/pipeline.rs::tests::diff_changed_python_line_limit_parses_positive_override",
+  "crates/ripr/src/analysis/pipeline.rs::tests::diff_changed_python_line_limit_rejects_invalid_values",
+  "crates/ripr/src/analysis/pipeline.rs::tests::diff_changed_typescript_line_limit_defaults_when_unset",
+  "crates/ripr/src/analysis/pipeline.rs::tests::diff_changed_typescript_line_limit_parses_positive_override",
+  "crates/ripr/src/analysis/pipeline.rs::tests::diff_changed_typescript_line_limit_rejects_invalid_values",
+  "crates/ripr/src/analysis/pipeline.rs::tests::preview_line_limits_resolve_forced_env_without_process_mutation",
+  "crates/ripr/src/analysis/pipeline.rs::tests::changed_python_line_count_ignores_non_python_paths",
+  "crates/ripr/src/analysis/pipeline.rs::tests::changed_python_line_count_ignores_generated_and_excluded_paths",
+  "crates/ripr/src/analysis/pipeline.rs::tests::changed_typescript_line_count_counts_the_whole_ts_js_family",
+  "crates/ripr/src/analysis/pipeline.rs::tests::changed_typescript_line_count_ignores_generated_and_excluded_paths",
+  "crates/ripr/src/analysis/pipeline.rs::tests::changed_python_line_limit_rejects_oversized_diff_before_probe_expansion",
+  "crates/ripr/src/analysis/pipeline.rs::tests::changed_python_line_limit_accepts_at_limit",
+  "crates/ripr/src/analysis/pipeline.rs::tests::changed_typescript_line_limit_rejects_oversized_diff_before_probe_expansion",
+  "crates/ripr/src/analysis/pipeline.rs::tests::changed_typescript_line_limit_accepts_at_limit",
+  "crates/ripr/src/analysis/pipeline.rs::tests::preview_line_limits_pass_an_at_limit_diff",
+  "crates/ripr/src/analysis/pipeline.rs::tests::oversized_python_diff_is_refused_before_python_analysis",
+  "crates/ripr/src/analysis/pipeline.rs::tests::oversized_typescript_diff_is_refused_before_typescript_analysis",
+  "crates/ripr/src/analysis/pipeline.rs::tests::oversized_python_diff_passes_when_python_is_not_enabled",
+  "crates/ripr/src/analysis/pipeline.rs::tests::generated_bulk_does_not_refuse_a_small_admitted_python_diff",
+  "crates/ripr/src/analysis/pipeline.rs::tests::generated_bulk_does_not_refuse_a_small_admitted_typescript_diff",
+  "crates/ripr/src/output/limited_check.rs::tests::python_budget_refusal_names_python_diff_scope_budget",
+  "crates/ripr/src/output/limited_check.rs::tests::typescript_budget_refusal_names_typescript_diff_scope_budget",
+  "crates/ripr/src/output/limited_check.rs::tests::rust_budget_refusals_keep_the_rust_basis",
+]
+code = [
+  "crates/ripr/src/analysis/pipeline.rs",
+  "crates/ripr/src/output/limited_check.rs",
+  "crates/ripr/src/analysis/language/rust/mod.rs",
+]
+outputs = [
+  "docs/OUTPUT_SCHEMA.md",
+]
