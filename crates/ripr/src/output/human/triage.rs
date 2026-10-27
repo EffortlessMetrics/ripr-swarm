@@ -564,7 +564,10 @@ fn push_ambiguous_stub_choices(
         "{indent}Choose a test-stub seam for {finding_id}: {reason}\n"
     ));
     let child = format!("{indent}  ");
-    out.push_str(&format!("{child}These syntax choices do not establish a repair binding or close a static limitation.\n"));
+    out.push_str(&format!("{child}These syntax choices are unvalidated; their commands may refuse, including for already-gripped seams.\n"));
+    out.push_str(&format!(
+        "{child}They do not establish a repair binding or close a static limitation.\n"
+    ));
     for seam_id in seam_ids {
         let command = navigation.stub_seam_command(seam_id);
         out.push_str(&format!("{child}{command}\n"));
@@ -1532,6 +1535,8 @@ mod tests {
         assert!(ambiguous.contains("Choose a test-stub seam for finding:hidden-unique:"));
         assert!(ambiguous.contains("--seam-id 0123456789abcdef"));
         assert!(ambiguous.contains("--seam-id fedcba9876543210"));
+        assert!(ambiguous.contains("syntax choices are unvalidated"));
+        assert!(ambiguous.contains("commands may refuse, including for already-gripped seams"));
     }
 
     #[test]

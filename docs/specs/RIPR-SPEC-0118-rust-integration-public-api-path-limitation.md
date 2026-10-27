@@ -302,6 +302,22 @@ MCP gap evidence uses the same named-edge guidance while preserving an absent
 next step as `null`. Missing edge evidence and unrelated limitation kinds keep
 their original advice. This projection does not change repair readiness.
 
+Ambiguous stub locations retain the syntax resolver's seam identities, with
+explicit disclosure that these selectors are unvalidated and their commands
+may refuse already-gripped or unsupported seams. They establish neither stub
+readiness nor repair admission. The mixed-grip CLI control independently
+establishes a strongly gripped seam and a weakly gripped seam at the same
+location, then requires the former's `not_a_gap` refusal and the latter's
+unwritten stub without filtering either syntax identity from the choices.
+
+The bounded hidden-row projection resolves syntax ambiguity only, after the
+existing eligibility and source-currentness guards. A canonical in-root file
+and supported seam family are required; no classified suffix fallback or
+constant-consumer investigation is performed for hidden rows. A unique hidden
+resolution adds no classified inventory lookup. The direct producer control
+counts those lookups against the same selected finding's full route; selected
+route classification and weak-oracle refusal retain their existing authority.
+
 ## Metrics
 
 - Corpus invariant: integration-origin transitive witnesses emit

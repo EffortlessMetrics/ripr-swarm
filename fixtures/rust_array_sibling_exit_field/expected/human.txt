@@ -38,7 +38,8 @@ Next: drill into the top finding:
   ripr context --root <cwd>/fixtures/rust_array_sibling_exit_field/input --diff <cwd>/fixtures/rust_array_sibling_exit_field/diff.patch --mode fast --at probe:src_lib.rs:field_construction:d6d7c327
   no repair start offered: ripr found no seam in this finding's file to bind it to, so there is no seam to start a repair from; follow the Next step above
 Choose a test-stub seam for probe:src_lib.rs:field_construction:d6d7c327: src/lib.rs:6 holds more than one field_construction seam, so --at cannot pick one; pass one of: --seam-id fcf2ca0c856d425c, --seam-id f7aa644690af18d3
-  These syntax choices do not establish a repair binding or close a static limitation.
+  These syntax choices are unvalidated; their commands may refuse, including for already-gripped seams.
+  They do not establish a repair binding or close a static limitation.
   ripr agent stub --root <cwd>/fixtures/rust_array_sibling_exit_field/input --seam-id fcf2ca0c856d425c
   ripr agent stub --root <cwd>/fixtures/rust_array_sibling_exit_field/input --seam-id f7aa644690af18d3
 

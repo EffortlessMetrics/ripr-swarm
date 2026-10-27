@@ -10149,6 +10149,7 @@ tests = [
   "crates/ripr/src/output/human/triage.rs::tests::limited_journey_hidden_rows_name_kind_and_reason",
   "crates/ripr/src/output/human/triage.rs::tests::limited_journey_hidden_stub_candidates_preserve_currentness_and_window",
   "crates/ripr/tests/agent_stub_compiles.rs::limited_journey_check_names_ambiguous_stub_seams",
+  "crates/ripr/tests/agent_stub_compiles.rs::limited_journey_mixed_grip_choices_disclose_unvalidated_refusal",
   "crates/ripr/tests/agent_stub_compiles.rs::limited_journey_hidden_predicate_ambiguity_keeps_identity_and_refuses_stale_bytes",
   "crates/ripr/tests/agent_stub_compiles.rs::limited_journey_public_api_helper_boundary_stays_limited",
   "crates/ripr/src/analysis/language/rust/mod.rs::tests::transitive_reach_limit_kind_names_integration_test_path",

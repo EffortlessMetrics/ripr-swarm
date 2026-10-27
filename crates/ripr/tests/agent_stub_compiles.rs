@@ -1289,6 +1289,127 @@ fn limited_journey_check_names_ambiguous_stub_seams() -> Result<(), String> {
 }
 
 #[test]
+fn limited_journey_mixed_grip_choices_disclose_unvalidated_refusal() -> Result<(), String> {
+    const SOURCE: &str = "pub fn pair(a: u32, b: u32) -> u32 {\n    if a >= 10 { return 1; } if b >= 20 { return 2; } 0\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn pins_a() {\n        assert_eq!(pair(9, 0), 0);\n        assert_eq!(pair(10, 0), 1);\n        assert_eq!(pair(11, 0), 1);\n    }\n}\n";
+    let scratch = kind_refusal_crate(SOURCE)?;
+    let root = &scratch.directory;
+    let diff = one_line_diff(
+        &scratch,
+        "src/lib.rs",
+        "    if a >= 10 { return 1; } if b > 20 { return 2; } 0",
+        "    if a >= 10 { return 1; } if b >= 20 { return 2; } 0",
+    )?;
+    // Establish real classified subjects before checking selector wording.
+    let mut inventory = ripr_command();
+    inventory
+        .args(["check", "--root"])
+        .arg(root)
+        .args(["--format", "repo-exposure-json"]);
+    let inventory = run_bounded(
+        inventory,
+        root,
+        "mixed-grip-inventory",
+        Duration::from_mins(2),
+    )?;
+    assert!(
+        inventory.status.success(),
+        "{}",
+        String::from_utf8_lossy(&inventory.stderr)
+    );
+    let inventory: serde_json::Value =
+        serde_json::from_slice(&inventory.stdout).map_err(|error| error.to_string())?;
+    let seams = inventory["seams"]
+        .as_array()
+        .ok_or("missing seam inventory")?;
+    let mut subjects = Vec::new();
+    for (expression, class, eligible) in [
+        ("a >= 10", "strongly_gripped", false),
+        ("b >= 20", "weakly_gripped", true),
+    ] {
+        let matching = seams
+            .iter()
+            .filter(|seam| seam["kind"] == "predicate_boundary" && seam["expression"] == expression)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            matching.len(),
+            1,
+            "one real subject for {expression}: {inventory}"
+        );
+        let seam = matching[0];
+        assert_eq!(seam["owner"], "src/lib.rs::pair");
+        assert_eq!(seam["grip_class"], class);
+        assert_eq!(seam["headline_eligible"], eligible);
+        let id = seam["seam_id"]
+            .as_str()
+            .filter(|id| !id.is_empty())
+            .ok_or("classified subject has no nonempty seam ID")?;
+        subjects.push((id.to_string(), class, eligible));
+    }
+    assert_ne!(subjects[0].0, subjects[1].0);
+    let stdout = check_human(root, &diff)?;
+    assert!(stdout.contains("Choose a test-stub seam for "), "{stdout}");
+    assert!(
+        stdout.contains("syntax choices are unvalidated"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("commands may refuse, including for already-gripped seams"),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("Write a test for it:"), "{stdout}");
+    let mut choices = stdout
+        .lines()
+        .filter(|line| line.trim_start().starts_with("ripr agent stub "))
+        .filter_map(|line| {
+            line.split_once("--seam-id ")
+                .map(|(_, id)| id.trim().to_string())
+        })
+        .collect::<Vec<_>>();
+    choices.sort();
+    let mut expected = subjects
+        .iter()
+        .map(|(id, _, _)| id.clone())
+        .collect::<Vec<_>>();
+    expected.sort();
+    assert_eq!(
+        choices, expected,
+        "same syntax identities, not filtered by readiness"
+    );
+    for (id, class, eligible) in subjects {
+        let mut command = ripr_command();
+        command
+            .args(["agent", "stub", "--root"])
+            .arg(root)
+            .args(["--seam-id", &id, "--json"]);
+        let outcome = run_bounded(command, root, "mixed-grip-choice", Duration::from_mins(2))?;
+        assert_eq!(outcome.status.code(), Some(if eligible { 0 } else { 3 }));
+        let document: serde_json::Value =
+            serde_json::from_slice(&outcome.stdout).map_err(|error| error.to_string())?;
+        assert_eq!(document["seam_id"], id);
+        assert_eq!(document["grip_class"], class);
+        if eligible {
+            assert_eq!(document["state"], "ready");
+            assert_eq!(document["classification"], "weakly_exposed");
+            assert_eq!(document["written"], false);
+            assert!(
+                document["text"]
+                    .as_str()
+                    .is_some_and(|text| text.contains("b >= 20"))
+            );
+        } else {
+            assert_eq!(document["state"], "refused");
+            assert_eq!(document["classification"], "exposed");
+            assert_eq!(document["refusal"]["kind"], "not_a_gap");
+        }
+    }
+    assert_eq!(
+        std::fs::read_to_string(root.join("src/lib.rs")).map_err(|error| error.to_string())?,
+        SOURCE
+    );
+    scratch.cleanup()
+}
+
+#[test]
 fn limited_journey_public_api_helper_boundary_stays_limited() -> Result<(), String> {
     let scratch = kind_refusal_crate(include_str!(
         "../../../fixtures/rust_transitive_reach_positive/input/src/lib.rs"

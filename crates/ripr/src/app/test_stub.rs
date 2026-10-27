@@ -375,7 +375,8 @@ pub(crate) enum StubRouteDecision {
     /// The shared resolver refuses: print its reason instead of a command
     /// that would only refuse.
     Refused { reason: String },
-    /// Explicit choices from the resolver; no seam or repair is selected.
+    /// Unvalidated syntax selectors from the resolver; classification or
+    /// stub generation can still refuse them. No seam or repair is selected.
     Ambiguous {
         reason: String,
         seam_ids: Vec<String>,
@@ -803,11 +804,42 @@ pub(crate) fn check_stub_routes(
             if !finding_text_is_on_disk(root, &file, line, &finding.probe.expression) {
                 return None;
             }
-            let route = stub_route_for_finding(root, &config, finding, seam_index)?;
-            (selected || matches!(&route.decision, StubRouteDecision::Ambiguous { .. }))
-                .then_some(route)
+            if selected {
+                stub_route_for_finding(root, &config, finding, seam_index)
+            } else {
+                hidden_stub_ambiguity(root, &config, finding, seam_index)
+            }
         })
         .collect()
+}
+
+/// Hidden rows display only syntax ambiguity. Do not finish a unique route's
+/// classified inventory/weak-oracle lookup merely to discard its result.
+fn hidden_stub_ambiguity(
+    root: &Path,
+    config: &RiprConfig,
+    finding: &Finding,
+    seam_index: &mut Option<analysis::FileSeamIndex>,
+) -> Option<StubRoute> {
+    let (file, line, kind) = stub_route_location(finding, root)?;
+    // A changed constant has no seam of its own; its selected route may
+    // investigate consumers, but hidden syntax choices must not widen scope.
+    analysis::seam_kind_for_probe_family(kind)?;
+    // Keep this the single-file shape path. A missing/out-of-root file must
+    // not fall back to the resolver's repo-wide classified suffix lookup.
+    scoped_file(root, &file)?;
+    match resolve_at_location(root, config, &file, line, Some(kind), seam_index) {
+        Err(TestStubError::Ambiguous { message, seam_ids }) if !seam_ids.is_empty() => {
+            Some(StubRoute {
+                finding_id: finding.id.clone(),
+                decision: StubRouteDecision::Ambiguous {
+                    reason: message,
+                    seam_ids,
+                },
+            })
+        }
+        _ => None,
+    }
 }
 
 /// Whether the finding's expression is still on disk in the function the
@@ -1096,6 +1128,11 @@ fn next_repair_for(
     })
 }
 
+#[cfg(test)]
+std::thread_local! {
+    static INVENTORY_ENTRY_FACTS_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// Inventory class for a seam selected from a file parse (`--at --kind`).
 /// Classification is not used to pick the seam (#5471); this lookup is
 /// disclosure only, plus the weak-oracle pointer (#10683). A failed or empty
@@ -1106,6 +1143,8 @@ fn inventory_entry_facts(
     file: &str,
     seam_id: &str,
 ) -> Option<(SeamGripClass, Option<String>)> {
+    #[cfg(test)]
+    INVENTORY_ENTRY_FACTS_CALLS.with(|count| count.set(count.get() + 1));
     let relative = scoped_file(root, file)?;
     let scoped = analysis::inventory_diff_scoped_classified_seams_at_with_config(
         root,
@@ -1732,7 +1771,32 @@ mod tests {
         let direct = stub_route_for_finding(&root, &config, hidden, &mut index)
             .ok_or("the hidden subject must independently resolve")?;
         assert!(matches!(direct.decision, StubRouteDecision::Stub { .. }));
+        let original_count = INVENTORY_ENTRY_FACTS_CALLS.with(|count| count.replace(0));
+        let mut selected_index = None;
+        let selected_route = stub_route_for_finding(
+            &root,
+            &config,
+            selected.ok_or("missing selected subject")?,
+            &mut selected_index,
+        )
+        .ok_or("selected subject must keep its full route")?;
+        let selected_inventory_calls = INVENTORY_ENTRY_FACTS_CALLS.with(|count| count.get());
+        assert!(
+            selected_inventory_calls > 0,
+            "positive classified-lookup control"
+        );
+        INVENTORY_ENTRY_FACTS_CALLS.with(|count| count.set(0));
         let routes = check_stub_routes(&root, &config, &output, &mut index);
+        assert_eq!(
+            INVENTORY_ENTRY_FACTS_CALLS.with(|count| count.get()),
+            selected_inventory_calls,
+            "hidden unique route must add no classified inventory lookup"
+        );
+        assert!(
+            routes.contains(&selected_route),
+            "selected full decision preserved"
+        );
+        INVENTORY_ENTRY_FACTS_CALLS.with(|count| count.set(original_count));
         assert!(routes.iter().all(|route| route.finding_id != hidden.id));
         assert!(
             routes.iter().any(|route| Some(route.finding_id.as_str())
