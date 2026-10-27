@@ -247,12 +247,13 @@ fn credits<'a>(
     let mut out = Vec::new();
     for test in all_tests {
         // A fixture request can run code that patches the class; a directly
-        // parametrized argument cannot.
+        // parametrized argument cannot, unless an unsettled `indirect=` may
+        // route it through a fixture (#10685).
         if super::test_activation::activation_control(test).is_some()
             || test
                 .fixtures
                 .iter()
-                .any(|parameter| !test.direct_parametrized.contains(parameter))
+                .any(|parameter| !test.takes_parametrize_value(parameter))
             || test.constant_rebinding.edited_in_diff
             || test.constant_rebinding.assigns_attribute(&field)
             || test.constant_rebinding.assigns_attribute(class)

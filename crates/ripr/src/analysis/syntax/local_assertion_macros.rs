@@ -18,7 +18,7 @@
 //! macro's transcriber text, and refuses everything it cannot attribute:
 //!
 //! - the definition is the only macro of that name anywhere in the file,
-//!   sits at item position behind no `cfg`, precedes the call and encloses
+//!   sits at item position behind no `cfg` other than `cfg(test)`, precedes the call and encloses
 //!   it, and no `use` imports the name;
 //! - the call is a plain statement of the test function's own body: not in
 //!   a closure, `async` or nested block, branch, loop, nested `fn` or
@@ -131,7 +131,7 @@ fn definitions(root: &SyntaxNode) -> (Definitions, BTreeSet<String>) {
                 // textual scope read here; any other attribute may gate it.
                 !attr.path().is_some_and(|path| {
                     path.syntax().text() == "macro_export" || path.syntax().text() == "macro_use"
-                })
+                }) && !is_cfg_test(&attr)
             })
         {
             continue;
@@ -141,6 +141,17 @@ fn definitions(root: &SyntaxNode) -> (Definitions, BTreeSet<String>) {
         }
     }
     (found, imported)
+}
+
+/// `#[cfg(test)]`, exactly. A `#[test]` function exists only in a test build,
+/// so a `cfg(test)` definition is always in scope for the calls read here.
+fn is_cfg_test(attr: &ast::Attr) -> bool {
+    attr.syntax()
+        .text()
+        .to_string()
+        .split_whitespace()
+        .collect::<String>()
+        == "#[cfg(test)]"
 }
 
 /// The transcriber text of every arm; `None` for any unexpected layout.
@@ -211,6 +222,25 @@ fn is_plain_statement_of(call: &SyntaxNode, function: &ast::Fn) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_cfg_test_definition_gate_is_read_as_in_scope() {
+        let source = |gate: &str| {
+            format!(
+                "{gate}\nmacro_rules! check {{\n    ($v:expr) => {{ assert_eq!($v, 1) }};\n}}\n#[test]\nfn t() {{\n    check!(f());\n}}\n"
+            )
+        };
+        assert_eq!(local_macro_calls(&source("#[cfg(test)]")).len(), 1);
+        assert_eq!(local_macro_calls(&source("#[cfg( test )]")).len(), 1);
+        for gate in [
+            "#[cfg(not(test))]",
+            "#[cfg(feature = \"x\")]",
+            "#[cfg(all(test, unix))]",
+            "#[cfg(any())]",
+        ] {
+            assert!(local_macro_calls(&source(gate)).is_empty(), "{gate}");
+        }
+    }
 
     #[test]
     fn statement_call_of_a_unique_macro_is_reported_with_its_arms() -> Result<(), String> {

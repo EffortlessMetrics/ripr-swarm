@@ -11202,6 +11202,7 @@ fn test_crate_bindings_of_the_root_are_read_from_that_crate_only() {
     }
 }
 
+mod claims_direction;
 mod expect_test_pins;
 mod helper_pins;
 

@@ -874,11 +874,90 @@ fn gap_bound_route(
         }
         _ => return None,
     };
+    let uncommitted_files = uncommitted_production_files(&output.root, &record);
     Some(crate::app::GapRepairRoute {
         finding_id: finding.id.clone(),
         gap_id: record.canonical_gap_id,
         base: base.to_string(),
+        uncommitted_files,
     })
+}
+
+/// Dirty paths the gap-bound start would refuse to begin from (#10698),
+/// spelled for the user's working directory. The start refuses every dirty
+/// tracked path outside the packet's allowed edit surface (normally only the
+/// selected test file), so this asks the same packet, policy and
+/// `trusted_head_surface_violations` predicate the start itself uses rather
+/// than guessing from path shapes. If the packet, policy, HEAD or Git cannot
+/// answer, no file is named and the start's own refusal stays the backstop.
+fn uncommitted_production_files(
+    root: &Path,
+    record: &crate::output::gap_decision_ledger::GapRecord,
+) -> Vec<String> {
+    let display = format!(
+        "target/ripr/workflow/{}",
+        super::gap_bound_repair::GAP_BOUND_BEFORE_SNAPSHOT_FILE
+    );
+    let Ok(packet) =
+        crate::output::agent_seam_packets::render_gap_bound_repair_packet(&display, record)
+    else {
+        return Vec::new();
+    };
+    let Ok(policy) =
+        crate::app::repair_attempt::edit_cage_policy_from_packet(&packet, &record.canonical_gap_id)
+    else {
+        return Vec::new();
+    };
+    dirty_paths_outside_surface(root, &policy)
+}
+
+/// The dirty tracked paths the start's own premise check refuses, respelled
+/// relative to `root`.
+fn dirty_paths_outside_surface(
+    root: &Path,
+    policy: &crate::edit_cage::EditCagePolicy,
+) -> Vec<String> {
+    let Ok(head) = crate::agent::artifact::current_git_head(root) else {
+        return Vec::new();
+    };
+    let Ok(violations) =
+        crate::app::repair_attempt::trusted_head_surface_violations(root, policy, &[], &head)
+    else {
+        return Vec::new();
+    };
+    let prefix = repo_prefix(root);
+    violations
+        .iter()
+        .map(|path| relative_to_cwd_root(path, &prefix))
+        .collect()
+}
+
+/// `git rev-parse --show-prefix`: the analyzed root's path inside its
+/// repository (empty at the top, otherwise `dir/sub/`).
+fn repo_prefix(root: &Path) -> String {
+    crate::git::run_git_output_with_deadline_and_limit(
+        root,
+        &["rev-parse", "--show-prefix"],
+        std::time::Duration::from_secs(10),
+        64 * 1024,
+    )
+    .ok()
+    .filter(|output| output.status.success())
+    .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+    .unwrap_or_default()
+}
+
+/// A repository-root-relative path respelled relative to the analyzed root,
+/// which is where the user runs the printed `git commit`.
+fn relative_to_cwd_root(path: &str, prefix: &str) -> String {
+    if prefix.is_empty() {
+        return path.to_string();
+    }
+    if let Some(rest) = path.strip_prefix(prefix) {
+        return rest.to_string();
+    }
+    let depth = prefix.split('/').filter(|part| !part.is_empty()).count();
+    format!("{}{path}", "../".repeat(depth))
 }
 
 /// The gap-bound start the default human `ripr check` would print for this
@@ -1727,13 +1806,16 @@ pub(crate) mod tests {
         let boundary_only = gate_entry(SeamGripClass::WeaklyGripped, vec![targeted]);
         let refusal = repair_start_refusal_for_entry(root, &boundary_only, policy)
             .ok_or("a boundary-only not-ready seam must be refused")?;
+        // `/repo` gains a drive on Windows and is console-quoted when it needs
+        // it, so the expected root goes through the same binding the refusal
+        // prints.
+        let printed_root = shell_arg(&bound_root(&root.to_string_lossy()));
         assert!(
-            refusal
+            refusal.reason.contains(&format!(
+                "ripr agent stub --root {printed_root} --at src/pricing.rs:88 --kind predicate"
+            )) && refusal
                 .reason
-                .contains("ripr agent stub --root /repo --at src/pricing.rs:88 --kind predicate")
-                && refusal
-                    .reason
-                    .contains("writes a fill-in skeleton for the changed comparison")
+                .contains("writes a fill-in skeleton for the changed comparison")
                 && refusal.reason.contains("prefilled when it derives")
                 && refusal.reason.contains("then rerun `ripr repair`"),
             "{}",
@@ -2295,6 +2377,107 @@ pub(crate) mod tests {
             }
         }
         Ok(())
+    }
+
+    /// #10698: the files check names for the commit step are exactly the
+    /// tracked production files that differ from HEAD, so the printed start
+    /// is never one the before phase refuses for a dirty tree.
+    #[test]
+    fn dirty_paths_outside_surface_mirror_the_start_premise_check() -> Result<(), String> {
+        use crate::testing::fixture_git::fixture_git_ok as run_git;
+
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| format!("test clock failed: {error}"))?
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "ripr-task-first-dirty-{}-{stamp}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(root.join("tests"))
+            .and_then(|()| std::fs::create_dir_all(root.join("src")))
+            .map_err(|error| format!("create {} failed: {error}", root.display()))?;
+        let root = root
+            .canonicalize()
+            .map_err(|error| format!("canonicalize {} failed: {error}", root.display()))?;
+        let _guard = TempRootGuard { root: root.clone() };
+        run_git(&root, &["init"])?;
+        run_git(
+            &root,
+            &["config", "user.email", "ripr-test@example.invalid"],
+        )?;
+        run_git(&root, &["config", "user.name", "RIPR Test"])?;
+        for (file, text) in [
+            ("pricing.py", "x = 1\n"),
+            ("tests/test_pricing.py", "y = 1\n"),
+            ("tests/conftest.py", "z = 1\n"),
+            ("util.py", "u = 1\n"),
+            ("src/[ab].py", "g = 1\n"),
+        ] {
+            std::fs::write(root.join(file), text)
+                .map_err(|error| format!("write {file} failed: {error}"))?;
+        }
+        run_git(&root, &["add", "."])?;
+        run_git(&root, &["commit", "--no-gpg-sign", "-m", "initial"])?;
+
+        let packet = serde_json::json!({
+            "packets": [{
+                "seam_id": "gap-1",
+                "allowed_edit_surface": ["tests/test_pricing.py"],
+                "forbidden_files": ["pricing.py"],
+                "recommended_test": {"file": "tests/test_pricing.py", "name": "tests/test_pricing.py::t"}
+            }]
+        });
+        let policy =
+            crate::app::repair_attempt::edit_cage_policy_from_packet(&packet.to_string(), "gap-1")?;
+
+        // Clean tree: nothing to commit, so the start prints bare.
+        assert!(dirty_paths_outside_surface(&root, &policy).is_empty());
+
+        // The selected test file is the only dirty path the start allows.
+        std::fs::write(root.join("tests/test_pricing.py"), "y = 2\n")
+            .map_err(|error| format!("write test failed: {error}"))?;
+        assert!(dirty_paths_outside_surface(&root, &policy).is_empty());
+        // A second test-looking file is NOT allowed: the start refuses it.
+        std::fs::write(root.join("tests/conftest.py"), "z = 2\n")
+            .map_err(|error| format!("write conftest failed: {error}"))?;
+        assert_eq!(
+            dirty_paths_outside_surface(&root, &policy),
+            ["tests/conftest.py"]
+        );
+        std::fs::write(root.join("pricing.py"), "x = 2\n")
+            .map_err(|error| format!("write production failed: {error}"))?;
+        run_git(&root, &["add", "pricing.py"])?;
+        assert_eq!(
+            dirty_paths_outside_surface(&root, &policy),
+            ["pricing.py", "tests/conftest.py"]
+        );
+        // A deleted tracked production file also differs from HEAD, and the
+        // start refuses it, so it is named too.
+        std::fs::remove_file(root.join("util.py"))
+            .map_err(|error| format!("delete util.py failed: {error}"))?;
+        assert_eq!(
+            dirty_paths_outside_surface(&root, &policy),
+            ["pricing.py", "tests/conftest.py", "util.py"]
+        );
+        // A tracked file whose name looks like a glob is named literally.
+        std::fs::write(root.join("src/[ab].py"), "g = 2\n")
+            .map_err(|error| format!("write glob-named file failed: {error}"))?;
+        assert_eq!(
+            dirty_paths_outside_surface(&root, &policy),
+            ["pricing.py", "src/[ab].py", "tests/conftest.py", "util.py"]
+        );
+        Ok(())
+    }
+
+    /// #10698: the commit hint is spelled relative to the analyzed root, which
+    /// may be a subdirectory of the repository.
+    #[test]
+    fn commit_hint_paths_are_relative_to_the_analyzed_root() {
+        assert_eq!(relative_to_cwd_root("a.py", ""), "a.py");
+        assert_eq!(relative_to_cwd_root("svc/src/a.py", "svc/"), "src/a.py");
+        assert_eq!(relative_to_cwd_root("other/b.py", "svc/"), "../other/b.py");
+        assert_eq!(relative_to_cwd_root("b.py", "svc/deep/"), "../../b.py");
     }
 
     /// Implicit continue skips trust-bound awaiting attempts: the façade

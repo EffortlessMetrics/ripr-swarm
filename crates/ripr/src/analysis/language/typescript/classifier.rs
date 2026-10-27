@@ -4800,7 +4800,10 @@ pub(super) fn balanced_close_offset(inner: &str) -> Option<usize> {
 /// `Some(false)` when it provably cannot (a dead test whose expectation is
 /// wrong under both behaviors, or equal under both); `None` when the check is not
 /// statically determinable (no owner body, unresolvable branches or bindings,
-/// non-numeric expectation) — the witness decision then stands unchanged.
+/// non-numeric expectation) — the witness decision then stands unchanged. The
+/// one exception is a changed `if` statement whose branch pair this scan cannot
+/// read (one-line, or nested in an arrow or `function`): that withholds
+/// (`Some(false)`), because a pin that cannot be shown live must not stand.
 ///
 /// The semantics are derived only from statically resolvable facts: the
 /// changed comparison's operator, the observed argument values bound to the
@@ -4836,6 +4839,25 @@ pub(crate) fn expected_side_is_live(
     let start = matching.next()?;
     if matching.next().is_some() {
         return None;
+    }
+    // A one-line or nested changed `if` has no branch pair this scan can read.
+    // The witness above already credited the pin, and a pair that cannot be
+    // read cannot show the pin is live, so withhold rather than let a dead pin
+    // stand (#10776). Only a plain `if` statement that opens a brace is held to
+    // this: a changed ternary, `else if` or other expression keeps the previous
+    // behavior.
+    let head = lines[start].trim_start();
+    // `else if` heads are left to the scan as before: their own closer sits on
+    // the same line, so the net-brace test here does not describe them.
+    let is_if_statement = ["if (", "if("].iter().any(|form| head.starts_with(form));
+    // A brace-less `if (c) return 1;` (#10463) never reached the brace scan and
+    // keeps its previous behavior, as does a condition that continues onto the
+    // next line: only a line that opens a brace is read wrongly by the scan.
+    if is_if_statement
+        && head.contains('{')
+        && changed_if_opens_its_own_body(&lines, start) != Some(true)
+    {
+        return Some(false);
     }
     let (true_expr, false_expr) = branch_return_expressions(&lines, start)?;
     let lhs = comparison_operand_value(left, owner, arguments)?;
@@ -5026,8 +5048,8 @@ pub(crate) fn branch_return_expressions(lines: &[&str], start: usize) -> Option<
 /// starts at depth 1, so a one-line `if (c) { return 1; }` would read the
 /// enclosing block's next `return` as the true branch, and a changed `if`
 /// inside a nested arrow or `function` would read that inner function's
-/// returns instead of the owner's (method shorthand carries neither token and
-/// is not recognized). Braces in strings and comments are blanked
+/// returns instead of the owner's; an object-literal or class method counts as a
+/// nested function too (#10776). Braces in strings and comments are blanked
 /// first; `None` means the text could not be lined up, which also fails the scan.
 fn changed_if_opens_its_own_body(lines: &[&str], start: usize) -> Option<bool> {
     lines.get(start)?;
@@ -5056,7 +5078,11 @@ fn changed_if_opens_its_own_body(lines: &[&str], start: usize) -> Option<bool> {
                     let names_function = segment
                         .split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
                         .any(|token| token == "function");
-                    opened_by_function.push(segment.trim_end().ends_with("=>") || names_function);
+                    opened_by_function.push(
+                        segment.trim_end().ends_with("=>")
+                            || names_function
+                            || opens_method_body(&segment),
+                    );
                     segment.clear();
                 }
                 '}' => {
@@ -5069,6 +5095,126 @@ fn changed_if_opens_its_own_body(lines: &[&str], start: usize) -> Option<bool> {
         }
     }
     Some(!opened_by_function.iter().skip(1).any(|nested| *nested))
+}
+
+/// Whether the text before a `{` is a method signature (`name(args)`,
+/// `async name(args): T`, `static get name()`): a name, a parameter list that
+/// closes before the brace, and an optional return type. Control heads
+/// (`if (c)`, `for (...)`, `catch (e)`) have the same shape and are excluded by
+/// keyword; a call that passes an object (`f(a, {`) never closes its list.
+fn opens_method_body(segment: &str) -> bool {
+    const MODIFIERS: [&str; 9] = [
+        "public",
+        "private",
+        "protected",
+        "static",
+        "async",
+        "get",
+        "set",
+        "readonly",
+        "override",
+    ];
+    const NOT_A_NAME: [&str; 12] = [
+        "if", "else", "for", "while", "switch", "catch", "with", "do", "return", "new", "function",
+        "class",
+    ];
+    // A statement without a trailing `;` stays in `segment`, so the signature
+    // is only the text after the last newline outside a parameter list
+    // (`log(x)\nwhile (go) {` must not read `log(x)` as a method head).
+    let mut depth = 0i64;
+    let mut head_start = 0;
+    let mut previous_head_start = 0;
+    for (index, c) in segment.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            '\n' if depth == 0 => {
+                previous_head_start = head_start;
+                head_start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    if depth != 0 {
+        return false;
+    }
+    // A brace on its own line (`pick(n)\n{`) leaves nothing after the last
+    // newline, so the signature is the line before it.
+    if segment[head_start..].trim().is_empty() {
+        head_start = previous_head_start;
+    }
+    if !segment[head_start..].contains(')') {
+        return false;
+    }
+    let mut rest = segment[head_start..]
+        .trim_start()
+        .trim_start_matches('*')
+        .trim_start();
+    loop {
+        let word_end = rest
+            .find(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
+            .unwrap_or(rest.len());
+        let word = &rest[..word_end];
+        let after = rest[word_end..].trim_start();
+        let another_name_follows = after
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_alphanumeric() || matches!(c, '_' | '$' | '[' | '*'));
+        if MODIFIERS.contains(&word) && another_name_follows {
+            rest = after.trim_start_matches('*').trim_start();
+            continue;
+        }
+        if word.is_empty() || NOT_A_NAME.contains(&word) {
+            return false;
+        }
+        return signature_tail(after).is_some_and(|tail| tail.is_empty() || tail.starts_with(':'));
+    }
+}
+
+/// The text after a method's optional `<...>` type-parameter list and its
+/// balanced `(...)` parameter list, trimmed; `None` when `text` does not open
+/// with them. `pick<T>(n)` is a head and a comparison like `f(s) < limit` has
+/// trailing text that is not a return type.
+fn signature_tail(text: &str) -> Option<&str> {
+    let mut rest = text;
+    if rest.starts_with('<') {
+        let mut depth = 0i64;
+        let mut previous = ' ';
+        let mut end = None;
+        for (index, c) in rest.char_indices() {
+            match c {
+                '<' => depth += 1,
+                // `=>` inside a type argument is an arrow, not a closing bracket.
+                '>' if previous != '=' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = Some(index + 1);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+            previous = c;
+        }
+        rest = rest[end?..].trim_start();
+    }
+    if !rest.starts_with('(') {
+        return None;
+    }
+    let mut depth = 0i64;
+    for (index, c) in rest.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(rest[index + 1..].trim());
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// The expression of a single-line `return <expr>;` statement, when `trimmed`
