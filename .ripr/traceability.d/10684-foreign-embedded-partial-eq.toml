@@ -1,0 +1,7 @@
+# Registers the foreign embedded PartialEq controls (#10684) under RIPR-SPEC-0228.
+[[extend]]
+id = "RIPR-SPEC-0228"
+tests = [
+  "crates/ripr/src/analysis/classify/custom_eq.rs::an_embedded_type_from_outside_the_workspace_may_compare_leniently",
+  "crates/ripr/src/analysis/classify/custom_eq.rs::generic_parameters_and_variant_names_are_read_from_the_declaration",
+]

@@ -553,7 +553,10 @@ pub(crate) struct CachedSeamLimitInfo {
 /// (`t += double(*x).await * 1`) is a `return_value` change credited by a pin
 /// whose run folds through that function (RIPR-SPEC-0360, #9478). Old entries
 /// keep the update's `static_unknown` probe.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.114";
+/// `1.115`: a pushed element embedding a type no workspace file defines (a
+/// dependency's `PartialEq` the index cannot read) fails closed like a
+/// hand-written `eq` (RIPR-SPEC-0228, #10684). Old entries keep the credit.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.115";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -714,7 +717,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.114";
 /// `0.119`: same arrow-row table splitting as full `1.112` (#10298).
 /// `0.120`: same arrow-row oracle as full `1.113` (#9619).
 /// `0.121`: same call-in-term accumulator as full `1.114` (#9478).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.121";
+/// `0.122`: same foreign-embedded-eq reading as full `1.115` (#10684).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.122";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -877,7 +881,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.121";
 /// `0.119`: same arrow-row table splitting as full `1.112` (#10298).
 /// `0.120`: same arrow-row oracle as full `1.113` (#9619).
 /// `0.121`: same call-in-term accumulator as full `1.114` (#9478).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.121";
+/// `0.122`: same foreign-embedded-eq reading as full `1.115` (#10684).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.122";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -5041,7 +5046,8 @@ mod tests {
         // 1.111 -> 1.112: arrow-separated macro table rows (#10298).
         // 1.112 -> 1.113: arrow-row oracles (RIPR-SPEC-0231 rule 9, #9619).
         // 1.113 -> 1.114: call-in-term accumulator (RIPR-SPEC-0360, #9478).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.114");
+        // 1.114 -> 1.115: foreign embedded `PartialEq` fails closed (#10684).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.115");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5142,8 +5148,9 @@ mod tests {
         // 0.118 -> 0.119: same arrow-row transition as full 1.112.
         // 0.119 -> 0.120: same arrow-row oracle as full 1.113.
         // 0.120 -> 0.121: same call-in-term accumulator as full 1.114.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.121");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.121");
+        // 0.121 -> 0.122: same foreign-embedded-eq reading as full 1.115.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.122");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.122");
     }
 
     #[test]

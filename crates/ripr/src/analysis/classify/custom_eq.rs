@@ -12,7 +12,9 @@
 //! The scan is textual and fails closed: a pushed literal whose type has no
 //! `struct`/`enum` definition in the workspace (macro-generated, aliased,
 //! `Self`, a foreign type that only shares a variant name) is treated as
-//! lenient.
+//! lenient. So is an embedded field type that has no workspace definition and
+//! is not a known std/core type: its `PartialEq` may live in a dependency the
+//! index does not read (#10684).
 
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::rust_index::RustIndex;
@@ -43,6 +45,7 @@ pub(super) fn pushed_element_may_compare_leniently(literal: &str, index: &RustIn
             if !visited.insert(name.clone()) {
                 continue;
             }
+            let mut found = false;
             for facts in index.files().values() {
                 let raw = facts.data().source.as_ref();
                 if !raw.contains(&format!("struct {name}"))
@@ -50,14 +53,34 @@ pub(super) fn pushed_element_may_compare_leniently(literal: &str, index: &RustIn
                 {
                     continue;
                 }
-                if let Some(body) = item_body(&mask_comments_and_strings(raw), &name) {
+                let masked = mask_comments_and_strings(raw);
+                if let Some(item) = item_parts(&masked, &name) {
+                    found = true;
                     // Only the element type itself proves the literal is a
                     // workspace type: a variant name can collide with an
                     // unrelated struct (`foreign::Event::Shipped` beside a
                     // local `struct Shipped`).
                     defined |= depth == 0 && name == element.type_name;
-                    next.extend(identifiers(body).filter(|ident| is_type_like(ident)));
+                    // The item's own generic parameters and enum variants are
+                    // not field types.
+                    let own: BTreeSet<String> = generic_parameters(item.generics)
+                        .into_iter()
+                        .chain(if item.is_enum {
+                            variant_names(item.body)
+                        } else {
+                            Vec::new()
+                        })
+                        .collect();
+                    next.extend(
+                        identifiers(item.body)
+                            .filter(|ident| is_type_like(ident) && !own.contains(ident)),
+                    );
                 }
+            }
+            // An embedded type that no workspace file defines and std does
+            // not own may carry a hand-written `eq` the index cannot read.
+            if depth > 0 && !found && !is_known_std_type(&name) {
+                return true;
             }
         }
         if next.is_empty() {
@@ -122,11 +145,25 @@ fn handwritten_partial_eq_types(index: &RustIndex) -> BTreeSet<String> {
         .collect()
 }
 
+/// One `struct`/`enum` definition read from masked source.
+struct ItemParts<'a> {
+    /// The `<..>` generic parameter list, empty when there is none.
+    generics: &'a str,
+    /// The text between the item's delimiters.
+    body: &'a str,
+    is_enum: bool,
+}
+
 /// The text between the delimiters of `struct name { .. }`, `struct name(..)`
 /// or `enum name { .. }` in masked `source`, past any generic parameters and
 /// `where` clause (`struct Line<F: Fn() + PartialEq> { .. }`); `None` when it
 /// declares neither (a unit struct embeds nothing and reads as empty).
+#[cfg(test)]
 fn item_body<'a>(source: &'a str, name: &str) -> Option<&'a str> {
+    item_parts(source, name).map(|item| item.body)
+}
+
+fn item_parts<'a>(source: &'a str, name: &str) -> Option<ItemParts<'a>> {
     ["struct", "enum"].iter().find_map(|keyword| {
         let needle = format!("{keyword} {name}");
         source.match_indices(&needle).find_map(|(at, _)| {
@@ -142,7 +179,10 @@ fn item_body<'a>(source: &'a str, name: &str) -> Option<&'a str> {
             if !before_ok || !after_ok {
                 return None;
             }
-            let after = skip_generics(after);
+            let after_generics = skip_generics(after);
+            let generics = &after[..after.len() - after_generics.len()];
+            let after = after_generics;
+            let is_enum = *keyword == "enum";
             let open = if after.trim_start().starts_with('(') {
                 after.find('(')?
             } else {
@@ -151,7 +191,13 @@ fn item_body<'a>(source: &'a str, name: &str) -> Option<&'a str> {
             let (open_ch, close_ch) = match after.as_bytes()[open] {
                 b'{' => ('{', '}'),
                 b'(' => ('(', ')'),
-                _ => return Some(""),
+                _ => {
+                    return Some(ItemParts {
+                        generics,
+                        body: "",
+                        is_enum,
+                    });
+                }
             };
             let mut depth = 0usize;
             for (offset, ch) in after[open..].char_indices() {
@@ -160,13 +206,134 @@ fn item_body<'a>(source: &'a str, name: &str) -> Option<&'a str> {
                 } else if ch == close_ch {
                     depth -= 1;
                     if depth == 0 {
-                        return Some(&after[open + 1..open + offset]);
+                        return Some(ItemParts {
+                            generics,
+                            body: &after[open + 1..open + offset],
+                            is_enum,
+                        });
                     }
                 }
             }
             None
         })
     })
+}
+
+/// The type parameter names a `<..>` list declares: each identifier that
+/// opens a top-level parameter (`T`, `F: Fn()`), not a lifetime or a bound.
+fn generic_parameters(generics: &str) -> Vec<String> {
+    let inner = generics.trim().trim_start_matches('<');
+    let mut names = Vec::new();
+    let mut depth = 0usize;
+    let mut segment_start = true;
+    let mut word = String::new();
+    let mut previous = ' ';
+    for ch in inner.chars() {
+        if ch.is_alphanumeric() || ch == '_' {
+            if segment_start {
+                word.push(ch);
+            }
+        } else {
+            if !word.is_empty() {
+                // `const N: usize` declares `N`; the keyword itself is not a name.
+                if word == "const" {
+                    word.clear();
+                } else {
+                    names.push(std::mem::take(&mut word));
+                    segment_start = false;
+                }
+            }
+            match ch {
+                '<' | '(' | '[' => depth += 1,
+                '>' if previous != '-' => depth = depth.saturating_sub(1),
+                ')' | ']' => depth = depth.saturating_sub(1),
+                ',' if depth == 0 => segment_start = true,
+                _ => {}
+            }
+        }
+        previous = ch;
+    }
+    if !word.is_empty() && word != "const" {
+        names.push(word);
+    }
+    names
+}
+
+/// The variant names of an enum body: the first identifier of each top-level
+/// comma-separated entry, past any `#[..]` attribute.
+fn variant_names(body: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut depth = 0usize;
+    let mut entry = String::new();
+    let mut flush = |entry: &mut String| {
+        let text = entry.trim();
+        let text = if text.starts_with("#[") {
+            text.split_once(']')
+                .map_or("", |(_, rest)| rest.trim_start())
+        } else {
+            text
+        };
+        if let Some(name) = identifiers(text).next() {
+            names.push(name);
+        }
+        entry.clear();
+    };
+    for ch in body.chars() {
+        match ch {
+            '{' | '(' | '[' | '<' => depth += 1,
+            '}' | ')' | ']' | '>' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                flush(&mut entry);
+                continue;
+            }
+            _ => {}
+        }
+        entry.push(ch);
+    }
+    flush(&mut entry);
+    names
+}
+
+/// A std/core/alloc type whose `PartialEq` compares what it holds, so only
+/// its type arguments can carry a lenient `eq`.
+fn is_known_std_type(name: &str) -> bool {
+    matches!(
+        name,
+        "Self"
+            | "String"
+            | "Vec"
+            | "VecDeque"
+            | "LinkedList"
+            | "Option"
+            | "Result"
+            | "Box"
+            | "Rc"
+            | "Arc"
+            | "Cell"
+            | "RefCell"
+            | "Cow"
+            | "HashMap"
+            | "HashSet"
+            | "BTreeMap"
+            | "BTreeSet"
+            | "BinaryHeap"
+            | "PhantomData"
+            | "Duration"
+            | "Instant"
+            | "SystemTime"
+            | "PathBuf"
+            | "Path"
+            | "OsString"
+            | "Ordering"
+            | "Reverse"
+            | "Wrapping"
+            | "Range"
+            | "RangeInclusive"
+            | "Some"
+            | "None"
+            | "Ok"
+            | "Err"
+    )
 }
 
 /// `text` past a leading balanced `<..>` generic parameter list, when there is
@@ -258,5 +425,67 @@ mod tests {
         assert_eq!(names("Self"), None);
         assert_eq!(names("Self::Shipped"), None);
         assert!(names("lower::path").is_none());
+    }
+
+    fn index_with(source: &str) -> RustIndex {
+        let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex::default());
+        index.insert_file_only(
+            std::path::PathBuf::from("src/lib.rs"),
+            crate::analysis::facts::FileFacts {
+                source: source.into(),
+                ..Default::default()
+            },
+        );
+        index
+    }
+
+    /// #10684: an embedded type no workspace file defines may carry an `eq`
+    /// the index cannot read; std types and workspace types do not.
+    #[test]
+    fn an_embedded_type_from_outside_the_workspace_may_compare_leniently() {
+        let lenient =
+            |source: &str| pushed_element_may_compare_leniently("Line", &index_with(source));
+        // The control: every embedded type is a workspace type or std.
+        assert!(!lenient(
+            "pub struct Sku(pub String);\npub struct Line { sku: Sku, qty: u32 }\n"
+        ));
+        assert!(!lenient(
+            "pub struct Line { sku: Option<String>, tags: Vec<String>, qty: u32 }\n"
+        ));
+        assert!(!lenient("pub struct Line<T> { sku: String, extra: T }\n"));
+        assert!(!lenient(
+            "pub struct Sku(String);\npub enum Kind { Plain, Tagged { sku: Sku } }\npub struct Line { kind: Kind }\n"
+        ));
+        // A type the workspace does not define, bare or qualified, nested in
+        // std containers, or reached through a workspace type, is lenient.
+        assert!(lenient(
+            "use outside::Sku;\npub struct Line { sku: Sku, qty: u32 }\n"
+        ));
+        assert!(lenient("pub struct Line { sku: outside::Sku }\n"));
+        assert!(lenient(
+            "pub struct Line { skus: Vec<Option<outside::Sku>> }\n"
+        ));
+        assert!(lenient(
+            "pub struct Inner { sku: outside::Sku }\npub struct Line { inner: Inner }\n"
+        ));
+        assert!(lenient(
+            "pub enum Kind { Tagged { sku: outside::Sku } }\npub struct Line { kind: Kind }\n"
+        ));
+        // A trait object cannot derive `PartialEq`; it stays unresolved.
+        assert!(lenient("pub struct Line { sku: Box<dyn Hashed> }\n"));
+    }
+
+    #[test]
+    fn generic_parameters_and_variant_names_are_read_from_the_declaration() {
+        assert_eq!(generic_parameters("<T, F: Fn() -> u8>"), ["T", "F"]);
+        assert_eq!(
+            generic_parameters("<'a, T: Clone + PartialEq, const N: usize>"),
+            ["a", "T", "N"]
+        );
+        assert!(generic_parameters("").is_empty());
+        assert_eq!(
+            variant_names(" A { s: Sku }, B, #[allow(dead_code)] C(Sku, u8) "),
+            ["A", "B", "C"]
+        );
     }
 }

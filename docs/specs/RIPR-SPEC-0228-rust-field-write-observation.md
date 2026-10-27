@@ -615,7 +615,12 @@ changes `self.count += 2` to `self.count += 1`.
   definition embeds one (followed four levels deep, `custom_eq.rs`), is not
   credited: its `eq` may ignore the changed field. A literal whose type has no
   `struct` or `enum` definition in the workspace (`Self`, an alias, a macro)
-  fails closed the same way. Derived `PartialEq` is taken to compare every
+  fails closed the same way. So does an embedded field type that no workspace file defines and
+  std does not own (`outside::Sku`, also inside `Vec<..>`/`Option<..>`): its
+  `PartialEq` may live in a dependency the index does not read (#10684). The
+  item's own generic parameters and enum variants are not field types, and
+  std/core containers and strings (`String`, `Vec`, `Option`, `Box`, ..)
+  keep the credit. Derived `PartialEq` is taken to compare every
   field. In reveal the credit also needs the expected side to be a second
   binding built by hand (example 21), outside `#[should_panic]` tests.
 - Field assignments (`self.f = ..`, `self.f op= ..`, every compound

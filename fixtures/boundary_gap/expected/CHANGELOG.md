@@ -53,6 +53,14 @@ accumulator update that adds a same-file function's value, read as a
 `return_value` change (RIPR-SPEC-0360, #9478), with the same scope: generation,
 content commitment, dependent verify commitments and receipt byte hashes only.
 
+
+### Foreign embedded PartialEq classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.114 to 1.115 for an
+embedded field type no workspace file defines, read as a possible lenient
+`eq` (RIPR-SPEC-0228, #10684), with the same scope: generation, content
+commitment, dependent verify commitments and receipt byte hashes only.
+
 ## Pending — boundary_gap (9)
 
 Reason:
