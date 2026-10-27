@@ -214,7 +214,11 @@ fn wire_bound_omits_whole_details_instead_of_truncating_and_writer_failure_is_fa
             .map(|error| error.kind()),
         Some(io::ErrorKind::BrokenPipe)
     );
-    assert!(serde_json::from_slice::<serde_json::Value>(&partial.0[PREFIX.len()..]).is_err());
+    if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&partial.0[PREFIX.len()..]) {
+        return Err(format!(
+            "partial diagnostic unexpectedly parsed as complete JSON: {value}"
+        ));
+    }
     Ok(())
 }
 
