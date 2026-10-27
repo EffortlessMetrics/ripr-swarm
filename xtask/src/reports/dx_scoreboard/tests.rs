@@ -4730,7 +4730,7 @@ fn repo_view_rows_carry_the_corpus_language() -> Result<(), String> {
 /// TypeScript row (#10338). The exact pin is asserted so moving it is a
 /// deliberate two-place edit that re-asks whether the commit still edits
 /// TypeScript source and its test. Only repositories that complete are pinned
-/// (defu, ky, h3): zod and execa are partial on the commits tried, and a
+/// (defu, ky, h3, execa): zod is partial on the commits tried, and a
 /// repository that stops short fails the completion gate even when new.
 #[test]
 fn corpus_pins_the_typescript_commit() -> Result<(), String> {
@@ -4760,10 +4760,15 @@ fn corpus_pins_the_typescript_commit() -> Result<(), String> {
             "3444ff78970e95c65e481ed2ff9a7d43c880ab1c",
             false,
         ),
+        (
+            "execa-typescript",
+            "ed80079bc4e21a259fdc521c5a4b27126b308c9a",
+            false,
+        ),
     ];
     if typescript != expected {
         return Err(format!(
-            "expected only the verified defu, ky and h3 TypeScript rows, got {typescript:?}"
+            "expected only the verified defu, ky, h3 and execa TypeScript rows, got {typescript:?}"
         ));
     }
     Ok(())

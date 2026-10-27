@@ -117,7 +117,40 @@ can only hint that a caller "may lead here" without changing anything.
   `propagation_unknown`, and an owner name with two candidates never forms
   the chain (`helper_transfer::test_calls_method_entry`). A forwarder that
   unwraps the owner's result with `unwrap_or_else` or `?` is a transform and
-  still abstains; `mut self` (by value) is not admitted.
+  still abstains, except an `unwrap_or_else` whose handler is a diverging
+  workspace function (the diverging unwrap tail below); `mut self` (by value)
+  is not admitted.
+- Diverging unwrap tail (#9638): a hop caller whose tail is exactly
+  `<hop call>.unwrap_or_else(<handler>)` forwards the owner's result when
+  `<handler>` is a path to a workspace function that only diverges, so the
+  owner's `Ok` value passes through unchanged and the error path never
+  returns. The handler is `name` (a free function) or `Type::name` (an
+  inherent associated function of that type, or `Self::name`); it must be the
+  one workspace function of its name, outside test or evidence source, with
+  no local binding, `use .. as` rename or foreign import of the name (or of
+  the type) in the caller's file, no other mention of the name in the caller
+  (a parameter, nested `fn`/`const`/`static`/`let` or a glob import in its
+  body), defined in the caller's own file, inline module and enclosing
+  function scope (read by whole-word item parsing, so a function whose
+  signature or name spells `impl` still opens its own scope), with a `Type::` qualifier that is the workspace type and
+  not a generic parameter, local item or import of the same name, called on a
+  hop whose callee declares `Result<..>` or `Option<..>` with no workspace
+  type of that name and no `use` in the callee's file binding that name to a non-std item or glob-importing a non-`super`/`self` module, and its whole body must be one
+  unconditional `panic!`, `unreachable!`, `unimplemented!`, `todo!` (none
+  rebound by a user macro or import) or `std::process::abort()` /
+  `std::process::exit(..)` (with no item, import or `use` binding named `std`
+  other than the standard crate anywhere in the workspace). Everything else keeps the abstention: a
+  closure (even one that panics), a substituting handler (`unwrap_or(..)`,
+  `unwrap_or_default()`, `|_| false`), a handler that sometimes returns, a
+  module-qualified, generic or external path, `.ok()`, `.is_ok()`,
+  `.unwrap()`, `.expect(..)`, and any further operation on the unwrapped
+  value. A handler declared `-> !` is not read: it does not type-check as a
+  handler for a value-returning forwarder. The forwarder resolved this way
+  must still return a value an exact assertion can pin. A unit-returning
+  forwarder (`fn grow(&mut self, n) { self.try_grow(n).unwrap_or_else(..) }`)
+  stays out of scope: its effect is observed through state
+  (`!v.spilled()`), which needs a state-observation rule this slice does not
+  add (`helper_transfer::diverging_handlers`).
 - The chain relation outranks any file-path, test-name or token
   proximity reason (#6694, #6672): a test that calls a resolved hop's
   caller relates as `HelperOwnerCall`, not `same_test_file`,
@@ -580,6 +613,15 @@ Reach on that rewritten finding is `unknown` and the stop reason is
     like a std method (`len`, `insert`, `is_empty`, `next`) is entered only by
     a receiver built as the owner's own type, never by the std receiver
     (`helper_wrapper_reach`, `forwarder_method_named_like_a_std_method_*`).
+12. Accept: a forwarder `self.try_dock(wanted).unwrap_or_else(die)` where `die`
+    is the one workspace function whose body is `panic!`, with a test pinning
+    `dock(4)` (`forwarder-hop-unwrap-diverging-handler`). The verdict is
+    `exposed`.
+13. Reject: a forwarder that collapses the result with `.is_ok()`
+    (`forwarder-hop-unwrap-is-ok-tail`), a substituting or closure handler, a
+    non-diverging, conditional, ambiguous, module-qualified, shadowed or
+    external handler: none is credited
+    (`helper_wrapper_reach`, `unwrap_tail_*`).
 
 ## Test Mapping
 
@@ -602,7 +644,7 @@ foreign-qualified entry, nested comparison, imported constructor), and the
 unselected `match_arm` control);
 `crates/ripr/tests/helper_wrapper_reach.rs` (`forwarder_method_*`: the method
 entry credit and its swallowed, transformed, shared-name, two-candidate,
-shadowed, path-call, std-receiver, unestablished-receiver, same-named-type, root-package-member, external-trait-impl,
+shadowed, path-call, unwrap-tail (including shadowed-name, other-module, other-file and custom-type controls), std-receiver, unestablished-receiver, same-named-type, root-package-member, external-trait-impl,
 `#[cfg(test)]`, no-self, macro-hop and other-package controls);
 `crates/ripr/tests/crate_qualified_entry_reach.rs` (own-crate qualified
 entry call, `[lib] name` and hyphen spellings, and each refusal above).
