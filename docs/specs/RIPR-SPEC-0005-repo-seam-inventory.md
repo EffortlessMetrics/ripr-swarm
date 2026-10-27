@@ -251,6 +251,10 @@ the same repository evidence path. Newly admitted typed ordinary rows must
 also pass the existing free-owner binding authority, including raw-name,
 module, type, import and competing-definition checks, before observed-value
 emission and equality pairing (including identical-text arguments).
+Ordinary associated/receiver owners retain their prior identical-argument-text
+equality pairing after the existing call-kind projection. That compatibility
+does not admit new typed scalar values for nonfree owners: different argument
+text still requires the free-owner authority before using the added reader.
 Every receipt-backed property candidate passes that authority before any
 evidence stage, including value-insensitive direct-call activation. An unused
 `Just` parameter cannot bypass it through literal-only call arguments.

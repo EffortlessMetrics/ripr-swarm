@@ -1511,11 +1511,18 @@ fn boundary_equality_overlap_score(
         let left_arg = projected_argument_expression(left_arg, left_operand.projection.as_deref());
         let right_arg =
             projected_argument_expression(right_arg, right_operand.projection.as_deref());
-        // Guard before the identical-text shortcut too: two equal typed
+        // Preserve the pre-existing identical-text equality route for
+        // ordinary nonfree owners after owner_call_text. This does not grant
+        // them the new suffixed-value reader: different text still needs the
+        // free-owner authority below, as does every free-owner shortcut.
+        let existing_nonfree_equality = owner_fn.impl_context != FunctionImplContext::Free
+            && left_arg.trim() == right_arg.trim();
+        // Guard the free-owner identical-text shortcut too: two equal typed
         // arguments to a shadowed function are not the owner's boundary.
         if [&left_arg, &right_arg]
             .into_iter()
             .any(|argument| suffixed_decimal_integer_value(argument).is_some())
+            && !existing_nonfree_equality
             && !super::classify::bound_free_owner_calls(
                 context.index,
                 owner_fn,

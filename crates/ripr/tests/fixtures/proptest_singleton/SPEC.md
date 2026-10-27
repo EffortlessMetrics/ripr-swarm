@@ -32,11 +32,15 @@ revoke the corresponding premise. The compiled positive must collect exactly
 only the owner changed back to `>` (100 observed, 90 expected).
 
 A repository-exposure run must demonstrate a classified-cache hit, then lose
-property credit after a `tests/.cargo/config.toml` runner override without
-changing Rust, manifests or lockfile. The warm result must equal an independent
+property credit after a `tests/.cargo/config.toml` `[env]` override of
+`PROPTEST_CASES` without changing Rust, manifests or lockfile. The warm result
+must equal an independent
 cold result, and removing the override must recover the preserved positive.
 The equivalent ordinary assertion with `100i32` must also be strongly gripped
-in repository analysis. Off-boundary and opaque inputs remain unclosed;
+in repository analysis. Ordinary associated/receiver calls with identical
+`100i32` arguments retain their existing empty missing-discriminator list while
+activation remains unknown; different argument text gains no new scalar values.
+Off-boundary and opaque inputs remain unclosed;
 ordinary and property calls through shadowing library modules/types, including
 raw-spelled declarations, supply no activation values for the real owner.
 New typed ordinary rows must pass the existing free-owner binding checks before
@@ -49,6 +53,12 @@ a real-owner call at 101 cannot borrow the boundary from a different callable
 at 100. Replacing only that different callable with the real owner restores
 the positive. The covered owner path is the canonical library-qualified one;
 registration alone does not establish bare, associated or unresolved paths.
+Changing `mock_expectation_strength` on a direct bool property whose owner name
+contains `expect_` exercises the real post-registration policy mutation. A
+registered fact without an exact matching receipt supplies no repository
+relation or observed value, including through an unused `Just` parameter and
+unsuffixed literal arguments. Restoring the default policy restores the same
+canonical property evidence; a shadowed owner remains uncredited in both states.
 Numeric-prefix casts, methods,
 ranges and computed expressions are outside the added scalar reading.
 

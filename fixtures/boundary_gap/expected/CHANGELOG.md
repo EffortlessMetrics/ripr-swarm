@@ -1,5 +1,17 @@
 # Golden Output Changes
 
+## Pending — suffixed integer activation cache generation (#10839)
+
+The portable unchanged-attempt snapshots follow corpus cache generation 1.116
+to 1.117 for whole suffixed decimal arguments in repository activation. The
+native CLI-smoke failure on merge `f36d916b3579e8bfcddd7bee5305787fb8b749ac`
+records the normalized production snapshot: it differs from the prior fixture
+only at the corpus generation and artifact content commitment. Refresh those
+two fields and their dependent verify commitments and receipt byte hashes.
+Weak grip, unchanged movement, historical currentness, incomplete receipt
+status and fail-closed first-action routing remain unchanged. No other fixture
+output is regenerated.
+
 ## Pending — typed function-pointer composition (#9478, #9705)
 
 The bounded typed function-pointer owner proof composes with accepted shared-target

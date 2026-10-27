@@ -469,6 +469,17 @@ impl serde::Serialize for IndexFiles<'_> {
 const SLACK_CHECKPOINT_STRIDE: usize = 4096;
 
 impl RustIndex {
+    /// Registration provenance survives later policy changes to a generated
+    /// fact. It is not interpretation authority: consumers must separately
+    /// require the exact receipt before crediting that property.
+    pub(crate) fn is_registered_proptest(&self, test: &TestFact) -> bool {
+        self.proptest_receipts.contains_key(&(
+            test.file.clone(),
+            test.start_line,
+            test.name.clone(),
+        ))
+    }
+
     /// A generation-owned interpretation of an exact provider-bound property.
     /// Raw/cached/deserialized TestFacts cannot manufacture this authority.
     pub(crate) fn proptest_source(&self, test: &TestFact) -> Option<(&str, usize)> {

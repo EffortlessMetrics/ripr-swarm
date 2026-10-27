@@ -87,20 +87,23 @@ pub(super) fn find_related_tests_with_context<'context, 'index>(
     // Newly registered property facts carry assertion interpretation, not
     // authority to call any owner with the same spelling. Bind them before
     // every evidence stage, including value-insensitive direct-call credit.
+    // A policy-modified fact must not become ordinary when its exact receipt
+    // no longer matches; registration provenance and authority are distinct.
     // Ordinary relation rows retain their existing rules.
     let owner_fn = context.owner_function(seam.file(), seam.display_line());
     candidates.retain(|test_index, _| {
         context.tests.get(*test_index).is_some_and(|indexed| {
-            context.index.proptest_source(indexed.test).is_none()
-                || owner_fn.is_some_and(|owner| {
-                    crate::analysis::classify::bound_free_owner_calls(
-                        context.index,
-                        owner,
-                        indexed.test,
-                        &indexed.test.body,
-                        context.pin_syntax(),
-                    )
-                })
+            !context.index.is_registered_proptest(indexed.test)
+                || (context.index.proptest_source(indexed.test).is_some()
+                    && owner_fn.is_some_and(|owner| {
+                        crate::analysis::classify::bound_free_owner_calls(
+                            context.index,
+                            owner,
+                            indexed.test,
+                            &indexed.test.body,
+                            context.pin_syntax(),
+                        )
+                    }))
         })
     });
 

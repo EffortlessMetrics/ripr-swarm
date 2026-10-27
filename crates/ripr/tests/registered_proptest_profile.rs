@@ -129,7 +129,7 @@ fn run(
         if let Some(status) = child.try_wait().map_err(|error| error.to_string())? {
             break status;
         }
-        if started.elapsed() > Duration::from_secs(300) {
+        if started.elapsed() > Duration::from_mins(5) {
             child.terminate_tree()?;
             return Err(format!(
                 "{label}: bounded property proof timed out; process reaped"
@@ -311,6 +311,77 @@ fn ordinary_qualified_typed_boundary_uses_the_same_discriminator() -> Result<(),
 }
 
 #[test]
+fn ordinary_nonfree_equal_typed_arguments_keep_existing_boundary_pairing() -> Result<(), String> {
+    for (style, signature, setup, call) in [
+        (
+            "associated",
+            "amount: i32, threshold: i32",
+            "",
+            "Price::discounted_total(100i32, 100i32)",
+        ),
+        (
+            "receiver",
+            "&self, amount: i32, threshold: i32",
+            "let price = Price;\n    ",
+            "price.discounted_total(100i32, 100i32)",
+        ),
+    ] {
+        let fixture = Fixture::new()?;
+        let cache = fixture.0.join("target/repository-cache");
+        fixture.write(
+            "src/lib.rs",
+            &format!(
+                "pub struct Price;\n\nimpl Price {{\n    pub fn discounted_total({signature}) -> i32 {{\n        if amount >= threshold {{\n            amount - 10\n        }} else {{\n            amount\n        }}\n    }}\n}}\n"
+            ),
+        )?;
+        let ordinary = format!(
+            "use lib_proptest::Price;\n\n#[test]\nfn exact_boundary() {{\n    {setup}assert_eq!({call}, 90);\n}}\n"
+        );
+        // Same runtime values, different text: the added scalar reader must
+        // not extend nonfree authority merely because both normalize to 100.
+        let differently_typed = ordinary.replace("100i32, 100i32", "100i32, 100");
+        assert_ne!(differently_typed, ordinary);
+        for (label, test_source, missing) in [
+            ("identical", ordinary.as_str(), false),
+            ("different-text", differently_typed.as_str(), true),
+        ] {
+            fixture.write("tests/boundary.rs", test_source)?;
+            let label = format!("{style}-{label}");
+            let (result, _) = report(&fixture, &label, None, Some(&cache))?;
+            assert_eq!(result["run_status"], "complete", "{label}: {result}");
+            let matching = result["seams"]
+                .as_array()
+                .ok_or("missing nonfree boundary seams")?
+                .iter()
+                .filter(|seam| {
+                    seam["owner"] == "src/lib.rs::impl Price::discounted_total"
+                        && seam["kind"] == "predicate_boundary"
+                })
+                .collect::<Vec<_>>();
+            let [seam] = matching.as_slice() else {
+                return Err(format!("expected one {style} boundary: {result}"));
+            };
+            assert_eq!(
+                seam["grip_class"], "activation_unknown",
+                "{label}: {result}"
+            );
+            assert_eq!(seam["evidence"]["activate"], "unknown", "{label}: {result}");
+            assert_eq!(seam["evidence"]["discriminate"], "yes", "{label}: {result}");
+            assert_eq!(
+                seam["observed_values"].as_array().map(Vec::len),
+                Some(0),
+                "{label}: {result}"
+            );
+            let missing_values = seam["missing_discriminators"]
+                .as_array()
+                .ok_or("missing discriminator array")?;
+            assert_eq!(!missing_values.is_empty(), missing, "{label}: {result}");
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn typed_repository_inputs_require_the_boundary_and_the_owner() -> Result<(), String> {
     let fixture = Fixture::new()?;
     let cache = fixture.0.join("target/repository-cache");
@@ -401,6 +472,23 @@ fn typed_repository_inputs_require_the_boundary_and_the_owner() -> Result<(), St
                     assert_eq!(seam["related_tests_total"], 0, "{label}: {result}");
                     assert_ne!(seam["grip_class"], "strongly_gripped", "{label}: {result}");
                 }
+                let result = finding(&fixture, &format!("{label}-diff"), None)?;
+                assert_eq!(result["related_tests_total"], 0, "{label}: {result}");
+                assert_eq!(
+                    result["related_tests"].as_array().map(Vec::len),
+                    Some(0),
+                    "{label}: {result}"
+                );
+                for values in [
+                    &result["observed_values"],
+                    &result["activation"]["observed_values"],
+                ] {
+                    assert_eq!(
+                        values.as_array().map(Vec::len),
+                        Some(0),
+                        "{label}: {result}"
+                    );
+                }
             }
             if style == "ordinary" {
                 // The old unsuffixed input row remains available. Only
@@ -425,6 +513,96 @@ fn typed_repository_inputs_require_the_boundary_and_the_owner() -> Result<(), St
 }
 
 #[test]
+fn configured_oracle_cannot_turn_a_registered_property_into_an_ordinary_test() -> Result<(), String>
+{
+    let fixture = Fixture::new()?;
+    let cache = fixture.0.join("target/repository-cache");
+    let source =
+        "pub fn expect_ready(amount: i32, threshold: i32) -> bool {\n    amount >= threshold\n}\n";
+    let property = "proptest::proptest! {\n    #[test]\n    fn exact_boundary(amount in proptest::strategy::Just(7i32)) {\n        proptest::prop_assert!(lib_proptest::expect_ready(100, 100));\n    }\n}\n";
+    let shadow = format!(
+        "mod lib_proptest {{ pub fn expect_ready(_: i32, _: i32) -> bool {{ true }} }}\n{property}"
+    );
+    fixture.write("src/lib.rs", source)?;
+    fixture.write("tests/boundary.rs", property)?;
+    fixture.write(
+        "diff.patch",
+        "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n pub fn expect_ready(amount: i32, threshold: i32) -> bool {\n-    amount > threshold\n+    amount >= threshold\n }\n",
+    )?;
+    let (canonical, _) = report(&fixture, "policy-real-default", None, Some(&cache))?;
+    assert_eq!(canonical["run_status"], "complete");
+    let canonical_boundary = canonical["seams"]
+        .as_array()
+        .ok_or("missing canonical seams")?
+        .iter()
+        .filter(|seam| {
+            seam["owner"] == "src/lib.rs::expect_ready" && seam["kind"] == "predicate_boundary"
+        })
+        .collect::<Vec<_>>();
+    let [canonical_boundary] = canonical_boundary.as_slice() else {
+        return Err(format!("expected one canonical bool boundary: {canonical}"));
+    };
+    assert_eq!(canonical_boundary["related_tests_total"], 1, "{canonical}");
+
+    // The existing expect_ spelling heuristic gives this assertion a mock
+    // oracle. The real supported policy changes its strength after property
+    // registration, invalidating exact TestFact equality. Neither that
+    // mutation nor unsuffixed, parameter-independent arguments may lend a
+    // shadowed function's evidence to the production owner.
+    for (label, test_source, configured) in [
+        ("policy-shadow-default", shadow.as_str(), false),
+        ("policy-shadow-configured", shadow.as_str(), true),
+        ("policy-real-configured", property, true),
+    ] {
+        fixture.write("tests/boundary.rs", test_source)?;
+        if configured {
+            fixture.write(
+                "ripr.toml",
+                "[oracles]\nmock_expectation_strength = \"strong\"\n",
+            )?;
+        }
+        let (result, _) = report(&fixture, label, None, Some(&cache))?;
+        assert_eq!(result["run_status"], "complete", "{label}: {result}");
+        let owned = result["seams"]
+            .as_array()
+            .ok_or("missing policy-control seams")?
+            .iter()
+            .filter(|seam| seam["owner"] == "src/lib.rs::expect_ready")
+            .collect::<Vec<_>>();
+        assert!(!owned.is_empty(), "{label}: {result}");
+        assert!(
+            owned
+                .iter()
+                .any(|seam| seam["kind"] == "predicate_boundary"),
+            "{label}: {result}"
+        );
+        for seam in owned {
+            assert_eq!(seam["related_tests_total"], 0, "{label}: {result}");
+            assert_eq!(
+                seam["observed_values"].as_array().map(Vec::len),
+                Some(0),
+                "{label}: {result}"
+            );
+        }
+        if configured {
+            let finding = finding(&fixture, &format!("{label}-diff"), None)?;
+            assert_eq!(finding["related_tests_total"], 0, "{finding}");
+            assert_eq!(
+                finding["related_tests"].as_array().map(Vec::len),
+                Some(0),
+                "{finding}"
+            );
+            assert_ne!(finding["classification"], "exposed", "{finding}");
+        }
+    }
+    std::fs::remove_file(fixture.0.join("ripr.toml")).map_err(|error| error.to_string())?;
+    fixture.write("tests/boundary.rs", property)?;
+    let (restored, _) = report(&fixture, "policy-real-restored", None, Some(&cache))?;
+    assert_eq!(restored["seams"], canonical["seams"]);
+    Ok(())
+}
+
+#[test]
 fn property_mixed_owner_calls_cannot_lend_each_other_boundary_values() -> Result<(), String> {
     let fixture = Fixture::new()?;
     let cache = fixture.0.join("target/repository-cache");
@@ -445,6 +623,14 @@ fn property_mixed_owner_calls_cannot_lend_each_other_boundary_values() -> Result
         "{result}"
     );
     assert_ne!(seam["grip_class"], "strongly_gripped", "{result}");
+    let diff = finding(&fixture, "mixed-owner-property-diff", None)?;
+    assert_eq!(diff["related_tests_total"], 0, "{diff}");
+    for values in [
+        &diff["observed_values"],
+        &diff["activation"]["observed_values"],
+    ] {
+        assert_eq!(values.as_array().map(Vec::len), Some(0), "{diff}");
+    }
 
     // The same declaration and both literal assertions are readable when
     // every call names the real owner. An any-call identity test would
@@ -458,6 +644,10 @@ fn property_mixed_owner_calls_cannot_lend_each_other_boundary_values() -> Result
         boundary(&result)?["grip_class"],
         "strongly_gripped",
         "{result}"
+    );
+    assert_eq!(
+        finding(&fixture, "all-owner-property-diff", None)?["classification"],
+        "exposed"
     );
     Ok(())
 }

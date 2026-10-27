@@ -497,7 +497,12 @@ ordinary-assertion interpretation, with original source lines retained. It
 does **not** make `prop_assert*` non-returning macros outside this callback.
 A generation-owned receipt binds the exact generated TestFact and its local
 interpretation; raw cached or deserialized facts cannot manufacture it. The
-receipt also retains the normalized function-body scope and the original
+registration key remains distinct from that exact authority: if later oracle
+policy changes the generated fact, diff and repository relation discovery
+withhold it instead of treating a missing exact receipt as an ordinary test.
+The original matching receipt is still required for both source and namespace
+interpretation.
+The receipt also retains the normalized function-body scope and the original
 file-root bindings. Qualified owner-call input rows use the existing resolver
 with those scopes: a generated function has no original AST function, while a
 standalone synthetic file would incorrectly erase root module/type shadows.
@@ -506,8 +511,8 @@ row; a later non-exposed verdict alone would not establish that boundary.
 The existing owner identity, operand, equality-dispatch, activation, propagation
 and discriminator rules still decide the result. In particular, registration
 of a nonzero/inequality check does not make it an exact discriminator.
-Repository evidence additionally binds every owner-name call in an admitted
-property through the existing free-owner authority before any evidence stage.
+Diff and repository evidence additionally bind every owner-name call in an
+admitted property through the existing free-owner authority before any evidence stage.
 The covered positive uses a canonical library-qualified owner call. Bare,
 `self`/`super`, method/associated, generic, re-exported or otherwise unresolved
 forms stay withheld wherever that authority cannot establish them; registration
