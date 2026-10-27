@@ -5,7 +5,12 @@ use super::*;
 /// Owner extracted from a TypeScript / JavaScript source file.
 ///
 /// Covers the syntax-first owner kinds accepted for the preview surface.
-#[derive(Clone, Debug, PartialEq, Eq)]
+///
+/// The serialized field spellings are on-disk cache identity (#10725): the
+/// per-file fact store persists owners across runs, so any field rename or
+/// type change is a schema change. Bump
+/// `TYPESCRIPT_FILE_FACT_SCHEMA_VERSION` in `fact_store.rs` with any edit.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct TypeScriptOwner {
     pub(crate) name: String,
     pub(crate) file: PathBuf,
@@ -84,7 +89,18 @@ pub(crate) struct TypeScriptOwner {
 }
 
 /// Syntactic method-shape refinement recorded during owner extraction.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+)]
 pub(crate) enum TypeScriptMethodKind {
     /// An ordinary callable method — invoked only by member CALLS.
     #[default]
@@ -113,7 +129,7 @@ impl TypeScriptOwner {
 /// Covers syntax-first Jest/Vitest `test('name', fn)`, `it('name', fn)`,
 /// and array-form `.each(...)('name', fn)` expression statements, including
 /// nested `describe(...)` blocks.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct TypeScriptTest {
     /// Qualified display name. Nested `describe(...)` names are joined with the
     /// local `test(...)` / `it(...)` name so user surfaces can show context.
@@ -237,7 +253,7 @@ impl TypeScriptTest {
 }
 
 /// One name an enclosing test scope binds, resolved to its innermost scope.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct TypeScriptScopeBinding {
     pub(crate) name: String,
     /// The constructor (`Cart`, `shop.Cart`) `name` holds when a test in the
@@ -265,6 +281,18 @@ pub(crate) struct TypeScriptScopeBinding {
 /// is quadratic in the file's size (#10017).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Shared<T>(std::sync::Arc<Vec<T>>);
+
+impl<T: serde::Serialize> serde::Serialize for Shared<T> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_seq(self.iter())
+    }
+}
+
+impl<'de, T: serde::Deserialize<'de>> serde::Deserialize<'de> for Shared<T> {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(Self(std::sync::Arc::new(Vec::deserialize(deserializer)?)))
+    }
+}
 
 impl<T> Default for Shared<T> {
     fn default() -> Self {
@@ -329,7 +357,7 @@ impl<T: Clone> Shared<T> {
 /// list.
 pub(crate) type ScopeBindings = Shared<TypeScriptScopeBinding>;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct TypeScriptImport {
     pub(crate) source: String,
     pub(crate) imported: Option<String>,
@@ -389,7 +417,7 @@ pub(crate) struct TypeScriptOwnerExtractionGap {
 /// Classification-neutral, additive disclosure only: the branch recursion is
 /// deliberate, and this record carries the caveat so a credited oracle is
 /// known to possibly never execute.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct TypeScriptConditionalCreditGap {
     pub(crate) file: PathBuf,
     pub(crate) sample_line: usize,
@@ -653,7 +681,7 @@ impl<'a> TypeScriptRelatedCandidate<'a> {
 ///   expected value is a concrete literal.
 /// - `raw_evidence_ref` — `file:line` back to the `expect(...)` call site,
 ///   i.e. `<file>:<assertion_line>`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct TypeScriptAssertion {
     pub(crate) matcher: String,
     pub(crate) argument_count: usize,
@@ -730,7 +758,7 @@ impl TypeScriptAssertion {
 
 /// Oracle confidence level derived from `oracle_strength` plus whether the
 /// expected value is a concrete literal (RIPR-SPEC-0085 §PR5).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) enum OracleConfidence {
     /// Strong oracle strength with a concrete literal expected value.
     High,
@@ -753,7 +781,7 @@ impl OracleConfidence {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct TypeScriptMockPayload {
     pub(crate) target: String,
     pub(crate) expected: String,
@@ -779,13 +807,13 @@ impl TypeScriptMockPayload {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) enum TypeScriptMockPayloadKind {
     CalledWith,
     CalledTimes,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct TypeScriptErrorPayload {
     pub(crate) expected: String,
     pub(crate) kind: TypeScriptErrorPayloadKind,
@@ -834,7 +862,7 @@ impl TypeScriptErrorPayload {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) enum TypeScriptErrorPayloadKind {
     /// `.toThrow("exact message")` — string literal payload.
     ThrowsLiteral,

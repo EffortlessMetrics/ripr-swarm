@@ -19,7 +19,7 @@ use oxc_ast::ast::{Argument, Expression, Function, Statement};
 const MAX_EXPANSIONS: usize = 8;
 
 /// The source with the expansions appended, and where each expansion starts.
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct SuiteFactoryExpansion {
     pub(crate) source: String,
     /// `(first line of an appended expansion, line of the call it came from)`,
@@ -28,7 +28,32 @@ pub(crate) struct SuiteFactoryExpansion {
     /// Byte spans of the factory declarations every one of whose calls was
     /// expanded. Their own registrations read `impl(...)` and are never
     /// extracted; the appended copies stand for them.
+    #[serde(with = "range_vec")]
     pub(crate) covered: Vec<std::ops::Range<usize>>,
+}
+
+/// `std::ops::Range<usize>` serializes as an inclusive-looking `(start, end)`
+/// pair; the serialized spelling is on-disk cache identity (#10725).
+mod range_vec {
+    pub(super) fn serialize<S: serde::Serializer>(
+        ranges: &[std::ops::Range<usize>],
+        s: S,
+    ) -> Result<S::Ok, S::Error> {
+        serde::Serialize::serialize(
+            &ranges
+                .iter()
+                .map(|range| (range.start, range.end))
+                .collect::<Vec<_>>(),
+            s,
+        )
+    }
+
+    pub(super) fn deserialize<'de, D: serde::Deserializer<'de>>(
+        d: D,
+    ) -> Result<Vec<std::ops::Range<usize>>, D::Error> {
+        let pairs: Vec<(usize, usize)> = serde::Deserialize::deserialize(d)?;
+        Ok(pairs.into_iter().map(|(start, end)| start..end).collect())
+    }
 }
 
 impl SuiteFactoryExpansion {

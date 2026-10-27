@@ -1008,7 +1008,7 @@ fn mock_names_module(test: &TypeScriptTest, mocked_modules: &[String], module: &
 }
 
 /// Export facts of one parsed module, collected on the parse worker.
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct ModuleExportFacts {
     pub(crate) entries: Vec<((String, String), (String, String))>,
     pub(crate) star_edges: Vec<(String, String)>,
