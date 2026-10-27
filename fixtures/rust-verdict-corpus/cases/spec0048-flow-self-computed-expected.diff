@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 0000000..0000000 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -36,7 +36,7 @@
+ 
+ pub const OTHER_FILE_LIMIT: u32 = 100;
+ 
+-pub const BANNER: &str = "v1";
++pub const BANNER: &str = "v2";
+ 
+ pub fn banner_line() -> String {
+     format!("[{BANNER}]")

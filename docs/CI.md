@@ -2402,6 +2402,21 @@ journeys themselves are re-checked by hand under the new runner
 (`cargo xtask check-fixture-contracts`, `cargo xtask blind-journey-execute`)
 before the update lands.
 
+The routed admission job checks out its executable bundle (the composite action
+wrapper and both admission interpreters) separately at the event's immutable
+PR base SHA, merge-group base SHA, or non-PR event SHA. The candidate checkout
+remains the input tree. The reserved `.admission-trusted` destination must be
+absent from that tree; before invoking either action mode the job verifies the
+trusted checkout's exact HEAD and all three executable file blobs. Missing or
+modified trusted bytes refuse admission without falling back to candidate code.
+Candidate `.gitattributes` declarations are still checked as data by the trusted
+interpreter, and generated exemptions still come only from the live base.
+
+This bundle pin does not authenticate a candidate-edited caller or its supplied
+thresholds and parameters. It does not establish reviewed-head/merge-group
+identity, same-head succession, atomic eligibility, or merge-queue activation.
+Those remain separate qualification and rollout obligations.
+
 The ordinary size envelope (files and changed lines) counts only what a human
 has to review. Generated files are declared once, with `linguist-generated` in
 `.gitattributes` (dependency lockfiles, blessed `expected/` rows and goldens,

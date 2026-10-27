@@ -706,6 +706,7 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
     snapshot
         .owners
         .push(module_owner(file, source, module_range, &imports));
+    let module_values = super::module_constants::module_stable_names(source, &module.body);
     collect_tests_from_statements(
         file,
         source,
@@ -715,6 +716,7 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
         TestImportContext {
             body: &imports,
             definition: &[],
+            module_values: &module_values,
             standard_unittest_list: false,
             subclassed: false,
             admission: &PythonAdmissionContext::of_module(
