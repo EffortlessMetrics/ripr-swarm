@@ -10,13 +10,13 @@ use crate::analysis::classify::{
     direct_call_name, direct_collection_mutation_receiver, expected_operand_value,
     fallible_check_receipt, fallible_literal_witness, function_returns_value, getter_plainly_reads,
     getter_plainly_reads_key, has_same_test_boundary_oracle_pairing, helper_only_reach,
-    helper_pins_owner_call, infection_evidence_for_owner, local_flow_sinks, method_cannot_store,
-    observes_returned_element_field, operand_only_pin, oracle_crediting_relations,
-    outer_imported_names, owner_touches_field_only_at, package_prefix, parameter_rebound,
-    propagation_evidence_with_witness, pushed_collection_compared_whole, pushed_literal_path,
-    reach_evidence, reveal_outcome, same_test_pairing_missing_summary, setter_plainly_writes,
-    signature_parameters, unconditional_owner_insert_field, unexercised_mask_bits,
-    wrapper_return_boundary_pinned,
+    helper_pins_owner_call, infection_evidence_for_owner, is_drop_destructor, local_flow_sinks,
+    method_cannot_store, observes_returned_element_field, operand_only_pin,
+    oracle_crediting_relations, outer_imported_names, owner_touches_field_only_at, package_prefix,
+    parameter_rebound, propagation_evidence_with_witness, pushed_collection_compared_whole,
+    pushed_literal_path, reach_evidence, reveal_outcome, same_test_pairing_missing_summary,
+    setter_plainly_writes, signature_parameters, unconditional_owner_insert_field,
+    unexercised_mask_bits, wrapper_return_boundary_pinned,
 };
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::facts::{FunctionSummary, OracleFact, RustIndex, TestSummary};
@@ -908,6 +908,11 @@ impl ClassifiedProbeEvidence {
                         return None;
                     }
                     let owner = context.owner_fn?;
+                    // A destructor runs at scope end, which the shared-sink
+                    // authority below has no reading for; never confirm it.
+                    if is_drop_destructor(owner, context.index) {
+                        return Some(false);
+                    }
                     let reach =
                         owner_reach.get_or_init(|| proximity_reach.owner_reach(&owner.name));
                     reach
