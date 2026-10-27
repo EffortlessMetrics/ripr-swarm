@@ -639,14 +639,57 @@ fn python_family_assertion_target(probe_family: &ProbeFamily) -> &'static str {
     }
 }
 
+fn python_unlinked_owner_next_step(
+    owner: &PythonOwner,
+    probe_family: &ProbeFamily,
+) -> Option<String> {
+    // #10708: a directly resolvable owner with no static link is a plain
+    // function owner; class-shaped, module, decorated, routed, or otherwise
+    // indirected owners stay silent instead of inventing a direct call
+    // target. NoStaticPath establishes no statically linked test call, not
+    // the universal absence of a test, so the wording names the honest
+    // ordered route: add a relevant test/assertion, run the project's native
+    // verifier, then refresh. No exact test file or verify command is named:
+    // neither is evidenced for an owner with no static link. A text-only
+    // mention (an unrelated test that merely names the owner) is not a
+    // related test and keeps this generic guidance rather than a credited
+    // target.
+    if owner.is_module_owner() || owner.owner_kind != Some(OwnerKind::Function) {
+        return None;
+    }
+    if !owner.decorators.is_empty()
+        || !owner.route_paths.is_empty()
+        || !owner.dynamic_route_decorators.is_empty()
+        || !owner.cli_receiver_names.is_empty()
+    {
+        return None;
+    }
+    let action = match probe_family {
+        ProbeFamily::Predicate => "a focused boundary assertion",
+        ProbeFamily::ReturnValue => "an exact return-value assertion",
+        ProbeFamily::ErrorPath => "an exception assertion",
+        ProbeFamily::FieldConstruction => "a field/object assertion",
+        ProbeFamily::SideEffect | ProbeFamily::CallDeletion => {
+            "an output/log/call-effect assertion"
+        }
+        ProbeFamily::MatchArm | ProbeFamily::StaticUnknown => "a focused assertion",
+    };
+    Some(format!(
+        "Python preview: no statically linked test calls `{}(`; add a test that calls the changed owner with {action}, run the project's native Python test command, then rerun `ripr check` to refresh the finding.",
+        owner.name
+    ))
+}
+
 fn python_recommended_next_step(
     class: &ExposureClass,
+    owner: &PythonOwner,
     probe_family: &ProbeFamily,
     has_oracle_eligible_relation: bool,
     missing_discriminators: &[MissingDiscriminatorFact],
 ) -> Option<String> {
     match class {
-        ExposureClass::StaticUnknown | ExposureClass::NoStaticPath => None,
+        ExposureClass::StaticUnknown => None,
+        ExposureClass::NoStaticPath => python_unlinked_owner_next_step(owner, probe_family),
         ExposureClass::Exposed => {
             Some("Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior.".to_string())
         }

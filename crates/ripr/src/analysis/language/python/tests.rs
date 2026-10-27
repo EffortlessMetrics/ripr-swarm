@@ -5287,7 +5287,14 @@ fn classify_change_suppresses_repair_guidance_for_non_actionable_python_cases() 
     .ok_or_else(|| "unrelated return change should classify".to_string())?;
     assert_eq!(no_static_path.class, ExposureClass::NoStaticPath);
     assert!(no_static_path.activation.missing_discriminators.is_empty());
-    assert!(no_static_path.recommended_next_step.is_none());
+    // #10708: the directly resolvable owner with no static link now carries
+    // the honest generic add-test / native-verifier / refresh route.
+    assert!(
+        no_static_path
+            .recommended_next_step
+            .as_deref()
+            .is_some_and(|step| step.contains("no statically linked test calls `apply_discount(`"))
+    );
 
     Ok(())
 }
@@ -6069,7 +6076,45 @@ fn classify_change_returns_no_static_path_without_related_test() -> Result<(), S
     assert_eq!(finding.ripr.reach.state, StageState::No);
     assert_eq!(finding.ripr.infect.state, StageState::Yes);
     assert_eq!(finding.ripr.propagate.state, StageState::Yes);
-    assert!(finding.recommended_next_step.is_none());
+    // #10708: the directly resolvable owner with no static link gains honest
+    // generic guidance — the ordered add-test / native-verifier / refresh
+    // route — while classification, confidence, and related-test evidence
+    // stay put.
+    assert_eq!(finding.confidence, 0.4);
+    assert!(finding.static_limit_kind.is_none());
+    assert!(finding.related_tests.is_empty());
+    let step = finding
+        .recommended_next_step
+        .as_deref()
+        .ok_or_else(|| "owner with no static link must carry guidance".to_string())?;
+    for expected in [
+        "no statically linked test calls `apply_discount(`",
+        "add a test that calls the changed owner",
+        "an exact return-value assertion",
+        "run the project's native Python test command",
+        "rerun `ripr check`",
+    ] {
+        assert!(
+            step.contains(expected),
+            "next step must contain {expected:?}; got: {step}"
+        );
+    }
+    for forbidden in [
+        "python -m pytest",
+        "pytest",
+        "unittest",
+        "tests/test_",
+        "test_pricing",
+    ] {
+        assert!(
+            !step.contains(forbidden),
+            "no invented exact file/command may appear; found {forbidden:?} in: {step}"
+        );
+    }
+    assert!(
+        !step.contains("no test "),
+        "must not claim universal test absence; got: {step}"
+    );
     Ok(())
 }
 
@@ -6096,6 +6141,63 @@ fn classify_change_ignores_unrelated_text_mentions() -> Result<(), String> {
 
     assert_eq!(finding.class, ExposureClass::NoStaticPath);
     assert!(finding.related_tests.is_empty());
+    // #10708 negative: a text-only mention is not a related test, reach,
+    // oracle, or repair credit — but the owner with no static link keeps the
+    // same honest generic guidance as the no-link case, not silence.
+    assert_eq!(finding.ripr.reach.state, StageState::No);
+    assert!(finding.static_limit_kind.is_none());
+    let step = finding
+        .recommended_next_step
+        .as_deref()
+        .ok_or_else(|| "text-only mention must not silence guidance".to_string())?;
+    assert!(
+        step.contains("no statically linked test calls `apply_discount(`"),
+        "guidance must keep the statically-linked wording; got: {step}"
+    );
+    assert!(
+        step.contains("add a test that calls the changed owner"),
+        "guidance must keep the ordered add-test route; got: {step}"
+    );
+    Ok(())
+}
+
+#[test]
+fn transitive_reach_witness_silences_with_no_link_guidance() -> Result<(), String> {
+    // TABLE_SOURCE in transitive_reach.rs: _get_padding_width reachable via
+    // render; the test constructs Table but never calls the changed method.
+    // #10708 requires the stale direct-call advice to not survive the
+    // witness: class, evidence, and readiness stay, guidance goes silent.
+    let source = "class Table:\n    def __init__(self):\n        self.columns = [1, 2]\n\n    def __rich_console__(self, console, options):\n        return self._calculate_column_widths()\n\n    def _calculate_column_widths(self):\n        return self._get_padding_width(0)\n\n    def _get_padding_width(self, column_index):\n        if column_index == len(self.columns) - 1:\n            return 0\n        return 1\n";
+    let changed = "        if column_index == len(self.columns) - 1:";
+    let line = source
+        .lines()
+        .position(|line| line == changed)
+        .ok_or_else(|| "fixture source must contain the changed line".to_string())?
+        + 1;
+    let owners = extract_owners(Path::new("src/table.py"), source);
+    let tests = extract_tests(
+        Path::new("tests/test_table.py"),
+        "from src.table import Table\n\ndef test_print_table():\n    table = Table()\n    assert table is not None\n",
+    );
+    let Some(finding) = classify_change(Path::new("src/table.py"), line, changed, &owners, &tests)
+    else {
+        return Err("changed line inside owner should classify".to_string());
+    };
+    assert_eq!(finding.class, ExposureClass::NoStaticPath);
+    assert!(finding.related_tests.is_empty());
+    assert_eq!(
+        finding.static_limit_kind,
+        Some(StaticLimitKind::PythonTransitiveReachUnresolved)
+    );
+    assert!(finding.recommended_next_step.is_none());
+    assert!(
+        finding
+            .missing
+            .iter()
+            .all(|line| !line.contains("No Python test references")),
+        "witnessed limitation must not claim no tests were found: {:?}",
+        finding.missing
+    );
     Ok(())
 }
 
