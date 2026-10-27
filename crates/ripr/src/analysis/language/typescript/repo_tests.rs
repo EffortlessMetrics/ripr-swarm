@@ -580,6 +580,12 @@ fn an_alias_imported_through_keeps_repo_mode_partial_but_a_direct_import_does_no
     }
     let canonical = std::fs::canonicalize(root.join("alias")).map_err(|e| e.to_string())?;
     let through = run(&root, 800);
+    // An escaped separator leaves neither `./` nor `/alias` in the raw text.
+    ts_write_file(
+        &root.join("tests/lib.test.ts"),
+        &TS_TEST.replace("../src/lib", "..\\u002falias/lib"),
+    )?;
+    let through_encoded = run(&root, 800);
     ts_write_file(&root.join("tests/lib.test.ts"), TS_TEST)?;
     let direct = run(&root, 800);
     let _ = std::fs::remove_dir_all(&root);
@@ -594,6 +600,13 @@ fn an_alias_imported_through_keeps_repo_mode_partial_but_a_direct_import_does_no
     assert!(
         through_reason.contains("typescript_repo_links_skipped:"),
         "{through_reason}"
+    );
+    let encoded_reason = through_encoded?
+        .partial_reason
+        .ok_or("an escaped import through the alias must keep the run partial")?;
+    assert!(
+        encoded_reason.contains("typescript_repo_links_skipped:"),
+        "{encoded_reason}"
     );
     let direct = direct?;
     assert!(

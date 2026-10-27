@@ -303,7 +303,8 @@ const ALIAS_IMPORT_SCAN_MAX_BYTES: u64 = 4 * 1024 * 1024;
 /// all match. It over-counts (a string mentioning `/name`, or a different
 /// directory with the same name) and never claims an unused alias from
 /// text it could not read: an unreadable or oversized indexed file counts
-/// as naming one.
+/// as naming one. Decoded literal values are checked as well (see
+/// [`decoded_literal_names_alias`]).
 fn any_file_imports_through(root: &Path, files: &[PathBuf], alias: &Path) -> bool {
     let Some(name) = alias.file_name().and_then(|name| name.to_str()) else {
         return true;
@@ -320,22 +321,52 @@ fn any_file_imports_through(root: &Path, files: &[PathBuf], alias: &Path) -> boo
         let Ok(text) = std::fs::read_to_string(&full) else {
             return true;
         };
-        // A `\u0069`, `\x69` or octal escape can spell the link's name in a
-        // string whose raw text never contains it; the decoded import source
-        // cannot be ruled out, so a file with one beside a relative path
-        // counts as naming the alias.
-        if text.contains("./") && has_character_escape(&text) {
-            return true;
-        }
-        text.match_indices(&needle).any(|(start, _)| {
-            text[start + needle.len()..]
-                .chars()
-                .next()
-                .is_none_or(|next| {
-                    !(next.is_alphanumeric() || matches!(next, '_' | '-' | '$' | '@'))
-                })
-        })
+        names_alias_component(&text, &needle) || decoded_literal_names_alias(&text, file, &needle)
     })
+}
+
+/// `true` when `haystack` has `needle` (`/<name>`) not continued by another
+/// name character.
+fn names_alias_component(haystack: &str, needle: &str) -> bool {
+    haystack.match_indices(needle).any(|(start, _)| {
+        haystack[start + needle.len()..]
+            .chars()
+            .next()
+            .is_none_or(|next| !(next.is_alphanumeric() || matches!(next, '_' | '-' | '$' | '@')))
+    })
+}
+
+/// Whether a string or template literal's decoded value names the alias, so
+/// `'../al\u0069as/lib'` and `'..\u002falias/lib'` match although their raw
+/// text does not. A file that does not parse cleanly cannot be ruled out and
+/// falls back to counting any character escape.
+fn decoded_literal_names_alias(text: &str, file: &Path, needle: &str) -> bool {
+    struct Finder<'n> {
+        needle: &'n str,
+        found: bool,
+    }
+    impl<'a> oxc_ast_visit::Visit<'a> for Finder<'_> {
+        fn visit_string_literal(&mut self, literal: &oxc_ast::ast::StringLiteral<'a>) {
+            self.found |= names_alias_component(literal.value.as_str(), self.needle);
+        }
+        fn visit_template_element(&mut self, element: &oxc_ast::ast::TemplateElement<'a>) {
+            self.found |= match element.value.cooked.as_deref() {
+                Some(cooked) => names_alias_component(cooked, self.needle),
+                None => true,
+            };
+        }
+    }
+    let allocator = oxc_allocator::Allocator::default();
+    let parsed = oxc_parser::Parser::new(&allocator, text, source_type_for(file)).parse();
+    if parsed.panicked || !parsed.errors.is_empty() {
+        return has_character_escape(text);
+    }
+    let mut finder = Finder {
+        needle,
+        found: false,
+    };
+    oxc_ast_visit::Visit::visit_program(&mut finder, &parsed.program);
+    finder.found
 }
 
 /// `true` when `text` has a backslash followed by `u`, `x` or an octal digit.
@@ -1043,6 +1074,26 @@ mod tests {
         let scan =
             visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
         assert_eq!(scan.skipped_links, 1, "{:?}", scan.files);
+
+        // An escaped separator leaves neither `./` nor `/alias` in the raw
+        // text; the decoded literal still names the link.
+        workspace.write(
+            "tests/sum.test.ts",
+            "import { sum } from '..\\u002falias/sum';\ntest('s', () => { expect(sum).toBe(1); });\n",
+        );
+        let scan =
+            visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        assert_eq!(scan.skipped_links, 1, "{:?}", scan.files);
+
+        // Escapes beside an unrelated, cleanly parsed import do not count
+        // (zod's unicode-heavy tests must keep the tooling alias exempt).
+        workspace.write(
+            "tests/sum.test.ts",
+            "import { sum } from '../src/sum';\nconst snow = '\\u2603';\ntest('s', () => { expect(sum).toBe(1); });\n",
+        );
+        let scan =
+            visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        assert_eq!(scan.skipped_links, 0, "{:?}", scan.files);
         Ok(())
     }
 

@@ -213,10 +213,11 @@ Test discovery:
   canonical root with no excluded component (`.tools/skills ->
   ../.agent/skills`), so its files are indexed at their real path, unless an
   indexed file's text names the link as a path component (`/<link name>` not
-  continued by another name character, quoting and comments ignored:
+  continued by another name character, in raw text or in a decoded literal,
+  quoting and comments ignored:
   `../alias/sum` with `alias -> src`, `'../my lib/sum'`): that import names a
   path the walk never indexes, so the alias is counted (an unreadable or
-  oversized indexed file, or one with a `\u`, `\x` or octal escape beside a relative path, counts as naming one since the escape can spell the link name). A directory link that leaves the root, points into an excluded directory or at a
+  oversized indexed file counts as naming one; so does a file that does not parse cleanly and contains a `\u`, `\x` or octal escape. Decoded string and template literal values are compared too, so `'..\u002falias/sum'` matches). A directory link that leaves the root, points into an excluded directory or at a
   directory the walk cannot list, a source-named link, a dangling link and a
   link whose target cannot be read stay counted.
 - a file named `*.d.ts`, `*.d.mts` or `*.d.cts` is parsed as a TypeScript
