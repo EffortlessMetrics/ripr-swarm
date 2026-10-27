@@ -1033,8 +1033,9 @@ fn collect_nul_records(bytes: &[u8], records: &mut BTreeSet<Vec<u8>>) {
 
 /// Whether `path` is interpreter or test-runner cache output that running the
 /// project's Python tests writes: compiled bytecode under a `__pycache__`
-/// directory, non-source files inside the pytest, mypy and ruff cache
-/// directories, and coverage data at the repository root. Matching is by path
+/// directory, files inside the pytest, mypy and ruff cache directories that
+/// are neither source, bytecode nor importable extensions (`.so`, `.pyd`,
+/// `.pth`), and coverage data at the repository root. Matching is by path
 /// shape only; callers must keep tracked paths observed, so a tracked file
 /// with a cache-like name is never exempted. Importable source never matches:
 /// a `.py`/`.pyi` file anywhere (including inside a cache directory), and a
@@ -1045,11 +1046,12 @@ fn is_python_tool_cache(path: &str) -> bool {
     let Some((file, parents)) = components.split_last() else {
         return false;
     };
-    if parents.iter().any(|dir| TOOL_CACHE_DIRS.contains(dir)) {
-        return !(file.ends_with(".py") || file.ends_with(".pyi"));
-    }
     if file.ends_with(".pyc") || file.ends_with(".pyo") {
         return parents.last() == Some(&"__pycache__");
+    }
+    if parents.iter().any(|dir| TOOL_CACHE_DIRS.contains(dir)) {
+        const IMPORTABLE: [&str; 5] = [".py", ".pyi", ".so", ".pyd", ".pth"];
+        return !IMPORTABLE.iter().any(|ext| file.ends_with(ext));
     }
     parents.is_empty() && (*file == ".coverage" || file.starts_with(".coverage."))
 }
@@ -3533,6 +3535,10 @@ mod tests {
                 ("helpers/foo.pyo", "sourceless bytecode"),
                 (".pytest_cache/evil.py", "x = 1\n"),
                 (".mypy_cache/evil.pyi", "x: int\n"),
+                (".pytest_cache/x.pyc", "bytecode"),
+                (".ruff_cache/ext.so", "binary"),
+                (".mypy_cache/ext.pyd", "binary"),
+                (".pytest_cache/hook.pth", "import os"),
             ],
         )?;
         assert_violates(
@@ -3544,7 +3550,56 @@ mod tests {
                 "helpers/foo.pyo",
                 ".pytest_cache/evil.py",
                 ".mypy_cache/evil.pyi",
+                ".pytest_cache/x.pyc",
+                ".ruff_cache/ext.so",
+                ".mypy_cache/ext.pyd",
+                ".pytest_cache/hook.pth",
             ],
+        );
+        Ok(())
+    }
+
+    /// Positive controls for #10699: coverage data variants, a nested tool
+    /// cache directory and `.pyo` bytecode are test-run output.
+    #[test]
+    fn python_cache_exemption_covers_coverage_variants_nested_caches_and_pyo() -> Result<(), String>
+    {
+        let verdict = python_verdict(
+            "python-cache-positive",
+            "",
+            &[
+                ("tests/test_pricing.py", "def test_a():\n    assert 1\n"),
+                (".coverage.host.1234.abc", "data"),
+                ("a/.pytest_cache/v/cache/nodeids", "[]"),
+                ("tests/__pycache__/test_pricing.cpython-313.pyo", "cache"),
+            ],
+        )?;
+        assert_eq!(
+            verdict.status,
+            EditCageVerdictStatus::Compliant,
+            "{verdict:?}"
+        );
+        Ok(())
+    }
+
+    /// Deleting an untracked cache file present at baseline is not an edit.
+    #[test]
+    fn python_cache_exemption_ignores_deleting_an_untracked_cache_file() -> Result<(), String> {
+        let (fixture, policy) = python_fixture("python-cache-delete", "")?;
+        write_fixture_file(&fixture, ".pytest_cache/v/cache/lastfailed", "{}")?;
+        let baseline = capture_attempt_baseline(&fixture.root, &policy)?;
+        fs::remove_file(fixture.root.join(".pytest_cache/v/cache/lastfailed"))
+            .map_err(|err| format!("remove cache file: {err}"))?;
+        write_fixture_file(
+            &fixture,
+            "tests/test_pricing.py",
+            "def test_a():\n    assert 1\n",
+        )?;
+        let verdict = evaluate_repository_edit_cage(&baseline)?;
+        assert_eq!(
+            verdict.status,
+            EditCageVerdictStatus::Compliant,
+            "{verdict:?}"
         );
         Ok(())
     }
