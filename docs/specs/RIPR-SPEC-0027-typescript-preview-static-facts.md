@@ -492,8 +492,9 @@ boundary without changing the guards (#4104 E):
   witness whose numeric expectation equals neither. When the changed line is a
   plain `if (` that opens a brace but the scan cannot read its pair (a one-line
   `if (c) { return 1; }`, which would hand it the enclosing block's returns, or
-  an `if` nested in an arrow or `function`, whose returns belong to that
-  function), the check withholds as well: a pin that cannot be shown live does
+  an `if` nested in an arrow, a `function` or an object-literal or class
+  method such as `pick(n) {` or `async pick(n): T {`, whose returns belong to
+  that function), the check withholds as well: a pin that cannot be shown live does
   not witness the boundary, live or dead. The rule applies after the existing
   gates (an owner body, a numeric expectation, a unique changed line); where one
   of those fails, the witness decision stands as before. A changed ternary,

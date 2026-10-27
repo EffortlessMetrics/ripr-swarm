@@ -1,0 +1,8 @@
+# Registers the method-shorthand body controls (#10776) under RIPR-SPEC-0027.
+[[extend]]
+id = "RIPR-SPEC-0027"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/tests.rs::branch_return_expressions_refuses_a_changed_if_in_a_method_shorthand",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::branch_return_expressions_keeps_control_heads_and_object_arguments",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::expected_side_is_live_withholds_a_changed_if_in_a_method_shorthand",
+]
