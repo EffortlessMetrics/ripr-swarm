@@ -658,7 +658,7 @@ fn import_statements(source: &str) -> impl Iterator<Item = String> + '_ {
                 return Some(statement);
             }
             let line = lines.next()?;
-            let trimmed = line.trim_start();
+            let trimmed = without_comment(line.trim_start());
             if !is_import_statement(trimmed) {
                 continue;
             }
@@ -669,6 +669,7 @@ fn import_statements(source: &str) -> impl Iterator<Item = String> + '_ {
                 let Some(next) = lines.next() else {
                     break;
                 };
+                let next = without_comment(next);
                 statement.push(' ');
                 statement.push_str(next.trim());
                 open = open && !next.contains(')');
@@ -683,6 +684,13 @@ fn import_statements(source: &str) -> impl Iterator<Item = String> + '_ {
             );
         }
     })
+}
+
+/// A line of an import statement up to its comment. Import syntax holds no
+/// string literal, so a `#` there always starts a comment, including inside
+/// a parenthesized name list.
+fn without_comment(line: &str) -> &str {
+    line.split_once('#').map_or(line, |(code, _)| code)
 }
 
 /// Local names `source` binds to a needle with `import ... as`: the `b` of
@@ -1216,7 +1224,7 @@ mod tests {
 
     #[test]
     fn import_statements_read_every_spelling_python_accepts() {
-        let source = "from pytest\timport fixture as fx\nfrom  pytest  import(fixture  as  fy)\nfrom.orders import make_order as build\nimport os; from pytest import fixture as fz\nfrom pytest import \\\n    fixture as fw\nfrom_x = 1\n";
+        let source = "from pytest\timport fixture as fx\nfrom  pytest  import(fixture  as  fy)\nfrom.orders import make_order as build\nimport os; from pytest import fixture as fz\nfrom pytest import \\\n    fixture as fw\nfrom pytest import (  # fixtures (and more)\n    # decorator\n    fixture as fv,  # alias\n)\nfrom_x = 1\n";
         let statements: Vec<String> = import_statements(source).collect();
         assert_eq!(
             statements,
@@ -1227,9 +1235,10 @@ mod tests {
                 "import os",
                 "from pytest import fixture as fz",
                 "from pytest import fixture as fw",
+                "from pytest import ( fixture as fv , )",
             ]
         );
-        assert_eq!(fixture_aliases(source), vec!["fx", "fy", "fz", "fw"]);
+        assert_eq!(fixture_aliases(source), vec!["fx", "fy", "fz", "fw", "fv"]);
         let needles: HashSet<String> = ["make_order".to_string()].into_iter().collect();
         assert_eq!(imported_aliases(source, &needles), vec!["build"]);
     }
