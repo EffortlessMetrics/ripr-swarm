@@ -34,9 +34,9 @@ pin is a commit whose own change touches production Rust, so the warm
 `ripr check --base HEAD~1` measures a real small edit. The `serde-no-rust` and `cargo-no-rust` entries pin commits that touch no `.rs` file
 (a CI workflow, a changelog), so a docs-or-CI edit has its own warm-check row, memory row and
 trend; `cargo-no-rust` pins its first parent as the base because its commit is a merge. Those rows are wall time, so they gate only against a same-runner baseline; the runner-independent guard is `crates/ripr/tests/no_rust_diff_reads_no_rust.rs`, which fails on any runner if a docs-only diff indexes the workspace's Rust sources (a discarded read is outside what it observes) in `instant`, `draft` or `fast` mode. Entries marked
-`heavy = true` (ripr-swarm at two sizes, cargo, `cargo-no-rust`, `poetry-python`, `pandas-python`) run only with `--include-heavy`.
+`heavy = true` (ripr-swarm at two sizes, cargo, `cargo-no-rust`, `poetry-python`, `pandas-python`, `django-python`) run only with `--include-heavy`.
 
-Entries may set `language` (`rust` when absent; `python`, `typescript` or `perl`), which the report carries on each repository row so a non-Rust edit is its own population. `click-python` (small), `poetry-python` (larger) and `pandas-python` (about 1500 `.py` files and 23k tests, the large-workspace row from #10750) pin single-parent commits that edit Python and its test; all three complete under `--mode draft`. The editor-refresh samples stay `not_measured` for them, because that instrument opens a changed Rust file. `django` was tried and stops at the Python workspace-file cap (partial), so it would not measure a complete check. `defu-typescript` pins a single-parent TypeScript edit and completes. `ky-typescript` (about 100 files) pins a single-parent edit to `source/utils/merge.ts` and its test and its warm `ripr check --base HEAD~1 --format json --mode draft` completes with findings on that diff, since the partial-extraction disclosure is scoped to test files that can reach the diff (#10436); other typed limitations can still make a different diff partial, and it has no changed Rust file, so its editor-refresh samples stay `not_measured`. `h3-typescript` pins a single-parent edit to `src/tracing.ts` and its test (a Vitest suite repository) and completes with findings now that links to non-source files (#10614) and `describe.skipIf/runIf` suites (#10629) no longer make it partial. `execa-typescript` pins a single-parent JavaScript edit (`lib/transform/generator.js` and its ava test), which the same adapter analyzes, and completes with findings; the commits that were partial there were partial only because `.d.ts` files were parsed as ordinary TypeScript (#10812). zod reports partial analysis on the commits tried, and a repository that stops short fails the completion gate even when new, so it is not pinned. Perl is blocked on its adapter and exporter not being available to the scoreboard's binary (#10338).
+Entries may set `language` (`rust` when absent; `python`, `typescript` or `perl`), which the report carries on each repository row so a non-Rust edit is its own population. `click-python` (small), `poetry-python` (larger), `pandas-python` (about 1500 `.py` files and 23k tests, the large-workspace row from #10750) and `django-python` (2,937 `.py` files, a 27-file edit) pin single-parent commits that edit Python and its test; all four complete under `--mode draft`. The editor-refresh samples stay `not_measured` for them, because that instrument opens a changed Rust file. Django fits under the 4,000-file Python workspace cap since #10468. `defu-typescript` pins a single-parent TypeScript edit and completes. `ky-typescript` (about 100 files) pins a single-parent edit to `source/utils/merge.ts` and its test and its warm `ripr check --base HEAD~1 --format json --mode draft` completes with findings on that diff, since the partial-extraction disclosure is scoped to test files that can reach the diff (#10436); other typed limitations can still make a different diff partial, and it has no changed Rust file, so its editor-refresh samples stay `not_measured`. `h3-typescript` pins a single-parent edit to `src/tracing.ts` and its test (a Vitest suite repository) and completes with findings now that links to non-source files (#10614) and `describe.skipIf/runIf` suites (#10629) no longer make it partial. `execa-typescript` pins a single-parent JavaScript edit (`lib/transform/generator.js` and its ava test), which the same adapter analyzes, and completes with findings; the commits that were partial there were partial only because `.d.ts` files were parsed as ordinary TypeScript (#10812). zod reports partial analysis on the commits tried, and a repository that stops short fails the completion gate even when new, so it is not pinned. Perl is blocked on its adapter and exporter not being available to the scoreboard's binary (#10338).
 Checkouts live under `target/ripr/dx-scoreboard/corpus/`; cloning is opt-in:
 
 ```bash
@@ -56,7 +56,9 @@ release ripr first, because developers run release builds.
   sample counts only when pilot exits 0 and `pilot-summary.json` says
   `complete`; otherwise it is `incomplete` and cannot meet its target.
 - **Warm check.** `ripr check --root <repo> --base HEAD~1 --format json` twice
-  on the cache pilot left behind; the second run is measured.
+  on the cache pilot left behind; the second run is measured. Both runs set
+  `RIPR_CHECK_FINDINGS_BYTES=0`: the contradiction scan reads every finding,
+  and a byte-bounded prefix would make a large-diff row `incomplete`.
 - **Peak memory.** `VmHWM` from `/proc/<pid>/status`, sampled in the same
   10 ms loop that enforces the deadline. Linux only; a lower bound.
 - **Workflow size.** `ripr init --root <tiny crate> --ci github`, then the
@@ -67,7 +69,9 @@ release ripr first, because developers run release builds.
   does not exist, run from an unrelated directory. Each should exit nonzero.
 - **Self-contradictions.** Rules over the pilot `repo-exposure.json` and the
   warm check JSON:
-  - `R1` a seam says reach is `no` while it lists related tests;
+  - `R1` a seam says reach is `no` while it lists a related test whose
+    relation establishes reach (proximity-only relations are listed beside
+    `reach: no` by design), or a listed window that cannot be fully inspected;
   - `R2` a finding is `no_static_path` while it lists related tests;
   - `R3` a finding's evidence says related tests were found while it lists
     none.

@@ -210,6 +210,11 @@ Test discovery:
   the entry's own path, so such a link hides no test or source. A directory
   link, a source-named link, a dangling link and a link whose target cannot be
   read stay counted.
+- a file named `*.d.ts`, `*.d.mts` or `*.d.cts` is parsed as a TypeScript
+  declaration file (#10812): its top-level declarations are ambient, so
+  `export const x: T;` is not a parse error there. The same text in an
+  ordinary `.ts` file, and any real syntax error in a declaration file, stay
+  disclosed as `language_scope_unsupported`.
 - top-level `expect(...)` calls when paired with a `test`/`it` block
 - exported test files matched by configured patterns (default:
   `*.test.ts`, `*.test.tsx`, `*.spec.ts`, `*.spec.tsx`, and the
@@ -487,6 +492,19 @@ boundary without changing the guards (#4104 E):
   simple operands. A compound (`&&`, `||`) or arithmetic condition stays
   unparsed, and a line whose condition equals the removed line's condition
   (an edit to the statement) is not a predicate boundary change.
+- **Unreadable changed `if` withholds** (#10776): the dead-expectation check
+  folds the two branch returns of the changed `if` and withholds a boundary
+  witness whose numeric expectation equals neither. When the changed line is a
+  plain `if (` that opens a brace but the scan cannot read its pair (a one-line
+  `if (c) { return 1; }`, which would hand it the enclosing block's returns, or
+  an `if` nested in an arrow or `function`, whose returns belong to that
+  function), the check withholds as well: a pin that cannot be shown live does
+  not witness the boundary, live or dead. The rule applies after the existing
+  gates (an owner body, a numeric expectation, a unique changed line); where one
+  of those fails, the witness decision stands as before. A changed ternary,
+  `else if` head, brace-less one-line `if` (#10463) or a condition that
+  continues onto the next line keeps its previous behavior. Method shorthand
+  and class methods are not recognized as nested functions (#10776).
 
 When the adapter cannot classify, it emits one of the `static_limit_kind`
 values defined in RIPR-SPEC-0026:
