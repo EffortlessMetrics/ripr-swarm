@@ -53,10 +53,17 @@ accumulator update that adds a same-file function's value, read as a
 `return_value` change (RIPR-SPEC-0360, #9478), with the same scope: generation,
 content commitment, dependent verify commitments and receipt byte hashes only.
 
+### test_case arrow row input substitution cache generation parity
+
+The same snapshots follow corpus cache generation 1.114 to 1.115 for the arrow row
+read with its inputs substituted into the returned expression (RIPR-SPEC-0231
+rule 9, #10797), with the same scope: generation, content commitment, dependent
+verify commitments and receipt byte hashes only.
+
 
 ### Foreign embedded PartialEq classified-cache generation parity
 
-The same snapshots follow corpus cache generation 1.114 to 1.115 for an
+The same snapshots follow corpus cache generation 1.115 to 1.116 for an
 embedded field type no workspace file defines, read as a possible lenient
 `eq` (RIPR-SPEC-0228, #10684), with the same scope: generation, content
 commitment, dependent verify commitments and receipt byte hashes only.
