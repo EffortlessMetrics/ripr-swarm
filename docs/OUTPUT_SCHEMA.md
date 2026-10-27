@@ -337,6 +337,23 @@ The unresolved identity and disclosure fields remain `null`, `warnings` stays
 must recognize `0.4` and distinguish this capability limit from a selector
 that can be corrected or re-listed. No new stub language is supported.
 
+A weak-oracle boundary seam instead uses `refusal.kind:
+existing_test_weak_oracle` (#10683): a single related test already supplies the
+changed predicate's boundary input and only its assertion is weak, so a second
+skeleton test would not close the gap. `refusal.reason` is `check`'s
+boundary-observed Next step followed by `Related test: <file>:<line> <name>`;
+strengthen that test's assertion instead. It exits `3`, writes the envelope to
+stdout under `--json` and the decision prose to stderr, like the other refusal
+kinds; `grip_class`, `classification` and `warnings` are populated. This
+refusal is evaluated before the stub producer's own refusals for the same seam
+(a seam with an existing reaching test needs the assertion fix first, whatever
+placement the producer would have refused). `ripr check` shows the same reason
+as `No test stub here:` instead of a `ripr agent stub` command. It is part of schema
+`0.4` (no further bump): the refusal object shape and every ready-document
+field are unchanged, and consumers dispatch on `state: refused` plus an open
+`refusal.kind` string; consumers must treat an unrecognized kind as a generic
+refusal (exit `3`, reason as prose).
+
 Schema `0.3` is additive on `0.2` (#8727): the ready document may carry a
 `next_repair` block naming the repair journey the stub feeds — the
 `ripr agent repair --seam-id <id> --phase before` start command and the repair
@@ -969,7 +986,11 @@ preserves the normal check envelope (`schema_version`, `tool`, `mode`, `root`,
 `summary`, and `findings`) and adds:
 
 - `analysis_scope.run_status: "diff_scope_oversized"`
-- `analysis_scope.basis: "rust_diff_scope_budget"`
+- `analysis_scope.basis: "rust_diff_scope_budget"` — or, since #10730,
+  `"python_diff_scope_budget"` / `"typescript_diff_scope_budget"` when the
+  refusal names the Python or TypeScript/JavaScript changed-line budget; the
+  basis always names the budget that actually fired, never a Rust budget for
+  a preview-language refusal
 - `analysis_scope.downstream_consumable: false`
 - `analysis_scope.limitation: "diff_scope_oversized"`
 - `analysis_scope.repair_route: "analysis/diff-scope-budget"`
@@ -3582,6 +3603,14 @@ The JSON report is repo automation output with schema version `"0.1"`:
 Policy reports are advisory unless `--mode fail-on-new-warning` is used.
 
 ## Context Packet
+
+Fresh `context`/`explain` selector misses remain usage-class failures: exit 2,
+empty stdout, and the selector guidance and retry command on stderr. When the
+fresh check carries detected-but-unanalyzed language advisories or non-success
+language runs, stderr also names those run-scope limitations and their existing
+producer recovery. The notice does not establish the cause of this selector's
+miss. Recorded `--from` lookups do not reconstruct absent advisory facts from
+ambient configuration; no packet field or schema version changes (#10720).
 
 `ripr context --json` emits compact test intent for agents:
 
@@ -18702,7 +18731,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.115",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.116",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. This is the existing
@@ -19470,7 +19499,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.115",
+      "schema_version": "1.116",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

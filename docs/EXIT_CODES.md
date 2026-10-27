@@ -116,6 +116,10 @@ reached the caller.
   usage-class errors keep stdout empty. Usage-class errors include argv
   errors and `context`/`explain` selector misses or ambiguity; their guidance
   and retry listing stay on stderr (RIPR-SPEC-0003).
+  Fresh selector misses also retain producer-owned language limitations for
+  that run, with the configured-off or unavailable-binary recovery. These
+  describe analysis scope rather than prove why the selector missed;
+  recorded `--from` lookups do not invent ambient language facts (#10720).
   [docs/OUTPUT_SCHEMA.md](OUTPUT_SCHEMA.md) documents the refusal
   shape and its `schema_version`.
 - **User error**: unknown command, missing required argument, or invalid
@@ -184,7 +188,10 @@ reached the caller.
   run the test by hand, then refresh the finding), or the selector names no
   reported gap (`seam_not_found`), or the location selector
   matches several files or tied disjoint seams (`selector_ambiguous`: choose
-  a specific path or one of the suggested seam IDs). Several inline test modules are not a
+  a specific path or one of the suggested seam IDs), or a single related
+  test already reaches the changed predicate boundary and only its assertion
+  is weak (`existing_test_weak_oracle`, #10683: strengthen that named test's
+  assertion instead of adding a second test). Several inline test modules are not a
   refusal: among those gated by plain `cfg(test)`, the stub goes into the
   one that already names the owner, else the nearest one after it, else the
   nearest one before it. The named reason is on stderr; under `--json` a

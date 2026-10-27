@@ -62,15 +62,15 @@ pub(super) fn failure_vocabulary() -> Vec<&'static str> {
 /// this server does not, and the CLI route that runs analysis outside this
 /// session. Naming a route is not invoking it: the server still edits
 /// nothing and executes nothing (ADR 0022).
-pub(super) const INSTRUCTIONS: &str = "Flow: call `ripr_workspace_status` for root discovery, authority, and session facts; `ripr_refresh` analyzes the committed default-branch diff into a completed snapshot. `ripr_list_gaps` lists the bounded working set; read evidence with `ripr_get_gap` or ripr://gap/{canonical_id}; for repair prefer `ripr_get_repair_card` (ripr://repair-card/{canonical_id}). With established repair-readiness facts, `ripr_prepare_repair` creates (or replays) one bounded in-memory repair transaction; read it with `ripr_get_repair_attempt` (ripr://repair-attempt/{attempt_id}), inspect receipts with `ripr_get_receipt_status` (ripr://receipt/{receipt_id}), and list every durable attempt with `ripr_list_repair_attempts`. RIPR is a static analyzer that asks whether the current tests would notice if the behavior changed in a diff were wrong. This MCP server exposes one read-only workspace session: it never edits source, executes nothing, runs no tests or mutation, and launches no processes; it names CLI routes without invoking them (ADR 0022). No document this server returns is a repair authorization: the external client's approval and sandbox policy remain authoritative. Scope: committed input only; staged and unstaged tracked edits and untracked files are outside. `ripr check` defaults to the working tree when staged or unstaged tracked edits exist; shared check authority does not mean identical input. `ripr check --committed` reads committed input; `ripr check --worktree --format json` adds staged and unstaged tracked edits only. Untracked files need staging/intent-to-add (`git add -N <paths>`) before `--worktree`, or explicit `--diff`.";
+pub(super) const INSTRUCTIONS: &str = "Flow: call `ripr_workspace_status` for root discovery, authority, and session facts; `ripr_refresh` defaults to the committed default-branch diff and commits a completed snapshot. `ripr_list_gaps` lists the bounded working set; read evidence with `ripr_get_gap` or ripr://gap/{canonical_id}; for repair prefer `ripr_get_repair_card` (ripr://repair-card/{canonical_id}). With established repair-readiness facts, `ripr_prepare_repair` creates (or replays) one bounded in-memory repair transaction; read it with `ripr_get_repair_attempt` (ripr://repair-attempt/{attempt_id}), inspect receipts with `ripr_get_receipt_status` (ripr://receipt/{receipt_id}), and list every durable attempt with `ripr_list_repair_attempts`. RIPR is a static analyzer that asks whether the current tests would notice if the behavior changed in a diff were wrong. This MCP server exposes one read-only workspace session: it never edits source, executes nothing, runs no tests or mutation, and launches no processes; it names CLI routes without invoking them (ADR 0022). No document this server returns is a repair authorization: the external client's approval and sandbox policy remain authoritative. By default: committed input only; staged and unstaged tracked edits and untracked files are outside. Opt in with `ripr_refresh` `source: \"worktree\"` to include saved staged and unstaged tracked edits; unsaved buffers and untracked files remain outside, and worktree repair cards/readiness are withheld. `ripr check` defaults to the working tree when staged or unstaged tracked edits exist; shared check authority does not mean identical input. `ripr check --committed` reads committed input; `ripr check --worktree --format json` adds staged and unstaged tracked edits only. Untracked files need staging/intent-to-add (`git add -N <paths>`) before `--worktree`, or explicit `--diff`.";
 
 const STATUS_TOOL_DESCRIPTION: &str = "Report the RIPR workspace and session state — call this first in a session: it is the root-discovery, authority, and session read. Covers repository-root discovery state (validated or unavailable; root error detail names why), launch-trust and authority facts (source edit, verification execution, mutation execution, and model provider are all none), and a session block: desired input, attempt state (no_snapshot, in_flight, completed, failed), last completed snapshot identity, last-known-good, freshness, typed AnalysisOutcome, and profile facts (project_config loaded, built-in defaults, or detected_not_loaded). `workspace_state: ready` means only that a repository root was discovered — not that analysis ran or that no issues were found. This tool returns session facts only: no gap evidence. It never edits source, runs tests or mutation, executes verification commands. To run analysis, call ripr_refresh.";
 
-const REFRESH_TOOL_DESCRIPTION: &str = "Run one bounded static analysis of the committed default-branch diff (optional `base` selects another revision) through shared check authority; commit its completed session snapshot. Call this when the session has no current snapshot or the committed diff changed since the last one. Blocks until: completed (snapshot identity returned), failed (typed code, bounded detail, recovery; last-known-good kept), in_flight (another attempt is running — wait and retry), or workspace_unavailable (restart with `--root <repository>`). An unresolvable default branch fails with analysis_failed naming candidate branches; retry with `base`. A `base` starting with `-` or naming no commit fails closed; omitting `base` returns to the default branch. A cancelled attempt still commits as a completed snapshot when it finishes and only transport teardown abandons one before it commits; a superseded attempt is never committed. Unsupported profiles fail closed with unsupported_profile. It never edits source, executes verification or mutation commands, or prepares a repair. Scope: committed input only; staged, unstaged, and untracked edits are outside — the INSTRUCTIONS scope block details the `--committed`/`--worktree`/`--diff` routes.";
+const REFRESH_TOOL_DESCRIPTION: &str = "Run one bounded static analysis of the default-branch diff (optional `base` selects another revision) through shared check authority; commit its completed session snapshot. `source: \"worktree\"` opts into saved tracked edits, with no repair cards. Call this when the session has no current snapshot or the selected input changed since the last one. Blocks until: completed (snapshot identity returned), failed (typed code, bounded detail, recovery; last-known-good kept), in_flight (another attempt is running — wait and retry), or workspace_unavailable (restart with `--root <repository>`). An unresolvable default branch fails with analysis_failed naming candidate branches; retry with `base`. A `base` starting with `-` or naming no commit fails closed; omitting `base` returns to the default branch. A cancelled attempt still commits as a completed snapshot when it finishes and only transport teardown abandons one before it commits; a superseded attempt is never committed. Unsupported profiles fail closed with unsupported_profile. It never edits source, executes verification or mutation commands, or prepares a repair. By default: committed input only; saved tracked edits require `source: \"worktree\"`; unsaved buffers and untracked files remain outside — the INSTRUCTIONS scope block details the `--committed`/`--worktree`/`--diff` routes.";
 
 const LIST_GAPS_TOOL_DESCRIPTION: &str = "Return the deterministic bounded working set of canonical items for the current completed snapshot (optional snapshot_id must match, else stale_snapshot). Call this after ripr_refresh to choose which items merit a detail read. The response carries counts, omitted identities with reasons, the selection basis, and one small summary per selected item (fields in the outputSchema). Selection is the shared CLI/LSP budget authority: MCP does not re-rank, never truncates silently, and infers no business risk; overflow is disclosed with reasons. Optional file, class, language, and repair_ready filters narrow the stored selection conjunctively before paging; offset and limit page the narrowed set in snapshot order, disclosed through page.has_more and page.next_offset. Fails closed with no_snapshot before the first successful ripr_refresh, workspace_unavailable on an unavailable root (restart with --root <repository>), and result_too_large on an over-bound page. Per-item detail: ripr_get_gap or ripr://gap/{canonical_id}.";
 
-const GET_GAP_TOOL_DESCRIPTION: &str = "Return one canonical item's complete bounded analysis evidence from the current completed snapshot (optional snapshot_id must match or the call fails closed with stale_snapshot). This is the read for analysis evidence when no repair intent exists — prefer ripr_get_repair_card when the intent is to repair; this evidence never authorizes an edit. repair_packet_ready now reports the committed producer repair-readiness facts. Unknown ids fail closed with item_not_found; a document over the response bound fails with result_too_large — recovery is `ripr check --committed --format json` outside MCP (a bounded summary whose related tests cap per finding); retrying ripr_get_gap cannot shrink the item. Fails closed with no_snapshot before the first successful ripr_refresh and workspace_unavailable on an unavailable root. The resource ripr://gap/{canonical_id} returns the same document.";
+const GET_GAP_TOOL_DESCRIPTION: &str = "Return one canonical item's complete bounded analysis evidence from the current completed snapshot (optional snapshot_id must match or the call fails closed with stale_snapshot). This is the read for analysis evidence when no repair intent exists — prefer ripr_get_repair_card when the intent is to repair; this evidence never authorizes an edit. repair_packet_ready now reports the committed producer repair-readiness facts. Unknown ids fail closed with item_not_found; a document over the response bound fails with result_too_large — follow the failure's captured-root/base/source CLI recovery outside MCP (a bounded summary, not immutable snapshot replay); retrying ripr_get_gap cannot shrink the item. Fails closed with no_snapshot before the first successful ripr_refresh and workspace_unavailable on an unavailable root. The resource ripr://gap/{canonical_id} returns the same document.";
 
 const PREPARE_REPAIR_TOOL_DESCRIPTION: &str = "When every committed producer repair-readiness gate reads established, create — or replay — one bounded in-memory repair transaction for one canonical item of the current completed snapshot. Call this when the agent intends to repair an item from ripr_list_gaps; the readiness gates are on that item's evidence. Inputs: canonical_id (required, from ripr_list_gaps) and optional snapshot_id, which must match the current snapshot or the call fails closed with stale_snapshot. The outputSchema enumerates the complete document. Repeating the call for the same snapshot, item, and root replays the identical document — never a second transaction. When a gate is not established the tool returns repair_packet_ready: false with the typed ineligibility reason and attempt: null — it never guesses a missing field and never creates a misleading attempt. This tool never edits source, never launches a process, and never executes verification or mutation commands; the external client's approval and sandbox policy remains authoritative. Fails closed with no_snapshot before the first successful ripr_refresh, workspace_unavailable on an unavailable root, and item_not_found on unknown canonical ids.";
 
@@ -82,7 +82,7 @@ const STATUS_RESOURCE_DESCRIPTION: &str = "Bounded, read-only workspace discover
 
 const SNAPSHOT_RESOURCE_TEMPLATE_DESCRIPTION: &str = "Bounded evidence for one completed snapshot: snapshot identity, typed AnalysisOutcome, the canonical item index (identities and locations, not evidence), and the stored selection summary. One item's complete evidence: ripr_get_gap or ripr://gap/{canonical_id}. Unknown or superseded ids fail closed with no_snapshot or stale_snapshot; an unavailable root fails closed with workspace_unavailable — restart the server with `ripr mcp --stdio --root <repository>`.";
 
-const GAP_RESOURCE_TEMPLATE_DESCRIPTION: &str = "One canonical item's complete evidence — changed behavior, causal attribution, discriminator availability, related tests, and the committed producer repair-readiness block; the same document ripr_get_gap returns. The item must exist in the current completed snapshot (else item_not_found). A document over the response bound fails with result_too_large — recovery is `ripr check --committed --format json` outside MCP; retrying this resource cannot shrink the item.";
+const GAP_RESOURCE_TEMPLATE_DESCRIPTION: &str = "One canonical item's complete evidence — changed behavior, causal attribution, discriminator availability, related tests, and the committed producer repair-readiness block; the same document ripr_get_gap returns. The item must exist in the current completed snapshot (else item_not_found). A document over the response bound fails with result_too_large — follow the failure's captured-root/base/source CLI recovery outside MCP; retrying this resource cannot shrink the item.";
 
 const REPAIR_ATTEMPT_TEMPLATE_DESCRIPTION: &str = "One repair transaction, as returned by ripr_get_repair_attempt: a session transaction from ripr_prepare_repair or a durable manifest with digest bindings and typed CommandSpec routes when valid. Unknown identities fail closed (attempt_not_found), invalid manifests (attempt_invalid), superseded-snapshot bindings (superseded), and tombstones past the 64-entry bound (attempt_not_found). The read never edits source or executes anything the attempt names.";
 
@@ -465,6 +465,11 @@ fn refresh_tool_descriptor() -> Value {
                     "minLength": 1,
                     "maxLength": 256,
                     "description": "Optional Git revision (branch, tag or commit) to diff against instead of the resolved default branch. Use it when the repository's default branch is not main or master, or when refresh fails with base_unresolvable. Omit it to use the default branch."
+                },
+                "source": {
+                    "type": "string",
+                    "enum": ["committed", "worktree"],
+                    "description": "Input to analyze. Omit for `committed` (the committed diff). `worktree` analyzes saved staged and unstaged tracked edits; repair cards and readiness are withheld."
                 }
             },
             "additionalProperties": false
@@ -753,10 +758,15 @@ fn scope_disclosure_schema() -> Value {
         "properties": {
             "analyzed": {
                 "type": "string",
-                "pattern": "^committed (default-branch diff|diff against base .+)$"
+                "pattern": "^(committed (default-branch diff|diff against base .+)|saved tracked-worktree diff against (the default branch|base .+))$"
             },
-            "uncommitted_edits": { "type": "string", "const": "outside this analysis" },
+            "uncommitted_edits": {
+                "type": "string",
+                "enum": ["outside this analysis", "saved tracked edits included"]
+            },
             "note": { "type": "string" },
+            "consumed_source_commitment": { "type": "string", "const": "not_established" },
+            "repair_cards": { "type": "string", "const": "withheld" },
             "untracked_edits": {
                 "type": "object",
                 "properties": {
@@ -946,6 +956,7 @@ pub(super) fn status_success_schema() -> Value {
                             "kind": { "type": "string", "const": "workspace_diff" },
                             "base": { "type": "string", "enum": ["default_branch", "explicit"] },
                             "base_revision": { "type": "string" },
+                            "source": { "type": "string", "const": "worktree" },
                             "mode": { "type": "string", "const": "draft" },
                             "scope": { "type": "string", "const": "diff" }
                         },
@@ -1117,6 +1128,8 @@ fn refresh_output_schema() -> Value {
                     },
                     "scope": scope_disclosure_schema(),
                     "requested_base": { "type": "string" },
+                    "requested_source": { "type": "string", "enum": ["committed", "worktree"] },
+                    "captured_source": { "type": ["string", "null"], "enum": ["committed", "worktree", null] },
                     "snapshot": { "type": ["object", "null"] },
                     "last_known_good": { "type": ["object", "null"] },
                     "claim_boundary": { "type": "string" },
@@ -1643,9 +1656,9 @@ mod tests {
         // pin); the complete ceiling adds only the inventory's 1,090 bytes.
         let mut budgets = std::collections::BTreeMap::from([
             ("tool ripr_workspace_status", 945),
-            ("tool ripr_refresh", 1255),
+            ("tool ripr_refresh", 1360),
             ("tool ripr_list_gaps", 1050),
-            ("tool ripr_get_gap", 915),
+            ("tool ripr_get_gap", 904),
             ("tool ripr_prepare_repair", 1235),
             ("tool ripr_get_repair_attempt", 1315),
             ("tool ripr_get_receipt_status", 1495),
@@ -1653,14 +1666,14 @@ mod tests {
             ("tool ripr_list_repair_attempts", 1090),
             ("resource ripr-workspace-status", 650),
             ("template ripr-snapshot-evidence", 475),
-            ("template ripr-gap-evidence", 475),
+            ("template ripr-gap-evidence", 486),
             ("template ripr-repair-attempt", 475),
             ("template ripr-receipt-status", 475),
             ("template ripr-repair-card", 475),
         ]);
-        if instructions.is_empty() || instructions.len() > 1676 {
+        if instructions.is_empty() || instructions.len() > 1866 {
             return Err(format!(
-                "instructions contain {} UTF-8 bytes; expected 1..=1676",
+                "instructions contain {} UTF-8 bytes; expected 1..=1866",
                 instructions.len()
             ));
         }
@@ -1701,14 +1714,14 @@ mod tests {
         if let Some(surface) = budgets.keys().next() {
             return Err(format!("{surface} is missing from its published catalog"));
         }
-        if previous_surfaces > 14201 {
+        if previous_surfaces > 14551 {
             return Err(format!(
-                "previously guarded descriptions total {previous_surfaces} UTF-8 bytes, over 14201"
+                "previously guarded descriptions total {previous_surfaces} UTF-8 bytes, over 14551"
             ));
         }
-        if total > 15291 {
+        if total > 15641 {
             return Err(format!(
-                "complete descriptions/instructions total {total} UTF-8 bytes, over 15291"
+                "complete descriptions/instructions total {total} UTF-8 bytes, over 15641"
             ));
         }
         Ok(total)
@@ -1727,7 +1740,7 @@ mod tests {
         // terminal mapping moved onto the outputSchema status field.
         // Intentional metadata changes need to reconcile this byte count as
         // well as the ceilings.
-        assert_eq!(total, 15115);
+        assert_eq!(total, 15465);
         Ok(())
     }
 
@@ -1935,8 +1948,9 @@ mod tests {
                     "never authorizes an edit",
                     "item_not_found",
                     "ripr://gap/{canonical_id}",
-                    "ripr check --committed --format json",
-                    "related tests cap per finding",
+                    "result_too_large",
+                    "follow the failure's captured-root/base/source CLI recovery outside MCP",
+                    "a bounded summary, not immutable snapshot replay",
                     "retrying ripr_get_gap cannot shrink the item",
                 ],
             ),
@@ -2004,6 +2018,14 @@ mod tests {
                     ));
                 }
             }
+        }
+        // The failure owns its source-bound command and detailed JSON caps;
+        // discovery must not replace it with a fixed committed-input route.
+        let gap_description = json_str(&tools, "/tools/3/description")?;
+        if gap_description.contains("ripr check --committed --format json") {
+            return Err(format!(
+                "gap description advertises committed-only recovery: {gap_description}"
+            ));
         }
         // #10541: the terminal mapping algorithm moved off the tool
         // description (which only names the vocabulary and the owner) onto
@@ -2184,8 +2206,10 @@ mod tests {
         // at that block instead of duplicating the routes into every
         // session's tools/list payload.
         for required in [
-            "committed input only",
+            "By default: committed input only",
             "staged and unstaged tracked edits only",
+            "unsaved buffers and untracked files remain outside",
+            "worktree repair cards/readiness are withheld",
             "Untracked files need staging/intent-to-add",
             "git add -N <paths>",
             "before `--worktree`, or explicit `--diff`",
@@ -2198,7 +2222,12 @@ mod tests {
         }
         let tools = tools_list_result();
         let refresh = json_str(&tools, "/tools/1/description")?;
-        if !refresh.contains("committed input only") || !refresh.contains("INSTRUCTIONS") {
+        if !refresh.contains("By default: committed input only")
+            || !refresh.contains("source: \"worktree\"")
+            || !refresh.contains("INSTRUCTIONS")
+            || refresh.contains("Scope: committed input only")
+            || INSTRUCTIONS.contains("Scope: committed input only")
+        {
             return Err(format!(
                 "refresh description must name the committed-input boundary and point at INSTRUCTIONS: {refresh}"
             ));

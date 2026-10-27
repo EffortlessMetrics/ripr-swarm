@@ -51,6 +51,9 @@ pub(crate) fn is_typescript_excluded_dir_everywhere(name: &str) -> bool {
 /// purpose. Python repo discovery keeps walking `vendor` so the files can be
 /// recorded as an excluded role. This adapter has no such ledger, and indexing
 /// those trees would only feed untrusted files into owner and test extraction.
+/// Compiled only with the adapter or for tests: nothing outside the
+/// feature-gated discovery walk and this module's tests calls it.
+#[cfg(any(feature = "lang-typescript", test))]
 pub(crate) fn is_typescript_dir_pruned_from_discovery(name: &str) -> bool {
     is_typescript_excluded_dir_everywhere(name)
 }
@@ -81,7 +84,9 @@ pub(crate) fn is_declared_handwritten_typescript_path(declared: &[String], path:
 /// `dir`, which is repository-relative and normalized. The workspace walk
 /// consults this before pruning an excluded-name directory: a declared
 /// hand-written file keeps its ancestor directories reachable so the file
-/// can be read and indexed (#7386).
+/// can be read and indexed (#7386). Only the feature-gated discovery walk
+/// calls it.
+#[cfg(any(feature = "lang-typescript", test))]
 pub(crate) fn declared_typescript_handwritten_under(declared: &[String], dir: &Path) -> bool {
     let mut prefix = dir.to_string_lossy().replace('\\', "/");
     if !prefix.is_empty() && !prefix.ends_with('/') {
@@ -117,11 +122,21 @@ pub(crate) fn is_detectable_generated_typescript_path(path: &Path) -> bool {
 /// no `ripr.toml` exists. `package.json` is deliberately not a marker: Rust
 /// and Python repositories routinely carry one for docs or tooling, and it
 /// does not say the repository's own tests run under a TS/JS runner.
+///
+/// The detection surface (this constant through
+/// `dir_contains_typescript_source` below) compiles only with the adapter or
+/// for tests: without `lang-typescript` the inert `typescript_absent` forms
+/// in `config.rs` keep no-config detection from ever selecting the adapter,
+/// so the real functions would be dead code in a rust-only build. The
+/// exclusion authorities above stay real in every lane (#10730).
+#[cfg(any(feature = "lang-typescript", test))]
 pub(crate) const TYPESCRIPT_PROJECT_MARKERS: &[&str] = &["tsconfig.json", "jsconfig.json"];
+#[cfg(any(feature = "lang-typescript", test))]
 pub(crate) const TYPESCRIPT_SOURCE_DIR_MARKERS: &[&str] = &["src", "tests"];
 
 /// No-config project detection, mirroring `detect_python_project`: a root
 /// marker file, or detectable TypeScript source below root `src`/`tests`.
+#[cfg(any(feature = "lang-typescript", test))]
 pub(crate) fn detect_typescript_project(root: &Path) -> bool {
     TYPESCRIPT_PROJECT_MARKERS
         .iter()
@@ -133,15 +148,18 @@ pub(crate) fn detect_typescript_project(root: &Path) -> bool {
 
 /// Canonical root marker file name for a candidate name. Markers resolve
 /// through the filesystem, so the comparison follows the host path rule.
+#[cfg(any(feature = "lang-typescript", test))]
 pub(crate) fn typescript_project_marker_name(name: &str) -> Option<&'static str> {
     canonical_marker_name(TYPESCRIPT_PROJECT_MARKERS, name)
 }
 
 /// Canonical root source-directory marker for a path component.
+#[cfg(any(feature = "lang-typescript", test))]
 pub(crate) fn typescript_source_dir_marker_name(name: &str) -> Option<&'static str> {
     canonical_marker_name(TYPESCRIPT_SOURCE_DIR_MARKERS, name)
 }
 
+#[cfg(any(feature = "lang-typescript", test))]
 fn canonical_marker_name(candidates: &[&'static str], name: &str) -> Option<&'static str> {
     let case_insensitive = crate::output::path::host_paths_case_insensitive();
     candidates.iter().copied().find(|candidate| {
@@ -157,6 +175,7 @@ fn canonical_marker_name(candidates: &[&'static str], name: &str) -> Option<&'st
 /// `.mts`/`.cts` extension that is not a generated-file name. Presence
 /// classification only; content is never read. JavaScript alone does not
 /// select the adapter.
+#[cfg(any(feature = "lang-typescript", test))]
 pub(crate) fn is_detectable_typescript_source_name(name: &str) -> bool {
     Path::new(name)
         .extension()
@@ -171,6 +190,7 @@ pub(crate) fn is_detectable_typescript_source_name(name: &str) -> bool {
 
 /// `.d.ts`, `.d.mts` and `.d.cts` declaration files. The adapter skips them
 /// when generating findings, so declarations alone never select it.
+#[cfg(any(feature = "lang-typescript", test))]
 fn is_typescript_declaration_name(name: &str) -> bool {
     [".d.ts", ".d.mts", ".d.cts"]
         .iter()
@@ -179,10 +199,12 @@ fn is_typescript_declaration_name(name: &str) -> bool {
 
 /// Whether a root source-directory marker contains detectable TypeScript
 /// source. Presence-only; the bound value is this boolean.
+#[cfg(any(feature = "lang-typescript", test))]
 pub(crate) fn source_dir_contains_detectable_typescript(root: &Path, marker: &str) -> bool {
     dir_contains_typescript_source(&root.join(marker))
 }
 
+#[cfg(any(feature = "lang-typescript", test))]
 fn dir_contains_typescript_source(dir: &Path) -> bool {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return false;
