@@ -212,10 +212,11 @@ Test discovery:
   visits (#10829): its canonical target is a listable directory inside the
   canonical root with no excluded component (`.tools/skills ->
   ../.agent/skills`), so its files are indexed at their real path, unless an
-  indexed file has a relative `./` or `../` path token (quoting and comments ignored) that resolves through the link
-  (`../alias/sum` with `alias -> src`): that import names a path the walk never
-  indexes, so the alias is counted (an unreadable or oversized indexed file
-  counts as importing). A directory link that leaves the root, points into an excluded directory or at a
+  indexed file's text names the link as a path component (`/<link name>` not
+  continued by another name character, quoting and comments ignored:
+  `../alias/sum` with `alias -> src`, `'../my lib/sum'`): that import names a
+  path the walk never indexes, so the alias is counted (an unreadable or
+  oversized indexed file counts as naming one). A directory link that leaves the root, points into an excluded directory or at a
   directory the walk cannot list, a source-named link, a dangling link and a
   link whose target cannot be read stay counted.
 - a file named `*.d.ts`, `*.d.mts` or `*.d.cts` is parsed as a TypeScript

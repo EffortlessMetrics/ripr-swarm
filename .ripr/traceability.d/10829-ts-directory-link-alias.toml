@@ -8,5 +8,6 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/discovery.rs::tests::discovery_counts_an_alias_of_a_directory_it_cannot_list",
   "crates/ripr/src/analysis/language/typescript/discovery.rs::tests::discovery_counts_an_alias_that_an_indexed_file_imports_through",
   "crates/ripr/src/analysis/language/typescript/discovery.rs::tests::discovery_counts_an_alias_whose_name_has_shell_characters",
+  "crates/ripr/src/analysis/language/typescript/discovery.rs::tests::discovery_counts_an_alias_whose_name_has_a_space_only_when_imported",
   "crates/ripr/src/analysis/language/typescript/repo_tests.rs::an_alias_imported_through_keeps_repo_mode_partial_but_a_direct_import_does_not",
 ]

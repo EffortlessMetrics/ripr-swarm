@@ -294,11 +294,21 @@ pub(crate) fn visit_workspace_with_handwritten(
 /// bigger file cannot be shown free of one, so it counts as traversing.
 const ALIAS_IMPORT_SCAN_MAX_BYTES: u64 = 4 * 1024 * 1024;
 
-/// `true` when an indexed file has a relative path token that resolves,
-/// lexically, to or below the alias link. The import then names the link
-/// path, which the walk never indexes, so the link hides the module the
-/// import means; an unread or oversized file fails closed.
+/// `true` when an indexed file may name a path through the alias link.
+///
+/// The check is a raw-text search for the link's own name as a path
+/// component (`/<name>` not continued by another name character), so no
+/// quoting, comment, escape or filename-character rule decides it:
+/// `'../my lib/lib'`, `"../a$b/sum"` and `/* " */ import ... "../alias/sum"`
+/// all match. It over-counts (a string mentioning `/name`, or a different
+/// directory with the same name) and never claims an unused alias from
+/// text it could not read: an unreadable or oversized indexed file counts
+/// as naming one.
 fn any_file_imports_through(root: &Path, files: &[PathBuf], alias: &Path) -> bool {
+    let Some(name) = alias.file_name().and_then(|name| name.to_str()) else {
+        return true;
+    };
+    let needle = format!("/{name}");
     files.iter().any(|file| {
         let full = root.join(file);
         let Ok(metadata) = std::fs::metadata(&full) else {
@@ -310,60 +320,15 @@ fn any_file_imports_through(root: &Path, files: &[PathBuf], alias: &Path) -> boo
         let Ok(text) = std::fs::read_to_string(&full) else {
             return true;
         };
-        let dir = file.parent().unwrap_or(Path::new(""));
-        relative_path_tokens(&text)
-            .into_iter()
-            .any(|specifier| lexically_resolve(dir, specifier).starts_with(alias))
+        text.match_indices(&needle).any(|(start, _)| {
+            text[start + needle.len()..]
+                .chars()
+                .next()
+                .is_none_or(|next| {
+                    !(next.is_alphanumeric() || matches!(next, '_' | '-' | '$' | '@'))
+                })
+        })
     })
-}
-
-/// Every token that begins `./` or `../`, where a token runs until
-/// whitespace or a character that can only delimit a specifier or
-/// expression (quotes, brackets, `,` `;` `<` `>` `=` `|` `&`).
-///
-/// The scan deliberately ignores quoting, comments and escapes: a comment
-/// quote before a real import (`/* " */ import ... from "../alias/sum"`)
-/// cannot hide the specifier. Any other character, including `$`, stays in
-/// the token, so a link named `a$b` is matched by its real spelling; a
-/// spelling the parser would reject is only ever over-counted.
-fn relative_path_tokens(text: &str) -> Vec<&str> {
-    text.split(|c: char| {
-        c.is_whitespace()
-            || matches!(
-                c,
-                '\'' | '"'
-                    | '`'
-                    | '('
-                    | ')'
-                    | '['
-                    | ']'
-                    | '{'
-                    | '}'
-                    | ','
-                    | ';'
-                    | '<'
-                    | '>'
-                    | '='
-                    | '|'
-                    | '&'
-            )
-    })
-    .filter(|token| token.starts_with("./") || token.starts_with("../"))
-    .collect()
-}
-
-fn lexically_resolve(dir: &Path, specifier: &str) -> PathBuf {
-    let mut resolved = dir.to_path_buf();
-    for part in specifier.split('/') {
-        match part {
-            "" | "." => {}
-            ".." => {
-                resolved.pop();
-            }
-            other => resolved.push(other),
-        }
-    }
-    resolved
 }
 
 /// `true` when the symlink at `path` hides nothing the walk would index.
@@ -1004,6 +969,33 @@ mod tests {
             "import { sum } from '../a$b/sum';\ntest('s', () => { expect(sum).toBe(1); });\n",
         );
         symlink("src", workspace.0.join("a$b"))?;
+        let scan =
+            visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        assert_eq!(scan.skipped_links, 1, "{:?}", scan.files);
+        Ok(())
+    }
+
+    /// A space in the alias name is ordinary import spelling: `'../my lib/sum'`
+    /// is matched, and the same alias with no importer is not counted.
+    #[cfg(unix)]
+    #[test]
+    fn discovery_counts_an_alias_whose_name_has_a_space_only_when_imported() -> std::io::Result<()>
+    {
+        use std::os::unix::fs::symlink;
+        let workspace = TempWorkspace::new("link-alias-space");
+        workspace.write("src/sum.ts", "export const sum = 1;\n");
+        workspace.write(
+            "tests/sum.test.ts",
+            "import { sum } from '../src/sum';\ntest('s', () => { expect(sum).toBe(1); });\n",
+        );
+        symlink("src", workspace.0.join("my lib"))?;
+        let scan =
+            visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        assert_eq!(scan.skipped_links, 0, "{:?}", scan.files);
+        workspace.write(
+            "tests/sum.test.ts",
+            "import { sum } from '../my lib/sum';\ntest('s', () => { expect(sum).toBe(1); });\n",
+        );
         let scan =
             visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
         assert_eq!(scan.skipped_links, 1, "{:?}", scan.files);
