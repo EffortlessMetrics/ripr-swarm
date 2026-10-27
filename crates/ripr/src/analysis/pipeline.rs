@@ -2834,7 +2834,10 @@ fn is_excluded_from_preview_analysis(
     }
 }
 
-#[cfg(feature = "lang-typescript")]
+/// Whether the TypeScript/JS adapter's generated-name and excluded-directory
+/// authorities refuse `path`. The authorities are real in every feature lane
+/// (like the Python ones), so the diff-scope guard measures the same admitted
+/// diff in a rust-only build as in a full build (#10730).
 fn is_excluded_from_typescript_preview_analysis(
     path: &std::path::Path,
     handwritten: &[String],
@@ -2842,14 +2845,6 @@ fn is_excluded_from_typescript_preview_analysis(
     crate::config::is_detectable_generated_typescript_path(path)
         || (crate::config::is_detectable_excluded_typescript_path(path)
             && !crate::config::is_declared_handwritten_typescript_path(handwritten, path))
-}
-
-#[cfg(not(feature = "lang-typescript"))]
-fn is_excluded_from_typescript_preview_analysis(
-    _path: &std::path::Path,
-    _handwritten: &[String],
-) -> bool {
-    false
 }
 
 #[cfg(feature = "lang-typescript")]
