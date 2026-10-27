@@ -1060,10 +1060,11 @@ fn git_changed_files(root: &Path, rev: &str) -> Result<Vec<String>, String> {
     // Raw NUL-delimited inventory (#4006): `-z` output is never C-quoted,
     // so exotic names survive byte-exact; parsing rules come from the
     // shared authority in `decode_changed_files`, not from line splitting
-    // here. The spawn site is unchanged (gate-runner policy entry).
+    // here. Keep both sides of renames: the removed path can select checks
+    // that the destination does not. The spawn site is unchanged.
     let output = std::process::Command::new("git")
         .current_dir(root)
-        .args(["diff", "--name-only", "-z", rev])
+        .args(["diff", "--no-renames", "--name-only", "-z", rev])
         .output()
         .map_err(|err| format!("git diff --name-only failed: {err}"))?;
     if !output.status.success() {
@@ -1117,6 +1118,10 @@ fn check_fast_selector_failure_report(error: &str) -> String {
         "# check-fast report\n\nStatus: instrument_failure\n\nSelector: failed\nBase: origin/main\n\nError: {error}\n\nRemediation: run `git fetch origin main` and retry `cargo xtask check-fast`.\n"
     )
 }
+
+#[cfg(test)]
+#[path = "tests/check_fast_renames.rs"]
+mod check_fast_rename_tests;
 
 #[cfg(test)]
 mod check_fast_selector_tests {
