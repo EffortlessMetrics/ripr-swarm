@@ -623,15 +623,44 @@ fn is_should_panic(test: &TestSummary) -> bool {
     })
 }
 
-/// Whether an identifier of the owner's signature or the changed expression
-/// names a type with a non-plain `Drop` impl in the workspace.
+/// Whether the owner's signature or the changed expression may name a type
+/// with a non-plain `Drop` impl. Fails closed: `Self` is read as the impl's
+/// self type (withheld when the owner's impl is not established), a type alias
+/// is not resolved so it withholds, and a workspace whose sources hold a macro
+/// or an outside-crate item (which may generate a `Drop` impl) calls no type
+/// plain.
 fn names_non_plain_drop_type(owner: &FunctionSummary, expression: &str, index: &RustIndex) -> bool {
     let body: &str = &owner.body;
     let signature = body.find('{').map_or(body, |open| &body[..open]);
     format!("{signature}\n{expression}")
         .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
         .filter(|word| word.starts_with(|ch: char| ch.is_ascii_uppercase()))
-        .any(|word| !crate::analysis::classify::drop_is_plain(index, word))
+        .any(|word| {
+            let word = if word == "Self" {
+                match &owner.impl_context {
+                    FunctionImplContext::Impl { self_type } => self_type.as_str(),
+                    _ => return true,
+                }
+            } else {
+                word
+            };
+            type_alias_declared(index, word)
+                || !crate::analysis::classify::drop_is_plain_in_closed_sources(index, word)
+        })
+}
+
+/// Whether some indexed source declares `type <name>` (an alias or an
+/// associated type), whose target this check does not resolve.
+fn type_alias_declared(index: &RustIndex, name: &str) -> bool {
+    let declaration = format!("type {name}");
+    index.files().iter().any(|(_, facts)| {
+        facts.source.match_indices(&declaration).any(|(at, _)| {
+            !facts.source[at + declaration.len()..]
+                .chars()
+                .next()
+                .is_some_and(|ch| ch.is_alphanumeric() || ch == '_')
+        })
+    })
 }
 
 /// Whether `expression` is a struct literal (`Config { .. }`, possibly

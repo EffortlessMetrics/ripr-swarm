@@ -653,3 +653,16 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — error_variant_boxed_wrapper_downcast_witness (48)
+
+Reason:
+RIPR-SPEC-0122: #10859 a workspace holding a macro or outside-crate item may generate a Drop impl no scan reads, so the return-value start is withheld
+
+Command:
+`cargo xtask goldens bless error_variant_boxed_wrapper_downcast_witness --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

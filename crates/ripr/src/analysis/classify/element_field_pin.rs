@@ -157,21 +157,27 @@ const ITERATION_METHODS: &[&str] = &["iter", "into_iter", "any"];
 /// local or inherent function, none of which a method call on an array or a
 /// slice iterator can reach.
 fn iteration_is_closed(index: &RustIndex) -> bool {
-    closed_field_workspace(index, ITERATION_METHODS)
+    closed_field_workspace(index, ITERATION_METHODS, true)
 }
 
 /// Shared primitive-field closure premise. Scalar field projection does not
 /// invoke iteration methods; the existing array observer keeps its method list.
 pub(super) fn field_workspace_is_closed(index: &RustIndex) -> bool {
-    closed_field_workspace(index, &[])
+    closed_field_workspace(index, &[], true)
 }
 
-fn closed_field_workspace(index: &RustIndex, methods: &[&str]) -> bool {
+/// `manifest` demands the Cargo manifests close over path dependencies: a
+/// renamed or outside crate could bring a trait the iteration and field
+/// reads name. A `Drop` scan only needs the sources it reads to be complete
+/// (no macro, outside-crate `use` or `extern crate` that may generate an
+/// impl), so it skips the manifest premise.
+fn closed_field_workspace(index: &RustIndex, methods: &[&str], manifest: bool) -> bool {
     if !index.non_utf8_sources.is_empty()
         || !index.include_limitations.is_empty()
-        || !index
-            .member_crates
-            .is_dependency_closed(index.files().iter().map(|(path, _)| path))
+        || (manifest
+            && !index
+                .member_crates
+                .is_dependency_closed(index.files().iter().map(|(path, _)| path)))
     {
         return false;
     }
@@ -486,11 +492,24 @@ fn observes_with(
 /// The answer is a lookup in the run-scoped [`DropImplIndex`] (#9209): the
 /// corpus is parsed once per index instead of once per probe and returned
 /// record type.
-pub(in crate::analysis) fn drop_is_plain(index: &RustIndex, type_name: &str) -> bool {
+pub(super) fn drop_is_plain(index: &RustIndex, type_name: &str) -> bool {
     index
         .call_identity_memos
         .workspace_drop_impls(|| DropImplIndex::build(index))
         .is_plain(type_name)
+}
+
+/// [`drop_is_plain`] for a caller that must fail closed on an open workspace:
+/// a macro, `extern crate` or outside-crate item may generate a `Drop` impl
+/// the scan cannot read, so no type is called plain then.
+pub(in crate::analysis) fn drop_is_plain_in_closed_sources(
+    index: &RustIndex,
+    type_name: &str,
+) -> bool {
+    index
+        .call_identity_memos
+        .workspace_drop_impls(|| DropImplIndex::build(index))
+        .is_plain_in_closed_sources(type_name)
 }
 
 /// The workspace's non-plain `Drop` impls, read once per index (#9209).
@@ -502,6 +521,9 @@ pub(in crate::analysis) struct DropImplIndex {
     /// Self-type names (last path segment, generics dropped) of a `Drop`
     /// impl whose `drop` body is not empty.
     non_plain: BTreeSet<String>,
+    /// The sources hold no macro, `extern crate` or outside-crate item that
+    /// could generate a `Drop` impl this scan cannot read.
+    sources_closed: bool,
 }
 
 impl DropImplIndex {
@@ -521,7 +543,10 @@ impl DropImplIndex {
             .iter()
             .map(|source| non_plain_drop_types(source))
             .collect();
-        let mut built = Self::default();
+        let mut built = Self {
+            sources_closed: closed_field_workspace(index, &[], false),
+            ..Self::default()
+        };
         for scan in scans {
             match scan {
                 Some(types) => built.non_plain.extend(types),
@@ -529,6 +554,12 @@ impl DropImplIndex {
             }
         }
         built
+    }
+
+    /// [`Self::is_plain`], and no macro or outside-crate item could have
+    /// generated an impl the scan cannot read.
+    fn is_plain_in_closed_sources(&self, type_name: &str) -> bool {
+        self.sources_closed && self.is_plain(type_name)
     }
 
     fn is_plain(&self, type_name: &str) -> bool {

@@ -19779,3 +19779,75 @@ fn seam_evidence_keeps_equal_value_facts_from_distinct_test_files() -> Result<()
     );
     Ok(())
 }
+
+/// Whether the named owner of `source` may name a non-plain `Drop` type.
+fn may_name_non_plain_drop(source: &str, owner: &str, expression: &str) -> Result<bool, String> {
+    let index = index_from_files(&[(PathBuf::from("src/lib.rs"), source)])?;
+    let function = index
+        .functions()
+        .iter()
+        .find(|function| function.name == owner)
+        .ok_or_else(|| format!("no function `{owner}` indexed"))?;
+    Ok(names_non_plain_drop_type(function, expression, &index))
+}
+
+const EXIT_DROP: &str =
+    "impl Drop for Loud {\n    fn drop(&mut self) {\n        std::process::exit(0);\n    }\n}\n";
+const PLAIN_DROP: &str = "impl Drop for Loud {\n    fn drop(&mut self) {}\n}\n";
+
+#[test]
+fn self_return_type_resolves_to_the_impl_self_type() -> Result<(), String> {
+    let lib = |drop: &str| {
+        format!(
+            "pub struct Loud(pub u32);\n{drop}impl Loud {{\n    pub fn mk(&self, x: u32) -> Self {{\n        Self(x * 3)\n    }}\n}}\n"
+        )
+    };
+    assert!(may_name_non_plain_drop(
+        &lib(EXIT_DROP),
+        "mk",
+        "Self(x * 3)"
+    )?);
+    assert!(!may_name_non_plain_drop(
+        &lib(PLAIN_DROP),
+        "mk",
+        "Self(x * 3)"
+    )?);
+    Ok(())
+}
+
+#[test]
+fn a_type_alias_is_not_resolved_so_it_withholds() -> Result<(), String> {
+    let lib = |alias: &str, ret: &str| {
+        format!(
+            "pub struct Loud(pub u32);\n{PLAIN_DROP}{alias}pub fn mk(x: u32) -> {ret} {{\n    Loud(x)\n}}\n"
+        )
+    };
+    assert!(may_name_non_plain_drop(
+        &lib("pub type Out = Loud;\n", "Out"),
+        "mk",
+        "make(x)"
+    )?);
+    assert!(!may_name_non_plain_drop(&lib("", "Loud"), "mk", "make(x)")?);
+    Ok(())
+}
+
+#[test]
+fn an_open_workspace_calls_no_type_plain() -> Result<(), String> {
+    let lib = |extra: &str| {
+        format!(
+            "{extra}pub struct Loud(pub u32);\n{PLAIN_DROP}pub fn mk(x: u32) -> Loud {{\n    Loud(x)\n}}\n"
+        )
+    };
+    assert!(!may_name_non_plain_drop(&lib(""), "mk", "make(x)")?);
+    assert!(may_name_non_plain_drop(
+        &lib("use rand::Rng;\n"),
+        "mk",
+        "make(x)"
+    )?);
+    assert!(may_name_non_plain_drop(
+        &lib("extern crate rand;\n"),
+        "mk",
+        "make(x)"
+    )?);
+    Ok(())
+}

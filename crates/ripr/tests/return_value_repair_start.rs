@@ -632,3 +632,33 @@ fn variant_exact_error_assertion_is_not_a_repair_start() -> Result<(), String> {
     )?;
     Ok(())
 }
+
+fn loud_lib(extra: &str, ret: &str, factor: u32) -> String {
+    format!(
+        "pub struct Loud(pub u32);\nimpl Drop for Loud {{\n    fn drop(&mut self) {{}}\n}}\n{extra}fn make(n: u32) -> Loud {{\n    Loud(n)\n}}\npub fn mk(x: u32) -> {ret} {{\n    make(x * {factor})\n}}\n"
+    )
+}
+
+const LOUD_TEST: &str = "use ar::mk;\n\n#[test]\nfn t() {\n    assert!(mk(2).0 > 0);\n}\n";
+
+/// A returned type that is an alias cannot be resolved to its `Drop` status,
+/// and a workspace holding a macro may generate a `Drop` impl no scan reads:
+/// each withholds, differing from the repairable plain twin by one line.
+#[test]
+fn unresolved_alias_or_macro_workspace_is_not_a_repair_start() -> Result<(), String> {
+    assert_repair_ready(
+        "plain-drop-twin",
+        &loud_lib("", "Loud", 2),
+        &loud_lib("", "Loud", 3),
+        LOUD_TEST,
+    )?;
+    assert_no_start(
+        "alias",
+        &loud_lib("pub type Out = Loud;\n", "Out", 2),
+        &loud_lib("pub type Out = Loud;\n", "Out", 3),
+        LOUD_TEST,
+    )?;
+    let with_macro = |factor| loud_lib("macro_rules! unused {\n    () => {};\n}\n", "Loud", factor);
+    assert_no_start("macro", &with_macro(2), &with_macro(3), LOUD_TEST)?;
+    Ok(())
+}
