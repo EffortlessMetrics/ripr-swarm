@@ -294,7 +294,7 @@ pub(crate) fn visit_workspace_with_handwritten(
 /// bigger file cannot be shown free of one, so it counts as traversing.
 const ALIAS_IMPORT_SCAN_MAX_BYTES: u64 = 4 * 1024 * 1024;
 
-/// `true` when an indexed file has a relative quoted specifier that resolves,
+/// `true` when an indexed file has a relative path token that resolves,
 /// lexically, to or below the alias link. The import then names the link
 /// path, which the walk never indexes, so the link hides the module the
 /// import means; an unread or oversized file fails closed.
@@ -311,34 +311,22 @@ fn any_file_imports_through(root: &Path, files: &[PathBuf], alias: &Path) -> boo
             return true;
         };
         let dir = file.parent().unwrap_or(Path::new(""));
-        quoted_relative_specifiers(&text)
+        relative_path_tokens(&text)
             .into_iter()
             .any(|specifier| lexically_resolve(dir, specifier).starts_with(alias))
     })
 }
 
-/// Quoted strings that begin `./` or `../` (single, double or backtick).
-fn quoted_relative_specifiers(text: &str) -> Vec<&str> {
-    let bytes = text.as_bytes();
-    let mut found = Vec::new();
-    let mut index = 0;
-    while index < bytes.len() {
-        let quote = bytes[index];
-        if matches!(quote, b'\'' | b'"' | b'`') {
-            let start = index + 1;
-            let rest = &text[start..];
-            let len = rest
-                .find(|c: char| c == char::from(quote) || c == '\n')
-                .unwrap_or(rest.len());
-            let candidate = &rest[..len];
-            if candidate.starts_with("./") || candidate.starts_with("../") {
-                found.push(candidate);
-            }
-            index = start + len;
-        }
-        index += 1;
-    }
-    found
+/// Every maximal run of path characters that begins `./` or `../`.
+///
+/// The scan deliberately ignores quoting, comments and escapes: a comment
+/// quote before a real import (`/* " */ import ... from "../alias/sum"`)
+/// cannot hide the specifier, and a spelling the parser would reject is only
+/// ever over-counted, never missed.
+fn relative_path_tokens(text: &str) -> Vec<&str> {
+    text.split(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '.' | '/' | '_' | '-' | '@')))
+        .filter(|token| token.starts_with("./") || token.starts_with("../"))
+        .collect()
 }
 
 fn lexically_resolve(dir: &Path, specifier: &str) -> PathBuf {
@@ -948,7 +936,32 @@ mod tests {
             "tests/sum.test.ts",
             "import { sum } from '../alias/sum';\ntest('s', () => { expect(sum).toBe(1); });\n",
         );
-        symlink("../src", workspace.0.join("alias"))?;
+        symlink("src", workspace.0.join("alias"))?;
+        assert_eq!(
+            std::fs::canonicalize(workspace.0.join("alias"))?,
+            std::fs::canonicalize(workspace.0.join("src"))?,
+            "the alias must resolve to the real indexed directory, not dangle"
+        );
+        let scan =
+            visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        assert!(scan.files.iter().any(|file| file.ends_with("src/sum.ts")));
+        assert_eq!(scan.skipped_links, 1, "{:?}", scan.files);
+
+        // Control: the same real alias that nothing imports through is not
+        // counted, so the count above comes from the import scan alone.
+        workspace.write(
+            "tests/sum.test.ts",
+            "import { sum } from '../src/sum';\ntest('s', () => { expect(sum).toBe(1); });\n",
+        );
+        let scan =
+            visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        assert_eq!(scan.skipped_links, 0, "{:?}", scan.files);
+
+        // A comment quote before the real import must not hide it.
+        workspace.write(
+            "tests/sum.test.ts",
+            "/* \" */ import { sum } from \"../alias/sum\";\ntest('s', () => {});\n",
+        );
         let scan =
             visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
         assert_eq!(scan.skipped_links, 1, "{:?}", scan.files);

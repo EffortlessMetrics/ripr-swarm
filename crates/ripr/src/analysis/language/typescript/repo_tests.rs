@@ -557,3 +557,43 @@ fn real_analyze_repo_output_flows_into_the_outcome_verbatim() -> Result<(), Stri
     );
     Ok(())
 }
+
+/// An alias an indexed test imports through (`../alias/sum`, `alias -> src`)
+/// names a path the walk never indexes, so repo mode stays partial (#10829);
+/// the same alias with only a direct-path import is not disclosed.
+#[cfg(unix)]
+#[test]
+fn an_alias_imported_through_keeps_repo_mode_partial_but_a_direct_import_does_not()
+-> Result<(), String> {
+    let root = ts_unique_tempdir("repo-alias-import")?;
+    ts_write_file(&root.join("src/sum.ts"), TS_SRC)?;
+    ts_write_file(
+        &root.join("tests/sum.test.ts"),
+        "/* \" */ import { sum } from \"../alias/sum\";\ntest('s', () => { expect(sum).toBe(1); });\n",
+    )?;
+    if std::os::unix::fs::symlink("src", root.join("alias")).is_err() {
+        let _ = std::fs::remove_dir_all(&root);
+        return Ok(());
+    }
+    let through = run(&root, 800);
+    ts_write_file(
+        &root.join("tests/sum.test.ts"),
+        "import { sum } from '../src/sum';\ntest('s', () => { expect(sum).toBe(1); });\n",
+    )?;
+    let direct = run(&root, 800);
+    let _ = std::fs::remove_dir_all(&root);
+    let through_reason = through?
+        .partial_reason
+        .ok_or("an import through the alias must keep the run partial")?;
+    assert!(
+        through_reason.contains("typescript_repo_links_skipped:"),
+        "{through_reason}"
+    );
+    assert!(
+        direct?
+            .partial_reason
+            .is_none_or(|reason| !reason.contains("typescript_repo_links_skipped:")),
+        "a direct-path import never traverses the alias"
+    );
+    Ok(())
+}
