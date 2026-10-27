@@ -309,10 +309,10 @@ pub(crate) fn render_finding_digest_with_config(
             "      discriminator = assertion distinguishes intended from wrong behavior\n",
             "    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;\n",
             "      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused\n",
-            "    Summary terms: changed behavior = one change point ripr checked; well tested = tests appear to notice it fully;\n",
-            "      loosely tested = tests notice it only partly; reached but unnoticed = tests reach it but nothing appears to notice;\n",
+            "    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;\n",
+            "      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;\n",
             "      no test path = no test path found; unclear = analysis limited, not a verdict;\n",
-            "      reported = shown for review; suppressed by your settings = hidden by your suppression policy;\n",
+            "      found = listed for review; suppressed by your settings = hidden by your suppression policy;\n",
             "      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers\n",
         ));
         for line in evidence.iter().take(2) {

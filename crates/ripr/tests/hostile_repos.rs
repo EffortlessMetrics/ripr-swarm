@@ -673,7 +673,9 @@ fn submodule_ignore_settings_cannot_hide_pointer_changes() -> Result<(), String>
                     return Err(format!("wrong changed behavior: {finding}"));
                 }
             }
-        } else if !summary_line(&ran).starts_with(&format!("Summary: {expected_count} probe")) {
+        } else if !summary_line(&ran)
+            .starts_with(&format!("Summary: {expected_count} changed behavior"))
+        {
             return Err(format!("unexpected human summary: {}", ran.stdout));
         }
         Ok(())

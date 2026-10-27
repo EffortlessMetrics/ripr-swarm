@@ -98,8 +98,8 @@ Hidden:                                    (only when N > 0)
   Machine data: rerun with --format json
 ```
 
-The Summary names how many findings are reported and how many the reader's
-suppression policy removed (`N reported, M suppressed by your settings`),
+The Summary names how many findings were found and how many the reader's
+suppression policy removed (`N found, M suppressed by your settings`),
 disclosing the suppressed remainder; the word is never "shown" and never
 "hidden", because the bounded digest renders exactly one finding and the
 `Hidden:` block below names the rest (#10691). `human-full` keeps the
@@ -112,8 +112,8 @@ needs the internal vocabulary: `State: a test gap to inspect or repair`,
 `Analysis outcome: findings below (analysis complete)`, the digest line
 `Static exposure: weak (severity: warning, confidence 0.92)`, the `Hidden:`
 bullets' plain class words, and a summary that names classes in plain words
-(`Summary: 4 changed behaviors checked: 0 well tested, 2 loosely tested, 1
-reached but unnoticed, 1 no test path. 4 reported, 0 suppressed by your
+(`Summary: 4 changed behaviors checked: 0 appear noticed by tests, 2 partly noticed, 1
+reached but not noticed, 1 no test path. 4 found, 0 suppressed by your
 settings`; with zero changed behaviors, `Summary: 0 changed behaviors checked`, never
 "nothing to check", because a skipped language makes the run incomplete). The three unknown classes share the one plain word `unclear` and sum
 into a single bucket named only when non-zero. Limitation lines on this
@@ -196,10 +196,10 @@ decisive stages behind a remainder count (#4324):
       discriminator = assertion distinguishes intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
-    Summary terms: changed behavior = one change point ripr checked; well tested = tests appear to notice it fully;
-      loosely tested = tests notice it only partly; reached but unnoticed = tests reach it but nothing appears to notice;
+    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
       no test path = no test path found; unclear = analysis limited, not a verdict;
-      reported = shown for review; suppressed by your settings = hidden by your suppression policy;
+      found = listed for review; suppressed by your settings = hidden by your suppression policy;
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
 ```
 
@@ -208,9 +208,9 @@ digest, including an exposed finding when selected. It explains static evidence,
 not execution or test adequacy. `weak` means partial evidence across the stages,
 and `no` means evidence was not found, never that a behavior is impossible.
 The `Summary terms` lines define the words the `Summary:` count line prints
-(changed behavior, well tested, loosely tested, reached but unnoticed, no test
-path) in the same static vocabulary (#9244 item 4); its last lines also define
-`reported`, `suppressed by your settings`, the `unclear` bucket, `base-side`
+(changed behavior, appear noticed by tests, partly noticed, reached but not noticed,
+no test path) in the same static vocabulary (#9244 item 4); its last lines also define
+`found`, `suppressed by your settings`, the `unclear` bucket, `base-side`
 and the Counts line's `candidate line` (#9244 item 4 leftovers, #10691). They claim no runtime mutation outcome.
 No legend renders when there is no selected digest (empty, all-suppressed,
 base-side-only, or unresolved-currentness-only findings). The legend adds a fixed

@@ -251,7 +251,7 @@ pub(crate) fn render_bounded_with_config_and_navigation(
     render_partial_scope_disclosure(&mut out, output);
 
     if output.findings.is_empty() {
-        out.push_str("No changed behavior was found in this diff for ripr to check.\n");
+        out.push_str("No findings: ripr checked no changed behavior.\n");
         if output.no_scope_provided {
             let triage = triage::select_human_triage(output, config);
             triage::render_human_triage(&mut out, &triage, output, config, drill_in, provenance);
@@ -307,7 +307,7 @@ pub(crate) fn render_full_with_config_and_navigation(
     render_partial_scope_disclosure(&mut out, output);
 
     if output.findings.is_empty() {
-        out.push_str("No changed behavior was found in this diff for ripr to check.\n");
+        out.push_str("No findings: ripr checked no changed behavior.\n");
         // RIPR-SPEC-0083: disclose when no analysis scope was provided
         // (#4012: or when the established range is empty — the note then
         // names the compared base instead of claiming no scope).
@@ -475,27 +475,39 @@ fn render_header_summary(output: &CheckOutput, config: &RiprConfig, plain: bool)
     let base_side = base_side_summary_note(output);
     if plain {
         // #8165 / #10691: plain words only, no schema tokens and no internal
-        // nouns (probe, finding, unsuppressed). The three unknown classes share
+        // nouns (probe, finding, unsuppressed). `found` (never `shown` or
+        // `reported`, per the #5017 rule above: the bounded digest renders one
+        // finding) counts the unsuppressed findings. The three unknown classes share
         // the one plain word `unclear`, so their counts sum into one bucket
         // named only when non-zero. The numbers are the same producer counts;
         // only the words changed.
         let s = &output.summary;
         if s.probes == 0 {
-            out.push_str("Summary: 0 changed behaviors checked\n\n");
+            // Counts are shown only when a caller supplied findings or
+            // suppression data without probes (never from the analysis
+            // pipeline, where findings derive from probes).
+            let counts = if unsuppressed > 0 || suppressed > 0 {
+                format!(". {unsuppressed} found, {suppressed} suppressed by your settings")
+            } else {
+                String::new()
+            };
+            out.push_str(&format!(
+                "Summary: 0 changed behaviors checked{counts}{base_side}\n\n"
+            ));
         } else {
             let unknown = s
                 .infection_unknown
                 .saturating_add(s.propagation_unknown)
                 .saturating_add(s.static_unknown);
             let mut classes = format!(
-                "{} well tested, {} loosely tested, {} reached but unnoticed, {} no test path",
+                "{} appear noticed by tests, {} partly noticed, {} reached but not noticed, {} no test path",
                 s.exposed, s.weakly_exposed, s.reachable_unrevealed, s.no_static_path,
             );
             if unknown > 0 {
                 classes.push_str(&format!(", {unknown} unclear"));
             }
             out.push_str(&format!(
-                "Summary: {} changed {} checked: {}. {} reported, {} suppressed by your settings{base_side}\n\n",
+                "Summary: {} changed {} checked: {}. {} found, {} suppressed by your settings{base_side}\n\n",
                 s.probes,
                 if s.probes == 1 { "behavior" } else { "behaviors" },
                 classes,
@@ -1349,9 +1361,9 @@ mod tests {
         // bounded summary uses plain words, sums the unknown classes into
         // one `unknown` bucket, and keeps the unsuppressed/total denominator.
         assert!(rendered.contains(
-            "Summary: 8 changed behaviors checked: 1 well tested, 2 loosely tested, 1 reached but unnoticed, 1 no test path, 3 unclear. 0 reported, 0 suppressed by your settings"
+            "Summary: 8 changed behaviors checked: 1 appear noticed by tests, 2 partly noticed, 1 reached but not noticed, 1 no test path, 3 unclear. 0 found, 0 suppressed by your settings"
         ));
-        assert!(rendered.contains("No changed behavior was found in this diff for ripr to check."));
+        assert!(rendered.contains("No findings: ripr checked no changed behavior."));
         assert!(!rendered.contains("Next:"));
     }
 
@@ -1874,7 +1886,7 @@ mod tests {
         let rendered = render(&output);
 
         assert!(
-            rendered.contains("Summary: 9 changed behaviors checked: 0 well tested, 0 loosely tested, 0 reached but unnoticed, 0 no test path, 9 unclear. 9 reported, 0 suppressed by your settings"),
+            rendered.contains("Summary: 9 changed behaviors checked: 0 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 0 no test path, 9 unclear. 9 found, 0 suppressed by your settings"),
             "bounded summary must sum the unknown classes in plain words; got:\n{rendered}"
         );
         for token in ["infection_unknown", "propagation_unknown", "static_unknown"] {
@@ -1941,7 +1953,7 @@ mod tests {
         let rendered = render(&output);
 
         assert!(
-            rendered.contains("1 reported, 1 suppressed by your settings"),
+            rendered.contains("1 found, 1 suppressed by your settings"),
             "the denominator must disclose the suppressed remainder; got:\n{rendered}"
         );
     }
@@ -1992,8 +2004,8 @@ mod tests {
 
         assert!(
             rendered.contains(
-                "Summary: 7 changed behaviors checked: 1 well tested, 2 loosely tested, 3 reached but unnoticed, 4 no test path, 18 unclear. \
-                 7 reported, 0 suppressed by your settings"
+                "Summary: 7 changed behaviors checked: 1 appear noticed by tests, 2 partly noticed, 3 reached but not noticed, 4 no test path, 18 unclear. \
+                 7 found, 0 suppressed by your settings"
             ),
             "bounded header must name every class in plain words; got:\n{rendered}"
         );
@@ -3129,7 +3141,7 @@ mod tests {
         let rendered = render(&bounded_output_with_findings(findings));
 
         assert!(
-            rendered.contains("3 reported, 0 suppressed by your settings"),
+            rendered.contains("3 found, 0 suppressed by your settings"),
             "header denominator must count unsuppressed findings; got:\n{rendered}"
         );
         assert!(
@@ -3812,7 +3824,7 @@ mod tests {
         // a concrete diff scope or whole-repository pilot exploration.
         assert!(rendered.contains("`ripr check --base BASE`"));
         assert!(rendered.contains("`ripr pilot --root .`"));
-        assert!(rendered.contains("No changed behavior was found in this diff for ripr to check."));
+        assert!(rendered.contains("No findings: ripr checked no changed behavior."));
     }
 
     /// #8165: the bounded (default) render leaks no schema token, while
@@ -7332,13 +7344,13 @@ mod tests {
             "not applicable = stage unused",
             // #9244 item 4: the words the Summary count line prints.
             "changed behavior = one change point ripr checked",
-            "well tested = tests appear to notice it fully",
-            "loosely tested = tests notice it only partly",
-            "reached but unnoticed = tests reach it but nothing appears to notice",
+            "appear noticed by tests = a test appears to notice the change",
+            "partly noticed = tests appear to notice it only partly",
+            "reached but not noticed = tests reach it but nothing appears to notice",
             "no test path = no test path found",
             // #9244 item 4 (leftover jargon): the remaining words the Summary
             // and Counts lines print.
-            "reported = shown for review",
+            "found = listed for review",
             "suppressed by your settings = hidden by your suppression policy",
             "unclear = analysis limited, not a verdict",
             "base-side = evidence from the old code, not an edit target",

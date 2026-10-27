@@ -3,7 +3,7 @@ mode: fast
 root: fixtures/python_same_stem_sibling_owner_not_related/input
 config: <cwd>/fixtures/python_same_stem_sibling_owner_not_related/input/ripr.toml
 
-Summary: 4 changed behaviors checked: 0 well tested, 1 loosely tested, 0 reached but unnoticed, 3 no test path. 4 reported, 0 suppressed by your settings
+Summary: 4 changed behaviors checked: 0 appear noticed by tests, 1 partly noticed, 0 reached but not noticed, 3 no test path. 4 found, 0 suppressed by your settings
 
 Changed file(s) by language: python = 1
 
@@ -36,10 +36,10 @@ Start here:
       discriminator = assertion distinguishes intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
-    Summary terms: changed behavior = one change point ripr checked; well tested = tests appear to notice it fully;
-      loosely tested = tests notice it only partly; reached but unnoticed = tests reach it but nothing appears to notice;
+    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
       no test path = no test path found; unclear = analysis limited, not a verdict;
-      reported = shown for review; suppressed by your settings = hidden by your suppression policy;
+      found = listed for review; suppressed by your settings = hidden by your suppression policy;
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: 2 related Python test(s) found for owner `discounted_total`
     - infection weak: Related tests reach the changed predicate, but no strong related test call places an input at the changed boundary

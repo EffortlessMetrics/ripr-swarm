@@ -2,7 +2,7 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/currentness_matrix_tail/input
 
-Summary: 3 changed behaviors checked: 0 well tested, 0 loosely tested, 0 reached but unnoticed, 3 no test path. 3 reported, 0 suppressed by your settings (3 base-side evidence, not candidate edit targets)
+Summary: 3 changed behaviors checked: 0 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 3 no test path. 3 found, 0 suppressed by your settings (3 base-side evidence, not candidate edit targets)
 
 Analysis outcome: findings below (analysis complete)
   Counts: 1 changed file(s), 5 changed line(s), 1 candidate line(s), 3 changed behavior(s) checked, 3 finding(s)

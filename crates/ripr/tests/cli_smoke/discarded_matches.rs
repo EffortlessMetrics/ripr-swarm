@@ -33,10 +33,10 @@ const BOUNDED_EVIDENCE_LEGEND: &str = concat!(
     "      discriminator = assertion distinguishes intended from wrong behavior\n",
     "    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;\n",
     "      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused\n",
-    "    Summary terms: changed behavior = one change point ripr checked; well tested = tests appear to notice it fully;\n",
-    "      loosely tested = tests notice it only partly; reached but unnoticed = tests reach it but nothing appears to notice;\n",
+    "    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;\n",
+    "      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;\n",
     "      no test path = no test path found; unclear = analysis limited, not a verdict;\n",
-    "      reported = shown for review; suppressed by your settings = hidden by your suppression policy;\n",
+    "      found = listed for review; suppressed by your settings = hidden by your suppression policy;\n",
     "      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers\n",
 );
 
@@ -122,11 +122,69 @@ fn bounded_legend_capture_projection_is_exact_and_preserves_evidence() -> Result
     Ok(())
 }
 
+/// Project a Summary line, in the historical or the plain-language spelling,
+/// onto one canonical form that still carries every count: changed behaviors,
+/// the five class buckets, and the reported / total findings. A count
+/// regression on either side still fails the byte comparison.
+fn canonical_summary(line: &str) -> String {
+    let ints = |text: &str| -> Vec<u64> {
+        text.split(|c: char| !c.is_ascii_digit())
+            .filter(|part| !part.is_empty())
+            .filter_map(|part| part.parse().ok())
+            .collect()
+    };
+    let canonical = |behaviors: u64, buckets: [u64; 5], reported: u64, total: u64| {
+        format!(
+            "Summary: behaviors={behaviors} buckets={buckets:?} reported={reported} total={total}\n"
+        )
+    };
+    let body = line.trim_end_matches('\n');
+    // Historical human-full / current human-full: tokens unchanged.
+    if body.contains("reachable_unrevealed") {
+        let head =
+            body.replacen("probe(s), ", "", 1)
+                .replacen("changed behavior(s) checked: ", "", 1);
+        return format!("{head}\n");
+    }
+    if body.contains("probes analyzed") {
+        let n = ints(body);
+        return canonical(0, [0; 5], n[1], n[1]);
+    }
+    if body.contains("changed behaviors checked") && !body.contains(" found") {
+        return canonical(0, [0; 5], 0, 0);
+    }
+    if body.contains("unsuppressed") {
+        // Historical bounded: `N probe(s) (a exposed, b weak, c unrevealed, d no path[, e unknown]); x of y ...`
+        let head = body.split("unsuppressed").next().unwrap_or(body);
+        let n = ints(head);
+        let has_unknown = head.contains(" unknown");
+        let (buckets, tail) = if has_unknown {
+            ([n[1], n[2], n[3], n[4], n[5]], &n[6..])
+        } else {
+            ([n[1], n[2], n[3], n[4], 0], &n[5..])
+        };
+        return canonical(n[0], buckets, tail[0], tail[1]);
+    }
+    // Current bounded: `N changed behavior(s) checked: a ..., d no test path[, e unclear]. x found, z suppressed by your settings`
+    let head = body
+        .split("suppressed by your settings")
+        .next()
+        .unwrap_or(body);
+    let n = ints(head);
+    let has_unclear = head.contains(" unclear");
+    let (buckets, tail) = if has_unclear {
+        ([n[1], n[2], n[3], n[4], n[5]], &n[6..])
+    } else {
+        ([n[1], n[2], n[3], n[4], 0], &n[5..])
+    };
+    canonical(n[0], buckets, tail[0], tail[0] + tail[1])
+}
+
 /// Neutralize the human wording that #10691 moved to plain language, on BOTH
 /// the current output and the hash-bound historical capture (whose bytes must
-/// not change). Only renderer-owned labels and the Summary line are replaced
-/// by fixed slots; every other line, and the byte-exact `check.json`
-/// comparison that owns the counts and classes, is untouched.
+/// not change). Only renderer-owned labels are replaced by fixed slots; the
+/// Summary keeps every count in a canonical form, and every other line and
+/// the byte-exact `check.json` comparison are untouched.
 fn neutralize_plain_language_wording(bytes: &[u8]) -> Vec<u8> {
     let text = String::from_utf8_lossy(bytes);
     let mut out = String::new();
@@ -153,7 +211,7 @@ fn neutralize_plain_language_wording(bytes: &[u8]) -> Vec<u8> {
             }
         }
         if line.starts_with("Summary: ") {
-            out.push_str("Summary: <counts>\n");
+            out.push_str(&canonical_summary(line));
         } else if line.starts_with("  Counts: ") {
             out.push_str(
                 &line
