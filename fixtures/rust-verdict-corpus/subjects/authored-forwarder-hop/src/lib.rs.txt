@@ -153,3 +153,45 @@ impl Gate {
         self.try_shut(wanted)
     }
 }
+
+fn die<T>(_: Overflow) -> T {
+    panic!("overflow")
+}
+
+#[derive(Default)]
+pub struct Bay {
+    docked: usize,
+}
+
+impl Bay {
+    pub fn try_dock(&mut self, wanted: usize) -> Result<bool, Overflow> {
+        if wanted > 4 {
+            self.docked += 1;
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    pub fn dock(&mut self, wanted: usize) -> bool {
+        self.try_dock(wanted).unwrap_or_else(die)
+    }
+}
+
+#[derive(Default)]
+pub struct Slip {
+    slipped: usize,
+}
+
+impl Slip {
+    pub fn try_slip(&mut self, wanted: usize) -> Result<bool, Overflow> {
+        if wanted > 4 {
+            self.slipped += 1;
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    pub fn slip(&mut self, wanted: usize) -> bool {
+        self.try_slip(wanted).is_ok()
+    }
+}

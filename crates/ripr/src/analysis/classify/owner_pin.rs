@@ -41,10 +41,12 @@
 //! read its `fn` text, and an out-of-workspace trait in scope that also
 //! names the method is not detected.
 
+mod call_term_fold;
 pub(super) mod closure_adaptor;
 mod expected_binding;
 mod fallible_check;
 mod helper_arguments;
+pub(super) mod result_map;
 pub(super) mod returned_closure;
 pub(super) mod short_circuit;
 pub(in crate::analysis) use fallible_check::{FallibleCheckReceipt, fallible_check_receipt};
@@ -65,6 +67,7 @@ use crate::analysis::extract::{
 #[cfg(test)]
 use crate::analysis::facts::FileFactsView;
 use crate::analysis::facts::drop_in::DropInManifests;
+use crate::analysis::facts::expanded_assertion_view;
 use crate::analysis::facts::{
     DOCTEST_FUNCTION_NAME, ExecutionContext, FunctionContainer, ModulePathTarget,
     SourceRoleProvenanceEdgeKind,
@@ -77,8 +80,8 @@ use crate::analysis::syntax::{
     attribute_settles_test_outcome, drop_in_assertion_leaf, empty_macro_binding_ambiguities,
     err_return_guard_key, generated_test_pins, local_empty_macro_names, macro_binding_scan,
     owner_pin_assertions, parse_clean_source_file, pattern_pins, returns_leave_the_function,
-    source_binds_value_name, source_declares_value_name, trusted_macro_binding_site_sets,
-    trusted_macro_binding_sites,
+    source_binds_value_name, source_declares_value_name, source_imported_claims_macros,
+    trusted_macro_binding_site_sets, trusted_macro_binding_sites,
 };
 use crate::domain::{Probe, ProbeFamily};
 use ra_ap_syntax::{
@@ -1510,7 +1513,10 @@ impl OwnerPinSyntax {
         };
         self.by_file
             .get_or_build(&test.file, || {
-                owner_pin_assertions(&facts.source, &assertion_context_macros())
+                owner_pin_assertions(
+                    &expanded_assertion_view(&facts.source, facts.tests.iter()),
+                    &assertion_context_macros(),
+                )
             })
             .refusal_trusting_comparison_macros(
                 (test.start_line, test.end_line, &test.name),
@@ -1591,7 +1597,10 @@ impl OwnerPinSyntax {
         let file_refusal = self
             .by_file
             .get_or_build(&test.file, || {
-                owner_pin_assertions(&facts.source, &assertion_context_macros())
+                owner_pin_assertions(
+                    &expanded_assertion_view(&facts.source, facts.tests.iter()),
+                    &assertion_context_macros(),
+                )
             })
             .refusal(
                 (test.start_line, test.end_line, &test.name),
@@ -2852,7 +2861,11 @@ enum ReturnPathGate {
     /// a nonzero integer literal: from zero, a nonzero result separates the
     /// update from a flipped sign, a product, a quotient and a deleted
     /// statement.
-    LoopAccumulator { position: usize },
+    LoopAccumulator {
+        position: usize,
+        /// RIPR-SPEC-0360 call-in-term: the callee the pinned run folds through.
+        term: Option<call_term_fold::CallPin>,
+    },
     /// RIPR-SPEC-0197 rule 3: the changed tail is the owner's whole body and
     /// one pure `&&` or `||` chain over its parameters. The pinned call
     /// must evaluate every operand on some run.
@@ -3178,8 +3191,9 @@ impl OwnerReturnPin {
             changed_line,
         ) {
             Some(path) => path,
-            // RIPR-SPEC-0265 rule 2: only a changed return value that is the
-            // whole admitted adaptor tail; the test side reads the input.
+            // #9870: an exact Result.map rewrite needs an Ok pin, which
+            // establishes that its callback ran. SPEC-0265's iterator tail
+            // instead reads the pinned input on the test side.
             // This fallback implements that spec's amendment of the pin's
             // closure refusal ("a closure in the tail no longer refuses it
             // on this shape") and must stay unguarded: 0265's keeping-pair
@@ -3189,33 +3203,40 @@ impl OwnerReturnPin {
                     crate::analysis::syntax::loop_accumulator::loop_accumulator_at(
                         &owner.body,
                         changed_line,
-                    ) =>
+                    )
+                // A call term needs its owner type, or it has no pin at all.
+                && let Some(term) = call_term_fold::admit(accumulator.term.clone(), owner) =>
             {
                 ReturnPathGate::LoopAccumulator {
                     position: accumulator.walked_position,
+                    term,
                 }
             }
             None if matches!(probe.family, ProbeFamily::ReturnValue) => {
-                closure_adaptor::admitted_owner_adaptor_tail(owner, index)
-                    .filter(|tail| tail.tail_is(&probe.expression))
-                    .map(|tail| ReturnPathGate::Adaptor {
-                        position: tail.position,
-                        requires_ok: tail.collects_result(),
-                    })
-                    // RIPR-SPEC-0265 rule 5: a returned closure applied in the
-                    // pinned expression.
-                    .or_else(|| {
-                        returned_closure::owner_returned_closure_tail(owner)
-                            .filter(|tail| tail.tail_is(&probe.expression))
-                            .and_then(|tail| {
-                                Some(ReturnPathGate::ReturnedClosure {
-                                    arity: tail.arity,
-                                    arithmetic: returned_closure::ArithmeticPin::establish(
-                                        owner, index,
-                                    )?,
+                if result_map::admitted_rewrite(probe, owner, index).is_some() {
+                    ReturnPathGate::Head("Ok")
+                } else {
+                    closure_adaptor::admitted_owner_adaptor_tail(owner, index)
+                        .filter(|tail| tail.tail_is(&probe.expression))
+                        .map(|tail| ReturnPathGate::Adaptor {
+                            position: tail.position,
+                            requires_ok: tail.collects_result(),
+                        })
+                        // RIPR-SPEC-0265 rule 5: a returned closure applied in the
+                        // pinned expression.
+                        .or_else(|| {
+                            returned_closure::owner_returned_closure_tail(owner)
+                                .filter(|tail| tail.tail_is(&probe.expression))
+                                .and_then(|tail| {
+                                    Some(ReturnPathGate::ReturnedClosure {
+                                        arity: tail.arity,
+                                        arithmetic: returned_closure::ArithmeticPin::establish(
+                                            owner, index,
+                                        )?,
+                                    })
                                 })
-                            })
-                    })?
+                        })?
+                }
             }
             None => return None,
         };
@@ -4114,6 +4135,36 @@ impl OwnerReturnPin {
                                             })
                                             .map(|call| (call, true))
                                     })
+                                    // claims' `assert_ok!(call)` / `assert_some!(call)`
+                                    // yield the payload exactly as `.unwrap()` does,
+                                    // on a verified `use claims::..` import.
+                                    .or_else(|| {
+                                        let (name, call) = claims_payload_call(initializer)?;
+                                        let imported =
+                                            index.files().get(&test.file).is_some_and(|facts| {
+                                                source_imported_claims_macros(&facts.source)
+                                                    .contains(&name)
+                                            });
+                                        // The macro panics on the other variant and yields
+                                        // the payload, so only a pin on that same payload
+                                        // reads: an `Err` pin (`ErrVariant`, or a field
+                                        // gate wrapped in `Err`) is the opposite direction.
+                                        let direction = matches!(
+                                            (name, unwrap_wrapper),
+                                            ("assert_ok", Some("Ok"))
+                                                | ("assert_some", Some("Some"))
+                                        );
+                                        (direction && imported)
+                                            .then(|| {
+                                                self.awaited_call_shape(
+                                                    poll_context,
+                                                    call,
+                                                    &self.name,
+                                                )
+                                            })
+                                            .flatten()
+                                            .map(|call| (call, true))
+                                    })
                             };
                             match (bound_whole(0), bound_whole(1)) {
                                 (Some((call, unwraps)), None) => {
@@ -4409,16 +4460,35 @@ impl OwnerReturnPin {
                 }
                 // RIPR-SPEC-0360: some pinned run walks a non-empty literal
                 // sequence and pins a nonzero integer.
-                if let ReturnPathGate::LoopAccumulator { position } = path
-                    && !call_text.is_some_and(|text| {
-                        closure_adaptor::pinned_run_sums_to_nonzero(
+                if let ReturnPathGate::LoopAccumulator { position, term } = path
+                    && !call_text.is_some_and(|text| match term {
+                        None => closure_adaptor::pinned_run_sums_to_nonzero(
                             test,
                             loan.as_ref(),
                             text,
                             &self.name,
                             *position,
                             expected,
-                        )
+                        ),
+                        // Folded through the callee: the run must give the
+                        // pinned value and tell every neighbour apart.
+                        Some(term) => closure_adaptor::pinned_run_accepts(
+                            test,
+                            loan.as_ref(),
+                            text,
+                            &self.name,
+                            *position,
+                            expected,
+                            &|elements, want| {
+                                call_term_fold::pinned_run_separates(
+                                    term,
+                                    &self.owner_file,
+                                    index,
+                                    elements,
+                                    want,
+                                )
+                            },
+                        ),
                     })
                 {
                     return false;
@@ -4518,6 +4588,13 @@ impl OwnerReturnPin {
         let owner_scope =
             OwnerScope::new(self.name.as_str(), self.owner_start_line, &self.owner_file);
         let masked_body = mask_comments_and_strings(&test.body);
+        // claims' assertion macros the test's file imports from the crate
+        // (the syntax admission settles the manifest and shadowing): they
+        // evaluate their operand and bind nothing, so an owner call inside
+        // one is no rebinding.
+        let claims_macros: Vec<&str> = test_source
+            .map(source_imported_claims_macros)
+            .unwrap_or_default();
         match (&self.call, call) {
             // #7082: a cfg on the owner or an enclosing module may compile
             // a same-named `static`, `const` or `use` in its place, which
@@ -4537,7 +4614,7 @@ impl OwnerReturnPin {
                     })
                     && !test_body_shadows_owner(test, &self.name)
                     && !binds_outside_let(&masked_body, &self.name)
-                    && !bound_by_macro(&masked_body, &self.name)
+                    && !bound_by_macro_with(&masked_body, &self.name, &claims_macros)
                     && helper.as_deref().is_none_or(|helper| {
                         helper_pins_owner_call(helper, &masked_body, &self.name)
                     })
@@ -5610,6 +5687,32 @@ fn bound_owner_initializer<'a>(
     test.body.get(equals + 1..end)
 }
 
+/// The claims macro name and operand call when `operand` is exactly
+/// `assert_ok!(<call>)` or `assert_some!(<call>)`: each evaluates its operand
+/// once, panics on the other variant and yields the payload, so a passing
+/// test read the call's `Ok`/`Some` payload as `.unwrap()` would. The caller
+/// verifies the `claims` import.
+fn claims_payload_call(operand: &str) -> Option<(&'static str, &str)> {
+    let operand = operand.trim();
+    let masked = mask_comments_and_strings(operand);
+    let name = ["assert_ok", "assert_some"]
+        .into_iter()
+        .find(|name| masked.starts_with(name))?;
+    let after_bang = masked[name.len()..]
+        .trim_start()
+        .strip_prefix('!')?
+        .trim_start();
+    let open = masked.len() - after_bang.len();
+    if masked.as_bytes().get(open) != Some(&b'(') {
+        return None;
+    }
+    let close = matching_close(&masked, open, b'(', b')')?;
+    masked[close + 1..]
+        .trim()
+        .is_empty()
+        .then_some((name, operand[open + 1..close].trim()))
+}
+
 /// RIPR-SPEC-0225 decision 6: the call `operand` unwraps, when it is
 /// `<call>.unwrap()` or `<call>.expect("..")` with one plain string literal
 /// message. Both panic on `Err`/`None`, so a passing comparison of the
@@ -6348,7 +6451,14 @@ fn assertion_context_macros() -> Vec<&'static str> {
 /// verifies `use expect_test::{expect, expect_file};`, a bare one is a
 /// crate's own (a try-style `expect!(x)` may hide a `return`), so owner
 /// bodies and binding reads never count it as bounded.
-const TEST_SCOPED_TRUSTED_MACROS: &[&str] = &["expect", "expect_file"];
+const TEST_SCOPED_TRUSTED_MACROS: &[&str] = &[
+    "assert_err",
+    "assert_none",
+    "assert_ok",
+    "assert_some",
+    "expect",
+    "expect_file",
+];
 
 /// Whether a macro named `name` neither returns nor binds a name, whatever
 /// file it sits in.
@@ -8863,9 +8973,15 @@ fn is_assert_eq_over(text: &str, spelling: &str, expansion: &str) -> bool {
 /// its arguments: `let_assert!(Ok(p) = ..)` and similar macros bind
 /// patterns ripr does not read.
 fn bound_by_macro(masked: &str, name: &str) -> bool {
+    bound_by_macro_with(masked, name, &[])
+}
+
+/// [`bound_by_macro`] where the macros in `bounded` are also known to bind
+/// nothing: the caller verified their import (claims' assertion macros).
+fn bound_by_macro_with(masked: &str, name: &str, bounded: &[&str]) -> bool {
     macro_invocations(masked)
         .into_iter()
-        .filter(|(macro_name, _)| !is_bounded_macro(macro_name))
+        .filter(|(macro_name, _)| !is_bounded_macro(macro_name) && !bounded.contains(macro_name))
         .any(|(_, delimiter)| {
             let (open, close) = match masked.as_bytes()[delimiter] {
                 b'(' => (b'(', b')'),
@@ -13463,7 +13579,7 @@ pub(in crate::analysis) fn test_receiver_named_type(
 /// How many `struct`, `enum`, `union` or `type` items named `name` the
 /// workspace declares, across every module and file. The per-name table is
 /// built once per index (every file masked once), then looked up.
-fn workspace_type_name_count(name: &str, index: &RustIndex) -> usize {
+pub(super) fn workspace_type_name_count(name: &str, index: &RustIndex) -> usize {
     index
         .call_identity_memos
         .type_name_counts(|| {

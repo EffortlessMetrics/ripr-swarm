@@ -94,7 +94,9 @@ pub(in crate::analysis) use helper_transfer::{
     helper_only_reach, hop_reach_keeps_weak_oracle_gap, resolve_chain, returned_ledger,
     returned_ledger_caller_is_observed, selected_inherent_calls,
 };
-pub(in crate::analysis) use implicit_call::withhold_implicit_call_gap;
+pub(in crate::analysis) use implicit_call::{
+    withhold_destructor_credit, withhold_implicit_call_gap,
+};
 pub(in crate::analysis) use indirect_owner::withhold_indirect_owner_gap;
 pub(in crate::analysis) use infection::{
     OwnerInputs, exercised_bool_chain_return_sink, infection_evidence_for_owner,
@@ -124,7 +126,7 @@ pub(in crate::analysis) use propagation_witness::{
     owner_may_exit_before_line, retain_returned_ledger, returned_ledger_witness,
 };
 pub(in crate::analysis) use propagation_witness::{
-    constant_tail_witness, fallible_literal_witness, format_tail_witness,
+    constant_tail_witness, fallible_literal_witness, format_tail_witness, result_map_witness,
 };
 #[cfg(test)]
 pub(in crate::analysis) use reach::take_external_docs_parse_count;
@@ -137,7 +139,7 @@ pub(in crate::analysis) use related_tests::{
     DependencyEdgeContext, RelatedTestCandidateIndex, assertion_pins_display_string,
     body_contains_owner_call, call_text_may_call_free_function, changes_only_string_literals,
     declared_dependent_package_calls_owner, find_related_tests_with_candidate_index,
-    impl_self_type_name, is_partial_eq_method, manifests_with_unindexed_files,
+    impl_self_type_name, is_drop_destructor, is_partial_eq_method, manifests_with_unindexed_files,
     method_call_resolves_to_impl, module_stem, owner_call_text, owner_dispatch_trait,
     package_prefix, resolves_method_in_prefix, test_calls_free_function,
 };

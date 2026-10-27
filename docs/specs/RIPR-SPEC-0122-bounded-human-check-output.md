@@ -34,6 +34,10 @@ Linked issues:
   item 1 explains the bounded Evidence stages and conservative state words
   beside the selected finding.
 
+- [#10716](https://github.com/EffortlessMetrics/ripr-swarm/issues/10716) -
+  non-Rust stub paths receive a typed capability refusal and a manual-test
+  route before Rust analysis; also covers the language-refusal subset of #10708.
+
 Linked PRs:
 
 - [#1489](https://github.com/EffortlessMetrics/ripr-swarm/pull/1489) -
@@ -45,7 +49,7 @@ Support-tier impact:
 
 - No tier change. This spec changes the default terminal presentation for
   `ripr check --format human`; it does not change analyzer classification,
-  pass/fail authority, JSON schema, SARIF, GitHub annotations, badge output, or
+  pass/fail authority, check JSON schema, SARIF, GitHub annotations, badge output, or
   repo-exposure evidence.
 - Support-tier definitions remain governed by
   [docs/status/SUPPORT_TIERS.md](../status/SUPPORT_TIERS.md).
@@ -380,10 +384,27 @@ family has no seam in the file.
 Direct JSON stub refusals distinguish an absent selector (`seam_not_found`)
 from a suffix naming several files or disjoint same-kind seams that tie
 (`selector_ambiguous`). Both remain decisions (exit 3), with the schema
-`0.2` refused envelope on stdout, human guidance on stderr, and no stub
+`0.4` refused envelope on stdout, human guidance on stderr, and no stub
 write. Unresolved identity/disclosure fields are explicitly null and warnings
 are empty. An exact path or a suggested seam ID can select one behavior;
 nested seams remain governed by the existing nesting rule (#7762).
+
+After root and configuration admission, but before selecting seams, a direct
+`--at` path that does not route to Rust is
+refused as `unsupported_language` (#10716), with or without `--kind` and
+including under `--write`. This capability refusal makes no claim about a
+check finding's presence or exposure and does not diagnose a non-Rust file
+as malformed Rust. It names the language when recognized and an ordered
+manual route: use the finding's test file/node and verify command when
+available, add or strengthen the test by hand, run the native test command,
+then refresh with `ripr check`. It does not ask the user to re-list Rust seams.
+The new refusal spelling requires stub schema `0.4`; the field set is unchanged,
+unresolved identity/disclosure fields stay null, and warnings stay empty.
+Supported Rust, absent Rust selectors, and malformed Rust keep their distinct
+existing outcomes. No Python or TypeScript stub generator is introduced.
+Configuration failures retain exit 2 before this capability decision, including
+an unavailable Python adapter selected by automatic project detection when no
+`ripr.toml` is discovered, or a malformed `ripr.toml`.
 
 For an integration-file stub, `run_command` names the effective cargo test
 target (#8794): an explicit `[[test]]` entry for the file supplies the name,
@@ -764,6 +785,10 @@ not a head-only row and prints no note.
 - `crates/ripr/tests/observation_wording_source_literals.rs::renamed_parameter_containing_the_token_prints_as_written`
 - `crates/ripr/tests/observation_wording_source_literals.rs::ordinary_parameter_keeps_the_prose_free_of_the_raw_marker`
 - `crates/ripr/src/output/human.rs::tests::no_static_path_weakness_list_drops_restated_evidence` (a `no_static_path` finding's Weakness list and digest pointer omit the three generic entries its Evidence block already states as `no`; distinct entries and other classes are unchanged)
+- `crates/ripr/tests/agent_stub_at_disclosure.rs::non_rust_paths_refuse_before_rust_analysis_and_never_write`
+- `crates/ripr/tests/agent_stub_at_disclosure.rs::python_marker_without_config_keeps_feature_admission`
+- `crates/ripr/tests/agent_stub_at_disclosure.rs::malformed_config_precedes_non_rust_stub_refusal`
+- `crates/ripr/tests/agent_stub_at_disclosure.rs::rust_paths_keep_ready_missing_and_malformed_results`
 - `crates/ripr/tests/agent_stub_compiles.rs::kind_not_found_refusal_preserves_the_requested_probe_family`
 - `crates/ripr/tests/agent_stub_compiles.rs::kind_nearest_hint_filters_before_the_cap_and_recovers_the_error_stub`
 - `crates/ripr/tests/agent_stub_compiles.rs::kind_not_found_without_a_matching_family_suggests_no_other_seams`

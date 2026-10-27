@@ -38,12 +38,15 @@ fn ripr_command() -> Command {
     Command::new(env!("CARGO_BIN_EXE_ripr"))
 }
 
-fn stub(root: &Path, at: &str, kind: &str, json: bool) -> Result<Output, String> {
+fn stub(root: &Path, at: &str, kind: Option<&str>, json: bool) -> Result<Output, String> {
     let mut command = ripr_command();
     command
         .args(["agent", "stub", "--root"])
         .arg(root)
-        .args(["--at", at, "--kind", kind]);
+        .args(["--at", at]);
+    if let Some(kind) = kind {
+        command.args(["--kind", kind]);
+    }
     if json {
         command.arg("--json");
     }
@@ -52,12 +55,15 @@ fn stub(root: &Path, at: &str, kind: &str, json: bool) -> Result<Output, String>
         .map_err(|error| format!("spawn ripr agent stub: {error}"))
 }
 
-fn stub_write(root: &Path, at: &str, kind: &str, json: bool) -> Result<Output, String> {
+fn stub_write(root: &Path, at: &str, kind: Option<&str>, json: bool) -> Result<Output, String> {
     let mut command = ripr_command();
     command
         .args(["agent", "stub", "--root"])
         .arg(root)
-        .args(["--at", at, "--kind", kind, "--write"]);
+        .args(["--at", at, "--write"]);
+    if let Some(kind) = kind {
+        command.args(["--kind", kind]);
+    }
     if json {
         command.arg("--json");
     }
@@ -88,6 +94,276 @@ fn note_names_substitution(note: &str, requested: &str, stubbed: &str) -> Result
     }
 }
 
+/// #10716: after root/config admission, capability is decided from the selected
+/// path before Rust seam analysis, independent of --kind, JSON, or a write.
+/// Rust-looking contents under a non-Rust suffix must not bypass the gate.
+#[test]
+fn non_rust_paths_refuse_before_rust_analysis_and_never_write() -> Result<(), String> {
+    const RUST_SOURCE: &str = "pub fn value(n: u32) -> bool {\n    n > 3\n}\n";
+    let cases = [
+        ("pricing.py", "Python", "def fee(n):\n    return n * 4\n"),
+        (
+            "src/pricing.ts",
+            "TypeScript",
+            "export function fee(n: number) { return n * 4; }\n",
+        ),
+        (
+            "src/pricing.mjs",
+            "JavaScript",
+            "export function fee(n) { return n * 4; }\n",
+        ),
+        ("pricing.pm", "Perl", "sub fee { return $_[0] * 4; }\n1;\n"),
+        ("src/pricing.rs.py", "Python", RUST_SOURCE),
+        ("src/pricing.txt", "non-Rust", RUST_SOURCE),
+    ];
+    for (file, language, source) in cases {
+        // An unrelated malformed Rust file must not turn a language refusal
+        // into a Rust parse failure or require a successful Rust inventory.
+        let unrelated = "pub fn unrelated(\n";
+        let scratch = Scratch::create("non_rust_language", unrelated)?;
+        let root = &scratch.0;
+        // Configuration admission precedes stub resolution. Pin Rust so a
+        // Python-shaped path cannot select an unavailable preview adapter in
+        // the Rust-only build; the path still must receive a language refusal.
+        let config = "[languages]\nenabled = [\"rust\"]\n";
+        std::fs::write(root.join("ripr.toml"), config).map_err(|error| error.to_string())?;
+        std::fs::write(root.join(file), source).map_err(|error| error.to_string())?;
+        let at = format!("{file}:2");
+        for kind in [None, Some("predicate")] {
+            for write in [false, true] {
+                for json in [true, false] {
+                    let output = if write {
+                        stub_write(root, &at, kind, json)?
+                    } else {
+                        stub(root, &at, kind, json)?
+                    };
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    assert_eq!(output.status.code(), Some(3), "{file}: {stdout}{stderr}");
+                    if json {
+                        let document: serde_json::Value = serde_json::from_str(&stdout)
+                            .map_err(|error| format!("{file}: refusal JSON: {error}: {stdout}"))?;
+                        // This assertion is the old-behavior discriminator;
+                        // schema movement alone cannot satisfy the test.
+                        assert_eq!(
+                            document["refusal"]["kind"], "unsupported_language",
+                            "{file}: {document}"
+                        );
+                        assert_eq!(document["schema_version"], "0.4");
+                        assert_eq!(document["kind"], "rust_test_stub");
+                        assert_eq!(document["state"], "refused");
+                        for field in ["seam_id", "owner", "grip_class", "classification"] {
+                            assert!(document[field].is_null(), "{file}: {field}: {document}");
+                        }
+                        assert_eq!(document["warnings"], serde_json::json!([]));
+                        let reason = document["refusal"]["reason"].as_str().ok_or_else(|| {
+                            format!("{file}: refusal reason is absent: {document}")
+                        })?;
+                        assert!(
+                            stderr.contains(reason),
+                            "{file}: JSON and human reasons differ: {stderr}"
+                        );
+                    } else {
+                        assert!(
+                            stdout.is_empty(),
+                            "{file}: human refusal wrote stdout: {stdout}"
+                        );
+                    }
+                    for expected in [
+                        file,
+                        language,
+                        "Rust files only",
+                        "test file/node",
+                        "verify command when available",
+                        "ripr check --root",
+                    ] {
+                        assert!(
+                            stderr.contains(expected),
+                            "{file}: missing {expected:?}: {stderr}"
+                        );
+                    }
+                    for false_cause in [
+                        "no reported gap",
+                        "did not parse cleanly",
+                        "lexical fallback",
+                        "ripr pilot",
+                    ] {
+                        assert!(
+                            !stderr.contains(false_cause),
+                            "{file}: false recovery/cause {false_cause:?}: {stderr}"
+                        );
+                    }
+                    let manual = stderr
+                        .find("Add or strengthen the test by hand")
+                        .ok_or_else(|| format!("{file}: missing manual-test route: {stderr}"))?;
+                    let native = stderr
+                        .find("run the verify command or your repository's test command")
+                        .ok_or_else(|| format!("{file}: missing native-test route: {stderr}"))?;
+                    let refresh = stderr
+                        .find("then rerun ")
+                        .ok_or_else(|| format!("{file}: missing post-test refresh: {stderr}"))?;
+                    assert!(
+                        manual < native && native < refresh,
+                        "{file}: recovery order: {stderr}"
+                    );
+                    assert_eq!(
+                        std::fs::read_to_string(root.join(file))
+                            .map_err(|error| error.to_string())?,
+                        source
+                    );
+                    assert_eq!(
+                        std::fs::read_to_string(root.join("src/lib.rs"))
+                            .map_err(|error| error.to_string())?,
+                        unrelated
+                    );
+                    assert_eq!(
+                        std::fs::read_to_string(root.join("ripr.toml"))
+                            .map_err(|error| error.to_string())?,
+                        config
+                    );
+                    assert!(
+                        !root.join("tests").exists(),
+                        "{file}: unsupported write created a tests target"
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// An unconfigured Python marker retains the existing adapter admission check.
+/// Both feature sets execute this control; only their expected result differs.
+#[test]
+fn python_marker_without_config_keeps_feature_admission() -> Result<(), String> {
+    let source = "pub fn value(n: u32) -> bool {\n    n > 3\n}\n";
+    let scratch = Scratch::create("python_config_admission", source)?;
+    let root = &scratch.0;
+    // Make this fixture a config-discovery boundary, including when TMPDIR is
+    // inside another repository, without creating or inheriting ripr.toml.
+    let manifest =
+        std::fs::read_to_string(root.join("Cargo.toml")).map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        format!("{manifest}\n[workspace]\n"),
+    )
+    .map_err(|error| error.to_string())?;
+    let file = "src/pricing.rs.py";
+    std::fs::write(root.join(file), source).map_err(|error| error.to_string())?;
+    assert!(!root.join("ripr.toml").exists());
+
+    let output = stub_write(root, "src/pricing.rs.py:2", None, true)?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if cfg!(feature = "lang-python") {
+        assert_eq!(output.status.code(), Some(3), "{stdout}{stderr}");
+        let document: serde_json::Value = serde_json::from_str(&stdout)
+            .map_err(|error| format!("Python capability refusal JSON: {error}: {stdout}"))?;
+        assert_eq!(document["refusal"]["kind"], "unsupported_language");
+    } else {
+        assert_eq!(output.status.code(), Some(2), "{stdout}{stderr}");
+        assert!(
+            stdout.is_empty(),
+            "configuration failure wrote stdout: {stdout}"
+        );
+        for expected in [
+            "Python project markers were detected",
+            "without Cargo feature `lang-python`",
+            "[languages] enabled = [\"rust\"]",
+        ] {
+            assert!(stderr.contains(expected), "missing {expected:?}: {stderr}");
+        }
+    }
+    for path in [file, "src/lib.rs"] {
+        assert_eq!(
+            std::fs::read_to_string(root.join(path)).map_err(|error| error.to_string())?,
+            source
+        );
+    }
+    assert!(!root.join("ripr.toml").exists());
+    assert!(!root.join("tests").exists());
+    Ok(())
+}
+
+/// A capability refusal must not mask malformed repository configuration.
+#[test]
+fn malformed_config_precedes_non_rust_stub_refusal() -> Result<(), String> {
+    let rust_source = "pub fn value(n: u32) -> bool {\n    n > 3\n}\n";
+    let python_source = "def fee(n):\n    return n * 4\n";
+    let malformed_config = "[analysis\n";
+    let scratch = Scratch::create("malformed_config_admission", rust_source)?;
+    let root = &scratch.0;
+    std::fs::write(root.join("pricing.py"), python_source).map_err(|error| error.to_string())?;
+    std::fs::write(root.join("ripr.toml"), malformed_config).map_err(|error| error.to_string())?;
+
+    let output = stub_write(root, "pricing.py:2", None, true)?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(2), "{stdout}{stderr}");
+    assert!(
+        stdout.is_empty(),
+        "configuration failure wrote stdout: {stdout}"
+    );
+    assert!(stderr.contains("ripr.toml"), "{stderr}");
+    assert!(stderr.contains("Fix the error above"), "{stderr}");
+    assert!(!stderr.contains("unsupported_language"), "{stderr}");
+    for (path, expected) in [
+        ("pricing.py", python_source),
+        ("src/lib.rs", rust_source),
+        ("ripr.toml", malformed_config),
+    ] {
+        assert_eq!(
+            std::fs::read_to_string(root.join(path)).map_err(|error| error.to_string())?,
+            expected
+        );
+    }
+    assert!(!root.join("tests").exists());
+    Ok(())
+}
+
+/// A blanket refusal or a check against source contents instead of path
+/// capability must not erase the retained Rust success and failure routes.
+#[test]
+fn rust_paths_keep_ready_missing_and_malformed_results() -> Result<(), String> {
+    let source = "pub fn value(n: u32) -> bool {\n    n > 3\n}\n";
+    let scratch = Scratch::create("rust_language_control", source)?;
+    let root = &scratch.0;
+    for kind in [None, Some("predicate")] {
+        let ready = stub(root, "src/lib.rs:2", kind, true)?;
+        assert_eq!(ready.status.code(), Some(0), "{ready:?}");
+        let document: serde_json::Value = serde_json::from_slice(&ready.stdout)
+            .map_err(|error| format!("Rust ready document: {error}"))?;
+        assert_eq!(document["state"], "ready");
+        assert_eq!(document["written"], false);
+
+        let missing = stub(root, "src/missing.rs:2", kind, true)?;
+        assert_eq!(missing.status.code(), Some(3), "{missing:?}");
+        let document: serde_json::Value = serde_json::from_slice(&missing.stdout)
+            .map_err(|error| format!("Rust missing-selector document: {error}"))?;
+        assert_eq!(document["refusal"]["kind"], "seam_not_found");
+    }
+    std::fs::write(root.join("src/broken.rs"), "pub fn broken(\n")
+        .map_err(|error| error.to_string())?;
+    for kind in [None, Some("predicate")] {
+        let malformed = stub(root, "src/broken.rs:1", kind, true)?;
+        assert_eq!(malformed.status.code(), Some(3), "{malformed:?}");
+        let document: serde_json::Value = serde_json::from_slice(&malformed.stdout)
+            .map_err(|error| format!("Rust malformed-source document: {error}"))?;
+        assert_eq!(document["refusal"]["kind"], "seam_not_found");
+        let stderr = String::from_utf8_lossy(&malformed.stderr);
+        assert!(
+            stderr.contains("did not parse cleanly as current-edition Rust"),
+            "{stderr}"
+        );
+        assert!(!stderr.contains("unsupported_language"), "{stderr}");
+    }
+    assert_eq!(
+        std::fs::read_to_string(root.join("src/lib.rs")).map_err(|error| error.to_string())?,
+        source
+    );
+    Ok(())
+}
+
 /// Same gripped-predicate fixture as the use-case test in `app/test_stub.rs`.
 /// Line 2 is the comparison; line 3 is the closing brace.
 const GRIPPED_PREDICATE: &str = "pub fn clamp_to(x: i32) -> i32 {\n    if x >= 100 { 100 } else { x }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn at_boundary_clamps() {\n        assert_eq!(clamp_to(100), 100);\n        assert_eq!(clamp_to(99), 99);\n        assert_eq!(clamp_to(500), 100);\n    }\n}\n";
@@ -101,7 +377,7 @@ const ASYNC_PREDICATE: &str =
 #[test]
 fn off_line_predicate_note_precedes_the_grip_class_warning() -> Result<(), String> {
     let scratch = Scratch::create("gripped-predicate", GRIPPED_PREDICATE)?;
-    let json = stub(&scratch.0, "src/lib.rs:3", "predicate", true)?;
+    let json = stub(&scratch.0, "src/lib.rs:3", Some("predicate"), true)?;
     let stdout = String::from_utf8_lossy(&json.stdout).to_string();
     let stderr = String::from_utf8_lossy(&json.stderr).to_string();
     if !json.status.success() {
@@ -144,7 +420,7 @@ fn off_line_predicate_note_precedes_the_grip_class_warning() -> Result<(), Strin
         ));
     }
 
-    let human = stub(&scratch.0, "src/lib.rs:3", "predicate", false)?;
+    let human = stub(&scratch.0, "src/lib.rs:3", Some("predicate"), false)?;
     let human_out = String::from_utf8_lossy(&human.stdout).to_string();
     if !human.status.success() {
         return Err(format!(
@@ -165,7 +441,7 @@ fn off_line_predicate_note_precedes_the_grip_class_warning() -> Result<(), Strin
 #[test]
 fn off_line_at_that_refuses_keeps_the_note_first_in_json_warnings() -> Result<(), String> {
     let scratch = Scratch::create("async-predicate", ASYNC_PREDICATE)?;
-    let json = stub(&scratch.0, "src/lib.rs:3", "predicate", true)?;
+    let json = stub(&scratch.0, "src/lib.rs:3", Some("predicate"), true)?;
     let stdout = String::from_utf8_lossy(&json.stdout).to_string();
     let stderr = String::from_utf8_lossy(&json.stderr).to_string();
     if json.status.code() != Some(3) {
@@ -214,7 +490,7 @@ fn second_write_reports_already_written_instead_of_a_duplicate() -> Result<(), S
     let scratch = Scratch::create("rewrite-clarity", OPEN_GAP)?;
     let root = &scratch.0;
 
-    let first = stub_write(root, "src/lib.rs:2", "predicate", false)?;
+    let first = stub_write(root, "src/lib.rs:2", Some("predicate"), false)?;
     if !first.status.success() {
         return Err(format!(
             "first --write must succeed: {}",
@@ -222,7 +498,7 @@ fn second_write_reports_already_written_instead_of_a_duplicate() -> Result<(), S
         ));
     }
 
-    let second = stub_write(root, "src/lib.rs:2", "predicate", false)?;
+    let second = stub_write(root, "src/lib.rs:2", Some("predicate"), false)?;
     let stdout = String::from_utf8_lossy(&second.stdout).to_string();
     let stderr = String::from_utf8_lossy(&second.stderr).to_string();
     if !second.status.success() {
@@ -266,7 +542,7 @@ fn second_write_reports_already_written_instead_of_a_duplicate() -> Result<(), S
     }
 
     // The JSON document reports the same state for machine consumers.
-    let json = stub_write(root, "src/lib.rs:2", "predicate", true)?;
+    let json = stub_write(root, "src/lib.rs:2", Some("predicate"), true)?;
     let document: serde_json::Value = serde_json::from_slice(&json.stdout)
         .map_err(|error| format!("ready stub JSON did not parse: {error}"))?;
     if document["state"] != "ready"
@@ -314,7 +590,7 @@ fn weak_oracle_boundary_points_at_the_existing_test_instead_of_a_new_one() -> Re
     let wording = "write it as an exact-value assertion ripr can credit, for example assert_eq!(result, expected)";
     let pointer = "Related test: tests/t.rs:3 t";
 
-    let human = stub(&scratch.0, "src/lib.rs:2", "predicate", false)?;
+    let human = stub(&scratch.0, "src/lib.rs:2", Some("predicate"), false)?;
     let stdout = String::from_utf8_lossy(&human.stdout).to_string();
     let stderr = String::from_utf8_lossy(&human.stderr).to_string();
     if human.status.code() != Some(3)
@@ -328,7 +604,7 @@ fn weak_oracle_boundary_points_at_the_existing_test_instead_of_a_new_one() -> Re
         ));
     }
 
-    let json = stub(&scratch.0, "src/lib.rs:2", "predicate", true)?;
+    let json = stub(&scratch.0, "src/lib.rs:2", Some("predicate"), true)?;
     let envelope: serde_json::Value = serde_json::from_slice(&json.stdout)
         .map_err(|error| format!("refusal envelope did not parse: {error}"))?;
     if envelope["state"] != "refused" || envelope["refusal"]["kind"] != "existing_test_weak_oracle"
@@ -356,7 +632,7 @@ fn weak_oracle_boundary_points_at_the_existing_test_instead_of_a_new_one() -> Re
     }
 
     // Control: no related test, so the boundary test is the right ask.
-    let ready = stub(&control.0, "src/lib.rs:2", "predicate", false)?;
+    let ready = stub(&control.0, "src/lib.rs:2", Some("predicate"), false)?;
     if !ready.status.success() || !String::from_utf8_lossy(&ready.stdout).contains("todo!") {
         return Err("the no-test control must keep the skeleton".to_string());
     }
@@ -376,7 +652,7 @@ fn weak_oracle_pointer_is_withheld_when_the_boundary_input_may_come_from_another
     std::fs::create_dir_all(scratch.0.join("tests")).map_err(|error| error.to_string())?;
     std::fs::write(scratch.0.join("tests/t.rs"), TESTS).map_err(|error| error.to_string())?;
 
-    let json = stub(&scratch.0, "src/lib.rs:2", "predicate", true)?;
+    let json = stub(&scratch.0, "src/lib.rs:2", Some("predicate"), true)?;
     let envelope: serde_json::Value = serde_json::from_slice(&json.stdout)
         .map_err(|error| format!("stub stdout did not parse: {error}"))?;
     if envelope["refusal"]["kind"] == "existing_test_weak_oracle"
