@@ -20,9 +20,8 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: this.total += amount * 2;
   Missing discriminator: Every related assertion calls `add` with literal inputs on which the old
-    and the changed returned expression evaluate to the same value; the changed arm or bound is not
-    exercised, so an exact assertion on those inputs passes on both versions. Add an input that
-    reaches the changed arm
+    and the changed state update add the same amount; an exact assertion on those inputs passes on
+    both versions. Add an input on which the two updates differ
   Related test: tests/cart.test.ts:4 adds nothing
   Next step — TypeScript preview advisory: add a test that exercises the changed behavior with an
     exact-value assertion (`toBe` / `toEqual` / `toStrictEqual`); no actionable repair packet is

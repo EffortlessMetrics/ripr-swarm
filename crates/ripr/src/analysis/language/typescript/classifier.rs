@@ -1304,7 +1304,12 @@ fn test_file_names_owner_outside_test_bodies(
     name: &str,
     root: &Path,
 ) -> Option<bool> {
-    let mut source = std::fs::read_to_string(root.join(&test.file)).ok()?;
+    // The test bodies come from the analyzed snapshot, so the file text is
+    // read from the same one (a committed-history diff reads HEAD).
+    let mut source = String::from_utf8(
+        crate::analysis::committed_source::read_source_bytes(root, &test.file).ok()??,
+    )
+    .ok()?;
     let bodies: Vec<&str> = sibling_tests
         .iter()
         .filter(|sibling| sibling.file == test.file && !sibling.body_text.is_empty())
@@ -1531,14 +1536,14 @@ pub(crate) fn ts_returned_expression_unexercised(
                 let owner_calls = masked_body
                     .match_indices(owner.name.as_str())
                     .filter(|(at, _)| {
-                        let embedded = masked_body[..*at]
+                        // Every mention counts, not only `name(`: a bound,
+                        // extracted or destructured method value can move the
+                        // state without that syntax, so it must stay unequal
+                        // to the asserted calls and keep the verdict.
+                        !masked_body[..*at]
                             .chars()
                             .next_back()
-                            .is_some_and(|c| c.is_alphanumeric() || matches!(c, '_' | '$'));
-                        !embedded
-                            && masked_body[*at + owner.name.len()..]
-                                .trim_start()
-                                .starts_with('(')
+                            .is_some_and(|c| c.is_alphanumeric() || matches!(c, '_' | '$'))
                     })
                     .count();
                 let asserted_calls: usize = candidate
@@ -7048,6 +7053,14 @@ pub(crate) fn classify_resolved_owner(
                     )
                 })
                 .unwrap_or_else(|| {
+                    if returned_state_guard::ts_returned_state_operands(owner, line_text, old_line_text)
+                        .is_some()
+                    {
+                        return format!(
+                            "Every related assertion calls `{}` with literal inputs on which the old and the changed state update add the same amount; an exact assertion on those inputs passes on both versions. Add an input on which the two updates differ.",
+                            owner.name
+                        );
+                    }
                     format!(
                         "Every related assertion calls `{}` with literal inputs on which the old and the changed returned expression evaluate to the same value; the changed arm or bound is not exercised, so an exact assertion on those inputs passes on both versions. Add an input that reaches the changed arm.",
                         owner.name
@@ -7369,6 +7382,8 @@ pub(crate) fn classify_resolved_owner(
                 .first()
                 .map_or("see missing evidence.", String::as_str)
         )
+    } else if returned_expression_unexercised {
+        "TypeScript preview adapter: strong oracle found but its literal inputs give the old and the changed code the same value; the assertion does not discriminate the change.".to_string()
     } else if strongest_strength >= OracleStrength::Strong.rank() {
         // RIPR-SPEC-0098: strong oracle exists but observation guard failed.
         "TypeScript preview adapter: strong oracle found but no assertion's observed_expression flows from the changed sub-expression; observation_unverified — discriminate unknown.".to_string()

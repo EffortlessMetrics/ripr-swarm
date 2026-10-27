@@ -1020,7 +1020,8 @@ separation requirement. The call is read through any plain receiver
 (`cart.add(0)`, a test-local `new Cart()`, a file-level instance or a fixture
 receiver). Because the state accumulates across calls, every owner call that can move it
 must be one of the evaluated strong assertions' calls: the test body holds no
-other call (a weak assertion's call counts as another call), the test file names
+other mention of the owner (a weak assertion's call, a bound, extracted or
+optional call all count), the test file names
 the owner nowhere outside its test bodies (no hook, describe-level binding or
 helper), and every sibling test of the file that names the owner is itself a
 related candidate. State seeded in another module stays unseen; a parameter
