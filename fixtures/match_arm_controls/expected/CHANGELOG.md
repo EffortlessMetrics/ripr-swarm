@@ -420,3 +420,27 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — match_arm_controls (36)
+
+Reason:
+One-sided equality swap (RIPR-SPEC-0032, #10304): the single pinned row sits on the replaced constant, so it flips under the edit; all four runtime mutants are killed, so gap and unknown become exposed. The bare binding is read as a catch-all (RIPR-SPEC-0164 Example 4).
+
+Command:
+`cargo xtask goldens bless match_arm_controls --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — match_arm_controls (37)
+
+Reason:
+RIPR-SPEC-0032: one-sided equality swap, the single pinned row sits on the replaced constant and flips under the edit (runtime mutants killed), so gap and unknown become exposed; RIPR-SPEC-0164 Example 4 reads the bare binding as a catch-all
+
+Command:
+`cargo xtask goldens bless match_arm_controls --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -585,14 +585,55 @@ fn configured_oracle_cannot_turn_a_registered_property_into_an_ordinary_test() -
             );
         }
         if configured {
-            let finding = finding(&fixture, &format!("{label}-diff"), None)?;
-            assert_eq!(finding["related_tests_total"], 0, "{finding}");
+            let (diff, _) = report(&fixture, &format!("{label}-diff"), None, None)?;
             assert_eq!(
-                finding["related_tests"].as_array().map(Vec::len),
-                Some(0),
-                "{finding}"
+                diff["analysis_outcome"]["analysis_complete"], true,
+                "{label}: {diff}"
             );
-            assert_ne!(finding["classification"], "exposed", "{finding}");
+            let findings = diff["findings"].as_array().ok_or("missing bool findings")?;
+            // This Boolean tail is both a changed predicate and a returned
+            // value. Neither subject may borrow the property's evidence.
+            assert_eq!(findings.len(), 2, "{label}: {diff}");
+            for (kind, family) in [
+                ("predicate_boundary", "predicate"),
+                ("return_value", "return_value"),
+            ] {
+                let matching = findings
+                    .iter()
+                    .filter(|finding| {
+                        finding["canonical_gap"]["file"] == "src/lib.rs"
+                            && finding["canonical_gap"]["owner"] == "expect_ready"
+                            && finding["canonical_gap"]["behavior_kind"] == kind
+                            && finding["probe"]["family"] == family
+                            && finding["probe"]["line"] == 2
+                            && finding["probe"]["expression"] == "amount >= threshold"
+                    })
+                    .collect::<Vec<_>>();
+                let [finding] = matching.as_slice() else {
+                    return Err(format!("{label}: expected one {kind} finding: {diff}"));
+                };
+                assert_eq!(finding["classification"], "no_static_path", "{diff}");
+                assert_eq!(finding["related_tests_total"], 0, "{diff}");
+                for values in [
+                    &finding["related_tests"],
+                    &finding["observed_values"],
+                    &finding["activation"]["observed_values"],
+                ] {
+                    assert_eq!(values.as_array().map(Vec::len), Some(0), "{diff}");
+                }
+                assert_eq!(
+                    finding["assertion_texts"]
+                        .as_object()
+                        .map(serde_json::Map::len),
+                    Some(0),
+                    "{diff}"
+                );
+                assert_eq!(finding["oracle_kind"], "unknown", "{diff}");
+                assert_eq!(finding["oracle_strength"], "none", "{diff}");
+                for stage in ["reach", "observe", "discriminate"] {
+                    assert_eq!(finding["ripr"][stage]["state"], "no", "{diff}");
+                }
+            }
         }
     }
     std::fs::remove_file(fixture.0.join("ripr.toml")).map_err(|error| error.to_string())?;
