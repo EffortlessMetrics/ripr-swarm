@@ -1149,6 +1149,86 @@ fn non_rust_language(file: &Path) -> Option<&'static str> {
     }
 }
 
+/// A non-Rust language the changed code under the selected root touches, and
+/// whether any of its changes adds or edits lines (`false`: deletion-only).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ChangedNonRust {
+    pub(crate) language: &'static str,
+    pub(crate) adds_code: bool,
+}
+
+/// The non-Rust languages in the diff `ripr check` would analyze under `root`
+/// (#10682). Reads check's own diff-source selection (committed history, or
+/// the working tree when it holds uncommitted work), base resolution and
+/// root scoping through the shared loaders, and the diff parser's own path
+/// decoding, so a committed-only branch, a package root and a C-quoted
+/// filename agree with `check`. Best effort: an unreadable diff reads as no
+/// such languages, so the caller keeps its generic message.
+pub(crate) fn changed_non_rust_languages(root: &Path) -> Vec<ChangedNonRust> {
+    let source = super::diff_source::select_live_diff_source(
+        root,
+        super::diff_source::DiffSourceRequest::Default,
+        None,
+    );
+    let text = if source.is_working_tree() {
+        crate::analysis::load_worktree_diff(root, None, None)
+    } else {
+        crate::analysis::load_diff(root, None, None, None)
+    };
+    let Ok(text) = text else {
+        return Vec::new();
+    };
+    let mut found: Vec<ChangedNonRust> = Vec::new();
+    for file in crate::analysis::parse_unified_diff(&text) {
+        let Some(language) = non_rust_language(&file.path) else {
+            continue;
+        };
+        let adds_code = !file.added_lines.is_empty();
+        match found.iter_mut().find(|entry| entry.language == language) {
+            Some(entry) => entry.adds_code |= adds_code,
+            None => found.push(ChangedNonRust {
+                language,
+                adds_code,
+            }),
+        }
+    }
+    found.sort_by_key(|entry| entry.language);
+    found
+}
+
+/// The `ripr repair` zero-seam message when the changed code is non-Rust
+/// (#10682): the seam inventory behind `ripr repair` covers Rust only, so
+/// "analyze the workspace" would loop through `ripr pilot` and `ripr check`.
+/// Names the gap-bound start for TypeScript and Python (#10373) and the
+/// manual route otherwise. A deletion-only change gets no `check` finding,
+/// so it is not promised one.
+pub(crate) fn non_rust_repair_guidance(root_display: &str, changed: &[ChangedNonRust]) -> String {
+    let languages = changed
+        .iter()
+        .map(|entry| entry.language)
+        .collect::<Vec<_>>()
+        .join(" and ");
+    let head = format!(
+        "the changed code under {root_display} is {languages}, and `ripr repair` works from Rust seams only"
+    );
+    if !changed.iter().any(|entry| entry.adds_code) {
+        return format!(
+            "{head}. The change only removes code, so `ripr check --root {root_display}` names no gap for it; look at the tests of the remaining behavior by hand"
+        );
+    }
+    let start = if changed
+        .iter()
+        .any(|entry| !gap_bound_start_pointer(entry.language).is_empty())
+    {
+        "; once it is committed and the repair packet is complete, `ripr check` also prints a `ripr agent repair --gap-id <gap> --base <base> --phase before` start"
+    } else {
+        ""
+    };
+    format!(
+        "{head}. Run `ripr check --root {root_display}` for the test to add by hand and its verify command{start}"
+    )
+}
+
 /// Display name of the non-Rust language a repair item names, or `None` for
 /// any other item: a canonical gap id (`gap:<language>:<file>:...`) or the
 /// preview-adapter finding id `ripr check` prints
