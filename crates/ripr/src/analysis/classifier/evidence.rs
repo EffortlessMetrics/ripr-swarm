@@ -1,5 +1,5 @@
 use crate::analysis::classify::{
-    ASSERTION_CONTEXT_UNESTABLISHED, ArmSelector, AssertionRefusal, EffectStateCarrier,
+    ASSERTION_CONTEXT_UNESTABLISHED, ArmSelector, AssertionRefusal, ConstFlow, EffectStateCarrier,
     HELPER_RESULT_NOT_FORWARDED, OwnerInputs, OwnerPinSyntax, OwnerReturnPin, ProbeContext,
     PropagationWitnessV1, ReturnOracleAdmission, TransitiveReachIndex, WrapperEntryPairing,
     activation_and_boundary_input, assertion_compares_hand_built_field,
@@ -1592,6 +1592,92 @@ impl ClassifiedProbeEvidence {
             implicit_dispatch_tests,
             debug_assert_eq_pins,
             related_call_budget_saturated,
+        }
+    }
+
+    /// RIPR-SPEC-0048: replace the stage evidence of a changed constant with
+    /// what evaluating it showed, and name the class that follows. Only
+    /// called with a flow the evaluator fully decided.
+    pub(in crate::analysis) fn apply_const_flow(&mut self, flow: &ConstFlow) -> ExposureClass {
+        let (detail, discriminated) = match flow {
+            ConstFlow::Discriminated(detail) => (detail, true),
+            ConstFlow::Indistinguishable(detail) => (detail, false),
+        };
+        let stage = |state, summary: String| StageEvidence::new(state, Confidence::Medium, summary);
+        let call = format!("`{}`", detail.assertion);
+        self.reach = stage(
+            StageState::Yes,
+            format!(
+                "`{}` calls `{}`, which reads the changed constant `{}`: {}",
+                detail.test, detail.reader, detail.constant, call
+            ),
+        );
+        self.infect = stage(
+            StageState::Yes,
+            format!(
+                "`{}` changes from {} to {}",
+                detail.constant, detail.old_value, detail.new_value
+            ),
+        );
+        self.observe = stage(
+            StageState::Yes,
+            format!(
+                "{} compares the result of `{}` to a literal",
+                call, detail.reader
+            ),
+        );
+        if discriminated {
+            self.propagate = stage(
+                StageState::Yes,
+                format!(
+                    "`{}` returns {} instead of {} for the tested inputs",
+                    detail.reader, detail.new_result, detail.old_result
+                ),
+            );
+            self.discriminate = stage(
+                StageState::Yes,
+                format!(
+                    "{} holds with {} = {} and fails with {}",
+                    call, detail.constant, detail.old_value, detail.new_value
+                ),
+            );
+        } else {
+            self.propagate = stage(
+                StageState::Weak,
+                format!(
+                    "`{}` returns {} under both values for the {} tested input set(s)",
+                    detail.reader, detail.old_result, detail.tests_evaluated
+                ),
+            );
+            self.discriminate = stage(
+                StageState::No,
+                format!(
+                    "No related assertion fails when `{}` changes from {} to {}",
+                    detail.constant, detail.old_value, detail.new_value
+                ),
+            );
+        }
+        self.ripr = RiprEvidence {
+            reach: self.reach.clone(),
+            infect: self.infect.clone(),
+            propagate: self.propagate.clone(),
+            reveal: RevealEvidence {
+                observe: self.observe.clone(),
+                discriminate: self.discriminate.clone(),
+            },
+        };
+        self.evidence = evidence_summaries([
+            &self.reach,
+            &self.infect,
+            &self.propagate,
+            &self.observe,
+            &self.discriminate,
+        ]);
+        self.assertion_refusal = None;
+        if discriminated {
+            ExposureClass::Exposed
+        } else {
+            ExposureClass::WeaklyExposed
         }
     }
 

@@ -1,0 +1,11 @@
+# Pins the value-flow evaluation of a changed constant (#9871) under RIPR-SPEC-0048.
+[[extend]]
+id = "RIPR-SPEC-0048"
+tests = [
+  "crates/ripr/src/analysis/classify/const_flow/tests.rs::a_pinned_boundary_notices_the_changed_value_and_an_unpinned_one_does_not",
+  "crates/ripr/src/analysis/classify/const_flow/tests.rs::a_rendered_label_is_compared_to_its_literal_text",
+  "crates/ripr/src/analysis/classify/const_flow/tests.rs::a_reader_outside_the_grammar_is_unreadable_not_approximated",
+  "crates/ripr/src/analysis/classify/const_flow/tests.rs::an_assertion_outside_the_grammar_is_unreadable",
+  "crates/ripr/src/analysis/classify/const_flow/tests.rs::arithmetic_that_leaves_the_declared_type_is_unreadable",
+  "crates/ripr/src/analysis/classify/const_flow/tests.rs::an_ambiguous_or_unpaired_constant_pairs_with_nothing",
+]

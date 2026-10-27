@@ -6,6 +6,7 @@ mod builder_override;
 mod call_identity;
 mod caller_loop_selector;
 mod changed_span;
+mod const_flow;
 mod const_readers;
 mod context;
 mod custom_eq;
@@ -65,6 +66,7 @@ pub(in crate::analysis) use call_identity::{
     CallIdentityMemos, CallTarget, OwnerCallIdentity, shared_owner_call_identity,
 };
 pub(in crate::analysis) use caller_loop_selector::withhold_caller_loop_selector_gap;
+pub(in crate::analysis) use const_flow::{ChangedConsts, ConstFlow, evaluate_const_flow};
 pub(in crate::analysis) use const_readers::same_file_const_readers;
 pub(in crate::analysis) use context::ProbeContext;
 pub(in crate::analysis) use decision::{
