@@ -360,3 +360,255 @@ fn given_a_function_result_helper_when_substituted_then_normal_owner_credit_is_p
     assert_eq!(finding.class, crate::domain::ExposureClass::Exposed);
     Ok(())
 }
+
+// RIPR-SPEC-0238 rule 27: `wrapper(lambda: helper(...))` reads as the helper
+// call only when the wrapper is a test-module def that re-raises.
+
+const RERAISING: &str =
+    "def logged(fn):\n    try:\n        return fn()\n    except Exception:\n        raise\n";
+
+fn wrapped_source(wrapper: &str, call: &str) -> String {
+    format!(
+        "from pkg.sq import sq\nfrom tests.helpers import check_equal\n\n\n{wrapper}\n\n\ndef test_sq():\n    {call}\n"
+    )
+}
+
+fn helper_reading(test: &PythonTest) -> Option<&PythonAssertion> {
+    test.assertions
+        .iter()
+        .find(|assertion| assertion.helper_derived)
+}
+
+#[test]
+fn given_a_reraising_wrapper_when_it_runs_a_helper_lambda_then_the_helper_call_is_the_assertion()
+-> Result<(), String> {
+    let source = wrapped_source(RERAISING, "logged(lambda: check_equal(sq(3), 9))");
+    let test = resolved(&source, EQ_HELPER);
+
+    let assertion = helper_reading(&test).ok_or("the wrapped helper call must resolve")?;
+    assert_eq!(assertion.oracle_shape, PythonOracleShape::ExactAssertion);
+    assert_eq!(assertion.gate_text, "assert sq(3) == 9");
+    assert_eq!(assertion.text, "check_equal(sq(3), 9)");
+    Ok(())
+}
+
+#[test]
+fn given_a_wrapper_that_can_swallow_when_it_runs_a_helper_lambda_then_nothing_resolves() {
+    let swallowing = [
+        (
+            "returns from the handler",
+            "def logged(fn):\n    try:\n        return fn()\n    except Exception:\n        return None\n",
+        ),
+        (
+            "swallows after a partial re-raise",
+            "def logged(fn):\n    try:\n        return fn()\n    except ValueError:\n        raise\n    except Exception:\n        return None\n",
+        ),
+        (
+            "falls off the handler",
+            "def logged(fn):\n    try:\n        return fn()\n    except Exception as exc:\n        if isinstance(exc, ValueError):\n            raise\n",
+        ),
+        (
+            "raises conditionally",
+            "def logged(fn):\n    try:\n        return fn()\n    except Exception:\n        if STRICT:\n            raise\n        raise\n",
+        ),
+        (
+            "returns before the raise",
+            "def logged(fn):\n    try:\n        return fn()\n    except Exception:\n        return None\n        raise\n",
+        ),
+        (
+            "swallows in a finally clause",
+            "def logged(fn):\n    try:\n        return fn()\n    except Exception:\n        raise\n    finally:\n        return None\n",
+        ),
+        (
+            "runs an else clause",
+            "def logged(fn):\n    try:\n        return fn()\n    except Exception:\n        raise\n    else:\n        return None\n",
+        ),
+        (
+            "has an empty handler",
+            "def logged(fn):\n    try:\n        return fn()\n    except Exception:\n        pass\n",
+        ),
+        (
+            "has no handler",
+            "def logged(fn):\n    try:\n        return fn()\n    finally:\n        pass\n",
+        ),
+        (
+            "raises a different exception",
+            "def logged(fn):\n    try:\n        return fn()\n    except Exception as exc:\n        raise exc\n",
+        ),
+        (
+            "chains a new exception",
+            "def logged(fn):\n    try:\n        return fn()\n    except Exception as exc:\n        raise RuntimeError('x') from exc\n",
+        ),
+        (
+            "evaluates a skipping handler type",
+            "def logged(fn):\n    try:\n        return fn()\n    except pytest.skip('x'):\n        raise\n",
+        ),
+        (
+            "evaluates a call in a tuple handler type",
+            "def logged(fn):\n    try:\n        return fn()\n    except (ValueError, pytest.skip('x')):\n        raise\n",
+        ),
+        (
+            "calls before the raise",
+            "def logged(fn):\n    try:\n        return fn()\n    except Exception:\n        note()\n        raise\n",
+        ),
+        (
+            "skips before the raise",
+            "def logged(fn):\n    try:\n        return fn()\n    except Exception:\n        pytest.skip('x')\n        raise\n",
+        ),
+        (
+            "assigns before the raise",
+            "def logged(fn):\n    try:\n        return fn()\n    except Exception:\n        state = 1\n        raise\n",
+        ),
+        (
+            "has a loop before the raise",
+            "def logged(fn):\n    try:\n        return fn()\n    except Exception:\n        for _ in range(1):\n            break\n        raise\n",
+        ),
+        (
+            "never calls its argument",
+            "def logged(fn):\n    try:\n        return None\n    except Exception:\n        raise\n",
+        ),
+        (
+            "calls another callable",
+            "def logged(fn):\n    try:\n        return other()\n    except Exception:\n        raise\n",
+        ),
+        (
+            "calls its argument with an argument",
+            "def logged(fn):\n    try:\n        return fn(1)\n    except Exception:\n        raise\n",
+        ),
+        (
+            "does more than call",
+            "def logged(fn):\n    try:\n        setup()\n        return fn()\n    except Exception:\n        raise\n",
+        ),
+        (
+            "does more than try",
+            "def logged(fn):\n    setup()\n    try:\n        return fn()\n    except Exception:\n        raise\n",
+        ),
+        (
+            "takes a second parameter",
+            "def logged(fn, extra):\n    try:\n        return fn()\n    except Exception:\n        raise\n",
+        ),
+        (
+            "defaults its parameter",
+            "def logged(fn=None):\n    try:\n        return fn()\n    except Exception:\n        raise\n",
+        ),
+        (
+            "is decorated",
+            "@decorate\ndef logged(fn):\n    try:\n        return fn()\n    except Exception:\n        raise\n",
+        ),
+        (
+            "is async",
+            "async def logged(fn):\n    try:\n        return fn()\n    except Exception:\n        raise\n",
+        ),
+        (
+            "is bound twice",
+            "def logged(fn):\n    try:\n        return fn()\n    except Exception:\n        raise\n\n\nlogged = quiet\n",
+        ),
+    ];
+    for (label, wrapper) in swallowing {
+        let source = wrapped_source(wrapper, "logged(lambda: check_equal(sq(3), 9))");
+        let test = resolved(&source, EQ_HELPER);
+        assert!(
+            helper_reading(&test).is_none(),
+            "a wrapper that {label} must not resolve its lambda"
+        );
+    }
+}
+
+#[test]
+fn given_a_reraising_wrapper_when_the_call_is_not_a_bare_helper_lambda_then_nothing_resolves() {
+    let calls = [
+        (
+            "passes a lambda with a parameter",
+            "logged(lambda x: check_equal(sq(3), 9))",
+        ),
+        (
+            "passes a lambda over a non-call",
+            "logged(lambda: sq(3) == 9)",
+        ),
+        (
+            "passes a second argument",
+            "logged(lambda: check_equal(sq(3), 9), 1)",
+        ),
+        (
+            "passes a keyword",
+            "logged(lambda: check_equal(sq(3), 9), x=1)",
+        ),
+        ("passes a named callable", "logged(check_equal)"),
+        (
+            "passes a lambda to another name",
+            "quiet(lambda: check_equal(sq(3), 9))",
+        ),
+        (
+            "wraps the wrapper call in an expression",
+            "x = logged(lambda: check_equal(sq(3), 9))",
+        ),
+    ];
+    for (label, call) in calls {
+        let source = wrapped_source(RERAISING, call);
+        let test = resolved(&source, EQ_HELPER);
+        assert!(
+            helper_reading(&test).is_none(),
+            "a call that {label} must not resolve"
+        );
+    }
+}
+
+#[test]
+fn given_a_wrapper_name_the_test_rebinds_or_imports_when_called_then_nothing_resolves() {
+    let local = "from pkg.sq import sq\nfrom tests.helpers import check_equal\n\n\ndef logged(fn):\n    try:\n        return fn()\n    except Exception:\n        raise\n\n\ndef test_sq():\n    logged = quiet\n    logged(lambda: check_equal(sq(3), 9))\n";
+    let imported = "from pkg.sq import sq\nfrom tests.helpers import check_equal, logged\n\n\ndef test_sq():\n    logged(lambda: check_equal(sq(3), 9))\n";
+    let both = "from pkg.sq import sq\nfrom tests.helpers import check_equal, logged\n\n\ndef logged(fn):\n    try:\n        return fn()\n    except Exception:\n        raise\n\n\ndef test_sq():\n    logged(lambda: check_equal(sq(3), 9))\n";
+    let star = "from pkg.sq import sq\nfrom tests.helpers import check_equal\nfrom tests.shared import *\n\n\ndef logged(fn):\n    try:\n        return fn()\n    except Exception:\n        raise\n\n\ndef test_sq():\n    logged(lambda: check_equal(sq(3), 9))\n";
+    let wrapper =
+        "def logged(fn):\n    try:\n        return fn()\n    except Exception:\n        raise\n";
+    let head = "from pkg.sq import sq\nfrom tests.helpers import check_equal\n\n\n";
+    let call = "    logged(lambda: check_equal(sq(3), 9))\n";
+    let rebinding = [
+        // A conditional import rebinds the name; the binding scan skips imports.
+        format!(
+            "{head}{wrapper}\n\ntry:\n    from compat import logged\nexcept ImportError:\n    pass\n\n\ndef test_sq():\n{call}"
+        ),
+        // A fixture rebinds it through `global`.
+        format!(
+            "{head}{wrapper}\n\n@pytest.fixture(autouse=True)\ndef _patch():\n    global logged\n    logged = lambda fn: None\n\n\ndef test_sq():\n{call}"
+        ),
+        // A walrus in the test body rebinds it.
+        format!("{head}{wrapper}\n\ndef test_sq():\n    (logged := lambda fn: None)\n{call}"),
+        // An import nested in the test body rebinds it.
+        format!(
+            "{head}{wrapper}\n\ndef test_sq():\n    if True:\n        from compat import logged\n{call}"
+        ),
+        // A `case` capture rebinds it.
+        format!(
+            "{head}{wrapper}\n\ndef test_sq():\n    match 1:\n        case logged:\n            pass\n{call}"
+        ),
+        // A string name for `setattr`.
+        format!(
+            "{head}{wrapper}\n\ndef test_sq(monkeypatch):\n    monkeypatch.setattr(sys.modules[__name__], 'logged', quiet)\n{call}"
+        ),
+        // Dynamic namespace access.
+        format!("{head}{wrapper}\n\ndef test_sq():\n    globals()['lo' + 'gged'] = quiet\n{call}"),
+        // A decorator use of the name.
+        format!("{head}{wrapper}\n\n@logged\ndef other():\n    pass\n\n\ndef test_sq():\n{call}"),
+        // A nested star import.
+        format!(
+            "{head}{wrapper}\n\nif FLAG:\n    from tests.shared import *\n\n\ndef test_sq():\n{call}"
+        ),
+    ];
+    for source in rebinding
+        .iter()
+        .map(String::as_str)
+        .chain([local, imported, both, star])
+    {
+        let test = resolved(source, EQ_HELPER);
+        assert!(helper_reading(&test).is_none(), "{source}");
+    }
+}
+
+#[test]
+fn given_a_reraising_wrapper_around_an_unresolvable_helper_when_called_then_nothing_resolves() {
+    let source = wrapped_source(RERAISING, "logged(lambda: check_equal(sq(3), 9))");
+    let opaque = "def check_equal(actual, expected):\n    print(actual)\n";
+    let test = resolved(&source, opaque);
+    assert!(helper_reading(&test).is_none());
+}

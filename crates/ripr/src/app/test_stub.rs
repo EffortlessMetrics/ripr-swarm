@@ -24,7 +24,7 @@ use crate::analysis::{ClassifiedSeam, RepoSeam};
 use crate::app::CheckOutput;
 use crate::app::agent_brief::AgentBriefPolicy;
 use crate::config::RiprConfig;
-use crate::domain::{ExposureClass, Finding};
+use crate::domain::{ExposureClass, Finding, LanguageId};
 use crate::output::agent_seam_packets::{
     recommended_test_for, recommended_test_is_repair_edit_target,
 };
@@ -150,6 +150,9 @@ pub(crate) enum TestStubError {
     /// Several candidate files or disjoint tied seams match the selector;
     /// no seam was selected and the message names how to disambiguate.
     Ambiguous(String),
+    /// Stub generation supports Rust source paths only. This says nothing
+    /// about whether another language's check finding exists or is exposed.
+    UnsupportedLanguage(String),
     Operational(String),
 }
 
@@ -220,6 +223,27 @@ fn resolve_at_location(
     kind: Option<&str>,
     seam_index: &mut Option<analysis::FileSeamIndex>,
 ) -> Result<TestStubResolution, TestStubError> {
+    let path = Path::new(file);
+    let source_language = analysis::route(path);
+    if source_language != Some(LanguageId::Rust) {
+        // The router groups TS/JS under one adapter; preserve the source
+        // language name without duplicating its extension inventory.
+        let language = if path
+            .extension()
+            .and_then(std::ffi::OsStr::to_str)
+            .and_then(analysis::ts_js_source_kind)
+            == Some(analysis::TsJsSourceKind::JavaScript)
+        {
+            Some(LanguageId::JavaScript)
+        } else {
+            source_language
+        };
+        let language = language.map(LanguageId::display_name).unwrap_or("non-Rust");
+        let root = shell_arg(&bound_root(&root.to_string_lossy()));
+        return Err(TestStubError::UnsupportedLanguage(format!(
+            "stub generation supports Rust files only; {file} is a {language} path. For a reported gap, use its `ripr check` test file/node and verify command when available. Add or strengthen the test by hand, run the verify command or your repository's test command, then rerun `ripr check --root {root}` to refresh the finding."
+        )));
+    }
     let kind = kind.and_then(|family| {
         analysis::seam_kind_for_probe_family(family).map(|seam_kind| AtKind { family, seam_kind })
     });
@@ -1147,7 +1171,8 @@ pub(crate) fn revalidate_already_present_stub(
     let fresh = resolve_test_stub(root, config, selector).map_err(|error| match error {
         TestStubError::Operational(message)
         | TestStubError::NotFound(message)
-        | TestStubError::Ambiguous(message) => {
+        | TestStubError::Ambiguous(message)
+        | TestStubError::UnsupportedLanguage(message) => {
             format!("{message}; the workspace changed after the stub was computed, so rerun `ripr agent stub`")
         }
     })?;

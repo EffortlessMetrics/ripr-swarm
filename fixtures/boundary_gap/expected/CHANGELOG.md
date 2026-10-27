@@ -39,6 +39,34 @@ Updated:
 - `first-useful-action/unchanged-after-attempt/agent-verify.json`
 - `first-useful-action/unchanged-after-attempt/agent-receipt.json`
 
+### test_case arrow row classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.112 to 1.113 for a clean
+`#[test_case(.. => literal)]` row read as the harness-compared return
+(RIPR-SPEC-0231 rule 9, #9619), with the same scope: generation, content
+commitment, dependent verify commitments and receipt byte hashes only.
+
+### call-in-term accumulator classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.113 to 1.114 for an
+accumulator update that adds a same-file function's value, read as a
+`return_value` change (RIPR-SPEC-0360, #9478), with the same scope: generation,
+content commitment, dependent verify commitments and receipt byte hashes only.
+
+### test_case arrow row input substitution cache generation parity
+
+The same snapshots follow corpus cache generation 1.114 to 1.115 for the arrow row
+read with its inputs substituted into the returned expression (RIPR-SPEC-0231
+rule 9, #10797), with the same scope: generation, content commitment, dependent
+verify commitments and receipt byte hashes only.
+
+### rebound let literal classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.115 to 1.116 for a `let`
+literal that a tuple, struct or `for` pattern rebinds no longer pairing with the
+owner call (RIPR-SPEC-0158, #10819), with the same scope: generation, content
+commitment, dependent verify commitments and receipt byte hashes only.
+
 ## Pending — boundary_gap (9)
 
 Reason:

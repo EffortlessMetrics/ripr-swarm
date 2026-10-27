@@ -22,7 +22,7 @@ use crate::config::{RiprConfig, load_for_root};
 use crate::output::gap_vocabulary::exposure_counterpart;
 
 /// Schema version of the `rust_test_stub` JSON document.
-const RUST_TEST_STUB_SCHEMA_VERSION: &str = "0.3";
+const RUST_TEST_STUB_SCHEMA_VERSION: &str = "0.4";
 
 pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), CommandError> {
     // #8767: same implicit root `ripr check` uses; `--root .` opts out.
@@ -36,12 +36,14 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
     let mut resolution = match resolve_test_stub(&options.root, &config, &options.selector) {
         Ok(resolution) => resolution,
         Err(error) => {
-            let (refusal_kind, message) = match error {
-                TestStubError::NotFound(message) => ("seam_not_found", message),
-                TestStubError::Ambiguous(message) => ("selector_ambiguous", message),
+            let (refusal_kind, message, list_selectors) = match error {
+                TestStubError::NotFound(message) => ("seam_not_found", message, true),
+                TestStubError::Ambiguous(message) => ("selector_ambiguous", message, true),
+                TestStubError::UnsupportedLanguage(message) => {
+                    ("unsupported_language", message, false)
+                }
                 TestStubError::Operational(message) => return Err(CommandError::Failure(message)),
             };
-            let root = shell_arg(&bound_root(&options.root.to_string_lossy()));
             if options.json {
                 // EXIT_CODES.md promises the versioned `rust_test_stub`
                 // `state: "refused"` envelope under `--json` for every
@@ -61,9 +63,15 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
                     Err(render_error) => return Err(render_error),
                 }
             }
-            return Err(CommandError::Decision(format!(
-                "agent stub: {message}. Run `ripr check --root {root}` to list finding locations or `ripr pilot --root {root}` to list seam IDs."
-            )));
+            let message = if list_selectors {
+                let root = shell_arg(&bound_root(&options.root.to_string_lossy()));
+                format!(
+                    "agent stub: {message}. Run `ripr check --root {root}` to list finding locations or `ripr pilot --root {root}` to list seam IDs."
+                )
+            } else {
+                format!("agent stub: {message}")
+            };
+            return Err(CommandError::Decision(message));
         }
     };
     // #8990 review X3: `already_present` was read from the placement file
@@ -372,7 +380,8 @@ fn render(document: &serde_json::Value) -> Result<String, CommandError> {
 }
 
 /// The versioned `rust_test_stub` `state: "refused"` document for a
-/// selector that named no reported gap (#7390) or was ambiguous (#7762):
+/// selector that named no reported gap (#7390), was ambiguous (#7762),
+/// or named a path outside the stub generator's language capability (#10716):
 /// the same field set the
 /// post-resolution refusal arm emits, with `null` where seam resolution
 /// would have supplied a value. `seam_id` repeats the requested id for a
@@ -499,7 +508,7 @@ mod tests {
         .map_err(|error| format!("envelope render refused: {error:?}"))?;
         let document: serde_json::Value = serde_json::from_str(&rendered)
             .map_err(|error| format!("envelope was not parseable JSON: {error}"))?;
-        assert_eq!(document["schema_version"], "0.3");
+        assert_eq!(document["schema_version"], "0.4");
         assert_eq!(document["kind"], "rust_test_stub");
         assert_eq!(document["seam_id"], "no-such-seam");
         assert_eq!(document["state"], "refused");

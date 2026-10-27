@@ -1,0 +1,4 @@
+[package]
+name = "rust_test_case_arrow_coincident_row"
+version = "0.1.0"
+edition = "2024"
