@@ -286,7 +286,7 @@ mod tests {
         let grace_slot: InputFactsSlot = Arc::new(Mutex::new(None));
         with_input_facts_capture(
             grace_slot.clone(),
-            Some(Instant::now() - std::time::Duration::from_secs(60)),
+            Some(Instant::now() - std::time::Duration::from_mins(1)),
             || {
                 publish_loaded_diff(
                     InputSource::WorkingTree,
@@ -310,7 +310,7 @@ mod tests {
         let live_slot: InputFactsSlot = Arc::new(Mutex::new(None));
         with_input_facts_capture(
             live_slot.clone(),
-            Some(Instant::now() + std::time::Duration::from_secs(60)),
+            Some(Instant::now() + std::time::Duration::from_mins(1)),
             || {
                 publish_loaded_diff(
                     InputSource::WorkingTree,

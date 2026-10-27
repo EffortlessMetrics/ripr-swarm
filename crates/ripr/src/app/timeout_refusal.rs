@@ -515,7 +515,7 @@ mod tests {
         let projection = build(
             &input("repo", Some("origin/main"), None),
             requested(InputSource::Committed),
-            Duration::from_secs(60),
+            Duration::from_mins(1),
             true,
             None,
             None,
@@ -552,7 +552,7 @@ mod tests {
         let projection = build(
             &input("repo", Some("origin/main"), None),
             requested(InputSource::Committed),
-            Duration::from_secs(60),
+            Duration::from_mins(1),
             true,
             None,
             None,
@@ -603,7 +603,7 @@ mod tests {
         let projection = build(
             &input("my repo", Some("feature/it''s"), None),
             requested(InputSource::Committed),
-            Duration::from_secs(60),
+            Duration::from_mins(1),
             true,
             None,
             None,
@@ -706,7 +706,7 @@ mod tests {
         let projection = build(
             &input("repo", None, None),
             requested(InputSource::WorkingTree),
-            Duration::from_secs(60),
+            Duration::from_mins(1),
             false,
             None,
             None,
@@ -733,7 +733,7 @@ mod tests {
         let late = build(
             &input("repo", Some("origin/main"), None),
             requested(InputSource::Committed),
-            Duration::from_secs(60),
+            Duration::from_mins(1),
             false,
             None,
             None,
@@ -752,7 +752,7 @@ mod tests {
         let early = build(
             &input("repo", Some("origin/main"), None),
             requested(InputSource::Committed),
-            Duration::from_secs(60),
+            Duration::from_mins(1),
             false,
             None,
             None,
@@ -772,7 +772,7 @@ mod tests {
         stash(build(
             &input("repo", None, None),
             requested(InputSource::Committed),
-            Duration::from_secs(60),
+            Duration::from_mins(1),
             false,
             None,
             None,
@@ -793,7 +793,7 @@ mod tests {
         let projection = build(
             &input("repo", Some("origin/main"), None),
             requested(InputSource::Committed),
-            Duration::from_secs(60),
+            Duration::from_mins(1),
             true,
             None,
             None,
@@ -861,7 +861,7 @@ mod tests {
         let json_run = build(
             &input("repo", None, None),
             requested(InputSource::Committed),
-            Duration::from_secs(60),
+            Duration::from_mins(1),
             true,
             None,
             None,
@@ -874,7 +874,7 @@ mod tests {
         let human_run = build(
             &input("repo", None, None),
             requested(InputSource::Committed),
-            Duration::from_secs(60),
+            Duration::from_mins(1),
             false,
             None,
             None,
@@ -893,7 +893,7 @@ mod tests {
         let committed = build(
             &input("repo", Some("origin/main"), None),
             requested(InputSource::Committed),
-            Duration::from_secs(60),
+            Duration::from_mins(1),
             false,
             None,
             None,
@@ -906,7 +906,7 @@ mod tests {
         let committed_default = build(
             &input("repo", None, None),
             requested(InputSource::Committed),
-            Duration::from_secs(60),
+            Duration::from_mins(1),
             false,
             None,
             None,
@@ -919,7 +919,7 @@ mod tests {
         let worktree = build(
             &input("repo", Some("origin/main"), None),
             requested(InputSource::WorkingTree),
-            Duration::from_secs(60),
+            Duration::from_mins(1),
             false,
             None,
             None,
