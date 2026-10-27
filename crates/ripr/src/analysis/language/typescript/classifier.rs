@@ -5122,23 +5122,28 @@ fn opens_method_body(segment: &str) -> bool {
     // is only the text after the last newline outside a parameter list
     // (`log(x)\nwhile (go) {` must not read `log(x)` as a method head).
     let mut depth = 0i64;
-    let mut closed_a_list = false;
     let mut head_start = 0;
+    let mut previous_head_start = 0;
     for (index, c) in segment.char_indices() {
         match c {
             '(' => depth += 1,
-            ')' => {
-                depth -= 1;
-                closed_a_list = true;
-            }
+            ')' => depth -= 1,
             '\n' if depth == 0 => {
+                previous_head_start = head_start;
                 head_start = index + 1;
-                closed_a_list = false;
             }
             _ => {}
         }
     }
-    if depth != 0 || !closed_a_list {
+    if depth != 0 {
+        return false;
+    }
+    // A brace on its own line (`pick(n)\n{`) leaves nothing after the last
+    // newline, so the signature is the line before it.
+    if segment[head_start..].trim().is_empty() {
+        head_start = previous_head_start;
+    }
+    if !segment[head_start..].contains(')') {
         return false;
     }
     let mut rest = segment[head_start..]

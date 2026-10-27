@@ -15963,19 +15963,48 @@ fn branch_return_expressions_reads_a_block_after_a_semicolon_less_call() {
     assert!(branch_return_expressions(&after_call, 3).is_some());
     let decorated: Vec<&str> = [
         "export function f(s: number): number {",
-        "    const o = { @Get()",
-        "    pick(n: number) {",
-        "        if (n === 404) {",
-        "            return 1;",
+        "    class C {",
+        "        @Get()",
+        "        pick(n: number) {",
+        "            if (n === 404) {",
+        "                return 1;",
+        "            }",
+        "            return 2;",
         "        }",
-        "        return 2;",
-        "    } };",
-        "    return o.pick(s);",
+        "    }",
+        "    return new C().pick(s);",
         "}",
     ]
     .into_iter()
     .collect();
-    assert_eq!(branch_return_expressions(&decorated, 3), None);
+    assert_eq!(branch_return_expressions(&decorated, 4), None);
+    // A multi-line parameter list and a brace on its own line keep the name.
+    for (header, changed) in [
+        (
+            vec!["        pick(", "            n: number", "        ) {"],
+            5,
+        ),
+        (vec!["        pick(n: number)", "        {"], 4),
+    ] {
+        let mut lines: Vec<&str> =
+            vec!["export function f(s: number): number {", "    const o = {"];
+        lines.extend(header);
+        lines.extend([
+            "            if (n === 404) {",
+            "                return 1;",
+            "            }",
+            "            return 2;",
+            "        }",
+            "    };",
+            "    return o.pick(s);",
+            "}",
+        ]);
+        assert_eq!(
+            branch_return_expressions(&lines, changed),
+            None,
+            "{lines:?}"
+        );
+    }
 }
 
 /// #10776: a changed `if` inside a class method is withheld the same way.

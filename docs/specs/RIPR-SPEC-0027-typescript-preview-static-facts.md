@@ -499,8 +499,11 @@ boundary without changing the guards (#4104 E):
   gates (an owner body, a numeric expectation, a unique changed line); where one
   of those fails, the witness decision stands as before. A changed ternary,
   `else if` head, brace-less one-line `if` (#10463) or a condition that
-  continues onto the next line keeps its previous behavior. Method shorthand
-  and class methods are not recognized as nested functions (#10776).
+  continues onto the next line keeps its previous behavior. A method head is
+  recognized by its signature (a name, a parameter list, an optional return
+  type); a computed or string-literal name, an optional method (`pick?(n)`), an
+  object-type return and a method named like a control keyword are not, and keep
+  their previous behavior (#10776).
 
 When the adapter cannot classify, it emits one of the `static_limit_kind`
 values defined in RIPR-SPEC-0026:
