@@ -143,26 +143,37 @@ pub(super) fn admit_by_reach(
     for _ in 0..MAX_FIXTURE_ROUNDS {
         let found: Vec<(usize, Vec<String>)> = (0..discovered.len())
             .into_par_iter()
-            .filter(|index| !reaching[*index])
             .filter_map(|index| {
+                // Test modules and conftests host fixtures. They are rescanned
+                // every round, even once reaching, because a fixture can build
+                // on another fixture that only joins the needles in a later
+                // round.
+                let is_fixture_host = is_test_file(&discovered[index])
+                    || discovered[index]
+                        .file_name()
+                        .is_some_and(|name| name == "conftest.py");
+                let already_reaching = reaching[index];
+                if already_reaching && !is_fixture_host {
+                    return None;
+                }
                 crate::analysis::cancellation::with_optional_token(token.as_ref(), || {
                     let Ok(source) = sources[index].read(file_limit)? else {
+                        if already_reaching {
+                            return None;
+                        }
                         // Unreadable here is unreadable for the analysis too;
                         // admitting it lets the read path name the failure.
                         return Some((index, Vec::new()));
                     };
-                    let reaches = names_any(&source, &needles)
+                    let reaches = already_reaching
+                        || names_any(&source, &needles)
                         || modules
                             .iter()
                             .any(|module| module.imported_by(&discovered[index], &source));
                     if !reaches {
                         return None;
                     }
-                    let fixtures = if is_test_file(&discovered[index])
-                        || discovered[index]
-                            .file_name()
-                            .is_some_and(|name| name == "conftest.py")
-                    {
+                    let fixtures = if is_fixture_host {
                         fixtures_over(&source, &needles)
                     } else {
                         Vec::new()
@@ -624,6 +635,67 @@ fn import_statements(source: &str) -> impl Iterator<Item = String> + '_ {
     })
 }
 
+/// Local names `source` binds to a needle with `import ... as`: the `b` of
+/// `from m import a as b` or `import pkg.a as b` when `a` is a needle.
+fn imported_aliases(source: &str, needles: &HashSet<String>) -> Vec<String> {
+    let mut local = Vec::new();
+    for statement in import_statements(source) {
+        let imported = match statement.strip_prefix("from ") {
+            Some(rest) => rest
+                .split_once(" import ")
+                .map_or("", |(_, imported)| imported),
+            None => statement.strip_prefix("import ").unwrap_or_default(),
+        };
+        for item in imported
+            .trim_matches(|c: char| c == '(' || c == ')' || c.is_whitespace())
+            .split(',')
+        {
+            let mut words = item.split_whitespace();
+            if let (Some(name), Some("as"), Some(alias)) =
+                (words.next(), words.next(), words.next())
+                && name
+                    .rsplit('.')
+                    .next()
+                    .is_some_and(|last| needles.contains(last))
+            {
+                local.push(alias.trim_end_matches(')').to_string());
+            }
+        }
+    }
+    local
+}
+
+/// Local names bound to pytest's fixture decorator by
+/// `from pytest import fixture as fx` (also `pytest_asyncio`). A later
+/// rebinding is not tracked: reading a shadowed alias as a fixture only
+/// admits more files.
+fn fixture_aliases(source: &str) -> Vec<String> {
+    let mut aliases = Vec::new();
+    for statement in import_statements(source) {
+        let Some(rest) = statement.strip_prefix("from ") else {
+            continue;
+        };
+        let Some((module, imported)) = rest.split_once(" import ") else {
+            continue;
+        };
+        if !matches!(module.trim(), "pytest" | "pytest_asyncio") {
+            continue;
+        }
+        for item in imported
+            .trim_matches(|c: char| c == '(' || c == ')' || c.is_whitespace())
+            .split(',')
+        {
+            let mut words = item.split_whitespace();
+            if let (Some("fixture"), Some("as"), Some(alias)) =
+                (words.next(), words.next(), words.next())
+            {
+                aliases.push(alias.trim_end_matches(')').to_string());
+            }
+        }
+    }
+    aliases
+}
+
 /// The name other files import a module by: its stem, or its package's name
 /// for an `__init__.py`.
 fn module_name(path: &Path) -> Option<String> {
@@ -759,11 +831,23 @@ fn is_keyword(word: &str) -> bool {
 /// calls. A `name=` override in the decorator is kept too (its words are).
 fn fixtures_over(source: &str, needles: &HashSet<String>) -> Vec<String> {
     let lines: Vec<&str> = source.lines().collect();
+    let aliases = fixture_aliases(source);
+    // A fixture body calls an owner by the local name this file imports it
+    // as (`from orders import make_order as build`).
+    let local = imported_aliases(source, needles);
+    let needles: HashSet<String> = needles.iter().cloned().chain(local).collect();
+    let needles = &needles;
     let mut fixtures = Vec::new();
     let mut at = 0;
     while at < lines.len() {
         let trimmed = lines[at].trim_start();
-        if !(trimmed.starts_with('@') && trimmed.contains("fixture")) {
+        let is_fixture = trimmed.strip_prefix('@').is_some_and(|decorator| {
+            decorator.contains("fixture")
+                || identifier_words(decorator)
+                    .next()
+                    .is_some_and(|head| aliases.iter().any(|alias| alias == head))
+        });
+        if !is_fixture {
             at += 1;
             continue;
         }
@@ -1006,6 +1090,78 @@ mod tests {
         grown.extend(first);
         let second = fixtures_over(conftest, &grown);
         assert!(second.contains(&"cart".to_string()) && !second.contains(&"unrelated".to_string()));
+    }
+
+    #[test]
+    fn a_conftest_already_reaching_is_rescanned_for_fixtures_built_on_fixtures()
+    -> Result<(), String> {
+        let root =
+            std::env::temp_dir().join(format!("ripr-reach-chained-fixture-{}", std::process::id()));
+        let files = [
+            (
+                "orders.py",
+                "def make_order(count):\n    if count > 2:\n        return count * 3\n    return count\n",
+            ),
+            (
+                "tests/conftest.py",
+                "import pytest\n\nfrom orders import make_order\n\n\n@pytest.fixture\ndef cart(order):\n    return [order]\n\n\n@pytest.fixture\ndef order():\n    return make_order(3)\n",
+            ),
+            (
+                "tests/test_cart.py",
+                "def test_cart(cart):\n    assert cart == [9]\n",
+            ),
+            ("filler/a.py", "def a(value):\n    return value\n"),
+            ("filler/b.py", "def b(value):\n    return value\n"),
+        ];
+        for (path, text) in files {
+            let full = root.join(path);
+            if let Some(parent) = full.parent() {
+                std::fs::create_dir_all(parent).map_err(|err| format!("mkdir: {err}"))?;
+            }
+            std::fs::write(&full, text).map_err(|err| format!("write: {err}"))?;
+        }
+        let changed_files = vec![changed("orders.py", &[(2, "    if count > 2:")])];
+        let changed_paths: BTreeSet<String> = ["orders.py".to_string()].into_iter().collect();
+        let discovered = files.iter().map(|(path, _)| PathBuf::from(path)).collect();
+        let admission = admit_by_reach(
+            &root,
+            discovered,
+            &changed_files,
+            &changed_paths,
+            3,
+            1 << 20,
+        );
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove: {err}"))?;
+        let admission = admission.ok_or("reach scan fell back")?;
+        // `cart` joins the needles only after `order` does, in the conftest
+        // that already reached in the first round.
+        assert!(
+            admission
+                .kept
+                .contains(&PathBuf::from("tests/test_cart.py")),
+            "kept {:?}",
+            admission.kept
+        );
+        assert_eq!(admission.refused_reaching, 0);
+        assert_eq!(admission.refused_unreached, 2);
+        Ok(())
+    }
+
+    #[test]
+    fn an_aliased_fixture_decorator_still_marks_a_fixture() {
+        let needles: HashSet<String> = ["make_order".to_string()].into_iter().collect();
+        let conftest = "from pytest import (\n    fixture as fx,\n    mark,\n)\n\n\n@fx\ndef order():\n    return make_order(3)\n\n\n@mark.slow\ndef helper():\n    return make_order(1)\n";
+        assert_eq!(fixtures_over(conftest, &needles), vec!["order".to_string()]);
+        let unaliased =
+            "from other import fixture as fx\n\n\n@fx\ndef order():\n    return make_order(3)\n";
+        assert!(fixtures_over(unaliased, &needles).is_empty());
+    }
+
+    #[test]
+    fn a_fixture_calling_an_owner_by_its_import_alias_joins_the_needles() {
+        let needles: HashSet<String> = ["make_order".to_string()].into_iter().collect();
+        let conftest = "import pytest\n\nfrom orders import make_order as build\n\n\n@pytest.fixture\ndef order():\n    return build(3)\n";
+        assert_eq!(fixtures_over(conftest, &needles), vec!["order".to_string()]);
     }
 
     #[test]

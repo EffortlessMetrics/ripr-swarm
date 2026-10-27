@@ -61,7 +61,9 @@ exceeds the cap, the rest of it is filled from the files that may reach the diff
 changed file; files whose text names a name a changed file defines (a `def` or
 `class` name at any depth, a top-level assignment target, a word of a decorator
 route literal) or a pytest fixture a reaching test module or `conftest.py`
-defines over such a name; for a module-level change, files that import the
+defines over such a name (a `fixture as` decorator alias and an `import ... as`
+alias of the name count, and fixture hosts are rescanned as fixture names join);
+for a module-level change, files that import the
 changed module, and for a `__dunder__` method change, files that import from a
 package above it; and the workspace modules that a reaching test or a changed
 file imports. A refused

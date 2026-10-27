@@ -6555,6 +6555,83 @@ fn analyze_diff_over_cap_keeps_a_test_reaching_the_owner_through_a_fixture() -> 
     Ok(())
 }
 
+/// #10785: the fixture relation the analysis supports holds when the
+/// conftest spells the decorator or the owner through an import alias, so
+/// reach admission must keep the test that only takes the fixture.
+fn assert_capped_fixture_test_matches_uncapped(label: &str, conftest: &str) -> Result<(), String> {
+    let root = unique_test_root(label);
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    write_repo_file(
+        &root.join("orders.py"),
+        "def make_order(count):\n    if count > 2:\n        return count * 3\n    return count\n",
+    )?;
+    write_repo_file(&root.join("tests/conftest.py"), conftest)?;
+    write_repo_file(
+        &root.join("tests/test_totals.py"),
+        "def test_total(order):\n    assert order == 9\n",
+    )?;
+    for index in 0..10 {
+        write_repo_file(
+            &root.join(format!("filler/m{index:02}.py")),
+            &format!("def f{index}(value):\n    return value + {index}\n"),
+        )?;
+    }
+    let changed_files = vec![ChangedFile {
+        path: PathBuf::from("orders.py"),
+        added_lines: vec![ChangedLine {
+            line: 2,
+            text: "    if count > 2:".to_string(),
+            new_side_line: 2,
+        }],
+        removed_lines: Vec::new(),
+    }];
+    let options = repo_options(&root);
+    let capped = PythonAdapter::analyze_diff_with_limits(
+        &options,
+        &changed_files,
+        PythonDiffWalkLimits {
+            max_workspace_files: 3,
+            ..generous_walk_limits()
+        },
+    )?;
+    let uncapped =
+        PythonAdapter::analyze_diff_with_limits(&options, &changed_files, generous_walk_limits())?;
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    let related: Vec<usize> = uncapped
+        .findings
+        .iter()
+        .map(|finding| finding.related_tests.len())
+        .collect();
+    assert!(
+        related.iter().any(|count| *count > 0),
+        "{label}: the fixture must relate the test in the uncapped run, got {related:?}"
+    );
+    assert!(
+        capped.limitations.is_empty(),
+        "{label}: only unrelated files were refused: {:?}",
+        capped.limitations
+    );
+    assert_eq!(capped.findings, uncapped.findings, "{label}");
+    Ok(())
+}
+
+#[test]
+fn analyze_diff_over_cap_keeps_a_test_through_an_aliased_fixture_decorator() -> Result<(), String> {
+    assert_capped_fixture_test_matches_uncapped(
+        "diff-walk-cap-reach-fixture-decorator-alias",
+        "from pytest import fixture as fx\n\nfrom orders import make_order\n\n\n@fx\ndef order():\n    return make_order(3)\n",
+    )
+}
+
+#[test]
+fn analyze_diff_over_cap_keeps_a_test_through_a_fixture_calling_an_import_alias()
+-> Result<(), String> {
+    assert_capped_fixture_test_matches_uncapped(
+        "diff-walk-cap-reach-fixture-import-alias",
+        "import pytest\n\nfrom orders import make_order as build\n\n\n@pytest.fixture\ndef order():\n    return build(3)\n",
+    )
+}
+
 /// #10785 negative control: the same workspace with a cap too small for the
 /// reaching set (the changed file plus one slot) refuses the helper module
 /// the test imports, so the run stays partial and names one refused file.
