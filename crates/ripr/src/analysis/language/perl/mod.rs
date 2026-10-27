@@ -346,7 +346,6 @@ impl LanguageAdapter for PerlAdapter {
             file_accounting: Default::default(),
             rust_diagnostic_origins: Default::default(),
             rust_consumed_sources: Default::default(),
-            preview_fact_cache: Default::default(),
         })
     }
 }
