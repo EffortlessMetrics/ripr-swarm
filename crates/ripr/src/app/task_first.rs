@@ -1709,13 +1709,16 @@ pub(crate) mod tests {
         let boundary_only = gate_entry(SeamGripClass::WeaklyGripped, vec![targeted]);
         let refusal = repair_start_refusal_for_entry(root, &boundary_only, policy)
             .ok_or("a boundary-only not-ready seam must be refused")?;
+        // `/repo` gains a drive on Windows and is console-quoted when it needs
+        // it, so the expected root goes through the same binding the refusal
+        // prints.
+        let printed_root = shell_arg(&bound_root(&root.to_string_lossy()));
         assert!(
-            refusal
+            refusal.reason.contains(&format!(
+                "ripr agent stub --root {printed_root} --at src/pricing.rs:88 --kind predicate"
+            )) && refusal
                 .reason
-                .contains("ripr agent stub --root /repo --at src/pricing.rs:88 --kind predicate")
-                && refusal
-                    .reason
-                    .contains("writes a fill-in skeleton for the changed comparison")
+                .contains("writes a fill-in skeleton for the changed comparison")
                 && refusal.reason.contains("prefilled when it derives")
                 && refusal.reason.contains("then rerun `ripr repair`"),
             "{}",
