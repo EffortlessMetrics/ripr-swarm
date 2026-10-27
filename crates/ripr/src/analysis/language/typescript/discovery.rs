@@ -320,6 +320,13 @@ fn any_file_imports_through(root: &Path, files: &[PathBuf], alias: &Path) -> boo
         let Ok(text) = std::fs::read_to_string(&full) else {
             return true;
         };
+        // A `\u0069`, `\x69` or octal escape can spell the link's name in a
+        // string whose raw text never contains it; the decoded import source
+        // cannot be ruled out, so a file with one beside a relative path
+        // counts as naming the alias.
+        if text.contains("./") && has_character_escape(&text) {
+            return true;
+        }
         text.match_indices(&needle).any(|(start, _)| {
             text[start + needle.len()..]
                 .chars()
@@ -328,6 +335,16 @@ fn any_file_imports_through(root: &Path, files: &[PathBuf], alias: &Path) -> boo
                     !(next.is_alphanumeric() || matches!(next, '_' | '-' | '$' | '@'))
                 })
         })
+    })
+}
+
+/// `true` when `text` has a backslash followed by `u`, `x` or an octal digit.
+fn has_character_escape(text: &str) -> bool {
+    text.match_indices('\\').any(|(start, _)| {
+        text[start + 1..]
+            .chars()
+            .next()
+            .is_some_and(|next| matches!(next, 'u' | 'x' | '0'..='7'))
     })
 }
 
@@ -995,6 +1012,33 @@ mod tests {
         workspace.write(
             "tests/sum.test.ts",
             "import { sum } from '../my lib/sum';\ntest('s', () => { expect(sum).toBe(1); });\n",
+        );
+        let scan =
+            visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        assert_eq!(scan.skipped_links, 1, "{:?}", scan.files);
+        Ok(())
+    }
+
+    /// An escaped spelling (`'../al\u0069as/lib'`) decodes to the alias name
+    /// without the raw text containing it, so it is counted; an unrelated
+    /// escape (`\n`) beside a direct import is not.
+    #[cfg(unix)]
+    #[test]
+    fn discovery_counts_an_alias_named_through_a_character_escape() -> std::io::Result<()> {
+        use std::os::unix::fs::symlink;
+        let workspace = TempWorkspace::new("link-alias-escape");
+        workspace.write("src/sum.ts", "export const sum = 1;\n");
+        symlink("src", workspace.0.join("alias"))?;
+        workspace.write(
+            "tests/sum.test.ts",
+            "import { sum } from '../src/sum';\nconst note = 'a\\nb';\ntest('s', () => { expect(sum).toBe(1); });\n",
+        );
+        let scan =
+            visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        assert_eq!(scan.skipped_links, 0, "{:?}", scan.files);
+        workspace.write(
+            "tests/sum.test.ts",
+            "import { sum } from '../al\\u0069as/sum';\ntest('s', () => { expect(sum).toBe(1); });\n",
         );
         let scan =
             visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);

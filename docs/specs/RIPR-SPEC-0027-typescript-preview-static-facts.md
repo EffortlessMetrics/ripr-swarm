@@ -216,7 +216,7 @@ Test discovery:
   continued by another name character, quoting and comments ignored:
   `../alias/sum` with `alias -> src`, `'../my lib/sum'`): that import names a
   path the walk never indexes, so the alias is counted (an unreadable or
-  oversized indexed file counts as naming one). A directory link that leaves the root, points into an excluded directory or at a
+  oversized indexed file, or one with a `\u`, `\x` or octal escape beside a relative path, counts as naming one since the escape can spell the link name). A directory link that leaves the root, points into an excluded directory or at a
   directory the walk cannot list, a source-named link, a dangling link and a
   link whose target cannot be read stay counted.
 - a file named `*.d.ts`, `*.d.mts` or `*.d.cts` is parsed as a TypeScript
