@@ -1314,7 +1314,10 @@ fn compare_golden(
             normalize_check_json_golden_document(&actual_text),
         )
     } else {
-        (expected_text, actual_text)
+        (
+            mask_repair_refusal_reason(&expected_text),
+            mask_repair_refusal_reason(&actual_text),
+        )
     };
     let normalized_expected = normalize_golden_text(&expected_text);
     let normalized_actual = normalize_golden_text(&actual_text);
@@ -1441,6 +1444,40 @@ fn split_compact_root_object_closer(value: &str) -> String {
         split.push('\n');
     }
     split
+}
+
+/// Marker that opens the human screen's repair-start refusal sentence.
+const REPAIR_REFUSAL_MARKER: &str = "no repair start offered: ";
+
+/// Mask the wording of the repair-start refusal sentence in human goldens.
+///
+/// The sentence after `no repair start offered:` is plain-language prose that
+/// reads differently for each refusal reason, and focused tests assert it
+/// directly. Comparing it verbatim made every wording improvement re-bless one
+/// line in each of hundreds of fixtures (#10702), burying the real change under
+/// mechanical churn. The masked line keeps the decision a golden should pin: a
+/// repair start is either offered (the `ripr repair` line) or refused, and the
+/// refusal line still has to be present in the same place.
+fn mask_repair_refusal_reason(value: &str) -> String {
+    let mut masked = String::with_capacity(value.len());
+    for segment in value.split_inclusive('\n') {
+        let indent = segment.len() - segment.trim_start().len();
+        let (head, rest) = segment.split_at(indent);
+        match rest.strip_prefix(REPAIR_REFUSAL_MARKER) {
+            Some(reason) => {
+                masked.push_str(head);
+                masked.push_str(REPAIR_REFUSAL_MARKER);
+                masked.push_str("<reason>");
+                if reason.ends_with("\r\n") {
+                    masked.push_str("\r\n");
+                } else if reason.ends_with('\n') {
+                    masked.push('\n');
+                }
+            }
+            None => masked.push_str(segment),
+        }
+    }
+    masked
 }
 
 fn normalize_check_json_golden_document(value: &str) -> String {
@@ -3071,6 +3108,44 @@ mod tests {
         assert_ne!(
             normalize_check_json_golden_document(left),
             normalize_check_json_golden_document(right)
+        );
+    }
+
+    #[test]
+    fn refusal_reason_wording_is_masked_but_the_decision_is_pinned() {
+        let old = "Next:\n  ripr explain x\n  no repair start offered: old words; rerun\nMore:\n";
+        let new = "Next:\n  ripr explain x\n  no repair start offered: new words\nMore:\n";
+        assert_eq!(
+            mask_repair_refusal_reason(old),
+            mask_repair_refusal_reason(new),
+            "a reworded refusal must not read as golden drift"
+        );
+        // Negative: a repair start that flips to a refusal is still drift.
+        let offered = "Next:\n  ripr explain x\n  ripr repair abc --root r\nMore:\n";
+        assert_ne!(
+            mask_repair_refusal_reason(offered),
+            mask_repair_refusal_reason(new)
+        );
+        // Negative: a refusal that disappears is still drift.
+        let absent = "Next:\n  ripr explain x\nMore:\n";
+        assert_ne!(
+            mask_repair_refusal_reason(absent),
+            mask_repair_refusal_reason(new)
+        );
+        // Only the marker line is masked; prose elsewhere stays compared, and
+        // CRLF and a missing final newline are preserved for the shared
+        // line-ending normalization.
+        assert_ne!(
+            mask_repair_refusal_reason("a\n  no repair start offered: x\n"),
+            mask_repair_refusal_reason("b\n  no repair start offered: x\n")
+        );
+        assert_eq!(
+            mask_repair_refusal_reason("  no repair start offered: x\r\n"),
+            "  no repair start offered: <reason>\r\n"
+        );
+        assert_eq!(
+            mask_repair_refusal_reason("  no repair start offered: x"),
+            "  no repair start offered: <reason>"
         );
     }
 

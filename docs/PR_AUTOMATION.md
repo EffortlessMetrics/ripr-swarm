@@ -627,6 +627,13 @@ reason to cite an existing `RIPR-SPEC-NNNN` under `docs/specs/`, then records
 the explicit blessing reason, updates expected JSON and human outputs, and
 appends the fixture expected-output changelog.
 
+Human goldens compare the line `no repair start offered: <reason>` by its
+presence and position, not by the wording of the reason. The reason is
+plain-language prose with focused tests of its own, and comparing it verbatim
+turned every rewording into one re-blessed line in hundreds of fixtures
+(#10702). A repair start that flips to a refusal, or a refusal that appears or
+disappears, is still drift.
+
 `golden-drift` writes the same advisory drift reports without failing merely
 because output drift exists. It still reports fixture execution errors as
 command failures.
