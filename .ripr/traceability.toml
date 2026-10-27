@@ -19697,10 +19697,17 @@ tests = [
   "crates/ripr/src/app/agent_status.rs::tests::gap_bound_attempt_status_recovers_with_a_gap_start_not_a_seam_id",
   "crates/ripr/src/output/agent_seam_packets.rs::tests::typescript_gap_repair_packet_names_the_canonical_gap_as_its_seam",
   "crates/ripr/src/output/agent_seam_packets.rs::tests::typescript_gap_repair_packet_stays_fail_closed",
+  "crates/ripr/src/app/navigation.rs::tests::commit_prerequisite_commits_literal_paths_from_a_decoy_directory",
+  "crates/ripr/src/app/task_first.rs::tests::dirty_paths_outside_surface_mirror_the_start_premise_check",
+  "crates/ripr/src/app/task_first.rs::tests::commit_hint_paths_are_relative_to_the_analyzed_root",
+  "crates/ripr/src/app/agent_status.rs::tests::pilot_routing_messages_name_the_commit_before_a_start_on_a_dirty_tree",
+  "crates/ripr/src/output/human.rs::tests::gap_bound_start_names_the_commit_first_on_a_dirty_tree",
 ]
 fixtures = []
 code = [
   "crates/ripr/src/app/gap_bound_repair.rs",
+  "crates/ripr/src/app/navigation.rs",
+  "crates/ripr/src/output/human/triage.rs",
   "crates/ripr/src/app/task_first.rs",
   "crates/ripr/src/app/repair_attempt/mod.rs",
   "crates/ripr/src/app/agent_status.rs",
