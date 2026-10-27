@@ -1,0 +1,23 @@
+{
+  "id": "python_one_line_def_body_fixture",
+  "language": "python",
+  "tier": "pure",
+  "source_fixture": "fixtures/python_one_line_def_body_fixture",
+  "vector": "one_line_def_body_uses_unresolved_fixture",
+  "assertions": [
+    {
+      "type": "expected_finding_count",
+      "count": 1
+    },
+    {
+      "type": "expected_class",
+      "class": "static_unknown"
+    },
+    {
+      "type": "must_not_promote"
+    },
+    {
+      "type": "must_not_report_clean"
+    }
+  ]
+}

@@ -1,4 +1,4 @@
-use super::source_utils::{SourceText, line_for_range_start, signature_colon_end, text_for_range};
+use super::source_utils::{SourceText, line_for_range_start, text_for_range};
 use super::{PythonAssertion, PythonOracleShape, expr_full_name};
 use crate::domain::{OracleKind, OracleStrength};
 use rustpython_parser::ast::{self, Expr, Ranged, Stmt};
@@ -1190,9 +1190,33 @@ fn is_trivial_message_pattern(pattern: &Expr, source: &str, call_start: usize) -
 /// `def_line`: the first colon outside strings and brackets. `None` when no
 /// such line is found.
 fn signature_end(lines: &[&str], def_line: usize) -> Option<usize> {
-    let text = lines.get(def_line..)?.join("\n");
-    let colon_end = signature_colon_end(&text, 0)?;
-    Some(def_line + text[..colon_end].matches('\n').count())
+    let mut depth = 0usize;
+    let mut quote: Option<char> = None;
+    for (index, line) in lines.iter().enumerate().skip(def_line) {
+        let mut escaped = false;
+        for ch in line.chars() {
+            if let Some(open) = quote {
+                if escaped {
+                    escaped = false;
+                } else if ch == '\\' {
+                    escaped = true;
+                } else if ch == open {
+                    quote = None;
+                }
+                continue;
+            }
+            match ch {
+                '\'' | '"' => quote = Some(ch),
+                '#' => break,
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' => depth = depth.saturating_sub(1),
+                ':' if depth == 0 => return Some(index),
+                _ => {}
+            }
+        }
+        quote = None;
+    }
+    None
 }
 
 /// The source lines a bare `name` at `call_start` can be bound by: the

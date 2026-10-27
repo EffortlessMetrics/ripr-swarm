@@ -960,8 +960,16 @@ fn body_uses_identifier(body_text: &str, identifier: &str) -> bool {
     // The test's own signature declares its parameters; it does not use them.
     // A multi-line signature puts them on lines that do not start with `def`,
     // and a one-line body follows the colon on the `def` line (#10685).
+    // The colon scan does not follow a triple-quoted string across lines, so
+    // a signature holding one falls back to the old line rule rather than
+    // risk starting the body past a real use.
     let body_start = test_def_offset(body_text)
-        .and_then(|def| signature_colon_end(body_text, def))
+        .and_then(|def| {
+            signature_colon_end(body_text, def).filter(|&end| {
+                let signature = &body_text[def..end];
+                !signature.contains("\"\"\"") && !signature.contains("\'\'\'")
+            })
+        })
         .unwrap_or(0);
     let mut line_start = 0;
     for line in body_text.split_inclusive('\n') {
@@ -2074,6 +2082,12 @@ pub(super) mod tests {
             ("def test_x(\n    fee,\n):\n    assert fee\n", true),
             ("def test_x(fee): assert fee\n", true),
             ("def test_x(\n    fee,\n): return fee\n", true),
+            // A triple-quoted default the colon scan cannot follow keeps the
+            // old line rule, so the body use still counts.
+            (
+                "def test_x(fee, note=\"\"\"a\nb\"\"\"):\n    assert fee\n    text = \"\"\"\n    1) step: x\n    \"\"\"\n",
+                true,
+            ),
         ];
         for (body, uses) in cases {
             assert_eq!(body_uses_identifier(body, "fee"), uses, "{body:?}");
