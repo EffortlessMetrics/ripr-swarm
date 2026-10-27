@@ -2548,6 +2548,36 @@ fn unwrap_tail_self_qualified_handler_on_a_generic_or_repeated_type_is_not_credi
 }
 
 #[test]
+fn unwrap_tail_on_a_result_or_option_the_file_imports_is_not_credited() -> Result<(), String> {
+    let tail = "self.try_grow(wanted).unwrap_or_else(die)";
+    // The control: no import rebinds the name, so the std method is credited.
+    let finding = forwarder_finding(DIVERGING_DIE, &unwrapping_forwarder(tail), UNWRAP_TESTS)?;
+    assert_eq!(finding["classification"], "exposed", "{finding}");
+    for import in [
+        "use dep::Result;\n",
+        "use dep::{Overflow2, Result};\n",
+        "use dep::Res as Result;\n",
+        "use dep::*;\n",
+        "use dep::prelude::*;\n",
+        "use std::fmt::Result;\n",
+        "use std::io::*;\n",
+        "pub use dep::Result;\n",
+    ] {
+        assert_unwrap_tail_not_credited(&format!("{DIVERGING_DIE}{import}"), tail)?;
+    }
+    // The std spellings of the import keep the credit.
+    for import in ["use std::result::Result;\n", "use core::result::Result;\n"] {
+        let finding = forwarder_finding(
+            &format!("{DIVERGING_DIE}{import}"),
+            &unwrapping_forwarder(tail),
+            UNWRAP_TESTS,
+        )?;
+        assert_eq!(finding["classification"], "exposed", "{import}: {finding}");
+    }
+    Ok(())
+}
+
+#[test]
 fn unwrap_tail_handler_reached_through_a_local_alias_is_not_credited() -> Result<(), String> {
     // `halt` is not a workspace function, so it is not a known handler even
     // though it is bound to the unique diverging `die`.

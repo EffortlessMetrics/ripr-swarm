@@ -2952,7 +2952,38 @@ fn callee_returns_std_result_or_option(callee_name: &str, index: &RustIndex) -> 
             .strip_prefix(std_type)
             .is_some_and(|rest| rest.starts_with('<'))
             && super::owner_pin::workspace_type_name_count(std_type, index) == 0
+            && index
+                .files()
+                .get(&callee.file)
+                .is_some_and(|file| !file_rebinds_prelude_name(&file.source, std_type))
     })
+}
+
+/// Whether `source` has a `use` that binds `name` (`Result` / `Option`) to
+/// anything but the standard item, or a glob import that could bring an
+/// external one in (`use dep::*;`, `use dep::prelude::*;`). `use super::*;`
+/// and `use self::*;` add nothing the parent module's own imports do not
+/// already bring, and those are checked as part of the same file.
+fn file_rebinds_prelude_name(source: &str, name: &str) -> bool {
+    let std_path = |path: &str| {
+        let path = path.trim_start_matches("::");
+        let module = if name == "Result" { "result" } else { "option" };
+        ["std", "core"]
+            .iter()
+            .any(|root| path == format!("{root}::{module}::{name}"))
+    };
+    super::reveal::flattened_use_paths(source)
+        .iter()
+        .any(|import| {
+            if import.path.ends_with('*') {
+                return !matches!(import.path.as_str(), "super::*" | "self::*");
+            }
+            let bound = import
+                .alias
+                .as_deref()
+                .unwrap_or_else(|| import.path.rsplit("::").next().unwrap_or(""));
+            bound == name && !std_path(&import.path)
+        })
 }
 
 /// One enclosing brace block of an item: an inline `mod`, an `impl` block

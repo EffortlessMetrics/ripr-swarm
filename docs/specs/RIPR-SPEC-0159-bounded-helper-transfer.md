@@ -135,7 +135,7 @@ can only hint that a caller "may lead here" without changing anything.
   signature or name spells `impl` still opens its own scope), with a `Type::` qualifier that is the workspace type and
   not a generic parameter, local item or import of the same name, called on a
   hop whose callee declares `Result<..>` or `Option<..>` with no workspace
-  type of that name, and its whole body must be one
+  type of that name and no `use` in the callee's file binding that name to a non-std item or glob-importing a non-`super`/`self` module, and its whole body must be one
   unconditional `panic!`, `unreachable!`, `unimplemented!`, `todo!` (none
   rebound by a user macro or import) or `std::process::abort()` /
   `std::process::exit(..)` (with no item, import or `use` binding named `std`
