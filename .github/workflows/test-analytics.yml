@@ -31,6 +31,11 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          # #10794 / #9646: the default shallow PR checkout has no base branch,
+          # so base-resolution tests (cli_progress, cli_smoke pr-evidence) fail
+          # and nextest aborts before ~30% of the suite runs.
+          fetch-depth: 0
 
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
