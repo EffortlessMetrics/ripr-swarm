@@ -1947,7 +1947,7 @@ impl PilotGapStart {
                 &route.gap_id,
                 &route.base,
             ),
-            prerequisite: route.commit_prerequisite(),
+            prerequisite: route.commit_prerequisite(root_display),
         }
     }
 
@@ -6698,7 +6698,18 @@ mod tests {
         let start = "ripr agent repair --gap-id gap-1 --base main --root . --phase before";
         let clean = PilotGapStart::from_route(".", &route(&[]));
         let dirty = PilotGapStart::from_route(".", &route(&["src/pricing.py"]));
-        let commit = "git commit -m \"<message>\" -- src/pricing.py";
+        let commit = "git -C . --literal-pathspecs commit -m \"<message>\" -- src/pricing.py";
+
+        // A decoy-cwd user needs the commit anchored at the analyzed root.
+        let anchored = PilotGapStart::from_route("/repo root", &route(&["src/[ab].py"]));
+        let anchored_message =
+            pilot_routed_to_check_message(&routes, "/repo root", Some(&anchored));
+        assert!(
+            anchored_message.contains(
+                "git -C '/repo root' --literal-pathspecs commit -m \"<message>\" -- 'src/[ab].py'"
+            ),
+            "{anchored_message}"
+        );
 
         let clean_routed = pilot_routed_to_check_message(&routes, ".", Some(&clean));
         let clean_card = pilot_python_repair_card_message(&card, ".", Some(&clean));

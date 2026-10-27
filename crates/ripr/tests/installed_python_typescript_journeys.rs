@@ -706,7 +706,7 @@ fn typescript_literal_threshold_packet_is_complete_and_controls_fail_closed() ->
     expect_exit(dirty_check_ok, true, "dirty check")?;
     need(
         &dirty_check,
-        "git commit -m \"<message>\" -- src/pricing.ts",
+        &format!("git -C {root_arg} --literal-pathspecs commit -m \"<message>\" -- src/pricing.ts"),
         "check names the commit step on a dirty tree",
     )?;
     expect_exit(dirty_ok, false, "dirty production start")?;

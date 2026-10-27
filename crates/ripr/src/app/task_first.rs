@@ -2374,6 +2374,7 @@ pub(crate) mod tests {
             std::process::id()
         ));
         std::fs::create_dir_all(root.join("tests"))
+            .and_then(|()| std::fs::create_dir_all(root.join("src")))
             .map_err(|error| format!("create {} failed: {error}", root.display()))?;
         let root = root
             .canonicalize()
@@ -2390,6 +2391,7 @@ pub(crate) mod tests {
             ("tests/test_pricing.py", "y = 1\n"),
             ("tests/conftest.py", "z = 1\n"),
             ("util.py", "u = 1\n"),
+            ("src/[ab].py", "g = 1\n"),
         ] {
             std::fs::write(root.join(file), text)
                 .map_err(|error| format!("write {file} failed: {error}"))?;
@@ -2436,6 +2438,13 @@ pub(crate) mod tests {
         assert_eq!(
             dirty_paths_outside_surface(&root, &policy),
             ["pricing.py", "tests/conftest.py", "util.py"]
+        );
+        // A tracked file whose name looks like a glob is named literally.
+        std::fs::write(root.join("src/[ab].py"), "g = 2\n")
+            .map_err(|error| format!("write glob-named file failed: {error}"))?;
+        assert_eq!(
+            dirty_paths_outside_surface(&root, &policy),
+            ["pricing.py", "src/[ab].py", "tests/conftest.py", "util.py"]
         );
         Ok(())
     }

@@ -2309,7 +2309,8 @@ mod tests {
             "ripr agent repair --gap-id gap:python:pricing.py:discount --base HEAD --phase before";
 
         let dirty = render_with(vec!["pricing.py".to_string()]);
-        let commit_at = dirty.find("git commit -m \"<message>\" -- pricing.py");
+        let commit_at =
+            dirty.find("git -C . --literal-pathspecs commit -m \"<message>\" -- pricing.py");
         let start_at = dirty.find(start);
         assert!(
             matches!((commit_at, start_at), (Some(commit), Some(start)) if commit < start),
