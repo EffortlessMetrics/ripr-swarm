@@ -5135,6 +5135,196 @@ fn check_json_bound_subject_config_timeout_names_timeout_identity() -> Result<()
     Ok(())
 }
 
+/// #10796: an early analysis deadline (the diff loader still stalled) keeps
+/// the typed `analysis_timeout` identity but now renders generation 0.3 with
+/// an `input_context`: the requested committed source selection is echoed,
+/// every resolved fact is explicitly unavailable with the deadline reason,
+/// and one bounded shell-safe retry is offered. The deadline is forced by a
+/// slow-git shim under `--timeout 1`; the git deadline stays at its default
+/// so the check budget — not the git timeout — is what fires.
+#[cfg(unix)]
+#[test]
+fn check_json_analysis_timeout_retains_requested_echo_and_bounded_recovery(
+) -> Result<(), String> {
+    let root = init_check_refusal_repo("check-json-analysis-timeout", 1)?;
+    let root_arg = root.display().to_string();
+    // Every git call takes 3 s; the 1 s check budget fires inside the first
+    // loader call, before any producer published (the early-timeout case).
+    let shim_dir = unique_temp_workspace("check-json-analysis-timeout-shim");
+    std::fs::create_dir_all(&shim_dir).map_err(|err| format!("create shim dir: {err}"))?;
+    let shim = shim_dir.join("git");
+    std::fs::write(&shim, "#!/bin/sh\nexec sleep 3\n")
+        .map_err(|err| format!("write git shim: {err}"))?;
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755))
+            .map_err(|err| format!("make git shim executable: {err}"))?;
+    }
+    let mut paths = vec![shim_dir.clone()];
+    paths.extend(std::env::split_paths(
+        &std::env::var_os("PATH").unwrap_or_default(),
+    ));
+    let search_path = std::env::join_paths(paths)
+        .map_err(|err| format!("build shim PATH: {err}"))?
+        .to_string_lossy()
+        .into_owned();
+
+    let started = std::time::Instant::now();
+    let output = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        &root,
+        &[
+            "check",
+            "--json",
+            "--root",
+            root_arg.as_str(),
+            "--base",
+            "HEAD",
+            "--committed",
+            "--timeout",
+            "1",
+        ],
+        &[("PATH", search_path.as_str())],
+    )
+    .map_err(|err| format!("run check under slow git: {err}"))?;
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < std::time::Duration::from_secs(45),
+        "check waited {elapsed:?} under --timeout 1 with slow git"
+    );
+    let stdout = assert_machine_refusal_basics(&output)?;
+    let value: serde_json::Value = serde_json::from_str(&stdout)
+        .map_err(|err| format!("timeout refusal must parse as JSON: {err}\n{stdout}"))?;
+    if value["analysis_scope"]["run_status"] != "analysis_timeout" {
+        return Err(format!(
+            "the check budget — not the git timeout — must fire: {value}"
+        ));
+    }
+    // Generation 0.3 carries the input context; the #6834 contract is intact.
+    if value["schema_version"] != "0.3" {
+        return Err(format!("the timeout refusal must render at 0.3: {value}"));
+    }
+    if value["findings"].as_array().map(Vec::len) != Some(0)
+        || value["summary"]["changed_rust_files"] != 0
+        || value["analysis_scope"]["downstream_consumable"] != false
+    {
+        return Err(format!(
+            "zeroed summary, empty findings and non-consumable treatment are required: {value}"
+        ));
+    }
+    for (pointer, expected) in [
+        ("/input_context/requested/source", "committed"),
+        ("/input_context/requested/base", "HEAD"),
+        ("/input_context/requested/analysis_mode", "draft"),
+        ("/input_context/recovery/kind", "retry_with_larger_budget"),
+        ("/input_context/recovery/budget_seconds", "2"),
+    ] {
+        let actual = value.pointer(pointer).and_then(serde_json::Value::as_str);
+        if actual != Some(expected) {
+            return Err(format!("{pointer}: expected {expected}, got {actual:?}\n{stdout}"));
+        }
+    }
+    if value["input_context"]["requested"]["root"].as_str() != Some(root_arg.as_str()) {
+        return Err(format!(
+            "requested root must echo the invocation: {}",
+            value["input_context"]["requested"]
+        ));
+    }
+    // Early timeout: the loader never published, so every fact names the
+    // deadline instead of reporting a value.
+    for pointer in [
+        "/input_context/resolved/effective_base",
+        "/input_context/resolved/base_commit",
+        "/input_context/resolved/merge_base",
+        "/input_context/resolved/scoped_changed_files",
+    ] {
+        let fact = value
+            .pointer(pointer)
+            .ok_or_else(|| format!("{pointer} must exist: {stdout}"))?;
+        if fact["available"] != false {
+            return Err(format!("{pointer} must be unavailable: {stdout}"));
+        }
+        if fact["reason"] != "not_published_before_deadline" {
+            return Err(format!("{pointer} must name the deadline reason: {stdout}"));
+        }
+    }
+    // The bounded retry preserves the invocation authority: root, base,
+    // committed source, json output, and a finite doubled budget — never a
+    // silent broadening and never "disable all time limits".
+    let command = value["input_context"]["recovery"]["command"]
+        .as_str()
+        .ok_or("recovery must carry a literal command")?;
+    for needle in [
+        "ripr check",
+        format!("--root {root_arg}").as_str(),
+        "--base HEAD",
+        "--committed",
+        "--json",
+        "--timeout 2",
+    ] {
+        if !command.contains(needle) {
+            return Err(format!("recovery command must contain `{needle}`: {command}"));
+        }
+    }
+    if command.contains("--timeout 0") {
+        return Err(format!("the retry must stay bounded: {command}"));
+    }
+    if value["input_context"]["recovery"]["rereads"]
+        .as_array()
+        .is_none_or(|reads| reads.is_empty())
+    {
+        return Err(format!(
+            "the retry must state what it re-reads: {}",
+            value["input_context"]["recovery"]
+        ));
+    }
+
+    // Native human consumers get the same recovery on stderr, with empty
+    // stdout and exit 2 preserved.
+    let human = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        &root,
+        &[
+            "check",
+            "--root",
+            root_arg.as_str(),
+            "--base",
+            "HEAD",
+            "--committed",
+            "--timeout",
+            "1",
+        ],
+        &[("PATH", search_path.as_str())],
+    )
+    .map_err(|err| format!("run human check under slow git: {err}"))?;
+    if human.status.code() != Some(2) {
+        return Err(format!(
+            "human timeout must keep exit 2, got {:?}",
+            human.status.code()
+        ));
+    }
+    if !human.stdout.is_empty() {
+        return Err("human timeout must keep empty stdout".to_string());
+    }
+    let stderr = String::from_utf8_lossy(&human.stderr);
+    if !stderr.contains("analysis_timeout") {
+        return Err(format!("stderr must keep the timeout prose: {stderr}"));
+    }
+    if !stderr.contains("bounded retry: ripr check") || !stderr.contains("--timeout 2") {
+        return Err(format!(
+            "human stderr must carry the bounded recovery: {stderr}"
+        ));
+    }
+    if !stderr.contains("not pinned") {
+        return Err(format!(
+            "human stderr must state the retry is not the same snapshot: {stderr}"
+        ));
+    }
+    ignore_remove_dir_all(&root);
+    ignore_remove_dir_all(&shim_dir);
+    Ok(())
+}
+
 /// #6834: the success path carries no refusal shape — no `analysis_scope`
 /// or `run_limitations` keys — so the envelope cannot be mistaken for a
 /// result and no success field moved. Byte-identity against the base
