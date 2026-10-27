@@ -1977,6 +1977,25 @@ fn candidate_lines_from_findings(findings: &[Finding]) -> usize {
         .len()
 }
 
+/// Collapses the `javascript` compat row into the `typescript` one when both
+/// were published with identical status and reason (#10546). The two ids share
+/// one adapter result, so identical rows are one fact. Passes that disagree
+/// (one clean or errored, the other partial) keep both rows, so a degradation
+/// is never dropped. Order-independent; a single-id run is untouched.
+fn dedupe_typescript_family_runs(runs: Vec<LanguageRun>) -> Vec<LanguageRun> {
+    let typescript: Vec<(LanguageRunStatus, Option<String>)> = runs
+        .iter()
+        .filter(|run| run.language == "typescript")
+        .map(|run| (run.status, run.reason.clone()))
+        .collect();
+    runs.into_iter()
+        .filter(|run| {
+            !(run.language == "javascript"
+                && typescript.contains(&(run.status, run.reason.clone())))
+        })
+        .collect()
+}
+
 fn limitations_from_language_runs(
     language_runs: &[LanguageRun],
 ) -> Result<Vec<AnalysisLimitation>, String> {
@@ -2143,23 +2162,7 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
                 let repeat_typescript_pass =
                     matches!(language, LanguageId::TypeScript | LanguageId::JavaScript)
                         && std::mem::replace(&mut typescript_family_merged, true);
-                // One public compat row per adapter family (#10546): both
-                // ids share one adapter result, so a partial run must not
-                // publish the same reasons under two labels. With both ids
-                // selected the canonical `typescript` pass owns the row (the
-                // label that owns the family file total below); a single id
-                // keeps its own label. Per-label outcomes are still recorded.
-                let both_typescript_ids = languages.contains(&LanguageId::TypeScript)
-                    && languages.contains(&LanguageId::JavaScript);
-                let owns_compat_row = match language {
-                    LanguageId::TypeScript | LanguageId::JavaScript if both_typescript_ids => {
-                        matches!(language, LanguageId::TypeScript)
-                    }
-                    _ => true,
-                };
-                if owns_compat_row {
-                    language_runs.extend(outcome.compat_run());
-                }
+                language_runs.extend(outcome.compat_run());
                 repo_language_aggregate.record(outcome);
                 if !repeat_typescript_pass {
                     value_origins.extend(result.value_origins);
@@ -2169,6 +2172,8 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
                     // to `typescript` whatever the id order, so the summary
                     // does not depend on which id ran first; a single-id run
                     // keeps its own label (#10013).
+                    let both_typescript_ids = languages.contains(&LanguageId::TypeScript)
+                        && languages.contains(&LanguageId::JavaScript);
                     let family_label = if both_typescript_ids {
                         LanguageId::TypeScript
                     } else {
@@ -2195,6 +2200,9 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
         }
     }
 
+    // One public compat row per adapter family (#10546): both ids share one
+    // adapter result, so identical rows collapse; divergent passes keep both.
+    let language_runs = dedupe_typescript_family_runs(language_runs);
     // Detect preview-language files anywhere in the workspace regardless of
     // adapter enablement, so a repo-scope clean result is never silently
     // presented as Rust-grade clean when TypeScript/JavaScript/Python files
@@ -5721,6 +5729,45 @@ mod tests {
             assert!(aggregate.outcomes.contains_key("javascript"), "{label}");
         }
         Ok(())
+    }
+
+    fn family_run(language: &str, status: LanguageRunStatus, reason: &str) -> LanguageRun {
+        LanguageRun {
+            language: language.to_string(),
+            status,
+            reason: Some(reason.to_string()),
+        }
+    }
+
+    /// #10546: identical typescript/javascript rows collapse to the typescript
+    /// row in either order; rows that differ in status or reason keep both so a
+    /// divergent pass never loses its degradation; other languages and
+    /// single-id runs are untouched.
+    #[test]
+    fn dedupe_typescript_family_runs_collapses_only_identical_rows() {
+        use super::dedupe_typescript_family_runs as dedupe;
+        let partial = LanguageRunStatus::Partial;
+        let ts = family_run("typescript", partial, "r");
+        let js = family_run("javascript", partial, "r");
+        assert_eq!(dedupe(vec![ts.clone(), js.clone()]), vec![ts.clone()]);
+        assert_eq!(dedupe(vec![js.clone(), ts.clone()]), vec![ts.clone()]);
+        // TS clean (no row) + JS partial keeps the javascript degradation.
+        assert_eq!(dedupe(vec![js.clone()]), vec![js.clone()]);
+        // TS Err + JS partial: statuses differ, both kept.
+        let ts_err = family_run("typescript", LanguageRunStatus::Unavailable, "r");
+        assert_eq!(
+            dedupe(vec![ts_err.clone(), js.clone()]),
+            vec![ts_err, js.clone()]
+        );
+        // Same status, different reason: both kept.
+        let ts_other = family_run("typescript", partial, "other");
+        assert_eq!(
+            dedupe(vec![ts_other.clone(), js.clone()]),
+            vec![ts_other, js]
+        );
+        // Single-id and unrelated rows are untouched.
+        let py = family_run("python", partial, "r");
+        assert_eq!(dedupe(vec![py.clone(), ts.clone()]), vec![py, ts]);
     }
 
     /// #10546: both TypeScript-family ids share one adapter result, so a
