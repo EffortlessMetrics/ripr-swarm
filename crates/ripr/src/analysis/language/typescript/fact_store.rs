@@ -461,7 +461,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn envelope_round_trips_through_codec() {
+    fn envelope_round_trips_through_codec() -> Result<(), String> {
         let key = TypeScriptFileFactKey::with_alias_digest(
             Path::new("src/a.ts"),
             "export const a = 1;\n",
@@ -475,17 +475,18 @@ mod tests {
             phase_two: super::super::owners::PhaseTwoFacts::default(),
         };
         let envelope = TypeScriptFileFactEnvelope::new(&key, facts.clone(), None);
-        let bytes =
-            seam_cache::encode_integrity_body(&envelope, envelope.expected_digest().unwrap())
-                .unwrap();
-        let decoded: TypeScriptFileFactEnvelope = serde_json::from_slice(&bytes).unwrap();
+        let digest = envelope.expected_digest()?;
+        let bytes = seam_cache::encode_integrity_body(&envelope, digest)?;
+        let decoded: TypeScriptFileFactEnvelope = serde_json::from_slice(&bytes)
+            .map_err(|err| format!("decode round-tripped envelope: {err}"))?;
         assert!(decoded.matches_key(&key));
-        decoded.validate_integrity().unwrap();
+        decoded.validate_integrity()?;
         assert_eq!(decoded.file_facts.parse_error, facts.parse_error);
+        Ok(())
     }
 
     #[test]
-    fn tampered_envelope_fails_integrity() {
+    fn tampered_envelope_fails_integrity() -> Result<(), String> {
         let key = TypeScriptFileFactKey::with_alias_digest(
             Path::new("src/a.ts"),
             "export const a = 1;\n",
@@ -499,12 +500,18 @@ mod tests {
             phase_two: super::super::owners::PhaseTwoFacts::default(),
         };
         let envelope = TypeScriptFileFactEnvelope::new(&key, facts, None);
-        let mut bytes =
-            seam_cache::encode_integrity_body(&envelope, envelope.expected_digest().unwrap())
-                .unwrap();
+        let digest = envelope.expected_digest()?;
+        let mut bytes = seam_cache::encode_integrity_body(&envelope, digest)?;
         let flip = bytes.len() / 2;
         bytes[flip] = bytes[flip].wrapping_add(1);
-        let decoded: TypeScriptFileFactEnvelope = serde_json::from_slice(&bytes).unwrap();
-        assert!(!decoded.matches_key(&key) || decoded.validate_integrity().is_err());
+        // A tampered entry must not be served, whether the flip breaks the
+        // JSON outright (a decode refusal) or leaves a digest mismatch.
+        match serde_json::from_slice::<TypeScriptFileFactEnvelope>(&bytes) {
+            Ok(decoded) => {
+                assert!(!decoded.matches_key(&key) || decoded.validate_integrity().is_err())
+            }
+            Err(_) => {}
+        }
+        Ok(())
     }
 }
