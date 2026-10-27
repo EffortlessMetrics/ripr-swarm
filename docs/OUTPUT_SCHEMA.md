@@ -3583,6 +3583,14 @@ Policy reports are advisory unless `--mode fail-on-new-warning` is used.
 
 ## Context Packet
 
+Fresh `context`/`explain` selector misses remain usage-class failures: exit 2,
+empty stdout, and the selector guidance and retry command on stderr. When the
+fresh check carries detected-but-unanalyzed language advisories or non-success
+language runs, stderr also names those run-scope limitations and their existing
+producer recovery. The notice does not establish the cause of this selector's
+miss. Recorded `--from` lookups do not reconstruct absent advisory facts from
+ambient configuration; no packet field or schema version changes (#10720).
+
 `ripr context --json` emits compact test intent for agents:
 
 ```json
