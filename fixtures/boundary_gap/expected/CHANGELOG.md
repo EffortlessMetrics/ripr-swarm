@@ -46,6 +46,13 @@ The same snapshots follow corpus cache generation 1.112 to 1.113 for a clean
 (RIPR-SPEC-0231 rule 9, #9619), with the same scope: generation, content
 commitment, dependent verify commitments and receipt byte hashes only.
 
+### test_case arrow row input substitution cache generation parity
+
+The same snapshots follow corpus cache generation 1.113 to 1.114 for the arrow row
+read with its inputs substituted into the returned expression (RIPR-SPEC-0231
+rule 9, #10797), with the same scope: generation, content commitment, dependent
+verify commitments and receipt byte hashes only.
+
 ## Pending — boundary_gap (9)
 
 Reason:

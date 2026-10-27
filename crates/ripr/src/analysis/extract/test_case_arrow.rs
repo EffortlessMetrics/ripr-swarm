@@ -159,8 +159,10 @@ impl ReturnedTemplate {
             self.pieces
                 .iter()
                 .map(|piece| match piece {
-                    Piece::Text(text) => text.as_str(),
-                    Piece::Parameter(index) => arguments[*index].as_str(),
+                    Piece::Text(text) => text.clone(),
+                    // Parenthesized so a negated literal keeps its sign as a
+                    // method receiver or cast operand (`(-5).abs()`).
+                    Piece::Parameter(index) => format!("({})", arguments[*index]),
                 })
                 .collect(),
         )
@@ -322,7 +324,12 @@ fn literal_arguments(text: &str) -> Option<Vec<String>> {
     arguments.push(text[start..].trim());
     arguments
         .into_iter()
-        .map(|argument| is_plain_literal(argument).then(|| argument.to_string()))
+        // A string reaches the parameter through `FromStr`, which runs user
+        // code: the row gate (`case_row_literals`) refuses it, so no oracle
+        // is built for it either.
+        .map(|argument| {
+            (is_plain_literal(argument) && !argument.starts_with('"')).then(|| argument.to_string())
+        })
         .collect()
 }
 

@@ -298,3 +298,18 @@ fn a_parameter_the_body_may_rebind_or_read_through_a_field_is_not_read() -> Resu
     }
     Ok(())
 }
+
+// A negated argument keeps its sign as a method receiver: `scale((-5).abs())`
+// is 15 under the edit and 10 before, so the row discriminates. Spliced bare
+// (`-5.abs()` is `-(5.abs())`) the oracle would read -15 and miss it.
+#[test]
+fn a_negated_row_argument_keeps_its_sign_as_a_receiver() -> Result<(), String> {
+    let found = scale_classes(
+        "    #[test_case(-5 => 15)]\n",
+        "    fn rows(x: i64) -> i64 {\n        scale(x.abs())\n    }\n",
+    )?;
+    if !found.contains(&ExposureClass::Exposed) {
+        return Err(format!("the discriminating row must credit: {found:?}"));
+    }
+    Ok(())
+}
