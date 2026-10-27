@@ -1757,6 +1757,13 @@ fn assigned_names_outside_strings(
     let Some(text) = source.get(start..end) else {
         return Vec::new();
     };
+    // A string handed to `eval` or `Function` is code, so a write inside it
+    // must stay visible (fail closed).
+    if identifier_occurrences(text, "eval").next().is_some()
+        || identifier_occurrences(text, "Function").next().is_some()
+    {
+        return assigned_identifier_names(text);
+    }
     let relative: Vec<std::ops::Range<usize>> = strings
         .0
         .iter()

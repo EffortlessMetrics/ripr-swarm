@@ -33,3 +33,12 @@ fn a_real_write_to_the_runner_still_withholds_registration() {
         assert_eq!(registered(&source), 0, "{source}");
     }
 }
+
+#[test]
+fn a_string_handed_to_eval_or_function_stays_visible() {
+    for call in ["eval(\"test = 1\")", "new Function(\"test = 1\")()"] {
+        let source =
+            format!("{IMPORT}test(\"a\", () => {{\n  {call};\n  expect(1).toBe(1);\n}});\n");
+        assert_eq!(registered(&source), 0, "{call}");
+    }
+}

@@ -4,4 +4,5 @@ id = "RIPR-SPEC-0027"
 tests = [
   "crates/ripr/src/analysis/language/typescript/tests/string_write_scan_tests.rs::a_string_literal_containing_a_runner_assignment_does_not_withhold_the_test",
   "crates/ripr/src/analysis/language/typescript/tests/string_write_scan_tests.rs::a_real_write_to_the_runner_still_withholds_registration",
+  "crates/ripr/src/analysis/language/typescript/tests/string_write_scan_tests.rs::a_string_handed_to_eval_or_function_stays_visible",
 ]
