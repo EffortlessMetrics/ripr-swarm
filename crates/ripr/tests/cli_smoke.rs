@@ -4282,6 +4282,131 @@ fn rerun_json_unreadable_gap_ledger_emits_refusal_envelope() -> Result<(), Strin
     Ok(())
 }
 
+/// #10720: fresh context preserves the check producer's named failure on
+/// both source routes, instead of flattening it through the String wrapper.
+#[test]
+fn context_json_fresh_analysis_preserves_base_failures() -> Result<(), String> {
+    let root = init_check_refusal_repo("context-json-typed-base", 1)?;
+    let result = (|| {
+        std::fs::write(root.join("ripr.toml"), "[analysis]\nmode = \"deep\"\n")
+            .map_err(|err| format!("write config: {err}"))?;
+        std::fs::write(root.join("src/lib.rs"), "pub fn v0() -> u8 { 1 }\n")
+            .map_err(|err| format!("write tracked edit: {err}"))?;
+        let root_arg = root.display().to_string();
+        let base = "definitely-not-a-real-ref-10720";
+        for source in ["--committed", "--worktree"] {
+            let check = run_ripr(&[
+                "check", "--root", &root_arg, source, "--base", base, "--json",
+            ]);
+            assert_check_json_refusal(&check, "base_unresolvable", "analysis/base-resolution")?;
+            let context = run_ripr(&[
+                "context",
+                "--root",
+                &root_arg,
+                source,
+                "--base",
+                base,
+                "--finding",
+                "probe:not-a-real-id",
+            ]);
+            let value = assert_json_refusal_envelope(
+                &context,
+                "1.1",
+                "diff",
+                "base_unresolvable",
+                "analysis/base-resolution",
+            )?;
+            assert_eq!(value["run_limitations"][0]["basis"], "base_unresolvable");
+            assert_eq!(value["base"], base);
+            assert_eq!(value["root"], printed_path(&root));
+            assert_eq!(value["mode"], "deep");
+            let message = value["run_limitations"][0]["message"]
+                .as_str()
+                .ok_or("base refusal must carry a message")?;
+            assert!(message.contains(base), "{message}");
+        }
+        Ok(())
+    })();
+    ignore_remove_dir_all(&root);
+    result
+}
+
+/// A real directory outside Git reaches the analysis producer and must keep
+/// its distinct root failure rather than borrowing the base-error identity.
+#[test]
+fn context_json_fresh_analysis_preserves_repository_root_failure() -> Result<(), String> {
+    let root = unique_external_workspace("context-json-typed-root")?;
+    let result = (|| {
+        std::fs::create_dir_all(&root).map_err(|err| format!("create plain dir: {err}"))?;
+        std::fs::write(root.join("ripr.toml"), "[analysis]\nmode = \"ready\"\n")
+            .map_err(|err| format!("write config: {err}"))?;
+        let root_arg = root.display().to_string();
+        let output = run_ripr(&[
+            "context",
+            "--root",
+            &root_arg,
+            "--committed",
+            "--base",
+            "main",
+            "--finding",
+            "probe:not-a-real-id",
+        ]);
+        let value = assert_json_refusal_envelope(
+            &output,
+            "1.1",
+            "diff",
+            "repository_root_unusable",
+            "analysis/repository-root",
+        )?;
+        assert_eq!(
+            value["run_limitations"][0]["basis"],
+            "repository_root_unusable"
+        );
+        assert_eq!(value["root"], printed_path(&root));
+        assert_eq!(value["mode"], "ready");
+        Ok(())
+    })();
+    ignore_remove_dir_all(&root);
+    result
+}
+
+/// Preserving typed failures does not invent a family for an unmigrated
+/// loader error. A missing supplied diff retains the generic fallback.
+#[test]
+fn context_json_fresh_analysis_keeps_untyped_failure_fallback() -> Result<(), String> {
+    let root = init_check_refusal_repo("context-json-missing-diff", 1)?;
+    let result = (|| {
+        let root_arg = root.display().to_string();
+        let missing_diff = root.join("missing-10720.patch");
+        let missing_arg = missing_diff.display().to_string();
+        let output = run_ripr(&[
+            "context",
+            "--root",
+            &root_arg,
+            "--diff",
+            &missing_arg,
+            "--finding",
+            "probe:not-a-real-id",
+        ]);
+        let value = assert_json_refusal_envelope(
+            &output,
+            "1.1",
+            "diff",
+            "analysis_failed",
+            "analysis/failure",
+        )?;
+        assert_eq!(value["run_limitations"][0]["basis"], "analysis_failed");
+        let message = value["run_limitations"][0]["message"]
+            .as_str()
+            .ok_or("diff refusal must carry a message")?;
+        assert!(message.contains("failed to read diff file"), "{message}");
+        assert!(message.contains("missing-10720.patch"), "{message}");
+        Ok(())
+    })();
+    ignore_remove_dir_all(&root);
+    result
+}
+
 /// #7331: `ripr context --from <missing>` names `check_artifact_unusable`,
 /// keyed with the context packet's own version.
 #[test]
