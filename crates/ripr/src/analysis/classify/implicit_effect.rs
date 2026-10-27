@@ -13,6 +13,11 @@ use ra_ap_syntax::{
 use std::collections::HashSet;
 use std::sync::OnceLock;
 
+mod scope_end;
+pub(in crate::analysis) use scope_end::{
+    assertion_observes_scope_end, destructor_credit_established,
+};
+
 fn compact(text: &str) -> String {
     text.chars().filter(|c| !c.is_whitespace()).collect()
 }
@@ -95,24 +100,55 @@ impl<'a> ImplicitExpansionContext<'a> {
 #[derive(Clone, Debug, Default)]
 struct ExpansionSurface {
     bounded: bool,
+    /// `bounded` without the workspace-wide refusal of a `Drop` impl, for the
+    /// scope-end carrier that admits the owner's own destructor (#10814).
+    bounded_apart_from_drop: bool,
     excluded_receivers: HashSet<String>,
+    /// `excluded_receivers` without the self type of a `Drop` impl.
+    excluded_apart_from_drop: HashSet<String>,
+    /// The last self-type segment of every `Drop` impl, one entry per impl.
+    drop_impl_types: Vec<String>,
     scanned_sources: usize,
 }
 
 impl ImplicitExpansionMemo {
-    pub(in crate::analysis) fn admits(&self, index: &RustIndex, receiver: &str) -> bool {
-        let surface = self.surface.get_or_init(|| {
+    fn surface_of(&self, index: &RustIndex) -> &ExpansionSurface {
+        self.surface.get_or_init(|| {
             ExpansionSurface::scan(
                 index
                     .files()
                     .values()
                     .map(|facts| std::sync::Arc::clone(&facts.source)),
             )
-        });
+        })
+    }
+
+    pub(in crate::analysis) fn admits(&self, index: &RustIndex, receiver: &str) -> bool {
+        let surface = self.surface_of(index);
         surface.bounded
             && !surface
                 .excluded_receivers
                 .contains(receiver.rsplit("::").next().unwrap_or(receiver))
+    }
+}
+
+impl ImplicitExpansionMemo {
+    /// Whether the one `Drop` impl of `receiver` may be read as the owner of a
+    /// scope-end carrier: the same bounded surface `admits` demands, except
+    /// that exactly this type has exactly one `Drop` impl. A second impl for
+    /// the type, an alias or `use` naming it, an item macro or a renamed `Drop`
+    /// import still refuses (#10814).
+    pub(in crate::analysis) fn admits_drop_owner(&self, index: &RustIndex, receiver: &str) -> bool {
+        let surface = self.surface_of(index);
+        let receiver = receiver.rsplit("::").next().unwrap_or(receiver);
+        surface.bounded_apart_from_drop
+            && !surface.excluded_apart_from_drop.contains(receiver)
+            && surface
+                .drop_impl_types
+                .iter()
+                .filter(|owner| *owner == receiver)
+                .count()
+                == 1
     }
 }
 
@@ -165,6 +201,7 @@ impl ExpansionSurface {
         ];
         let mut surface = Self {
             bounded: true,
+            bounded_apart_from_drop: true,
             ..Self::default()
         };
         for source in sources {
@@ -180,7 +217,7 @@ impl ExpansionSurface {
                 if let Some(alias) = ast::TypeAlias::cast(node.clone())
                     && let Some(ty) = alias.ty()
                 {
-                    surface.excluded_receivers.extend(
+                    surface.exclude_all(
                         compact(&ty.syntax().text().to_string())
                             .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
                             .filter(|name| !name.is_empty())
@@ -188,7 +225,7 @@ impl ExpansionSurface {
                     );
                 }
                 if let Some(use_tree) = ast::UseTree::cast(node.clone()) {
-                    surface.excluded_receivers.extend(
+                    surface.exclude_all(
                         compact(&use_tree.syntax().text().to_string())
                             .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
                             .filter(|name| !name.is_empty())
@@ -205,13 +242,20 @@ impl ExpansionSurface {
                         .is_some_and(|name| !DISPATCH_TRAITS.contains(&name))
                         && let Some(ty) = item.self_ty()
                     {
-                        surface.excluded_receivers.insert(
-                            compact(&ty.syntax().text().to_string())
-                                .rsplit("::")
-                                .next()
-                                .unwrap_or("")
-                                .to_owned(),
-                        );
+                        let receiver = compact(&ty.syntax().text().to_string())
+                            .rsplit("::")
+                            .next()
+                            .unwrap_or("")
+                            .to_owned();
+                        if trait_text
+                            .as_deref()
+                            .is_some_and(|name| name == "Drop" || name.ends_with("::Drop"))
+                        {
+                            surface.drop_impl_types.push(receiver.clone());
+                            surface.excluded_receivers.insert(receiver);
+                        } else {
+                            surface.exclude_all([receiver]);
+                        }
                     }
                 }
             }
@@ -250,19 +294,6 @@ impl ExpansionSurface {
             && !tree.syntax().descendants().filter_map(ast::UseTree::cast).any(|item| {
                 item.path().is_some_and(|path| {
                     compact(&path.syntax().text().to_string()).rsplit("::").next() == Some("Drop")
-                })
-            })
-            && !tree
-            .syntax()
-            .descendants()
-            .filter_map(ast::Impl::cast)
-            .any(|item| {
-                let trait_text = item
-                    .trait_()
-                        .map(|t| compact(&t.syntax().text().to_string()))
-                        .map(|path| path.split('<').next().unwrap_or(&path).to_string());
-                trait_text.as_deref().is_some_and(|name| {
-                    name == "Drop" || name.ends_with("::Drop")
                 })
             })
             && tree
@@ -309,9 +340,33 @@ impl ExpansionSurface {
                 .descendants()
                 .filter_map(ast::Attr::cast)
                 .all(|attr| known_builtin_attribute(&attr));
-            surface.bounded &= bounded;
+            // A `Drop` impl makes the general bounded proof unknown, since a
+            // destructor runs when the consumed receiver leaves scope and may
+            // write the same sink. Only the scope-end carrier admits one.
+            let has_drop_impl =
+                tree.syntax()
+                    .descendants()
+                    .filter_map(ast::Impl::cast)
+                    .any(|item| {
+                        let trait_text = item
+                            .trait_()
+                            .map(|t| compact(&t.syntax().text().to_string()))
+                            .map(|path| path.split('<').next().unwrap_or(&path).to_string());
+                        trait_text
+                            .as_deref()
+                            .is_some_and(|name| name == "Drop" || name.ends_with("::Drop"))
+                    });
+            surface.bounded &= bounded && !has_drop_impl;
+            surface.bounded_apart_from_drop &= bounded;
         }
         surface
+    }
+
+    fn exclude_all(&mut self, names: impl IntoIterator<Item = String>) {
+        for name in names {
+            self.excluded_apart_from_drop.insert(name.clone());
+            self.excluded_receivers.insert(name);
+        }
     }
 }
 fn name(expr: &ast::Expr) -> Option<String> {
@@ -610,6 +665,15 @@ fn local_dispatch_type(
     self_ty: &str,
     expansion: &ImplicitExpansionContext<'_>,
 ) -> bool {
+    // Keep the bounded observer proof inside source forms whose expansions
+    // cannot add hidden Drop implementations.
+    plain_receiver_type(source, self_ty, |ty| expansion.admits(ty))
+}
+
+/// The receiver type is one attribute-free struct of the source file that no
+/// alias or import renames, and no item macro can have added an impl to.
+/// `admitted` is the workspace-wide expansion refusal the caller applies.
+fn plain_receiver_type(source: &str, self_ty: &str, admitted: impl Fn(&str) -> bool) -> bool {
     if self_ty.is_empty()
         || !self_ty
             .bytes()
@@ -617,9 +681,7 @@ fn local_dispatch_type(
     {
         return false;
     }
-    // Keep the bounded observer proof inside source forms whose expansions
-    // cannot add hidden Drop implementations.
-    if !expansion.admits(self_ty) {
+    if !admitted(self_ty) {
         return false;
     }
     let Some(parse) = parse_clean_source_file(source) else {
@@ -664,6 +726,169 @@ fn local_dispatch_type(
         })
 }
 
+/// The test's own function and the assertion the authority is asked about:
+/// one top-level `assert_eq!` on a wrapper of the shared handle, with every
+/// top-level statement before it.
+struct AssertionSite {
+    visible: Vec<ast::Stmt>,
+    observed_local: String,
+    expected_value: String,
+}
+
+fn assertion_site(
+    test: &TestSummary,
+    assertion: &OracleFact,
+    source: &str,
+) -> Option<AssertionSite> {
+    let parse = parse_clean_source_file(&test.body)?;
+    let tree = parse.tree();
+    let function = tree.syntax().children().find_map(ast::Fn::cast)?;
+    let statements = function.body().and_then(|b| b.stmt_list())?;
+    let relative_line = assertion.line.checked_sub(test.start_line)?;
+    let calls: Vec<_> = tree
+        .syntax()
+        .descendants()
+        .filter_map(ast::MacroCall::cast)
+        .filter(|call| {
+            let at = usize::from(call.syntax().text_range().start());
+            test.body
+                .get(..at)
+                .is_some_and(|p| p.matches('\n').count() == relative_line)
+        })
+        .collect();
+    let [call] = calls.as_slice() else {
+        return None;
+    };
+    let (observed_local, expected_value) = observer_local(call, source)?;
+    let visible: Vec<_> = statements
+        .statements()
+        .take_while(|s| s.syntax().text_range().end() <= call.syntax().text_range().start())
+        .collect();
+    // The assertion must be a top-level statement, not a deferred closure,
+    // nested function or condition whose execution/order is unestablished.
+    if !statements.statements().any(|s| matches!(s,
+        ast::Stmt::ExprStmt(ref e) if matches!(e.expr(), Some(ast::Expr::MacroExpr(ref m)) if m.macro_call().is_some_and(|c| c.syntax() == call.syntax())))) { return None; }
+    Some(AssertionSite {
+        visible,
+        observed_local,
+        expected_value,
+    })
+}
+
+/// The local handle a guard literal clones into `field`: `Guard { field:
+/// handle.clone() }` with only literal other fields. `None` for any other
+/// initializer, a spread or a different type.
+fn guard_literal_handle(initializer: &ast::Expr, self_ty: &str, field: &str) -> Option<String> {
+    let ast::Expr::RecordExpr(record) = initializer else {
+        return None;
+    };
+    if record
+        .path()
+        .is_none_or(|p| compact(&p.syntax().text().to_string()) != compact(self_ty))
+    {
+        return None;
+    }
+    // The existing receiver/trait resolver is still required by the caller;
+    // here we bind the exact literal instance's written field.
+    let fields = record.record_expr_field_list()?;
+    if fields.spread().is_some()
+        || fields.fields().any(|f| {
+            f.field_name().is_none_or(|name| name.text() != field)
+                && !matches!(f.expr(), Some(ast::Expr::Literal(_)))
+        })
+    {
+        return None;
+    }
+    let shared = fields
+        .fields()
+        .find(|f| f.field_name().is_some_and(|n| n.text() == field))?;
+    let Some(ast::Expr::MethodCallExpr(clone)) = shared.expr() else {
+        return None;
+    };
+    if clone.name_ref().is_none_or(|n| n.text() != "clone")
+        || clone.arg_list().is_none_or(|a| a.args().next().is_some())
+    {
+        return None;
+    }
+    clone.receiver().and_then(|e| name(&e))
+}
+
+/// Whether the handle `local` is introduced exactly once in `before`, from a
+/// fresh constructor whose literal state differs from the one the changed
+/// `expression` writes, and the assertion expects exactly that write.
+/// `before` are the statements before the guard's scope, so the guard's own
+/// clone of the handle is not among them.
+fn handle_is_fresh_and_pinned(
+    before: &[ast::Stmt],
+    local: &str,
+    expression: &str,
+    expected_value: &str,
+) -> bool {
+    let introductions: Vec<_> = before
+        .iter()
+        .filter(|s| mentions(s.syntax(), local))
+        .collect();
+    if introductions.len() != 1 {
+        return false;
+    }
+    let ast::Stmt::LetStmt(introduction) = introductions[0] else {
+        return false;
+    };
+    if introduction
+        .pat()
+        .is_none_or(|p| compact(&p.syntax().text().to_string()) != local)
+    {
+        return false;
+    }
+    let Some(initializer) = introduction.initializer() else {
+        return false;
+    };
+    let init = compact(&initializer.syntax().text().to_string());
+    let Some(value_parse) =
+        parse_clean_source_file(&format!("fn __ripr_value() {{ let _ = {expression}; }}"))
+    else {
+        return false;
+    };
+    let Some(write) = value_parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::LetStmt::cast)
+        .and_then(|s| s.initializer())
+    else {
+        return false;
+    };
+    let ast::Expr::MethodCallExpr(write) = write else {
+        return false;
+    };
+    let Some(arguments) = write.arg_list() else {
+        return false;
+    };
+    let arguments: Vec<_> = arguments.args().collect();
+    let [ast::Expr::Literal(value)] = arguments.as_slice() else {
+        return false;
+    };
+    let value = compact(&value.syntax().text().to_string());
+    let expected = match write.name_ref().map(|n| n.text().to_string()).as_deref() {
+        Some("set") => format!("Rc::new(Cell::new({value}))"),
+        Some("push") => format!("Rc::new(RefCell::new(vec![{value}]))"),
+        _ => return false,
+    };
+    if expected_value != expected {
+        return false;
+    }
+    // The exact constructors and literal/empty initial states exclude
+    // initializer transformations and computed expected values.
+    let initial_state = init
+        .strip_prefix("Rc::new(Cell::new(")
+        .and_then(|s| s.strip_suffix("))"));
+    let initial_cell = initial_state
+        .is_some_and(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) && s != value);
+    let initial_vec =
+        init == "Rc::new(RefCell::new(Vec::new()))" || init == "Rc::new(RefCell::new(vec![]))";
+    initial_cell || initial_vec
+}
+
 pub(super) fn assertion_observes_dispatch(
     dispatch: &FunctionSummary,
     owner: &FunctionSummary,
@@ -682,44 +907,10 @@ pub(super) fn assertion_observes_dispatch(
     let Some(field) = shared_field(dispatch, owner, expression) else {
         return false;
     };
-    let Some(parse) = parse_clean_source_file(&test.body) else {
+    let Some(site) = assertion_site(test, assertion, source) else {
         return false;
     };
-    let tree = parse.tree();
-    let Some(function) = tree.syntax().children().find_map(ast::Fn::cast) else {
-        return false;
-    };
-    let Some(statements) = function.body().and_then(|b| b.stmt_list()) else {
-        return false;
-    };
-    let Some(relative_line) = assertion.line.checked_sub(test.start_line) else {
-        return false;
-    };
-    let calls: Vec<_> = tree
-        .syntax()
-        .descendants()
-        .filter_map(ast::MacroCall::cast)
-        .filter(|call| {
-            let at = usize::from(call.syntax().text_range().start());
-            test.body
-                .get(..at)
-                .is_some_and(|p| p.matches('\n').count() == relative_line)
-        })
-        .collect();
-    let [call] = calls.as_slice() else {
-        return false;
-    };
-    let Some((observed_local, expected_value)) = observer_local(call, source) else {
-        return false;
-    };
-    let visible: Vec<_> = statements
-        .statements()
-        .take_while(|s| s.syntax().text_range().end() <= call.syntax().text_range().start())
-        .collect();
-    // The assertion must be a top-level statement, not a deferred closure,
-    // nested function or condition whose execution/order is unestablished.
-    if !statements.statements().any(|s| matches!(s,
-        ast::Stmt::ExprStmt(ref e) if matches!(e.expr(), Some(ast::Expr::MacroExpr(ref m)) if m.macro_call().is_some_and(|c| c.syntax() == call.syntax())))) { return false; }
+    let visible = &site.visible;
     for (at, statement) in visible.iter().enumerate() {
         let ast::Stmt::LetStmt(binding) = statement else {
             continue;
@@ -730,121 +921,24 @@ pub(super) fn assertion_observes_dispatch(
         let Some(receiver) = pattern.name().map(|n| n.text().to_string()) else {
             continue;
         };
-        let Some(ast::Expr::RecordExpr(record)) = binding.initializer() else {
+        let Some(initializer) = binding.initializer() else {
             continue;
         };
-        if record
-            .path()
-            .is_none_or(|p| compact(&p.syntax().text().to_string()) != compact(self_ty))
-        {
-            continue;
-        }
-        // The existing receiver/trait resolver is still required by the caller;
-        // here we bind the exact literal instance's written field.
-        let Some(fields) = record.record_expr_field_list() else {
+        let Some(local) = guard_literal_handle(&initializer, self_ty, &field) else {
             continue;
         };
-        if fields.spread().is_some()
-            || fields.fields().any(|f| {
-                f.field_name().is_none_or(|name| name.text() != field)
-                    && !matches!(f.expr(), Some(ast::Expr::Literal(_)))
-            })
-        {
-            continue;
-        }
-        let Some(shared) = fields
-            .fields()
-            .find(|f| f.field_name().is_some_and(|n| n.text() == field))
-        else {
-            continue;
-        };
-        let Some(ast::Expr::MethodCallExpr(clone)) = shared.expr() else {
-            continue;
-        };
-        if clone.name_ref().is_none_or(|n| n.text() != "clone")
-            || clone.arg_list().is_none_or(|a| a.args().next().is_some())
-        {
-            continue;
-        }
-        let Some(local) = clone.receiver().and_then(|e| name(&e)) else {
-            continue;
-        };
-        if observed_local != local {
+        if site.observed_local != local {
             continue;
         }
         // Exactly one local introduction and no intervening alias, mutation,
         // replacement or opaque use of either handle is admitted.
         if visible[..at]
             .iter()
-            .filter(|s| mentions(s.syntax(), &receiver))
-            .count()
-            != 0
+            .any(|s| mentions(s.syntax(), &receiver))
         {
             continue;
         }
-        let introductions: Vec<_> = visible[..at]
-            .iter()
-            .filter(|s| mentions(s.syntax(), &local))
-            .collect();
-        if introductions.len() != 1 {
-            continue;
-        }
-        let ast::Stmt::LetStmt(introduction) = introductions[0] else {
-            continue;
-        };
-        if introduction
-            .pat()
-            .is_none_or(|p| compact(&p.syntax().text().to_string()) != local)
-        {
-            continue;
-        }
-        let Some(initializer) = introduction.initializer() else {
-            continue;
-        };
-        let init = compact(&initializer.syntax().text().to_string());
-        let Some(value_parse) =
-            parse_clean_source_file(&format!("fn __ripr_value() {{ let _ = {expression}; }}"))
-        else {
-            continue;
-        };
-        let Some(write) = value_parse
-            .tree()
-            .syntax()
-            .descendants()
-            .find_map(ast::LetStmt::cast)
-            .and_then(|s| s.initializer())
-        else {
-            continue;
-        };
-        let ast::Expr::MethodCallExpr(write) = write else {
-            continue;
-        };
-        let Some(arguments) = write.arg_list() else {
-            continue;
-        };
-        let arguments: Vec<_> = arguments.args().collect();
-        let [ast::Expr::Literal(value)] = arguments.as_slice() else {
-            continue;
-        };
-        let value = compact(&value.syntax().text().to_string());
-        let expected = match write.name_ref().map(|n| n.text().to_string()).as_deref() {
-            Some("set") => format!("Rc::new(Cell::new({value}))"),
-            Some("push") => format!("Rc::new(RefCell::new(vec![{value}]))"),
-            _ => continue,
-        };
-        if expected_value != expected {
-            continue;
-        }
-        // The exact constructors and literal/empty initial states exclude
-        // initializer transformations and computed expected values.
-        let initial_state = init
-            .strip_prefix("Rc::new(Cell::new(")
-            .and_then(|s| s.strip_suffix("))"));
-        let initial_cell = initial_state
-            .is_some_and(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) && s != value);
-        let initial_vec =
-            init == "Rc::new(RefCell::new(Vec::new()))" || init == "Rc::new(RefCell::new(vec![]))";
-        if !(initial_cell || initial_vec) {
+        if !handle_is_fresh_and_pinned(&visible[..at], &local, expression, &site.expected_value) {
             continue;
         }
         let mut dispatched = false;
