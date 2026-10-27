@@ -230,3 +230,16 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_returned_error_drop_exit (19)
+
+Reason:
+RIPR-SPEC-0122: #10859 a changed value whose returned type has a non-plain Drop no longer starts a repair, since an added assertion cannot fix a failure the Drop swallows
+
+Command:
+`cargo xtask goldens bless rust_returned_error_drop_exit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

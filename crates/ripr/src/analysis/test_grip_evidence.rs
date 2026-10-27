@@ -37,9 +37,9 @@ use related_tests::{
 
 use super::classify::{
     assertion_observes_collection_argument, assertion_observes_direct_collection_for_probe,
-    call_text_may_call_free_function, direct_collection_mutation_receiver, owner_call_text,
-    reach_evidence as classify_reach_evidence, related_tests_reach_owner_indirectly,
-    relation_establishes_reach, test_calls_free_function,
+    call_text_may_call_free_function, direct_collection_mutation_receiver, is_ignored,
+    owner_call_text, reach_evidence as classify_reach_evidence,
+    related_tests_reach_owner_indirectly, relation_establishes_reach, test_calls_free_function,
 };
 use super::facts::{CallFact, FunctionImplContext};
 use super::new_test_target::{self, NewTestTargetAdmission};
@@ -546,18 +546,6 @@ fn return_value_missing_discriminator(
     ) {
         return None;
     }
-    // `check` credits a lone equality between an owner call and an owner-free
-    // expected value (`assert!(f(x) == lit)`, or the terminal Err-return guard
-    // twin `if f(x) != lit { return Err(..) }`) through the owner-return pin,
-    // while the seam-level oracle grade stays weak. Such a test already pins
-    // the changed value, so repair must not start on it either; the check is
-    // syntactic and errs toward withholding.
-    if related_summaries
-        .iter()
-        .any(|test| test_pins_owner_call_by_equality(test, &owner_fn.name, index))
-    {
-        return None;
-    }
     // `discriminate` is `None` unless reach, activation and propagation are
     // all established: when `check` would call the change statically limited
     // (for example no clear path to an observable sink), repair must not
@@ -566,6 +554,13 @@ fn return_value_missing_discriminator(
         discriminate.map(|stage| &stage.state),
         Some(StageState::Weak | StageState::No)
     ) {
+        return None;
+    }
+    // A changed struct-literal value is judged by `check` per changed field:
+    // an assertion on a sibling field leaves the finding statically limited
+    // ("propagation unknown"). The seam does not know which field changed, so
+    // the start is withheld and `ripr repair` agrees with `ripr check`.
+    if seam.kind() == SeamKind::ReturnValue && is_struct_literal_expression(seam.expression()) {
         return None;
     }
     let (description, reason) = match seam.required_discriminator() {
@@ -580,6 +575,35 @@ fn return_value_missing_discriminator(
     if description.trim().is_empty() {
         return None;
     }
+    // `check` credits a lone equality between an owner call and an owner-free
+    // expected value (`assert!(f(x) == lit)`, or the terminal Err-return guard
+    // twin `if f(x) != lit { return Err(..) }`) through the owner-return pin,
+    // while the seam-level oracle grade stays weak. Such a test already pins
+    // the changed value, so repair must not start on it either; the check is
+    // syntactic and errs toward withholding.
+    if related_summaries
+        .iter()
+        .any(|test| test_pins_owner_call_by_equality(test, &owner_fn.name, index))
+    {
+        return None;
+    }
+    // A strengthened `#[ignore]` or `#[should_panic]` test is not an effective
+    // repair: a default run never executes the first and the second passes by
+    // panicking. Any such related test that calls the owner withholds the start.
+    if related_summaries
+        .iter()
+        .any(|test| is_ignored(test) || is_should_panic(test))
+    {
+        return None;
+    }
+    // Adding an assertion cannot fix a test whose failure is swallowed: when
+    // the returned type has a non-plain `Drop` (it may exit the process while
+    // unwinding from the failed assertion), `check` already demotes an exact
+    // assertion and no new one would grip. Types are read from the owner's
+    // signature and the changed expression; an unreadable workspace withholds.
+    if names_non_plain_drop_type(owner_fn, seam.expression(), index) {
+        return None;
+    }
     let direct_call_with_target = related_tests.iter().any(|test| {
         test.relation_reason == RelationReason::DirectOwnerCall && test.test_target.is_some()
     });
@@ -590,8 +614,50 @@ fn return_value_missing_discriminator(
     })
 }
 
+/// Whether `test` expects a panic, so passing means panicking (any
+/// `should_panic` form, with or without an expected message).
+fn is_should_panic(test: &TestSummary) -> bool {
+    test.attrs.iter().any(|attr| {
+        let compact: String = attr.chars().filter(|ch| !ch.is_whitespace()).collect();
+        compact.contains("should_panic")
+    })
+}
+
+/// Whether an identifier of the owner's signature or the changed expression
+/// names a type with a non-plain `Drop` impl in the workspace.
+fn names_non_plain_drop_type(owner: &FunctionSummary, expression: &str, index: &RustIndex) -> bool {
+    let body: &str = &owner.body;
+    let signature = body.find('{').map_or(body, |open| &body[..open]);
+    format!("{signature}\n{expression}")
+        .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+        .filter(|word| word.starts_with(|ch: char| ch.is_ascii_uppercase()))
+        .any(|word| !crate::analysis::classify::drop_is_plain(index, word))
+}
+
+/// Whether `expression` is a struct literal (`Config { .. }`, possibly
+/// returned or path-qualified), not a block, `if`, `match` or loop.
+fn is_struct_literal_expression(expression: &str) -> bool {
+    let trimmed = expression.trim();
+    let trimmed = trimmed.strip_prefix("return ").unwrap_or(trimmed).trim();
+    let Some(open) = trimmed.find('{') else {
+        return false;
+    };
+    let path = trimmed[..open].trim_end();
+    let name = path.rsplit("::").next().unwrap_or(path);
+    trimmed.ends_with('}')
+        && !path.is_empty()
+        && path
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == ':')
+        && name
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_uppercase())
+}
+
 /// Whether one of `test`'s assertions is a lone top-level equality with a call
-/// to `owner_name` on one side (RIPR-SPEC-0197 / RIPR-SPEC-0154 shapes).
+/// to `owner_name` on one side, or with a local bound from such a call
+/// (RIPR-SPEC-0197 / RIPR-SPEC-0154 shapes).
 fn test_pins_owner_call_by_equality(
     test: &TestSummary,
     owner_name: &str,
@@ -601,11 +667,59 @@ fn test_pins_owner_call_by_equality(
         .files()
         .get(&test.file)
         .map(|facts| facts.source.clone());
+    let locals = owner_result_locals(&test.body, owner_name);
     assertions_pin_owner_by_equality(
         test.assertions.iter().map(|oracle| oracle.text.as_str()),
         owner_name,
+        &locals,
         source.as_deref(),
     )
+}
+
+/// Names bound by a `let` whose initializer calls `owner_name`
+/// (`let v = f(2);`, `let mut v: T = f(2).await;`), so an equality on the
+/// local pins the owner's value as an equality on the call does. Reads the
+/// masked body; a rebinding of the name is not tracked, which only withholds.
+fn owner_result_locals(body: &str, owner_name: &str) -> Vec<String> {
+    let masked = crate::analysis::extract::mask_comments_and_strings(body);
+    let call = format!("{owner_name}(");
+    let mut locals = Vec::new();
+    for statement in masked.split(';') {
+        let Some(at) = statement.find("let ") else {
+            continue;
+        };
+        if at > 0
+            && statement[..at]
+                .chars()
+                .next_back()
+                .is_some_and(|ch| ch.is_alphanumeric() || ch == '_')
+        {
+            continue;
+        }
+        let rest = statement[at + 4..].trim_start();
+        let rest = rest.strip_prefix("mut ").unwrap_or(rest).trim_start();
+        let name: String = rest
+            .chars()
+            .take_while(|ch| ch.is_alphanumeric() || *ch == '_')
+            .collect();
+        let Some(init) = rest[name.len()..].split_once('=').map(|(_, init)| init) else {
+            continue;
+        };
+        if !name.is_empty() && init.contains(&call) {
+            locals.push(name);
+        }
+    }
+    locals
+}
+
+/// Whether `operand` mentions `name` as a whole identifier.
+fn mentions_identifier(operand: &str, name: &str) -> bool {
+    operand.match_indices(name).any(|(at, _)| {
+        let before = operand[..at].chars().next_back();
+        let after = operand[at + name.len()..].chars().next();
+        let part = |ch: Option<char>| ch.is_some_and(|ch| ch.is_alphanumeric() || ch == '_');
+        !part(before) && !part(after)
+    })
 }
 
 /// The pure core of [`test_pins_owner_call_by_equality`]. A terminal
@@ -617,22 +731,70 @@ fn test_pins_owner_call_by_equality(
 fn assertions_pin_owner_by_equality<'a>(
     assertions: impl IntoIterator<Item = &'a str>,
     owner_name: &str,
+    locals: &[String],
     source: Option<&str>,
 ) -> bool {
     let call = format!("{owner_name}(");
-    let err_shadowed = source
-        .is_some_and(|source| crate::analysis::syntax::source_declares_value_name(source, "Err"));
+    // Evaluated only when a guard assertion is seen; an unreadable file
+    // (`None`) is not shadowed, so the guard stays a pin and withholds.
+    let err_shadowed = || {
+        source.is_some_and(|source| {
+            crate::analysis::syntax::source_declares_value_name(source, "Err")
+        })
+    };
     assertions.into_iter().any(|text| {
         let guard = crate::analysis::extract::err_return_guard_twin(text).is_some();
-        (!guard || !err_shadowed)
-            && crate::analysis::classify::equality_condition_operands(text)
-                .is_some_and(|operands| operands.iter().any(|operand| operand.contains(&call)))
+        (!guard || !err_shadowed())
+            && crate::analysis::classify::equality_condition_operands(text).is_some_and(
+                |operands| {
+                    operands.iter().any(|operand| {
+                        operand.contains(&call)
+                            || locals
+                                .iter()
+                                .any(|local| mentions_identifier(operand, local))
+                    })
+                },
+            )
     })
 }
 
 #[cfg(test)]
 mod equality_pin_tests {
-    use super::assertions_pin_owner_by_equality as pins;
+    use super::{mentions_identifier, owner_result_locals};
+
+    fn pins<'a>(
+        assertions: impl IntoIterator<Item = &'a str>,
+        owner_name: &str,
+        source: Option<&str>,
+    ) -> bool {
+        super::assertions_pin_owner_by_equality(assertions, owner_name, &[], source)
+    }
+
+    #[test]
+    fn an_equality_on_a_local_bound_from_the_owner_call_pins() {
+        let body = "let v = weight(4);\n    assert!(v == 12);";
+        let locals = owner_result_locals(body, "weight");
+        assert_eq!(locals, ["v"]);
+        let pinned = |assertion: &str, locals: &[String]| {
+            super::assertions_pin_owner_by_equality([assertion], "weight", locals, Some(""))
+        };
+        assert!(pinned("assert!(v == 12);", &locals));
+        assert!(!pinned("assert!(v > 0);", &locals), "weak stays unpinned");
+        assert!(!pinned("assert!(vv == 12);", &locals), "whole identifiers");
+        assert!(!pinned("assert!(v == 12);", &[]), "no local, no pin");
+    }
+
+    #[test]
+    fn locals_come_only_from_lets_that_call_the_owner() {
+        let locals = |body: &str| owner_result_locals(body, "weight");
+        assert_eq!(locals("let mut v: u32 = weight(4);"), ["v"]);
+        assert_eq!(locals("let r = weight(4).unwrap();"), ["r"]);
+        assert!(locals("let v = other(4);").is_empty());
+        assert!(locals("let v = 4; assert!(weight(v) > 0);").is_empty());
+        assert!(locals("// let v = weight(4);").is_empty());
+        assert!(mentions_identifier("v + 1", "v"));
+        assert!(!mentions_identifier("value + 1", "v"));
+    }
 
     const GUARD: &str = "if weight(4) != 12 { return Err(\"mismatch\"); }";
     const PLAIN: &str = "assert!(weight(4) == 12);";
@@ -664,6 +826,18 @@ mod equality_pin_tests {
         ] {
             assert!(pins([GUARD], "weight", Some(source)), "{source}");
         }
+    }
+
+    #[test]
+    fn struct_literals_are_told_from_blocks_and_calls() {
+        use super::is_struct_literal_expression as lit;
+        assert!(lit("Config {\n    a: 1,\n    b,\n}"));
+        assert!(lit("return crate::Config { a: 1 }"));
+        assert!(!lit("if a { 1 } else { 2 }"));
+        assert!(!lit("match a { _ => 1 }"));
+        assert!(!lit("{ 1 }"));
+        assert!(!lit("x * 3"));
+        assert!(!lit("make(Config { a: 1 })"));
     }
 
     #[test]

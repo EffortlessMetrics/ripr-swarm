@@ -27,9 +27,10 @@ impl Repo {
         repo.write("Cargo.toml", CARGO_TOML)?;
         repo.write("src/lib.rs", old_src)?;
         repo.write("tests/t.rs", test)?;
-        repo.git(&["init", "-q"])?;
+        repo.git(&["-c", "init.templateDir=", "init", "-q"])?;
         repo.git(&["config", "user.email", "t@example.com"])?;
         repo.git(&["config", "user.name", "t"])?;
+        repo.git(&["config", "commit.gpgSign", "false"])?;
         repo.git(&["add", "-A"])?;
         repo.git(&["commit", "-qm", "base"])?;
         repo.write("src/lib.rs", new_src)?;
@@ -463,6 +464,171 @@ fn contradicted_assertion_beside_a_weak_test_is_not_a_repair_start() -> Result<(
         &format!(
             "use ar::dbl;\n\n{weak}\n#[test]\nfn wrong() {{\n    assert_eq!(dbl(2), 5);\n}}\n"
         ),
+    )?;
+    Ok(())
+}
+
+const CONFIG_OLD: &str = "pub struct Config {\n    pub timeout_secs: u32,\n    pub retries: u32,\n}\n\npub fn default_config() -> Config {\n    let retries = 3;\n    Config {\n        timeout_secs: 30,\n        retries: 1,\n    }\n}\n";
+const CONFIG_NEW: &str = "pub struct Config {\n    pub timeout_secs: u32,\n    pub retries: u32,\n}\n\npub fn default_config() -> Config {\n    let retries = 3;\n    Config {\n        timeout_secs: 30,\n        retries,\n    }\n}\n";
+
+/// `ripr repair` must agree with `ripr check` on the struct-field change of
+/// `observation_unverified_field_construction` (the check run on the fixture
+/// itself is `statically_limited_finding_keeps_its_refusal_and_manual_route`):
+/// a weak assertion on a sibling field is not a repair start, bare or
+/// addressed by location, and the manual stub route stays
+/// named. Bare `ripr repair` on the fixture started before the struct-literal
+/// withhold, so this binds the repair path, not only the check screen.
+#[test]
+fn repair_agrees_with_check_on_a_statically_limited_struct_field_finding() -> Result<(), String> {
+    let repo = assert_no_start(
+        "field-construction",
+        CONFIG_OLD,
+        CONFIG_NEW,
+        "use ar::default_config;\n\n#[test]\nfn config_exists() {\n    let cfg = default_config();\n    assert!(cfg.timeout_secs > 0);\n}\n",
+    )?;
+    {
+        let item = "src/lib.rs:8";
+        let (ok, repair) = repo.repair_text(&[item])?;
+        assert!(!ok, "{item}: repair must refuse:\n{repair}");
+        assert!(
+            !repair.contains("repair_ready=true"),
+            "{item}: repair must not be ready:\n{repair}"
+        );
+        assert!(
+            repair.contains("--kind return_value"),
+            "{item}: the manual stub route must stay named:\n{repair}"
+        );
+    }
+    Ok(())
+}
+
+/// A test that only discards the owner's result has no assertion, so
+/// propagation stays unknown and no repair start is offered.
+#[test]
+fn discarded_only_test_is_not_a_repair_start() -> Result<(), String> {
+    assert_no_start(
+        "discarded-only",
+        DBL_OLD,
+        DBL_NEW,
+        "use ar::dbl;\n\n#[test]\nfn discarded() {\n    let _ = dbl(2);\n}\n",
+    )?;
+    Ok(())
+}
+
+fn dbl_test(body: &str) -> String {
+    format!("use ar::dbl;\n\n#[test]\nfn t() {{\n{body}}}\n")
+}
+
+/// Adding an assertion to a test that never runs (`#[ignore]`) or that passes
+/// by panicking (`#[should_panic]`) is not an effective repair; each differs
+/// from the repairable twin only by its attribute.
+#[test]
+fn ignored_and_should_panic_tests_are_not_a_repair_start() -> Result<(), String> {
+    let body = "    assert!(dbl(2) > 0);\n";
+    assert_repair_ready("plain-twin", DBL_OLD, DBL_NEW, &dbl_test(body))?;
+    for attribute in [
+        "#[ignore]",
+        "#[should_panic]",
+        "#[should_panic(expected = \"x\")]",
+    ] {
+        let test = format!("use ar::dbl;\n\n#[test]\n{attribute}\nfn t() {{\n{body}}}\n");
+        assert_no_start(attribute, DBL_OLD, DBL_NEW, &test)?;
+    }
+    Ok(())
+}
+
+/// `let v = dbl(2); assert!(v == 6)` pins the value through a local exactly as
+/// `assert!(dbl(2) == 6)` does, so repair withholds; a weak assertion on the
+/// same local still starts.
+#[test]
+fn equality_through_a_local_binding_is_not_a_repair_start() -> Result<(), String> {
+    assert_repair_ready(
+        "local-weak-twin",
+        DBL_OLD,
+        DBL_NEW,
+        &dbl_test("    let v = dbl(2);\n    assert!(v > 0);\n"),
+    )?;
+    assert_no_start(
+        "local-equality",
+        DBL_OLD,
+        DBL_NEW,
+        &dbl_test("    let v = dbl(2);\n    assert!(v == 6);\n"),
+    )?;
+    Ok(())
+}
+
+/// A strong non-equality oracle (`matches!`) already grips the exact value, so
+/// the weak twin starts a repair and the `matches!` one does not; only the
+/// weak-or-absent discriminator gate separates them.
+#[test]
+fn strong_non_equality_oracle_is_not_a_repair_start() -> Result<(), String> {
+    assert_repair_ready(
+        "weak-twin",
+        DBL_OLD,
+        DBL_NEW,
+        &dbl_test("    assert!(dbl(2) > 0);\n"),
+    )?;
+    assert_no_start(
+        "matches-exact",
+        DBL_OLD,
+        DBL_NEW,
+        &dbl_test("    assert!(matches!(dbl(2), 6));\n"),
+    )?;
+    Ok(())
+}
+
+/// An executor-wrapped call beside a direct call: the direct call alone starts
+/// a repair, so only the executor-wrap rule explains the refusal.
+#[test]
+fn executor_wrapped_call_beside_a_direct_call_is_not_a_repair_start() -> Result<(), String> {
+    let test = |second: &str| {
+        format!(
+            "use ar::dbl;\n\n#[tokio::test]\nasync fn t() {{\n    let first = dbl(1).await;\n    let v = {second};\n    assert!(v > first);\n}}\nfn block_on<T>(_f: impl std::future::Future<Output = T>) -> T {{\n    unimplemented!()\n}}\n"
+        )
+    };
+    assert_repair_ready("direct-twin", ASYNC_OLD, ASYNC_NEW, &test("dbl(2).await"))?;
+    assert_no_start(
+        "executor-beside-direct",
+        ASYNC_OLD,
+        ASYNC_NEW,
+        &test("block_on(dbl(2))"),
+    )?;
+    Ok(())
+}
+
+/// A test whose call result is discarded with no assertion has nothing to
+/// strengthen yet: reach, activation and propagation are not all established,
+/// so the weak twin starts a repair and the bare call does not.
+#[test]
+fn bare_call_without_an_assertion_is_not_a_repair_start() -> Result<(), String> {
+    assert_repair_ready(
+        "asserted-twin",
+        DBL_OLD,
+        DBL_NEW,
+        &dbl_test("    assert!(dbl(2) > 0);\n"),
+    )?;
+    assert_no_start("bare-call", DBL_OLD, DBL_NEW, &dbl_test("    dbl(2);\n"))?;
+    Ok(())
+}
+
+const PARSE_OLD: &str = "pub enum E {\n    A,\n    B,\n}\n\npub fn parse(_x: i32) -> Result<i32, E> {\n    Err(E::A)\n}\n";
+const PARSE_NEW: &str = "pub enum E {\n    A,\n    B,\n}\n\npub fn parse(_x: i32) -> Result<i32, E> {\n    Err(E::B)\n}\n";
+
+/// A variant-exact `matches!` on the changed error already grips the variant;
+/// the weak `is_err()` twin starts a repair and this one does not.
+#[test]
+fn variant_exact_error_assertion_is_not_a_repair_start() -> Result<(), String> {
+    assert_repair_ready(
+        "is-err-twin",
+        PARSE_OLD,
+        PARSE_NEW,
+        "use ar::parse;\n\n#[test]\nfn t() {\n    assert!(parse(-1).is_err());\n}\n",
+    )?;
+    assert_no_start(
+        "matches-variant",
+        PARSE_OLD,
+        PARSE_NEW,
+        "use ar::{parse, E};\n\n#[test]\nfn t() {\n    assert!(matches!(parse(-1), Err(E::B)));\n}\n",
     )?;
     Ok(())
 }

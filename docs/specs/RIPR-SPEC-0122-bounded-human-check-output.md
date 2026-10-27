@@ -731,12 +731,13 @@ not a head-only row and prints no note.
   commit-or-stash requirement, naming the test route only when a stub is
   rendered. The predicate is the edit cage's own committed-file law, deferring
   (no hold) when it cannot be established.
-- Tests for the return-value repair start (#10701): a weak or discarded-only
+- Tests for the return-value repair start (#10701): a weak
   assertion on a changed return value or error variant, with a direct owner
   call and an editable test target, prints one `ripr repair <id>` start; a
   lone equality pin (`assert!(f(x) == lit)`, the terminal Err-return guard), a
   strong exact assertion, a statically contradicted assertion, a function-value
-  or executor-helper reach, and a test with no direct owner call stay refused
+  or executor-helper reach, a changed struct literal, a test that only discards
+  the result, and a test with no direct owner call stay refused
   with one plain-language reason and the manual `ripr agent stub` route
   (`crates/ripr/tests/return_value_repair_start.rs`).
 - Format parsing tests for `human-full` and `text-full`.

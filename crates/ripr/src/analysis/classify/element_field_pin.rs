@@ -486,7 +486,7 @@ fn observes_with(
 /// The answer is a lookup in the run-scoped [`DropImplIndex`] (#9209): the
 /// corpus is parsed once per index instead of once per probe and returned
 /// record type.
-pub(super) fn drop_is_plain(index: &RustIndex, type_name: &str) -> bool {
+pub(in crate::analysis) fn drop_is_plain(index: &RustIndex, type_name: &str) -> bool {
     index
         .call_identity_memos
         .workspace_drop_impls(|| DropImplIndex::build(index))
