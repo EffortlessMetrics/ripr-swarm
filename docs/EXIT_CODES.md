@@ -174,13 +174,16 @@ reached the caller.
   body or `const` block, an owner behind a cfg in its own file that a plain
   `cargo test` build may not enable, no return value, an out-of-line test module, or
   inline test modules that are all gated by more than `cfg(test)`), or the
-  selector names no reported gap (`seam_not_found`), or the location selector
+  `--at` path names a language the Rust-only generator does not support
+  (`unsupported_language`: follow any check-provided test guidance, edit and
+  run the test by hand, then refresh the finding), or the selector names no
+  reported gap (`seam_not_found`), or the location selector
   matches several files or tied disjoint seams (`selector_ambiguous`: choose
   a specific path or one of the suggested seam IDs). Several inline test modules are not a
   refusal: among those gated by plain `cfg(test)`, the stub goes into the
   one that already names the owner, else the nearest one after it, else the
   nearest one before it. The named reason is on stderr; under `--json` a
-  `rust_test_stub` schema `0.3` `state: refused` envelope is the stdout
+  `rust_test_stub` schema `0.4` `state: refused` envelope is the stdout
   document. A failed read, analysis, or `--write` stays exit `2`.
 - **Typed agent card refusal**: `ripr agent card` reached a deliberate named
   refusal of the default handoff — the seam id names no seam

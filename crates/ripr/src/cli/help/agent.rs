@@ -29,7 +29,7 @@ The same transaction with explicit phases:
   # edit one focused test outside RIPR
   ripr agent repair --attempt ID --phase after
 
-From a `ripr check` finding, `ripr agent stub --at FILE:LINE` (the location
+From a Rust `ripr check` finding, `ripr agent stub --at FILE:LINE` (the location
 the finding prints) gives a ready-to-run test for that gap in one step.
 
 `--seam-id` takes a seam ID from `ripr pilot --root .` or `ripr agent status`,
@@ -172,7 +172,7 @@ Options:
                    second --write for the same seam reports the stub already
                    written instead of suffixing a `_2` duplicate.
   --json           Emit one `rust_test_stub` JSON document (schema_version
-                   `0.3`) with the placement, test name, exact text, the
+                   `0.4`) with the placement, test name, exact text, the
                    `todo!()` fill-ins, derived inputs, run command, and
                    inventory `grip_class` plus check `classification`
                    when known. A strongly_gripped seam stays `state:
@@ -185,6 +185,12 @@ Options:
                    surface, and — when the stub's placement differs from
                    that surface — a `placement_divergence` naming both
                    files.
+
+Stub generation supports Rust `.rs` paths only. Other --at paths receive
+`unsupported_language` (exit `3`), including with --write. For a reported
+gap, use the `ripr check` finding's test file/node and verify command when
+available: edit the test by hand, run the native test command, then refresh
+with `ripr check`. No stub is written for an unsupported language.
 
 The stub calls the changed function with its real receiver and parameters,
 fills a boundary input when the changed comparison names one, and stops at a
