@@ -131,13 +131,12 @@ language = "python"
 note = "large Python library (~1500 .py files, ~23k tests); commit edits scripts/validate_min_versions_in_sync.py and its test"
 heavy = true
 
-# TypeScript diffs. `defu`, `ky` and `h3` complete under `--mode draft` for their
+# TypeScript diffs. `defu`, `ky`, `h3` and `execa` complete under `--mode draft` for their
 # pinned diffs. Partial-extraction gaps (#10436) are omitted only when their test
 # file is provably unrelated to the diff; uncertain reachability and other typed
 # limitations (read bounds, truncated discovery, skipped links) can still make an
-# analysis partial. zod and execa were partial on the commits tried, and a
-# repository that stops short fails the completion gate even when new, so they
-# are not pinned.
+# analysis partial. zod was partial on the commits tried, and a repository that
+# stops short fails the completion gate even when new, so it is not pinned.
 [[corpus]]
 id = "defu-typescript"
 url = "https://github.com/unjs/defu"
@@ -158,6 +157,13 @@ url = "https://github.com/h3js/h3"
 sha = "3444ff78970e95c65e481ed2ff9a7d43c880ab1c"
 language = "typescript"
 note = "HTTP server framework with Vitest suites; commit edits src/tracing.ts and test/tracing.test.ts"
+
+[[corpus]]
+id = "execa-typescript"
+url = "https://github.com/sindresorhus/execa"
+sha = "ed80079bc4e21a259fdc521c5a4b27126b308c9a"
+language = "typescript"
+note = "process-execution library tested with ava; the commit edits JavaScript (lib/transform/generator.js and test/transform/encoding-multibyte.js) through the same TypeScript/JavaScript adapter"
 
 # ---------------------------------------------------------------- speed ----
 
