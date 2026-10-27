@@ -15,8 +15,10 @@ pub(crate) use generated_rust_corpus::{
 };
 pub(crate) mod harness_projection;
 mod input_facts;
+#[cfg(test)]
+pub(crate) use input_facts::PublishedInputFacts;
 pub(crate) use input_facts::{
-    InputFactsSlot, InputSource, PublishedInputFacts,
+    CapturedInputFacts, InputFactsSlot, InputSource,
     publish_input_source as publish_input_source_fact,
     publish_loaded_diff as publish_loaded_input_facts,
     publish_scoped_intake as publish_scoped_intake_facts, published as published_input_facts,

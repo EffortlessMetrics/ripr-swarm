@@ -5,6 +5,7 @@ id = "RIPR-SPEC-0241"
 tests = [
   "crates/ripr/src/analysis/input_facts.rs::captured_facts_round_trip_and_merge_across_producers",
   "crates/ripr/src/analysis/input_facts.rs::early_deadline_leaves_the_slot_empty",
+  "crates/ripr/src/analysis/input_facts.rs::facts_published_at_or_after_the_deadline_stamp_are_masked",
   "crates/ripr/src/analysis/input_facts.rs::publish_without_capture_is_a_no_op",
   "crates/ripr/src/analysis/input_facts.rs::source_labels_stay_distinct_from_analysis_mode",
   "crates/ripr/src/cli/commands/check_budget.rs::budget_timeout_before_discovery_retains_no_input_facts",
@@ -19,6 +20,10 @@ tests = [
   "crates/ripr/src/app/timeout_refusal.rs::auto_selected_worktree_states_rereads_instead_of_fake_flags",
   "crates/ripr/src/app/timeout_refusal.rs::human_text_covers_late_and_early_timeouts",
   "crates/ripr/src/app/timeout_refusal.rs::stash_take_and_clear_are_scoped_to_one_projection",
+  "crates/ripr/src/app/timeout_refusal.rs::post_deadline_facts_read_unavailable_and_are_named_in_human_text",
+  "crates/ripr/src/app/timeout_refusal.rs::explicit_format_and_output_dir_choices_are_preserved",
+  "crates/ripr/src/app/timeout_refusal.rs::auto_selected_format_and_output_stay_absent",
+  "crates/ripr/src/app/timeout_refusal.rs::committed_and_worktree_rereads_name_every_live_ref",
   "crates/ripr/src/output/limited_check.rs::timeout_refusal_with_stashed_context_renders_input_context_at_generation_0_3",
   "crates/ripr/src/output/limited_check.rs::timeout_refusal_without_context_keeps_the_pre_amendment_bytes",
   "crates/ripr/src/output/limited_check.rs::early_timeout_marks_every_resolved_fact_unavailable",

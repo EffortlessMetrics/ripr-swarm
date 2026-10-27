@@ -653,6 +653,10 @@ struct TimeoutRefusalSite<'a> {
     error: &'a CoreError,
     budget: Option<std::time::Duration>,
     format: OutputFormat,
+    /// The explicit `--format VALUE` spelling from argv, when one was given.
+    format_explicit: Option<String>,
+    /// The explicit `--output-dir` destination, when the invocation named one.
+    output_dir: Option<PathBuf>,
     /// The requested input source the CLI established before analysis.
     source: crate::analysis::InputSource,
     worktree_explicit: bool,
@@ -685,6 +689,8 @@ fn stash_timeout_refusal(site: &TimeoutRefusalSite<'_>) {
         },
         budget,
         site.format == OutputFormat::Json,
+        site.format_explicit.clone(),
+        site.output_dir.clone(),
         crate::analysis::published_input_facts(site.slot),
     );
     app::timeout_refusal::stash(projection);
@@ -738,6 +744,10 @@ fn check_inner(
     // it, so a second selection that disagrees is refused by name instead of
     // silently winning.
     let mut format_selection: Option<String> = None;
+    // #10796: the explicit `--format VALUE` spelling, preserved for the
+    // timeout refusal's bounded retry (the `--json` spelling rides the
+    // resolved format instead).
+    let mut format_explicit: Option<String> = None;
     let mut root_explicitly_provided = false;
     // RIPR-SPEC-0140: explicit artifact sink for the explain/context reuse
     // pair. No implicit cache: the user names the artifact path.
@@ -834,6 +844,10 @@ fn check_inner(
                     format!("--format {value}"),
                     parse_format(value)?,
                 )?;
+                // #10796: the refusal's bounded retry must repeat the explicit
+                // non-JSON format spelling the user chose, not the resolved
+                // enum default.
+                format_explicit = Some(value.to_string());
             }
             "--gap-ledger" => {
                 i += 1;
@@ -1697,9 +1711,10 @@ fn check_inner(
     } else {
         app::AnalysisProgressScope::Diff
     };
-    // #10796: register the input-facts capture for the worker thread so a
-    // deadline refusal can retain only what producers actually published
-    // before the budget fired. No capture-registered run (or none at all)
+    // #10796: the capture slot a deadline refusal reads. The budget owner
+    // registers it on the worker thread and stamps the deadline when the
+    // budget starts, so the refusal retains only what producers published
+    // before that stamp. A run with no budgeted worker (repo seam formats)
     // leaves the slot empty — the early-timeout case.
     let input_facts_slot: crate::analysis::InputFactsSlot =
         std::sync::Arc::new(std::sync::Mutex::new(None));
@@ -1711,28 +1726,29 @@ fn check_inner(
         Ok(app::repo_seam_inventory_input(input))
     } else {
         // #5369: bound the diff/worktree analysis by the wall-clock budget.
+        // The budget owner registers the input-facts capture on the worker
+        // thread and stamps the deadline, so a producer finishing inside the
+        // cancel grace is recorded post-deadline (#10796).
         let worker_config = config.clone();
         let worker_sink = progress.clone();
         let abandon_sink = progress.clone();
-        let worker_input_facts_slot = input_facts_slot.clone();
         super::check_budget::run_with_budget(
             check_timeout,
+            Some(&input_facts_slot),
             move || {
                 if let Some(sink) = &abandon_sink {
                     sink.abandon();
                 }
             },
             move || {
-                crate::analysis::with_input_facts_capture(worker_input_facts_slot, move || {
-                    app::check_with_progress_core(
-                        input,
-                        &worker_config,
-                        progress_scope,
-                        worker_sink
-                            .as_ref()
-                            .map(|sink| &**sink as &dyn crate::app::AnalysisProgressSink),
-                    )
-                })
+                app::check_with_progress_core(
+                    input,
+                    &worker_config,
+                    progress_scope,
+                    worker_sink
+                        .as_ref()
+                        .map(|sink| &**sink as &dyn crate::app::AnalysisProgressSink),
+                )
             },
         )
     };
@@ -1756,6 +1772,8 @@ fn check_inner(
                 error: &err,
                 budget: check_timeout,
                 format: effective_format,
+                format_explicit: format_explicit.clone(),
+                output_dir: output_dir.clone(),
                 source,
                 worktree_explicit: worktree_explicitly_provided,
                 committed_explicit: committed_explicitly_provided,

@@ -11,7 +11,7 @@
 //! resolved facts come only from [`PublishedInputFacts`] the producers
 //! completed and published before the deadline.
 
-use crate::analysis::{InputSource, PublishedInputFacts};
+use crate::analysis::{CapturedInputFacts, InputSource};
 use crate::app::CheckInput;
 use serde_json::{Value, json};
 use std::path::PathBuf;
@@ -44,18 +44,26 @@ pub(crate) struct TimeoutRefusalProjection {
     requested: RequestedSourceContext,
     expired_budget: Duration,
     json_output: bool,
-    published: Option<PublishedInputFacts>,
+    /// The explicit `--format VALUE` spelling from argv, preserved verbatim;
+    /// `None` when the format was `--json` or the default human renderer.
+    format_explicit: Option<String>,
+    /// Explicit `--output-dir` destination, when the fanout invocation named one.
+    output_dir: Option<PathBuf>,
+    published: Option<CapturedInputFacts>,
 }
 
 /// Build the projection from the invocation snapshot, the requested source
-/// selection, the expired budget, and whatever the producers published before
-/// the deadline (`None` = early timeout, no producer completed).
+/// selection, the expired budget, the explicit format/output choices argv
+/// made, and whatever the producers published before the deadline (`None` =
+/// early timeout, no producer completed).
 pub(crate) fn build(
     input: &CheckInput,
     requested: RequestedSourceContext,
     expired_budget: Duration,
     json_output: bool,
-    published: Option<PublishedInputFacts>,
+    format_explicit: Option<String>,
+    output_dir: Option<PathBuf>,
+    published: Option<CapturedInputFacts>,
 ) -> TimeoutRefusalProjection {
     TimeoutRefusalProjection {
         root: input.root.clone(),
@@ -67,14 +75,24 @@ pub(crate) fn build(
         requested,
         expired_budget,
         json_output,
+        format_explicit,
+        output_dir,
         published,
     }
 }
 
 /// One resolved fact: available with its value, or unavailable with the
 /// reason. An early deadline reads `not_published_before_deadline`; a fact
-/// the producer never computes for this source reads `not_computed_for_source`.
-fn fact_string(value: Option<&str>, published_any: bool) -> Value {
+/// the producer never computes for this source reads `not_computed_for_source`;
+/// a fact published at or after the deadline stamp (a producer finishing in
+/// the cancel grace) reads `published_after_deadline` — never `available`.
+fn fact_string(value: Option<&str>, published_any: bool, post_deadline: bool) -> Value {
+    if post_deadline {
+        return json!({
+            "available": false,
+            "reason": "published_after_deadline",
+        });
+    }
     match value {
         Some(value) => json!({"available": true, "value": value}),
         None if published_any => json!({
@@ -88,7 +106,18 @@ fn fact_string(value: Option<&str>, published_any: bool) -> Value {
     }
 }
 
-fn fact_count(value: Option<usize>, published_any: bool, producer: &str) -> Value {
+fn fact_count(
+    value: Option<usize>,
+    published_any: bool,
+    post_deadline: bool,
+    producer: &str,
+) -> Value {
+    if post_deadline {
+        return json!({
+            "available": false,
+            "reason": "published_after_deadline",
+        });
+    }
     match value {
         Some(value) => json!({"available": true, "value": value, "producer": producer}),
         None if published_any => json!({
@@ -103,11 +132,14 @@ fn fact_count(value: Option<usize>, published_any: bool, producer: &str) -> Valu
 }
 
 /// What a retry re-reads: named from the requested source, never silently
-/// pinned to the timed-out run's snapshot.
+/// pinned to the timed-out run's snapshot. The committed-history diff is the
+/// `<base>...HEAD` range, so both endpoints are live refs; a working-tree
+/// diff re-reads live bytes and re-resolves the merge base, which reads the
+/// base ref and `HEAD`.
 fn rereads(self_: &TimeoutRefusalProjection) -> Vec<&'static str> {
     match self_.requested.source {
         InputSource::Committed => {
-            let mut reads = vec!["base-ref"];
+            let mut reads = vec!["base-ref", "head-ref"];
             if self_.base.is_none() {
                 reads.push("default-base-resolution");
             }
@@ -116,9 +148,14 @@ fn rereads(self_: &TimeoutRefusalProjection) -> Vec<&'static str> {
         InputSource::WorkingTree => {
             let mut reads = vec!["worktree-bytes"];
             if self_.base.is_none() {
+                // Default-base resolution covers the merge-base re-resolution
+                // (base and HEAD) under one label.
                 reads.push("default-base-resolution");
             } else {
+                // The merge base of the explicit base and HEAD is
+                // re-resolved on retry, so both live refs are named.
                 reads.push("base-ref");
+                reads.push("head-ref");
             }
             reads
         }
@@ -150,9 +187,13 @@ fn next_budget_secs(expired: Duration) -> u64 {
 
 impl TimeoutRefusalProjection {
     /// The literal, shell-safe retry command rebuilt from the invocation
-    /// authority that actually ran. Explicit source/base/scope/format choices
-    /// are preserved; auto-selected sources keep their auto-selection instead
-    /// of fabricating flags that would silently narrow or broaden the diff.
+    /// authority that actually ran. Explicit source/base/scope/format/output
+    /// choices are preserved; auto-selected sources keep their
+    /// auto-selection instead of fabricating flags that would silently
+    /// narrow or broaden the diff. (`ripr check` has no `--config` or
+    /// `--lang` switch — config is discovered from the root and the language
+    /// set comes from `ripr.toml` — so preserving `--root` retains the
+    /// discovery anchor and there is nothing else to carry.)
     pub(crate) fn recovery_command(&self) -> String {
         let mut argv: Vec<String> = vec!["ripr".to_string(), "check".to_string()];
         argv.push(format!(
@@ -217,8 +258,19 @@ impl TimeoutRefusalProjection {
                 crate::agent::loop_commands::shell_arg(exclude)
             ));
         }
-        if self.json_output {
+        if let Some(value) = &self.format_explicit {
+            argv.push(format!(
+                "--format {}",
+                crate::agent::loop_commands::shell_arg(value)
+            ));
+        } else if self.json_output {
             argv.push("--json".to_string());
+        }
+        if let Some(output_dir) = &self.output_dir {
+            argv.push(format!(
+                "--output-dir {}",
+                crate::agent::loop_commands::shell_arg(&output_dir.to_string_lossy())
+            ));
         }
         argv.push(format!(
             "--timeout {}",
@@ -232,7 +284,11 @@ impl TimeoutRefusalProjection {
     /// fact carries its own availability instead of being omitted.
     pub(crate) fn input_context_value(&self) -> Value {
         let published_any = self.published.is_some();
-        let published = self.published.as_ref();
+        let facts = self.published.as_ref().map(|captured| &captured.facts);
+        let mask = self
+            .published
+            .as_ref()
+            .map(|captured| &captured.post_deadline);
         let requested = json!({
             "root": crate::output::path::display_path(&self.root),
             "source": self.requested.source.as_str(),
@@ -246,25 +302,30 @@ impl TimeoutRefusalProjection {
         });
         let resolved = json!({
             "effective_base": fact_string(
-                published.and_then(|facts| facts.effective_base.as_deref()),
+                facts.and_then(|facts| facts.effective_base.as_deref()),
                 published_any,
+                mask.is_some_and(|mask| mask.effective_base.is_some()),
             ),
             "base_commit": fact_string(
-                published.and_then(|facts| facts.resolved_base_commit.as_deref()),
+                facts.and_then(|facts| facts.resolved_base_commit.as_deref()),
                 published_any,
+                mask.is_some_and(|mask| mask.resolved_base_commit.is_some()),
             ),
             "merge_base": fact_string(
-                published.and_then(|facts| facts.merge_base_origin.as_deref()),
+                facts.and_then(|facts| facts.merge_base_origin.as_deref()),
                 published_any,
+                mask.is_some_and(|mask| mask.merge_base_origin.is_some()),
             ),
             "scoped_changed_files": fact_count(
-                published.and_then(|facts| facts.scoped_changed_file_count),
+                facts.and_then(|facts| facts.scoped_changed_file_count),
                 published_any,
+                mask.is_some_and(|mask| mask.scoped_changed_file_count.is_some()),
                 "scoped-diff-intake",
             ),
             "out_of_scope_files": fact_count(
-                published.and_then(|facts| facts.out_of_scope_file_count),
+                facts.and_then(|facts| facts.out_of_scope_file_count),
                 published_any,
+                mask.is_some_and(|mask| mask.out_of_scope_file_count.is_some()),
                 "scoped-diff-intake",
             ),
         });
@@ -294,18 +355,31 @@ impl TimeoutRefusalProjection {
             lines.push(format!("ripr: requested base: {base}"));
         }
         match &self.published {
-            Some(facts) => {
+            Some(captured) => {
+                let facts = &captured.facts;
+                let mask = &captured.post_deadline;
                 let mut resolved = Vec::new();
-                if let Some(base) = &facts.effective_base {
-                    resolved.push(format!("effective base {base}"));
+                if facts.effective_base.is_some() && mask.effective_base.is_none() {
+                    resolved.push(format!("effective base {}", facts.effective_base.as_deref().unwrap_or_default()));
                 }
-                if let Some(commit) = &facts.resolved_base_commit {
-                    resolved.push(format!("base commit {commit}"));
+                if facts.resolved_base_commit.is_some()
+                    && mask.resolved_base_commit.is_none()
+                {
+                    resolved.push(format!(
+                        "base commit {}",
+                        facts.resolved_base_commit.as_deref().unwrap_or_default()
+                    ));
                 }
-                if let Some(merge_base) = &facts.merge_base_origin {
-                    resolved.push(format!("merge base {merge_base}"));
+                if facts.merge_base_origin.is_some() && mask.merge_base_origin.is_none() {
+                    resolved.push(format!(
+                        "merge base {}",
+                        facts.merge_base_origin.as_deref().unwrap_or_default()
+                    ));
                 }
-                if let Some(count) = facts.scoped_changed_file_count {
+                if facts.scoped_changed_file_count.is_some()
+                    && mask.scoped_changed_file_count.is_none()
+                {
+                    let count = facts.scoped_changed_file_count.unwrap_or(0);
                     let out = facts.out_of_scope_file_count.unwrap_or(0);
                     resolved.push(format!(
                         "scoped changed files {count} ({out} out of scope)"
@@ -320,6 +394,27 @@ impl TimeoutRefusalProjection {
                     lines.push(format!(
                         "ripr: resolved before the deadline: {}",
                         resolved.join(", ")
+                    ));
+                }
+                // Honesty: a producer that finished inside the cancel grace
+                // published too late to be claimed as resolved context.
+                let mut late = Vec::new();
+                if mask.effective_base.is_some() {
+                    late.push("effective base");
+                }
+                if mask.resolved_base_commit.is_some() {
+                    late.push("base commit");
+                }
+                if mask.merge_base_origin.is_some() {
+                    late.push("merge base");
+                }
+                if mask.scoped_changed_file_count.is_some() {
+                    late.push("scoped intake counts");
+                }
+                if !late.is_empty() {
+                    lines.push(format!(
+                        "ripr: published after the deadline (not retained): {}",
+                        late.join(", ")
                     ));
                 }
             }
@@ -363,6 +458,7 @@ pub(crate) fn clear_stashed() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::analysis::PublishedInputFacts;
     use crate::app::{Mode, OutputFormat};
 
     fn input(root: &str, base: Option<&str>, diff_file: Option<&str>) -> CheckInput {
@@ -397,6 +493,23 @@ mod tests {
         }
     }
 
+    /// Facts that arrived before the deadline stamp: nothing masked.
+    fn captured(facts: PublishedInputFacts) -> CapturedInputFacts {
+        CapturedInputFacts {
+            facts,
+            post_deadline: PublishedInputFacts::default(),
+        }
+    }
+
+    /// Facts a producer published at or after the deadline stamp (a worker
+    /// finishing inside the cancel grace): every field masked post-deadline.
+    fn captured_post_deadline(facts: PublishedInputFacts) -> CapturedInputFacts {
+        CapturedInputFacts {
+            post_deadline: facts.clone(),
+            facts,
+        }
+    }
+
     #[test]
     fn late_timeout_marks_published_facts_available() {
         let projection = build(
@@ -404,7 +517,9 @@ mod tests {
             requested(InputSource::Committed),
             Duration::from_secs(60),
             true,
-            Some(published_full()),
+            None,
+            None,
+            Some(captured(published_full())),
         );
         let value = projection.input_context_value();
         assert_eq!(
@@ -440,6 +555,8 @@ mod tests {
             Duration::from_secs(60),
             true,
             None,
+            None,
+            None,
         );
         let value = projection.input_context_value();
         for pointer in [
@@ -472,6 +589,8 @@ mod tests {
             Duration::from_secs(30),
             false,
             None,
+            None,
+            None,
         );
         let value = projection.input_context_value();
         assert_eq!(value["requested"]["source"], json!("working-tree"));
@@ -487,14 +606,23 @@ mod tests {
             Duration::from_secs(60),
             true,
             None,
+            None,
+            None,
         );
         let command = projection.recovery_command();
+        // The host's quoting form is owned and pinned by
+        // `loop_commands::shell_arg_for`; here we pin that the recovery
+        // command routes the values through it (the #4378 human_path_text
+        // pattern).
+        let windows = cfg!(windows);
+        let root = crate::agent::loop_commands::shell_arg_for("my repo", windows);
+        let base = crate::agent::loop_commands::shell_arg_for("feature/it''s", windows);
         assert!(
-            command.contains("--root 'my repo'"),
+            command.contains(&format!("--root {root}")),
             "root with a space must be quoted: {command}"
         );
         assert!(
-            command.contains("--base 'feature/it'\\''s'"),
+            command.contains(&format!("--base {base}")),
             "base with a quote must be escaped: {command}"
         );
         assert!(command.ends_with("--timeout 120"), "bounded: {command}");
@@ -508,6 +636,13 @@ mod tests {
             Duration::from_secs(45),
             false,
             None,
+            None,
+            // The loader published only the source label for the supplied
+            // diff: its producer never computes base facts.
+            Some(captured(PublishedInputFacts {
+                source: Some(InputSource::SuppliedDiff),
+                ..PublishedInputFacts::default()
+            })),
         );
         let command = projection.recovery_command();
         assert!(
@@ -545,6 +680,8 @@ mod tests {
             Duration::from_secs(10),
             false,
             None,
+            None,
+            None,
         );
         let command = projection.recovery_command();
         assert!(
@@ -572,6 +709,8 @@ mod tests {
             Duration::from_secs(60),
             false,
             None,
+            None,
+            None,
         );
         let command = projection.recovery_command();
         assert!(
@@ -596,7 +735,9 @@ mod tests {
             requested(InputSource::Committed),
             Duration::from_secs(60),
             false,
-            Some(published_full()),
+            None,
+            None,
+            Some(captured(published_full())),
         );
         let text = late.human_recovery_text();
         assert!(text.contains("source=committed"), "{text}");
@@ -613,6 +754,8 @@ mod tests {
             requested(InputSource::Committed),
             Duration::from_secs(60),
             false,
+            None,
+            None,
             None,
         );
         let text = early.human_recovery_text();
@@ -632,11 +775,159 @@ mod tests {
             Duration::from_secs(60),
             false,
             None,
+            None,
+            None,
         ));
         assert!(take_stashed().is_some(), "first take consumes the stash");
         assert!(
             take_stashed().is_none(),
             "a second take must find nothing (no leak into a later refusal)"
+        );
+    }
+
+    #[test]
+    fn post_deadline_facts_read_unavailable_and_are_named_in_human_text() {
+        // #10796 review (MINOR 1): a producer finishing inside the cancel
+        // grace publishes after the deadline; the projection must render the
+        // fact as published_after_deadline, never available:true.
+        let projection = build(
+            &input("repo", Some("origin/main"), None),
+            requested(InputSource::Committed),
+            Duration::from_secs(60),
+            true,
+            None,
+            None,
+            Some(captured_post_deadline(published_full())),
+        );
+        let value = projection.input_context_value();
+        for pointer in [
+            "/resolved/effective_base",
+            "/resolved/base_commit",
+            "/resolved/scoped_changed_files",
+            "/resolved/out_of_scope_files",
+        ] {
+            assert_eq!(
+                value.pointer(pointer).and_then(|fact| fact.get("reason")),
+                Some(&Value::String("published_after_deadline".to_string())),
+                "{pointer} must name the grace-window reason: {value}"
+            );
+        }
+        let text = projection.human_recovery_text();
+        assert!(
+            text.contains("published after the deadline (not retained)"),
+            "{text}"
+        );
+        assert!(
+            !text.contains("resolved before the deadline: effective base"),
+            "a post-deadline fact must not be listed as resolved: {text}"
+        );
+    }
+
+    #[test]
+    fn explicit_format_and_output_dir_choices_are_preserved() {
+        // #10796 review (MINOR 2): the bounded retry must repeat the explicit
+        // output choices argv made — here a non-JSON --format and --output-dir
+        // with a space, both shell-quoted like every other preserved value.
+        let projection = build(
+            &input("repo", None, Some("change.diff")),
+            requested(InputSource::SuppliedDiff),
+            Duration::from_secs(45),
+            false,
+            Some("sarif".to_string()),
+            Some(PathBuf::from("out dir")),
+            None,
+        );
+        let command = projection.recovery_command();
+        assert!(
+            command.contains("--format sarif"),
+            "explicit non-JSON format must be preserved: {command}"
+        );
+        let output_dir = crate::agent::loop_commands::shell_arg_for("out dir", cfg!(windows));
+        assert!(
+            command.contains(&format!("--output-dir {output_dir}")),
+            "explicit output dir must be preserved and quoted: {command}"
+        );
+        assert!(
+            !command.contains("--json"),
+            "--json must not appear when the user chose --format sarif: {command}"
+        );
+    }
+
+    #[test]
+    fn auto_selected_format_and_output_stay_absent() {
+        // No explicit --format/--output-dir: the retry keeps the --json
+        // spelling (or the default human renderer) and adds no output dir —
+        // nothing the user did not ask for.
+        let json_run = build(
+            &input("repo", None, None),
+            requested(InputSource::Committed),
+            Duration::from_secs(60),
+            true,
+            None,
+            None,
+            None,
+        );
+        let command = json_run.recovery_command();
+        assert!(command.contains("--json"), "{command}");
+        assert!(!command.contains("--format"), "{command}");
+        assert!(!command.contains("--output-dir"), "{command}");
+        let human_run = build(
+            &input("repo", None, None),
+            requested(InputSource::Committed),
+            Duration::from_secs(60),
+            false,
+            None,
+            None,
+            None,
+        );
+        let command = human_run.recovery_command();
+        assert!(!command.contains("--json"), "{command}");
+        assert!(!command.contains("--format"), "{command}");
+    }
+
+    #[test]
+    fn committed_and_worktree_rereads_name_every_live_ref() {
+        // #10796 review (NIT 3): a committed diff is the <base>...HEAD range,
+        // so both endpoint refs are live; a working-tree retry re-resolves
+        // the merge base, which reads the base ref and HEAD as well.
+        let committed = build(
+            &input("repo", Some("origin/main"), None),
+            requested(InputSource::Committed),
+            Duration::from_secs(60),
+            false,
+            None,
+            None,
+            None,
+        );
+        assert_eq!(
+            committed.input_context_value()["recovery"]["rereads"],
+            json!(["base-ref", "head-ref"])
+        );
+        let committed_default = build(
+            &input("repo", None, None),
+            requested(InputSource::Committed),
+            Duration::from_secs(60),
+            false,
+            None,
+            None,
+            None,
+        );
+        assert_eq!(
+            committed_default.input_context_value()["recovery"]["rereads"],
+            json!(["base-ref", "head-ref", "default-base-resolution"])
+        );
+        let worktree = build(
+            &input("repo", Some("origin/main"), None),
+            requested(InputSource::WorkingTree),
+            Duration::from_secs(60),
+            false,
+            None,
+            None,
+            None,
+        );
+        assert_eq!(
+            worktree.input_context_value()["recovery"]["rereads"],
+            json!(["worktree-bytes", "base-ref", "head-ref"])
         );
     }
 }

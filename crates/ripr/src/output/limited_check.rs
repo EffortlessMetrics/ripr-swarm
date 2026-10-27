@@ -793,13 +793,18 @@ mod tests {
             },
             std::time::Duration::from_secs(600),
             true,
-            Some(crate::analysis::PublishedInputFacts {
-                source: Some(crate::analysis::InputSource::Committed),
-                effective_base: Some("origin/main".to_string()),
-                resolved_base_commit: Some("06e6aea".to_string()),
-                merge_base_origin: None,
-                scoped_changed_file_count: Some(6),
-                out_of_scope_file_count: Some(0),
+            None,
+            None,
+            Some(crate::analysis::CapturedInputFacts {
+                facts: crate::analysis::PublishedInputFacts {
+                    source: Some(crate::analysis::InputSource::Committed),
+                    effective_base: Some("origin/main".to_string()),
+                    resolved_base_commit: Some("06e6aea".to_string()),
+                    merge_base_origin: None,
+                    scoped_changed_file_count: Some(6),
+                    out_of_scope_file_count: Some(0),
+                },
+                post_deadline: crate::analysis::PublishedInputFacts::default(),
             }),
         ));
         let error = CoreError::analysis_timeout(
@@ -822,13 +827,20 @@ mod tests {
                 "origin/main",
             ),
             ("/input_context/resolved/base_commit/value", "06e6aea"),
-            ("/input_context/resolved/scoped_changed_files/value", "6"),
             ("/input_context/recovery/kind", "retry_with_larger_budget"),
         ] {
             let actual = value.pointer(pointer).and_then(Value::as_str);
             if actual != Some(expected) {
                 return Err(format!("{pointer}: expected {expected}, got {actual:?}"));
             }
+        }
+        // The scoped intake count is a JSON number, not a string.
+        if value
+            .pointer("/input_context/resolved/scoped_changed_files/value")
+            .and_then(Value::as_u64)
+            != Some(6)
+        {
+            return Err(format!("scoped_changed_files must read 6: {value}"));
         }
         // #10796 acceptance: the typed identity, zeroed summary, empty
         // findings and non-consumable treatment are unchanged.
@@ -921,6 +933,8 @@ mod tests {
             std::time::Duration::from_secs(60),
             false,
             None,
+            None,
+            None,
         ));
         let rendered = render_check_failure_json(
             &input(),
@@ -967,6 +981,8 @@ mod tests {
             },
             std::time::Duration::from_secs(60),
             false,
+            None,
+            None,
             None,
         ));
         let rendered = render_check_failure_json(

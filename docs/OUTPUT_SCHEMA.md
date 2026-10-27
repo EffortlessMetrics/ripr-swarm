@@ -1041,12 +1041,20 @@ file, `--path`/`--exclude` scope, and the analysis effort mode under
 base/commit/merge-base revisions and the scoped intake file counts, each as
 `{available, value}` or `{available: false, reason}`, where the reason is
 `not_published_before_deadline` (the producer had not completed; a progress
-heartbeat never establishes discovery) or `not_computed_for_source` (the fact
-does not exist for that input source, e.g. a merge base on a committed diff);
-`recovery` carries at most one bounded `retry_with_larger_budget` action — a
+heartbeat never establishes discovery), `not_computed_for_source` (the fact
+does not exist for that input source, e.g. a merge base on a committed
+diff), or `published_after_deadline` (a producer finishing inside the
+cancel grace published after the budget owner's deadline stamp, so the fact
+is not available context); `recovery` carries at most one bounded
+`retry_with_larger_budget` action — a
 shell-safe literal command preserving the meaningful root/source/base/scope/
-output choices with a finite doubled `--timeout`, plus `rereads` naming what a
-retry re-reads (live base refs, worktree bytes, the diff file, or nothing for
+output choices (an explicit `--format VALUE` spelling and `--output-dir`
+included; `ripr check` has no `--config`/`--lang` switch, so the discovered
+config and `ripr.toml` language set ride the preserved `--root`) with a
+finite doubled `--timeout`, plus `rereads` naming what a
+retry re-reads (the `base-ref` and `head-ref` of the committed
+`<base>...HEAD` range, worktree bytes with the base/head merge-base
+re-resolution, the diff file, or nothing for
 immutable Git candidate objects) and a note that such a retry is not pinned to
 the timed-out run's snapshot. Input metadata never implies an exposure, clean,
 or repair-ready verdict: exit stays `2`, findings stay empty, the summary

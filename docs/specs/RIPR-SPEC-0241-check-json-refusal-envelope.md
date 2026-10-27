@@ -313,30 +313,42 @@ enters the document") are amended, not silently violated, for one identity:
   each as `{available: true, value}` or `{available: false, reason}`.
   `reason` is `not_published_before_deadline` when the producer had not
   completed when the budget fired (an early timeout; a progress heartbeat
-  alone never establishes discovery) and `not_computed_for_source` when the
+  alone never establishes discovery), `not_computed_for_source` when the
   producer never computes the fact for that input source (for example a
   merge base on a committed-history diff, or any base fact for a supplied
-  diff). Scoped counts are intake quantities — adapter-facing files after
-  the scope filter — never raw Git path counts and never adapter result
-  counts.
+  diff), and `published_after_deadline` when the publish landed at or after
+  the deadline stamp — a producer finishing inside the cancel grace must
+  not read as available context. Scoped counts are intake quantities —
+  adapter-facing files after the scope filter — never raw Git path counts
+  and never adapter result counts.
 - Only producers that completed before the deadline may populate a fact:
   the diff loader publishes the resolved base/commit/merge-base after its
   load returns, and the scoped intake publishes its counts after the scope
-  partition. The check budget worker registers the capture slot on its own
-  thread; every other surface (LSP refresh, library callers) runs with no
-  registered capture, so publishing is a no-op. No new Git discovery,
-  analysis, or cleanup runs after the deadline to enrich the refusal, and
-  no run pays for capture when no budget is registered.
+  partition. The check budget owner stamps the deadline instant when the
+  budget starts and registers the capture slot on the worker thread with
+  that stamp, so a grace-window publish is masked `published_after_deadline`
+  per fact rather than blended into the available set; every other surface
+  (LSP refresh, library callers) runs with no registered capture, so
+  publishing is a no-op. No new Git discovery, analysis, or cleanup runs
+  after the deadline to enrich the refusal, and no run pays for capture
+  when no budget is registered.
 - `recovery` offers at most one bounded next action, `retry_with_larger_budget`:
   a shell-safe literal command rebuilt from the invocation authority that
   actually ran — root, an explicit base, an explicit `--worktree` /
   `--committed` / `--diff` / candidate selection, the scope patterns, the
-  `--json` output selection, and a finite doubled budget (`--timeout 2*N`
+  output selection (the explicit `--format VALUE` spelling when one was
+  given, otherwise `--json` when the run was JSON), an explicit
+  `--output-dir` destination, and a finite doubled budget (`--timeout 2*N`
   for an expired `N`-second budget; "disable all time limits" is never the
-  continuation). `rereads` names what a retry re-reads (`base-ref`,
-  `worktree-bytes`, `diff-file-bytes`, or none for immutable Git candidate
-  objects) and `note` states that a live-ref or worktree retry is not
-  pinned to the timed-out run's snapshot. Auto-selected sources keep their
+  continuation). `ripr check` has no `--config` or `--lang` switch — config
+  is discovered from the root and the language set comes from `ripr.toml` —
+  so preserving `--root` retains the discovery anchor and no unsupported
+  flag is fabricated. `rereads` names what a retry re-reads (`base-ref` and
+  `head-ref` for the committed `<base>...HEAD` range, `worktree-bytes` with
+  the base/head merge-base re-resolution for a working-tree diff,
+  `diff-file-bytes`, or none for immutable Git candidate objects) and `note`
+  states that a live-ref or worktree retry is not pinned to the timed-out
+  run's snapshot. Auto-selected sources and formats keep their
   auto-selection instead of fabricating flags that would silently narrow or
   broaden the diff. The recovery is advisory: execution stays with the
   caller.
@@ -356,6 +368,7 @@ enters the document") are amended, not silently violated, for one identity:
 
 - `crates/ripr/src/analysis/input_facts.rs::captured_facts_round_trip_and_merge_across_producers`
 - `crates/ripr/src/analysis/input_facts.rs::early_deadline_leaves_the_slot_empty`
+- `crates/ripr/src/analysis/input_facts.rs::facts_published_at_or_after_the_deadline_stamp_are_masked`
 - `crates/ripr/src/analysis/input_facts.rs::publish_without_capture_is_a_no_op`
 - `crates/ripr/src/analysis/input_facts.rs::source_labels_stay_distinct_from_analysis_mode`
 - `crates/ripr/src/cli/commands/check_budget.rs::budget_timeout_before_discovery_retains_no_input_facts`
@@ -370,6 +383,10 @@ enters the document") are amended, not silently violated, for one identity:
 - `crates/ripr/src/app/timeout_refusal.rs::auto_selected_worktree_states_rereads_instead_of_fake_flags`
 - `crates/ripr/src/app/timeout_refusal.rs::human_text_covers_late_and_early_timeouts`
 - `crates/ripr/src/app/timeout_refusal.rs::stash_take_and_clear_are_scoped_to_one_projection`
+- `crates/ripr/src/app/timeout_refusal.rs::post_deadline_facts_read_unavailable_and_are_named_in_human_text`
+- `crates/ripr/src/app/timeout_refusal.rs::explicit_format_and_output_dir_choices_are_preserved`
+- `crates/ripr/src/app/timeout_refusal.rs::auto_selected_format_and_output_stay_absent`
+- `crates/ripr/src/app/timeout_refusal.rs::committed_and_worktree_rereads_name_every_live_ref`
 - `crates/ripr/src/output/limited_check.rs::timeout_refusal_with_stashed_context_renders_input_context_at_generation_0_3`
 - `crates/ripr/src/output/limited_check.rs::timeout_refusal_without_context_keeps_the_pre_amendment_bytes`
 - `crates/ripr/src/output/limited_check.rs::early_timeout_marks_every_resolved_fact_unavailable`
@@ -378,9 +395,10 @@ enters the document") are amended, not silently violated, for one identity:
 
 ## Implementation Mapping (Amendment #10796)
 
-- `crates/ripr/src/analysis/input_facts.rs` (`PublishedInputFacts`, capture slot, publish/take)
+- `crates/ripr/src/analysis/input_facts.rs` (`PublishedInputFacts`, `CapturedInputFacts` with the post-deadline mask, capture slot, publish/take)
 - `crates/ripr/src/analysis/pipeline.rs` (loader and scoped-intake publish sites)
 - `crates/ripr/src/app/timeout_refusal.rs` (`RequestedSourceContext`, `TimeoutRefusalProjection`, stash)
 - `crates/ripr/src/app.rs::CHECK_REFUSAL_SCHEMA_VERSION`
-- `crates/ripr/src/cli/commands/check.rs` (capture registration, `stash_timeout_refusal`, human recovery prose)
+- `crates/ripr/src/cli/commands/check_budget.rs` (deadline stamp, worker capture registration)
+- `crates/ripr/src/cli/commands/check.rs` (`stash_timeout_refusal`, human recovery prose)
 - `crates/ripr/src/output/limited_check.rs::render_check_failure_json` (generation 0.3 and `input_context`)

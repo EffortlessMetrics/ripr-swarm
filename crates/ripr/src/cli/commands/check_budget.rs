@@ -46,11 +46,18 @@ fn timeout_detail(budget: Duration) -> String {
 
 /// Run `work` under `budget`. `None` runs it inline with no thread.
 ///
+/// `input_facts`, when given, is the capture slot a deadline refusal reads:
+/// the run's deadline is stamped here, when the budget starts, and the worker
+/// publishes into the slot with that stamp, so a producer finishing inside
+/// the cancel grace is recorded post-deadline instead of as available
+/// context (#10796 review).
+///
 /// `on_timeout` runs once when the budget fires and the worker has not
 /// finished, before the refusal is returned, so the caller can close any
 /// progress output the abandoned worker still holds.
 pub(super) fn run_with_budget<T, F>(
     budget: Option<Duration>,
+    input_facts: Option<&crate::analysis::InputFactsSlot>,
     on_timeout: impl FnOnce(),
     work: F,
 ) -> Result<T, CoreError>
@@ -61,6 +68,10 @@ where
     let Some(budget) = budget else {
         return work();
     };
+    // The deadline stamp is taken when the budget starts — the same instant
+    // `rx.recv_timeout(budget)` measures against — never from wall-clock
+    // observation inside a producer.
+    let deadline = std::time::Instant::now() + budget;
     // The standalone caller owns first-SIGINT flags, but a budget expiry
     // must cancel only this worker. Copy the flags into a separate token so
     // exporter waits can settle before the caller renders status 130.
@@ -68,6 +79,7 @@ where
         caller.for_check_budget_worker()
     });
     let worker_token = token.clone();
+    let worker_slot = input_facts.map(std::sync::Arc::clone);
     let (tx, rx) = mpsc::channel();
     // The worker replaces the main thread's analysis stack, so it gets at
     // least the main thread's usual 8 MiB; the 2 MiB default would let a
@@ -76,7 +88,20 @@ where
         .name("ripr-check-analysis".to_string())
         .stack_size(ANALYSIS_STACK_BYTES)
         .spawn(move || {
-            let result = with_token(&worker_token, work);
+            // `with_input_facts_capture` restores the previous registration
+            // only on normal return; that is safe here because this worker
+            // thread terminates as soon as `work` returns — a panic unwinds
+            // out of the closure and the thread-local dies with the thread —
+            // and the inline `None`-budget path above exits before any
+            // sibling run can reuse this thread.
+            let result = match worker_slot {
+                Some(slot) => {
+                    crate::analysis::with_input_facts_capture(slot, Some(deadline), move || {
+                        with_token(&worker_token, work)
+                    })
+                }
+                None => with_token(&worker_token, work),
+            };
             let _ignored = tx.send(result);
         });
     if let Err(error) = spawned {
@@ -121,6 +146,7 @@ mod tests {
         let result = with_token(&token, || {
             run_with_budget(
                 Some(Duration::from_secs(2)),
+                None,
                 || {},
                 || {
                     Ok(crate::analysis::cancellation::checkpoint_typed()
@@ -139,6 +165,7 @@ mod tests {
         let result: Result<(), _> = with_token(&caller, || {
             run_with_budget(
                 Some(Duration::from_millis(30)),
+                None,
                 || {},
                 || {
                     while crate::analysis::cancellation::checkpoint_typed().is_ok() {
@@ -158,7 +185,7 @@ mod tests {
 
     #[test]
     fn work_inside_the_budget_returns_its_result() {
-        let result = run_with_budget(Some(Duration::from_secs(30)), || {}, || Ok(7_u32));
+        let result = run_with_budget(Some(Duration::from_secs(30)), None, || {}, || Ok(7_u32));
         assert_eq!(result, Ok(7));
     }
 
@@ -166,6 +193,7 @@ mod tests {
     fn work_error_inside_the_budget_is_not_a_timeout() -> Result<(), String> {
         let result: Result<u32, _> = run_with_budget(
             Some(Duration::from_secs(30)),
+            None,
             || {},
             || Err(CoreError::message("boom")),
         );
@@ -182,6 +210,7 @@ mod tests {
         let caller = std::thread::current().id();
         let result = run_with_budget(
             None,
+            None,
             || {},
             move || Ok(std::thread::current().id() == caller),
         );
@@ -193,6 +222,7 @@ mod tests {
         let started = std::time::Instant::now();
         let result: Result<u32, _> = run_with_budget(
             Some(Duration::from_millis(50)),
+            None,
             || {},
             || {
                 std::thread::sleep(Duration::from_mins(1));
@@ -220,6 +250,7 @@ mod tests {
         let (seen_tx, seen_rx) = mpsc::channel();
         let result: Result<u32, _> = run_with_budget(
             Some(Duration::from_millis(50)),
+            None,
             || {},
             move || {
                 let token = crate::analysis::cancellation::current_token();
@@ -250,23 +281,21 @@ mod tests {
         // "no input facts" — an empty capture slot, not fabricated zeroes.
         let slot: crate::analysis::InputFactsSlot =
             std::sync::Arc::new(std::sync::Mutex::new(None));
-        let worker_slot = std::sync::Arc::clone(&slot);
         let result: Result<u32, _> = run_with_budget(
             Some(Duration::from_millis(50)),
+            Some(&slot),
             || {},
-            move || {
-                crate::analysis::with_input_facts_capture(worker_slot, || {
-                    // Stuck between checkpoints: no loader, no intake, only a
-                    // would-be progress heartbeat — which cannot establish
-                    // discovery by contract.
-                    loop {
-                        if crate::analysis::cancellation::checkpoint_typed().is_err() {
-                            break;
-                        }
-                        std::thread::sleep(Duration::from_millis(5));
+            || {
+                // Stuck between checkpoints: no loader, no intake, only a
+                // would-be progress heartbeat — which cannot establish
+                // discovery by contract.
+                loop {
+                    if crate::analysis::cancellation::checkpoint_typed().is_err() {
+                        break;
                     }
-                    Ok(1)
-                })
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Ok(1)
             },
         );
         let Err(error) = result else {
@@ -286,33 +315,32 @@ mod tests {
     fn budget_timeout_after_published_input_facts_retains_them() -> Result<(), String> {
         // #10796 decisive control, late timeout: the loader and intake facts
         // were published before the worker stalled, so the refusal may retain
-        // exactly those facts — and only those.
+        // exactly those facts — and only those, unmasked, because they
+        // published before the stamped deadline.
         let slot: crate::analysis::InputFactsSlot =
             std::sync::Arc::new(std::sync::Mutex::new(None));
-        let worker_slot = std::sync::Arc::clone(&slot);
         let result: Result<u32, _> = run_with_budget(
             Some(Duration::from_millis(50)),
+            Some(&slot),
             || {},
-            move || {
-                crate::analysis::with_input_facts_capture(worker_slot, || {
-                    crate::analysis::publish_loaded_input_facts(
-                        crate::analysis::InputSource::WorkingTree,
-                        &crate::analysis::LoadedDiff {
-                            text: String::new(),
-                            effective_base: Some("origin/main".to_string()),
-                            resolved_base_commit: Some("06e6aea".to_string()),
-                            merge_base_origin: Some("4d3c2b1".to_string()),
-                        },
-                    );
-                    crate::analysis::publish_scoped_intake_facts(6, 2);
-                    loop {
-                        if crate::analysis::cancellation::checkpoint_typed().is_err() {
-                            break;
-                        }
-                        std::thread::sleep(Duration::from_millis(5));
+            || {
+                crate::analysis::publish_loaded_input_facts(
+                    crate::analysis::InputSource::WorkingTree,
+                    &crate::analysis::LoadedDiff {
+                        text: String::new(),
+                        effective_base: Some("origin/main".to_string()),
+                        resolved_base_commit: Some("06e6aea".to_string()),
+                        merge_base_origin: Some("4d3c2b1".to_string()),
+                    },
+                );
+                crate::analysis::publish_scoped_intake_facts(6, 2);
+                loop {
+                    if crate::analysis::cancellation::checkpoint_typed().is_err() {
+                        break;
                     }
-                    Ok(1)
-                })
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Ok(1)
             },
         );
         let Err(error) = result else {
@@ -322,8 +350,9 @@ mod tests {
             error.check_failure_kind(),
             Some(CheckFailureKind::AnalysisTimeout)
         );
-        let facts = crate::analysis::published_input_facts(&slot)
+        let captured = crate::analysis::published_input_facts(&slot)
             .ok_or("published facts must be retained for the refusal")?;
+        let facts = &captured.facts;
         assert_eq!(
             facts.source,
             Some(crate::analysis::InputSource::WorkingTree)
@@ -333,6 +362,11 @@ mod tests {
         assert_eq!(facts.merge_base_origin.as_deref(), Some("4d3c2b1"));
         assert_eq!(facts.scoped_changed_file_count, Some(6));
         assert_eq!(facts.out_of_scope_file_count, Some(2));
+        assert_eq!(
+            captured.post_deadline,
+            crate::analysis::PublishedInputFacts::default(),
+            "pre-deadline publishes must stay unmasked"
+        );
         Ok(())
     }
 
@@ -347,19 +381,24 @@ mod tests {
         ] {
             let slot: crate::analysis::InputFactsSlot =
                 std::sync::Arc::new(std::sync::Mutex::new(None));
-            crate::analysis::with_input_facts_capture(std::sync::Arc::clone(&slot), || {
-                crate::analysis::publish_loaded_input_facts(
-                    source,
-                    &crate::analysis::LoadedDiff {
-                        text: String::new(),
-                        effective_base: Some("origin/main".to_string()),
-                        resolved_base_commit: Some("06e6aea".to_string()),
-                        merge_base_origin: None,
-                    },
-                );
+            // Mirror the real loader: a supplied diff leaves the base unset
+            // because its producer never computes one.
+            let loaded = crate::analysis::LoadedDiff {
+                text: String::new(),
+                effective_base: if expect_base {
+                    Some("origin/main".to_string())
+                } else {
+                    None
+                },
+                resolved_base_commit: Some("06e6aea".to_string()),
+                merge_base_origin: None,
+            };
+            crate::analysis::with_input_facts_capture(std::sync::Arc::clone(&slot), None, || {
+                crate::analysis::publish_loaded_input_facts(source, &loaded);
             });
-            let facts = crate::analysis::published_input_facts(&slot)
+            let captured = crate::analysis::published_input_facts(&slot)
                 .ok_or("loaded facts must publish for every source mode")?;
+            let facts = &captured.facts;
             assert_eq!(facts.source, Some(source));
             if expect_base {
                 assert_eq!(facts.effective_base.as_deref(), Some("origin/main"));

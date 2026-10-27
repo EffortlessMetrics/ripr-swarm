@@ -3,11 +3,16 @@
 //! When `ripr check` exhausts its wall-clock budget, the typed
 //! `analysis_timeout` refusal must not invent input context: every retained
 //! fact has to come from a producer that actually completed and published it
-//! before the deadline. This module is the narrow publication channel between
-//! those producers (the diff loader and the scoped intake) and the refusal
-//! renderer. It adds no discovery of its own: producers publish facts they
-//! already hold, and a run with no registered capture slot (the LSP refresh,
-//! library callers, tests) is a no-op.
+//! before the deadline. Cancellation is cooperative and the budget owner
+//! waits a short cancel grace, so a producer can finish inside that window
+//! and publish after the deadline; the budget owner therefore stamps the
+//! deadline at registration, and a publish at or after the stamp is recorded
+//! in a post-deadline mask the renderer reads as `published_after_deadline`
+//! instead of `available`. This module is the narrow publication channel
+//! between those producers (the diff loader and the scoped intake) and the
+//! refusal renderer. It adds no discovery of its own: producers publish facts
+//! they already hold, and a run with no registered capture slot (the LSP
+//! refresh, library callers, tests) is a no-op.
 //!
 //! The capture slot is registered on the analysis thread by the check budget
 //! owner, mirroring the cancellation-token thread boundary
@@ -16,6 +21,7 @@
 //! runs in one process from publishing into each other's refusal.
 
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 /// Which input source the run analyzed; the requested source mode the CLI
 /// selected, echoed back without confusing it with the analysis effort mode.
@@ -64,20 +70,41 @@ pub(crate) struct PublishedInputFacts {
     pub(crate) out_of_scope_file_count: Option<usize>,
 }
 
+/// Facts captured for a deadline refusal, with the post-deadline mask. The
+/// budget owner stamps the deadline when the run starts; a producer that
+/// publishes at or after that stamp (a worker finishing inside the cancel
+/// grace) has its fields recorded in `post_deadline`, a presence mask parallel
+/// to `facts`, so the renderer can say `published_after_deadline` instead of
+/// claiming the fact was available before the deadline.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct CapturedInputFacts {
+    /// The merged facts, first-writer-wins across producers.
+    pub(crate) facts: PublishedInputFacts,
+    /// Presence mask of which `facts` fields arrived at or after the deadline.
+    pub(crate) post_deadline: PublishedInputFacts,
+}
+
 /// Shared slot the check run registers and the refusal renderer reads. `None`
 /// means no producer completed before the deadline — the early-timeout case.
-pub(crate) type InputFactsSlot = Arc<Mutex<Option<PublishedInputFacts>>>;
+pub(crate) type InputFactsSlot = Arc<Mutex<Option<CapturedInputFacts>>>;
 
 thread_local! {
-    static CAPTURE: std::cell::RefCell<Option<InputFactsSlot>> = const { std::cell::RefCell::new(None) };
+    static CAPTURE: std::cell::RefCell<Option<(InputFactsSlot, Option<Instant>)>> = const { std::cell::RefCell::new(None) };
 }
 
 /// Register `slot` as this thread's publication target for `work`, restoring
-/// the previous registration afterwards. Without a registration every
-/// `publish_*` call is a no-op, so producers stay free on non-CLI surfaces.
-pub(crate) fn with_input_facts_capture<T>(slot: InputFactsSlot, work: impl FnOnce() -> T) -> T {
+/// the previous registration afterwards. `deadline` is the budget owner's
+/// stamp of when the run's wall-clock budget expires: publishes at or after
+/// it are recorded in the slot's post-deadline mask rather than as
+/// before-deadline facts. Without a registration every `publish_*` call is a
+/// no-op, so producers stay free on non-CLI surfaces.
+pub(crate) fn with_input_facts_capture<T>(
+    slot: InputFactsSlot,
+    deadline: Option<Instant>,
+    work: impl FnOnce() -> T,
+) -> T {
     CAPTURE.with(|capture| {
-        let previous = capture.replace(Some(slot));
+        let previous = capture.replace(Some((slot, deadline)));
         let result = work();
         capture.replace(previous);
         result
@@ -85,27 +112,75 @@ pub(crate) fn with_input_facts_capture<T>(slot: InputFactsSlot, work: impl FnOnc
 }
 
 /// Merge `facts` into the registered slot. Lock poisoning keeps the poisoned
-/// value in place (the run is already failing); publishing never panics.
+/// value in place (the run is already failing); publishing never panics. A
+/// publish at or after the registered deadline (a producer finishing inside
+/// the cancel grace) lands in the slot but is masked post-deadline.
 fn publish(facts: PublishedInputFacts) {
     CAPTURE.with(|capture| {
-        let Some(slot) = capture.borrow().as_ref().cloned() else {
+        let Some((slot, deadline)) = capture.borrow().as_ref().cloned() else {
             return;
         };
+        let post_deadline = deadline.is_some_and(|stamp| Instant::now() >= stamp);
         let Ok(mut published) = slot.lock() else {
             return;
         };
         let merged = published.take().unwrap_or_default();
-        *published = Some(PublishedInputFacts {
-            source: facts.source.or(merged.source),
-            effective_base: facts.effective_base.or(merged.effective_base),
-            resolved_base_commit: facts.resolved_base_commit.or(merged.resolved_base_commit),
-            merge_base_origin: facts.merge_base_origin.or(merged.merge_base_origin),
-            scoped_changed_file_count: facts
-                .scoped_changed_file_count
-                .or(merged.scoped_changed_file_count),
-            out_of_scope_file_count: facts
-                .out_of_scope_file_count
-                .or(merged.out_of_scope_file_count),
+        // First writer wins on the value; a later publish cannot overwrite a
+        // before-deadline fact, and a before-deadline publish cannot un-mark
+        // a field an earlier grace-window publish masked.
+        let mask_source = if post_deadline { facts.source } else { None };
+        let mask_effective_base = if post_deadline {
+            facts.effective_base.clone()
+        } else {
+            None
+        };
+        let mask_resolved_base_commit = if post_deadline {
+            facts.resolved_base_commit.clone()
+        } else {
+            None
+        };
+        let mask_merge_base_origin = if post_deadline {
+            facts.merge_base_origin.clone()
+        } else {
+            None
+        };
+        let mask_scoped_changed_file_count = if post_deadline {
+            facts.scoped_changed_file_count
+        } else {
+            None
+        };
+        let mask_out_of_scope_file_count = if post_deadline {
+            facts.out_of_scope_file_count
+        } else {
+            None
+        };
+        *published = Some(CapturedInputFacts {
+            facts: PublishedInputFacts {
+                source: facts.source.or(merged.facts.source),
+                effective_base: facts.effective_base.or(merged.facts.effective_base),
+                resolved_base_commit: facts
+                    .resolved_base_commit
+                    .or(merged.facts.resolved_base_commit),
+                merge_base_origin: facts.merge_base_origin.or(merged.facts.merge_base_origin),
+                scoped_changed_file_count: facts
+                    .scoped_changed_file_count
+                    .or(merged.facts.scoped_changed_file_count),
+                out_of_scope_file_count: facts
+                    .out_of_scope_file_count
+                    .or(merged.facts.out_of_scope_file_count),
+            },
+            post_deadline: PublishedInputFacts {
+                source: mask_source.or(merged.post_deadline.source),
+                effective_base: mask_effective_base.or(merged.post_deadline.effective_base),
+                resolved_base_commit: mask_resolved_base_commit
+                    .or(merged.post_deadline.resolved_base_commit),
+                merge_base_origin: mask_merge_base_origin
+                    .or(merged.post_deadline.merge_base_origin),
+                scoped_changed_file_count: mask_scoped_changed_file_count
+                    .or(merged.post_deadline.scoped_changed_file_count),
+                out_of_scope_file_count: mask_out_of_scope_file_count
+                    .or(merged.post_deadline.out_of_scope_file_count),
+            },
         });
     });
 }
@@ -147,7 +222,7 @@ pub(crate) fn publish_scoped_intake(
 
 /// Read the facts published so far without blocking. The refusal path calls
 /// this only after the run already failed; no producer runs at this point.
-pub(crate) fn published(slot: &InputFactsSlot) -> Option<PublishedInputFacts> {
+pub(crate) fn published(slot: &InputFactsSlot) -> Option<CapturedInputFacts> {
     slot.lock().ok().and_then(|published| published.clone())
 }
 
@@ -179,20 +254,76 @@ mod tests {
     #[test]
     fn captured_facts_round_trip_and_merge_across_producers() -> Result<(), String> {
         let slot: InputFactsSlot = Arc::new(Mutex::new(None));
-        with_input_facts_capture(slot.clone(), || {
+        with_input_facts_capture(slot.clone(), None, || {
             publish_loaded_diff(
                 InputSource::WorkingTree,
                 &loaded(Some("main"), Some("abc123"), Some("def456")),
             );
             publish_scoped_intake(6, 2);
         });
-        let facts = published(&slot).ok_or("published facts must be retained")?;
+        let captured = published(&slot).ok_or("published facts must be retained")?;
+        let facts = &captured.facts;
         assert_eq!(facts.source, Some(InputSource::WorkingTree));
         assert_eq!(facts.effective_base.as_deref(), Some("main"));
         assert_eq!(facts.resolved_base_commit.as_deref(), Some("abc123"));
         assert_eq!(facts.merge_base_origin.as_deref(), Some("def456"));
         assert_eq!(facts.scoped_changed_file_count, Some(6));
         assert_eq!(facts.out_of_scope_file_count, Some(2));
+        assert_eq!(
+            captured.post_deadline,
+            PublishedInputFacts::default(),
+            "no deadline was registered, so nothing may be masked post-deadline"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn facts_published_at_or_after_the_deadline_stamp_are_masked() -> Result<(), String> {
+        // #10796 review (MINOR 1): a producer finishing inside the cancel
+        // grace publishes after the budget fired. The publish time is the
+        // only completion evidence the slot has, so the projection must read
+        // such facts as `published_after_deadline`, never `available: true`.
+        let grace_slot: InputFactsSlot = Arc::new(Mutex::new(None));
+        with_input_facts_capture(
+            grace_slot.clone(),
+            Some(Instant::now() - std::time::Duration::from_secs(60)),
+            || {
+                publish_loaded_diff(
+                    InputSource::WorkingTree,
+                    &loaded(Some("main"), Some("abc123"), None),
+                );
+            },
+        );
+        let grace = published(&grace_slot).ok_or("grace-window facts must be captured")?;
+        assert_eq!(grace.facts.effective_base.as_deref(), Some("main"));
+        assert_eq!(
+            grace.post_deadline.effective_base.as_deref(),
+            Some("main"),
+            "a publish after the deadline stamp must be masked, not available"
+        );
+        assert_eq!(
+            grace.post_deadline.resolved_base_commit.as_deref(),
+            Some("abc123")
+        );
+        // Before-deadline control: the same publish under a future deadline
+        // lands unmasked and reads available.
+        let live_slot: InputFactsSlot = Arc::new(Mutex::new(None));
+        with_input_facts_capture(
+            live_slot.clone(),
+            Some(Instant::now() + std::time::Duration::from_secs(60)),
+            || {
+                publish_loaded_diff(
+                    InputSource::WorkingTree,
+                    &loaded(Some("main"), Some("abc123"), None),
+                );
+            },
+        );
+        let live = published(&live_slot).ok_or("live facts must be captured")?;
+        assert_eq!(
+            live.post_deadline,
+            PublishedInputFacts::default(),
+            "a publish before the deadline stamp must stay available"
+        );
         Ok(())
     }
 
@@ -201,7 +332,7 @@ mod tests {
         // A producer that never completes publishes nothing: the early
         // timeout case must read as "no input facts", not as zero facts.
         let slot: InputFactsSlot = Arc::new(Mutex::new(None));
-        let seen = with_input_facts_capture(slot.clone(), || published(&slot));
+        let seen = with_input_facts_capture(slot.clone(), None, || published(&slot));
         assert_eq!(seen, None);
     }
 
