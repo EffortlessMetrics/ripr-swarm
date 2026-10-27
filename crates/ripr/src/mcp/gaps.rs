@@ -824,7 +824,8 @@ mod tests {
         );
 
         let mut unrelated = finding.clone();
-        unrelated.static_limit_kind = Some(crate::domain::StaticLimitKind::StaticProbeUnknown);
+        unrelated.static_limit_kind =
+            Some(crate::domain::StaticLimitKind::RustValuePropagationUnresolved);
         let projected = GapItem::from_finding(&unrelated, &root)?;
         assert_eq!(
             projected.evidence_core["recommended_next_step"],
