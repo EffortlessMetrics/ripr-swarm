@@ -1018,8 +1018,12 @@ state is a function of the prior state and the operand alone, so the operands
 above, at the literal arguments of each observed call, with the same probe-grid
 separation requirement. The call is read through any plain receiver
 (`cart.add(0)`, a test-local `new Cart()`, a file-level instance or a fixture
-receiver). Because the state accumulates across calls, the test body may hold no
-call of the owner that is not one of the evaluated assertions' calls; a parameter
+receiver). Because the state accumulates across calls, every owner call that can move it
+must be one of the evaluated strong assertions' calls: the test body holds no
+other call (a weak assertion's call counts as another call), the test file names
+the owner nowhere outside its test bodies (no hook, describe-level binding or
+helper), and every sibling test of the file that names the owner is itself a
+related candidate. State seeded in another module stays unseen; a parameter
 reassigned in the owner, an operand the evaluator cannot read (a loop variable,
 a field, another call) or a different operator keeps the existing verdict. The
 rule only withdraws credit: a separating input such as `add(5)` pinned to `10`

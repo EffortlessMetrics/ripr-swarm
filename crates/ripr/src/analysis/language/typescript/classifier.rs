@@ -1292,6 +1292,68 @@ pub(crate) fn plain_changed_return<'t>(
     Some((old_expression, new_expression))
 }
 
+/// Whether the test file names `name` anywhere outside its test bodies (a
+/// hook, a describe-level binding or a file-level helper); `None` when the file
+/// cannot be read or a body cannot be blanked unambiguously. Unlike
+/// [`test_file_names_owner_only_in_test_bodies`] it tolerates ordinary
+/// statements outside the tests (a shared instance, a fixture definition): it
+/// only asks whether the owner is called there.
+fn test_file_names_owner_outside_test_bodies(
+    test: &TypeScriptTest,
+    sibling_tests: &[TypeScriptTest],
+    name: &str,
+    root: &Path,
+) -> Option<bool> {
+    let mut source = std::fs::read_to_string(root.join(&test.file)).ok()?;
+    let bodies: Vec<&str> = sibling_tests
+        .iter()
+        .filter(|sibling| sibling.file == test.file && !sibling.body_text.is_empty())
+        .map(|sibling| sibling.body_text.as_str())
+        .collect();
+    // Blanking a body that occurs twice would also blank its copy outside
+    // the tests, hiding a call there; refuse instead.
+    if source.matches(test.body_text.as_str()).count() != 1
+        || bodies.iter().any(|body| source.matches(body).count() != 1)
+    {
+        return None;
+    }
+    for body in bodies {
+        source = source.replace(body, "");
+    }
+    Some(word_occurrences(&source, name) > 0)
+}
+
+/// Whether every call that can move the owner's state is one the rule reads
+/// (#10850). A hook, a describe-level binding or a file-level helper that names
+/// the owner can seed state this test body does not show, and a sibling test of
+/// the file that calls the owner but is not itself a related candidate could
+/// share an instance, so either leaves the existing verdict.
+fn state_update_calls_are_all_seen(
+    test: &TypeScriptTest,
+    candidates: &[TypeScriptRelatedCandidate<'_>],
+    all_tests: &[TypeScriptTest],
+    owner: &TypeScriptOwner,
+    workspace_root: Option<&Path>,
+) -> bool {
+    let Some(root) = workspace_root else {
+        return false;
+    };
+    if test_file_names_owner_outside_test_bodies(test, all_tests, &owner.name, root) != Some(false)
+    {
+        return false;
+    }
+    all_tests
+        .iter()
+        .filter(|sibling| {
+            sibling.file == test.file && word_occurrences(&sibling.body_text, &owner.name) > 0
+        })
+        .all(|sibling| {
+            candidates.iter().any(|candidate| {
+                candidate.test.file == sibling.file && candidate.test.line == sibling.line
+            })
+        })
+}
+
 /// The plain receivers of every `<receiver>.<owner_name>(` call in `observed`.
 pub(crate) fn instance_call_receivers(observed: &str, owner_name: &str) -> Vec<String> {
     observed
@@ -1391,6 +1453,7 @@ pub(crate) fn ts_returned_expression_unexercised(
     old_line_text: Option<&str>,
     owner: &TypeScriptOwner,
     candidates: &[TypeScriptRelatedCandidate<'_>],
+    all_tests: &[TypeScriptTest],
     alias_map: Option<&TsAliasMap>,
     workspace_root: Option<&Path>,
     other_credit_present: bool,
@@ -1416,6 +1479,17 @@ pub(crate) fn ts_returned_expression_unexercised(
             continue;
         }
         if local_identifier_declared_in_test_body(&candidate.test.body_text, &owner.name) {
+            return false;
+        }
+        if state_operands.is_some()
+            && !state_update_calls_are_all_seen(
+                candidate.test,
+                candidates,
+                all_tests,
+                owner,
+                workspace_root,
+            )
+        {
             return false;
         }
         let mut receivers =
@@ -1471,6 +1545,9 @@ pub(crate) fn ts_returned_expression_unexercised(
                     .test
                     .assertions
                     .iter()
+                    .filter(|assertion| {
+                        assertion.oracle_strength.rank() >= OracleStrength::Strong.rank()
+                    })
                     .filter_map(|assertion| assertion.observed_expression.as_deref())
                     .map(|observed| owner_call_arguments(observed, &owner.name, &receivers).len())
                     .sum();
@@ -6819,6 +6896,7 @@ pub(crate) fn classify_resolved_owner(
             old_line_text,
             owner,
             related_candidates,
+            all_tests,
             alias_map,
             workspace_root,
             !pin_facts.is_empty() || lookup_change.is_some(),
