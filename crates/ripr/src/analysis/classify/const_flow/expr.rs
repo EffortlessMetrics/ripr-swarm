@@ -375,6 +375,20 @@ impl Expr {
         }
     }
 
+    /// The first call in source order, as its own expression.
+    pub(super) fn first_call(&self) -> Option<&Self> {
+        match self {
+            Self::Literal(_) | Self::Var(_) => None,
+            Self::Not(inner) | Self::Neg(inner) => inner.first_call(),
+            Self::Bin(_, left, right) => left.first_call().or_else(|| right.first_call()),
+            Self::Method(receiver, _, args) => receiver
+                .first_call()
+                .or_else(|| args.iter().find_map(Self::first_call)),
+            Self::Call(..) => Some(self),
+            Self::Format(_, args) => args.iter().find_map(Self::first_call),
+        }
+    }
+
     /// Every called name, in source order.
     pub(super) fn call_names(&self, names: &mut Vec<String>) {
         match self {
@@ -659,8 +673,9 @@ impl Machine<'_> {
         }
     }
 
-    /// The value of the assertion's first call, for the explanation. `None`
-    /// when it is not a single call or does not evaluate.
+    /// The value the assertion's first reader call returns, for the
+    /// explanation (not the value of the whole comparison). `None` when
+    /// there is no call or it does not evaluate.
     pub(super) fn call_result(&self, assertion: &Assertion) -> Option<Value> {
         let scope = Scope {
             vars: BTreeMap::new(),
@@ -671,7 +686,7 @@ impl Machine<'_> {
         let expr = match assertion {
             Assertion::True(expr) | Assertion::Eq(expr, _) | Assertion::Ne(expr, _) => expr,
         };
-        eval(expr, &scope, Some(self))
+        eval(expr.first_call()?, &scope, Some(self))
     }
 }
 

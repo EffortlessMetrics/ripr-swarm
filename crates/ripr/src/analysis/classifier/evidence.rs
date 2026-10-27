@@ -1614,10 +1614,17 @@ impl ClassifiedProbeEvidence {
         );
         self.infect = stage(
             StageState::Yes,
-            format!(
-                "`{}` changes from {} to {}",
-                detail.constant, detail.old_value, detail.new_value
-            ),
+            if detail.rewrite {
+                format!(
+                    "`{}` keeps the value {}; evaluated with the neighbouring value(s) {}",
+                    detail.constant, detail.old_value, detail.new_value
+                )
+            } else {
+                format!(
+                    "`{}` changes from {} to {}",
+                    detail.constant, detail.old_value, detail.new_value
+                )
+            },
         );
         self.observe = stage(
             StageState::Yes,
@@ -1636,10 +1643,17 @@ impl ClassifiedProbeEvidence {
             );
             self.discriminate = stage(
                 StageState::Yes,
-                format!(
-                    "{} holds with {} = {} and fails with {}",
-                    call, detail.constant, detail.old_value, detail.new_value
-                ),
+                if detail.rewrite {
+                    format!(
+                        "{} holds with {} = {} and fails with a neighbouring value; each neighbour ({}) is noticed by a related assertion",
+                        call, detail.constant, detail.old_value, detail.new_value
+                    )
+                } else {
+                    format!(
+                        "{} holds with {} = {} and fails with {}",
+                        call, detail.constant, detail.old_value, detail.new_value
+                    )
+                },
             );
         } else {
             self.propagate = stage(

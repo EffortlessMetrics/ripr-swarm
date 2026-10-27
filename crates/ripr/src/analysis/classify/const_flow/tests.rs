@@ -308,3 +308,73 @@ fn an_ambiguous_or_unpaired_constant_pairs_with_nothing() {
         ]
     ));
 }
+
+#[test]
+fn a_value_keeping_rewrite_is_asked_about_its_neighbours() {
+    use super::neighbours;
+    assert_eq!(
+        neighbours(&Value::Int(10), U32),
+        Some(vec![Value::Int(9), Value::Int(11)])
+    );
+    // The type's edge removes the neighbour it does not admit.
+    assert_eq!(neighbours(&Value::Int(0), U32), Some(vec![Value::Int(1)]));
+    let byte = Ty::Int { min: 0, max: 255 };
+    assert_eq!(
+        neighbours(&Value::Int(255), byte),
+        Some(vec![Value::Int(254)])
+    );
+    // Only integers have neighbours.
+    assert_eq!(neighbours(&Value::Str("a".into()), Ty::Str), None);
+    assert_eq!(neighbours(&Value::Bool(true), Ty::Bool), None);
+}
+
+#[test]
+fn both_neighbours_must_break_a_pinned_boundary() {
+    // `within(10)` and `!within(11)` pin `value <= LIMIT` from both sides.
+    let reader = "pub fn within(value: u32) -> bool {\n    value <= LIMIT\n}";
+    let pinned = ["assert!(within(10));", "assert!(!within(11));"];
+    let noticed = |limit: i64| -> Vec<Option<bool>> {
+        pinned
+            .iter()
+            .map(|assertion| holds(reader, ("LIMIT", U32, Value::Int(limit)), assertion))
+            .collect()
+    };
+    assert_eq!(noticed(10), vec![Some(true), Some(true)]);
+    // 9 breaks `within(10)`; 11 breaks `!within(11)`: each neighbour is noticed.
+    assert_eq!(noticed(9)[0], Some(false));
+    assert_eq!(noticed(11)[1], Some(false));
+    // A single-sided pin leaves the other neighbour unnoticed.
+    let one_sided = "assert!(within(10));";
+    let high = holds(reader, ("LIMIT", U32, Value::Int(11)), one_sided);
+    assert_eq!(
+        high,
+        Some(true),
+        "11 passes a pin that only looks from below"
+    );
+}
+
+#[test]
+fn the_explained_result_is_the_readers_return_not_the_comparison() -> Result<(), String> {
+    let readers = [parse_reader(SHOULD_RETRY).ok_or("the reader source parses")?];
+    let value = Value::Int(10);
+    let machine = Machine {
+        readers: &readers,
+        constant: "LIMIT",
+        constant_ty: U32,
+        constant_value: &value,
+    };
+    // `should_retry(10)` is false at LIMIT 10; the negated assertion is true.
+    for (text, expected) in [
+        ("assert!(!should_retry(10));", Value::Bool(false)),
+        ("assert_eq!(should_retry(10), false);", Value::Bool(false)),
+        ("assert!(should_retry(9));", Value::Bool(true)),
+    ] {
+        let parsed = parse_assertion(text);
+        assert_eq!(
+            parsed.and_then(|assertion| machine.call_result(&assertion)),
+            Some(expected),
+            "{text}"
+        );
+    }
+    Ok(())
+}

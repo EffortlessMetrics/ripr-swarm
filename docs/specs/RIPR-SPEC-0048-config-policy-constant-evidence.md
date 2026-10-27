@@ -239,8 +239,13 @@ Outcomes, over every related test that calls a reader:
 | Every related test is evaluated and every assertion holds on both | `weakly_exposed` (gap); the tests reach the reader and cannot tell the values apart |
 | Anything else: a test, assertion or reader that is unevaluable, no change in value (a rewrite), no related test calls a reader | unchanged: `static_unknown` with reach `weak` |
 
-A rewrite that keeps the value (`10` to `5 + 5`) is not decided here: with no
-changed value there is nothing to distinguish, and it keeps its abstention.
+A rewrite that keeps the value (`10` to `5 + 5`) has no old/new pair, so it is
+asked the mutation question instead: the integer constant is evaluated one
+below and one above its value (neighbours its declared type admits). It is
+`exposed` only when every neighbour makes some assertion that holds on the
+current value fail; if any neighbour goes unnoticed, or the constant is not an
+integer, it keeps its abstention. A rewrite is never reported as a gap here:
+the neighbours are a sample of the wrong values, not all of them.
 
 The first implementation slice after this spec should target only the
 same-file direct-reader row; the slice after it targets only `opaque_config_lookup`. Generated output, macro output, dynamic dispatch,

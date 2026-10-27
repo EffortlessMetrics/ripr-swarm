@@ -117,6 +117,8 @@ pub(in crate::analysis) struct ConstFlowDetail {
     pub old_result: String,
     pub new_result: String,
     pub tests_evaluated: usize,
+    /// The edit kept the value; `new_value` lists the neighbours tried.
+    pub rewrite: bool,
 }
 
 /// Evaluate the flow, or `None` when any part of it is unreadable.
@@ -137,11 +139,19 @@ pub(in crate::analysis) fn evaluate_const_flow(
     }
     let old_value = expr::evaluate_initializer(&old.init, old.ty)?;
     let new_value = expr::evaluate_initializer(&new.init, new.ty)?;
-    // A rewrite that keeps the value has nothing to distinguish.
-    if old_value == new_value || readers.is_empty() || tests.is_empty() || tests.len() > TEST_LIMIT
-    {
+    if readers.is_empty() || tests.is_empty() || tests.len() > TEST_LIMIT {
         return None;
     }
+    // A changed value is compared with the old one. An edit that keeps the
+    // value (`10` to `5 + 5`) has no old/new pair, so it is asked the
+    // mutation question instead: would a test notice the value being one
+    // off, either way?
+    let rewrite = old_value == new_value;
+    let alternatives = if rewrite {
+        neighbours(&old_value, old.ty)?
+    } else {
+        vec![new_value.clone()]
+    };
     let mut parsed: Vec<Reader> = Vec::new();
     for reader in readers {
         if functions_named(&reader.name) != 1
@@ -160,18 +170,25 @@ pub(in crate::analysis) fn evaluate_const_flow(
         constant_ty: old.ty,
         constant_value,
     };
-    let (before, after) = (machine(&old_value), machine(&new_value));
+    let before = machine(&old_value);
+    let afters: Vec<Machine<'_>> = alternatives.iter().map(machine).collect();
+    let first_after = afters.first()?;
     let explain = Explain {
         constant: &old.name,
         old_value: &old_value,
-        new_value: &new_value,
+        new_value: alternatives
+            .iter()
+            .map(Value::render)
+            .collect::<Vec<_>>()
+            .join(" and "),
         before: &before,
-        after: &after,
+        after: first_after,
     };
     let reader_names: Vec<&str> = parsed.iter().map(|reader| reader.name.as_str()).collect();
 
     let mut first_seen: Option<ConstFlowDetail> = None;
     let mut failing: Option<ConstFlowDetail> = None;
+    let mut flipped = vec![false; afters.len()];
     for test in tests {
         let mut evaluated = 0usize;
         let mut calls_evaluated = 0usize;
@@ -196,15 +213,19 @@ pub(in crate::analysis) fn evaluate_const_flow(
             if !before.holds(&assertion)? {
                 return None;
             }
-            let holds_after = after.holds(&assertion)?;
             evaluated += 1;
             calls_evaluated += names.len();
             let detail = explain.detail(test, &oracle.text, &assertion);
             if first_seen.is_none() {
                 first_seen = Some(detail.clone());
             }
-            if !holds_after && failing.is_none() {
-                failing = Some(detail);
+            for (after, flip) in afters.iter().zip(flipped.iter_mut()) {
+                if !after.holds(&assertion)? {
+                    *flip = true;
+                    if failing.is_none() {
+                        failing = Some(detail.clone());
+                    }
+                }
             }
         }
         // Every call of a reader in the test body must sit in an evaluated
@@ -217,18 +238,39 @@ pub(in crate::analysis) fn evaluate_const_flow(
             return None;
         }
     }
-    let tests_evaluated = tests.len();
+    let detail = |detail: ConstFlowDetail| ConstFlowDetail {
+        tests_evaluated: tests.len(),
+        rewrite,
+        ..detail
+    };
+    if rewrite {
+        // Credit only when every neighbour is noticed; a rewrite that some
+        // tests catch and others do not is not decided here.
+        return match (flipped.iter().all(|flip| *flip), failing) {
+            (true, Some(failing)) => Some(ConstFlow::Discriminated(detail(failing))),
+            _ => None,
+        };
+    }
     match (failing, first_seen) {
-        (Some(detail), _) => Some(ConstFlow::Discriminated(ConstFlowDetail {
-            tests_evaluated,
-            ..detail
-        })),
-        (None, Some(detail)) => Some(ConstFlow::Indistinguishable(ConstFlowDetail {
-            tests_evaluated,
-            ..detail
-        })),
+        (Some(failing), _) => Some(ConstFlow::Discriminated(detail(failing))),
+        (None, Some(first)) => Some(ConstFlow::Indistinguishable(detail(first))),
         (None, None) => None,
     }
+}
+
+/// The values one below and one above `value` that its type admits. `None`
+/// when `value` is not an integer or neither neighbour exists.
+fn neighbours(value: &Value, ty: expr::Ty) -> Option<Vec<Value>> {
+    let (Value::Int(v), expr::Ty::Int { min, max }) = (value, ty) else {
+        return None;
+    };
+    let found: Vec<Value> = [v.checked_sub(1), v.checked_add(1)]
+        .into_iter()
+        .flatten()
+        .filter(|n| (min..=max).contains(n))
+        .map(Value::Int)
+        .collect();
+    (!found.is_empty()).then_some(found)
 }
 
 /// What one evaluation explains: the constant's two values and the machines
@@ -236,7 +278,7 @@ pub(in crate::analysis) fn evaluate_const_flow(
 struct Explain<'a> {
     constant: &'a str,
     old_value: &'a Value,
-    new_value: &'a Value,
+    new_value: String,
     before: &'a Machine<'a>,
     after: &'a Machine<'a>,
 }
@@ -252,7 +294,7 @@ impl Explain<'_> {
         ConstFlowDetail {
             constant: self.constant.to_string(),
             old_value: self.old_value.render(),
-            new_value: self.new_value.render(),
+            new_value: self.new_value.clone(),
             reader: assertion
                 .call_names()
                 .into_iter()
@@ -263,6 +305,7 @@ impl Explain<'_> {
             old_result: render(self.before),
             new_result: render(self.after),
             tests_evaluated: 0,
+            rewrite: false,
         }
     }
 }
