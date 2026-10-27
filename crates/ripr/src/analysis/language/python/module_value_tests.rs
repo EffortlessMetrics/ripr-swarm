@@ -973,6 +973,27 @@ fn the_target_assertion_is_identified_before_crediting_its_line() -> Check {
 }
 
 #[test]
+fn a_write_shared_with_another_file_survives_excluding_one_of_them() {
+    // #10730: the index counts the sources behind each write and subtracts
+    // the excluded file, so a write that file shares with another stays.
+    let sources = [
+        (Path::new("a.py"), "import c\nc.LIMIT = 1\n"),
+        (Path::new("b.py"), "import c\nc.LIMIT = 2\nc.RATE = 3\n"),
+        (Path::new("c.py"), "LIMIT = 10\nRATE = 5\n"),
+    ];
+    let index = super::module_value::ForeignIndex::build(sources.iter().copied(), false);
+    let module = Path::new("c.py");
+    let without_b = index.excluding(Path::new("b.py"));
+    assert!(without_b.may_rebind("LIMIT", module));
+    assert!(!without_b.may_rebind("RATE", module));
+    let without_a = index.excluding(Path::new("a.py"));
+    assert!(without_a.may_rebind("LIMIT", module));
+    assert!(without_a.may_rebind("RATE", module));
+    let without_c = index.excluding(module);
+    assert!(without_c.may_rebind("LIMIT", module) && without_c.may_rebind("RATE", module));
+}
+
+#[test]
 fn one_workspace_index_gives_each_changed_file_its_own_foreign_view() {
     // #10125: the index is built once; each changed file sees every other
     // file's writes and none of its own.
