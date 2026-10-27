@@ -1039,30 +1039,18 @@ mod tests {
         values.iter().map(|value| value.to_string()).collect()
     }
 
-    /// #10681: an uncommitted Python edit must reach pilot's Python preview
-    /// through the production path (`load_pilot_current_change` selects the
-    /// diff source, `collect_pilot_python_first_use` analyzes it), matching
-    /// what `ripr check` reports instead of `findings: 0`.
-    #[test]
-    fn pilot_python_preview_counts_uncommitted_python_change() -> Result<(), String> {
-        let root = std::env::temp_dir().join(format!("ripr-pilot-py-{}", std::process::id()));
-        let io = |error: std::io::Error| error.to_string();
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(root.join("tests")).map_err(io)?;
+    #[cfg(feature = "lang-python")]
+    const PRICING_GE: &str =
+        "def discount(qty, price):\n    if qty >= 10:\n        return price * 0.1\n    return 0\n";
+    #[cfg(feature = "lang-python")]
+    const PRICING_GT: &str =
+        "def discount(qty, price):\n    if qty > 10:\n        return price * 0.1\n    return 0\n";
+
+    #[cfg(feature = "lang-python")]
+    fn commit_all(root: &std::path::Path, message: &str) -> Result<(), String> {
         let git = |args: &[&str]| {
-            crate::git::run_git(&root, args).map_err(|err| format!("git {args:?} failed: {err}"))
+            crate::git::run_git(root, args).map_err(|err| format!("git {args:?} failed: {err}"))
         };
-        git(&["init", "-q"])?;
-        std::fs::write(
-            root.join("pricing.py"),
-            "def discount(qty, price):\n    if qty >= 10:\n        return price * 0.1\n    return 0\n",
-        )
-        .map_err(io)?;
-        std::fs::write(
-            root.join("tests/test_pricing.py"),
-            "from pricing import discount\n\ndef test_discount():\n    assert discount(10, 10) > 0\n",
-        )
-        .map_err(io)?;
         git(&["add", "-A"])?;
         git(&[
             "-c",
@@ -1072,13 +1060,39 @@ mod tests {
             "commit",
             "-q",
             "-m",
-            "init",
+            message,
         ])?;
+        Ok(())
+    }
+
+    #[cfg(feature = "lang-python")]
+    /// A Python repo whose `pricing.py` is committed as `>=` with a boundary
+    /// test that does not observe the exact boundary.
+    fn python_pilot_fixture(name: &str) -> Result<std::path::PathBuf, String> {
+        let root = std::env::temp_dir().join(format!("{name}-{}", std::process::id()));
+        let io = |error: std::io::Error| error.to_string();
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("tests")).map_err(io)?;
+        crate::git::run_git(&root, &["init", "-q"]).map_err(|err| format!("git init: {err}"))?;
+        std::fs::write(root.join("pricing.py"), PRICING_GE).map_err(io)?;
         std::fs::write(
-            root.join("pricing.py"),
-            "def discount(qty, price):\n    if qty > 10:\n        return price * 0.1\n    return 0\n",
+            root.join("tests/test_pricing.py"),
+            "from pricing import discount\n\ndef test_discount():\n    assert discount(10, 10) > 0\n",
         )
         .map_err(io)?;
+        commit_all(&root, "init")?;
+        Ok(root)
+    }
+
+    /// #10681: an uncommitted Python edit must reach pilot's Python preview
+    /// through the production path (`load_pilot_current_change` selects the
+    /// diff source, `collect_pilot_python_first_use` analyzes it), matching
+    /// what `ripr check` reports instead of `findings: 0`.
+    #[cfg(feature = "lang-python")]
+    #[test]
+    fn pilot_python_preview_counts_uncommitted_python_change() -> Result<(), String> {
+        let root = python_pilot_fixture("ripr-pilot-py")?;
+        std::fs::write(root.join("pricing.py"), PRICING_GT).map_err(|e| e.to_string())?;
 
         let input = CheckInput {
             root: root.clone(),
@@ -1098,6 +1112,47 @@ mod tests {
             first_use.findings_total, 1,
             "pilot must count the same Python finding `ripr check` reports"
         );
+        Ok(())
+    }
+
+    /// #10681: committed `>=`->`>` then an unstaged edit restoring `>=`
+    /// leaves the working-tree diff against the base empty (`NoChange`), but
+    /// `ripr check` still reads the working tree because tracked files are
+    /// dirty. The preview must follow that source and find nothing, not
+    /// recommend a repair for code absent from the working tree.
+    #[cfg(feature = "lang-python")]
+    #[test]
+    fn pilot_python_preview_follows_working_tree_when_edit_restores_base() -> Result<(), String> {
+        let root = python_pilot_fixture("ripr-pilot-py-revert")?;
+        let io = |error: std::io::Error| error.to_string();
+        std::fs::write(root.join("pricing.py"), PRICING_GT).map_err(io)?;
+        commit_all(&root, "tighten boundary")?;
+        std::fs::write(root.join("pricing.py"), PRICING_GE).map_err(io)?;
+
+        let input = CheckInput {
+            root: root.clone(),
+            base: Some("HEAD~1".to_string()),
+            ..CheckInput::default()
+        };
+        let config = load_for_root(&root)?;
+        let change = load_pilot_current_change(&input, Some(std::time::Duration::from_secs(30)));
+        assert!(
+            matches!(change, output::pilot::PilotCurrentChange::NoChange { .. }),
+            "restoring the base must leave an empty working-tree diff: {change:?}"
+        );
+        assert!(
+            change.is_working_tree(),
+            "an empty diff must keep the working-tree source: {change:?}"
+        );
+        let first_use = collect_pilot_python_first_use(&input, &config, change.is_working_tree())
+            .ok_or_else(|| "python is enabled by default".to_string())?;
+        // Contrast: the committed-history source would report the stale edit.
+        let committed = collect_pilot_python_first_use(&input, &config, false)
+            .ok_or_else(|| "python is enabled by default".to_string())?;
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(first_use.analysis_error, None);
+        assert_eq!(first_use.findings_total, 0, "{first_use:?}");
+        assert_eq!(committed.findings_total, 1, "{committed:?}");
         Ok(())
     }
 
