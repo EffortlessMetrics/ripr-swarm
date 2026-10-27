@@ -380,7 +380,10 @@ fn name(expr: &ast::Expr) -> Option<String> {
 fn mentions(node: &ra_ap_syntax::SyntaxNode, binding: &str) -> bool {
     node.descendants_with_tokens()
         .filter_map(|e| e.into_token())
-        .any(|t| t.kind() == SyntaxKind::IDENT && t.text() == binding)
+        .any(|t| {
+            t.kind() == SyntaxKind::IDENT
+                && (t.text() == binding || t.text().strip_prefix("r#") == Some(binding))
+        })
 }
 fn single_self_field_use(function: &FunctionSummary, field: &str) -> bool {
     let Some(parse) = parse_clean_source_file(&function.body) else {
@@ -882,8 +885,15 @@ fn handle_is_fresh_and_pinned(
     let initial_state = init
         .strip_prefix("Rc::new(Cell::new(")
         .and_then(|s| s.strip_suffix("))"));
+    // Compared as numbers: `01` or a suffixed `1usize` spell the state the
+    // write stores, so a string difference is not a difference.
+    let digits = |text: &str| {
+        (!text.is_empty() && text.bytes().all(|b| b.is_ascii_digit()))
+            .then(|| text.parse::<u128>().ok())
+            .flatten()
+    };
     let initial_cell = initial_state
-        .is_some_and(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) && s != value);
+        .is_some_and(|s| matches!((digits(s), digits(&value)), (Some(a), Some(b)) if a != b));
     let initial_vec =
         init == "Rc::new(RefCell::new(Vec::new()))" || init == "Rc::new(RefCell::new(vec![]))";
     initial_cell || initial_vec

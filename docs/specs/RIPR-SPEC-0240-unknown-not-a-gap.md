@@ -801,7 +801,7 @@ must differ from the stored one, and no other top-level statement may mention
 the handle or the guard. The impl is the type's only `Drop` impl in the
 workspace, no alias, `use` or item macro names the type or could add an impl,
 the test carries no attribute but `#[test]`, and no earlier top-level statement
-can end the test (`return`, `?`, `break`, `process::exit`). Reading the
+can end the test (`return`, `?`, `break`, `continue`, `yield`, or an `exit` or `abort` call). The initial and stored states are compared as numbers, a raw identifier counts as a mention, and an attribute on the scope block refuses it. Reading the
 destructor's write requires the changed line to be a `side_effect` or
 `call_deletion` write of one self field. Such a finding is credited like an
 iterator's, and a destructor finding stays `exposed` only when every strong
@@ -952,7 +952,8 @@ Tests in `crates/ripr/src/analysis/classify/implicit_call.rs` and
 - `method_calls_need_a_dot_receiver_and_a_whole_name`
 - `operator_syntax_is_read_per_trait`
 - `a_scope_end_carrier_credits_the_destructor`,
-  `a_destructor_without_a_scope_end_carrier_is_never_credited` and
+  `a_destructor_without_a_scope_end_carrier_is_never_credited`,
+  `a_vec_handle_carrier_credits_only_the_pushed_value` and
   `a_predicate_in_a_destructor_is_never_credited`
   (`crates/ripr/tests/sibling_effect_oracle.rs`, #10814)
 - `a_drop_impl_reached_at_scope_exit_is_withheld`,

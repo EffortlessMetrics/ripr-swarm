@@ -459,6 +459,24 @@ fn a_destructor_without_a_scope_end_carrier_is_never_credited() -> Result<(), St
             )),
         ),
         (
+            "initial_state_is_numerically_the_asserted_one",
+            drop_guard(&format!(
+                "    let state = Rc::new(Cell::new(01));\n{block}    {SCOPE_ASSERTION}"
+            )),
+        ),
+        (
+            "raw_identifier_write_after_the_scope",
+            drop_guard(&format!(
+                "    let state = Rc::new(Cell::new(0));\n{block}    r#state.set(1);\n    {SCOPE_ASSERTION}"
+            )),
+        ),
+        (
+            "cfg_disabled_scope_block",
+            drop_guard(&format!(
+                "    let state = Rc::new(Cell::new(0));\n    #[cfg(any())]\n    {{\n        let _g = Guard {{ sink: state.clone() }};\n    }}\n    {SCOPE_ASSERTION}"
+            )),
+        ),
+        (
             "assertion_before_the_scope",
             drop_guard(
                 "    let state = Rc::new(Cell::new(0));\n    assert_eq!(Observation { cell: state.clone() }, Observation { cell: Rc::new(Cell::new(0)) });\n    {\n        let _g = Guard { sink: state.clone() };\n    }",
@@ -527,6 +545,13 @@ fn a_destructor_without_a_scope_end_carrier_is_never_credited() -> Result<(), St
             drop_guard_with("type Held = Guard;", &shared_cell_body("block")?),
         ),
         (
+            "renamed_import_of_the_guard",
+            drop_guard_with(
+                "mod inner { pub use super::Guard as Held; }",
+                &shared_cell_body("block")?,
+            ),
+        ),
+        (
             "item_macro_in_the_file",
             drop_guard_with(
                 "macro_rules! extra { () => { impl Drop for Other { fn drop(&mut self) {} } }; }",
@@ -543,10 +568,9 @@ fn a_destructor_without_a_scope_end_carrier_is_never_credited() -> Result<(), St
     ];
     for (label, source) in cases {
         let finding = destructor_finding(&source)?;
-        assert_ne!(finding["classification"], "exposed", "{label}: {finding}");
-        assert_ne!(
-            finding["classification"], "reachable_unrevealed",
-            "{label}: a gap would be a wrong claim here: {finding}"
+        assert_eq!(
+            finding["classification"], "static_unknown",
+            "{label}: {finding}"
         );
     }
     Ok(())
@@ -571,6 +595,66 @@ fn a_predicate_in_a_destructor_is_never_credited() -> Result<(), String> {
     let finding = finding(&source, &diff, "self.sink.get() >= 0", "predicate")?;
     assert_ne!(finding["classification"], "exposed", "{finding}");
     Ok(())
+}
+
+/// The `RefCell<Vec<_>>` handle of the carrier: the destructor pushes a literal
+/// and the assertion expects exactly that one-element vector.
+fn drop_vec_guard(initial: &str, expected: &str, test_body_scope: &str) -> String {
+    format!(
+        r#"use std::{{cell::RefCell, rc::Rc}};
+struct Guard {{ sink: Rc<RefCell<Vec<usize>>> }}
+impl Drop for Guard {{
+    fn drop(&mut self) {{
+        self.sink.borrow_mut().push(1);
+    }}
+}}
+#[derive(Debug, PartialEq)] struct Observation {{ cell: Rc<RefCell<Vec<usize>>> }}
+#[test]
+fn scope_observer() {{
+    let state = Rc::new(RefCell::new({initial}));
+{test_body_scope}
+    assert_eq!(Observation {{ cell: state }}, Observation {{ cell: Rc::new(RefCell::new({expected})) }});
+}}
+"#
+    )
+}
+
+#[test]
+fn a_vec_handle_carrier_credits_only_the_pushed_value() -> Result<(), String> {
+    let scope = "    {\n        let _g = Guard { sink: state.clone() };\n    }";
+    let cases = [
+        ("pushed_value_expected", "Vec::new()", "vec![1]", "exposed"),
+        ("empty_literal_start", "vec![]", "vec![1]", "exposed"),
+        (
+            "other_value_expected",
+            "Vec::new()",
+            "vec![2]",
+            "static_unknown",
+        ),
+        ("start_is_not_empty", "vec![1]", "vec![1]", "static_unknown"),
+    ];
+    for (label, initial, expected, want) in cases {
+        let source = drop_vec_guard(initial, expected, scope);
+        let finding = finding(
+            &source,
+            &changed_effect_push(&source),
+            "self.sink.borrow_mut().push(1)",
+            "call_deletion",
+        )?;
+        assert_eq!(finding["classification"], want, "{label}: {finding}");
+    }
+    Ok(())
+}
+
+fn changed_effect_push(source: &str) -> String {
+    let line = source
+        .lines()
+        .position(|line| line.contains("self.sink.borrow_mut().push(1)"))
+        .unwrap_or(0)
+        + 1;
+    format!(
+        "--- a/src/sensors/ripr_limits.rs\n+++ b/src/sensors/ripr_limits.rs\n@@ -{line},1 +{line},1 @@\n-        self.sink.borrow_mut().push(0);\n+        self.sink.borrow_mut().push(1);\n"
+    )
 }
 
 const UNUSED_TRAIT: &str =
