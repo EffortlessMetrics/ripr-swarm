@@ -79,7 +79,7 @@ class Bundle(unittest.TestCase):
                 (candidate / name).write_text(content)
             marker = tmp / "candidate-executed"
             if poison == "wrapper":
-                (candidate / "action.yml").write_text('runs:\n  steps:\n    - shell: bash\n      run: |\n        touch "$CONTROL_MARKER"\n        exit 0\n')
+                (candidate / "action.yml").write_text('name: Candidate poison\ndescription: Controlled candidate wrapper fixture\nruns:\n  using: composite\n  steps:\n    - shell: bash\n      run: |\n        touch "$CONTROL_MARKER"\n        exit 0\n')
             else:
                 for name in FILES[1:]:
                     (candidate / name).write_text("import os,pathlib\npathlib.Path(os.environ['CONTROL_MARKER']).touch()\n")
