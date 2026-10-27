@@ -210,8 +210,13 @@ jobs:
 
       # pwsh starts with SeBackupPrivilege and SeRestorePrivilege disabled and its children
       # inherit that, so the deny is enforced and these tests establish their precondition.
-      # Test outcomes stay advisory; a missing status is an evidence failure, like the runs
-      # above, so the step fails then and only then.
+      # Test outcomes stay advisory; the evidence is not. A status file alone cannot tell
+      # these four tests from a renamed filter that matched nothing (#4938), and the runner
+      # writes a status even when cargo could not start, so the guard re-reads both files
+      # and fails the step when the status or log is missing or unreadable, the runner
+      # reported spawn status 127, or an expected test is missing, duplicated or ignored
+      # in the log. The guard is the step's last command, so its refusal is the step's
+      # own exit status.
       - name: Run the real-ACL tests outside bash (advisory, #10621)
         if: ${{ !cancelled() }}
         timeout-minutes: 25
@@ -222,8 +227,7 @@ jobs:
           $status = if (Test-Path target/windows-acl.status) { (Get-Content target/windows-acl.status -Raw).Trim() } else { 'missing' }
           $rows = if (Test-Path target/windows-acl.log) { Select-String -Path target/windows-acl.log -Pattern '^test .* \.\.\. (ok|FAILED|ignored)' | ForEach-Object { $_.Line } } else { @() }
           Add-Content $env:GITHUB_STEP_SUMMARY "### Real-ACL tests (pwsh)`n`ncargo test exit status: $status`n`n``````n$($rows -join "`n")`n``````"
-          if ($status -eq 'missing') { Write-Error 'real-ACL evidence is missing: no status file'; exit 1 }
-          exit 0
+          target/advisory-run/xtask.exe windows-advisory-acl-evidence --log target/windows-acl.log --status target/windows-acl.status --expect cli::commands::doctor::tests::probe_creatable_dir_reports_a_directory_that_denies_creation --expect cli::commands::doctor::tests::cache_unwritable_reason_reports_existing_sharded_dir_denying_subdirectories --expect cli::commands::doctor::tests::cache_unwritable_reason_reports_key_dir_denying_subdirectories --expect reports::eval_sweep_refresh::python_eval_sweep_refresh::real_unreadable_subtree_marks_corpus_selection_incomplete
 
       - name: Summarize environment
         if: ${{ !cancelled() }}
