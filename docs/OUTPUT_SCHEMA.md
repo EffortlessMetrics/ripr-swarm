@@ -101,6 +101,7 @@ map is:
 | Output | Field | Current value |
 | --- | --- | --- |
 | `ripr check --format json` | `schema_version` | `0.2` |
+| `ripr check --format json` refusal envelope, `analysis_timeout` with input context (RIPR-SPEC-0241 amendment #10796) | `schema_version` | `0.3` |
 | `ripr check --output-dir DIR` manifest | `schema_version` | `ripr-native-diff-output-set-v1` |
 | `ripr check --format sarif` | `version` | `2.1.0` (standard SARIF envelope) |
 | `ripr gate evaluate` | `schema_version` | `0.1` |
@@ -1027,6 +1028,29 @@ zeroed `summary`, same empty `findings`, same
 The scope-guard identities (`diff_scope_oversized`, `repo_scope_oversized`)
 keep their existing documents byte for byte; they are not members of this
 vocabulary.
+
+An `analysis_timeout` refusal of `ripr check` renders at refusal generation
+`"0.3"` and adds one optional key, `input_context` (RIPR-SPEC-0241 amendment
+#10796); every other identity keeps generation `"0.2"` and the exact key set
+above, and a timeout refusal with no stashed projection (a library caller that
+never registered the capture) also keeps `"0.2"`. `input_context` has three
+fixed keys: `requested` echoes the invocation-established root, input source
+(`committed`, `working-tree`, `supplied-diff`, `git-candidate`), base, diff
+file, `--path`/`--exclude` scope, and the analysis effort mode under
+`analysis_mode` (never confused with the input source); `resolved` carries the
+base/commit/merge-base revisions and the scoped intake file counts, each as
+`{available, value}` or `{available: false, reason}`, where the reason is
+`not_published_before_deadline` (the producer had not completed; a progress
+heartbeat never establishes discovery) or `not_computed_for_source` (the fact
+does not exist for that input source, e.g. a merge base on a committed diff);
+`recovery` carries at most one bounded `retry_with_larger_budget` action — a
+shell-safe literal command preserving the meaningful root/source/base/scope/
+output choices with a finite doubled `--timeout`, plus `rereads` naming what a
+retry re-reads (live base refs, worktree bytes, the diff file, or nothing for
+immutable Git candidate objects) and a note that such a retry is not pinned to
+the timed-out run's snapshot. Input metadata never implies an exposure, clean,
+or repair-ready verdict: exit stays `2`, findings stay empty, the summary
+stays zeroed, and `downstream_consumable` stays `false`.
 
 The same envelope covers the other `--json` commands (#7331): `ripr diff
 --json`, `ripr rerun --json`, `ripr context` (which emits JSON only), `ripr
