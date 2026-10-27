@@ -553,11 +553,13 @@ pub(crate) struct CachedSeamLimitInfo {
 /// (`t += double(*x).await * 1`) is a `return_value` change credited by a pin
 /// whose run folds through that function (RIPR-SPEC-0360, #9478). Old entries
 /// keep the update's `static_unknown` probe.
-/// `1.116`: a standard `Drop::drop` can be credited through a scope-end
-/// carrier (RIPR-SPEC-0240, #10814).
 /// `1.115`: the row's inputs are substituted into the returned expression
 /// (#10797); `1.114` credited a coincident row.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.116";
+/// `1.117`: a standard `Drop::drop` can be credited through a scope-end
+/// carrier (RIPR-SPEC-0240, #10814).
+/// `1.116`: a `let` literal that a tuple, struct, `for` or other pattern
+/// rebinds is not the owner call's argument (#10819); `1.115` paired it.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.117";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -718,9 +720,10 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.116";
 /// `0.119`: same arrow-row table splitting as full `1.112` (#10298).
 /// `0.120`: same arrow-row oracle as full `1.113` (#9619).
 /// `0.121`: same call-in-term accumulator as full `1.114` (#9478).
-/// `0.123`: same scope-end carrier as full `1.116` (#10814).
 /// `0.122`: same row-input oracle as full `1.115` (#10797).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.123";
+/// `0.123`: same rebound-let rule as full `1.116` (#10819).
+/// `0.124`: same scope-end carrier as full `1.117` (#10814).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.124";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -883,9 +886,10 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.123";
 /// `0.119`: same arrow-row table splitting as full `1.112` (#10298).
 /// `0.120`: same arrow-row oracle as full `1.113` (#9619).
 /// `0.121`: same call-in-term accumulator as full `1.114` (#9478).
-/// `0.123`: same scope-end carrier as full `1.116` (#10814).
 /// `0.122`: same row-input oracle as full `1.115` (#10797).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.123";
+/// `0.123`: same rebound-let rule as full `1.116` (#10819).
+/// `0.124`: same scope-end carrier as full `1.117` (#10814).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.124";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -5052,8 +5056,10 @@ mod tests {
         // 1.111 -> 1.112: arrow-separated macro table rows (#10298).
         // 1.112 -> 1.113: arrow-row oracles (RIPR-SPEC-0231 rule 9, #9619).
         // 1.113 -> 1.114: call-in-term accumulator (RIPR-SPEC-0360, #9478).
-        // 1.115 -> 1.116: scope-end carrier for a standard Drop (#10814).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.116");
+        // 1.114 -> 1.115: arrow row inputs substituted (RIPR-SPEC-0231 rule 9, #10797).
+        // 1.115 -> 1.116: rebound let literal is not the argument (#10819).
+        // 1.116 -> 1.117: scope-end carrier for a standard Drop (#10814).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.117");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5154,9 +5160,11 @@ mod tests {
         // 0.118 -> 0.119: same arrow-row transition as full 1.112.
         // 0.119 -> 0.120: same arrow-row oracle as full 1.113.
         // 0.120 -> 0.121: same call-in-term accumulator as full 1.114.
-        // 0.122 -> 0.123: same scope-end carrier as full 1.116.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.123");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.123");
+        // 0.121 -> 0.122: same row-input oracle as full 1.115.
+        // 0.122 -> 0.123: same rebound-let rule as full 1.116.
+        // 0.123 -> 0.124: same scope-end carrier as full 1.117.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.124");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.124");
     }
 
     #[test]

@@ -926,9 +926,10 @@ fn test_has_unresolved_pytest_fixture_inputs(test: &PythonTest, owner: &PythonOw
             .fixtures
             .iter()
             // A direct parametrize argname is a value pytest supplies, not a
-            // fixture; a parametrize mark does not resolve the test's other
-            // fixtures (#9619).
-            .filter(|fixture| !test.direct_parametrized.contains(fixture))
+            // fixture, unless an unsettled `indirect=` may route it (#10685);
+            // a parametrize mark does not resolve the test's other fixtures
+            // (#9619).
+            .filter(|fixture| !test.takes_parametrize_value(fixture))
             .filter(|fixture| !is_known_auxiliary_pytest_fixture(fixture))
             .filter(|fixture| !literal_owner_instance_fixture(test, owner, fixture))
             .any(|fixture| body_uses_identifier(&test.body_text, fixture))
