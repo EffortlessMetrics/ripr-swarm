@@ -1359,7 +1359,7 @@ fn a_leading_unpack_of_a_tuple_argname_reads_its_rows() -> Result<(), String> {
     };
     for (shape, tests) in [
         ("module", module("[(50, 0.0), (500, 0.15)]")),
-        ("method", method("[[50, 0.0], (500, 0.15)]")),
+        ("method", method("[(50, 0.0), (500, 0.15)]")),
         ("override", overriding("[(50, 0.0), (500, 0.15)]")),
     ] {
         let finding = classify(&tests)?;
@@ -1387,12 +1387,34 @@ fn a_leading_unpack_of_a_tuple_argname_reads_its_rows() -> Result<(), String> {
             "{shape}: {finding:?}"
         );
     }
+    // A bare target takes the whole literal row.
+    let bare = |rows: &str| {
+        format!(
+            "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"case\", {rows})\ndef test_bulk_discount(case):\n    quantity = case\n    assert bulk_discount(quantity) == 0.0\n"
+        )
+    };
+    let finding = classify(&bare("[50, 500]"))?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    assert!(observed(&finding, "quantity = 500"), "{finding:?}");
+    let finding = classify(&bare("[50, 100]"))?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    // A row element that shadows the owner: the test calls `fake`, so the
+    // on-boundary row must not credit the owner (review of #10840).
+    let finding = classify(
+        "import pytest\nfrom src.subject import bulk_discount\n\ndef fake(q):\n    return 0.0\n\n@pytest.mark.parametrize(\"case\", [(100, 0.0, fake)])\ndef test_bulk_discount(case):\n    quantity, rate, bulk_discount = case\n    assert bulk_discount(quantity) == rate\n",
+    )?;
+    assert!(!observed(&finding, "quantity == 100"), "{finding:?}");
     // Shapes the unpack cannot pin stay unread: a row of another arity, a
-    // starred row, a later use of the argname, a rebound target, a target
-    // that is another parameter, and an unpack sharing its line.
+    // starred row, a mutable list row a fixture could change, a name in a
+    // row, a wrapping decorator that may pass another row, a later use of
+    // the argname, a rebound target, a target that is another parameter,
+    // and an unpack sharing its line.
     for tests in [
-        module("[(50, 0.0), (500,)]"),
-        module("[(50, 0.0), (*REST,)]"),
+        module("[(50, 0.0), (500, 0.1, 1)]"),
+        module("[(50, 0.0), (*REST, 0.0)]"),
+        module("[(50, 0.0), [500, 0.1]]"),
+        module("[(50, 0.0), (LIMIT, 0.1)]"),
+        "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"case\", [(50, 0.0)])\n@swap_case\ndef test_bulk_discount(case):\n    quantity, rate = case\n    assert bulk_discount(quantity) == rate\n".to_string(),
         "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"case\", [(50, 0.0)])\ndef test_bulk_discount(case):\n    quantity, rate = case\n    assert bulk_discount(quantity) == rate, case\n".to_string(),
         "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"case\", [(50, 0.0)])\ndef test_bulk_discount(case):\n    quantity, rate = case\n    quantity = 100\n    assert bulk_discount(quantity) == rate\n".to_string(),
         "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"case, quantity\", [((50, 0.0), 1)])\ndef test_bulk_discount(case, quantity):\n    quantity, rate = case\n    assert bulk_discount(quantity) == rate\n".to_string(),

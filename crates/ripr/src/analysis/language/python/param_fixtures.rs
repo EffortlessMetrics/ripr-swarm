@@ -171,8 +171,9 @@ fn literal_strings(expr: &Expr) -> Option<usize> {
 pub(super) fn apply_literal_param_fixtures(tests: &mut [PythonTest]) {
     for test in tests {
         if let Some((cases, unpack)) = literal_param_cases(test) {
-            blank_range(&mut test.body_text, unpack);
-            test.parametrize = Some(cases);
+            if blank_range(&mut test.body_text, unpack) {
+                test.parametrize = Some(cases);
+            }
         }
     }
 }
@@ -323,10 +324,12 @@ pub(super) fn leading_unpack<'b>(body: &'b [Stmt], text: &str) -> Option<Leading
 /// (`amount, fee = fee_case` under `parametrize("fee_case", [(50, 5)])`) is
 /// the test parametrized by the unpacked names over a body without the
 /// unpack (#10832), the same reading the literal-params fixture gets. The
-/// cases and the unpack's range in `source` come back, or None when any
-/// case value is not a tuple or list display of the targets' arity, a
-/// target is another parameter, or the rest of the body names the argname
-/// or rebinds a target.
+/// cases and the unpack's range in `source` come back, or None unless every
+/// case value is a scalar literal (bare target) or a tuple of scalar
+/// literals of the targets' arity, no target is another parameter, and the
+/// rest of the body neither names the argname nor rebinds a target. Literal
+/// rows keep the read off mutable lists a fixture could change and off a
+/// row value that shadows the owner (`quantity, bulk_discount = case`).
 pub(super) fn unpacked_parametrize_cases(
     cases: &PythonParametrizeCases,
     body: &[Stmt],
@@ -335,11 +338,7 @@ pub(super) fn unpacked_parametrize_cases(
 ) -> Option<(PythonParametrizeCases, std::ops::Range<usize>)> {
     let unpack = leading_unpack(body, source)?;
     let argname = unpack.source;
-    if !cases.binds(argname)
-        || unpack.names.iter().any(|name| {
-            parameters.contains(name) || cases.cases.iter().any(|case| case.contains_key(name))
-        })
-    {
+    if !cases.binds(argname) || unpack.names.iter().any(|name| parameters.contains(name)) {
         return None;
     }
     let unpacked: Option<Vec<BTreeMap<String, String>>> = cases
@@ -347,10 +346,13 @@ pub(super) fn unpacked_parametrize_cases(
         .iter()
         .map(|case| {
             let value = case.get(argname)?;
+            let elements = literal_row_elements(value, unpack.bare)?;
             let elements = if unpack.bare {
                 vec![value.clone()]
+            } else if elements.len() == unpack.names.len() {
+                elements
             } else {
-                row_elements(value, unpack.names.len())?
+                return None;
             };
             let mut case = case.clone();
             case.remove(argname);
@@ -366,25 +368,25 @@ pub(super) fn unpacked_parametrize_cases(
         .then_some((cases, unpack.span))
 }
 
-/// The element texts of a tuple or list display with `arity` elements and
-/// no starred element.
-fn row_elements(text: &str, arity: usize) -> Option<Vec<String>> {
+/// The element texts of a case value that is a tuple of scalar literals,
+/// or, for a bare target, the value itself when it is a scalar literal or
+/// such a tuple. Lists, names, calls and starred elements are refused.
+fn literal_row_elements(text: &str, bare: bool) -> Option<Vec<String>> {
     let Ok(Mod::Expression(expression)) = parse(text, Mode::Expression, "<parametrize-row>") else {
         return None;
     };
-    let elements = match &*expression.body {
-        Expr::Tuple(tuple) => &tuple.elts,
-        Expr::List(list) => &list.elts,
-        _ => return None,
+    let value = &*expression.body;
+    if bare && is_literal_argument(value) {
+        return Some(vec![text.trim().to_string()]);
+    }
+    let Expr::Tuple(tuple) = value else {
+        return None;
     };
-    if elements.len() != arity
-        || elements
-            .iter()
-            .any(|element| matches!(element, Expr::Starred(_)))
-    {
+    if !tuple.elts.iter().all(is_literal_argument) {
         return None;
     }
-    elements
+    tuple
+        .elts
         .iter()
         .map(|element| text.get(usize::from(element.start())..usize::from(element.end())))
         .map(|element| element.map(|element| element.trim().to_string()))
@@ -393,9 +395,10 @@ fn row_elements(text: &str, arity: usize) -> Option<Vec<String>> {
 
 /// Replace a statement's text with spaces, keeping every byte offset and
 /// line number of the rest of the body.
-pub(super) fn blank_range(text: &mut String, range: std::ops::Range<usize>) {
+/// False, leaving the text unchanged, when the range is not in it.
+pub(super) fn blank_range(text: &mut String, range: std::ops::Range<usize>) -> bool {
     let Some(span) = text.get(range.clone()) else {
-        return;
+        return false;
     };
     let blanked: String = span
         .chars()
@@ -404,4 +407,5 @@ pub(super) fn blank_range(text: &mut String, range: std::ops::Range<usize>) {
     // Multi-byte characters become one space each; pad to keep offsets.
     let blanked = format!("{blanked:<width$}", width = span.len());
     text.replace_range(range, &blanked);
+    true
 }

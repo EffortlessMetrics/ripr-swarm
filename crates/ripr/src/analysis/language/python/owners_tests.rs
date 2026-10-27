@@ -571,6 +571,7 @@ pub(super) fn collect_tests_from_statements(
                 let (parametrize, body_text) = unpack_parametrize_argname(
                     source,
                     function.range,
+                    &function.decorator_list,
                     &function.body,
                     parametrize,
                     &fixtures,
@@ -666,6 +667,7 @@ pub(super) fn collect_tests_from_statements(
                 let (parametrize, body_text) = unpack_parametrize_argname(
                     source,
                     function.range,
+                    &function.decorator_list,
                     &function.body,
                     parametrize,
                     &fixtures,
@@ -822,12 +824,21 @@ pub(super) fn collect_tests_from_statements(
 fn unpack_parametrize_argname(
     source: &str,
     range: TextRange,
+    decorators: &[Expr],
     body: &[Stmt],
     parametrize: Option<super::parametrize::PythonParametrizeCases>,
     parameters: &[String],
 ) -> (Option<super::parametrize::PythonParametrizeCases>, String) {
     let mut body_text = text_for_range(source, range);
     let parametrize = parametrize.and_then(|cases| cases.excluding_body_bindings(body));
+    // A decorator other than a pytest mark may call the test with another
+    // row, as the literal-params fixture path also refuses.
+    if !decorator_names(decorators)
+        .iter()
+        .all(|decorator| decorator.starts_with("pytest.mark."))
+    {
+        return (parametrize, body_text);
+    }
     let Some((cases, span)) = parametrize.as_ref().and_then(|cases| {
         super::param_fixtures::unpacked_parametrize_cases(cases, body, source, parameters)
     }) else {
@@ -838,7 +849,9 @@ fn unpack_parametrize_argname(
     else {
         return (parametrize, body_text);
     };
-    super::param_fixtures::blank_range(&mut body_text, from..to);
+    if !super::param_fixtures::blank_range(&mut body_text, from..to) {
+        return (parametrize, body_text);
+    }
     (Some(cases), body_text)
 }
 
