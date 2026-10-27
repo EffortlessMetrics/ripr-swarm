@@ -81,8 +81,7 @@ use crate::analysis::syntax::{
     empty_macro_binding_ambiguities, err_return_guard_key, generated_test_pins,
     local_empty_macro_names, macro_binding_scan, owner_pin_assertions, parse_clean_source_file,
     pattern_pins, returns_leave_the_function, source_binds_value_name, source_declares_value_name,
-    source_imported_claims_macros,
-    trusted_macro_binding_site_sets, trusted_macro_binding_sites,
+    source_imported_claims_macros, trusted_macro_binding_site_sets, trusted_macro_binding_sites,
 };
 use crate::domain::{Probe, ProbeFamily};
 use ra_ap_syntax::{
