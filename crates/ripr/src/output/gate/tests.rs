@@ -961,6 +961,87 @@ fn non_consumable_record_detection_requires_explicit_false() {
 }
 
 #[test]
+fn refusal_input_error_requires_explicit_consumable_false() {
+    // #10733 review repair (RIPR-SPEC-0362 identity): a known refusal status
+    // requires an EXPLICIT `downstream_consumable: false` alongside it. A
+    // known status without the flag is the healthy complete shape (the
+    // producer never writes the member on a complete run) and must be
+    // admitted, not refused; the document does not disclose a refusal.
+    let path = Path::new("input.json");
+    for document in [
+        json!({"run_status": "diff_scope_oversized"}),
+        json!({"analysis_scope": {"run_status": "repo_scope_oversized"}}),
+        json!({
+            "run_limitations": [{"category": "diff_scope_oversized", "run_status": "diff_scope_oversized"}]
+        }),
+        // A malformed flag member does not establish an explicit refusal.
+        json!({
+            "run_status": "diff_scope_oversized",
+            "run_limitations": [{"downstream_consumable": "false"}]
+        }),
+    ] {
+        assert_eq!(
+            refusal_input_error(&document, path, "gate input"),
+            None,
+            "a known refusal status without an explicit false flag is admitted as \
+             the healthy complete shape, not refused: {document}"
+        );
+    }
+    // The explicit flag in EITHER position still establishes the refusal and
+    // names the typed status.
+    for document in [
+        json!({
+            "run_status": "diff_scope_oversized",
+            "run_limitations": [{"downstream_consumable": false}]
+        }),
+        json!({
+            "run_status": "diff_scope_oversized",
+            "analysis_scope": {"downstream_consumable": false}
+        }),
+    ] {
+        let error = refusal_input_error(&document, path, "gate input").unwrap_or_else(|| {
+            panic!("explicit false flag must establish the refusal: {document}")
+        });
+        assert!(
+            error.contains("diff_scope_oversized"),
+            "typed refusal must name the run status: {error}"
+        );
+    }
+}
+
+#[test]
+fn gate_admits_consumable_document_with_known_refusal_status() -> Result<(), String> {
+    // #10733 review repair: a document carrying a known refusal run status
+    // but NO explicit `downstream_consumable: false` discloses no refusal;
+    // the gate must admit it instead of reporting a config_error both
+    // surfaces refuse without the document disclosing one.
+    let dir = temp_dir("gate-status-without-flag-admitted")?;
+    let ledger = write_temp_json(
+        &dir,
+        "gap-ledger.json",
+        r#"{
+          "schema_version": "0.2",
+          "kind": "gap_decision_ledger",
+          "status": "no_records",
+          "records": [],
+          "run_status": "diff_scope_oversized"
+        }"#,
+    )?;
+    let (_fixture_input, mut input) = fixture_input(GateMode::Acknowledgeable)?;
+    input.pr_guidance = None;
+    input.gap_ledger = Some(ledger);
+    let report = build_gate_decision_report(&input)?;
+    assert_eq!(
+        report.status, "pass",
+        "a known refusal status without the explicit false flag is the healthy \
+         complete shape and must pass, not config_error: {:?}",
+        report.config_errors
+    );
+    ignore_remove_dir_all(dir);
+    Ok(())
+}
+
+#[test]
 fn gate_gap_ledger_refuses_generic_non_consumable_record() -> Result<(), String> {
     // #10733: a document whose disclosed run_limitations entry is explicitly
     // non-consumable under an unknown typed status is still a refusal, caught
