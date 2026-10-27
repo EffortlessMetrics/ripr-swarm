@@ -651,6 +651,21 @@ pub(crate) fn test_let_bound_literal(body: &str, ident: &str) -> Option<String> 
     if is_mut || declarations.next().is_some() {
         return None;
     }
+    // A tuple or struct `let` pattern, a `for`, `if let`, closure or match
+    // binding of the same name is a second binding the simple-`let` scan above
+    // cannot see: `let n = 10; let (n, _) = (9, 1); owner(n)` calls with 9.
+    // The parser counts every pattern; the lexical scan covers macro bodies.
+    let source = if body.trim_start().starts_with("fn ") || body.trim_start().starts_with("#[") {
+        body.to_string()
+    } else {
+        format!("fn __test() {{\n{body}\n}}")
+    };
+    if crate::analysis::syntax::fn_name_binding_count(&source, ident) != Some(1)
+        || !non_simple_let_shadowing_lines(&cleaned, ident, 0).is_empty()
+        || !non_let_shadowing_lines(&cleaned, ident, 0).is_empty()
+    {
+        return None;
+    }
     extract_let_bindings(body).remove(ident)
 }
 
