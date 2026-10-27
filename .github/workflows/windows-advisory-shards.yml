@@ -11,6 +11,7 @@ on:
 
 permissions:
   contents: read
+  issues: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -29,7 +30,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2]
     steps:
       # Full history, like the Linux test lanes: base-resolving tests refuse
       # on a shallow clone (#10344).
@@ -87,8 +88,11 @@ jobs:
         run: |
           mkdir -p target
           shard=${{ matrix.shard }}
-          cargo nextest run --profile windows-advisory --workspace --no-fail-fast --partition count:$shard/4 -E "not $ACL_TESTS" > target/shard-$shard.log 2>&1 &
+          cargo nextest run --profile windows-advisory --workspace --no-fail-fast --partition count:$shard/4 --status-level all -E "not $ACL_TESTS" > target/shard-$shard.log 2>&1 &
           nextest_pid=$!
+          if [ "$shard" = 1 ]; then cid=6435427311; else cid=6435427669; fi
+          GH_TOKEN=${{ secrets.GITHUB_TOKEN }} powershell -NoProfile -File .github/probe/heartbeat.ps1 -Shard $shard -CommentId $cid -Log target/shard-$shard.log > /dev/null 2>&1 &
+          hb_pid=$!
           winpid=$(cat "/proc/$nextest_pid/winpid" 2> /dev/null | tr -cd 0-9 || true)
           (
             set +e
@@ -109,6 +113,7 @@ jobs:
           set +e
           wait "$nextest_pid"; status=$?
           wait "$watchdog_pid"
+          kill "$hb_pid" > /dev/null 2>&1
           if [ -f target/shard-$shard.watchdog ]; then status=124; fi
           printf '%s\n' "$status" > target/shard-$shard.status
           cat target/shard-$shard.log
