@@ -860,7 +860,8 @@ fn gate_refuses_saved_refusal_ledger_with_named_reason() -> Result<(), String> {
         crate::output::gap_decision_ledger::GapDecisionLedgerInput {
             root: ".".to_string(),
             generated_at: "test".to_string(),
-            source_kind: crate::output::gap_decision_ledger::GapDecisionLedgerSourceKind::CheckOutput,
+            source_kind:
+                crate::output::gap_decision_ledger::GapDecisionLedgerSourceKind::CheckOutput,
             records_path: "check.json".to_string(),
             records_json: Ok(refusal.to_string()),
         },
@@ -886,6 +887,282 @@ fn gate_refuses_saved_refusal_ledger_with_named_reason() -> Result<(), String> {
                 && error.contains("downstream_consumable")),
         "saved-refusal rejection must name the typed run status and the consumable flag: {:?}",
         report.config_errors
+    );
+    ignore_remove_dir_all(dir);
+    Ok(())
+}
+
+#[test]
+fn producer_refusal_detection_covers_run_state_vocabulary() {
+    assert_eq!(
+        refusal_run_status(&json!({"run_status": "diff_scope_oversized"})),
+        Some("diff_scope_oversized")
+    );
+    assert_eq!(
+        refusal_run_status(&json!({
+            "analysis_scope": {"run_status": "repo_scope_oversized"}
+        })),
+        Some("repo_scope_oversized")
+    );
+    assert_eq!(
+        refusal_run_status(&json!({
+            "run_limitations": [{"category": "diff_scope_oversized"}]
+        })),
+        Some("diff_scope_oversized")
+    );
+    assert_eq!(
+        refusal_run_status(&json!({
+            "run_limitations": [{"run_status": "repo_scope_oversized"}]
+        })),
+        Some("repo_scope_oversized")
+    );
+    // Refusal is independent from the older limited states: complete, partial
+    // and findings-bounded documents are not producer refusals.
+    assert_eq!(refusal_run_status(&json!({"run_status": "complete"})), None);
+    assert_eq!(
+        refusal_run_status(&json!({
+            "analysis_scope": {"run_status": "limited_partial_scope"}
+        })),
+        None
+    );
+    assert_eq!(
+        refusal_run_status(&json!({
+            "run_limitations": [{"run_status": "limited_findings_bound"}]
+        })),
+        None
+    );
+    // No disclosure at all is not a refusal.
+    assert_eq!(
+        refusal_run_status(&json!({"schema_version": "0.2", "findings": []})),
+        None
+    );
+}
+
+#[test]
+fn non_consumable_record_detection_requires_explicit_false() {
+    assert!(discloses_non_consumable_record(&json!({
+        "run_limitations": [{"downstream_consumable": false}]
+    })));
+    assert!(discloses_non_consumable_record(&json!({
+        "analysis_scope": {"downstream_consumable": false}
+    })));
+    // Explicitly consumable or absent members are not refusals; a malformed
+    // member does not establish an explicit refusal either.
+    assert!(!discloses_non_consumable_record(&json!({
+        "run_limitations": [{"downstream_consumable": true}]
+    })));
+    assert!(!discloses_non_consumable_record(&json!({
+        "run_limitations": [{"run_status": "limited_findings_bound"}]
+    })));
+    assert!(!discloses_non_consumable_record(&json!({
+        "run_limitations": [{"downstream_consumable": "false"}]
+    })));
+    assert!(!discloses_non_consumable_record(&json!({"findings": []})));
+}
+
+#[test]
+fn gate_gap_ledger_refuses_generic_non_consumable_record() -> Result<(), String> {
+    // #10733: a document whose disclosed run_limitations entry is explicitly
+    // non-consumable under an unknown typed status is still a refusal, caught
+    // by the generic `downstream_consumable: false` check.
+    let dir = temp_dir("gate-generic-non-consumable-ledger")?;
+    let ledger = write_temp_json(
+        &dir,
+        "gap-ledger.json",
+        r#"{
+          "schema_version": "0.2",
+          "kind": "gap_decision_ledger",
+          "status": "advisory",
+          "records": [],
+          "run_limitations": [
+            {
+              "category": "some_future_guard",
+              "run_status": "some_future_guard",
+              "downstream_consumable": false,
+              "repair_route": "analysis/future-guard"
+            }
+          ]
+        }"#,
+    )?;
+    let (_fixture_input, mut input) = fixture_input(GateMode::VisibleOnly)?;
+    input.pr_guidance = None;
+    input.gap_ledger = Some(ledger);
+    let report = build_gate_decision_report(&input)?;
+    assert_eq!(report.status, "config_error");
+    assert!(
+        report
+            .config_errors
+            .iter()
+            .any(|error| error.contains("downstream_consumable: false")),
+        "generic non-consumable refusal must name the consumable flag: {:?}",
+        report.config_errors
+    );
+    ignore_remove_dir_all(dir);
+    Ok(())
+}
+
+#[test]
+fn gate_baseline_refuses_producer_refusal_envelope() -> Result<(), String> {
+    // #10733: the baseline reader applies the same shared refusal admission
+    // as the gap-ledger reader.
+    let dir = temp_dir("gate-refusal-baseline")?;
+    let baseline = write_temp_json(
+        &dir,
+        "baseline.json",
+        r#"{
+          "run_limitations": [
+            {
+              "category": "diff_scope_oversized",
+              "run_status": "diff_scope_oversized",
+              "basis": "rust_diff_scope_budget",
+              "downstream_consumable": false,
+              "repair_route": "analysis/diff-scope-budget"
+            }
+          ]
+        }"#,
+    )?;
+    let (_fixture_input, mut input) = fixture_input(GateMode::BaselineCheck)?;
+    input.baseline = Some(baseline);
+    let report = build_gate_decision_report(&input)?;
+    assert_eq!(report.status, "config_error");
+    assert!(
+        report
+            .config_errors
+            .iter()
+            .any(|error| error.contains("diff_scope_oversized")),
+        "baseline refusal must name the typed run status: {:?}",
+        report.config_errors
+    );
+    ignore_remove_dir_all(dir);
+    Ok(())
+}
+
+#[test]
+fn gate_pr_guidance_refuses_producer_refusal_run() -> Result<(), String> {
+    // #10733: a review-comments-shaped document that discloses a producer
+    // refusal run is refused at the pr-guidance position with the same named
+    // reason, rather than passing on its (empty) comment set.
+    let dir = temp_dir("gate-refusal-pr-guidance")?;
+    let guidance = write_temp_json(
+        &dir,
+        "comments.json",
+        r#"{
+          "schema_version": "0.1",
+          "tool": "ripr",
+          "status": "advisory",
+          "comments": [],
+          "run_limitations": [
+            {
+              "category": "repo_scope_oversized",
+              "run_status": "repo_scope_oversized",
+              "basis": "rust_repo_scope_budget",
+              "downstream_consumable": false,
+              "repair_route": "analysis/repo-scope-budget"
+            }
+          ]
+        }"#,
+    )?;
+    let (_fixture_input, mut input) = fixture_input(GateMode::VisibleOnly)?;
+    input.pr_guidance = Some(guidance);
+    let report = build_gate_decision_report(&input)?;
+    assert_eq!(report.status, "config_error");
+    assert!(
+        report
+            .config_errors
+            .iter()
+            .any(|error| error.contains("repo_scope_oversized")),
+        "pr-guidance refusal must name the typed run status: {:?}",
+        report.config_errors
+    );
+    ignore_remove_dir_all(dir);
+    Ok(())
+}
+
+#[test]
+fn gate_refusal_admission_keeps_complete_and_advisory_controls() -> Result<(), String> {
+    // #10733 positive controls: a saved ledger from a complete zero-finding
+    // run still passes, and a saved ledger from an advisory-churn run still
+    // evaluates its records — refusal admission must not widen to healthy
+    // envelopes.
+    let dir = temp_dir("gate-refusal-positive-controls")?;
+
+    let zero_ledger = crate::output::gap_decision_ledger::build_gap_decision_ledger_report(
+        crate::output::gap_decision_ledger::GapDecisionLedgerInput {
+            root: ".".to_string(),
+            generated_at: "test".to_string(),
+            source_kind:
+                crate::output::gap_decision_ledger::GapDecisionLedgerSourceKind::CheckOutput,
+            records_path: "check.json".to_string(),
+            records_json: Ok(json!({
+                "schema_version": "0.2",
+                "tool": "ripr",
+                "mode": "fast",
+                "root": ".",
+                "summary": {"findings": 0},
+                "findings": []
+            })
+            .to_string()),
+        },
+    );
+    assert_eq!(zero_ledger.status, "no_records");
+    let zero_path = dir.join("zero-ledger.json");
+    let zero_json =
+        crate::output::gap_decision_ledger::render_gap_decision_ledger_json(&zero_ledger)?;
+    fs::write(&zero_path, zero_json).map_err(|error| format!("write zero ledger: {error}"))?;
+    let (_zero_fixture, mut zero_input) = fixture_input(GateMode::VisibleOnly)?;
+    zero_input.pr_guidance = None;
+    zero_input.gap_ledger = Some(zero_path);
+    let zero_report = build_gate_decision_report(&zero_input)?;
+    assert_eq!(
+        zero_report.status, "pass",
+        "complete zero-finding ledger must still pass: {:?}",
+        zero_report.config_errors
+    );
+
+    let advisory_ledger = crate::output::gap_decision_ledger::build_gap_decision_ledger_report(
+        crate::output::gap_decision_ledger::GapDecisionLedgerInput {
+            root: ".".to_string(),
+            generated_at: "test".to_string(),
+            source_kind: crate::output::gap_decision_ledger::GapDecisionLedgerSourceKind::Records,
+            records_path: "records.json".to_string(),
+            records_json: Ok(json!({
+                "records": [
+                    {
+                        "gap_id": "gap:advisory-churn",
+                        "source_currentness": "candidate_current",
+                        "canonical_gap_id": "gap:advisory-churn",
+                        "kind": "MissingBoundaryAssertion",
+                        "language": "typescript",
+                        "language_status": "preview",
+                        "scope": "pr_local",
+                        "evidence_class": "predicate_boundary",
+                        "gap_state": "actionable",
+                        "policy_state": "new"
+                    }
+                ]
+            })
+            .to_string()),
+        },
+    );
+    assert_eq!(advisory_ledger.status, "advisory");
+    let advisory_path = dir.join("advisory-ledger.json");
+    let advisory_json =
+        crate::output::gap_decision_ledger::render_gap_decision_ledger_json(&advisory_ledger)?;
+    fs::write(&advisory_path, advisory_json)
+        .map_err(|error| format!("write advisory ledger: {error}"))?;
+    let (_advisory_fixture, mut advisory_input) = fixture_input(GateMode::VisibleOnly)?;
+    advisory_input.pr_guidance = None;
+    advisory_input.gap_ledger = Some(advisory_path);
+    let advisory_report = build_gate_decision_report(&advisory_input)?;
+    assert_ne!(
+        advisory_report.status, "config_error",
+        "advisory-churn ledger must not be refused: {:?}",
+        advisory_report.config_errors
+    );
+    assert!(
+        advisory_report.summary.evaluated >= 1,
+        "advisory-churn ledger records must still be evaluated: {:?}",
+        advisory_report.summary
     );
     ignore_remove_dir_all(dir);
     Ok(())

@@ -490,6 +490,29 @@ pub(crate) fn build_gap_decision_ledger_report(
         }
     };
 
+    // #10733: a producer refusal envelope (exit 2, empty findings,
+    // `downstream_consumable: false`) parses cleanly to zero records, but it
+    // is not a healthy empty run — nothing was analyzed. Admitting it as
+    // `no_records` lets a saved refusal ride into a gate pass as an empty
+    // denominator; refuse admission with the typed reason and land on
+    // `blocked`, the ledger's existing rejected-input status. Bounded and
+    // partial documents keep their existing handling: the gate refuses them
+    // by their own typed names, so only the refusal statuses are admitted
+    // here (the generic non-consumable record check stays gate-side).
+    if let Some(status) = source_value_snapshot
+        .as_ref()
+        .and_then(crate::output::gate::refusal_run_status)
+    {
+        warnings.push(format!(
+            "gap decision ledger input {} is a producer refusal (run_status: {status}, \
+             downstream_consumable: false): nothing was analyzed, so no gap records can be \
+             derived; follow the refusal's repair_route (narrower diff or scope budget), \
+             re-run the check, and rebuild this ledger before gating",
+            input.records_path,
+        ));
+        parsed_cleanly = false;
+    }
+
     if input.source_kind == GapDecisionLedgerSourceKind::CheckOutput {
         attach_check_output_preview_receipt_routes(&mut records, &input.root);
     }
@@ -3942,10 +3965,108 @@ mod tests {
         assert_eq!(report.summary.records_total, 0);
         assert!(
             report.warnings.iter().any(|warning| {
-                warning.contains("diff_scope_oversized") && warning.contains("downstream_consumable")
+                warning.contains("diff_scope_oversized")
+                    && warning.contains("downstream_consumable")
             }),
             "refusal admission must name the typed run status and the consumable flag: {:?}",
             report.warnings
+        );
+    }
+
+    /// The repo-scope guard emits the same non-consumable refusal envelope
+    /// with only the scope identity different (#2109); admission refuses it
+    /// identically (#10733).
+    #[test]
+    fn gap_decision_ledger_refuses_repo_scope_oversized_refusal_envelope() {
+        let report = report_from_check_output(serde_json::json!({
+            "schema_version": "0.2",
+            "tool": "ripr",
+            "mode": "fast",
+            "root": ".",
+            "summary": {"changed_rust_files": 0, "probes": 0, "findings": 0},
+            "findings": [],
+            "analysis_scope": {
+                "scope": "repo",
+                "run_status": "repo_scope_oversized",
+                "basis": "rust_repo_scope_budget",
+                "downstream_consumable": false,
+                "limitation": "repo_scope_oversized",
+                "repair_route": "analysis/repo-scope-budget"
+            },
+            "run_limitations": [
+                {
+                    "category": "repo_scope_oversized",
+                    "run_status": "repo_scope_oversized",
+                    "basis": "rust_repo_scope_budget",
+                    "downstream_consumable": false,
+                    "message": "repo_scope_oversized: indexed Rust files exceed the repo scope budget",
+                    "repair_route": "analysis/repo-scope-budget"
+                }
+            ]
+        }));
+        assert_eq!(report.status, "blocked");
+        assert!(
+            report.warnings.iter().any(|warning| {
+                warning.contains("repo_scope_oversized")
+                    && warning.contains("downstream_consumable")
+            }),
+            "refusal admission must name the typed run status and the consumable flag: {:?}",
+            report.warnings
+        );
+    }
+
+    /// Refusal admission is narrow: a complete run with an empty
+    /// `run_limitations` array and zero findings stays the healthy
+    /// `no_records` state, and a bounded document keeps its existing
+    /// handling (the gate refuses it by its typed `limited_findings_bound`
+    /// name — the ledger does not steal that vocabulary).
+    #[test]
+    fn gap_decision_ledger_refusal_admission_keeps_healthy_controls() {
+        let empty_limitations = report_from_check_output(serde_json::json!({
+            "schema_version": "0.2",
+            "tool": "ripr",
+            "mode": "fast",
+            "root": ".",
+            "summary": {"findings": 0},
+            "findings": [],
+            "run_limitations": []
+        }));
+        assert_eq!(empty_limitations.status, "no_records");
+        assert!(empty_limitations.warnings.is_empty());
+
+        let bounded = report_from_check_output(serde_json::json!({
+            "schema_version": "0.2",
+            "tool": "ripr",
+            "mode": "fast",
+            "root": ".",
+            "summary": {"findings": 2},
+            "findings": [
+                {"id": "rendered-prefix-finding", "classification": "reachable_unrevealed"}
+            ],
+            "run_limitations": [
+                {
+                    "category": "limited_findings_bound",
+                    "run_status": "limited_findings_bound",
+                    "basis": "check_findings_byte_budget",
+                    "downstream_consumable": false,
+                    "message": "rendered 1 of 2 findings within the findings-array byte budget",
+                    "repair_route": "output/check-findings-budget"
+                }
+            ]
+        }));
+        assert_ne!(
+            bounded.status, "blocked",
+            "a findings-bounded document keeps its existing ledger handling: {:?}",
+            bounded.warnings
+        );
+        assert!(
+            bounded
+                .run_limitations
+                .as_ref()
+                .is_some_and(|limitations| limitations
+                    .to_string()
+                    .contains("limited_findings_bound")),
+            "bounded run_limitations keep propagating unchanged"
         );
     }
 
