@@ -138,8 +138,8 @@ can only hint that a caller "may lead here" without changing anything.
   type of that name, and its whole body must be one
   unconditional `panic!`, `unreachable!`, `unimplemented!`, `todo!` (none
   rebound by a user macro or import) or `std::process::abort()` /
-  `std::process::exit(..)` (with no item or import named `std` anywhere in
-  the workspace). Everything else keeps the abstention: a
+  `std::process::exit(..)` (with no item, import or `use` binding named `std`
+  other than the standard crate anywhere in the workspace). Everything else keeps the abstention: a
   closure (even one that panics), a substituting handler (`unwrap_or(..)`,
   `unwrap_or_default()`, `|_| false`), a handler that sometimes returns, a
   module-qualified, generic or external path, `.ok()`, `.is_ok()`,

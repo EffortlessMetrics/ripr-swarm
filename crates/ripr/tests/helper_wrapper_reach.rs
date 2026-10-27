@@ -2513,3 +2513,59 @@ fn unwrap_tail_process_exit_handler_with_a_rebound_std_is_not_credited() -> Resu
     }
     Ok(())
 }
+
+#[test]
+fn unwrap_tail_process_exit_handler_with_a_std_bound_by_a_use_is_not_credited() -> Result<(), String>
+{
+    let abort_die = "fn die<T>(_: Overflow) -> T {\n    std::process::abort()\n}\n";
+    let forwarder = unwrapping_forwarder("self.try_grow(wanted).unwrap_or_else(die)");
+    for rebinding in [
+        "use ext_dep::std;\n",
+        "use ext_dep::{other, std};\n",
+        "pub use ext_dep::inner::std;\n",
+        "use ext_dep::{inner::{std, more}, other};\n",
+        "use crate::std;\n",
+        "use ::ext_dep::std;\n",
+    ] {
+        let extra = format!("{abort_die}{rebinding}");
+        assert_shadowed_handler_not_credited(&extra, &forwarder, UNWRAP_TESTS)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn unwrap_tail_self_qualified_handler_on_a_generic_or_repeated_type_is_not_credited()
+-> Result<(), String> {
+    let pool_die = POOL_DIE;
+    let forwarder = unwrapping_forwarder("self.try_grow(wanted).unwrap_or_else(Self::die)");
+    // The control: `Self::die` on the one real `Pool` is credited.
+    let finding = forwarder_finding(pool_die, &forwarder, UNWRAP_TESTS)?;
+    assert_eq!(finding["classification"], "exposed", "{finding}");
+    // A second workspace type named `Pool`.
+    let twin = format!("{pool_die}mod alt {{\n    pub struct Pool;\n}}\n");
+    assert_shadowed_handler_not_credited(&twin, &forwarder, UNWRAP_TESTS)?;
+    Ok(())
+}
+
+#[test]
+fn unwrap_tail_handler_reached_through_a_local_alias_is_not_credited() -> Result<(), String> {
+    // `halt` is not a workspace function, so it is not a known handler even
+    // though it is bound to the unique diverging `die`.
+    for (extra, tail) in [
+        (
+            format!("{DIVERGING_DIE}use crate::die as halt;\n"),
+            "self.try_grow(wanted).unwrap_or_else(halt)",
+        ),
+        (
+            DIVERGING_DIE.to_string(),
+            "let halt = die;\n        self.try_grow(wanted).unwrap_or_else(halt)",
+        ),
+        (
+            DIVERGING_DIE.to_string(),
+            "const halt: fn(Overflow) -> bool = die;\n        self.try_grow(wanted).unwrap_or_else(halt)",
+        ),
+    ] {
+        assert_unwrap_tail_not_credited(&extra, tail)?;
+    }
+    Ok(())
+}

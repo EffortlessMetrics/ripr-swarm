@@ -3137,9 +3137,8 @@ fn handler_diverges(path: &str, caller: &FunctionSummary, index: &RustIndex) -> 
     if handler.file != caller.file
         || non_impl_scopes(&handler_scopes) != non_impl_scopes(&caller_scopes)
         || !name_only_used_as_handler(caller, path, name)
-        || qualifier.is_some_and(|q| {
-            q != "Self" && !qualifier_is_workspace_type(caller, path, q, &caller_scopes, index)
-        })
+        || qualifier
+            .is_some_and(|q| !qualifier_is_workspace_type(caller, path, q, &caller_scopes, index))
     {
         return false;
     }
@@ -3171,7 +3170,20 @@ fn qualifier_is_workspace_type(
     caller_scopes: &[BlockScope],
     index: &RustIndex,
 ) -> bool {
-    if !name_only_used_as_handler(caller, path, qualifier)
+    // `Self` names the enclosing impl's type: judge that type by name, with
+    // the same exactly-one-type and generics conditions, without the
+    // other-mention rule (`Self { .. }` is ordinary in an impl).
+    let self_type = if qualifier == "Self" {
+        match impl_self_type(caller) {
+            Some(own) => own,
+            None => return false,
+        }
+    } else {
+        qualifier.to_string()
+    };
+    let qualifier = self_type.as_str();
+    if (path.split("::").next() != Some("Self")
+        && !name_only_used_as_handler(caller, path, qualifier))
         || super::owner_pin::workspace_type_name_count(qualifier, index) != 1
     {
         return false;
@@ -3239,6 +3251,21 @@ fn std_name_rebound(index: &RustIndex) -> bool {
     index.files().values().any(|file| {
         if !file.source.contains("std") {
             return false;
+        }
+        // Any `use` item whose bound name is `std` and whose path is not the
+        // bare `std` crate (`use ext::std;`, `use ext::{a, std};`,
+        // `use crate::std;`, `use ::ext::std;`).
+        if super::reveal::flattened_use_paths(&file.source)
+            .iter()
+            .any(|import| {
+                let bound = import
+                    .alias
+                    .as_deref()
+                    .unwrap_or_else(|| import.path.rsplit("::").next().unwrap_or(""));
+                bound == "std" && import.path.trim_start_matches("::") != "std"
+            })
+        {
+            return true;
         }
         let masked = crate::analysis::language::mask_rust_comments_and_strings(&file.source);
         masked.match_indices("std").any(|(at, _)| {
