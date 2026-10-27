@@ -6123,18 +6123,33 @@ fn generous_walk_limits() -> PythonDiffWalkLimits {
     }
 }
 
+/// Past the cap, a refused file that names what the diff changes keeps the
+/// run partial (#10785): `b.py` calls the changed `a`, and the changed file
+/// takes the only slot.
 #[test]
 fn analyze_diff_discloses_workspace_file_count_cap() -> Result<(), String> {
     let root = unique_test_root("diff-walk-count-cap");
     std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
     write_repo_file(&root.join("a.py"), "def a():\n    return 1\n")?;
-    write_repo_file(&root.join("b.py"), "def b():\n    return 2\n")?;
+    write_repo_file(
+        &root.join("b.py"),
+        "from a import a\n\n\ndef b():\n    return a()\n",
+    )?;
     let options = repo_options(&root);
     let limits = PythonDiffWalkLimits {
         max_workspace_files: 1,
         ..generous_walk_limits()
     };
-    let result = PythonAdapter::analyze_diff_with_limits(&options, &[], limits)?;
+    let changed_files = vec![ChangedFile {
+        path: PathBuf::from("a.py"),
+        added_lines: vec![ChangedLine {
+            line: 2,
+            text: "    return 1".to_string(),
+            new_side_line: 2,
+        }],
+        removed_lines: Vec::new(),
+    }];
+    let result = PythonAdapter::analyze_diff_with_limits(&options, &changed_files, limits)?;
     assert_eq!(
         result.limitations.len(),
         1,
@@ -6150,8 +6165,8 @@ fn analyze_diff_discloses_workspace_file_count_cap() -> Result<(), String> {
     assert_eq!(limitation.affected_items, Some(1));
     let detail = limitation.bounded_detail.as_deref().unwrap_or_default();
     assert!(
-        detail.contains("1 discovered .py file(s) were not analyzed"),
-        "refused count missing from detail: {detail}"
+        detail.contains("1 of the 1 discovered .py file(s) that may reach the diff"),
+        "refused reaching count missing from detail: {detail}"
     );
     assert!(
         detail.contains("RIPR_PYTHON_MAX_WORKSPACE_FILES"),
@@ -6341,7 +6356,10 @@ fn declared_handwritten_file_under_build_dir_is_analyzed() -> Result<(), String>
 fn analyze_diff_keeps_a_late_sorting_changed_file_past_the_cap() -> Result<(), String> {
     let root = unique_test_root("diff-walk-cap-keeps-changed");
     std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
-    write_repo_file(&root.join("a.py"), "def a():\n    return 1\n")?;
+    write_repo_file(
+        &root.join("a.py"),
+        "from zz_changed import price\n\n\ndef a():\n    return price(1)\n",
+    )?;
     write_repo_file(&root.join("b.py"), "def b():\n    return 2\n")?;
     write_repo_file(
         &root.join("zz_changed.py"),
@@ -6380,13 +6398,217 @@ fn analyze_diff_keeps_a_late_sorting_changed_file_past_the_cap() -> Result<(), S
     assert_eq!(limitation.kind, AnalysisLimitationKind::DiffScopeOversized);
     assert_eq!(
         limitation.affected_items,
-        Some(2),
-        "both unchanged files are refused because the changed file takes the only slot"
+        Some(1),
+        "the changed file takes the only slot, so `a.py`, which calls `price`, is refused; \
+         `b.py` names nothing the diff changes and is not counted"
     );
     let detail = limitation.bounded_detail.as_deref().unwrap_or_default();
     assert!(
         detail.contains("changed .py files are kept past this cap"),
         "disclosure must say changed files were kept: {detail}"
+    );
+    Ok(())
+}
+
+/// #10785: past the cap, the files that name the changed owner and the helper
+/// module their test imports are admitted first. When every refused file
+/// names nothing the diff changes, the run is complete and its findings equal
+/// the uncapped run's, related tests and helper-backed oracle included.
+#[test]
+fn analyze_diff_over_cap_matches_uncapped_when_no_refused_file_can_reach() -> Result<(), String> {
+    let root = unique_test_root("diff-walk-cap-reach-differential");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    write_repo_file(
+        &root.join("pricing.py"),
+        "def discount(amount):\n    if amount > 100:\n        return amount - 10\n    return amount\n",
+    )?;
+    write_repo_file(
+        &root.join("tests/test_pricing.py"),
+        "from pricing import discount\nfrom tests.helpers import assert_price\n\n\ndef test_discount_applies():\n    assert discount(150) == 140\n\n\ndef test_no_discount_at_boundary():\n    assert_price(discount(100), 100)\n",
+    )?;
+    write_repo_file(
+        &root.join("tests/helpers.py"),
+        "def assert_price(actual, expected):\n    assert actual == expected\n",
+    )?;
+    // Unrelated modules that sort ahead of `tests/`: the earliest-path cap
+    // used to keep these and refuse the test.
+    for index in 0..30 {
+        write_repo_file(
+            &root.join(format!("filler/m{index:02}.py")),
+            &format!("def f{index}(value):\n    return value + {index}\n"),
+        )?;
+    }
+    let changed_files = vec![ChangedFile {
+        path: PathBuf::from("pricing.py"),
+        added_lines: vec![ChangedLine {
+            line: 2,
+            text: "    if amount > 100:".to_string(),
+            new_side_line: 2,
+        }],
+        removed_lines: vec![ChangedLine {
+            line: 2,
+            text: "    if amount >= 100:".to_string(),
+            new_side_line: 2,
+        }],
+    }];
+    let options = repo_options(&root);
+    let capped = PythonAdapter::analyze_diff_with_limits(
+        &options,
+        &changed_files,
+        PythonDiffWalkLimits {
+            max_workspace_files: 3,
+            ..generous_walk_limits()
+        },
+    )?;
+    let uncapped =
+        PythonAdapter::analyze_diff_with_limits(&options, &changed_files, generous_walk_limits())?;
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    assert!(
+        uncapped.limitations.is_empty(),
+        "the uncapped reference must be complete: {:?}",
+        uncapped.limitations
+    );
+    let related: Vec<usize> = uncapped
+        .findings
+        .iter()
+        .map(|finding| finding.related_tests.len())
+        .collect();
+    assert!(
+        related.contains(&2),
+        "fixture must relate both tests in the uncapped run, got {related:?}"
+    );
+    assert!(
+        capped.limitations.is_empty(),
+        "only files that name nothing the diff changes were refused, so the run is complete: {:?}",
+        capped
+            .limitations
+            .iter()
+            .map(|limitation| limitation.bounded_detail.clone())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(capped.findings, uncapped.findings);
+    Ok(())
+}
+
+/// #10785: a test that reaches the changed owner only through a `conftest.py`
+/// fixture names neither the owner nor its module, yet the adapter relates it
+/// (`fixture_owner_call`). The reach scan follows the fixture, so the capped
+/// run keeps the test and matches the uncapped run.
+#[test]
+fn analyze_diff_over_cap_keeps_a_test_reaching_the_owner_through_a_fixture() -> Result<(), String> {
+    let root = unique_test_root("diff-walk-cap-reach-fixture");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    write_repo_file(
+        &root.join("orders.py"),
+        "def make_order(count):\n    if count > 2:\n        return count * 3\n    return count\n",
+    )?;
+    write_repo_file(
+        &root.join("tests/conftest.py"),
+        "import pytest\n\nfrom orders import make_order\n\n\n@pytest.fixture\ndef order():\n    return make_order(3)\n",
+    )?;
+    write_repo_file(
+        &root.join("tests/test_totals.py"),
+        "def test_total(order):\n    assert order == 9\n",
+    )?;
+    for index in 0..10 {
+        write_repo_file(
+            &root.join(format!("filler/m{index:02}.py")),
+            &format!("def f{index}(value):\n    return value + {index}\n"),
+        )?;
+    }
+    let changed_files = vec![ChangedFile {
+        path: PathBuf::from("orders.py"),
+        added_lines: vec![ChangedLine {
+            line: 2,
+            text: "    if count > 2:".to_string(),
+            new_side_line: 2,
+        }],
+        removed_lines: Vec::new(),
+    }];
+    let options = repo_options(&root);
+    let capped = PythonAdapter::analyze_diff_with_limits(
+        &options,
+        &changed_files,
+        PythonDiffWalkLimits {
+            max_workspace_files: 3,
+            ..generous_walk_limits()
+        },
+    )?;
+    let uncapped =
+        PythonAdapter::analyze_diff_with_limits(&options, &changed_files, generous_walk_limits())?;
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    let related: Vec<usize> = uncapped
+        .findings
+        .iter()
+        .map(|finding| finding.related_tests.len())
+        .collect();
+    assert!(
+        related.iter().any(|count| *count > 0),
+        "fixture must relate the test in the uncapped run, got {related:?}"
+    );
+    assert!(
+        capped.limitations.is_empty(),
+        "only unrelated files were refused: {:?}",
+        capped.limitations
+    );
+    assert_eq!(capped.findings, uncapped.findings);
+    Ok(())
+}
+
+/// #10785 negative control: the same workspace with a cap too small for the
+/// reaching set (the changed file plus one slot) refuses the helper module
+/// the test imports, so the run stays partial and names one refused file.
+#[test]
+fn analyze_diff_over_cap_stays_partial_when_a_reaching_file_is_refused() -> Result<(), String> {
+    let root = unique_test_root("diff-walk-cap-reach-refused");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    write_repo_file(
+        &root.join("pricing.py"),
+        "def discount(amount):\n    if amount > 100:\n        return amount - 10\n    return amount\n",
+    )?;
+    write_repo_file(
+        &root.join("tests/test_pricing.py"),
+        "from pricing import discount\nfrom tests.helpers import assert_price\n\n\ndef test_no_discount_at_boundary():\n    assert_price(discount(100), 100)\n",
+    )?;
+    write_repo_file(
+        &root.join("tests/helpers.py"),
+        "def assert_price(actual, expected):\n    assert actual == expected\n",
+    )?;
+    write_repo_file(
+        &root.join("filler/m.py"),
+        "def f(value):\n    return value\n",
+    )?;
+    let changed_files = vec![ChangedFile {
+        path: PathBuf::from("pricing.py"),
+        added_lines: vec![ChangedLine {
+            line: 2,
+            text: "    if amount > 100:".to_string(),
+            new_side_line: 2,
+        }],
+        removed_lines: Vec::new(),
+    }];
+    let result = PythonAdapter::analyze_diff_with_limits(
+        &repo_options(&root),
+        &changed_files,
+        PythonDiffWalkLimits {
+            max_workspace_files: 2,
+            ..generous_walk_limits()
+        },
+    )?;
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    let [limitation] = result.limitations.as_slice() else {
+        return Err(format!(
+            "exactly the count-cap disclosure is expected, got {:?}",
+            result.limitations
+        ));
+    };
+    assert_eq!(limitation.kind, AnalysisLimitationKind::DiffScopeOversized);
+    assert_eq!(limitation.affected_items, Some(1));
+    let detail = limitation.bounded_detail.as_deref().unwrap_or_default();
+    assert!(
+        detail.contains("1 of the 2 discovered .py file(s) that may reach the diff")
+            && detail.contains("1 that name nothing it changes were skipped"),
+        "detail must split reaching and unrelated refusals: {detail}"
     );
     Ok(())
 }

@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- Python diff mode now fills the workspace-file cap with the files that can reach the diff (files naming what it changes, the modules their tests import, `conftest.py` and package `__init__.py` files) instead of the earliest paths, and a refused file that names nothing the diff changes no longer makes the run partial. On home-assistant (about 20,000 `.py` files) a Forecast.Solar edit now completes in about 7 s and 380 MiB with the same findings as an uncapped run (43 s, 3 GiB), where it was partial and found 3 of the 6 related tests (#10785).
