@@ -771,13 +771,60 @@ sibling-effect oracle confirms that the assertion reads a cell the iterator
 writes (`Counter { sink: state.clone() }` then `assert_eq!(state.get(), 1)`),
 which credits it. A collected or returned value has no such carrier yet.
 
-`Drop::drop` is not related yet. The observed value (a counter behind a shared
-cell) shares no token with the changed line, and relating a scope end lifts
-reach so that the ordinary oracle credits a guard whose counter the assertion
-does not read (#9567). Drop waits for the carrier check of #10553 part 2.
+`Drop::drop` is related when a test drops a value at scope end (#10553). A
+statement-position `{ .. }` block that binds an owned value of the impl's type
+in a `let` and uses the name only as a method or field receiver, or `drop(x)`,
+`mem::drop(x)` of such a value, runs `drop` before a later assertion. The
+relation refuses a value that is moved, leaked (`mem::forget`, `ManuallyDrop`,
+`Box::leak`, anywhere a file naming the type spells it), or reached through a
+by-value method of the type or any std method the index cannot see; a `drop` or
+`mem` the test file may rebind (a local `fn drop`, `mod mem`, a renamed or
+foreign `use`, a `mem` imported from another file, a local binding named `drop`); a reference operand; an assertion that came before the drop; a
+value that lives to the end of the test (it is dropped after every assertion);
+and the sites an iterator relation refuses (closures, branches, `#[cfg]`-disabled
+statements), including a guard bound inside a branch or closure of the block.
+
+Unlike `next`, a destructor is never credited by the sibling-effect read. A
+guard's counter shares no token with the changed line, and relating a scope end
+lifts reach, so without a gate the ordinary oracle credited an assertion on a
+different cell, a fresh guard cell, a cell the test re-created or wrote itself,
+or an assertion that ran before the scope (#9567). No assertion-local authority
+ties an assertion to the end of a scope, so a related destructor with an exact
+assertion stays `static_unknown` (`rust_implicit_call_unresolved`), and an
+assertion-free test stays a real `weakly_exposed` gap. The same holds for every probe family: an `exposed` verdict on a standard
+`Drop::drop` (a predicate on the changed line, a name match on the free `drop`)
+is rewritten to `static_unknown`. A local trait named `Drop` is an ordinary
+trait and is not gated. A positive credit needs such a carrier check and is not
+claimed.
 
 Corpus effect: `shape-op-add-impl` moves from `limited` to `credited`, its
 ideal verdict.
+
+### A refused owner assertion beside an admitted weaker oracle (#5431)
+
+A `weakly_exposed` finding asks for a stronger assertion. When a related test
+also holds an `assert_eq!` on the owner that ripr refused, that refused
+assertion may already be the exact oracle, so the request can be false.
+`withhold_mixed_refusal_gap` rewrites a `weakly_exposed` finding with no
+`static_limit_kind` to `static_unknown` under `rust_assertion_context_unresolved`
+when at least one refused equality assertion calls the owner and every such
+refusal is an analyzer limit (`AssertionRefusal::is_analyzer_limit`: an
+unparsed or unplaced file, a glob or `#[macro_use]` that only may rebind the
+macro). The classifier hands the decision over as an evidence marker, and the
+pass drops the repair values like any withheld gap. It never raises a class.
+
+The pass applies only when reach, infection and propagation are established
+(`yes`) and the discriminator is the missing stage: a boundary input no test
+supplies is a gap whatever a refused assertion compares. Only refusals in
+tests that could have credited an oracle (`oracle_crediting_relations`) count,
+as for the unestablished-context rule above; the macro named in the next step
+is the standard `assert_eq!`.
+
+Refusals that are not analyzer limits (a branch, a loop that may run zero
+times, a gated module, a real rebinding) keep the gap, as do refused
+assertions that do not call the owner: they could not have been its oracle,
+or they are real gaps pinned by the runtime controls. A weak assertion alone
+stays `weakly_exposed`.
 
 ## Scope boundary
 
@@ -849,6 +896,8 @@ a credited weak oracle) and semver `op()` (reach with no retained test, #5344).
   finding stays `reachable_unrevealed`.
 
 ## Test Mapping
+
+- `crates/ripr/tests/refused_assertion_beside_weak_oracle.rs::an_analyzer_limit_refusal_beside_a_weak_oracle_is_not_a_gap` (#5431)
 
 Tests in `crates/ripr/src/analysis/classify/gap_admission.rs`:
 

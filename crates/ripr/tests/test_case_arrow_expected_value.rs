@@ -313,3 +313,46 @@ fn a_negated_row_argument_keeps_its_sign_as_a_receiver() -> Result<(), String> {
     }
     Ok(())
 }
+
+/// The changed line sits in a branch only a large input enters. A row whose
+/// input misses it earns no credit, and a sibling row's literals do not lend
+/// it any (the promoted test carries every row's literals).
+fn branch_classes(rows: &str) -> Result<Vec<ExposureClass>, String> {
+    let lib = format!(
+        "pub fn bump(x: i64) -> i64 {{\n    if x > 15 {{\n        x + 2\n    }} else {{\n        x + 100\n    }}\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n{IMPORT}\n{rows}{BODY}}}\n"
+    );
+    let diff = "diff --git a/src/lib.rs b/src/lib.rs
+index 1111111..2222222 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -3,1 +3,1 @@
+-        x + 1
++        x + 2
+";
+    let found: Vec<ExposureClass> = TempRepo::create(&lib, diff)?
+        .findings()?
+        .into_iter()
+        .filter(|finding| finding.probe.location.line == 3)
+        .map(|finding| finding.class)
+        .collect();
+    if found.is_empty() {
+        return Err("premise: a finding on the rewritten line".to_string());
+    }
+    Ok(found)
+}
+
+#[test]
+fn a_row_that_misses_the_changed_branch_earns_no_credit_from_its_siblings() -> Result<(), String> {
+    for rows in [
+        "    #[test_case(10 => 110)]\n",
+        "    #[test_case(10 => 110)]\n    #[test_case(5 => 105)]\n",
+    ] {
+        let found = branch_classes(rows)?;
+        if found.contains(&ExposureClass::Exposed) {
+            return Err(format!(
+                "an input that misses the branch must not credit: {found:?}"
+            ));
+        }
+    }
+    Ok(())
+}

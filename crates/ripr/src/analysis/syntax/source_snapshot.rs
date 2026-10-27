@@ -189,29 +189,33 @@ impl SourceSnapshot {
             function.start_line,
             function.end_line,
         );
-        let compute = || {
-            let tree = self.parse.as_ref()?.tree();
-            let mut matches = tree
-                .syntax()
-                .descendants()
-                .filter_map(ast::Fn::cast)
-                .filter(|item| {
-                    item.name()
-                        .is_some_and(|name| name.text() == function.name.as_str())
-                        && item.fn_token().is_some_and(|token| {
-                            (self.lines.line(item.syntax().text_range().start())
-                                ..=self.lines.line(token.text_range().start()))
-                                .contains(&function.start_line)
-                        })
-                });
-            match (matches.next(), matches.next()) {
-                (Some(item), None) => Some(item.async_token().is_some()),
-                _ => None,
-            }
-        };
+        let compute = || Some(self.declaration(function)?.async_token().is_some());
         match self.declarations.lock() {
             Ok(mut memo) => *memo.entry(key).or_insert_with(compute),
             Err(_) => compute(),
+        }
+    }
+
+    /// Recover the unique full-source declaration, including qualifiers,
+    /// attributes and lexical ancestry omitted from indexed body slices.
+    pub(crate) fn declaration(&self, function: &FunctionSummary) -> Option<ast::Fn> {
+        let tree = self.parse.as_ref()?.tree();
+        let mut matches = tree
+            .syntax()
+            .descendants()
+            .filter_map(ast::Fn::cast)
+            .filter(|item| {
+                item.name()
+                    .is_some_and(|name| name.text() == function.name.as_str())
+                    && item.fn_token().is_some_and(|token| {
+                        (self.lines.line(item.syntax().text_range().start())
+                            ..=self.lines.line(token.text_range().start()))
+                            .contains(&function.start_line)
+                    })
+            });
+        match (matches.next(), matches.next()) {
+            (Some(item), None) => Some(item),
+            _ => None,
         }
     }
 

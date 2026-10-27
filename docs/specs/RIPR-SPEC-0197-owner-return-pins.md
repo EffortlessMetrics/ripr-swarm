@@ -709,6 +709,30 @@ wrong credits.
      bare call (#7082): with the cfg off, `T::name` can reach a trait
      default the index never sees. A bare `name(..)` still never names the
      associated owner (shape 1 above).
+Bounded Result.map rewrite (#9870). A changed return tail whose whole owner
+body rewrites `Ok(f(self.read(args)?, rest))` to
+`self.read(args).map(|v| f(v, rest))` completes its forwarding witness. The
+same-file `self.read` declaration must be uniquely established and synchronous,
+in the owner's exact lexical impl or trait block with the same plain receiver
+form (`self`, `&self` or `&mut self`). Conditional declarations or enclosing
+scopes, typed or mismatched receivers and separate impl blocks refuse this
+bounded identity rule. It and the owner must return standard `Result`;
+rebound `Result`, `Ok`, `Err`, `std` or `core` names and opaque imports refuse.
+The callback must use
+one plain binding exactly once in one unconditional expression, optionally in
+a block with no statements. Replacing that binding by the exact receiver plus
+`?` must reconstruct the former `Ok` payload token for token. A matching `Ok`
+owner-return pin establishes callback execution separately for each observing
+test; an `Err`-only assertion, a reach-only sibling or a deferred assertion
+cannot borrow that provenance. An unrelated assertion on a helper named in the
+callback cannot confirm aggregate discrimination either. This rule requires the
+direct owner-return Ok pin; generic helper-entry pins do not establish callback
+execution. Unknown declaration provenance, including same-line ambiguity, refuses. Discarded, recomputed or constant callback
+results, changed payloads, multiple binding reads, `move`/async callbacks,
+chained adaptors, aliases, `map_err` and unpaired rewrites retain the previous
+reading. This bounded rule does not change base-deleted findings or establish
+general combinator, callback or mutation adequacy.
+
 3. Return path. The changed expression must be the owner body's tail (or
    its final `return <expr>;`), and it must evaluate all of its parts on
    every input: no closure, `|=` or non-binary `|`, no `&&`/`||` (except
@@ -2571,6 +2595,19 @@ assertions. This repair shares the existing callback without that larger migrati
    receiver does not confirm a change to the default.
 
 ## Test Mapping
+
+- `crates/ripr/tests/result_map_callback.rs`: exact and block-tail forwarding;
+  discard/recompute/constant and changed-payload refusals; receiver, binding,
+  conditional, chained-adaptor and alias boundaries; per-test Ok/Err, reach-only
+  and deferred-observer provenance (#9870). Inactive and receiver-mismatched
+  inherent readers must not borrow identity from an async trait reader whose
+  Future.map ignores the callback; external globs and shadowed qualified Result
+  roots must not establish standard identity. The inherent-entry control pairs an
+  Err-only constructed-receiver entry with a direct Ok observer and an ordinary
+  non-map method-entry positive. The typed-parameter entry establishes reach but
+  is outside the existing helper forwarding/pin shapes; it cannot validate this
+  map-only exclusion. Removing the direct-only map guard must reject the
+  inherent-entry control without changing helper admission.
 
 - `operand_whitespace.rs`: `established_standard_derives_keep_the_missing_discriminator`
   retains genuine primitive pins beside established standard derives;
