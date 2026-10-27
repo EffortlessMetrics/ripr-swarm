@@ -198,10 +198,11 @@ Test discovery:
   unresolved relative import, a computed `import()` / `require()`,
   `import.meta.glob` / `require.context` / `createRequire`, a bare specifier a
   tsconfig path, workspace package or the root package name could resolve, a
-  `~`, `#`, `$`, `/` or `@/` specifier, a `baseUrl`, `rootDirs`, a relative
-  `extends`, a package-level `paths`, any bundler, transpiler or test-runner
-  config that declares an alias or module directory, a Rust change related
-  through the Bun bridge, and a closure over 400 files. The conditional
+  `~`, `#`, `$`, `/` or `@/` specifier, a `baseUrl`, `rootDirs`, an uninspected
+  `extends` (including an npm package base, after JSONC key decoding), a
+  project `references` entry, a package-level `paths`, any bundler, transpiler or test-runner config that
+  declares an alias or module directory, a Rust change related through the Bun
+  bridge, and a closure over 400 files. The conditional
   assertion credit and owner-extraction disclosures keep their own scopes.
 - a symlink or junction the walk does not follow is counted for
   `typescript_workspace_links_skipped` / `typescript_repo_links_skipped`

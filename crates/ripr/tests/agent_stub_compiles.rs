@@ -766,6 +766,51 @@ fn check_prints_no_route_when_the_nearest_gap_line_is_ambiguous() -> Result<(), 
     scratch.cleanup()
 }
 
+/// #10683: a weak-oracle boundary finding must not advertise a stub command
+/// that `agent stub` now refuses. `check` prints the refusal reason instead,
+/// and running the stub at the finding's own location agrees with it.
+#[test]
+fn check_prints_no_stub_command_for_a_weak_oracle_boundary_finding() -> Result<(), String> {
+    const LIB: &str = "pub fn discount(price: u32, qty: u32) -> u32 {\n    if qty > 10 { price * 10 / 100 } else { 0 }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn at_ten() {\n        assert!(discount(10, 10) > 0);\n    }\n}\n";
+    let scratch = Scratch::new()?;
+    let root = scratch.directory.clone();
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"stub_weak_oracle\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(root.join("src/lib.rs"), LIB).map_err(|error| error.to_string())?;
+    let diff = one_line_diff(
+        &scratch,
+        "src/lib.rs",
+        "    if qty >= 10 { price * 10 / 100 } else { 0 }",
+        "    if qty > 10 { price * 10 / 100 } else { 0 }",
+    )?;
+    let stdout = check_human(&root, &diff)?;
+    assert!(
+        stdout.contains("src/lib.rs:2"),
+        "the finding is on line 2: {stdout}"
+    );
+    assert!(
+        printed_stub_args(&stdout).is_none() && !stdout.contains("Write a test for it:"),
+        "a weak-oracle boundary must not print a stub command: {stdout}"
+    );
+    assert!(
+        stdout.contains("No test stub here:") && stdout.contains("Related test: src/lib.rs"),
+        "the refusal reason names the existing test: {stdout}"
+    );
+    let mut stub = ripr_command();
+    stub.args(["agent", "stub", "--root"]).arg(&root).args([
+        "--at",
+        "src/lib.rs:2",
+        "--kind",
+        "predicate",
+    ]);
+    let output = run_bounded(stub, &root, "stub", Duration::from_mins(2))?;
+    assert_eq!(output.status.code(), Some(3), "agent stub agrees: refuses");
+    scratch.cleanup()
+}
+
 /// `check` output for a one-line change to line 2 of a scratch crate.
 fn check_for_changed_line_two(lib: &str, old: &str, new: &str) -> Result<String, String> {
     let scratch = Scratch::new()?;
