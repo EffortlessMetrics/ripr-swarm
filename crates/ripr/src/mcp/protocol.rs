@@ -1948,8 +1948,9 @@ mod tests {
                     "never authorizes an edit",
                     "item_not_found",
                     "ripr://gap/{canonical_id}",
-                    "ripr check --committed --format json",
-                    "related tests cap per finding",
+                    "result_too_large",
+                    "follow the failure's captured-root/base/source CLI recovery outside MCP",
+                    "a bounded summary, not immutable snapshot replay",
                     "retrying ripr_get_gap cannot shrink the item",
                 ],
             ),
@@ -2017,6 +2018,14 @@ mod tests {
                     ));
                 }
             }
+        }
+        // The failure owns its source-bound command and detailed JSON caps;
+        // discovery must not replace it with a fixed committed-input route.
+        let gap_description = json_str(&tools, "/tools/3/description")?;
+        if gap_description.contains("ripr check --committed --format json") {
+            return Err(format!(
+                "gap description advertises committed-only recovery: {gap_description}"
+            ));
         }
         // #10541: the terminal mapping algorithm moved off the tool
         // description (which only names the vocabulary and the owner) onto
