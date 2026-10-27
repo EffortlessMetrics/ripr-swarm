@@ -5144,8 +5144,7 @@ fn check_json_bound_subject_config_timeout_names_timeout_identity() -> Result<()
 /// so the check budget — not the git timeout — is what fires.
 #[cfg(unix)]
 #[test]
-fn check_json_analysis_timeout_retains_requested_echo_and_bounded_recovery(
-) -> Result<(), String> {
+fn check_json_analysis_timeout_retains_requested_echo_and_bounded_recovery() -> Result<(), String> {
     let root = init_check_refusal_repo("check-json-analysis-timeout", 1)?;
     let root_arg = root.display().to_string();
     // Every git call takes 3 s; the 1 s check budget fires inside the first
@@ -5221,7 +5220,9 @@ fn check_json_analysis_timeout_retains_requested_echo_and_bounded_recovery(
     ] {
         let actual = value.pointer(pointer).and_then(serde_json::Value::as_str);
         if actual != Some(expected) {
-            return Err(format!("{pointer}: expected {expected}, got {actual:?}\n{stdout}"));
+            return Err(format!(
+                "{pointer}: expected {expected}, got {actual:?}\n{stdout}"
+            ));
         }
     }
     if value["input_context"]["requested"]["root"].as_str() != Some(root_arg.as_str()) {
@@ -5263,7 +5264,9 @@ fn check_json_analysis_timeout_retains_requested_echo_and_bounded_recovery(
         "--timeout 2",
     ] {
         if !command.contains(needle) {
-            return Err(format!("recovery command must contain `{needle}`: {command}"));
+            return Err(format!(
+                "recovery command must contain `{needle}`: {command}"
+            ));
         }
     }
     if command.contains("--timeout 0") {

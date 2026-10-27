@@ -646,53 +646,46 @@ pub(super) fn machine_refusal_document(
     }
 }
 
+/// The invocation authority and failure state at the analysis-timeout site,
+/// bundled so the stash helper stays one coherent input.
+struct TimeoutRefusalSite<'a> {
+    input: &'a CheckInput,
+    error: &'a CoreError,
+    budget: Option<std::time::Duration>,
+    format: OutputFormat,
+    /// The requested input source the CLI established before analysis.
+    source: crate::analysis::InputSource,
+    worktree_explicit: bool,
+    committed_explicit: bool,
+    candidate_tree: Option<String>,
+    candidate_base: Option<String>,
+    slot: &'a crate::analysis::InputFactsSlot,
+}
+
 /// Stash the availability-aware input-context projection when the budget
 /// fired (#10796), so the refusal renderer — JSON envelope or human stderr —
 /// can offer the requested echo, the published facts, and one bounded retry.
 /// Non-timeout failures never stash: their refusals stay byte-identical.
-fn stash_timeout_refusal(
-    input: &CheckInput,
-    error: &CoreError,
-    budget: Option<std::time::Duration>,
-    format: OutputFormat,
-    worktree_run: bool,
-    supplied_diff: bool,
-    candidate_tree: &Option<String>,
-    candidate_base: &Option<String>,
-    worktree_explicit: bool,
-    committed_explicit: bool,
-    slot: &crate::analysis::InputFactsSlot,
-) {
+fn stash_timeout_refusal(site: &TimeoutRefusalSite<'_>) {
     use crate::core_error::CheckFailureKind;
-    if error.check_failure_kind() != Some(CheckFailureKind::AnalysisTimeout) {
+    if site.error.check_failure_kind() != Some(CheckFailureKind::AnalysisTimeout) {
         return;
     }
-    let Some(budget) = budget else {
+    let Some(budget) = site.budget else {
         return;
     };
-    // The requested source selection the CLI established; the analysis effort
-    // mode rides separately in the projection and is never confused with it.
-    let source = if candidate_tree.is_some() {
-        crate::analysis::InputSource::GitCandidate
-    } else if supplied_diff {
-        crate::analysis::InputSource::SuppliedDiff
-    } else if worktree_run {
-        crate::analysis::InputSource::WorkingTree
-    } else {
-        crate::analysis::InputSource::Committed
-    };
     let projection = app::timeout_refusal::build(
-        input,
+        site.input,
         app::timeout_refusal::RequestedSourceContext {
-            source,
-            worktree_explicit,
-            committed_explicit,
-            candidate_tree: candidate_tree.clone(),
-            candidate_base: candidate_base.clone(),
+            source: site.source,
+            worktree_explicit: site.worktree_explicit,
+            committed_explicit: site.committed_explicit,
+            candidate_tree: site.candidate_tree.clone(),
+            candidate_base: site.candidate_base.clone(),
         },
         budget,
-        format == OutputFormat::Json,
-        crate::analysis::published_input_facts(slot),
+        site.format == OutputFormat::Json,
+        crate::analysis::published_input_facts(site.slot),
     );
     app::timeout_refusal::stash(projection);
 }
@@ -1746,19 +1739,30 @@ fn check_inner(
     let mut output = match output_result {
         Ok(output) => output,
         Err(err) => {
-            stash_timeout_refusal(
-                &envelope_input,
-                &err,
-                check_timeout,
-                effective_format,
-                worktree_run,
-                input_diff_file_is_some,
-                &candidate_tree,
-                &candidate_base,
-                worktree_explicitly_provided,
-                committed_explicitly_provided,
-                &input_facts_slot,
-            );
+            // The requested source selection the CLI established; the
+            // analysis effort mode rides separately in the projection and is
+            // never confused with it.
+            let source = if candidate_tree.is_some() {
+                crate::analysis::InputSource::GitCandidate
+            } else if input_diff_file_is_some {
+                crate::analysis::InputSource::SuppliedDiff
+            } else if worktree_run {
+                crate::analysis::InputSource::WorkingTree
+            } else {
+                crate::analysis::InputSource::Committed
+            };
+            stash_timeout_refusal(&TimeoutRefusalSite {
+                input: &envelope_input,
+                error: &err,
+                budget: check_timeout,
+                format: effective_format,
+                source,
+                worktree_explicit: worktree_explicitly_provided,
+                committed_explicit: committed_explicitly_provided,
+                candidate_tree: candidate_tree.clone(),
+                candidate_base: candidate_base.clone(),
+                slot: &input_facts_slot,
+            });
             return Err(super::check_fanout::refuse(
                 super::check_fanout::refusal_destination(
                     fanout_custody.as_ref(),

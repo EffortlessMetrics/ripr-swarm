@@ -343,10 +343,7 @@ mod tests {
         // no base facts because its producer never computes them.
         for (source, expect_base) in [
             (crate::analysis::InputSource::Committed, true),
-            (
-                crate::analysis::InputSource::SuppliedDiff,
-                false,
-            ),
+            (crate::analysis::InputSource::SuppliedDiff, false),
         ] {
             let slot: crate::analysis::InputFactsSlot =
                 std::sync::Arc::new(std::sync::Mutex::new(None));

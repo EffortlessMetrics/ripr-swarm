@@ -1,13 +1,7 @@
-use crate::app::{CHECK_OUTPUT_SCHEMA_VERSION, CheckInput};
+use crate::app::{CHECK_OUTPUT_SCHEMA_VERSION, CHECK_REFUSAL_SCHEMA_VERSION, CheckInput};
 use crate::core_error::CoreError;
 use crate::output::json::render_pretty_with_newline;
 use serde_json::{Value, json};
-
-/// Refusal-envelope schema generation for the `analysis_timeout` input-context
-/// amendment (#10796, RIPR-SPEC-0241): generation `0.3` adds the optional
-/// `input_context` key, present only on `analysis_timeout` refusals. Every
-/// other identity and sibling command keeps its existing generation.
-pub(crate) const CHECK_REFUSAL_SCHEMA_VERSION: &str = "0.3";
 
 const DIFF_SCOPE_OVERSIZED_PREFIX: &str = "diff_scope_oversized:";
 const DIFF_SCOPE_REPAIR_ROUTE: &str = "analysis/diff-scope-budget";
@@ -146,10 +140,7 @@ pub(crate) struct RefusalEnvelopeContext<'a> {
 /// human diagnostic rides in `message`. The identity comes from
 /// [`CoreError::check_refusal`], matched structurally; this renderer never
 /// inspects message text.
-fn refusal_envelope_value(
-    context: &RefusalEnvelopeContext<'_>,
-    error: &CoreError,
-) -> Value {
+fn refusal_envelope_value(context: &RefusalEnvelopeContext<'_>, error: &CoreError) -> Value {
     let notice = error.refusal_notice();
     let identity = notice.identity;
     let repair_route = notice.repair_route;
@@ -785,8 +776,8 @@ mod tests {
     }
 
     #[test]
-    fn timeout_refusal_with_stashed_context_renders_input_context_at_generation_0_3(
-    ) -> Result<(), String> {
+    fn timeout_refusal_with_stashed_context_renders_input_context_at_generation_0_3()
+    -> Result<(), String> {
         use crate::app::timeout_refusal;
         use crate::core_error::CoreError;
         timeout_refusal::clear_stashed();
@@ -815,8 +806,8 @@ mod tests {
             "analysis_timeout: ripr check exceeded its 600s wall-clock budget",
         );
         let rendered = render_check_failure_json(&input(), &error)?;
-        let value: Value = serde_json::from_str(&rendered)
-            .map_err(|err| format!("parse refusal JSON: {err}"))?;
+        let value: Value =
+            serde_json::from_str(&rendered).map_err(|err| format!("parse refusal JSON: {err}"))?;
 
         // Generation 0.3 and the new key, only because the projection exists.
         if value.pointer("/schema_version").and_then(Value::as_str) != Some("0.3") {
@@ -826,7 +817,10 @@ mod tests {
             ("/input_context/requested/source", "committed"),
             ("/input_context/requested/base", "origin/main"),
             ("/input_context/requested/analysis_mode", "draft"),
-            ("/input_context/resolved/effective_base/value", "origin/main"),
+            (
+                "/input_context/resolved/effective_base/value",
+                "origin/main",
+            ),
             ("/input_context/resolved/base_commit/value", "06e6aea"),
             ("/input_context/resolved/scoped_changed_files/value", "6"),
             ("/input_context/recovery/kind", "retry_with_larger_budget"),
@@ -850,9 +844,12 @@ mod tests {
             }
         }
         if value.pointer("/analysis_scope/downstream_consumable") != Some(&Value::Bool(false))
-            || value.pointer("/run_limitations/0/downstream_consumable") != Some(&Value::Bool(false))
+            || value.pointer("/run_limitations/0/downstream_consumable")
+                != Some(&Value::Bool(false))
         {
-            return Err(format!("non-consumable treatment must be preserved: {value}"));
+            return Err(format!(
+                "non-consumable treatment must be preserved: {value}"
+            ));
         }
         if value["findings"].as_array().map(Vec::len) != Some(0) {
             return Err(format!("findings must stay empty: {value}"));
@@ -882,17 +879,23 @@ mod tests {
             "analysis_timeout: ripr check exceeded its 600s wall-clock budget",
         );
         let rendered = render_check_failure_json(&input(), &error)?;
-        let value: Value = serde_json::from_str(&rendered)
-            .map_err(|err| format!("parse refusal JSON: {err}"))?;
+        let value: Value =
+            serde_json::from_str(&rendered).map_err(|err| format!("parse refusal JSON: {err}"))?;
         // No stashed projection (library caller): unchanged 0.2 shape, no
         // input_context key, so no caller-unsupplied value enters the doc.
         if value.pointer("/schema_version").and_then(Value::as_str) != Some("0.2") {
-            return Err(format!("context-less timeout refusal must stay at 0.2: {value}"));
+            return Err(format!(
+                "context-less timeout refusal must stay at 0.2: {value}"
+            ));
         }
         if value.get("input_context").is_some() {
-            return Err(format!("input_context must be absent without a projection: {value}"));
+            return Err(format!(
+                "input_context must be absent without a projection: {value}"
+            ));
         }
-        if value.pointer("/analysis_scope/run_status").and_then(Value::as_str)
+        if value
+            .pointer("/analysis_scope/run_status")
+            .and_then(Value::as_str)
             != Some("analysis_timeout")
         {
             return Err(format!("typed identity must be preserved: {value}"));
@@ -925,8 +928,8 @@ mod tests {
                 "analysis_timeout: ripr check exceeded its 60s wall-clock budget",
             ),
         )?;
-        let value: Value = serde_json::from_str(&rendered)
-            .map_err(|err| format!("parse refusal JSON: {err}"))?;
+        let value: Value =
+            serde_json::from_str(&rendered).map_err(|err| format!("parse refusal JSON: {err}"))?;
         for pointer in [
             "/input_context/resolved/effective_base",
             "/input_context/resolved/base_commit",
@@ -940,8 +943,7 @@ mod tests {
             if fact.get("available") != Some(&Value::Bool(false)) {
                 return Err(format!("{pointer} must be unavailable: {value}"));
             }
-            if fact.get("reason") != Some(&Value::String("not_published_before_deadline".into()))
-            {
+            if fact.get("reason") != Some(&Value::String("not_published_before_deadline".into())) {
                 return Err(format!("{pointer} must name the deadline reason: {value}"));
             }
         }
@@ -971,10 +973,12 @@ mod tests {
             &input(),
             &CoreError::base_unresolvable("the base `x` does not resolve to a commit"),
         )?;
-        let value: Value = serde_json::from_str(&rendered)
-            .map_err(|err| format!("parse refusal JSON: {err}"))?;
+        let value: Value =
+            serde_json::from_str(&rendered).map_err(|err| format!("parse refusal JSON: {err}"))?;
         if value.get("input_context").is_some() {
-            return Err(format!("non-timeout refusal must not gain input_context: {value}"));
+            return Err(format!(
+                "non-timeout refusal must not gain input_context: {value}"
+            ));
         }
         if value.pointer("/schema_version").and_then(Value::as_str) != Some("0.2") {
             return Err(format!("non-timeout refusal must stay at 0.2: {value}"));

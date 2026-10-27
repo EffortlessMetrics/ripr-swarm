@@ -155,9 +155,10 @@ impl TimeoutRefusalProjection {
     /// of fabricating flags that would silently narrow or broaden the diff.
     pub(crate) fn recovery_command(&self) -> String {
         let mut argv: Vec<String> = vec!["ripr".to_string(), "check".to_string()];
-        argv.push(format!("--root {}", crate::agent::loop_commands::shell_arg(
-            &crate::output::path::display_path(&self.root),
-        )));
+        argv.push(format!(
+            "--root {}",
+            crate::agent::loop_commands::shell_arg(&crate::output::path::display_path(&self.root),)
+        ));
         match self.requested.source {
             InputSource::SuppliedDiff => {
                 if let Some(diff_file) = &self.diff_file {
@@ -172,7 +173,10 @@ impl TimeoutRefusalProjection {
                     argv.push("--worktree".to_string());
                 }
                 if let Some(base) = &self.base {
-                    argv.push(format!("--base {}", crate::agent::loop_commands::shell_arg(base)));
+                    argv.push(format!(
+                        "--base {}",
+                        crate::agent::loop_commands::shell_arg(base)
+                    ));
                 }
             }
             InputSource::Committed => {
@@ -180,7 +184,10 @@ impl TimeoutRefusalProjection {
                     argv.push("--committed".to_string());
                 }
                 if let Some(base) = &self.base {
-                    argv.push(format!("--base {}", crate::agent::loop_commands::shell_arg(base)));
+                    argv.push(format!(
+                        "--base {}",
+                        crate::agent::loop_commands::shell_arg(base)
+                    ));
                 }
             }
             InputSource::GitCandidate => {
@@ -199,15 +206,24 @@ impl TimeoutRefusalProjection {
             }
         }
         for include in &self.scope_include {
-            argv.push(format!("--path {}", crate::agent::loop_commands::shell_arg(include)));
+            argv.push(format!(
+                "--path {}",
+                crate::agent::loop_commands::shell_arg(include)
+            ));
         }
         for exclude in &self.scope_exclude {
-            argv.push(format!("--exclude {}", crate::agent::loop_commands::shell_arg(exclude)));
+            argv.push(format!(
+                "--exclude {}",
+                crate::agent::loop_commands::shell_arg(exclude)
+            ));
         }
         if self.json_output {
             argv.push("--json".to_string());
         }
-        argv.push(format!("--timeout {}", next_budget_secs(self.expired_budget)));
+        argv.push(format!(
+            "--timeout {}",
+            next_budget_secs(self.expired_budget)
+        ));
         argv.join(" ")
     }
 
@@ -438,7 +454,9 @@ mod tests {
             "/resolved/out_of_scope_files",
         ] {
             assert_eq!(
-                value.pointer(pointer).and_then(|fact| fact.get("available")),
+                value
+                    .pointer(pointer)
+                    .and_then(|fact| fact.get("available")),
                 Some(&Value::Bool(false)),
                 "{pointer} must be unavailable: {value}"
             );
@@ -512,20 +530,23 @@ mod tests {
         );
         let value = projection.input_context_value();
         assert_eq!(value["recovery"]["rereads"], json!(["diff-file-bytes"]));
-        assert_eq!(value["resolved"]["effective_base"], json!({
-            "available": false,
-            "reason": "not_computed_for_source",
-        }));
+        assert_eq!(
+            value["resolved"]["effective_base"],
+            json!({
+                "available": false,
+                "reason": "not_computed_for_source",
+            })
+        );
     }
 
     #[test]
-    fn explicit_source_flags_and_scope_are_preserved() {
+    fn explicit_source_flags_and_scope_are_preserved() -> Result<(), String> {
         let mut check_input = input("repo", Some("main"), None);
         check_input.scope = crate::analysis::DiffScopeFilter::new(
             vec!["crates/api".to_string()],
             vec!["crates/api/tests".to_string()],
         )
-        .expect("scope patterns are valid");
+        .map_err(|err| format!("scope patterns are valid: {err}"))?;
         let mut requested_context = requested(InputSource::Committed);
         requested_context.committed_explicit = true;
         let projection = build(
@@ -550,6 +571,7 @@ mod tests {
             command.contains("--exclude crates/api/tests"),
             "exclude scope must be preserved: {command}"
         );
+        Ok(())
     }
 
     #[test]
@@ -595,7 +617,10 @@ mod tests {
         let text = late.human_recovery_text();
         assert!(text.contains("source=committed"), "{text}");
         assert!(text.contains("effective base origin/main"), "{text}");
-        assert!(text.contains("scoped changed files 6 (2 out of scope)"), "{text}");
+        assert!(
+            text.contains("scoped changed files 6 (2 out of scope)"),
+            "{text}"
+        );
         assert!(text.contains("bounded retry: ripr check"), "{text}");
         assert!(text.contains("not pinned"), "{text}");
 

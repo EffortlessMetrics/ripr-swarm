@@ -134,7 +134,10 @@ pub(crate) fn publish_loaded_diff(source: InputSource, loaded: &crate::analysis:
 /// Publish the scoped intake counts the parse and partition produced. These
 /// are adapter-facing scoped files; the raw Git path count is a different
 /// quantity and is deliberately not published here.
-pub(crate) fn publish_scoped_intake(scoped_changed_file_count: usize, out_of_scope_file_count: usize) {
+pub(crate) fn publish_scoped_intake(
+    scoped_changed_file_count: usize,
+    out_of_scope_file_count: usize,
+) {
     publish(PublishedInputFacts {
         scoped_changed_file_count: Some(scoped_changed_file_count),
         out_of_scope_file_count: Some(out_of_scope_file_count),
@@ -152,7 +155,11 @@ pub(crate) fn published(slot: &InputFactsSlot) -> Option<PublishedInputFacts> {
 mod tests {
     use super::*;
 
-    fn loaded(base: Option<&str>, commit: Option<&str>, merge_base: Option<&str>) -> crate::analysis::diff::LoadedDiff {
+    fn loaded(
+        base: Option<&str>,
+        commit: Option<&str>,
+        merge_base: Option<&str>,
+    ) -> crate::analysis::diff::LoadedDiff {
         crate::analysis::diff::LoadedDiff {
             text: String::new(),
             effective_base: base.map(str::to_string),
@@ -170,7 +177,7 @@ mod tests {
     }
 
     #[test]
-    fn captured_facts_round_trip_and_merge_across_producers() {
+    fn captured_facts_round_trip_and_merge_across_producers() -> Result<(), String> {
         let slot: InputFactsSlot = Arc::new(Mutex::new(None));
         with_input_facts_capture(slot.clone(), || {
             publish_loaded_diff(
@@ -179,13 +186,14 @@ mod tests {
             );
             publish_scoped_intake(6, 2);
         });
-        let facts = published(&slot).expect("published facts must be retained");
+        let facts = published(&slot).ok_or("published facts must be retained")?;
         assert_eq!(facts.source, Some(InputSource::WorkingTree));
         assert_eq!(facts.effective_base.as_deref(), Some("main"));
         assert_eq!(facts.resolved_base_commit.as_deref(), Some("abc123"));
         assert_eq!(facts.merge_base_origin.as_deref(), Some("def456"));
         assert_eq!(facts.scoped_changed_file_count, Some(6));
         assert_eq!(facts.out_of_scope_file_count, Some(2));
+        Ok(())
     }
 
     #[test]

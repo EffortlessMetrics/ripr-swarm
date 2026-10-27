@@ -16,10 +16,10 @@ pub(crate) use generated_rust_corpus::{
 pub(crate) mod harness_projection;
 mod input_facts;
 pub(crate) use input_facts::{
-    InputFactsSlot, InputSource, PublishedInputFacts, published as published_input_facts,
+    InputFactsSlot, InputSource, PublishedInputFacts,
     publish_input_source as publish_input_source_fact,
     publish_loaded_diff as publish_loaded_input_facts,
-    publish_scoped_intake as publish_scoped_intake_facts,
+    publish_scoped_intake as publish_scoped_intake_facts, published as published_input_facts,
     with_input_facts_capture,
 };
 mod language;
@@ -63,6 +63,11 @@ pub(crate) use diff::parse_unified_diff_bounded_with_metadata;
 pub(crate) use diff_scope_filter::DiffIntake;
 pub use diff_scope_filter::DiffScopeFilter;
 
+/// Test-only construction handle for the deadline-refusal input-facts
+/// publisher (RIPR-SPEC-0241 #10796); production publishers run inside the
+/// analysis tree and name the type through inference.
+#[cfg(test)]
+pub(crate) use diff::LoadedDiff;
 /// Shared pinned PR-evidence diff assembly (#3930, #4004): the one named
 /// owner for packet diff presentation, consumed by the product route and the
 /// xtask route alike. Neither route may rebuild its argv inline.
@@ -81,11 +86,6 @@ pub(crate) use diff::{
     resolve_effective_base_core, ripr_artifact_roots, working_tree_has_tracked_changes,
     working_tree_has_uncommitted_changes,
 };
-/// Test-only construction handle for the deadline-refusal input-facts
-/// publisher (RIPR-SPEC-0241 #10796); production publishers run inside the
-/// analysis tree and name the type through inference.
-#[cfg(test)]
-pub(crate) use diff::LoadedDiff;
 /// Shared RIPR-SPEC-0084 default-base authority and pinned analysis-range
 /// diff assembly (#4003): the one named owner for badge input base/diff,
 /// consumed by the analysis route and the xtask badge route alike. Neither
