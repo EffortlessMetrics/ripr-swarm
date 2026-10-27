@@ -252,6 +252,27 @@ fn repair_refusal(
                         ": write the boundary test by hand — `ripr agent stub{root_flag} --at {at} --kind predicate` writes a fill-in skeleton for the changed comparison; the boundary input is prefilled when it derives, otherwise fill the todo!() values, then rerun `ripr repair`"
                     ));
                 }
+                // #10701: a changed return value or error with no test ripr can
+                // safely strengthen has a working manual route too.
+                if let [missing] = eligibility.readiness.missing_evidence.as_slice()
+                    && let Some(kind) =
+                        crate::analysis::repair_route::stub_kind_for_missing_evidence(missing)
+                    && kind != "predicate"
+                    && matches!(
+                        (entry.seam.kind(), kind),
+                        (crate::analysis::seams::SeamKind::ReturnValue, "return_value")
+                            | (crate::analysis::seams::SeamKind::ErrorVariant, "error_path")
+                    )
+                {
+                    let file = crate::analysis::stable_path_text(entry.seam.file());
+                    let at = shell_arg(&format!("{file}:{}", entry.seam.display_line()));
+                    let root_flag = root.map_or_else(String::new, |root| {
+                        format!(" --root {}", shell_arg(&bound_root(&root.to_string_lossy())))
+                    });
+                    label.push_str(&format!(
+                        ": write the test by hand, or run `ripr agent stub{root_flag} --at {at} --kind {kind}` for a fill-in skeleton, then rerun `ripr repair`"
+                    ));
+                }
                 (RefusalKind::RouteNotReady, label)
             } else {
                 (RefusalKind::Other, label.to_string())

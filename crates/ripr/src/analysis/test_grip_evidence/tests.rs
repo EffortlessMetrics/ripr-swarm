@@ -3247,9 +3247,15 @@ fn device_labels_start_empty() {
         "activation summary should explain the value-insensitive owner-call route: {}",
         evidence.activate.summary
     );
+    // #10701: the only debt is the exact changed return value (the weak
+    // `is_empty()` oracle), never a boundary-value fact.
     assert!(
-        evidence.missing_discriminators.is_empty(),
-        "return-value no-arg activation must not create boundary debt"
+        evidence
+            .missing_discriminators
+            .iter()
+            .all(|fact| fact.value == return_seam.expression()),
+        "return-value no-arg activation must not create boundary debt: {:?}",
+        evidence.missing_discriminators
     );
     Ok(())
 }
@@ -3296,9 +3302,15 @@ fn device_labels_start_empty() {
         "activation summary should explain the value-insensitive owner-call route: {}",
         evidence.activate.summary
     );
+    // #10701: the only debt is the exact changed return value (the weak
+    // `is_empty()` oracle), never a boundary-value fact.
     assert!(
-        evidence.missing_discriminators.is_empty(),
-        "multiline value-insensitive direct owner calls must not create boundary debt"
+        evidence
+            .missing_discriminators
+            .iter()
+            .all(|fact| fact.value == return_seam.expression()),
+        "multiline value-insensitive direct owner calls must not create boundary debt: {:?}",
+        evidence.missing_discriminators
     );
     Ok(())
 }

@@ -38,8 +38,8 @@ use related_tests::{
 use super::classify::{
     assertion_observes_collection_argument, assertion_observes_direct_collection_for_probe,
     call_text_may_call_free_function, direct_collection_mutation_receiver, owner_call_text,
-    reach_evidence as classify_reach_evidence, relation_establishes_reach,
-    test_calls_free_function,
+    reach_evidence as classify_reach_evidence, related_tests_reach_owner_indirectly,
+    relation_establishes_reach, test_calls_free_function,
 };
 use super::facts::{CallFact, FunctionImplContext};
 use super::new_test_target::{self, NewTestTargetAdmission};
@@ -451,6 +451,21 @@ fn evidence_for_seam_with_context(
         .filter(|test| test_has_contradicted_assertion(test, owner_fn))
         .count();
 
+    let mut missing_discriminators = missing_discriminators;
+    let path_established = [&reach, &activate, &propagate]
+        .iter()
+        .all(|stage| stage.state == StageState::Yes);
+    if let Some(fact) = return_value_missing_discriminator(
+        seam,
+        &related_tests,
+        path_established.then_some(&discriminate),
+        statically_contradicted_related_tests,
+        owner_fn,
+        context.index,
+    ) {
+        missing_discriminators.push(fact);
+    }
+
     let mut evidence = TestGripEvidence {
         seam_id: seam.id().clone(),
         related_tests,
@@ -468,6 +483,85 @@ fn evidence_for_seam_with_context(
     let saturated = call_budget::any_saturated(related.iter().copied());
     call_budget::withhold(&mut evidence, saturated);
     evidence
+}
+
+/// The producer-owned `return_value` missing-discriminator fact (#10701).
+///
+/// A changed plain return expression is a repairable gap only when all of the
+/// following hold, so the fact never turns an unsound or unobserved case into
+/// a repair start:
+///
+/// - the seam is a `ReturnValue` seam with a non-empty changed expression;
+/// - a related test calls the owner directly and carries an edit target in a
+///   test file (the repair route also demands this target separately);
+/// - reach, activation and propagation are all established, and the
+///   discrimination stage found a weak or absent oracle on the result, so no
+///   related test already pins the exact returned value;
+/// - no related test's assertion is statically contradicted by the owner.
+///
+/// Anything else (no direct call, unknown/opaque discrimination, a strong
+/// oracle) emits nothing and the route stays fail-closed.
+fn return_value_missing_discriminator(
+    seam: &RepoSeam,
+    related_tests: &[Arc<RelatedTestGrip>],
+    discriminate: Option<&StageEvidence>,
+    statically_contradicted_related_tests: usize,
+    owner_fn: Option<&FunctionSummary>,
+    index: &RustIndex,
+) -> Option<MissingDiscriminatorFact> {
+    if !matches!(seam.kind(), SeamKind::ReturnValue | SeamKind::ErrorVariant)
+        || statically_contradicted_related_tests > 0
+    {
+        return None;
+    }
+    // `check` withholds the gap when a test reaches the owner as a function
+    // value or inside an executor helper; repair must agree.
+    let owner_fn = owner_fn?;
+    let related_identities: Vec<(&str, &Path, usize)> = related_tests
+        .iter()
+        .map(|test| (test.test_name.as_str(), test.file.as_path(), test.line))
+        .collect();
+    if related_tests_reach_owner_indirectly(
+        seam.file(),
+        seam.display_line(),
+        &owner_fn.name,
+        &related_identities,
+        index,
+    ) {
+        return None;
+    }
+    // `discriminate` is `None` unless reach, activation and propagation are
+    // all established: when `check` would call the change statically limited
+    // (for example no clear path to an observable sink), repair must not
+    // start on it either.
+    if !matches!(
+        discriminate.map(|stage| &stage.state),
+        Some(StageState::Weak | StageState::No)
+    ) {
+        return None;
+    }
+    let (description, reason) = match seam.required_discriminator() {
+        super::seams::RequiredDiscriminator::ReturnValue { description } => (
+            description,
+            "no related test asserts the exact changed return value",
+        ),
+        super::seams::RequiredDiscriminator::ErrorVariant { variant } => (
+            variant,
+            "no related test asserts the exact changed error variant",
+        ),
+        _ => return None,
+    };
+    if description.trim().is_empty() {
+        return None;
+    }
+    let direct_call_with_target = related_tests.iter().any(|test| {
+        test.relation_reason == RelationReason::DirectOwnerCall && test.test_target.is_some()
+    });
+    direct_call_with_target.then(|| MissingDiscriminatorFact {
+        value: description.clone(),
+        reason: reason.to_string(),
+        flow_sink: None,
+    })
 }
 
 fn new_test_target_admission(

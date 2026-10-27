@@ -257,6 +257,20 @@ pub(crate) fn producer_discriminator_evidence(kind: &str) -> String {
     format!("{PRODUCER_DISCRIMINATOR_EVIDENCE}: {kind}")
 }
 
+/// The `ripr agent stub --kind` spelling for a missing discriminator item
+/// whose gap has a working hand-written route, if any.
+pub(crate) fn stub_kind_for_missing_evidence(item: &str) -> Option<&'static str> {
+    let kind = item
+        .strip_prefix(PRODUCER_DISCRIMINATOR_EVIDENCE)?
+        .strip_prefix(": ")?;
+    match kind {
+        "return_value" => Some("return_value"),
+        "error_variant" => Some("error_path"),
+        "boundary_value" => Some("predicate"),
+        _ => None,
+    }
+}
+
 /// Whether a readiness evidence item names the boundary-value discriminator.
 pub(crate) fn is_boundary_value_discriminator_evidence(item: &str) -> bool {
     item == producer_discriminator_evidence(
