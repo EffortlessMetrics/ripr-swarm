@@ -284,6 +284,9 @@ fn expand_call(call: &LocalMacroCall) -> Option<ExpandedCall> {
         return None;
     }
     let statement = single_assertion_statement(&arm.transcriber)?;
+    if transcriber_makes_its_own_call(statement, &names) {
+        return None;
+    }
     let expanded = substitute_fragments(statement, &names, &arguments)?;
     // The expansion replaces the call's text in place, so a line break in
     // either would shift every later line, and a call split from its `;` by a
@@ -302,6 +305,35 @@ fn expand_call(call: &LocalMacroCall) -> Option<ExpandedCall> {
     Some(ExpandedCall {
         statement: expanded,
         oracle,
+    })
+}
+
+/// Whether the transcriber calls something the call's arguments do not
+/// supply: `assert_eq!(surcharge(5), $expected)` runs `surcharge(5)` whatever
+/// the call site wrote, so the call line's own inputs say nothing about what
+/// the assertion exercises and the expansion would be graded against the wrong
+/// ones. Only a constructor-like capitalised head, an assertion or nested
+/// macro, and a method on a fragment (`$value.len()`) are read.
+fn transcriber_makes_its_own_call(statement: &str, names: &[String]) -> bool {
+    let masked = mask_comments_and_strings(statement);
+    masked.match_indices('(').any(|(open, _)| {
+        let before = &masked[..open];
+        let head = before
+            .trim_end_matches(|character: char| character.is_alphanumeric() || character == '_');
+        let callee = &before[head.len()..];
+        if callee.is_empty() || callee.starts_with(|character: char| character.is_uppercase()) {
+            return false;
+        }
+        // A method call is the call site's own when its receiver is a bare
+        // fragment.
+        let Some(receiver) = head.strip_suffix('.') else {
+            return true;
+        };
+        let name = receiver
+            .rsplit(|character: char| !(character.is_alphanumeric() || character == '_'))
+            .next()
+            .unwrap_or_default();
+        !(receiver.ends_with(&format!("${name}")) && names.iter().any(|fragment| fragment == name))
     })
 }
 

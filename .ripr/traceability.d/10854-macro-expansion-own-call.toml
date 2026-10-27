@@ -1,0 +1,6 @@
+# Registers the own-call transcriber control (#10854) under RIPR-SPEC-0120.
+[[extend]]
+id = "RIPR-SPEC-0120"
+tests = [
+  "crates/ripr/tests/local_macro_assertion_expansion.rs::a_transcriber_that_makes_its_own_call_is_never_credited",
+]
