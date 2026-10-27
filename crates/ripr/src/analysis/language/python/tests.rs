@@ -6632,6 +6632,168 @@ fn analyze_diff_over_cap_keeps_a_test_through_a_fixture_calling_an_import_alias(
     )
 }
 
+/// #10785: Python accepts any whitespace, parentheses and `;` in an import,
+/// so the alias routes above must hold for every spelling, not only a
+/// single space.
+#[test]
+fn analyze_diff_over_cap_keeps_fixture_alias_tests_for_every_import_spelling() -> Result<(), String>
+{
+    for (label, conftest) in [
+        (
+            "diff-walk-cap-reach-fixture-decorator-alias-tab",
+            "from pytest\timport fixture as fx\n\nfrom orders import make_order\n\n\n@fx\ndef order():\n    return make_order(3)\n",
+        ),
+        (
+            "diff-walk-cap-reach-fixture-decorator-alias-parens",
+            "from pytest import(fixture as fx)\n\nfrom orders import make_order\n\n\n@fx\ndef order():\n    return make_order(3)\n",
+        ),
+        (
+            "diff-walk-cap-reach-fixture-import-alias-tab",
+            "import pytest\n\nfrom orders\timport make_order\tas\tbuild\n\n\n@pytest.fixture\ndef order():\n    return build(3)\n",
+        ),
+        (
+            "diff-walk-cap-reach-fixture-import-alias-semicolon",
+            "import pytest; from orders import make_order as build\n\n\n@pytest.fixture\ndef order():\n    return build(3)\n",
+        ),
+    ] {
+        assert_capped_fixture_test_matches_uncapped(label, conftest)?;
+    }
+    Ok(())
+}
+
+/// #10785: routes by which a test relates to a changed owner without naming
+/// it in its own body (a star import, a module alias, a conftest fixture in a
+/// parent directory, a fixture taken by a test-class method, a fixture over a
+/// module attribute, a fixture defined in the test module itself). Under a
+/// cap that only fits the changed file and the files on the route, each run
+/// must stay complete and match the uncapped findings.
+#[test]
+fn analyze_diff_over_cap_keeps_every_supported_relation_route() -> Result<(), String> {
+    let fixture = "import pytest\n\nfrom orders import make_order\n\n\n@pytest.fixture\ndef order():\n    return make_order(3)\n";
+    // (label, files beside orders.py, cap)
+    type Route<'a> = (&'a str, &'a [(&'a str, &'a str)], usize);
+    let routes: &[Route] = &[
+        (
+            "star-import",
+            &[
+                ("helpers.py", "from orders import *\n"),
+                (
+                    "tests/test_a.py",
+                    "from helpers import *\n\n\ndef test_a():\n    assert make_order(3) == 9\n",
+                ),
+            ],
+            3,
+        ),
+        (
+            "module-alias",
+            &[(
+                "tests/test_a.py",
+                "import orders as o\n\n\ndef test_a():\n    assert o.make_order(3) == 9\n",
+            )],
+            2,
+        ),
+        (
+            "parent-conftest",
+            &[
+                ("conftest.py", fixture),
+                (
+                    "tests/unit/deep/test_a.py",
+                    "def test_a(order):\n    assert order == 9\n",
+                ),
+            ],
+            3,
+        ),
+        (
+            "test-class-fixture",
+            &[
+                ("tests/conftest.py", fixture),
+                (
+                    "tests/test_a.py",
+                    "class TestA:\n    def test_a(self, order):\n        assert order == 9\n",
+                ),
+            ],
+            3,
+        ),
+        (
+            "module-attribute-fixture",
+            &[
+                (
+                    "tests/conftest.py",
+                    "import pytest\nimport orders\n\n\n@pytest.fixture\ndef order():\n    yield orders.make_order(3)\n",
+                ),
+                (
+                    "tests/test_a.py",
+                    "def test_a(order):\n    assert order == 9\n",
+                ),
+            ],
+            3,
+        ),
+        (
+            "fixture-in-test-module",
+            &[(
+                "tests/test_a.py",
+                "import pytest\n\nfrom orders import make_order\n\n\n@pytest.fixture\ndef order():\n    return make_order(3)\n\n\ndef test_a(order):\n    assert order == 9\n",
+            )],
+            2,
+        ),
+    ];
+    for (label, files, cap) in routes {
+        let root = unique_test_root(&format!("diff-walk-cap-route-{label}"));
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        write_repo_file(
+            &root.join("orders.py"),
+            "def make_order(count):\n    if count > 2:\n        return count * 3\n    return count\n",
+        )?;
+        for (path, text) in *files {
+            write_repo_file(&root.join(path), text)?;
+        }
+        for index in 0..10 {
+            write_repo_file(
+                &root.join(format!("filler/m{index:02}.py")),
+                &format!("def f{index}(value):\n    return value + {index}\n"),
+            )?;
+        }
+        let changed_files = vec![ChangedFile {
+            path: PathBuf::from("orders.py"),
+            added_lines: vec![ChangedLine {
+                line: 2,
+                text: "    if count > 2:".to_string(),
+                new_side_line: 2,
+            }],
+            removed_lines: Vec::new(),
+        }];
+        let options = repo_options(&root);
+        let capped = PythonAdapter::analyze_diff_with_limits(
+            &options,
+            &changed_files,
+            PythonDiffWalkLimits {
+                max_workspace_files: *cap,
+                ..generous_walk_limits()
+            },
+        )?;
+        let uncapped = PythonAdapter::analyze_diff_with_limits(
+            &options,
+            &changed_files,
+            generous_walk_limits(),
+        )?;
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        assert!(
+            uncapped
+                .findings
+                .iter()
+                .any(|finding| !finding.related_tests.is_empty()),
+            "{label}: the route must relate the test in the uncapped run"
+        );
+        assert!(
+            capped.limitations.is_empty(),
+            "{label}: only unrelated files were refused: {:?}",
+            capped.limitations
+        );
+        assert_eq!(capped.findings, uncapped.findings, "{label}");
+    }
+    Ok(())
+}
+
 /// #10785 negative control: the same workspace with a cap too small for the
 /// reaching set (the changed file plus one slot) refuses the helper module
 /// the test imports, so the run stays partial and names one refused file.

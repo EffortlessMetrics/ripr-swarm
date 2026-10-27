@@ -140,7 +140,17 @@ pub(super) fn admit_by_reach(
     let token = crate::analysis::cancellation::current_token();
     let mut reaching = vec![false; discovered.len()];
     let mut settled = false;
+    // A cancelled run stops scanning; the caller's own checkpoints then
+    // abort the analysis.
+    let cancelled = || {
+        token
+            .as_ref()
+            .is_some_and(|token| token.checkpoint().is_err())
+    };
     for _ in 0..MAX_FIXTURE_ROUNDS {
+        if cancelled() {
+            return None;
+        }
         let found: Vec<(usize, Vec<String>)> = (0..discovered.len())
             .into_par_iter()
             .filter_map(|index| {
@@ -194,7 +204,7 @@ pub(super) fn admit_by_reach(
             break;
         }
     }
-    if !settled {
+    if !settled || cancelled() {
         return None;
     }
     // The workspace modules a changed file, conftest, package init or
@@ -465,7 +475,36 @@ fn block_kinds(source: &str) -> Vec<BlockKind> {
 }
 
 fn is_import_statement(trimmed: &str) -> bool {
-    trimmed.starts_with("import ") || trimmed.starts_with("from ")
+    ["import", "from"].iter().any(|keyword| {
+        trimmed.strip_prefix(keyword).is_some_and(|rest| {
+            rest.starts_with(|ch: char| ch.is_whitespace() || ch == '.' || ch == '\\')
+        })
+    })
+}
+
+/// One import statement in a single spelling: any run of whitespace or a
+/// backslash continuation becomes one space, parentheses and commas stand
+/// apart, and `from.x` becomes `from .x`, so `from pytest\timport(fixture
+/// as fx)` reads `from pytest import ( fixture as fx )`. Python accepts
+/// all of these spellings, so every parser here must see them.
+fn normalize_import(statement: &str) -> String {
+    let mut spaced = String::with_capacity(statement.len() + 8);
+    for ch in statement.chars() {
+        match ch {
+            '(' | ')' | ',' => {
+                spaced.push(' ');
+                spaced.push(ch);
+                spaced.push(' ');
+            }
+            '\\' => spaced.push(' '),
+            _ => spaced.push(ch),
+        }
+    }
+    let joined = spaced.split_whitespace().collect::<Vec<_>>().join(" ");
+    match joined.strip_prefix("from.") {
+        Some(rest) => format!("from .{rest}"),
+        None => joined,
+    }
 }
 
 /// A changed module, searched for on import lines.
@@ -608,11 +647,16 @@ fn enclosing_defs(source: &str) -> Vec<Option<String>> {
 }
 
 /// Import statements of a module at any indentation, with a parenthesized or
-/// backslash-continued name list joined onto its first line.
+/// backslash-continued name list joined onto its first line, `;`-separated
+/// imports split apart, and each one in [`normalize_import`]'s spelling.
 fn import_statements(source: &str) -> impl Iterator<Item = String> + '_ {
     let mut lines = source.lines();
+    let mut pending: std::collections::VecDeque<String> = std::collections::VecDeque::new();
     std::iter::from_fn(move || {
         loop {
+            if let Some(statement) = pending.pop_front() {
+                return Some(statement);
+            }
             let line = lines.next()?;
             let trimmed = line.trim_start();
             if !is_import_statement(trimmed) {
@@ -630,7 +674,13 @@ fn import_statements(source: &str) -> impl Iterator<Item = String> + '_ {
                 open = open && !next.contains(')');
                 continued = next.trim_end().ends_with('\\');
             }
-            return Some(statement);
+            pending.extend(
+                statement
+                    .split(';')
+                    .map(str::trim_start)
+                    .filter(|part| is_import_statement(part))
+                    .map(normalize_import),
+            );
         }
     })
 }
@@ -1162,6 +1212,26 @@ mod tests {
         let needles: HashSet<String> = ["make_order".to_string()].into_iter().collect();
         let conftest = "import pytest\n\nfrom orders import make_order as build\n\n\n@pytest.fixture\ndef order():\n    return build(3)\n";
         assert_eq!(fixtures_over(conftest, &needles), vec!["order".to_string()]);
+    }
+
+    #[test]
+    fn import_statements_read_every_spelling_python_accepts() {
+        let source = "from pytest\timport fixture as fx\nfrom  pytest  import(fixture  as  fy)\nfrom.orders import make_order as build\nimport os; from pytest import fixture as fz\nfrom pytest import \\\n    fixture as fw\nfrom_x = 1\n";
+        let statements: Vec<String> = import_statements(source).collect();
+        assert_eq!(
+            statements,
+            vec![
+                "from pytest import fixture as fx",
+                "from pytest import ( fixture as fy )",
+                "from .orders import make_order as build",
+                "import os",
+                "from pytest import fixture as fz",
+                "from pytest import fixture as fw",
+            ]
+        );
+        assert_eq!(fixture_aliases(source), vec!["fx", "fy", "fz", "fw"]);
+        let needles: HashSet<String> = ["make_order".to_string()].into_iter().collect();
+        assert_eq!(imported_aliases(source, &needles), vec!["build"]);
     }
 
     #[test]
