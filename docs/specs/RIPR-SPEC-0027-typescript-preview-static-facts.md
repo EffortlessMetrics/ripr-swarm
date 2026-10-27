@@ -210,6 +210,11 @@ Test discovery:
   the entry's own path, so such a link hides no test or source. A directory
   link, a source-named link, a dangling link and a link whose target cannot be
   read stay counted.
+- a file named `*.d.ts`, `*.d.mts` or `*.d.cts` is parsed as a TypeScript
+  declaration file (#10812): its top-level declarations are ambient, so
+  `export const x: T;` is not a parse error there. The same text in an
+  ordinary `.ts` file, and any real syntax error in a declaration file, stay
+  disclosed as `language_scope_unsupported`.
 - top-level `expect(...)` calls when paired with a `test`/`it` block
 - exported test files matched by configured patterns (default:
   `*.test.ts`, `*.test.tsx`, `*.spec.ts`, `*.spec.tsx`, and the

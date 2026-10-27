@@ -141,3 +141,30 @@ fn only_parsed_ambient_declarations_are_skipped() -> Result<(), String> {
     );
     Ok(())
 }
+
+fn parse_error_count(file: &str, source: &str) -> usize {
+    let allocator = oxc_allocator::Allocator::default();
+    oxc_parser::Parser::new(&allocator, source, source_type_for(Path::new(file)))
+        .parse()
+        .errors
+        .len()
+}
+
+/// #10812: a declaration file's top-level `const` has no initializer by
+/// design, so it must parse clean under `.d.ts`, `.d.mts` and `.d.cts`, while
+/// the same text in a `.ts` file is still a disclosed parse error.
+#[test]
+fn declaration_files_parse_ambient_const_without_an_initializer() {
+    let source = "export const $: Runner<{}>;\nexport declare function run(): void;\n";
+    for file in ["types/api.d.ts", "types/api.d.mts", "types/api.d.cts"] {
+        assert_eq!(parse_error_count(file, source), 0, "{file}");
+    }
+    assert!(
+        parse_error_count("src/api.ts", source) > 0,
+        "the same text in an ordinary .ts file must stay a parse error"
+    );
+    assert!(
+        parse_error_count("types/api.d.ts", "export const = ;\n") > 0,
+        "a real syntax error in a declaration file is still disclosed"
+    );
+}

@@ -1,0 +1,6 @@
+# Registers the declaration-file parse mode (#10812) under RIPR-SPEC-0027.
+[[extend]]
+id = "RIPR-SPEC-0027"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/ambient_declaration_tests.rs::declaration_files_parse_ambient_const_without_an_initializer",
+]
