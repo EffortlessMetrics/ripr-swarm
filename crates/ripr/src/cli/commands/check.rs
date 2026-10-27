@@ -558,7 +558,10 @@ pub(super) fn refuse_check(
     let error = error.into();
     let rendered = match machine_refusal_document(envelope_input, format, &error) {
         Some(rendered) => rendered,
-        None => return error.to_string(),
+        // Human formats (and machine formats without an honest refusal shape)
+        // stay prose-only; an analysis_timeout refusal appends the same
+        // bounded recovery the JSON envelope carries (#10796).
+        None => return human_refusal_prose(&error),
     };
     match rendered {
         Ok(document) => {
@@ -567,6 +570,19 @@ pub(super) fn refuse_check(
             }
         }
         Err(render) => return render,
+    }
+    error.to_string()
+}
+
+/// The stderr refusal for a format with no machine refusal document. A timed
+/// run consumes the stashed input-context projection so native human
+/// consumers get the requested echo, the published facts, and the bounded
+/// retry; every other failure keeps its unchanged prose.
+fn human_refusal_prose(error: &CoreError) -> String {
+    if error.refusal_notice().identity == "analysis_timeout"
+        && let Some(projection) = app::timeout_refusal::take_stashed()
+    {
+        return format!("{error}\n{}", projection.human_recovery_text());
     }
     error.to_string()
 }
@@ -630,6 +646,57 @@ pub(super) fn machine_refusal_document(
     }
 }
 
+/// Stash the availability-aware input-context projection when the budget
+/// fired (#10796), so the refusal renderer — JSON envelope or human stderr —
+/// can offer the requested echo, the published facts, and one bounded retry.
+/// Non-timeout failures never stash: their refusals stay byte-identical.
+fn stash_timeout_refusal(
+    input: &CheckInput,
+    error: &CoreError,
+    budget: Option<std::time::Duration>,
+    format: OutputFormat,
+    worktree_run: bool,
+    supplied_diff: bool,
+    candidate_tree: &Option<String>,
+    candidate_base: &Option<String>,
+    worktree_explicit: bool,
+    committed_explicit: bool,
+    slot: &crate::analysis::InputFactsSlot,
+) {
+    use crate::core_error::CheckFailureKind;
+    if error.check_failure_kind() != Some(CheckFailureKind::AnalysisTimeout) {
+        return;
+    }
+    let Some(budget) = budget else {
+        return;
+    };
+    // The requested source selection the CLI established; the analysis effort
+    // mode rides separately in the projection and is never confused with it.
+    let source = if candidate_tree.is_some() {
+        crate::analysis::InputSource::GitCandidate
+    } else if supplied_diff {
+        crate::analysis::InputSource::SuppliedDiff
+    } else if worktree_run {
+        crate::analysis::InputSource::WorkingTree
+    } else {
+        crate::analysis::InputSource::Committed
+    };
+    let projection = app::timeout_refusal::build(
+        input,
+        app::timeout_refusal::RequestedSourceContext {
+            source,
+            worktree_explicit,
+            committed_explicit,
+            candidate_tree: candidate_tree.clone(),
+            candidate_base: candidate_base.clone(),
+        },
+        budget,
+        format == OutputFormat::Json,
+        crate::analysis::published_input_facts(slot),
+    );
+    app::timeout_refusal::stash(projection);
+}
+
 pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     check_inner(args, None)
 }
@@ -646,6 +713,9 @@ fn check_inner(
     args: &[String],
     interrupt_flags: Option<crate::cli::interrupt::InterruptFlags>,
 ) -> Result<(), String> {
+    // #10796: one CLI invocation must never inherit a timed-out run's stashed
+    // input context on this thread.
+    app::timeout_refusal::clear_stashed();
     #[cfg(not(unix))]
     let _ = interrupt_flags;
     let mut input = CheckInput {
@@ -1634,6 +1704,12 @@ fn check_inner(
     } else {
         app::AnalysisProgressScope::Diff
     };
+    // #10796: register the input-facts capture for the worker thread so a
+    // deadline refusal can retain only what producers actually published
+    // before the budget fired. No capture-registered run (or none at all)
+    // leaves the slot empty — the early-timeout case.
+    let input_facts_slot: crate::analysis::InputFactsSlot =
+        std::sync::Arc::new(std::sync::Mutex::new(None));
     let output_result = if format.is_repo_seam_inventory() {
         // Repo seam-driven formats do not consume legacy repo `Findings`,
         // so skip `run_repo_analysis` and let `render_check` drive the
@@ -1645,6 +1721,7 @@ fn check_inner(
         let worker_config = config.clone();
         let worker_sink = progress.clone();
         let abandon_sink = progress.clone();
+        let worker_input_facts_slot = input_facts_slot.clone();
         super::check_budget::run_with_budget(
             check_timeout,
             move || {
@@ -1653,20 +1730,35 @@ fn check_inner(
                 }
             },
             move || {
-                app::check_with_progress_core(
-                    input,
-                    &worker_config,
-                    progress_scope,
-                    worker_sink
-                        .as_ref()
-                        .map(|sink| &**sink as &dyn crate::app::AnalysisProgressSink),
-                )
+                crate::analysis::with_input_facts_capture(worker_input_facts_slot, move || {
+                    app::check_with_progress_core(
+                        input,
+                        &worker_config,
+                        progress_scope,
+                        worker_sink
+                            .as_ref()
+                            .map(|sink| &**sink as &dyn crate::app::AnalysisProgressSink),
+                    )
+                })
             },
         )
     };
     let mut output = match output_result {
         Ok(output) => output,
         Err(err) => {
+            stash_timeout_refusal(
+                &envelope_input,
+                &err,
+                check_timeout,
+                effective_format,
+                worktree_run,
+                input_diff_file_is_some,
+                &candidate_tree,
+                &candidate_base,
+                worktree_explicitly_provided,
+                committed_explicitly_provided,
+                &input_facts_slot,
+            );
             return Err(super::check_fanout::refuse(
                 super::check_fanout::refusal_destination(
                     fanout_custody.as_ref(),

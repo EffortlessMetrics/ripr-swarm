@@ -241,4 +241,138 @@ mod tests {
             Ok(Some(AnalysisAbortKind::DeadlineExceeded))
         );
     }
+
+    #[test]
+    fn budget_timeout_before_discovery_retains_no_input_facts() -> Result<(), String> {
+        // #10796 decisive control, early timeout: the worker is stuck before
+        // any producer publishes. The deadline is injected (50 ms), never
+        // derived from wall-clock observation, and the refusal must read as
+        // "no input facts" — an empty capture slot, not fabricated zeroes.
+        let slot: crate::analysis::InputFactsSlot =
+            std::sync::Arc::new(std::sync::Mutex::new(None));
+        let worker_slot = std::sync::Arc::clone(&slot);
+        let result: Result<u32, _> = run_with_budget(
+            Some(Duration::from_millis(50)),
+            || {},
+            move || {
+                crate::analysis::with_input_facts_capture(worker_slot, || {
+                    // Stuck between checkpoints: no loader, no intake, only a
+                    // would-be progress heartbeat — which cannot establish
+                    // discovery by contract.
+                    loop {
+                        if crate::analysis::cancellation::checkpoint_typed().is_err() {
+                            break;
+                        }
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                    Ok(1)
+                })
+            },
+        );
+        let Err(error) = result else {
+            return Err("a stuck pre-discovery worker must hit the budget".to_string());
+        };
+        assert_eq!(
+            error.check_failure_kind(),
+            Some(CheckFailureKind::AnalysisTimeout)
+        );
+        if crate::analysis::published_input_facts(&slot).is_some() {
+            return Err("no fact may be retained before its producer completed".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn budget_timeout_after_published_input_facts_retains_them() -> Result<(), String> {
+        // #10796 decisive control, late timeout: the loader and intake facts
+        // were published before the worker stalled, so the refusal may retain
+        // exactly those facts — and only those.
+        let slot: crate::analysis::InputFactsSlot =
+            std::sync::Arc::new(std::sync::Mutex::new(None));
+        let worker_slot = std::sync::Arc::clone(&slot);
+        let result: Result<u32, _> = run_with_budget(
+            Some(Duration::from_millis(50)),
+            || {},
+            move || {
+                crate::analysis::with_input_facts_capture(worker_slot, || {
+                    crate::analysis::publish_loaded_input_facts(
+                        crate::analysis::InputSource::WorkingTree,
+                        &crate::analysis::LoadedDiff {
+                            text: String::new(),
+                            effective_base: Some("origin/main".to_string()),
+                            resolved_base_commit: Some("06e6aea".to_string()),
+                            merge_base_origin: Some("4d3c2b1".to_string()),
+                        },
+                    );
+                    crate::analysis::publish_scoped_intake_facts(6, 2);
+                    loop {
+                        if crate::analysis::cancellation::checkpoint_typed().is_err() {
+                            break;
+                        }
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                    Ok(1)
+                })
+            },
+        );
+        let Err(error) = result else {
+            return Err("a stalled post-discovery worker must hit the budget".to_string());
+        };
+        assert_eq!(
+            error.check_failure_kind(),
+            Some(CheckFailureKind::AnalysisTimeout)
+        );
+        let facts = crate::analysis::published_input_facts(&slot)
+            .ok_or("published facts must be retained for the refusal")?;
+        assert_eq!(
+            facts.source,
+            Some(crate::analysis::InputSource::WorkingTree)
+        );
+        assert_eq!(facts.effective_base.as_deref(), Some("origin/main"));
+        assert_eq!(facts.resolved_base_commit.as_deref(), Some("06e6aea"));
+        assert_eq!(facts.merge_base_origin.as_deref(), Some("4d3c2b1"));
+        assert_eq!(facts.scoped_changed_file_count, Some(6));
+        assert_eq!(facts.out_of_scope_file_count, Some(2));
+        Ok(())
+    }
+
+    #[test]
+    fn budget_timeout_facts_cover_committed_and_supplied_diff_modes() -> Result<(), String> {
+        // #10796 decisive controls, source modes: the loader publishes the
+        // source label with its own revision facts; a supplied diff publishes
+        // no base facts because its producer never computes them.
+        for (source, expect_base) in [
+            (crate::analysis::InputSource::Committed, true),
+            (
+                crate::analysis::InputSource::SuppliedDiff,
+                false,
+            ),
+        ] {
+            let slot: crate::analysis::InputFactsSlot =
+                std::sync::Arc::new(std::sync::Mutex::new(None));
+            crate::analysis::with_input_facts_capture(std::sync::Arc::clone(&slot), || {
+                crate::analysis::publish_loaded_input_facts(
+                    source,
+                    &crate::analysis::LoadedDiff {
+                        text: String::new(),
+                        effective_base: Some("origin/main".to_string()),
+                        resolved_base_commit: Some("06e6aea".to_string()),
+                        merge_base_origin: None,
+                    },
+                );
+            });
+            let facts = crate::analysis::published_input_facts(&slot)
+                .ok_or("loaded facts must publish for every source mode")?;
+            assert_eq!(facts.source, Some(source));
+            if expect_base {
+                assert_eq!(facts.effective_base.as_deref(), Some("origin/main"));
+            } else {
+                assert!(
+                    facts.effective_base.is_none(),
+                    "a supplied diff never computes a base"
+                );
+            }
+        }
+        Ok(())
+    }
 }
