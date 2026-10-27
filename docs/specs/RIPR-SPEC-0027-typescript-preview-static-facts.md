@@ -487,6 +487,19 @@ boundary without changing the guards (#4104 E):
   simple operands. A compound (`&&`, `||`) or arithmetic condition stays
   unparsed, and a line whose condition equals the removed line's condition
   (an edit to the statement) is not a predicate boundary change.
+- **Unreadable changed `if` withholds** (#10776): the dead-expectation check
+  folds the two branch returns of the changed `if` and withholds a boundary
+  witness whose numeric expectation equals neither. When the changed line is a
+  plain `if (` that opens a brace but the scan cannot read its pair (a one-line
+  `if (c) { return 1; }`, which would hand it the enclosing block's returns, or
+  an `if` nested in an arrow or `function`, whose returns belong to that
+  function), the check withholds as well: a pin that cannot be shown live does
+  not witness the boundary, live or dead. The rule applies after the existing
+  gates (an owner body, a numeric expectation, a unique changed line); where one
+  of those fails, the witness decision stands as before. A changed ternary,
+  `else if` head, brace-less one-line `if` (#10463) or a condition that
+  continues onto the next line keeps its previous behavior. Method shorthand
+  and class methods are not recognized as nested functions (#10776).
 
 When the adapter cannot classify, it emits one of the `static_limit_kind`
 values defined in RIPR-SPEC-0026:
