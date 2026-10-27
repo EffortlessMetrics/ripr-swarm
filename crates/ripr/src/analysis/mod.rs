@@ -14,6 +14,14 @@ pub(crate) use generated_rust_corpus::{
     absent_changed_rust_file_limitations, generated_rust_recovery,
 };
 pub(crate) mod harness_projection;
+mod input_facts;
+pub(crate) use input_facts::{
+    InputFactsSlot, InputSource, PublishedInputFacts, published as published_input_facts,
+    publish_input_source as publish_input_source_fact,
+    publish_loaded_diff as publish_loaded_input_facts,
+    publish_scoped_intake as publish_scoped_intake_facts,
+    with_input_facts_capture,
+};
 mod language;
 pub(crate) mod language_outcome;
 pub(crate) mod new_test_target;
@@ -73,6 +81,11 @@ pub(crate) use diff::{
     resolve_effective_base_core, ripr_artifact_roots, working_tree_has_tracked_changes,
     working_tree_has_uncommitted_changes,
 };
+/// Test-only construction handle for the deadline-refusal input-facts
+/// publisher (RIPR-SPEC-0241 #10796); production publishers run inside the
+/// analysis tree and name the type through inference.
+#[cfg(test)]
+pub(crate) use diff::LoadedDiff;
 /// Shared RIPR-SPEC-0084 default-base authority and pinned analysis-range
 /// diff assembly (#4003): the one named owner for badge input base/diff,
 /// consumed by the analysis route and the xtask badge route alike. Neither

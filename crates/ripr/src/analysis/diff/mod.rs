@@ -9,7 +9,8 @@ pub(crate) use source::reconstruct_old_source;
 pub mod records;
 
 pub(crate) use load::{
-    AnalyzedRevisions, resolve_analyzed_revisions, working_tree_has_uncommitted_changes,
+    AnalyzedRevisions, LoadedDiff, resolve_analyzed_revisions,
+    working_tree_has_uncommitted_changes,
 };
 pub(crate) use load::{
     another_base_candidate, load_diff_core, load_diff_range_with_deadline_core,
