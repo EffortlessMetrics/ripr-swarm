@@ -63,12 +63,14 @@ related test row pins the exact label per arm.
 - Replaced constant (#10304): when the changed line is exactly
   `left == literal` (or `!=`) on both sides of the edit, with the same
   left operand and operator and two different single literals (string,
-  char or integer), a related test row whose left operand resolves
-  exactly to the replaced literal observes the swap: that row takes the
+  char or integer), a related test row whose left operand equals
+  the replaced literal observes the swap: that row takes the
   other branch after the edit, as a row on the new literal does before
   it. A compound predicate, a changed left operand, a named or computed
   constant, a row on neither literal and a weak oracle keep the missing
-  equality-boundary discriminator.
+  equality-boundary discriminator. Known limit (#10856): the rule is not
+  path-sensitive, so a row that an earlier branch or early return
+  handles still counts, as a row on the new literal already does.
 
 ## Required Evidence
 
@@ -109,7 +111,9 @@ related test row pins the exact label per arm.
   never names it is read as a catch-all binding in source order (#10680),
   only when the file holding the helper shows the name is a fresh binding:
   no `const`, `static`, import, module glob, unit struct, enum, function,
-  type or module of that name in the file or the helper body. A guard on
+  type, trait, union or module of that name in the file or the helper body,
+  and no `include!`, `macro_rules!` or column-0 item macro that could
+  declare one. A guard on
   it, a value that names it, a capitalized name, `ref`/`mut` and an
   unreadable file refuse the whole match.
 - No bound is exceeded silently: the shape is all-or-nothing, and any

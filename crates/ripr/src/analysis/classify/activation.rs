@@ -578,7 +578,7 @@ fn observed_discriminator_values(
                 context: ValueContext::FunctionArgument,
             });
         } else if let Some(old) = &replaced
-            && comparable_value(&old.value) == comparable_value(&left_value.value)
+            && same_literal_value(&old.value, &left_value.value)
         {
             // The row sits on the constant the edit replaced; it flips the
             // same way a row on the new constant does (#10680).
@@ -2608,9 +2608,8 @@ fn missing_boundary_discriminator(
                 .any(|left_value| exact_values_equal(&old.value, &left_value.value))
         }) || left_credit.as_deref().is_some_and(|name| {
             call_values.iter().any(|row| {
-                parameter_value(row, name).is_some_and(|cell| {
-                    comparable_value(&cell.value) == comparable_value(&old.value)
-                })
+                parameter_value(row, name)
+                    .is_some_and(|cell| same_literal_value(&cell.value, &old.value))
             })
         })
     });
@@ -5819,6 +5818,10 @@ fn replaced_equality_constant(probe: &Probe) -> Option<ReplacedConstant> {
         return None;
     }
     let value = literal_operand_value(&before_literal)?;
+    // `5` to `05` or `"a"` to `"\u{61}"` is the same value: nothing flips.
+    if same_literal_value(&value, &literal_operand_value(&after_literal)?) {
+        return None;
+    }
     Some(ReplacedConstant {
         text: before_literal,
         value,
@@ -6147,6 +6150,14 @@ fn is_float_exponent_sign(chars: &[char], sign: usize) -> bool {
         && mantissa
             .iter()
             .all(|ch| ch.is_ascii_digit() || matches!(ch, '_' | '.'))
+}
+
+/// Two literal values are the same constant: equal text or the same plain
+/// decimal, never merely equal once underscores are erased (`"a_b"` is not
+/// `"ab"`), which `comparable_value` would claim.
+fn same_literal_value(left: &str, right: &str) -> bool {
+    let bare = |value: &'_ str| value.trim().trim_matches('"').to_string();
+    exact_values_equal(left, right) || bare(left) == bare(right)
 }
 
 fn comparable_value(value: &str) -> String {
@@ -9291,6 +9302,14 @@ assert_eq!(input.amount, 100);"#
             replaced("if label != \"alpha\" {", "if label != \"beta\" {"),
             Some("\"alpha\"".to_string())
         );
+        // The same value spelled twice is no swap.
+        assert_eq!(replaced("if n == 5 {", "if n == 05 {"), None);
+        assert_eq!(
+            replaced("if n == 5 {", "if n == 5_0 {"),
+            Some("5".to_string())
+        );
+        assert!(same_literal_value("\"a\"", "a"));
+        assert!(!same_literal_value("\"a_b\"", "\"ab\""));
         // A compound predicate, a changed operand or operator, a named or
         // computed constant, an unchanged literal and a missing `before`
         // all keep the missing equality.

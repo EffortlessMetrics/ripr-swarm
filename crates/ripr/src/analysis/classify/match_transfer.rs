@@ -272,7 +272,7 @@ fn mentions_word(text: &str, word: &str) -> bool {
 }
 
 /// `source` with every inline `#[cfg(test)] mod name { .. }` body blanked
-/// (newlines kept), so its imports and items are not read as the helper's
+/// (newlines and byte offsets kept), so its imports and items are not read as the helper's
 /// scope. Unparseable source is returned as it is.
 fn without_test_modules(source: &str) -> String {
     use ra_ap_syntax::AstNode;
@@ -300,7 +300,11 @@ fn without_test_modules(source: &str) -> String {
         if let Some(text) = source.get(start..end) {
             let spaces: String = text
                 .chars()
-                .map(|ch| if ch == '\n' { '\n' } else { ' ' })
+                .flat_map(|ch| {
+                    // Keep every byte offset: later ranges index the original.
+                    let fill = if ch == '\n' { '\n' } else { ' ' };
+                    std::iter::repeat_n(fill, ch.len_utf8())
+                })
                 .collect();
             blanked.replace_range(start..end, &spaces);
         }
@@ -330,6 +334,23 @@ fn binding_may_name_item(
     }
     let masked = mask_rust_comments_and_strings(&source);
     let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    // `include!` and item-level macro invocations (a line starting at
+    // column 0 with `name!`) can declare a constant this text never shows.
+    let item_macro = masked.lines().any(|line| {
+        let head = line
+            .split(['(', '{', '['])
+            .next()
+            .unwrap_or_default()
+            .trim_end();
+        head.ends_with('!')
+            && !head.starts_with(char::is_whitespace)
+            && head[..head.len() - 1]
+                .chars()
+                .all(|ch| is_word(ch) || ch == ':')
+    });
+    if item_macro || masked.contains("include!") || masked.contains("macro_rules!") {
+        return true;
+    }
     masked.match_indices(name).any(|(at, _)| {
         if masked[..at].chars().next_back().is_some_and(is_word)
             || masked[at + name.len()..]
@@ -897,6 +918,15 @@ mod tests {
     }
 
     #[test]
+    fn blanking_test_modules_keeps_byte_offsets_with_non_ascii_text() {
+        let source = "#[cfg(test)]\nmod a { const s: &str = \"é—ü\"; }\n#[cfg(test)]\nmod b { const word: u8 = 1; }\nfn keep() {}\n";
+        let blanked = without_test_modules(source);
+        assert_eq!(blanked.len(), source.len());
+        assert!(!blanked.contains("word") && !blanked.contains('é'));
+        assert!(blanked.contains("fn keep()"));
+    }
+
+    #[test]
     fn a_bare_name_that_may_be_an_item_or_is_not_a_plain_binding_refuses() {
         let helper = match_fn("label", BINDING_BODY);
         for (name, source) in [
@@ -908,6 +938,10 @@ mod tests {
             ("a unit struct", "struct other;\n"),
             ("a function", "fn other() {}\n"),
             ("a type alias", "type other = u8;\n"),
+            ("an include", "include!(\"consts.rs\");\n"),
+            ("an item macro", "generate_consts!();\n"),
+            ("a path item macro", "mac::generate! { }\n"),
+            ("a macro definition", "macro_rules! m { () => {}; }\n"),
             (
                 "a module-level glob beside a test glob",
                 "use consts::*;\n#[cfg(test)]\nmod tests {\n    use super::*;\n}\n",
