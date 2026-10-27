@@ -51,12 +51,18 @@ fn admitted_under(
 #[test]
 fn the_claims_payload_route_reads_only_the_variant_it_yields() -> Result<(), String> {
     let root = verified_claims_root()?;
+    let outcome = claims_route_outcomes(&root);
+    let _ = std::fs::remove_dir_all(&root);
+    outcome
+}
+
+fn claims_route_outcomes(root: &Path) -> Result<(), String> {
     let ok_body = "use demo::checked_div;\nuse claims::assert_ok;\n\n#[test]\nfn divides() {\n    let q = assert_ok!(checked_div(17, 5));\n    assert_eq!(q, 3);\n}\n";
     // Control: the import verifies and the `Ok` tail pin credits through the
-    // route, so the refusal below is the direction gate, not the import.
+    // route, so the refusals below are the direction gate, not the import.
     assert_eq!(
         admitted_under(
-            &root,
+            root,
             OK_LIB,
             "checked_div",
             ProbeFamily::ReturnValue,
@@ -65,20 +71,24 @@ fn the_claims_payload_route_reads_only_the_variant_it_yields() -> Result<(), Str
         )?,
         vec!["assert_eq!(q, 3);".to_string()]
     );
-    // The same route beside the early `Err(..)` change: `assert_ok!` panics
-    // on the `Err` the changed exit builds, so its payload says nothing of it.
-    let err_lib = format!("{MISSING_EQUALS_LIB}\n");
-    let err_body = "use demo::{parse_pairs, ConfigError};\nuse claims::assert_ok;\n\n#[test]\nfn reads() {\n    let q = assert_ok!(parse_pairs(\"port\"));\n    assert_eq!(q, ConfigError::MissingEquals { line: 1 });\n}\n";
-    assert_eq!(
-        admitted_under(
-            &root,
-            &err_lib,
-            "parse_pairs",
-            ProbeFamily::ErrorPath,
-            "return Err(ConfigError::MissingEquals { line: idx + 1 });",
-            err_body
-        )?,
-        Vec::<String>::new()
-    );
+    // The same route beside the early `Err(..)` change: both macros panic on
+    // the `Err` the changed exit builds, so their payload says nothing of it.
+    for name in ["assert_ok", "assert_some"] {
+        let err_body = format!(
+            "use demo::{{parse_pairs, ConfigError}};\nuse claims::{name};\n\n#[test]\nfn reads() {{\n    let q = {name}!(parse_pairs(\"port\"));\n    assert_eq!(q, ConfigError::MissingEquals {{ line: 1 }});\n}}\n"
+        );
+        assert_eq!(
+            admitted_under(
+                root,
+                MISSING_EQUALS_LIB,
+                "parse_pairs",
+                ProbeFamily::ErrorPath,
+                "return Err(ConfigError::MissingEquals { line: idx + 1 });",
+                &err_body
+            )?,
+            Vec::<String>::new(),
+            "{name}"
+        );
+    }
     Ok(())
 }
