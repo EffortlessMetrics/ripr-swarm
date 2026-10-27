@@ -404,8 +404,6 @@ mod tests {
             requested(InputSource::Committed),
             Duration::from_secs(60),
             true,
-            Vec::new(),
-            Vec::new(),
             Some(published_full()),
         );
         let value = projection.input_context_value();
@@ -441,8 +439,6 @@ mod tests {
             requested(InputSource::Committed),
             Duration::from_secs(60),
             true,
-            Vec::new(),
-            Vec::new(),
             None,
         );
         let value = projection.input_context_value();
@@ -475,8 +471,6 @@ mod tests {
             requested(InputSource::WorkingTree),
             Duration::from_secs(30),
             false,
-            Vec::new(),
-            Vec::new(),
             None,
         );
         let value = projection.input_context_value();
@@ -492,8 +486,6 @@ mod tests {
             requested(InputSource::Committed),
             Duration::from_secs(60),
             true,
-            Vec::new(),
-            Vec::new(),
             None,
         );
         let command = projection.recovery_command();
@@ -515,8 +507,6 @@ mod tests {
             requested(InputSource::SuppliedDiff),
             Duration::from_secs(45),
             false,
-            Vec::new(),
-            Vec::new(),
             None,
         );
         let command = projection.recovery_command();
@@ -554,8 +544,6 @@ mod tests {
             requested_context,
             Duration::from_secs(10),
             false,
-            check_input.scope.include().to_vec(),
-            check_input.scope.exclude().to_vec(),
             None,
         );
         let command = projection.recovery_command();
@@ -583,8 +571,6 @@ mod tests {
             requested(InputSource::WorkingTree),
             Duration::from_secs(60),
             false,
-            Vec::new(),
-            Vec::new(),
             None,
         );
         let command = projection.recovery_command();
@@ -610,8 +596,6 @@ mod tests {
             requested(InputSource::Committed),
             Duration::from_secs(60),
             false,
-            Vec::new(),
-            Vec::new(),
             Some(published_full()),
         );
         let text = late.human_recovery_text();
@@ -629,8 +613,6 @@ mod tests {
             requested(InputSource::Committed),
             Duration::from_secs(60),
             false,
-            Vec::new(),
-            Vec::new(),
             None,
         );
         let text = early.human_recovery_text();
@@ -649,8 +631,6 @@ mod tests {
             requested(InputSource::Committed),
             Duration::from_secs(60),
             false,
-            Vec::new(),
-            Vec::new(),
             None,
         ));
         assert!(take_stashed().is_some(), "first take consumes the stash");
