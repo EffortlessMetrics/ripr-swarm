@@ -102,9 +102,9 @@ heavy = true
 # Python diffs. The warm check on a Python edit runs the Python analyzer, which
 # has its own hot spots (#10017), so these rows are a separate population from
 # the Rust rows above. Each pin is a single-parent commit whose own change edits
-# production Python and its test, so `HEAD~1` is the base. Both complete with
-# findings under `--mode draft`; `django` was tried and stops at the Python
-# workspace-file cap (partial), so it would not measure a complete check.
+# production Python and its test, so `HEAD~1` is the base. All complete with
+# findings under `--mode draft`. Django (2,937 `.py` files) fits under the
+# 4,000-file cap since #10468.
 [[corpus]]
 id = "click-python"
 url = "https://github.com/pallets/click"
@@ -129,6 +129,16 @@ url = "https://github.com/pandas-dev/pandas"
 sha = "ecdb4258a39cdfc8ba70ce1aa3edda1615b1defc"
 language = "python"
 note = "large Python library (~1500 .py files, ~23k tests); commit edits scripts/validate_min_versions_in_sync.py and its test"
+heavy = true
+
+# The largest real Python workspace pinned (#10785): Django's own tree, a
+# 27-file edit across django/ and tests/ (14.4 s, 390 MiB peak on 4 cores).
+[[corpus]]
+id = "django-python"
+url = "https://github.com/django/django"
+sha = "5c13b5a19864807cae7266339554c14e151e5961"
+language = "python"
+note = "large Python framework (2,937 .py files); commit adds HTTP QUERY method support across django/ and its tests"
 heavy = true
 
 # TypeScript diffs. `defu`, `ky` and `h3` complete under `--mode draft` for their
