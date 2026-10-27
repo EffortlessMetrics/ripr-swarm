@@ -24,7 +24,8 @@ mod value_contradiction;
 use boolean_boundary_pin::BooleanBoundaryPin;
 pub(crate) use value_contradiction::CONTRADICTION_DISCLOSURE;
 use value_contradiction::{
-    ExactValueVerdict, contradiction_summary, exact_value_assertion_verdict_for_test,
+    ExactValueVerdict, boolean_assertion_verdict_for_test, contradiction_summary,
+    exact_value_assertion_verdict_for_test,
 };
 pub(in crate::analysis) use value_contradiction::{
     PointerReturnChange, change_is_invisible_to_every_assertion,
@@ -2167,7 +2168,7 @@ fn effective_oracle_strength(
     index: &RustIndex,
     pin_syntax: &crate::analysis::classify::OwnerPinSyntax,
 ) -> (OracleStrength, Option<String>) {
-    match exact_value_assertion_verdict_for_test(owner_fn, &oracle.text, test) {
+    match assertion_verdict_for_test(owner_fn, &oracle.text, test) {
         ExactValueVerdict::Contradicted {
             expected,
             evaluated,
@@ -2182,18 +2183,42 @@ fn effective_oracle_strength(
     }
 }
 
-/// Whether any of `test`'s equality assertions statically contradicts the
-/// owner's folded behavior (#6026). Such a test fails at baseline and its
-/// call-site values pin the mutant's value, so its activation credit is
-/// withheld beside its oracle credit (#7007). Fail-closed toward prior
-/// credit: without a resolved owner nothing is contradicted.
+/// The equality fold's verdict, extended by #8610's admitted direct boolean
+/// shape. Each entry point stays fail-closed, and the boolean fold is only
+/// consulted where the equality reading was not evaluable, so the extension
+/// can withhold credit or state a contradiction the equality fold could not
+/// see — it never upgrades an oracle the equality fold already graded.
+fn assertion_verdict_for_test(
+    owner: Option<&FunctionSummary>,
+    oracle_text: &str,
+    test: &TestSummary,
+) -> ExactValueVerdict {
+    let Some(owner) = owner else {
+        return ExactValueVerdict::NotEvaluable;
+    };
+    match exact_value_assertion_verdict_for_test(Some(owner), oracle_text, test) {
+        ExactValueVerdict::NotEvaluable => {
+            boolean_assertion_verdict_for_test(owner, oracle_text, test)
+        }
+        verdict => verdict,
+    }
+}
+
+/// Whether any of `test`'s assertions statically contradicts the owner's
+/// folded behavior (#6026). Such a test fails at baseline and its call-site
+/// values pin the mutant's value, so its activation credit is withheld beside
+/// its oracle credit (#7007). A supported direct boolean assertion counts the
+/// same way: `assert!(owner(18)); assert!(!owner(18));` fails on its second
+/// line, so the consistent first line must not lend the failing test's
+/// promotion to the seam (#8610 review). Fail-closed toward prior credit:
+/// without a resolved owner nothing is contradicted.
 fn test_has_contradicted_assertion(test: &TestSummary, owner_fn: Option<&FunctionSummary>) -> bool {
     let Some(owner_fn) = owner_fn else {
         return false;
     };
     test.assertions.iter().any(|oracle| {
         matches!(
-            exact_value_assertion_verdict_for_test(Some(owner_fn), &oracle.text, test),
+            assertion_verdict_for_test(Some(owner_fn), &oracle.text, test),
             ExactValueVerdict::Contradicted { .. }
         )
     })

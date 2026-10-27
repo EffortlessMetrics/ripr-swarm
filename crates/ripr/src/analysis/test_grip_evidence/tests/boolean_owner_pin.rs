@@ -231,3 +231,50 @@ fn boolean_consistency_requires_representable_matching_integer_literals() -> Res
     }
     Ok(())
 }
+
+#[test]
+fn a_contradicted_boolean_assertion_withholds_the_whole_tests_promotion() -> Result<(), String> {
+    // #8610 review: `assert!(is_adult(18)); assert!(!is_adult(18));` fails on
+    // its second line, so this baseline-failing test must carry no activation
+    // credit and cannot lift the seam to a strong grip through its consistent
+    // first line — the same whole-test refusal an equality contradiction
+    // already receives (#6026, #7007).
+    let body = "assert!(is_adult(18));\nassert!(!is_adult(18));";
+    let (index, seam) = boundary_fixture("age >= 18", "age >= 18", body)?;
+    let owner = index
+        .functions()
+        .iter()
+        .find(|owner| owner.name == "is_adult")
+        .ok_or("fixture lost its owner")?;
+    let test = index
+        .tests()
+        .iter()
+        .find(|test| test.name == "adult_boundary")
+        .ok_or("fixture lost its paired test")?;
+    assert_eq!(test.assertions.len(), 2, "extraction keeps both assertions");
+    assert!(
+        test_has_contradicted_assertion(test, Some(owner)),
+        "the contradictory boolean assertion must count beside an equality one: {test:?}"
+    );
+
+    let full = evidence_for_seam(&seam, &index);
+    assert!(!full.related_tests.is_empty(), "nonempty control: {full:?}");
+    assert_ne!(
+        full.activate.state,
+        StageState::Yes,
+        "the baseline-failing test keeps no activation credit: {full:?}"
+    );
+    assert_ne!(
+        crate::analysis::seam_classification::classify_seam(&seam, &full),
+        SeamGripClass::StronglyGripped,
+        "a failing test cannot make the seam strongly gripped: {full:?}"
+    );
+    let context = CompactGripContext::new(&index);
+    let compact = compact_evidence_for_seam(&seam, &context);
+    assert_ne!(
+        crate::analysis::seam_classification::classify_seam(&seam, &compact),
+        SeamGripClass::StronglyGripped,
+        "compact evidence must keep the same refusal: {compact:?}"
+    );
+    Ok(())
+}
