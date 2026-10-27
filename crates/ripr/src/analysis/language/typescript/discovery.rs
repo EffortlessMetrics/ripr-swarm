@@ -317,16 +317,39 @@ fn any_file_imports_through(root: &Path, files: &[PathBuf], alias: &Path) -> boo
     })
 }
 
-/// Every maximal run of path characters that begins `./` or `../`.
+/// Every token that begins `./` or `../`, where a token runs until
+/// whitespace or a character that can only delimit a specifier or
+/// expression (quotes, brackets, `,` `;` `<` `>` `=` `|` `&`).
 ///
 /// The scan deliberately ignores quoting, comments and escapes: a comment
 /// quote before a real import (`/* " */ import ... from "../alias/sum"`)
-/// cannot hide the specifier, and a spelling the parser would reject is only
-/// ever over-counted, never missed.
+/// cannot hide the specifier. Any other character, including `$`, stays in
+/// the token, so a link named `a$b` is matched by its real spelling; a
+/// spelling the parser would reject is only ever over-counted.
 fn relative_path_tokens(text: &str) -> Vec<&str> {
-    text.split(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '.' | '/' | '_' | '-' | '@')))
-        .filter(|token| token.starts_with("./") || token.starts_with("../"))
-        .collect()
+    text.split(|c: char| {
+        c.is_whitespace()
+            || matches!(
+                c,
+                '\'' | '"'
+                    | '`'
+                    | '('
+                    | ')'
+                    | '['
+                    | ']'
+                    | '{'
+                    | '}'
+                    | ','
+                    | ';'
+                    | '<'
+                    | '>'
+                    | '='
+                    | '|'
+                    | '&'
+            )
+    })
+    .filter(|token| token.starts_with("./") || token.starts_with("../"))
+    .collect()
 }
 
 fn lexically_resolve(dir: &Path, specifier: &str) -> PathBuf {
@@ -962,6 +985,25 @@ mod tests {
             "tests/sum.test.ts",
             "/* \" */ import { sum } from \"../alias/sum\";\ntest('s', () => {});\n",
         );
+        let scan =
+            visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        assert_eq!(scan.skipped_links, 1, "{:?}", scan.files);
+        Ok(())
+    }
+
+    /// The alias name is not limited to a restricted character set: `a$b`
+    /// imported as `../a$b/sum` is still matched (#10829 review).
+    #[cfg(unix)]
+    #[test]
+    fn discovery_counts_an_alias_whose_name_has_shell_characters() -> std::io::Result<()> {
+        use std::os::unix::fs::symlink;
+        let workspace = TempWorkspace::new("link-alias-dollar");
+        workspace.write("src/sum.ts", "export const sum = 1;\n");
+        workspace.write(
+            "tests/sum.test.ts",
+            "import { sum } from '../a$b/sum';\ntest('s', () => { expect(sum).toBe(1); });\n",
+        );
+        symlink("src", workspace.0.join("a$b"))?;
         let scan =
             visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
         assert_eq!(scan.skipped_links, 1, "{:?}", scan.files);
