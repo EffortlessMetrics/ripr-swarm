@@ -207,7 +207,20 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
-## Pending — rust_returned_error_drop_exit (15)
+## Pending — rust_returned_error_drop_exit (17)
+
+Reason:
+RIPR-SPEC-0122: plain-language repair-route refusal names the missing evidence without internal fact codes (#10644)
+
+Command:
+`cargo xtask goldens bless rust_returned_error_drop_exit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_returned_error_drop_exit (18)
 
 Reason:
 RIPR-SPEC-0118 / docs/OUTPUT_SCHEMA.md: #10192 displays hidden finding kind/reason, exact ambiguous seam choices, and evidence-specific unresolved-edge guidance; verdict, stage, identity and oracle fields stay unchanged (independently compared against actual JSON).

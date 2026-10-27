@@ -1,0 +1,20 @@
+{
+  "id": "rust_diverging_call_error_side",
+  "language": "rust",
+  "tier": "pure",
+  "source_fixture": "fixtures/rust_diverging_call_error_side",
+  "vector": "a_diverging_call_in_test_code_cannot_credit_the_result_side_oracle",
+  "probe_family": "error_path",
+  "assertions": [
+    {
+      "type": "expected_class",
+      "class": "weakly_exposed"
+    },
+    {
+      "type": "must_not_promote"
+    },
+    {
+      "type": "must_not_report_clean"
+    }
+  ]
+}

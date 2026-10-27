@@ -1,0 +1,20 @@
+pub fn tier_const(qty: u32) -> u32 {
+    if 10 <= qty {
+        5
+    } else {
+        0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const BASE: u32 = 9;
+
+    #[test]
+    fn the_tenth_unit_earns_the_tier_m_const() {
+        assert_eq!(tier_const(BASE + 1), 5);
+        assert_eq!(tier_const(BASE), 0);
+    }
+}

@@ -1100,6 +1100,36 @@ class TestTwice:
     );
 }
 
+/// #10685: a mark held by a module name (`@cases`) parametrizes the test as
+/// much as the spelled decorator, so literal-instance fixture credit, which
+/// skips parametrized tests, cannot treat its argname as a fixture. A name
+/// bound to anything else, or rebound, does not.
+#[test]
+fn a_module_name_holding_a_parametrize_mark_parametrizes_the_test() {
+    let flags = |source: &str| -> Vec<(String, bool, Vec<String>)> {
+        extract_tests(Path::new("tests/test_account.py"), source)
+            .into_iter()
+            .map(|test| (test.name, test.parametrized, test.direct_parametrized))
+            .collect()
+    };
+    assert_eq!(
+        flags(
+            "import pytest as pt\n\ncases = pt.mark.parametrize(\"account\", [1])\n\n@cases\ndef test_a(account):\n    pass\n"
+        ),
+        vec![("test_a".to_string(), true, vec!["account".to_string()])]
+    );
+    for source in [
+        "import pytest\n\ncases = pytest.mark.slow\n\n@cases\ndef test_a(account):\n    pass\n",
+        "import pytest\n\ncases = pytest.mark.parametrize(\"account\", [1])\ncases = pytest.mark.slow\n\n@cases\ndef test_a(account):\n    pass\n",
+    ] {
+        assert_eq!(
+            flags(source),
+            vec![("test_a".to_string(), false, Vec::new())],
+            "{source}"
+        );
+    }
+}
+
 #[test]
 fn extract_tests_recognizes_pytest_parametrize_and_unittest() {
     let tests = extract_tests(
@@ -4552,6 +4582,10 @@ fn a_caplog_that_is_not_the_builtin_fixture_keeps_abstaining() -> Result<(), Str
                 file: PathBuf::from("tests/conftest.py"),
                 body_text: "def caplog():\n    return Recorder()\n".to_string(),
                 imports: Vec::new(),
+                literal_construction: None,
+                literal_params: None,
+                isolated: false,
+                scope_imports: Vec::new(),
             });
         }
         tests
@@ -5392,6 +5426,80 @@ fn find_related_tests_matches_import_alias_call() {
     assert_eq!(related[0].name, "test_discount_alias");
     assert_eq!(related[0].oracle_kind, OracleKind::ExactValue);
     assert_eq!(related[0].oracle_strength, OracleStrength::Strong);
+}
+
+/// #10750: a large test set is scanned on the rayon workers. The candidates
+/// and their order must equal the sequential scan's, including the
+/// alternation of related and unrelated tests in the input.
+#[test]
+fn related_test_candidates_parallel_scan_matches_sequential_order() {
+    let owners = extract_owners(
+        Path::new("src/pricing.py"),
+        "def apply_discount(amount):\n    return amount - 10\n",
+    );
+    let mut source = "from src.pricing import apply_discount\n\n".to_string();
+    for index in 0..700 {
+        if index % 3 == 0 {
+            source.push_str(&format!(
+                "def test_other_{index}():\n    assert other({index}) == {index}\n\n"
+            ));
+        } else if index % 3 == 1 {
+            source.push_str(&format!(
+                "def test_discount_{index}():\n    assert apply_discount({index}) == {}\n\n",
+                index - 10
+            ));
+        } else {
+            source.push_str(&format!(
+                "def test_discount_weak_{index}():\n    assert apply_discount({index})\n\n"
+            ));
+        }
+    }
+    let tests = extract_tests(Path::new("tests/test_pricing.py"), &source);
+    assert_eq!(tests.len(), 700, "every generated test is extracted");
+
+    let related = related_test_candidates(&owners[0], &tests);
+
+    let sequential: Vec<_> = tests
+        .iter()
+        .filter_map(|test| related_test_relation(test, &owners[0]).map(|relation| (test, relation)))
+        .collect();
+    assert_eq!(sequential.len(), related.len());
+    assert!(
+        related
+            .iter()
+            .all(|candidate| sequential.iter().any(|(test, relation)| {
+                std::ptr::eq(*test, candidate.test) && *relation == candidate.relation
+            })),
+        "every candidate keeps its sequentially computed relation kind"
+    );
+    let strong_first = related
+        .iter()
+        .position(|candidate| candidate.test.name.starts_with("test_discount_weak_"));
+    assert_eq!(
+        related.len(),
+        466,
+        "two of every three tests call the owner"
+    );
+    assert_eq!(
+        strong_first,
+        Some(233),
+        "every strong exact-value test ranks before every weak truthiness test"
+    );
+    let names: Vec<&str> = related.iter().map(|c| c.test.name.as_str()).collect();
+    let mut strong: Vec<&str> = sequential
+        .iter()
+        .map(|(test, _)| test.name.as_str())
+        .filter(|name| !name.starts_with("test_discount_weak_"))
+        .collect();
+    strong.sort_unstable();
+    let mut weak: Vec<&str> = sequential
+        .iter()
+        .map(|(test, _)| test.name.as_str())
+        .filter(|name| name.starts_with("test_discount_weak_"))
+        .collect();
+    weak.sort_unstable();
+    let expected: Vec<&str> = strong.into_iter().chain(weak).collect();
+    assert_eq!(names, expected, "parallel order equals the sequential sort");
 }
 
 #[test]
@@ -6254,6 +6362,62 @@ fn declared_handwritten_file_under_build_dir_is_analyzed() -> Result<(), String>
             declared.changed_files
         ));
     }
+    Ok(())
+}
+
+/// #10461: a changed file that sorts past the workspace cap is still read and
+/// classified; the cap refuses only unchanged context, and says so.
+#[test]
+fn analyze_diff_keeps_a_late_sorting_changed_file_past_the_cap() -> Result<(), String> {
+    let root = unique_test_root("diff-walk-cap-keeps-changed");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    write_repo_file(&root.join("a.py"), "def a():\n    return 1\n")?;
+    write_repo_file(&root.join("b.py"), "def b():\n    return 2\n")?;
+    write_repo_file(
+        &root.join("zz_changed.py"),
+        "def price(amount):\n    return amount + 1\n",
+    )?;
+    let options = repo_options(&root);
+    let limits = PythonDiffWalkLimits {
+        max_workspace_files: 1,
+        ..generous_walk_limits()
+    };
+    let changed_files = vec![ChangedFile {
+        path: PathBuf::from("zz_changed.py"),
+        added_lines: vec![crate::analysis::diff::ChangedLine {
+            line: 2,
+            new_side_line: 2,
+            text: "    return amount + 1".to_string(),
+        }],
+        removed_lines: Vec::new(),
+    }];
+    let result = PythonAdapter::analyze_diff_with_limits(&options, &changed_files, limits)?;
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    assert!(
+        result
+            .findings
+            .iter()
+            .any(|finding| finding.probe.location.file == Path::new("zz_changed.py")),
+        "the changed file past the cap must still be classified, got {:?}",
+        result.findings
+    );
+    let [limitation] = result.limitations.as_slice() else {
+        return Err(format!(
+            "exactly the count-cap disclosure is expected, got {:?}",
+            result.limitations
+        ));
+    };
+    assert_eq!(limitation.kind, AnalysisLimitationKind::DiffScopeOversized);
+    assert_eq!(
+        limitation.affected_items,
+        Some(2),
+        "both unchanged files are refused because the changed file takes the only slot"
+    );
+    let detail = limitation.bounded_detail.as_deref().unwrap_or_default();
+    assert!(
+        detail.contains("changed .py files are kept past this cap"),
+        "disclosure must say changed files were kept: {detail}"
+    );
     Ok(())
 }
 
@@ -8229,6 +8393,7 @@ fn classify_price_boundary_with_test_body_and_origins(
         PythonNoBehaviorContext::default(),
         None,
         &mut origins,
+        None,
     )
     .ok_or_else(|| "changed predicate should classify".to_string())?;
     Ok((finding, origins))
@@ -8268,6 +8433,7 @@ fn boundary_value_facts_preserve_identical_calls_from_two_files() -> Result<(), 
             PythonNoBehaviorContext::default(),
             None,
             &mut origins,
+            None,
         )
         .ok_or_else(|| "changed predicate should classify".to_string())?;
         let files = origins

@@ -1379,10 +1379,15 @@ impl<'a> TransitiveReachIndex<'a> {
     pub(in crate::analysis) fn private_helper_boundary(
         &self,
         owner_id: &crate::domain::SymbolId,
+        owner_name: &str,
         entry_name: &str,
     ) -> Option<String> {
         let owners = self
-            .production_functions()
+            .graph()
+            .by_name
+            .get(owner_name)?
+            .iter()
+            .copied()
             .filter(|function| &function.id == owner_id)
             .collect::<Vec<_>>();
         let [owner] = owners.as_slice() else {
@@ -1425,9 +1430,8 @@ impl<'a> TransitiveReachIndex<'a> {
 fn declaration_visibility(index: &RustIndex, function: &FunctionSummary) -> Option<String> {
     use ra_ap_syntax::{AstNode, ast, ast::HasName, ast::HasVisibility};
     let file = index.files().get(&function.file)?;
-    let parse = crate::analysis::syntax::parse_clean_source_file(&file.source)?;
-    let declarations = parse
-        .tree()
+    let tree = index.source_syntax.get(index, &function.file)?.tree()?;
+    let declarations = tree
         .syntax()
         .descendants()
         .filter_map(ast::Fn::cast)
@@ -3153,7 +3157,7 @@ mod tests {
             let index = index_with_source(facts.functions, Vec::new(), source);
             let reach = TransitiveReachIndex::new(&index);
             let owner = SymbolId("src/lib.rs::inner".to_string());
-            let detail = reach.private_helper_boundary(&owner, "outer");
+            let detail = reach.private_helper_boundary(&owner, "inner", "outer");
             assert_eq!(detail.is_some(), expected.is_some(), "{detail:?}");
             if let Some(expected) = expected {
                 assert!(
@@ -3164,10 +3168,21 @@ mod tests {
                 );
             }
             assert_eq!(
-                reach.private_helper_boundary(&SymbolId("src/lib.rs::absent".to_string()), "outer"),
+                reach.private_helper_boundary(
+                    &SymbolId("src/lib.rs::absent".to_string()),
+                    "inner",
+                    "outer"
+                ),
                 None
             );
-            assert_eq!(reach.private_helper_boundary(&owner, "absent"), None);
+            assert_eq!(
+                reach.private_helper_boundary(&owner, "inner", "absent"),
+                None
+            );
+            assert_eq!(
+                reach.private_helper_boundary(&owner, "absent", "outer"),
+                None
+            );
         }
         Ok(())
     }
@@ -3213,7 +3228,9 @@ mod tests {
             assert_eq!(entries, expected_entries);
             let owner = SymbolId("src/lib.rs::inner".to_string());
             assert_eq!(
-                reach.private_helper_boundary(&owner, "outer").as_deref(),
+                reach
+                    .private_helper_boundary(&owner, "inner", "outer")
+                    .as_deref(),
                 if duplicate_entry {
                     None
                 } else {

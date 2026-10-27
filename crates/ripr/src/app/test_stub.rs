@@ -24,7 +24,7 @@ use crate::analysis::{ClassifiedSeam, RepoSeam};
 use crate::app::CheckOutput;
 use crate::app::agent_brief::AgentBriefPolicy;
 use crate::config::RiprConfig;
-use crate::domain::{ExposureClass, Finding};
+use crate::domain::{ExposureClass, Finding, LanguageId};
 use crate::output::agent_seam_packets::{
     recommended_test_for, recommended_test_is_repair_edit_target,
 };
@@ -67,8 +67,8 @@ impl TestStubSelector {
         let (file, line) = value
             .rsplit_once(':')
             .ok_or_else(|| format!("--at expects FILE:LINE, got {value:?}"))?;
-        let line = line.parse::<usize>().map_err(|error| {
-            format!("--at expects FILE:LINE with a line number, got {value:?}: {error}")
+        let line = line.parse::<usize>().map_err(|_parse_err| {
+            format!("--at expects FILE:LINE with a line number, got {value:?}")
         })?;
         if file.trim().is_empty() || line == 0 {
             return Err(format!("--at expects FILE:LINE, got {value:?}"));
@@ -109,6 +109,10 @@ pub(crate) struct TestStubResolution {
     /// The line of the seam this resolution stubs. It differs from a
     /// requested `--at` line when the nearest gap was substituted.
     pub(crate) seam_line: usize,
+    /// Set when a related test already reaches the boundary and only its
+    /// assertion is weak (#10683): `check`'s wording plus that test. The CLI
+    /// reports this instead of a second test skeleton.
+    pub(crate) weak_oracle_guidance: Option<String>,
 }
 
 /// The repair journey one generated stub feeds (#8727). Both placements are
@@ -153,6 +157,9 @@ pub(crate) enum TestStubError {
         message: String,
         seam_ids: Vec<String>,
     },
+    /// Stub generation supports Rust source paths only. This says nothing
+    /// about whether another language's check finding exists or is exposed.
+    UnsupportedLanguage(String),
     Operational(String),
 }
 
@@ -177,9 +184,12 @@ pub(crate) fn resolve_test_stub(
             let mut seam_index = None;
             let mut resolution =
                 resolve_at_location(root, config, file, *line, kind.as_deref(), &mut seam_index)?;
-            if resolution.grip_class.is_none() {
-                resolution.grip_class =
-                    inventory_grip_class(root, config, file, &resolution.seam_id);
+            if let Some((class, guidance)) =
+                inventory_entry_facts(root, config, file, &resolution.seam_id)
+            {
+                resolution.grip_class.get_or_insert(class);
+                resolution.weak_oracle_guidance =
+                    resolution.weak_oracle_guidance.take().or(guidance);
             }
             Ok(resolution)
         }
@@ -223,6 +233,27 @@ fn resolve_at_location(
     kind: Option<&str>,
     seam_index: &mut Option<analysis::FileSeamIndex>,
 ) -> Result<TestStubResolution, TestStubError> {
+    let path = Path::new(file);
+    let source_language = analysis::route(path);
+    if source_language != Some(LanguageId::Rust) {
+        // The router groups TS/JS under one adapter; preserve the source
+        // language name without duplicating its extension inventory.
+        let language = if path
+            .extension()
+            .and_then(std::ffi::OsStr::to_str)
+            .and_then(analysis::ts_js_source_kind)
+            == Some(analysis::TsJsSourceKind::JavaScript)
+        {
+            Some(LanguageId::JavaScript)
+        } else {
+            source_language
+        };
+        let language = language.map(LanguageId::display_name).unwrap_or("non-Rust");
+        let root = shell_arg(&bound_root(&root.to_string_lossy()));
+        return Err(TestStubError::UnsupportedLanguage(format!(
+            "stub generation supports Rust files only; {file} is a {language} path. For a reported gap, use its `ripr check` test file/node and verify command when available. Add or strengthen the test by hand, run the verify command or your repository's test command, then rerun `ripr check --root {root}` to refresh the finding."
+        )));
+    }
     let kind = kind.and_then(|family| {
         analysis::seam_kind_for_probe_family(family).map(|seam_kind| AtKind { family, seam_kind })
     });
@@ -297,6 +328,7 @@ impl<'a> AtCandidate<'a> {
                     // route is invented (#8727).
                     next_repair: None,
                     seam_line: seam.display_line(),
+                    weak_oracle_guidance: None,
                 }
             }
             Self::Classified(entry) => resolution_for(root, config, entry, source),
@@ -342,7 +374,7 @@ pub(crate) enum StubRouteDecision {
     },
     /// The shared resolver refuses: print its reason instead of a command
     /// that would only refuse.
-    Refused { reason: &'static str },
+    Refused { reason: String },
     /// Explicit choices from the resolver; no seam or repair is selected.
     Ambiguous {
         reason: String,
@@ -398,19 +430,33 @@ pub(crate) fn stub_route_for_finding(
             decision,
         });
     }
-    let resolution = match resolve_at_location(root, config, &file, line, Some(kind), seam_index) {
-        Ok(resolution) => resolution,
-        Err(TestStubError::Ambiguous { message, seam_ids }) if !seam_ids.is_empty() => {
-            return Some(StubRoute {
-                finding_id: finding.id.clone(),
-                decision: StubRouteDecision::Ambiguous {
-                    reason: message,
-                    seam_ids,
-                },
-            });
-        }
-        Err(_) => return None,
-    };
+    let mut resolution =
+        match resolve_at_location(root, config, &file, line, Some(kind), seam_index) {
+            Ok(resolution) => resolution,
+            Err(TestStubError::Ambiguous { message, seam_ids }) if !seam_ids.is_empty() => {
+                return Some(StubRoute {
+                    finding_id: finding.id.clone(),
+                    decision: StubRouteDecision::Ambiguous {
+                        reason: message,
+                        seam_ids,
+                    },
+                });
+            }
+            Err(_) => return None,
+        };
+    // #10683: `agent stub` refuses a weak-oracle boundary seam (an existing
+    // test already reaches it); never advertise a stub command it will refuse.
+    if resolution.weak_oracle_guidance.is_none() {
+        resolution.weak_oracle_guidance =
+            inventory_entry_facts(root, config, &file, &resolution.seam_id)
+                .and_then(|(_, guidance)| guidance);
+    }
+    if let Some(guidance) = resolution.weak_oracle_guidance.take() {
+        return Some(StubRoute {
+            finding_id: finding.id.clone(),
+            decision: StubRouteDecision::Refused { reason: guidance },
+        });
+    }
     let decision = match resolution.outcome {
         // `--at` stubs the nearest gap when the finding's line holds none
         // (#6298). Print the line that stub is for, and only when asking for
@@ -426,7 +472,7 @@ pub(crate) fn stub_route_for_finding(
         }
         Ok(_) => StubRouteDecision::Stub { file, line, kind },
         Err(refusal) => StubRouteDecision::Refused {
-            reason: refusal.reason(),
+            reason: refusal.reason().to_string(),
         },
     };
     Some(StubRoute {
@@ -550,7 +596,7 @@ fn const_consumer_route(
                 }
                 Err(refusal) => {
                     first_refusal.get_or_insert(StubRouteDecision::Refused {
-                        reason: refusal.reason(),
+                        reason: refusal.reason().to_string(),
                     });
                 }
             }
@@ -992,6 +1038,7 @@ fn resolution_for(
         at_note: None,
         next_repair,
         seam_line: entry.seam.display_line(),
+        weak_oracle_guidance: super::task_first::weak_oracle_guidance(entry),
     }
 }
 
@@ -1051,13 +1098,14 @@ fn next_repair_for(
 
 /// Inventory class for a seam selected from a file parse (`--at --kind`).
 /// Classification is not used to pick the seam (#5471); this lookup is
-/// disclosure only. A failed or empty inventory leaves `None`.
-fn inventory_grip_class(
+/// disclosure only, plus the weak-oracle pointer (#10683). A failed or empty
+/// inventory leaves `None`.
+fn inventory_entry_facts(
     root: &Path,
     config: &RiprConfig,
     file: &str,
     seam_id: &str,
-) -> Option<SeamGripClass> {
+) -> Option<(SeamGripClass, Option<String>)> {
     let relative = scoped_file(root, file)?;
     let scoped = analysis::inventory_diff_scoped_classified_seams_at_with_config(
         root,
@@ -1070,7 +1118,7 @@ fn inventory_grip_class(
         .classified
         .iter()
         .find(|entry| entry.seam.id().as_str() == seam_id)
-        .map(|entry| entry.class)
+        .map(|entry| (entry.class, super::task_first::weak_oracle_guidance(entry)))
 }
 
 /// Exact or path-suffix match in either direction, after normalizing
@@ -1189,7 +1237,8 @@ pub(crate) fn revalidate_already_present_stub(
     let fresh = resolve_test_stub(root, config, selector).map_err(|error| match error {
         TestStubError::Operational(message)
         | TestStubError::NotFound(message)
-        | TestStubError::Ambiguous { message, .. } => {
+        | TestStubError::Ambiguous { message, .. }
+        | TestStubError::UnsupportedLanguage(message) => {
             format!("{message}; the workspace changed after the stub was computed, so rerun `ripr agent stub`")
         }
     })?;
@@ -1565,9 +1614,17 @@ mod tests {
             })
         );
         for junk in ["src/lib.rs", "src/lib.rs:x", ":3", "src/lib.rs:0"] {
+            let error = TestStubSelector::parse_at(junk).err();
+            assert!(error.is_some(), "{junk}: expected a refusal, got Ok");
+            let message = error.unwrap_or_default();
+            assert!(message.contains("FILE:LINE"), "{junk}: {message}");
             assert!(
-                matches!(TestStubSelector::parse_at(junk), Err(message) if message.contains("FILE:LINE")),
-                "{junk}"
+                message.contains(&format!("{junk:?}")),
+                "{junk}: dropped the typed value: {message}"
+            );
+            assert!(
+                !message.contains("invalid digit"),
+                "{junk}: restored std parse jargon: {message}"
             );
         }
     }
@@ -1641,6 +1698,51 @@ mod tests {
         .map_err(|error| error.to_string())?;
         std::fs::write(root.join("src/lib.rs"), source).map_err(|error| error.to_string())?;
         Ok(root)
+    }
+
+    #[cfg(feature = "lang-rust")]
+    #[test]
+    fn limited_journey_hidden_unique_stub_is_not_projected() -> Result<(), String> {
+        let root = scratch_stub_crate(
+            "hidden-unique",
+            "pub fn bulk(qty: u32) -> bool {\n    qty >= 10\n}\n",
+        )?;
+        let diff = root.join("change.patch");
+        std::fs::write(
+            &diff,
+            "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -2 +2 @@\n-    qty > 10\n+    qty >= 10\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let config = RiprConfig::default();
+        let output = crate::app::check_workspace(crate::app::CheckInput {
+            root: root.clone(),
+            diff_file: Some(diff),
+            ..Default::default()
+        })?;
+        let (selected, hidden) = crate::output::human::stub_route_subjects(&output, &config);
+        assert!(selected.is_some(), "nonempty selected subject");
+        let [hidden] = hidden.as_slice() else {
+            return Err(format!(
+                "expected one hidden predicate, got {}",
+                hidden.len()
+            ));
+        };
+        assert_eq!(hidden.probe.family.as_str(), "predicate");
+        let mut index = None;
+        let direct = stub_route_for_finding(&root, &config, hidden, &mut index)
+            .ok_or("the hidden subject must independently resolve")?;
+        assert!(matches!(direct.decision, StubRouteDecision::Stub { .. }));
+        let routes = check_stub_routes(&root, &config, &output, &mut index);
+        assert!(routes.iter().all(|route| route.finding_id != hidden.id));
+        assert!(
+            routes.iter().any(|route| Some(route.finding_id.as_str())
+                == selected.map(|finding| finding.id.as_str()))
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("src/lib.rs")).map_err(|error| error.to_string())?,
+            "pub fn bulk(qty: u32) -> bool {\n    qty >= 10\n}\n"
+        );
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())
     }
 
     #[test]

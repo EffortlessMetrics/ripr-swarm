@@ -367,7 +367,19 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 
-## Pending — binding_predicate_positions (25)
+## Pending — binding_predicate_positions (27)
+
+Reason:
+RIPR-SPEC-0122: plain-language repair-route refusal names the missing evidence without internal fact codes (#10644)
+
+Command:
+`cargo xtask goldens bless binding_predicate_positions --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — binding_predicate_positions (28)
 
 Reason:
 RIPR-SPEC-0118 / docs/OUTPUT_SCHEMA.md: #10192 displays hidden finding kind/reason, exact ambiguous seam choices, and evidence-specific unresolved-edge guidance; verdict, stage, identity and oracle fields stay unchanged (independently compared against actual JSON).

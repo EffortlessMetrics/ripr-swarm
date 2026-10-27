@@ -48,6 +48,18 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 
+## Pending — module_reach_super_import_in_file_tests (5)
+
+Reason:
+RIPR-SPEC-0122: plain-language repair-route refusal names the missing evidence without internal fact codes (#10644)
+
+Command:
+`cargo xtask goldens bless module_reach_super_import_in_file_tests --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
 ## 2026-10-26 — RIPR-SPEC-0118 / #10192 receiving composition
 
 - `human.txt`: name kind and reason on every listed hidden row, preserving currentness and the selected finding. JSON and registered full-human expectations are unchanged.

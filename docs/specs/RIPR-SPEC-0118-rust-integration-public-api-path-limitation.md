@@ -298,6 +298,9 @@ edge, route, and non-claim values remain unchanged.
 `explain` presents investigation guidance instead of a recipe claimed to change
 the verdict; check withholds its test-writing route for this limitation. Neither
 changes classification, stage evidence, or repair admission.
+MCP gap evidence uses the same named-edge guidance while preserving an absent
+next step as `null`. Missing edge evidence and unrelated limitation kinds keep
+their original advice. This projection does not change repair readiness.
 
 ## Metrics
 

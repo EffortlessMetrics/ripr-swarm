@@ -17,7 +17,9 @@ Start here:
   Changed behavior: amount >= discount_threshold
   Missing discriminator: No strong discriminator was detected
   Related test: tests/pricing.rs:4 boundary_matches_expected (assertion too weak to tell the old behavior from the new)
-  Next step: Add boundary tests for below, equal, and above the changed threshold with exact assertions
+  Next step: A related test already reaches the boundary input, but ripr grades its assertion as a
+    weak check; write it as an exact-value assertion ripr can credit, for example assert_eq!(result,
+    expected), so the old and changed behavior differ
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
@@ -36,9 +38,8 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/assertion_form_parity_err_guard/input --diff <cwd>/fixtures/assertion_form_parity_err_guard/diff.patch --mode fast probe:src_lib.rs:predicate:c80557eb
   ripr context --root <cwd>/fixtures/assertion_form_parity_err_guard/input --diff <cwd>/fixtures/assertion_form_parity_err_guard/diff.patch --mode fast --at probe:src_lib.rs:predicate:c80557eb
-  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: producer-owned missing discriminator fact: boundary_value; follow the Next step above, then rerun `ripr check`
-Write a test for it:
-  ripr agent stub --root <cwd>/fixtures/assertion_form_parity_err_guard/input --at src/lib.rs:2 --kind predicate
+  no repair start offered: a related test already reaches the changed boundary input, but ripr grades its assertion as a weak check, so ripr cannot build a repair packet for this finding yet. Follow the Next step above, then rerun `ripr check`
+No test stub here: A related test already reaches the boundary input, but ripr grades its assertion as a weak check; write it as an exact-value assertion ripr can credit, for example assert_eq!(result, expected), so the old and changed behavior differ. Related test: tests/pricing.rs:4 boundary_matches_expected
 
 Hidden:
   2 lower-priority finding(s) omitted from default human output.

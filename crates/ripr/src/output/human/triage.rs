@@ -360,6 +360,13 @@ pub(crate) fn render_human_triage(
             if let Some(route) = gap_route {
                 if !is_static_limited(finding) {
                     let command = navigation.gap_repair_command(route);
+                    // #10698: the start refuses while tracked production
+                    // files differ from HEAD, so name the commit first.
+                    if let Some(commit) = navigation.gap_repair_prerequisite(route) {
+                        out.push_str(&format!(
+                            "  Commit your production change first (the repair start refuses to begin while it is uncommitted):\n  {commit}\n  Then start the repair:\n"
+                        ));
+                    }
                     out.push_str(&format!("  {command}\n"));
                     super::push_powershell_variant(out, "  ", &command);
                 }
@@ -1468,6 +1475,63 @@ mod tests {
                 && line.contains("reason: No detected boundary input")),
             "{rendered}"
         );
+    }
+
+    #[test]
+    fn limited_journey_hidden_unique_route_is_not_rendered() {
+        use crate::app::test_stub::{StubRoute, StubRouteDecision};
+        let top = super::super::tests::sample_finding();
+        let mut hidden = test_finding("finding:hidden-unique");
+        hidden.class = ExposureClass::WeaklyExposed;
+        hidden.probe.family = ProbeFamily::Predicate;
+        hidden.probe.location.line = 42;
+        hidden.recommended_next_step = Some("inspect the boundary".to_string());
+        assert!(offers_test_stub(&hidden), "eligible hidden subject");
+        let output = test_output(vec![top.clone(), hidden.clone()]);
+        let triage = HumanTriage {
+            state: HumanTriageState::TopGap,
+            selected: Some(&top),
+            omitted: vec![&hidden],
+        };
+        let render = |decision| {
+            let navigation =
+                crate::app::FindingNavigation::legacy().with_stub_routes(vec![StubRoute {
+                    finding_id: hidden.id.clone(),
+                    decision,
+                }]);
+            let drill_in = FindingDrillIn::Commands(navigation);
+            let mut text = String::new();
+            render_human_triage(
+                &mut text,
+                &triage,
+                &output,
+                &RiprConfig::default(),
+                Some(&drill_in),
+                CheckDiffProvenance::CommittedHistory,
+            );
+            text
+        };
+        let unique = render(StubRouteDecision::Stub {
+            file: "src/lib.rs".to_string(),
+            line: 42,
+            kind: "predicate",
+        });
+        let hidden_block = unique
+            .split_once("Hidden:")
+            .map(|(_, block)| block)
+            .unwrap_or_default();
+        assert!(hidden_block.contains("src/lib.rs:42"));
+        assert!(!hidden_block.contains("ripr agent stub"), "{unique}");
+        let ambiguous = render(StubRouteDecision::Ambiguous {
+            reason: "choose the intended predicate".to_string(),
+            seam_ids: vec![
+                "0123456789abcdef".to_string(),
+                "fedcba9876543210".to_string(),
+            ],
+        });
+        assert!(ambiguous.contains("Choose a test-stub seam for finding:hidden-unique:"));
+        assert!(ambiguous.contains("--seam-id 0123456789abcdef"));
+        assert!(ambiguous.contains("--seam-id fedcba9876543210"));
     }
 
     #[test]

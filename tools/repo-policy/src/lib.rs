@@ -1407,7 +1407,9 @@ pub fn routed_rust_ready_event_contract_violations(workflow: &str) -> Vec<String
             ".github/workflows/routed-rust.yml result job must be named by exactly `{ROUTED_RUST_RESULT_NAME_EXPRESSION}` so `{ROUTED_RUST_REQUIRED_RESULT_NAME}` is posted only for main/manual runs and a `{ROUTED_RUST_REQUEST_LABEL}` request and every other label event posts `{ROUTED_RUST_NONREQUEST_RESULT_NAME}` (#4986)"
         ));
     }
-    if !routed_rust_job_block_any(workflow, "result", |line| line.trim() == "if: always()") {
+    if !routed_rust_job_block_any(workflow, "result", |line| {
+        line.trim_end() == "    if: always()"
+    }) {
         violations.push(
             ".github/workflows/routed-rust.yml result job must keep the job-level `if: always()` so the required context is reported (failed) rather than skipped when a prerequisite is skipped or cancelled (#4986)".to_string(),
         );

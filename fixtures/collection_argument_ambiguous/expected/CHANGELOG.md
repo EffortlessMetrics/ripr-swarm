@@ -196,7 +196,20 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
-## Pending — collection_argument_ambiguous (14)
+## Pending — collection_argument_ambiguous (16)
+
+Reason:
+RIPR-SPEC-0158: observed argument facts no longer present call/macro/block-built values as literals
+
+Command:
+`cargo xtask goldens bless collection_argument_ambiguous --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — collection_argument_ambiguous (17)
 
 Reason:
 RIPR-SPEC-0118 / docs/OUTPUT_SCHEMA.md: #10192 displays hidden finding kind/reason, exact ambiguous seam choices, and evidence-specific unresolved-edge guidance; verdict, stage, identity and oracle fields stay unchanged (independently compared against actual JSON).

@@ -34,7 +34,7 @@ Start here:
       candidate line = changed line ripr considers for probes
     - reach yes: Related tests appear to reach did_save_params: checks
     - infection yes: Reachable tests can plausibly activate this changed behavior
-    - 6 more detail line(s) in --format human-full
+    - 5 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/owner_return_pin_json_nested_literal/input --diff <cwd>/fixtures/owner_return_pin_json_nested_literal/diff.patch --mode fast probe:src_lib.rs:return_value:9659b9fa

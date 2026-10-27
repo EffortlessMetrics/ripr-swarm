@@ -17,7 +17,7 @@ use crate::output::preview_actionability::preview_actionability_for;
 ///
 /// For a finding with `repair_packet_ready: true` the blocked-case tail
 /// "; no actionable repair packet is emitted until …" is stripped and replaced
-/// with "; the repair packet is complete and delegatable (advisory)."
+/// with "; the repair packet is complete (advisory: `ripr context --at <finding-id>` prints it; the seam-based `ripr repair` covers Rust files only)."
 ///
 /// Named Rust public-API/helper path limits with retained edge evidence get
 /// evidence-specific guidance explaining why tests cannot close that edge.
@@ -53,7 +53,9 @@ pub(crate) fn reconcile_next_step(finding: &Finding) -> String {
         .unwrap_or(step)
         .trim_end_matches(['.', ' '])
         .to_string();
-    format!("{head}; the repair packet is complete and delegatable (advisory).")
+    format!(
+        "{head}; the repair packet is complete (advisory: `ripr context --at <finding-id>` prints it; the seam-based `ripr repair` covers Rust files only)."
+    )
 }
 
 /// Evidence-specific guidance for a named unresolved edge. This changes only
@@ -327,7 +329,7 @@ mod tests {
         let finding = complete_ts_finding();
         let step = reconcile_next_step(&finding);
         assert!(
-            step.contains("the repair packet is complete and delegatable (advisory)"),
+            step.contains("the repair packet is complete (advisory: `ripr context --at <finding-id>` prints it; the seam-based `ripr repair` covers Rust files only)"),
             "complete packet must produce actionable step; got: {step}"
         );
         assert!(
@@ -346,7 +348,7 @@ mod tests {
             "blocked packet must preserve blocked-state disclosure; got: {step}"
         );
         assert!(
-            !step.contains("the repair packet is complete and delegatable"),
+            !step.contains("the repair packet is complete (advisory"),
             "blocked packet must NOT say actionable; got: {step}"
         );
     }
@@ -372,7 +374,7 @@ mod tests {
         let finding = complete_ts_finding();
         let expected = reconcile_next_step(&finding);
         assert!(
-            expected.contains("the repair packet is complete and delegatable (advisory)"),
+            expected.contains("the repair packet is complete (advisory: `ripr context --at <finding-id>` prints it; the seam-based `ripr repair` covers Rust files only)"),
             "precondition: reconcile_next_step must produce actionable string; got: {expected}"
         );
 
@@ -388,7 +390,7 @@ mod tests {
             .collect::<Vec<_>>()
             .join(" ");
         assert!(
-            human.contains("the repair packet is complete and delegatable (advisory)"),
+            human.contains("the repair packet is complete (advisory: `ripr context --at <finding-id>` prints it; the seam-based `ripr repair` covers Rust files only)"),
             "human surface must contain reconciled next-step.\nExpected: {expected}\nHuman output: {human}"
         );
         assert!(
@@ -399,7 +401,7 @@ mod tests {
         // JSON surface
         let json_out = json_render_with_config(&output, &config, None);
         assert!(
-            json_out.contains("the repair packet is complete and delegatable (advisory)"),
+            json_out.contains("the repair packet is complete (advisory: `ripr context --at <finding-id>` prints it; the seam-based `ripr repair` covers Rust files only)"),
             "JSON surface must contain reconciled next-step.\nExpected: {expected}\nJSON output: {json_out}"
         );
         assert!(
@@ -433,7 +435,7 @@ mod tests {
         // string when the packet is complete (the gap that the first fix missed).
         let sarif_message = sarif_result["message"]["text"].as_str().unwrap_or("");
         assert!(
-            sarif_message.contains("the repair packet is complete and delegatable (advisory)"),
+            sarif_message.contains("the repair packet is complete (advisory: `ripr context --at <finding-id>` prints it; the seam-based `ripr repair` covers Rust files only)"),
             "SARIF message.text must contain reconciled next-step.\nExpected tail: {expected}\nMessage: {sarif_message}"
         );
         assert!(
@@ -455,7 +457,7 @@ mod tests {
         // carry the reconciled next-step, not the raw blocked-case field.
         let github_out = github_render_with_config(&output, &config);
         assert!(
-            github_out.contains("the repair packet is complete and delegatable (advisory)"),
+            github_out.contains("the repair packet is complete (advisory: `ripr context --at <finding-id>` prints it; the seam-based `ripr repair` covers Rust files only)"),
             "GitHub surface must contain reconciled next-step.\nExpected: {expected}\nGitHub output: {github_out}"
         );
         assert_eq!(

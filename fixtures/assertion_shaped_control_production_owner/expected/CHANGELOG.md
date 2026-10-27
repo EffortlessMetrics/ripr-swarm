@@ -455,3 +455,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — assertion_shaped_control_production_owner (31)
+
+Reason:
+RIPR-SPEC-0158 now reads the nullary literal helper boundary_amount() (body 100) as the row 100 on the changed >= boundary pinned by an exact assertion, so the control reads exposed instead of infection_unknown (#9637)
+
+Command:
+`cargo xtask goldens bless assertion_shaped_control_production_owner --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

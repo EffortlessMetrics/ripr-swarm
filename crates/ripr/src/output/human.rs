@@ -976,7 +976,7 @@ fn render_all_no_path_disclosure(out: &mut String, output: &CheckOutput) {
         note.push_str(&format!(
             " This repo also has {lower_bound}{} Python test file(s) (for example {}); ripr does not link Python tests to Rust changes, so a change they alone cover reads as no static path. Check those tests with your Python test runner, or add a Rust test that observes the behavior.",
             python.count,
-            escape_terminal_display(&python.example)
+            escape_terminal_display(&super::path::path_display_lossy(&python.example))
         ));
     }
     out.push('\n');
@@ -2261,6 +2261,80 @@ mod tests {
         );
         assert!(!rendered.contains("eol_only_churn"), "{rendered}");
         Ok(())
+    }
+
+    /// #10698: a gap-bound start whose analyzed tree has uncommitted
+    /// production edits prints the commit step before the start (which the
+    /// before phase refuses on a dirty tree); a clean tree prints it bare.
+    #[test]
+    fn gap_bound_start_names_the_commit_first_on_a_dirty_tree() {
+        let finding = sample_finding();
+        let finding_id = finding.id.clone();
+        let output = CheckOutput {
+            value_origins: Default::default(),
+            harness_projections: Vec::new(),
+            schema_version: "0.1".to_string(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root: PathBuf::from("repo"),
+            base: None,
+            summary: Summary {
+                probes: 1,
+                findings: 1,
+                weakly_exposed: 1,
+                ..Summary::default()
+            },
+            findings: vec![finding],
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
+            suppression: None,
+            analysis_outcome: None,
+            partial_scope: None,
+            analyzed_revisions: None,
+        };
+        let config = crate::config::RiprConfig::default();
+        let render_with = |uncommitted: Vec<String>| {
+            let navigation = crate::app::FindingDrillIn::Commands(
+                crate::app::FindingNavigation::legacy().with_repair_route_outcome(
+                    crate::app::CheckRepairRoute::GapRoute(crate::app::GapRepairRoute {
+                        finding_id: finding_id.clone(),
+                        gap_id: "gap:python:pricing.py:discount".to_string(),
+                        base: "HEAD".to_string(),
+                        uncommitted_files: uncommitted,
+                    }),
+                ),
+            );
+            super::render_bounded_with_config_and_navigation(
+                &output,
+                &config,
+                Some(&navigation),
+                crate::app::CheckDiffProvenance::CommittedHistory,
+            )
+        };
+        let start =
+            "ripr agent repair --gap-id gap:python:pricing.py:discount --base HEAD --phase before";
+
+        let dirty = render_with(vec!["pricing.py".to_string()]);
+        let commit_at =
+            dirty.find("git -C . --literal-pathspecs commit -m \"<message>\" -- pricing.py");
+        let start_at = dirty.find(start);
+        assert!(
+            matches!((commit_at, start_at), (Some(commit), Some(start)) if commit < start),
+            "the commit step must precede the start:\n{dirty}"
+        );
+        assert!(
+            dirty.contains("Commit your production change first"),
+            "{dirty}"
+        );
+
+        let clean = render_with(Vec::new());
+        assert!(clean.contains(start), "{clean}");
+        assert!(!clean.contains("git commit"), "{clean}");
     }
 
     #[test]
@@ -8639,7 +8713,7 @@ mod tests {
     fn python_tests(at_least: bool) -> Option<crate::analysis::UnlinkedPythonTests> {
         Some(crate::analysis::UnlinkedPythonTests {
             count: 124,
-            example: "tests/test_x.py".to_string(),
+            example: std::path::PathBuf::from("tests/test_x.py"),
             at_least,
         })
     }

@@ -40,12 +40,12 @@ Start here:
       candidate line = changed line ripr considers for probes
     - reach yes: Related tests appear to reach parse_note: other_parser_condition, unresolved_target_location_is_required_and_positive
     - infection unknown: Changed boundary input is unresolved: boundary operand `reason` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell…
-    - 15 more detail line(s) in --format human-full
+    - 14 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/parser_formatted_input_provenance/input --diff <cwd>/fixtures/parser_formatted_input_provenance/diff.patch --mode fast probe:src_lib.rs:predicate:7ed3887e
   ripr context --root <cwd>/fixtures/parser_formatted_input_provenance/input --diff <cwd>/fixtures/parser_formatted_input_provenance/diff.patch --mode fast --at probe:src_lib.rs:predicate:7ed3887e
-  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: producer-owned missing discriminator fact: boundary_value; incomplete evidence stage: activation; follow the Next step above, then rerun `ripr check`
+  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: a test assertion that pins the changed boundary value exactly; incomplete evidence stage: activation; follow the Next step above, then rerun `ripr check`
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/parser_formatted_input_provenance/input --at src/lib.rs:44 --kind predicate
 

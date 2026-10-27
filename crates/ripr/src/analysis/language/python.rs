@@ -47,8 +47,8 @@ use crate::domain::{
     ProbeFamily, StaticLimitKind, StopReason, SymbolId,
 };
 use bounded_read::{
-    PYTHON_MAX_WORKSPACE_FILES_ENV, PythonDiffWalkLimits, read_workspace_sources_capped,
-    truncate_workspace_files,
+    PYTHON_MAX_WORKSPACE_FILES_ENV, PythonDiffWalkLimits, WorkspaceFileSelection,
+    read_workspace_sources_capped,
 };
 use rayon::prelude::*;
 use rustpython_parser::ast::Expr;
@@ -69,10 +69,14 @@ mod boundary;
 mod caplog_text;
 mod classify;
 mod conditional_defs;
+mod dataclass_default;
 mod deleted_lines;
+mod doctest_eval;
+mod doctest_tests;
 mod guard_activation;
 mod guard_credit;
 mod helper_inline;
+mod imported_call_operator;
 mod message_pin;
 mod module_value;
 mod type_guard;
@@ -92,6 +96,7 @@ mod module_constants;
 mod no_behavior;
 mod oracles;
 mod owners_tests;
+mod param_fixtures;
 mod parametrize;
 mod parse_budget;
 mod probe_shape;
@@ -104,6 +109,7 @@ mod row_reach;
 mod setup_receivers;
 mod sink_alignment;
 mod source_facts;
+mod table_reads;
 mod table_rows;
 #[cfg(test)]
 use discriminators::{
@@ -188,9 +194,9 @@ use static_limits::{
 
 mod workspace;
 use crate::analysis::diff::reconstruct_old_source;
-use workspace::{
-    collect_workspace_python_files_with_handwritten, line_is_in_ranges, owner_for_changed_line,
-};
+#[cfg(test)]
+use workspace::collect_workspace_python_files_with_handwritten;
+use workspace::{line_is_in_ranges, owner_for_changed_line, visit_workspace_with_handwritten};
 
 /// Python preview adapter.
 ///
@@ -427,6 +433,10 @@ struct PythonTest {
     /// Argnames a pytest parametrize decorator supplies directly (not routed
     /// to a fixture by `indirect=`); never resolved as fixtures (#4563).
     direct_parametrized: Vec<String>,
+    /// The `direct_parametrized` names whose `indirect=` value the read
+    /// cannot settle: not resolved as fixtures, but still counted toward the
+    /// fixture limit (#10685).
+    unsettled_indirect: Vec<String>,
     /// Literal `@pytest.mark.parametrize` cases, when statically certain (#4559).
     parametrize: Option<parametrize::PythonParametrizeCases>,
     /// Parameters Hypothesis `@given(...)` supplies (#6601); never fixtures.
@@ -447,6 +457,19 @@ struct PythonTest {
     constant_rebinding: module_constants::PythonTestRebinding,
 }
 
+impl PythonTest {
+    /// Whether pytest certainly passes `name`'s parametrize value to the
+    /// test itself: a direct argname whose `indirect=` the read settled.
+    /// Such a parameter runs no fixture code (#10685).
+    fn takes_parametrize_value(&self, name: &str) -> bool {
+        self.direct_parametrized.iter().any(|direct| direct == name)
+            && !self
+                .unsettled_indirect
+                .iter()
+                .any(|unsettled| unsettled == name)
+    }
+}
+
 /// A module-level `@pytest.fixture` function: its body is read with the same
 /// relation rules as a test body when a test names it as a parameter (#4563).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -460,6 +483,18 @@ struct PythonFixtureDef {
     file: PathBuf,
     body_text: String,
     imports: Vec<PythonImport>,
+    /// The class the fixture returns a fresh literal-built instance of
+    /// (`return Account(100)`), when that is its whole shape (#9619).
+    literal_construction: Option<String>,
+    /// The literal `params=` rows a fixture returning `request.param` hands
+    /// the test, one run per row (#9619, `param_fixtures.rs`).
+    literal_params: Option<Vec<param_fixtures::FixtureParamRow>>,
+    /// Set when attached: no other fixture or hook visible to the test names
+    /// this fixture, so the test receives the instance exactly as built.
+    isolated: bool,
+    /// Set when attached: the `from` imports of the test's module and its
+    /// conftest chain, by importing file; each must be the owner's module.
+    scope_imports: Vec<(PathBuf, PythonImport)>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -834,10 +869,22 @@ impl PythonAdapter {
         walk_limits: PythonDiffWalkLimits,
         handwritten: &[String],
     ) -> Result<LanguageDiffResult, String> {
-        let discovered =
-            collect_workspace_python_files_with_handwritten(&options.root, handwritten);
-        let (workspace_files, refused_files) =
-            truncate_workspace_files(discovered, walk_limits.max_workspace_files);
+        // Changed files are the subject of the diff, so the cap only ever
+        // refuses context around them (#10461). The walk streams into a
+        // bounded selection so discovery memory stays at the cap rather
+        // than the workspace size (#10594).
+        let changed_walk_paths: BTreeSet<String> = changed_files
+            .iter()
+            .map(|changed| normalized_path(&changed.path))
+            .collect();
+        let mut selection =
+            WorkspaceFileSelection::new(walk_limits.max_workspace_files, |file: &Path| {
+                changed_walk_paths.contains(&normalized_path(file))
+            });
+        visit_workspace_with_handwritten(&options.root, &options.root, handwritten, &mut |file| {
+            selection.push(file)
+        });
+        let (workspace_files, refused_files) = selection.finish();
         let workspace_read = read_workspace_sources_capped(
             &options.root,
             &workspace_files,
@@ -847,6 +894,8 @@ impl PythonAdapter {
         let mut all_owners: Vec<PythonOwner> = Vec::new();
         let mut all_tests: Vec<PythonTest> = Vec::new();
         let mut fixture_defs_by_file: BTreeMap<PathBuf, Vec<PythonFixtureDef>> = BTreeMap::new();
+        let mut fixture_side_by_file: BTreeMap<PathBuf, fixtures::FixtureSideEffects> =
+            BTreeMap::new();
         // Conftests that install implicit setup around tests (#6657).
         let mut implicit_conftests: BTreeSet<PathBuf> = BTreeSet::new();
         let mut reach_conftests: BTreeSet<PathBuf> = BTreeSet::new();
@@ -906,6 +955,10 @@ impl PythonAdapter {
                 if !facts.fixtures.is_empty() {
                     fixture_defs_by_file.insert(relative.clone(), facts.fixtures.clone());
                 }
+                let side = fixtures::side_effects_of(&facts);
+                if side != fixtures::FixtureSideEffects::default() {
+                    fixture_side_by_file.insert(relative.clone(), side);
+                }
                 helper_modules_by_file.insert(relative.clone(), facts.helper_module.clone());
                 // A conftest with implicit setup, or one that only partly parsed,
                 // may assert around every test below it.
@@ -935,6 +988,13 @@ impl PythonAdapter {
         let unreadable_conftest = |conftest: &Path| {
             !workspace_read.sources.contains_key(conftest) && options.root.join(conftest).is_file()
         };
+        fixtures::mark_isolated_fixture_defs(
+            &mut all_tests,
+            &fixture_defs_by_file,
+            &fixture_side_by_file,
+            unreadable_conftest,
+        );
+        param_fixtures::apply_literal_param_fixtures(&mut all_tests);
         fixtures::taint_admission_by_conftest(
             &mut all_tests,
             &implicit_conftests,
@@ -984,7 +1044,7 @@ impl PythonAdapter {
                         .map_err(|err| format!("refused file count overflows u64: {err}"))?,
                 )?
                 .with_detail(format!(
-                    "python workspace walk stopped at the {}-file cap ({PYTHON_MAX_WORKSPACE_FILES_ENV}); {refused_files} discovered .py file(s) were not analyzed.",
+                    "python workspace walk reached the {}-file cap ({PYTHON_MAX_WORKSPACE_FILES_ENV}); {refused_files} discovered .py file(s) were not analyzed; changed .py files are kept past this cap.",
                     walk_limits.max_workspace_files,
                 ))?,
             );
@@ -1089,6 +1149,28 @@ impl PythonAdapter {
                 owner.foreign_writes = foreign.clone();
             }
         }
+        // Doctest examples (RIPR-SPEC-0238 rule 26) are tests that live in a
+        // changed owner file; they need the file's old source to prove the
+        // example held before the edit.
+        for changed in &python_changed_files {
+            if is_test_file(&changed.path)
+                || absent_changed_paths.contains(&normalized_path(&changed.path))
+            {
+                continue;
+            }
+            let Some(new_source) = workspace_read.sources.get(&changed.path) else {
+                continue;
+            };
+            let Some(old_source) = reconstruct_old_source(new_source, changed) else {
+                continue;
+            };
+            all_tests.extend(doctest_tests::doctest_tests(
+                &changed.path,
+                new_source,
+                &old_source,
+                &options.root,
+            ));
+        }
         for test in &mut all_tests {
             if python_changed_files
                 .iter()
@@ -1100,6 +1182,7 @@ impl PythonAdapter {
 
         let mut findings: Vec<Finding> = Vec::new();
         let mut value_origins = crate::value_origins::ValueOrigins::default();
+        let mut related_memo = related_tests::RelatedCandidateMemo::default();
         let mut changed_count: usize = 0;
         for changed in python_changed_files {
             if absent_changed_paths.contains(&normalized_path(&changed.path)) {
@@ -1253,6 +1336,7 @@ impl PythonAdapter {
                         .get(&changed.path)
                         .map(String::as_str),
                     &mut value_origins,
+                    Some(&mut related_memo),
                 ) {
                     findings.push(finding);
                 }
@@ -1277,6 +1361,7 @@ impl PythonAdapter {
                 &all_tests,
                 &findings,
                 &mut value_origins,
+                &mut related_memo,
             );
             findings.extend(deleted);
         }
@@ -1360,6 +1445,12 @@ mod deleted_lines_tests;
 mod fixtures_tests;
 
 #[cfg(test)]
+mod literal_fixture_tests;
+
+#[cfg(test)]
+mod param_fixture_tests;
+
+#[cfg(test)]
 mod dunder_entry_tests;
 
 #[cfg(test)]
@@ -1379,6 +1470,8 @@ mod literal_patch_tests;
 #[cfg(test)]
 mod helper_owner_call_tests;
 
+#[cfg(test)]
+mod imported_call_operator_tests;
 #[cfg(test)]
 mod module_value_tests;
 #[cfg(test)]
@@ -1404,3 +1497,6 @@ mod tests;
 
 #[cfg(test)]
 mod verdict_corpus_tests;
+
+#[cfg(test)]
+mod doctest_gate_tests;

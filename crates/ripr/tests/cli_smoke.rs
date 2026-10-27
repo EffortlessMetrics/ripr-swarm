@@ -125,6 +125,9 @@ mod same_line_owner_tail;
 #[path = "cli_smoke/sample_output.rs"]
 mod sample_output;
 #[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/selector_language_recovery.rs"]
+mod selector_language_recovery;
+#[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/selector_recovery_scope.rs"]
 mod selector_recovery_scope;
 #[path = "cli_smoke/shell_words.rs"]
@@ -4280,6 +4283,131 @@ fn rerun_json_unreadable_gap_ledger_emits_refusal_envelope() -> Result<(), Strin
     }
     ignore_remove_dir_all(&root);
     Ok(())
+}
+
+/// #10720: fresh context preserves the check producer's named failure on
+/// both source routes, instead of flattening it through the String wrapper.
+#[test]
+fn context_json_fresh_analysis_preserves_base_failures() -> Result<(), String> {
+    let root = init_check_refusal_repo("context-json-typed-base", 1)?;
+    let result = (|| {
+        std::fs::write(root.join("ripr.toml"), "[analysis]\nmode = \"deep\"\n")
+            .map_err(|err| format!("write config: {err}"))?;
+        std::fs::write(root.join("src/lib.rs"), "pub fn v0() -> u8 { 1 }\n")
+            .map_err(|err| format!("write tracked edit: {err}"))?;
+        let root_arg = root.display().to_string();
+        let base = "definitely-not-a-real-ref-10720";
+        for source in ["--committed", "--worktree"] {
+            let check = run_ripr(&[
+                "check", "--root", &root_arg, source, "--base", base, "--json",
+            ]);
+            assert_check_json_refusal(&check, "base_unresolvable", "analysis/base-resolution")?;
+            let context = run_ripr(&[
+                "context",
+                "--root",
+                &root_arg,
+                source,
+                "--base",
+                base,
+                "--finding",
+                "probe:not-a-real-id",
+            ]);
+            let value = assert_json_refusal_envelope(
+                &context,
+                "1.1",
+                "diff",
+                "base_unresolvable",
+                "analysis/base-resolution",
+            )?;
+            assert_eq!(value["run_limitations"][0]["basis"], "base_unresolvable");
+            assert_eq!(value["base"], base);
+            assert_eq!(value["root"], printed_path(&root));
+            assert_eq!(value["mode"], "deep");
+            let message = value["run_limitations"][0]["message"]
+                .as_str()
+                .ok_or("base refusal must carry a message")?;
+            assert!(message.contains(base), "{message}");
+        }
+        Ok(())
+    })();
+    ignore_remove_dir_all(&root);
+    result
+}
+
+/// A real directory outside Git reaches the analysis producer and must keep
+/// its distinct root failure rather than borrowing the base-error identity.
+#[test]
+fn context_json_fresh_analysis_preserves_repository_root_failure() -> Result<(), String> {
+    let root = unique_external_workspace("context-json-typed-root")?;
+    let result = (|| {
+        std::fs::create_dir_all(&root).map_err(|err| format!("create plain dir: {err}"))?;
+        std::fs::write(root.join("ripr.toml"), "[analysis]\nmode = \"ready\"\n")
+            .map_err(|err| format!("write config: {err}"))?;
+        let root_arg = root.display().to_string();
+        let output = run_ripr(&[
+            "context",
+            "--root",
+            &root_arg,
+            "--committed",
+            "--base",
+            "main",
+            "--finding",
+            "probe:not-a-real-id",
+        ]);
+        let value = assert_json_refusal_envelope(
+            &output,
+            "1.1",
+            "diff",
+            "repository_root_unusable",
+            "analysis/repository-root",
+        )?;
+        assert_eq!(
+            value["run_limitations"][0]["basis"],
+            "repository_root_unusable"
+        );
+        assert_eq!(value["root"], printed_path(&root));
+        assert_eq!(value["mode"], "ready");
+        Ok(())
+    })();
+    ignore_remove_dir_all(&root);
+    result
+}
+
+/// Preserving typed failures does not invent a family for an unmigrated
+/// loader error. A missing supplied diff retains the generic fallback.
+#[test]
+fn context_json_fresh_analysis_keeps_untyped_failure_fallback() -> Result<(), String> {
+    let root = init_check_refusal_repo("context-json-missing-diff", 1)?;
+    let result = (|| {
+        let root_arg = root.display().to_string();
+        let missing_diff = root.join("missing-10720.patch");
+        let missing_arg = missing_diff.display().to_string();
+        let output = run_ripr(&[
+            "context",
+            "--root",
+            &root_arg,
+            "--diff",
+            &missing_arg,
+            "--finding",
+            "probe:not-a-real-id",
+        ]);
+        let value = assert_json_refusal_envelope(
+            &output,
+            "1.1",
+            "diff",
+            "analysis_failed",
+            "analysis/failure",
+        )?;
+        assert_eq!(value["run_limitations"][0]["basis"], "analysis_failed");
+        let message = value["run_limitations"][0]["message"]
+            .as_str()
+            .ok_or("diff refusal must carry a message")?;
+        assert!(message.contains("failed to read diff file"), "{message}");
+        assert!(message.contains("missing-10720.patch"), "{message}");
+        Ok(())
+    })();
+    ignore_remove_dir_all(&root);
+    result
 }
 
 /// #7331: `ripr context --from <missing>` names `check_artifact_unusable`,
@@ -26726,6 +26854,73 @@ fn agent_status_refuses_non_default_out_dir() -> Result<(), String> {
         "--json",
     ]);
     assert_success(&default);
+
+    // A path-equivalent spelling names exactly the accepted directory; only
+    // genuinely different directories stay refused (#10542).
+    let dotted = run_ripr(&[
+        "agent",
+        "status",
+        "--root",
+        &root_str,
+        "--out",
+        "./target/ripr/workflow",
+        "--json",
+    ]);
+    assert_success(&dotted);
+    let trailing_slash = run_ripr(&[
+        "agent",
+        "status",
+        "--root",
+        &root_str,
+        "--out",
+        "target/ripr/workflow/",
+        "--json",
+    ]);
+    assert_success(&trailing_slash);
+    // A `..` that pops only real directories is still genuine equivalence.
+    let parent_pop = run_ripr(&[
+        "agent",
+        "status",
+        "--root",
+        &root_str,
+        "--out",
+        "target/ripr/../ripr/workflow",
+        "--json",
+    ]);
+    assert_success(&parent_pop);
+
+    // #10624 review: a symlink before `..` resolves differently on the
+    // filesystem than lexically (`alias/..` lands in the symlink target's
+    // parent), so the spelling must stay refused instead of silently
+    // reading the default directory. Unix only: symlink creation needs
+    // elevation on Windows and the production guard is Unix-only too.
+    #[cfg(unix)]
+    {
+        std::fs::create_dir_all(root.join("other"))
+            .map_err(|err| format!("create other: {err}"))?;
+        std::fs::create_dir_all(root.join("target/ripr"))
+            .map_err(|err| format!("create target/ripr: {err}"))?;
+        std::os::unix::fs::symlink(root.join("other"), root.join("target/ripr/alias"))
+            .map_err(|err| format!("create alias symlink: {err}"))?;
+        let trick = run_ripr(&[
+            "agent",
+            "status",
+            "--root",
+            &root_str,
+            "--out",
+            "target/ripr/alias/../workflow",
+            "--json",
+        ]);
+        if trick.status.success() {
+            return Err(
+                "agent status --out with a symlink before `..` must fail closed".to_string(),
+            );
+        }
+        let stderr = String::from_utf8_lossy(&trick.stderr);
+        if !stderr.contains("is not supported") {
+            return Err(format!("expected a named --out refusal; got:\n{stderr}"));
+        }
+    }
 
     ignore_remove_dir_all(&root);
     Ok(())

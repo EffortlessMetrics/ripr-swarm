@@ -198,11 +198,24 @@ Test discovery:
   unresolved relative import, a computed `import()` / `require()`,
   `import.meta.glob` / `require.context` / `createRequire`, a bare specifier a
   tsconfig path, workspace package or the root package name could resolve, a
-  `~`, `#`, `$`, `/` or `@/` specifier, a `baseUrl`, `rootDirs`, a relative
-  `extends`, a package-level `paths`, any bundler, transpiler or test-runner
-  config that declares an alias or module directory, a Rust change related
-  through the Bun bridge, and a closure over 400 files. The conditional
+  `~`, `#`, `$`, `/` or `@/` specifier, a `baseUrl`, `rootDirs`, an uninspected
+  `extends` (including an npm package base, after JSONC key decoding), a
+  project `references` entry, a package-level `paths`, any bundler, transpiler or test-runner config that
+  declares an alias or module directory, a Rust change related through the Bun
+  bridge, and a closure over 400 files. The conditional
   assertion credit and owner-extraction disclosures keep their own scopes.
+- a symlink or junction the walk does not follow is counted for
+  `typescript_workspace_links_skipped` / `typescript_repo_links_skipped`
+  (#10614) unless it is a link to an existing regular file whose own name the
+  adapter would not index (a docs `index.md -> README.md`): the walk indexes by
+  the entry's own path, so such a link hides no test or source. A directory
+  link, a source-named link, a dangling link and a link whose target cannot be
+  read stay counted.
+- a file named `*.d.ts`, `*.d.mts` or `*.d.cts` is parsed as a TypeScript
+  declaration file (#10812): its top-level declarations are ambient, so
+  `export const x: T;` is not a parse error there. The same text in an
+  ordinary `.ts` file, and any real syntax error in a declaration file, stay
+  disclosed as `language_scope_unsupported`.
 - top-level `expect(...)` calls when paired with a `test`/`it` block
 - exported test files matched by configured patterns (default:
   `*.test.ts`, `*.test.tsx`, `*.spec.ts`, `*.spec.tsx`, and the
@@ -480,6 +493,23 @@ boundary without changing the guards (#4104 E):
   simple operands. A compound (`&&`, `||`) or arithmetic condition stays
   unparsed, and a line whose condition equals the removed line's condition
   (an edit to the statement) is not a predicate boundary change.
+- **Unreadable changed `if` withholds** (#10776): the dead-expectation check
+  folds the two branch returns of the changed `if` and withholds a boundary
+  witness whose numeric expectation equals neither. When the changed line is a
+  plain `if (` that opens a brace but the scan cannot read its pair (a one-line
+  `if (c) { return 1; }`, which would hand it the enclosing block's returns, or
+  an `if` nested in an arrow, a `function` or an object-literal or class
+  method such as `pick(n) {` or `async pick(n): T {`, whose returns belong to
+  that function), the check withholds as well: a pin that cannot be shown live does
+  not witness the boundary, live or dead. The rule applies after the existing
+  gates (an owner body, a numeric expectation, a unique changed line); where one
+  of those fails, the witness decision stands as before. A changed ternary,
+  `else if` head, brace-less one-line `if` (#10463) or a condition that
+  continues onto the next line keeps its previous behavior. A method head is
+  recognized by its signature (a name, a parameter list, an optional return
+  type); a computed or string-literal name, an optional method (`pick?(n)`), an
+  object-type return and a method named like a control keyword are not, and keep
+  their previous behavior (#10776).
 
 When the adapter cannot classify, it emits one of the `static_limit_kind`
 values defined in RIPR-SPEC-0026:
