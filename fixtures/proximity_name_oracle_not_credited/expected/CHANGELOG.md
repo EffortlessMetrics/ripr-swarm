@@ -345,5 +345,4 @@ Command:
 `cargo xtask goldens bless proximity_name_oracle_not_credited --reason "..."`
 
 Updated:
-- `expected/check.json`
 - `expected/human.txt`

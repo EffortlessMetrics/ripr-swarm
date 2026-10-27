@@ -140,6 +140,4 @@ Command:
 `cargo xtask goldens bless test_in_struct_literal_not_exact --reason "..."`
 
 Updated:
-- `expected/check.json`
 - `expected/human.txt`
-- `expected/human-full.txt`

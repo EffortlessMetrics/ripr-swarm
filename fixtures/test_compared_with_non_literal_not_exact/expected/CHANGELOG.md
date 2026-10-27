@@ -166,6 +166,4 @@ Command:
 `cargo xtask goldens bless test_compared_with_non_literal_not_exact --reason "..."`
 
 Updated:
-- `expected/check.json`
 - `expected/human.txt`
-- `expected/human-full.txt`

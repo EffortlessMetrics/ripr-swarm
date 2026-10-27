@@ -378,3 +378,91 @@ fn executor_helper_differs_from_the_awaited_call_only_by_indirect_reach() -> Res
         "use ar::dbl;\n\n#[tokio::test]\nasync fn dbl_positive() {\n    let v = block_on(dbl(2));\n    assert!(v > 0);\n}\nfn block_on<T>(_f: impl std::future::Future<Output = T>) -> T {\n    unimplemented!()\n}\n",
     )
 }
+
+const GUARD_TEST: &str = "use ar::dbl;\n\n#[test]\nfn guarded() -> Result<(), String> {\n    if dbl(2) != 6 {\n        return Err(\"mismatch\".to_string());\n    }\n    Ok(())\n}\n";
+const SHADOWED_GUARD_TEST: &str = "use ar::dbl;\n\nfn Err(_: String) -> Result<(), String> {\n    Ok(())\n}\n\n#[test]\nfn guarded() -> Result<(), String> {\n    if dbl(2) != 6 {\n        return Err(\"mismatch\".to_string());\n    }\n    Ok(())\n}\n";
+
+/// The two tests differ only by a value-namespace `Err` that makes the guard
+/// an ordinary statement: the prelude guard pins the owner (no start), the
+/// shadowed one does not (RIPR-SPEC-0197), so only the shadow rule explains
+/// the different outcomes.
+#[test]
+fn shadowed_err_guard_differs_from_the_prelude_guard_only_by_the_shadow() -> Result<(), String> {
+    assert_no_start("prelude-guard", DBL_OLD, DBL_NEW, GUARD_TEST)?;
+    assert_repair_ready("shadowed-guard", DBL_OLD, DBL_NEW, SHADOWED_GUARD_TEST)
+}
+
+/// A finding the check screen calls statically limited ("propagation
+/// unknown") must not start a repair even though the seam-level evidence has
+/// a weak oracle: it keeps its refusal with the manual route (#10701 review).
+/// Runs the real fixture, whose finding-level and seam-level evidence differ.
+#[test]
+fn statically_limited_finding_keeps_its_refusal_and_manual_route() -> Result<(), String> {
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/observation_unverified_field_construction");
+    let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
+        .args(["check", "--mode", "fast", "--root"])
+        .arg(fixture.join("input"))
+        .arg("--diff")
+        .arg(fixture.join("diff.patch"))
+        .output()
+        .map_err(|e| e.to_string())?;
+    let check = text(&output);
+    assert!(
+        check.contains("propagation unknown"),
+        "precondition, the finding is statically limited:\n{check}"
+    );
+    assert!(
+        printed_repair_seam(&check).is_none(),
+        "a limited finding must not print a repair start:\n{check}"
+    );
+    assert!(
+        check.contains("no repair start offered")
+            && check.contains("a test assertion that checks the changed return value"),
+        "the refusal must stay, with its plain reason:\n{check}"
+    );
+    Ok(())
+}
+
+/// Function-value reach beside a direct call: the direct call alone would
+/// start a repair, so only the function-value (indirect reach) rule can
+/// explain the refusal.
+#[test]
+fn function_value_reach_beside_a_direct_call_is_not_a_repair_start() -> Result<(), String> {
+    assert_repair_ready(
+        "direct-twin",
+        DBL_OLD,
+        DBL_NEW,
+        "use ar::dbl;\n\n#[test]\nfn mapped() {\n    let first = dbl(1);\n    let v: Vec<i32> = vec![first].into_iter().collect();\n    assert!(!v.is_empty());\n}\n",
+    )?;
+    assert_no_start(
+        "function-value-beside-direct",
+        DBL_OLD,
+        DBL_NEW,
+        "use ar::dbl;\n\n#[test]\nfn mapped() {\n    let first = dbl(1);\n    let v: Vec<i32> = vec![first].into_iter().map(dbl).collect();\n    assert!(!v.is_empty());\n}\n",
+    )?;
+    Ok(())
+}
+
+/// A weak test beside a statically contradicted exact assertion: the weak
+/// test alone starts a repair, so only the contradiction rule explains the
+/// refusal.
+#[test]
+fn contradicted_assertion_beside_a_weak_test_is_not_a_repair_start() -> Result<(), String> {
+    let weak = "#[test]\nfn weak() {\n    assert!(dbl(2) > 0);\n}\n";
+    assert_repair_ready(
+        "weak-alone",
+        DBL_OLD,
+        DBL_NEW,
+        &format!("use ar::dbl;\n\n{weak}"),
+    )?;
+    assert_no_start(
+        "weak-beside-contradicted",
+        DBL_OLD,
+        DBL_NEW,
+        &format!(
+            "use ar::dbl;\n\n{weak}\n#[test]\nfn wrong() {{\n    assert_eq!(dbl(2), 5);\n}}\n"
+        ),
+    )?;
+    Ok(())
+}

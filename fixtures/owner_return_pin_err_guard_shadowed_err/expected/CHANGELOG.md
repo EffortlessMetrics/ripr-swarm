@@ -202,6 +202,4 @@ Command:
 `cargo xtask goldens bless owner_return_pin_err_guard_shadowed_err --reason "..."`
 
 Updated:
-- `expected/check.json`
 - `expected/human.txt`
-- `expected/human-full.txt`

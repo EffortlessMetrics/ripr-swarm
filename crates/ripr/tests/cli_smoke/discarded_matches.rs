@@ -138,9 +138,13 @@ fn bounded_legend_capture_projection_is_exact_and_preserves_evidence() -> Result
 ///   (old spelling `producer-owned missing discriminator fact: return_value`
 ///   or `error_variant`, or its plain-language phrase); it and a printed
 ///   `ripr repair <id> --root ...` start both project to
-///   `<return-value-or-error-gap>`, present on both sides or neither. Any
-///   other missing-evidence list (including that item beside another) stays
-///   byte-exact, and a start is accepted only in that slot.
+///   `<return-value-or-error-gap>`. The projection is deliberately blind to
+///   which of the two (refusal or start) a side printed, so this comparison
+///   proves nothing about whether the slot is present; the repair-start
+///   contract lives in `return_value_repair_start.rs`. Any other
+///   missing-evidence list (including that item beside another) stays
+///   byte-exact, and a printed start is projected only when it carries
+///   `--root`.
 ///
 /// Every other advisory line stays byte-exact. Returns the projected bytes and
 /// how many lines were normalized.

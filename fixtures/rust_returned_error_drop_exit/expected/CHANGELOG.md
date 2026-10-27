@@ -229,6 +229,4 @@ Command:
 `cargo xtask goldens bless rust_returned_error_drop_exit --reason "..."`
 
 Updated:
-- `expected/check.json`
 - `expected/human.txt`
-- `expected/human-full.txt`

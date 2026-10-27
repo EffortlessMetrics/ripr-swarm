@@ -10431,6 +10431,9 @@ tests = [
   "crates/ripr/tests/return_value_repair_start.rs::statically_contradicted_assertion_is_not_a_repair_start",
   "crates/ripr/tests/return_value_repair_start.rs::indirect_call_without_a_direct_owner_call_is_not_a_repair_start",
   "crates/ripr/tests/return_value_repair_start.rs::executor_helper_differs_from_the_awaited_call_only_by_indirect_reach",
+  "crates/ripr/tests/return_value_repair_start.rs::statically_limited_finding_keeps_its_refusal_and_manual_route",
+  "crates/ripr/tests/return_value_repair_start.rs::function_value_reach_beside_a_direct_call_is_not_a_repair_start",
+  "crates/ripr/tests/return_value_repair_start.rs::contradicted_assertion_beside_a_weak_test_is_not_a_repair_start",
 ]
 fixtures = ["fixtures/human_full_shared_parse_port"]
 code = [
@@ -13798,6 +13801,13 @@ id = "RIPR-SPEC-0197"
 name = "Owner-return pins through calls that name the owner"
 spec = "docs/specs/RIPR-SPEC-0197-owner-return-pins.md"
 tests = [
+  "crates/ripr/tests/return_value_repair_start.rs::equality_assert_pinning_the_owner_is_not_a_repair_start",
+  "crates/ripr/tests/return_value_repair_start.rs::terminal_err_return_guard_pinning_the_owner_is_not_a_repair_start",
+  "crates/ripr/tests/return_value_repair_start.rs::shadowed_err_guard_differs_from_the_prelude_guard_only_by_the_shadow",
+  "crates/ripr/src/analysis/test_grip_evidence.rs::equality_pin_tests::plain_and_guard_equalities_pin_the_owner",
+  "crates/ripr/src/analysis/test_grip_evidence.rs::equality_pin_tests::a_declared_value_err_unpins_only_the_guard",
+  "crates/ripr/src/analysis/test_grip_evidence.rs::equality_pin_tests::lookalike_names_comments_and_strings_do_not_shadow_err",
+  "crates/ripr/src/analysis/test_grip_evidence.rs::equality_pin_tests::other_owner_calls_and_non_equalities_do_not_pin",
   "crates/ripr/tests/operand_whitespace.rs::both_spellings_have_the_same_rust_tokens_and_native_values",
   "crates/ripr/tests/operand_whitespace.rs::whitespace_does_not_supply_the_missing_shipping_discriminator",
   "crates/ripr/tests/operand_whitespace.rs::a_nonzero_shipping_pin_discriminates_both_spellings",

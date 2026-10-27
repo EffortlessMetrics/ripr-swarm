@@ -502,6 +502,20 @@ fn evidence_for_seam_with_context(
 ///
 /// Anything else (no direct call, unknown/opaque discrimination, a strong
 /// oracle) emits nothing and the route stays fail-closed.
+const RETURN_VALUE_START_REASON: &str = "no related test asserts the exact changed return value";
+const ERROR_VARIANT_START_REASON: &str = "no related test asserts the exact changed error variant";
+
+/// Whether the seam's only missing-discriminator fact is the return-value or
+/// error-variant repair-start fact (#10701), so removing it returns the seam
+/// to its earlier not-ready route.
+pub(crate) fn eligible_only_by_return_value_start(entry: &super::ClassifiedSeam) -> bool {
+    let facts = &entry.evidence.missing_discriminators;
+    !facts.is_empty()
+        && facts.iter().all(|fact| {
+            fact.reason == RETURN_VALUE_START_REASON || fact.reason == ERROR_VARIANT_START_REASON
+        })
+}
+
 fn return_value_missing_discriminator(
     seam: &RepoSeam,
     related_tests: &[Arc<RelatedTestGrip>],
@@ -555,14 +569,12 @@ fn return_value_missing_discriminator(
         return None;
     }
     let (description, reason) = match seam.required_discriminator() {
-        super::seams::RequiredDiscriminator::ReturnValue { description } => (
-            description,
-            "no related test asserts the exact changed return value",
-        ),
-        super::seams::RequiredDiscriminator::ErrorVariant { variant } => (
-            variant,
-            "no related test asserts the exact changed error variant",
-        ),
+        super::seams::RequiredDiscriminator::ReturnValue { description } => {
+            (description, RETURN_VALUE_START_REASON)
+        }
+        super::seams::RequiredDiscriminator::ErrorVariant { variant } => {
+            (variant, ERROR_VARIANT_START_REASON)
+        }
         _ => return None,
     };
     if description.trim().is_empty() {
@@ -585,30 +597,80 @@ fn test_pins_owner_call_by_equality(
     owner_name: &str,
     index: &RustIndex,
 ) -> bool {
+    let source = index
+        .files()
+        .get(&test.file)
+        .map(|facts| facts.source.clone());
+    assertions_pin_owner_by_equality(
+        test.assertions.iter().map(|oracle| oracle.text.as_str()),
+        owner_name,
+        source.as_deref(),
+    )
+}
+
+/// The pure core of [`test_pins_owner_call_by_equality`]. A terminal
+/// Err-return guard is a pin only through the prelude `Err`: a file that
+/// declares `Err` as a value (`fn Err`, `const Err`, ...) makes the guard an
+/// ordinary statement (RIPR-SPEC-0197), read by the same authority the
+/// owner-pin credit uses. A file fact that cannot be read withholds: the
+/// guard is kept as a pin, so no start is offered on unknown ground.
+fn assertions_pin_owner_by_equality<'a>(
+    assertions: impl IntoIterator<Item = &'a str>,
+    owner_name: &str,
+    source: Option<&str>,
+) -> bool {
     let call = format!("{owner_name}(");
-    // A terminal Err-return guard is a pin only through the prelude `Err`; a
-    // file that binds `Err` as a value (`fn Err`, `const Err`) makes the guard
-    // an ordinary statement (RIPR-SPEC-0197), so it is not read as a pin.
-    let err_shadowed = index.files().get(&test.file).is_none_or(|facts| {
-        facts.source.lines().any(|line| {
-            let line = line.trim_start();
-            [
-                "fn Err",
-                "const Err",
-                "static Err",
-                "let Err",
-                "let mut Err",
-            ]
-            .iter()
-            .any(|binding| line.contains(binding))
-        })
-    });
-    test.assertions.iter().any(|oracle| {
-        let guard = crate::analysis::extract::err_return_guard_twin(&oracle.text).is_some();
+    let err_shadowed = source
+        .is_some_and(|source| crate::analysis::syntax::source_declares_value_name(source, "Err"));
+    assertions.into_iter().any(|text| {
+        let guard = crate::analysis::extract::err_return_guard_twin(text).is_some();
         (!guard || !err_shadowed)
-            && crate::analysis::classify::equality_condition_operands(&oracle.text)
+            && crate::analysis::classify::equality_condition_operands(text)
                 .is_some_and(|operands| operands.iter().any(|operand| operand.contains(&call)))
     })
+}
+
+#[cfg(test)]
+mod equality_pin_tests {
+    use super::assertions_pin_owner_by_equality as pins;
+
+    const GUARD: &str = "if weight(4) != 12 { return Err(\"mismatch\"); }";
+    const PLAIN: &str = "assert!(weight(4) == 12);";
+
+    #[test]
+    fn plain_and_guard_equalities_pin_the_owner() {
+        assert!(pins([PLAIN], "weight", Some("fn t() {}")));
+        assert!(pins([GUARD], "weight", Some("fn t() {}")));
+        assert!(
+            pins([GUARD], "weight", None),
+            "an unreadable file withholds"
+        );
+    }
+
+    #[test]
+    fn a_declared_value_err_unpins_only_the_guard() {
+        let shadowed = "fn Err(_: &str) -> Result<(), String> { Ok(()) }";
+        assert!(!pins([GUARD], "weight", Some(shadowed)));
+        assert!(pins([PLAIN], "weight", Some(shadowed)));
+    }
+
+    #[test]
+    fn lookalike_names_comments_and_strings_do_not_shadow_err() {
+        for source in [
+            "fn Error_case() {}",
+            "fn t() { let Errors = 1; }",
+            "// fn Err(_: &str) {}",
+            "const S: &str = \"fn Err\";",
+        ] {
+            assert!(pins([GUARD], "weight", Some(source)), "{source}");
+        }
+    }
+
+    #[test]
+    fn other_owner_calls_and_non_equalities_do_not_pin() {
+        assert!(!pins([PLAIN], "other", Some("")));
+        assert!(!pins(["assert!(weight(4) > 0);"], "weight", Some("")));
+    }
 }
 
 fn new_test_target_admission(

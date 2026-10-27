@@ -1,1 +1,1 @@
-crates/ripr/tests/return_value_repair_start.rs|Command::new|2|cli-tests|#10701: runs git (fixture repository setup and commits) and the built ripr binary (`check`, `repair`) against an isolated temp workspace. No shell, network, or user-repository mutation.
+crates/ripr/tests/return_value_repair_start.rs|Command::new|3|cli-tests|#10701: runs git (fixture repository setup and commits) and the built ripr binary (`check`, `repair`, and `check` over a checked-in fixture read-only) against isolated temp workspaces. No shell, network, or user-repository mutation.

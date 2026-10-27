@@ -192,6 +192,4 @@ Command:
 `cargo xtask goldens bless inequality_assertion_not_exact --reason "..."`
 
 Updated:
-- `expected/check.json`
 - `expected/human.txt`
-- `expected/human-full.txt`

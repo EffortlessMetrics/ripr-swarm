@@ -270,6 +270,4 @@ Command:
 `cargo xtask goldens bless wildcard_oracle_wildcard_wrong --reason "..."`
 
 Updated:
-- `expected/check.json`
 - `expected/human.txt`
-- `expected/human-full.txt`
