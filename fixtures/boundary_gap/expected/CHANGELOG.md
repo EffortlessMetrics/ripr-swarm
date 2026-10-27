@@ -60,6 +60,13 @@ read with its inputs substituted into the returned expression (RIPR-SPEC-0231
 rule 9, #10797), with the same scope: generation, content commitment, dependent
 verify commitments and receipt byte hashes only.
 
+### rebound let literal classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.115 to 1.116 for a `let`
+literal that a tuple, struct or `for` pattern rebinds no longer pairing with the
+owner call (RIPR-SPEC-0158, #10819), with the same scope: generation, content
+commitment, dependent verify commitments and receipt byte hashes only.
+
 ## Pending — boundary_gap (9)
 
 Reason:
