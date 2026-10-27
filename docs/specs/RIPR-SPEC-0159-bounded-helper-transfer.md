@@ -117,7 +117,9 @@ can only hint that a caller "may lead here" without changing anything.
   `propagation_unknown`, and an owner name with two candidates never forms
   the chain (`helper_transfer::test_calls_method_entry`). A forwarder that
   unwraps the owner's result with `unwrap_or_else` or `?` is a transform and
-  still abstains; `mut self` (by value) is not admitted.
+  still abstains, except an `unwrap_or_else` whose handler is a diverging
+  workspace function (the diverging unwrap tail below); `mut self` (by value)
+  is not admitted.
 - Diverging unwrap tail (#9638): a hop caller whose tail is exactly
   `<hop call>.unwrap_or_else(<handler>)` forwards the owner's result when
   `<handler>` is a path to a workspace function that only diverges, so the
