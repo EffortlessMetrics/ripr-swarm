@@ -386,6 +386,16 @@ impl WorkspaceSession {
                 "list the current canonical ids with ripr_list_gaps, then retry",
             ));
         };
+        if snapshot.source == super::workspace::RefreshSource::Worktree {
+            return Err(agent_card_failure(AgentCardError::refusal(
+                AgentCardRefusalKind::IncompleteInventory,
+                format!(
+                    "repair card for canonical item {} is unavailable: {}",
+                    item.canonical_id,
+                    super::workspace::WORKTREE_CARD_WITHHELD_DETAIL
+                ),
+            )));
+        }
         let Some(producers) = &snapshot.card_producers else {
             return Err(AttemptFailure::new(
                 CODE_NO_SNAPSHOT,
@@ -703,6 +713,7 @@ mod tests {
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
+            desired_source: Default::default(),
             superseded_order: std::collections::VecDeque::new(),
         })
     }
@@ -729,6 +740,7 @@ mod tests {
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
+            desired_source: Default::default(),
             superseded_order: std::collections::VecDeque::new(),
         })
     }

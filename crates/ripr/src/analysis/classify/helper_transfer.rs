@@ -165,6 +165,11 @@ pub(crate) struct HelperHop {
     /// import, a glob or `#[macro_use]`), so no bare macro in the caller
     /// is trusted to be transparent (#10351).
     pub(crate) transparent_macros_rebound: bool,
+    /// The `.unwrap_or_else(<path>)` handler paths in the caller's body whose
+    /// target is one workspace function that only diverges (#9638), so an
+    /// `Ok` value passes through that unwrap unchanged. Resolved once at hop
+    /// construction, where the index is in hand; empty when none qualifies.
+    pub(crate) diverging_handlers: Vec<String>,
 }
 
 /// The resolved chain for one helper. `stop_above` names the first
@@ -1000,6 +1005,7 @@ pub(crate) fn resolve_chain(
             receiver: None,
             through_macro: true,
             transparent_macros_rebound: transparent_macro_name_rebound(&caller.body, index),
+            diverging_handlers: diverging_handlers(caller, callee_name, index),
         };
         return extend_chain(hop, callee_name, index, workspace_complete, visited);
     }
@@ -1115,6 +1121,7 @@ fn chain_through_caller(
         receiver: None,
         through_macro: false,
         transparent_macros_rebound: transparent_macro_name_rebound(&caller.body, index),
+        diverging_handlers: diverging_handlers(caller, callee_name, index),
     };
     extend_chain(hop, callee_name, index, workspace_complete, visited)
 }
@@ -1455,6 +1462,7 @@ fn method_hop(caller: &FunctionSummary, callee_name: &str, index: &RustIndex) ->
         receiver: Some(receiver.to_string()),
         through_macro: false,
         transparent_macros_rebound: transparent_macro_name_rebound(&caller.body, index),
+        diverging_handlers: diverging_handlers(caller, callee_name, index),
     })
 }
 
@@ -2661,7 +2669,12 @@ fn hops_forward_owner_result(owner_name: &str, hops: &[HelperHop]) -> bool {
                     None => return false,
                 },
             };
-            caller_tail_forwards_call(&hop.caller, callee, &hop.call_text)
+            caller_tail_forwards_call(
+                &hop.caller,
+                callee,
+                &hop.call_text,
+                &hop.diverging_handlers,
+            )
                 // #10284: a caller that binds its callee's name
                 // (`let is_bulk = |_| true;`) calls the binding, and a
                 // user macro may expand to an early `return` the textual
@@ -2871,7 +2884,474 @@ fn receiver_is_whole_expression(receiver: &str) -> bool {
     false
 }
 
-fn caller_tail_forwards_call(caller: &FunctionSummary, callee: &str, call_text: &str) -> bool {
+/// `<head>.unwrap_or_else(<handler>)` as `(head, handler)` when the call is the
+/// whole of `tail` (masked text).
+fn split_unwrap_or_else(tail: &str) -> Option<(&str, &str)> {
+    const NEEDLE: &str = ".unwrap_or_else(";
+    let tail = tail.trim();
+    let positions: Vec<usize> = tail.match_indices(NEEDLE).map(|(at, _)| at).collect();
+    positions.into_iter().rev().find_map(|at| {
+        let open = at + NEEDLE.len() - 1;
+        (matching_close(tail, open)? + 1 == tail.len())
+            .then(|| (tail[..at].trim_end(), tail[open + 1..tail.len() - 1].trim()))
+    })
+}
+
+/// The `.unwrap_or_else(<path>)` handlers in `caller`'s body that resolve to
+/// one workspace function which only diverges (#9638).
+fn diverging_handlers(
+    caller: &FunctionSummary,
+    callee_name: &str,
+    index: &RustIndex,
+) -> Vec<String> {
+    const NEEDLE: &str = ".unwrap_or_else(";
+    let body: &str = &caller.body;
+    if !body.contains("unwrap_or_else") || !callee_returns_std_result_or_option(callee_name, index)
+    {
+        return Vec::new();
+    }
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(body);
+    if masked.len() != body.len() {
+        return Vec::new();
+    }
+    let mut handlers = Vec::new();
+    for (at, _) in masked.match_indices(NEEDLE) {
+        let open = at + NEEDLE.len() - 1;
+        let Some(close) = matching_close(&masked, open) else {
+            continue;
+        };
+        let path = masked[open + 1..close].trim();
+        if !handlers.iter().any(|known| known == path) && handler_diverges(path, caller, index) {
+            handlers.push(path.to_string());
+        }
+    }
+    handlers
+}
+
+/// Whether `callee_name` is the one workspace function of its name and
+/// declares a `Result<..>` or `Option<..>` return, with no workspace type of
+/// either name, so `.unwrap_or_else(..)` on its result is the std method and
+/// not a same-named method of a custom type.
+fn callee_returns_std_result_or_option(callee_name: &str, index: &RustIndex) -> bool {
+    if !callee_is_unique(callee_name, index) {
+        return false;
+    }
+    let Some(callee) = index
+        .functions()
+        .iter()
+        .find(|function| function.name == callee_name)
+    else {
+        return false;
+    };
+    let Some(returned) = super::owner_pin::declared_return_type(&callee.body) else {
+        return false;
+    };
+    let returned = returned.trim();
+    ["Result", "Option"].iter().any(|std_type| {
+        returned
+            .strip_prefix(std_type)
+            .is_some_and(|rest| rest.starts_with('<'))
+            && super::owner_pin::workspace_type_name_count(std_type, index) == 0
+            && index
+                .files()
+                .get(&callee.file)
+                .is_some_and(|file| !file_rebinds_prelude_name(&file.source, std_type))
+    })
+}
+
+/// Whether `source` has a `use` that binds `name` (`Result` / `Option`) to
+/// anything but the standard item, or a glob import that could bring an
+/// external one in (`use dep::*;`, `use dep::prelude::*;`). `use super::*;`
+/// and `use self::*;` add nothing the parent module's own imports do not
+/// already bring, and those are checked as part of the same file.
+fn file_rebinds_prelude_name(source: &str, name: &str) -> bool {
+    let std_path = |path: &str| {
+        let path = path.trim_start_matches("::");
+        let module = if name == "Result" { "result" } else { "option" };
+        ["std", "core"]
+            .iter()
+            .any(|root| path == format!("{root}::{module}::{name}"))
+    };
+    super::reveal::flattened_use_paths(source)
+        .iter()
+        .any(|import| {
+            if import.path.ends_with('*') {
+                return !matches!(import.path.as_str(), "super::*" | "self::*");
+            }
+            let bound = import
+                .alias
+                .as_deref()
+                .unwrap_or_else(|| import.path.rsplit("::").next().unwrap_or(""));
+            bound == name && !std_path(&import.path)
+        })
+}
+
+/// One enclosing brace block of an item: an inline `mod`, an `impl` block
+/// (its header kept for the generics check), or anything else (a function
+/// body, `trait`, `extern`, a block), identified by its opening brace so two
+/// different blocks never compare equal.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum BlockScope {
+    Module(String),
+    Impl(String),
+    Opaque(usize),
+}
+
+/// The block scopes enclosing the `fn <name>` item declared on 1-based `line`
+/// of the masked `source`, outermost first. `None` when the item cannot be
+/// located on that line or the braces do not balance.
+fn scopes_enclosing_fn(masked: &str, line: usize, name: &str) -> Option<Vec<BlockScope>> {
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    let line_start: usize = masked
+        .split_inclusive('\n')
+        .take(line.checked_sub(1)?)
+        .map(str::len)
+        .sum();
+    let line_text = masked.get(line_start..)?.split('\n').next()?;
+    let fn_at = line_start
+        + line_text.match_indices("fn").map(|(at, _)| at).find(|at| {
+            let after = &line_text[at + 2..];
+            !line_text[..*at].chars().next_back().is_some_and(is_word)
+                && after.starts_with(char::is_whitespace)
+                && after
+                    .trim_start()
+                    .strip_prefix(name)
+                    .is_some_and(|rest| !rest.chars().next().is_some_and(is_word))
+        })?;
+    let mut stack: Vec<BlockScope> = Vec::new();
+    for (at, character) in masked[..fn_at].char_indices() {
+        match character {
+            '{' => {
+                let statement_start = masked[..at]
+                    .rfind([';', '{', '}'])
+                    .map_or(0, |found| found + 1);
+                stack.push(classify_block_head(&masked[statement_start..at], at));
+            }
+            '}' => {
+                stack.pop()?;
+            }
+            _ => {}
+        }
+    }
+    Some(stack)
+}
+
+/// Classify the item head before a `{`: a module, an impl block, or opaque.
+/// Whole-word parsing after attributes and visibility/safety qualifiers; a
+/// head that is neither is opaque, so uncertainty never matches a scope.
+fn classify_block_head(head: &str, brace_at: usize) -> BlockScope {
+    let mut rest = head.trim();
+    while let Some(attribute) = rest.strip_prefix("#[") {
+        let mut depth = 1usize;
+        let mut end = None;
+        for (at, character) in attribute.char_indices() {
+            match character {
+                '[' => depth += 1,
+                ']' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = Some(at);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        match end {
+            Some(end) => rest = attribute[end + 1..].trim_start(),
+            None => return BlockScope::Opaque(brace_at),
+        }
+    }
+    loop {
+        let trimmed = rest.trim_start();
+        if let Some(after) = trimmed.strip_prefix("pub") {
+            let after_pub = after.trim_start();
+            rest = if after_pub.starts_with('(') {
+                match matching_close(after_pub, 0) {
+                    Some(close) => &after_pub[close + 1..],
+                    None => return BlockScope::Opaque(brace_at),
+                }
+            } else if after.starts_with(char::is_whitespace) {
+                after_pub
+            } else {
+                return BlockScope::Opaque(brace_at);
+            };
+            continue;
+        }
+        if let Some(after) = trimmed.strip_prefix("unsafe")
+            && after.starts_with(char::is_whitespace)
+        {
+            rest = after;
+            continue;
+        }
+        rest = trimmed;
+        break;
+    }
+    let mut words = rest.split_whitespace();
+    match words.next() {
+        Some("mod") => match (words.next(), words.next()) {
+            (Some(name), None) if is_identifier(name) => BlockScope::Module(name.to_string()),
+            _ => BlockScope::Opaque(brace_at),
+        },
+        Some(first) if first == "impl" || first.starts_with("impl<") => {
+            BlockScope::Impl(rest.to_string())
+        }
+        _ => BlockScope::Opaque(brace_at),
+    }
+}
+
+/// The scopes other than `impl` blocks, for comparing where two items live.
+fn non_impl_scopes(scopes: &[BlockScope]) -> Vec<&BlockScope> {
+    scopes
+        .iter()
+        .filter(|scope| !matches!(scope, BlockScope::Impl(_)))
+        .collect()
+}
+
+/// Whether `path` (`name` or `Type::name`) names the one workspace function
+/// of its name, a free function or an inherent associated function of that
+/// type, that only diverges, with no local binding, rename or foreign import
+/// of the name in the caller's file. Module-qualified, generic and external
+/// paths, and every closure, are refused.
+fn handler_diverges(path: &str, caller: &FunctionSummary, index: &RustIndex) -> bool {
+    let segments: Vec<&str> = path.split("::").collect();
+    let (qualifier, name) = match segments.as_slice() {
+        [name] => (None, *name),
+        [qualifier, name] => (Some(*qualifier), *name),
+        _ => return false,
+    };
+    if !is_identifier(name)
+        || qualifier.is_some_and(|q| !is_identifier(q))
+        || !callee_is_unique(name, index)
+        || caller_rebinds_parameter(&caller.body, name)
+    {
+        return false;
+    }
+    let qualifier_type = match qualifier {
+        Some("Self") => match impl_self_type(caller) {
+            Some(own) => Some(own),
+            None => return false,
+        },
+        Some(other) => Some(other.to_string()),
+        None => None,
+    };
+    let Some(handler) = index
+        .functions()
+        .iter()
+        .find(|function| function.name == name)
+    else {
+        return false;
+    };
+    let placed = match (&qualifier_type, &handler.item.container) {
+        (None, crate::analysis::facts::FunctionContainer::Free) => true,
+        (Some(ty), crate::analysis::facts::FunctionContainer::Inherent { .. }) => {
+            impl_self_type(handler).as_deref() == Some(ty.as_str())
+        }
+        _ => false,
+    };
+    if !placed || handler.source_role.is_evidence_role() {
+        return false;
+    }
+    let Some(file) = index.files().get(&caller.file) else {
+        return false;
+    };
+    // The handler must sit in the caller's own file and inline module, so a
+    // bare or type-qualified name resolves to it without an import, and the
+    // caller's body must not glob-import or re-declare the name.
+    let masked_file = crate::analysis::language::mask_rust_comments_and_strings(&file.source);
+    let (Some(handler_scopes), Some(caller_scopes)) = (
+        scopes_enclosing_fn(&masked_file, handler.start_line, &handler.name),
+        scopes_enclosing_fn(&masked_file, caller.start_line, &caller.name),
+    ) else {
+        return false;
+    };
+    if handler.file != caller.file
+        || non_impl_scopes(&handler_scopes) != non_impl_scopes(&caller_scopes)
+        || !name_only_used_as_handler(caller, path, name)
+        || qualifier
+            .is_some_and(|q| !qualifier_is_workspace_type(caller, path, q, &caller_scopes, index))
+    {
+        return false;
+    }
+    let shadowed = |item: &str| {
+        super::reveal::flattened_use_paths(&file.source)
+            .iter()
+            .any(|import| import.alias.as_deref() == Some(item))
+            || super::reveal::file_imports_foreign_callee_name(
+                &file.source,
+                item,
+                &index.package_names,
+            )
+    };
+    if shadowed(name) || qualifier_type.as_deref().is_some_and(shadowed) {
+        return false;
+    }
+    function_only_diverges(handler, index)
+}
+
+/// The qualifier `q` of a `q::name` handler names the workspace type, not a
+/// generic parameter or a local item: it appears in the caller only as the
+/// handler path's qualifier, and the enclosing `impl` header does not
+/// introduce it as a generic parameter (not independently pinned by a test: a
+/// same-impl generic of the type's own name does not form a bound chain).
+fn qualifier_is_workspace_type(
+    caller: &FunctionSummary,
+    path: &str,
+    qualifier: &str,
+    caller_scopes: &[BlockScope],
+    index: &RustIndex,
+) -> bool {
+    // `Self` names the enclosing impl's type: judge that type by name, with
+    // the same exactly-one-type and generics conditions, without the
+    // other-mention rule (`Self { .. }` is ordinary in an impl).
+    let self_type = if qualifier == "Self" {
+        match impl_self_type(caller) {
+            Some(own) => own,
+            None => return false,
+        }
+    } else {
+        qualifier.to_string()
+    };
+    let qualifier = self_type.as_str();
+    if (path.split("::").next() != Some("Self")
+        && !name_only_used_as_handler(caller, path, qualifier))
+        || super::owner_pin::workspace_type_name_count(qualifier, index) != 1
+    {
+        return false;
+    }
+    // Every enclosing `impl` block's generics, not the nearest `impl` word.
+    // The exactly-one-type count above and these generics are defense in
+    // depth: no test pins either on its own, since the scope and import
+    // checks refuse the same fixtures.
+    caller_scopes.iter().all(|scope| match scope {
+        BlockScope::Impl(header) => {
+            let generics = header["impl".len()..].trim_start();
+            !(generics.starts_with('<')
+                && matching_close_angle(generics)
+                    .is_some_and(|close| contains_word(&generics[..close], qualifier)))
+        }
+        _ => true,
+    })
+}
+
+/// Index of the `>` closing the `<` that starts `text`.
+fn matching_close_angle(text: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    for (at, character) in text.char_indices() {
+        match character {
+            '<' => depth += 1,
+            '>' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(at);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Every whole-word mention of `name` in the caller (signature and body) is
+/// the handler argument `path` of an `.unwrap_or_else(path)` call, and the
+/// body glob-imports nothing: a parameter, nested `fn`/`const`/`static`/`let`
+/// or glob-imported item of that name would be the one the call resolves to.
+fn name_only_used_as_handler(caller: &FunctionSummary, path: &str, name: &str) -> bool {
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(&caller.body);
+    if masked.contains("::*") {
+        return false;
+    }
+    let call = format!(".unwrap_or_else({path})");
+    let rest = masked.replace(&call, ".unwrap_or_else()");
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    !rest.match_indices(name).any(|(at, _)| {
+        !rest[..at].chars().next_back().is_some_and(is_word)
+            && !rest[at + name.len()..].chars().next().is_some_and(is_word)
+    })
+}
+
+/// Whether any indexed file declares or renames an item named `std` (a
+/// `mod std`, `use x as std`, `extern crate x as std`, a local `fn std`, ...),
+/// so a `std::process::..` path may not name the standard library.
+fn std_name_rebound(index: &RustIndex) -> bool {
+    const DECLARERS: &[&str] = &[
+        "mod", "as", "struct", "enum", "fn", "const", "static", "type", "union", "trait", "let",
+        "crate",
+    ];
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    index.files().values().any(|file| {
+        if !file.source.contains("std") {
+            return false;
+        }
+        // Any `use` item whose bound name is `std` and whose path is not the
+        // bare `std` crate (`use ext::std;`, `use ext::{a, std};`,
+        // `use crate::std;`, `use ::ext::std;`).
+        if super::reveal::flattened_use_paths(&file.source)
+            .iter()
+            .any(|import| {
+                let bound = import
+                    .alias
+                    .as_deref()
+                    .unwrap_or_else(|| import.path.rsplit("::").next().unwrap_or(""));
+                bound == "std" && import.path.trim_start_matches("::") != "std"
+            })
+        {
+            return true;
+        }
+        let masked = crate::analysis::language::mask_rust_comments_and_strings(&file.source);
+        masked.match_indices("std").any(|(at, _)| {
+            !masked[..at].chars().next_back().is_some_and(is_word)
+                && !masked[at + 3..].chars().next().is_some_and(is_word)
+                && masked[..at]
+                    .split_whitespace()
+                    .next_back()
+                    .is_some_and(|previous| DECLARERS.contains(&previous))
+        })
+    })
+}
+
+/// Whether `function` can never return normally: its whole body is one
+/// unconditional `panic!`-family macro or process exit. A `-> !` signature is
+/// not read: a function returning `!` does not type-check as an
+/// `unwrap_or_else` handler for a value-returning forwarder.
+fn function_only_diverges(function: &FunctionSummary, index: &RustIndex) -> bool {
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(&function.body);
+    let (Some(open), Some(close)) = (masked.find('{'), masked.rfind('}')) else {
+        return false;
+    };
+    if close <= open {
+        return false;
+    }
+    let statement = masked[open + 1..close].trim();
+    let statement = statement.strip_suffix(';').unwrap_or(statement).trim();
+    let macro_call = ["panic!", "unreachable!", "unimplemented!", "todo!"]
+        .iter()
+        .find(|name| statement.starts_with(**name))
+        .is_some_and(|name| {
+            let rest = &statement[name.len()..];
+            rest.starts_with(['(', '[', '{'])
+                && matching_close(rest, 0).is_some_and(|end| end + 1 == rest.len())
+        });
+    if macro_call {
+        return !transparent_macro_name_rebound(&function.body, index);
+    }
+    !std_name_rebound(index)
+        && ["std::process::abort", "std::process::exit"]
+            .iter()
+            .any(|name| {
+                statement.strip_prefix(name).is_some_and(|rest| {
+                    rest.starts_with('(')
+                        && matching_close(rest, 0).is_some_and(|end| end + 1 == rest.len())
+                })
+            })
+}
+
+fn caller_tail_forwards_call(
+    caller: &FunctionSummary,
+    callee: &str,
+    call_text: &str,
+    diverging_handlers: &[String],
+) -> bool {
     let body: &str = &caller.body;
     let masked = crate::analysis::language::mask_rust_comments_and_strings(body);
     if masked.len() != body.len() || callee.is_empty() {
@@ -2913,6 +3393,18 @@ fn caller_tail_forwards_call(caller: &FunctionSummary, callee: &str, call_text: 
     let lead = inner[tail_start..].len() - inner[tail_start..].trim_start().len();
     let Some(raw_tail) = raw_inner.get(tail_start + lead..tail_start + lead + tail.len()) else {
         return false;
+    };
+    // #9638: `<call>.unwrap_or_else(<handler>)` hands the call's `Ok` value
+    // through unchanged when the handler is a path to a workspace function
+    // that only diverges; any other handler substitutes a value.
+    let tail = match split_unwrap_or_else(tail) {
+        Some((head, handler)) => {
+            if !diverging_handlers.iter().any(|known| known == handler) {
+                return false;
+            }
+            head
+        }
+        None => tail,
     };
     if is_exact_call(tail, callee) {
         return true;
@@ -4057,6 +4549,7 @@ mod tests {
                 receiver: None,
                 through_macro: false,
                 transparent_macros_rebound: false,
+                diverging_handlers: Vec::new(),
             }],
             stop_above: None,
         }
@@ -4377,6 +4870,7 @@ mod tests {
             receiver: None,
             through_macro: false,
             transparent_macros_rebound: false,
+            diverging_handlers: Vec::new(),
         };
         let chain = HelperChain {
             hops: vec![hop(lower.clone()), hop(upper)],
@@ -4460,6 +4954,7 @@ mod tests {
                     receiver: None,
                     through_macro: false,
                     transparent_macros_rebound: false,
+                    diverging_handlers: Vec::new(),
                 }],
                 stop_above: None,
             }
@@ -4686,5 +5181,46 @@ mod tests {
             }
         }
         Ok(())
+    }
+    fn scopes(source: &str, line: usize, name: &str) -> Option<Vec<BlockScope>> {
+        let masked = crate::analysis::language::mask_rust_comments_and_strings(source);
+        scopes_enclosing_fn(&masked, line, name)
+    }
+
+    #[test]
+    fn enclosing_scopes_read_modules_impls_and_function_bodies_by_whole_word() {
+        let source = "mod a {\n    pub fn die() {}\n}\nfn outer(_x: impl Copy) {\n    impl Z {\n        fn grow2() {}\n    }\n}\nfn implode() {\n    fn inner() {}\n}\nimpl<T: Tr> W<T> {\n    fn m() {}\n}\n";
+        assert_eq!(
+            scopes(source, 2, "die"),
+            Some(vec![BlockScope::Module("a".to_string())])
+        );
+        // `outer`'s `impl Copy` argument does not hide its own body, and the
+        // nested `impl Z` block is an impl scope inside it.
+        let nested = scopes(source, 6, "grow2");
+        assert!(matches!(
+            nested.as_deref(),
+            Some([BlockScope::Opaque(_), BlockScope::Impl(header)]) if header == "impl Z"
+        ));
+        // A name that merely contains `impl` is still a function body.
+        assert!(matches!(
+            scopes(source, 10, "inner").as_deref(),
+            Some([BlockScope::Opaque(_)])
+        ));
+        assert!(matches!(
+            scopes(source, 13, "m").as_deref(),
+            Some([BlockScope::Impl(header)]) if header.starts_with("impl<T")
+        ));
+        // An item missing from its line is not located.
+        assert_eq!(scopes(source, 1, "die"), None);
+    }
+
+    #[test]
+    fn enclosing_scopes_distinguish_one_line_modules() {
+        let source = "mod a { pub fn die() {} } fn grow() {}\n";
+        assert_eq!(
+            scopes(source, 1, "die"),
+            Some(vec![BlockScope::Module("a".to_string())])
+        );
+        assert_eq!(scopes(source, 1, "grow"), Some(Vec::new()));
     }
 }

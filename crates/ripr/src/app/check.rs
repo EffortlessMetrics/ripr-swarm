@@ -65,6 +65,26 @@ pub(crate) fn check_workspace_with_config_typed(
     Ok((output, view))
 }
 
+/// [`check_workspace_worktree_with_config`] keeping the failure typed and
+/// returning the run's mixed-language completeness view, the saved
+/// tracked-worktree counterpart of [`check_workspace_with_config_typed`]
+/// (#7357). Unlike the LSP refresh entry point it keeps the disclosure
+/// probes, so the untracked and ignored working-tree facts are populated.
+pub(crate) fn check_workspace_worktree_with_config_typed(
+    input: CheckInput,
+    config: &RiprConfig,
+) -> Result<
+    (
+        CheckOutput,
+        Option<crate::analysis::language_outcome::LanguageCompletenessView>,
+    ),
+    CoreError,
+> {
+    let (output, _, _, view) =
+        check_with_progress_and_origins(input, config, AnalysisProgressScope::Worktree, None)?;
+    Ok((output, view))
+}
+
 pub fn check_workspace_worktree_with_config(
     input: CheckInput,
     config: &RiprConfig,

@@ -371,6 +371,13 @@ pub(crate) fn render_human_triage(
             if let Some(route) = gap_route {
                 if !is_static_limited(finding) {
                     let command = navigation.gap_repair_command(route);
+                    // #10698: the start refuses while tracked production
+                    // files differ from HEAD, so name the commit first.
+                    if let Some(commit) = navigation.gap_repair_prerequisite(route) {
+                        out.push_str(&format!(
+                            "  Commit your production change first (the repair start refuses to begin while it is uncommitted):\n  {commit}\n  Then start the repair:\n"
+                        ));
+                    }
                     out.push_str(&format!("  {command}\n"));
                     super::push_powershell_variant(out, "  ", &command);
                 }

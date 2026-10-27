@@ -327,3 +327,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_repair_packet_boundary_literal_derived (28)
+
+Reason:
+RIPR-SPEC-0088: #10682 next-step wording names ripr context --at and the Rust-only scope of seam-based repair instead of delegatable
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_literal_derived --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

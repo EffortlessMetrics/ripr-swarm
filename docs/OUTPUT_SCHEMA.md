@@ -969,7 +969,11 @@ preserves the normal check envelope (`schema_version`, `tool`, `mode`, `root`,
 `summary`, and `findings`) and adds:
 
 - `analysis_scope.run_status: "diff_scope_oversized"`
-- `analysis_scope.basis: "rust_diff_scope_budget"`
+- `analysis_scope.basis: "rust_diff_scope_budget"` — or, since #10730,
+  `"python_diff_scope_budget"` / `"typescript_diff_scope_budget"` when the
+  refusal names the Python or TypeScript/JavaScript changed-line budget; the
+  basis always names the budget that actually fired, never a Rust budget for
+  a preview-language refusal
 - `analysis_scope.downstream_consumable: false`
 - `analysis_scope.limitation: "diff_scope_oversized"`
 - `analysis_scope.repair_route: "analysis/diff-scope-budget"`
@@ -3582,6 +3586,14 @@ The JSON report is repo automation output with schema version `"0.1"`:
 Policy reports are advisory unless `--mode fail-on-new-warning` is used.
 
 ## Context Packet
+
+Fresh `context`/`explain` selector misses remain usage-class failures: exit 2,
+empty stdout, and the selector guidance and retry command on stderr. When the
+fresh check carries detected-but-unanalyzed language advisories or non-success
+language runs, stderr also names those run-scope limitations and their existing
+producer recovery. The notice does not establish the cause of this selector's
+miss. Recorded `--from` lookups do not reconstruct absent advisory facts from
+ambient configuration; no packet field or schema version changes (#10720).
 
 `ripr context --json` emits compact test intent for agents:
 
@@ -18702,7 +18714,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.115",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.116",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. This is the existing
@@ -19470,7 +19482,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.115",
+      "schema_version": "1.116",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

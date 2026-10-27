@@ -13579,7 +13579,7 @@ pub(in crate::analysis) fn test_receiver_named_type(
 /// How many `struct`, `enum`, `union` or `type` items named `name` the
 /// workspace declares, across every module and file. The per-name table is
 /// built once per index (every file masked once), then looked up.
-fn workspace_type_name_count(name: &str, index: &RustIndex) -> usize {
+pub(super) fn workspace_type_name_count(name: &str, index: &RustIndex) -> usize {
     index
         .call_identity_memos
         .type_name_counts(|| {
