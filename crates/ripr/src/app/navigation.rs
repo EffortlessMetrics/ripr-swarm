@@ -905,21 +905,25 @@ mod tests {
             "no-binding-seam must not route back to the gate: {unbound}"
         );
         // #10702: seams exist in the file, so the advisory must not claim there are none.
-        let several = RepairRouteRefusal::NoBindingSeam { seams_in_file: 3 }.advisory(gate);
+        let counted = RepairRouteRefusal::NoBindingSeam { seams_in_file: 3 }.advisory(gate);
         assert!(
-            several.contains("found 3 seams in this finding's file")
-                && !several.contains("no seam in this finding's file")
-                && !several.contains("found no seam"),
-            "{several}"
+            counted.contains("found 3 seams in this finding's file")
+                && !counted.contains("no seam in this finding's file")
+                && !counted.contains("found no seam"),
+            "{counted}"
         );
         let one = RepairRouteRefusal::NoBindingSeam { seams_in_file: 1 }.advisory(gate);
-        assert!(one.contains("found 1 seam in this finding's file"), "{one}");
+        assert_eq!(
+            one,
+            "no repair start offered: ripr found 1 seam in this finding's file, but could not \
+             tie one to this finding's changed line, so it cannot pick one for you; `ripr \
+             pilot` lists them, or follow the Next step above"
+        );
         let exposed = RepairRouteRefusal::FindingAlreadyExposed.advisory(gate);
-        assert!(
-            exposed.contains("nothing to repair here")
-                && exposed.contains("already notice this change (exposed)")
-                && !exposed.contains("missing"),
-            "{exposed}"
+        assert_eq!(
+            exposed,
+            "no repair start offered: nothing to repair here; the related tests already \
+             notice this change (exposed)"
         );
         let disagree = RepairRouteRefusal::SeamGrippedFindingNot.advisory(gate);
         assert!(

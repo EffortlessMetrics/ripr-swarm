@@ -1497,7 +1497,7 @@ const fn rule(prefix: &'static str) -> RefusalRule {
 /// compared verbatim, so a new or heavily reworded variant is visible golden
 /// drift that has to be re-blessed and added here, not silently masked.
 const REPAIR_REFUSAL_RULES: &[RefusalRule] = &[
-    rule("this finding has no canonical gap"),
+    rule("this finding has no gap ID"),
     rule("ripr found no seam in this finding's file to bind it to"),
     rule("several seams bind this finding"),
     rule("nothing to repair here"),
@@ -3285,8 +3285,8 @@ mod tests {
             format!("Next:\n  ripr explain x\n  no repair start offered: {reason}\nMore:\n")
         };
         let canonical =
-            wrap("this finding has no canonical gap, so old words; follow the Next step above");
-        let reworded = wrap("this finding has no canonical gap, so new words");
+            wrap("this finding has no gap ID, so old words; follow the Next step above");
+        let reworded = wrap("this finding has no gap ID, so new words");
         assert_eq!(
             mask_repair_refusal_reason(&canonical),
             mask_repair_refusal_reason(&reworded),
@@ -3405,7 +3405,7 @@ mod tests {
         )?;
         let other_variant = write(
             "other_variant.txt",
-            &line("this finding has no canonical gap, so there is no seam"),
+            &line("this finding has no gap ID, so there is no seam"),
         )?;
         let matches = |actual: &Path, surface: &'static str| -> Result<bool, String> {
             Ok(compare_golden("unlisted_fixture", surface, &expected, actual)?.matches)
@@ -3471,11 +3471,11 @@ mod tests {
         );
         let no_gap = write_exposed(
             "no_gap.txt",
-            "this finding has no canonical gap, so there is no seam",
+            "this finding has no gap ID, so there is no seam",
         )?;
         assert!(
             compare(no_gap_exposed, &no_gap, &exposed, "human.txt")?,
-            "no canonical gap -> exposed"
+            "no gap ID -> exposed"
         );
         let missing = write_exposed(
             "missing.txt",

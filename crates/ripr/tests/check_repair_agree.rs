@@ -30,13 +30,14 @@ impl Repo {
         repo.write("Cargo.toml", CARGO_TOML)?;
         repo.write("src/lib.rs", old_src)?;
         repo.write("tests/t.rs", test)?;
-        repo.git(&["init", "-q"])?;
+        repo.git(&["-c", "init.templateDir=", "init", "-q"])?;
         repo.git(&["config", "user.email", "t@example.com"])?;
         repo.git(&["config", "user.name", "t"])?;
+        repo.git(&["config", "commit.gpgSign", "false"])?;
         repo.git(&["add", "-A"])?;
-        repo.git(&["commit", "-qm", "base"])?;
+        repo.git(&["commit", "-q", "--no-gpg-sign", "-m", "base"])?;
         repo.write("src/lib.rs", new_src)?;
-        repo.git(&["commit", "-qam", "change"])?;
+        repo.git(&["commit", "-q", "--no-gpg-sign", "-am", "change"])?;
         Ok(repo)
     }
 

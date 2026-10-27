@@ -6,7 +6,7 @@
 //! entries it blesses; delete this file when it is empty.
 
 /// Fixed old openings (the variant discriminators the goldens pin).
-pub(super) const NO_CANONICAL_GAP: &str = "this finding has no canonical gap";
+pub(super) const NO_GAP_ID: &str = "this finding has no gap ID";
 pub(super) const NO_SEAM: &str = "ripr found no seam in this finding's file to bind it to";
 pub(super) const SEAM_INVENTORY: &str = "the seam inventory behind `ripr repair`";
 pub(super) const STILL_MISSING: &str =
@@ -60,7 +60,7 @@ pub(super) const MIGRATIONS: &[Migration] = &[
         ],
     },
     Migration {
-        old: NO_CANONICAL_GAP,
+        old: NO_GAP_ID,
         new: EXPOSED,
         surfaces: &[
             "currentness_matrix_typescript_deleted_statement/human.txt",

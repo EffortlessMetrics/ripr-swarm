@@ -259,8 +259,10 @@ fn neutralize_plain_language_wording(bytes: &[u8]) -> Vec<u8> {
 ///   Since #10702 the same check-side no-start line may also read the exposed
 ///   opening ("nothing to repair here ... (exposed)") or the counted
 ///   "ripr found N seam(s) in this finding's file, but could not tie one"
-///   opening; exactly those known openings share the slot, any other
-///   advisory stays byte-exact.
+///   opening. They get DISTINCT slots here; `bind_advisory_transition` then
+///   lets the retained no-binding slot become the exposed slot only on a
+///   capture whose own Static exposure is exposed, and the counted slot only
+///   on one that is not. Any other advisory stays byte-exact.
 /// - Not-ready (RouteNotReady) keeps its producer-owned missing-evidence list:
 ///   the old `(missing evidence: LIST); run ...` form and the current
 ///   `still missing: LIST; follow ...` form both become
@@ -269,12 +271,51 @@ fn neutralize_plain_language_wording(bytes: &[u8]) -> Vec<u8> {
 ///
 /// Every other advisory line stays byte-exact. Returns the projected bytes and
 /// how many lines were normalized.
+const NO_BINDING_SLOT: &str = "  no repair start offered: <no-binding-seam advisory>";
+const EXPOSED_SLOT: &str = "  no repair start offered: <exposed advisory>";
+const UNTIED_SLOT: &str = "  no repair start offered: <untied-seams advisory>";
+
+/// Whether a human capture's own findings all read `Static exposure: exposed`.
+fn capture_is_exposed(normalized: &[u8]) -> bool {
+    let text = String::from_utf8_lossy(normalized);
+    let mut lines = text
+        .lines()
+        .filter_map(|line| line.trim_start().strip_prefix("Static exposure: "))
+        .peekable();
+    lines.peek().is_some() && lines.all(|rest| rest.starts_with("exposed"))
+}
+
+/// Bind the permitted transition of a retained no-binding advisory to the
+/// capture's own evidence (#10702). Only these live rewrites are accepted, and
+/// only where the retained capture holds the no-binding slot:
+/// - the capture reads exposed: the live exposed slot stands for it, and a
+///   counted-untied slot does not;
+/// - the capture does not read exposed: the live counted-untied slot stands
+///   for it, and an exposed slot does not.
+///
+/// Everything else (including a rejected live slot) is left as the live
+/// producer printed it, so the byte comparison fails.
+fn bind_advisory_transition(expected: &[u8], actual: &[u8]) -> Vec<u8> {
+    let expected_text = String::from_utf8_lossy(expected);
+    if !expected_text.contains(NO_BINDING_SLOT) {
+        return actual.to_vec();
+    }
+    let allowed = if capture_is_exposed(expected) {
+        EXPOSED_SLOT
+    } else {
+        UNTIED_SLOT
+    };
+    String::from_utf8_lossy(actual)
+        .replace(allowed, NO_BINDING_SLOT)
+        .into_bytes()
+}
+
 fn normalize_moved_repair_advisories(bytes: &[u8]) -> (Vec<u8>, usize) {
-    const NO_BINDING: [&str; 3] = [
+    const NO_BINDING: [&str; 2] = [
         "  no repair start offered: no seam in the finding's file binds this finding;",
         "  no repair start offered: ripr found no seam in this finding's file to bind it to,",
-        "  no repair start offered: nothing to repair here; the related tests already notice this change (exposed)",
     ];
+    const EXPOSED_ADVISORY: &str = "  no repair start offered: nothing to repair here; the related tests already notice this change (exposed)";
     const COUNTED_START: &str = "  no repair start offered: ripr found ";
     const COUNTED_REST: &str =
         " in this finding's file, but could not tie one to this finding's changed line,";
@@ -304,10 +345,12 @@ fn normalize_moved_repair_advisories(bytes: &[u8]) -> (Vec<u8>, usize) {
     let projected = String::from_utf8_lossy(bytes)
         .split_inclusive('\n')
         .map(|line| {
-            let replacement = if NO_BINDING.iter().any(|prefix| line.starts_with(prefix))
-                || counted_untied(line)
-            {
-                Some("  no repair start offered: <no-binding-seam advisory>\n".to_string())
+            let replacement = if NO_BINDING.iter().any(|prefix| line.starts_with(prefix)) {
+                Some(format!("{NO_BINDING_SLOT}\n"))
+            } else if line.starts_with(EXPOSED_ADVISORY) {
+                Some(format!("{EXPOSED_SLOT}\n"))
+            } else if counted_untied(line) {
+                Some(format!("{UNTIED_SLOT}\n"))
             } else {
                 list_between(line, OLD_NOT_READY, OLD_LIST_END)
                     .or_else(|| list_between(line, NEW_NOT_READY, NEW_LIST_END))
@@ -552,7 +595,7 @@ fn discarded_matcher_cli_controls_reject_false_credit_and_retain_consumers() -> 
                             actual_slots, expected_slots,
                             "{id}: each moved repair advisory must appear on both sides"
                         );
-                        (actual, expected)
+                        (bind_advisory_transition(&expected, &actual), expected)
                     } else {
                         (actual, expected_bytes)
                     };
@@ -773,4 +816,35 @@ fn discarded_matcher_cli_controls_reject_false_credit_and_retain_consumers() -> 
     })();
     let cleanup = std::fs::remove_dir_all(&root).map_err(|error| error.to_string());
     result.and(cleanup)
+}
+
+/// #10702: the no-binding slot may become the exposed slot only on an exposed
+/// capture and the counted-untied slot only on an unexposed one.
+#[test]
+fn advisory_transition_is_bound_to_the_captures_own_exposure() {
+    let capture = |exposure: &str, slot: &str| {
+        format!("  Static exposure: {exposure} (severity: info)\n{slot}\n").into_bytes()
+    };
+    let bound = |exposure: &str, live_slot: &str| {
+        bind_advisory_transition(
+            &capture(exposure, NO_BINDING_SLOT),
+            &capture(exposure, live_slot),
+        ) == capture(exposure, NO_BINDING_SLOT)
+    };
+    assert!(bound("exposed", EXPOSED_SLOT), "exposed capture -> exposed");
+    assert!(
+        !bound("exposed", UNTIED_SLOT),
+        "counted-untied on an exposed capture is rejected"
+    );
+    assert!(bound("weakly_exposed", UNTIED_SLOT), "unexposed -> untied");
+    assert!(
+        !bound("weakly_exposed", EXPOSED_SLOT),
+        "an unexposed capture gaining the exposed advisory is rejected"
+    );
+    // No retained no-binding slot: nothing is rewritten.
+    let retained = capture("exposed", EXPOSED_SLOT);
+    assert_eq!(
+        bind_advisory_transition(&retained, &capture("exposed", UNTIED_SLOT)),
+        capture("exposed", UNTIED_SLOT)
+    );
 }
