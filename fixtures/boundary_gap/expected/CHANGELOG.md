@@ -46,6 +46,13 @@ The same snapshots follow corpus cache generation 1.112 to 1.113 for a clean
 (RIPR-SPEC-0231 rule 9, #9619), with the same scope: generation, content
 commitment, dependent verify commitments and receipt byte hashes only.
 
+### call-in-term accumulator classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.113 to 1.114 for an
+accumulator update that adds a same-file function's value, read as a
+`return_value` change (RIPR-SPEC-0360, #9478), with the same scope: generation,
+content commitment, dependent verify commitments and receipt byte hashes only.
+
 ## Pending — boundary_gap (9)
 
 Reason:

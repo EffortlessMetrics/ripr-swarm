@@ -247,6 +247,11 @@ pub(in crate::analysis) fn build_finding_with_origins(
     {
         evidence_lines.push(crate::analysis::classify::REFUSALS_ARE_ANALYZER_LIMITS.to_string());
     }
+    // #5431: an admitted weak oracle beside a refused owner-calling
+    // `assert_eq!` whose refusal is an analyzer limit.
+    if class == ExposureClass::WeaklyExposed && evidence.mixed_refusal_is_analyzer_limit {
+        evidence_lines.push(crate::analysis::classify::MIXED_REFUSAL_IS_ANALYZER_LIMIT.to_string());
+    }
     // #8051: hand the `debug_assert_eq!` pins to the gap-admission post-pass,
     // which consumes the marker.
     if matches!(
@@ -1172,6 +1177,7 @@ mod tests {
             reach_ruled_out: true,
             assertion_refusal: None,
             refusals_are_analyzer_limits: false,
+            mixed_refusal_is_analyzer_limit: false,
             implicit_dispatch_tests: Default::default(),
             debug_assert_eq_pins: Vec::new(),
             related_call_budget_saturated: false,

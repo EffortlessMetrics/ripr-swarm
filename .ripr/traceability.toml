@@ -7554,6 +7554,7 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests.rs::package_local_filter_rejects_cross_package_test",
   "crates/ripr/src/analysis/language/typescript/tests.rs::extract_imports_recognizes_commonjs_destructured_require",
   "crates/ripr/src/analysis/language/typescript/tests.rs::extract_imports_recognizes_re_export_form",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::extract_imports_terminates_on_es_import_binding_require",
   "crates/ripr/src/analysis/language/typescript/tests.rs::named_limitation_target_unresolved_emitted_for_cross_package_reference",
   "crates/ripr/src/analysis/language/typescript/tests.rs::named_limitation_target_unresolved_not_emitted_for_same_package",
   "crates/ripr/src/output/typescript_limitations.rs::tests::typescript_limitation_leaderboard_counts_unique_kinds_per_finding",
