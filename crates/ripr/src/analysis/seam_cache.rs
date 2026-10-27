@@ -4084,7 +4084,7 @@ pub(crate) fn workspace_graph_provenance(root: &Path) -> WorkspaceGraphProvenanc
     feature_facts.sort();
     path_dep_edges.sort();
     path_dep_edges.dedup();
-    let graph_context = UnparsedManifestContext::new(&parsed_manifests, &path_dep_edges);
+    let graph_context = UnparsedManifestContext::new(root, &parsed_manifests, &path_dep_edges);
     for (manifest, detail) in unparsed_manifests {
         if graph_context.proves_outside_graph(&manifest) {
             continue;
@@ -4129,6 +4129,7 @@ struct UnparsedManifestContext {
 
 impl UnparsedManifestContext {
     fn new(
+        root: &Path,
         parsed_manifests: &[(&PathBuf, String, toml::Value)],
         edges: &[PathDependencyEdge],
     ) -> Self {
@@ -4177,6 +4178,22 @@ impl UnparsedManifestContext {
             }
             parsed_dirs.push(dir);
         }
+        // The scanned manifest identity replaces `\\` with `/` and does not
+        // follow symlinked directories, so a target can spell the same
+        // directory differently from the unparsed manifest: add the
+        // separator-normalised spelling and the resolved real location.
+        let canonical_root = root.canonicalize().ok();
+        let mut spellings = BTreeSet::new();
+        for target in &targets {
+            spellings.insert(target.replace('\\', "/"));
+            if let (Some(canonical_root), Ok(real)) =
+                (&canonical_root, root.join(target).canonicalize())
+                && let Ok(relative) = real.strip_prefix(canonical_root)
+            {
+                spellings.insert(relative.to_string_lossy().replace('\\', "/"));
+            }
+        }
+        targets.extend(spellings);
         Self {
             workspaces,
             parsed_dirs,
@@ -8345,6 +8362,39 @@ mod tests {
                 "tools/ws/m/Cargo.toml",
                 "vendor/patched/Cargo.toml"
             ]
+        );
+
+        ignore_remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unparsed_manifest_reached_through_a_symlink_or_backslash_spelling_stays_a_limitation()
+    -> Result<(), String> {
+        let root = isolated_dir("path-dep-unparsed-spellings");
+        ignore_remove_dir_all(&root);
+        write_manifest(&root, "Cargo.toml", "[workspace]\nmembers = [\"app\"]\n")?;
+        write_manifest(
+            &root,
+            "app/Cargo.toml",
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n\
+             [dependencies]\nlinked = { path = \"../linked\" }\nodd = { path = \"../odd\\\\dir\" }\n",
+        )?;
+        write_manifest(&root, "vendor/bad/Cargo.toml", "[package\nname = ")?;
+        write_manifest(&root, "odd/dir/Cargo.toml", "[package\nname = ")?;
+        std::os::unix::fs::symlink(root.join("vendor/bad"), root.join("linked"))
+            .map_err(|err| err.to_string())?;
+
+        let provenance = workspace_graph_provenance(&root);
+        let manifests: Vec<&str> = provenance
+            .path_dependency_limitations
+            .iter()
+            .map(|limitation| limitation.manifest.as_str())
+            .collect();
+        assert_eq!(
+            manifests,
+            vec!["odd/dir/Cargo.toml", "vendor/bad/Cargo.toml"]
         );
 
         ignore_remove_dir_all(&root);
