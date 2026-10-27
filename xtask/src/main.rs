@@ -1791,8 +1791,106 @@ fn vscode_package() -> Result<(), String> {
 fn vscode_verify_vsix(args: &[String]) -> Result<(), String> {
     let vsix_path = vscode_verify_vsix_path(args)?;
     let notices = load_repository_license_notices(&repo_root()?)?;
-    println!("{}", verify_packaged_vsix(&vsix_path, &notices)?);
+    let summary = verify_packaged_vsix(&vsix_path, &notices)?;
+    verify_packaged_vsix_version(&vsix_path)?;
+    println!("{summary}");
     Ok(())
+}
+
+/// The VSIX file name carries the release version (`ripr-<version>.vsix`);
+/// its own `extension/package.json` and `extension.vsixmanifest` must agree
+/// (#10731: `ripr-0.10.0.vsix` shipped extension 0.8.0).
+fn verify_packaged_vsix_version(vsix_path: &Path) -> Result<(), String> {
+    let name = vsix_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+    let expected = name
+        .strip_prefix("ripr-")
+        .and_then(|rest| rest.strip_suffix(".vsix"))
+        .filter(|version| !version.is_empty())
+        .ok_or_else(|| {
+            format!("VSIX file name {name:?} must be ripr-<version>.vsix to bind its version")
+        })?;
+    let file = fs::File::open(vsix_path)
+        .map_err(|err| format!("packaged VSIX {} is missing: {err}", vsix_path.display()))?;
+    let mut archive = zip::ZipArchive::new(file)
+        .map_err(|err| format!("packaged VSIX {} is not a zip: {err}", vsix_path.display()))?;
+    let package_json = read_vsix_text_member(&mut archive, "extension/package.json", vsix_path)?;
+    let package: Value = serde_json::from_str(&package_json).map_err(|err| {
+        format!(
+            "packaged VSIX {} extension/package.json is not JSON: {err}",
+            vsix_path.display()
+        )
+    })?;
+    let manifest_version = package.get("version").and_then(Value::as_str).unwrap_or("");
+    let vsixmanifest = read_vsix_text_member(&mut archive, "extension.vsixmanifest", vsix_path)?;
+    let identity_version = vsixmanifest_identity_version(&vsixmanifest);
+    if manifest_version != expected || identity_version != expected {
+        return Err(format!(
+            "packaged VSIX {} is named for version {expected} but carries extension/package.json version {manifest_version:?} and extension.vsixmanifest Identity Version {identity_version:?}",
+            vsix_path.display()
+        ));
+    }
+    Ok(())
+}
+
+/// Version of the `<Identity>` element inside `<Metadata>`, read after removing
+/// XML comments and CDATA so Identity-like text there cannot be mistaken for
+/// the real element (no XML dependency exists in the workspace).
+fn vsixmanifest_identity_version(text: &str) -> String {
+    let mut cleaned = text.to_string();
+    for (open, close) in [("<!--", "-->"), ("<![CDATA[", "]]>")] {
+        while let Some(start) = cleaned.find(open) {
+            let end = cleaned[start..]
+                .find(close)
+                .map_or(cleaned.len(), |offset| start + offset + close.len());
+            cleaned.replace_range(start..end, "");
+        }
+    }
+    let Some(metadata) = cleaned.find("<Metadata") else {
+        return String::new();
+    };
+    let rest = &cleaned[metadata..];
+    let mut search = 0;
+    while let Some(found) = rest[search..].find("<Identity") {
+        let tag_start = search + found + "<Identity".len();
+        search = tag_start;
+        if !rest[tag_start..].starts_with(|c: char| c.is_whitespace() || c == '/' || c == '>') {
+            continue;
+        }
+        let tag = rest[tag_start..].split('>').next().unwrap_or("");
+        for quote in ['"', '\''] {
+            let needle = format!("Version={quote}");
+            let mut from = 0;
+            while let Some(at) = tag[from..].find(&needle) {
+                let abs = from + at;
+                from = abs + needle.len();
+                if tag[..abs].ends_with(|c: char| c.is_whitespace()) {
+                    return tag[from..].split(quote).next().unwrap_or("").to_string();
+                }
+            }
+        }
+        return String::new();
+    }
+    String::new()
+}
+
+fn read_vsix_text_member(
+    archive: &mut zip::ZipArchive<fs::File>,
+    member: &str,
+    vsix_path: &Path,
+) -> Result<String, String> {
+    let mut entry = archive.by_name(member).map_err(|err| {
+        format!(
+            "packaged VSIX {} is missing {member}: {err}",
+            vsix_path.display()
+        )
+    })?;
+    let mut text = String::new();
+    std::io::Read::read_to_string(&mut entry, &mut text)
+        .map_err(|err| format!("failed to read {member} in {}: {err}", vsix_path.display()))?;
+    Ok(text)
 }
 
 fn vscode_verify_vsix_path(args: &[String]) -> Result<PathBuf, String> {

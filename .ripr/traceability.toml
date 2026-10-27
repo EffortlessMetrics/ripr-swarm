@@ -15101,7 +15101,8 @@ tests = [
   "packaging/npm/launcher/test/run-tests.test.cjs",
   "packaging/npm/launcher/test/launcher.test.cjs",
   "xtask/src/policy/distribution/tests.rs",
-  "xtask/src/version.rs"
+  "xtask/src/version.rs",
+  "xtask/src/tests.rs"
 ]
 code = [
   "packaging/npm/launcher/package.json",
@@ -15109,7 +15110,8 @@ code = [
   "packaging/npm/launcher/lib/launcher.cjs",
   "xtask/src/policy/distribution/npm_launcher.rs",
   "xtask/src/policy/distribution/mod.rs",
-  "xtask/src/version.rs"
+  "xtask/src/version.rs",
+  "xtask/src/main.rs"
 ]
 outputs = [
   "packaging/npm/launcher/README.md",

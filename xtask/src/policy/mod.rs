@@ -65,6 +65,9 @@ pub(crate) fn check_release_targets() -> Result<(), String> {
     if let Err(error) = release_selection::check_release_selection() {
         failures.push(error);
     }
+    if let Err(error) = crate::version::check_release_version_sync() {
+        failures.push(error);
+    }
 
     if failures.is_empty() {
         Ok(())

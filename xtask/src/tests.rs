@@ -51410,18 +51410,194 @@ fn vscode_verify_vsix_reuses_sealed_archive_license_check() -> Result<(), String
     let mit = String::from_utf8(notices.mit.clone()).map_err(|err| err.to_string())?;
     let apache = String::from_utf8(notices.apache.clone()).map_err(|err| err.to_string())?;
     with_temp_cwd("vscode-verify-vsix-reuse", |root| {
-        let good = root.join("good.vsix");
+        let good = root.join("ripr-0.11.0.vsix");
         let license_txt = packaged_license_txt(&mit, &apache);
-        write_packaging_test_vsix(&good, &[("extension/LICENSE.txt", &license_txt)])?;
+        let versioned = |version: &str| {
+            (
+                format!("{{\"name\":\"ripr\",\"version\":\"{version}\"}}"),
+                format!(
+                    "<PackageManifest><Metadata><Identity Language=\"en-US\" Id=\"ripr\" Version=\"{version}\" Publisher=\"EffortlessMetrics\" /></Metadata></PackageManifest>"
+                ),
+            )
+        };
+        let (package_json, vsixmanifest) = versioned("0.11.0");
+        write_packaging_test_vsix(
+            &good,
+            &[
+                ("extension/LICENSE.txt", &license_txt),
+                ("extension/package.json", &package_json),
+                ("extension.vsixmanifest", &vsixmanifest),
+            ],
+        )?;
         super::vscode_verify_vsix(&[good.to_string_lossy().into_owned()])?;
 
-        let pointer = root.join("pointer.vsix");
+        // #10731: a stale 0.8.0 extension under a 0.10.0 name must fail.
+        let stale = root.join("ripr-0.10.0.vsix");
+        let (package_json, vsixmanifest) = versioned("0.8.0");
+        write_packaging_test_vsix(
+            &stale,
+            &[
+                ("extension/LICENSE.txt", &license_txt),
+                ("extension/package.json", &package_json),
+                ("extension.vsixmanifest", &vsixmanifest),
+            ],
+        )?;
+        let Err(error) = super::vscode_verify_vsix(&[stale.to_string_lossy().into_owned()]) else {
+            return Err("vscode-verify-vsix must reject a stale extension version".to_string());
+        };
+        assert!(
+            error.contains("named for version 0.10.0") && error.contains("0.8.0"),
+            "{error}"
+        );
+
+        // A matching Identity inside a comment or CDATA must not mask the real, stale one.
+        let masked = root.join("ripr-0.11.2.vsix");
+        let masked_manifest = "<PackageManifest><!-- <Identity Version=\"0.11.2\" /> --><Metadata><![CDATA[<Identity Version=\"0.11.2\" />]]><Identity Language=\"en-US\" Id=\"ripr\" Version=\"0.8.0\" Publisher=\"EffortlessMetrics\" /></Metadata></PackageManifest>";
+        write_packaging_test_vsix(
+            &masked,
+            &[
+                ("extension/LICENSE.txt", &license_txt),
+                ("extension/package.json", "{\"version\":\"0.11.2\"}"),
+                ("extension.vsixmanifest", masked_manifest),
+            ],
+        )?;
+        let Err(error) = super::vscode_verify_vsix(&[masked.to_string_lossy().into_owned()]) else {
+            return Err("an Identity-like comment must not mask a stale Identity".to_string());
+        };
+        assert!(error.contains("Identity Version \"0.8.0\""), "{error}");
+        assert_eq!(
+            super::vsixmanifest_identity_version(
+                "<PackageManifest><Metadata><Identity Id='ripr' Version='0.11.2'/></Metadata></PackageManifest>"
+            ),
+            "0.11.2"
+        );
+
+        let pointer = root.join("ripr-0.11.1.vsix");
         write_packaging_test_vsix(&pointer, &[("extension/LICENSE.txt", POINTER_LICENSE)])?;
         let Err(error) = super::vscode_verify_vsix(&[pointer.to_string_lossy().into_owned()])
         else {
             return Err("vscode-verify-vsix must reject a pointer-only LICENSE.txt".to_string());
         };
         assert!(error.contains("extension/LICENSE.txt"), "{error}");
+        Ok(())
+    })
+}
+
+#[test]
+fn verify_packaged_vsix_version_binds_each_member_to_the_file_name() -> Result<(), String> {
+    let manifest = |version: &str| {
+        format!(
+            "<PackageManifest><Metadata><Identity Language=\"en-US\" Id=\"ripr\" Version=\"{version}\" Publisher=\"EffortlessMetrics\" /></Metadata></PackageManifest>"
+        )
+    };
+    let package = |version: &str| format!("{{\"name\":\"ripr\",\"version\":\"{version}\"}}");
+    with_temp_cwd("verify-vsix-version-members", |root| {
+        let write = |name: &str, members: &[(&str, &str)]| -> Result<PathBuf, String> {
+            let path = root.join(name);
+            write_packaging_test_vsix(&path, members)?;
+            Ok(path)
+        };
+        let reject = |path: &Path| -> Result<String, String> {
+            match super::verify_packaged_vsix_version(path) {
+                Ok(()) => Err(format!("{} must be rejected", path.display())),
+                Err(error) => Ok(error),
+            }
+        };
+
+        let aligned = write(
+            "ripr-0.10.0.vsix",
+            &[
+                ("extension/package.json", &package("0.10.0")),
+                ("extension.vsixmanifest", &manifest("0.10.0")),
+            ],
+        )?;
+        super::verify_packaged_vsix_version(&aligned)?;
+
+        // Only extension/package.json is stale.
+        let only_package = write(
+            "ripr-0.10.1.vsix",
+            &[
+                ("extension/package.json", &package("0.8.0")),
+                ("extension.vsixmanifest", &manifest("0.10.1")),
+            ],
+        )?;
+        let error = reject(&only_package)?;
+        assert!(error.contains("package.json version \"0.8.0\""), "{error}");
+        assert!(error.contains("Identity Version \"0.10.1\""), "{error}");
+
+        // Only extension.vsixmanifest is stale.
+        let only_manifest = write(
+            "ripr-0.10.2.vsix",
+            &[
+                ("extension/package.json", &package("0.10.2")),
+                ("extension.vsixmanifest", &manifest("0.8.0")),
+            ],
+        )?;
+        let error = reject(&only_manifest)?;
+        assert!(error.contains("package.json version \"0.10.2\""), "{error}");
+        assert!(error.contains("Identity Version \"0.8.0\""), "{error}");
+
+        // Both stale and different: both observed values are reported.
+        let both = write(
+            "ripr-0.10.3.vsix",
+            &[
+                ("extension/package.json", &package("0.8.0")),
+                ("extension.vsixmanifest", &manifest("0.9.0")),
+            ],
+        )?;
+        let error = reject(&both)?;
+        assert!(error.contains("named for version 0.10.3"), "{error}");
+        assert!(error.contains("package.json version \"0.8.0\""), "{error}");
+        assert!(error.contains("Identity Version \"0.9.0\""), "{error}");
+
+        // Absent or malformed version fields never match the file name.
+        let no_version = write(
+            "ripr-0.10.4.vsix",
+            &[
+                ("extension/package.json", r#"{"name":"ripr"}"#),
+                (
+                    "extension.vsixmanifest",
+                    "<PackageManifest><Identity Id=\"ripr\" /></PackageManifest>",
+                ),
+            ],
+        )?;
+        let error = reject(&no_version)?;
+        assert!(error.contains("package.json version \"\""), "{error}");
+        assert!(error.contains("Identity Version \"\""), "{error}");
+        let non_string = write(
+            "ripr-0.10.5.vsix",
+            &[
+                ("extension/package.json", r#"{"version":10}"#),
+                ("extension.vsixmanifest", &manifest("0.10.5")),
+            ],
+        )?;
+        reject(&non_string)?;
+        let bad_json = write(
+            "ripr-0.10.6.vsix",
+            &[
+                ("extension/package.json", "not json"),
+                ("extension.vsixmanifest", &manifest("0.10.6")),
+            ],
+        )?;
+        let error = reject(&bad_json)?;
+        assert!(error.contains("is not JSON"), "{error}");
+
+        // Missing members and a non-conforming file name fail closed.
+        let no_manifest = write(
+            "ripr-0.10.7.vsix",
+            &[("extension/package.json", &package("0.10.7"))],
+        )?;
+        let error = reject(&no_manifest)?;
+        assert!(error.contains("extension.vsixmanifest"), "{error}");
+        let misnamed = write(
+            "good.vsix",
+            &[
+                ("extension/package.json", &package("0.10.0")),
+                ("extension.vsixmanifest", &manifest("0.10.0")),
+            ],
+        )?;
+        let error = reject(&misnamed)?;
+        assert!(error.contains("ripr-<version>.vsix"), "{error}");
         Ok(())
     })
 }
