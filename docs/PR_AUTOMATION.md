@@ -644,6 +644,14 @@ every rewording into one re-blessed line in hundreds of fixtures (#10702). A
 repair start that flips to a refusal, a refusal that appears or disappears, and
 a change of variant or missing-evidence list are still drift.
 
+Transitional (#10702): `TRANSITIONAL_REFUSAL_ALIASES` in the same file lets a
+human golden whose expected refusal opens with one of four retired openings
+(no canonical gap, no binding seam, seam inventory, still missing) now read
+"nothing to repair here" or "found N seams … none is tied to … changed line",
+so the check-side change does not need ~250 re-blessed fixtures in one PR over
+the admission file cap. Any other opening change is still drift. Follow-up
+batches re-bless fixtures and shrink the table; it is removed once empty.
+
 `golden-drift` writes the same advisory drift reports without failing merely
 because output drift exists. It still reports fixture execution errors as
 command failures.

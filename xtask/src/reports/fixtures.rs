@@ -1321,11 +1321,13 @@ fn compare_golden(
     };
     let normalized_expected = normalize_golden_text(&expected_text);
     let normalized_actual = normalize_golden_text(&actual_text);
+    let aliased = surface != "check.json"
+        && transitional_refusal_aliases_apply(&normalized_expected, &normalized_actual);
     Ok(GoldenComparison {
         surface,
         expected: expected.to_path_buf(),
         actual: actual.to_path_buf(),
-        matches: normalized_expected == normalized_actual,
+        matches: aliased || normalized_expected == normalized_actual,
         first_difference: first_line_difference(&normalized_expected, &normalized_actual),
     })
 }
@@ -1478,6 +1480,8 @@ const REPAIR_REFUSAL_RULES: &[RefusalRule] = &[
     rule("this finding has no canonical gap"),
     rule("ripr found no seam in this finding's file to bind it to"),
     rule("several seams bind this finding"),
+    rule("nothing to repair here"),
+    rule("`ripr check` reads a gap or limit for this change"),
     rule("the seam inventory behind `ripr repair`"),
     rule("the seam budget left"),
     rule("the root's config could not be read"),
@@ -1525,7 +1529,77 @@ fn mask_repair_refusal_reason(value: &str) -> String {
     masked
 }
 
+/// Opening of the "seams exist in the file but none is tied to the changed
+/// line" variant once its seam count is masked (#10702).
+const SEAMS_UNTIED_OPENING: &str =
+    "ripr found <n> seams in this finding's file, but none is tied to this finding's changed line";
+const EXPOSED_OPENING: &str = "nothing to repair here";
+
+/// TRANSITIONAL (#10702): old variant opening -> new openings it may become
+/// while the check-side change is re-blessed in batches. An old opening
+/// becoming anything not listed is still drift. Remove entries as fixtures are
+/// re-blessed; the table should end empty and be deleted.
+const TRANSITIONAL_REFUSAL_ALIASES: &[(&str, &[&str])] = &[
+    ("this finding has no canonical gap", &[EXPOSED_OPENING]),
+    (
+        "ripr found no seam in this finding's file to bind it to",
+        &[EXPOSED_OPENING, SEAMS_UNTIED_OPENING],
+    ),
+    (
+        "the seam inventory behind `ripr repair`",
+        &[EXPOSED_OPENING],
+    ),
+    (
+        "ripr cannot build a repair packet for this finding yet because it is still missing: ",
+        &[EXPOSED_OPENING],
+    ),
+];
+
+/// Whether `actual` differs from `expected` (both already refusal-masked) only
+/// by refusal openings that `TRANSITIONAL_REFUSAL_ALIASES` allows to change.
+fn transitional_refusal_aliases_apply(expected: &str, actual: &str) -> bool {
+    let expected_lines: Vec<&str> = expected.split('\n').collect();
+    let actual_lines: Vec<&str> = actual.split('\n').collect();
+    if expected_lines.len() != actual_lines.len() {
+        return false;
+    }
+    expected_lines.iter().zip(&actual_lines).all(|(old, new)| {
+        if old == new {
+            return true;
+        }
+        let (Some(old_body), Some(new_body)) = (
+            old.trim_start().strip_prefix(REPAIR_REFUSAL_MARKER),
+            new.trim_start().strip_prefix(REPAIR_REFUSAL_MARKER),
+        ) else {
+            return false;
+        };
+        TRANSITIONAL_REFUSAL_ALIASES.iter().any(|(from, to)| {
+            old_body.starts_with(from) && to.iter().any(|opening| new_body.starts_with(opening))
+        })
+    })
+}
+
+/// Replace the seam count of the untied-seams opening so the count (which
+/// moves with unrelated seams) is not golden-pinned.
+fn normalize_seam_count(body: &str) -> Option<String> {
+    let rest = body.strip_prefix("ripr found ")?;
+    let digits = rest.chars().take_while(char::is_ascii_digit).count();
+    if digits == 0 {
+        return None;
+    }
+    let after = &rest[digits..];
+    let after = after
+        .strip_prefix(" seams")
+        .or_else(|| after.strip_prefix(" seam"))?;
+    after
+        .strip_prefix(" in this finding's file, but none is tied to this finding's changed line")?;
+    Some(format!("{SEAMS_UNTIED_OPENING}<reason>"))
+}
+
 fn mask_refusal_body(body: &str) -> String {
+    if let Some(masked) = normalize_seam_count(body) {
+        return masked;
+    }
     for rule in REPAIR_REFUSAL_RULES {
         let Some(after) = body.strip_prefix(rule.prefix) else {
             continue;
@@ -3328,6 +3402,39 @@ mod tests {
         // check.json is never refusal-masked: the same text diverges there.
         assert!(!matches(&reworded, "check.json")?, "check.json is unmasked");
         assert!(matches(&expected, "check.json")?);
+
+        // Transitional aliases (#10702): a listed old->new opening passes in
+        // human goldens only; an unlisted new opening, or check.json, fails.
+        let exposed = write(
+            "exposed.txt",
+            &line("nothing to repair here; the related tests already notice this change (exposed)"),
+        )?;
+        let old_no_seam = write(
+            "old_no_seam.txt",
+            &line("ripr found no seam in this finding's file to bind it to, so x"),
+        )?;
+        let untied = write(
+            "untied.txt",
+            &line(
+                "ripr found 4 seams in this finding's file, but none is tied to this finding's changed line, so y",
+            ),
+        )?;
+        let compare = |exp: &Path, act: &Path, surface: &'static str| -> Result<bool, String> {
+            Ok(compare_golden(surface, exp, act)?.matches)
+        };
+        assert!(compare(&old_no_seam, &exposed, "human.txt")?);
+        assert!(compare(&old_no_seam, &untied, "human.txt")?);
+        assert!(!compare(&old_no_seam, &exposed, "check.json")?);
+        // Discriminating negatives: not listed for this old opening.
+        assert!(
+            !compare(&untied, &exposed, "human.txt")?,
+            "new->new is not aliased"
+        );
+        assert!(
+            !compare(&expected, &untied, "human.txt")?,
+            "missing-list -> untied is not listed"
+        );
+        assert!(!compare(&old_no_seam, &other_variant, "human.txt")?);
         std::fs::remove_dir_all(&dir).map_err(|err| err.to_string())?;
         Ok(())
     }
