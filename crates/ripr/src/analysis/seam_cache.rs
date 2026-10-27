@@ -4084,7 +4084,15 @@ pub(crate) fn workspace_graph_provenance(root: &Path) -> WorkspaceGraphProvenanc
     feature_facts.sort();
     path_dep_edges.sort();
     path_dep_edges.dedup();
+    let workspace_member_patterns = workspace_member_patterns(&parsed_manifests);
     for (manifest, detail) in unparsed_manifests {
+        if unparsed_manifest_is_outside_graph(
+            &manifest,
+            &workspace_member_patterns,
+            &path_dep_edges,
+        ) {
+            continue;
+        }
         path_dep_limitations.push(PathDependencyLimitation {
             manifest,
             kind: PathDependencyLimitationKind::ManifestUnparsed,
@@ -4111,6 +4119,126 @@ pub(crate) fn workspace_graph_provenance(root: &Path) -> WorkspaceGraphProvenanc
 /// Repo-relative, `/`-separated directory text of a manifest path, or `None`
 /// when the path is not valid UTF-8 (the supported-path boundary: no lossy
 /// conversion). The root manifest's directory is the empty string.
+/// `(workspace root directory, member patterns)` for every parsed manifest
+/// with a `[workspace]` table; `None` patterns mean `members` is present but
+/// not a plain string array and so cannot be evaluated.
+type WorkspaceMemberPatterns = Vec<(String, Option<Vec<String>>)>;
+
+fn workspace_member_patterns(
+    parsed_manifests: &[(&PathBuf, String, toml::Value)],
+) -> WorkspaceMemberPatterns {
+    parsed_manifests
+        .iter()
+        .filter_map(|(path, _, value)| {
+            let workspace = value.get("workspace").and_then(toml::Value::as_table)?;
+            let dir = portable_manifest_dir_text(path)?;
+            let patterns = match workspace.get("members") {
+                None => Some(Vec::new()),
+                Some(members) => members.as_array().and_then(|items| {
+                    items
+                        .iter()
+                        .map(|item| item.as_str().map(str::to_string))
+                        .collect::<Option<Vec<_>>>()
+                }),
+            };
+            Some((dir, patterns))
+        })
+        .collect()
+}
+
+/// True when an unparsed manifest provably cannot be part of the
+/// path-dependency graph: no captured edge targets its directory, and some
+/// ancestor workspace root enumerates `members` with patterns this matcher
+/// fully understands, none of which select it. Cargo refuses a workspace whose
+/// member or path-dependency target fails to parse, so a stray fixture
+/// manifest (for example a deliberately invalid `Cargo.toml` under a test
+/// directory) is outside the graph and must not mark the inventory partial.
+/// Anything unproven stays a limitation (fail closed).
+fn unparsed_manifest_is_outside_graph(
+    manifest: &str,
+    workspaces: &WorkspaceMemberPatterns,
+    edges: &[PathDependencyEdge],
+) -> bool {
+    let dir = manifest.rsplit_once('/').map_or("", |(dir, _)| dir);
+    if edges
+        .iter()
+        .any(|edge| edge.resolved_path.as_deref() == Some(dir))
+    {
+        return false;
+    }
+    workspaces.iter().any(|(root_dir, patterns)| {
+        let Some(patterns) = patterns else {
+            return false;
+        };
+        let relative = if root_dir.is_empty() {
+            dir
+        } else {
+            match dir
+                .strip_prefix(root_dir.as_str())
+                .and_then(|rest| rest.strip_prefix('/'))
+            {
+                Some(rest) => rest,
+                None => return false,
+            }
+        };
+        !relative.is_empty()
+            && patterns
+                .iter()
+                .all(|pattern| matches!(member_pattern_selects(pattern, relative), Some(false)))
+    })
+}
+
+/// Evaluate one `[workspace] members` pattern against a root-relative
+/// directory. Supports literal segments and `*` wildcards inside a segment;
+/// returns `None` for syntax it does not model (`**`, `?`, classes, braces,
+/// absolute or `..` paths) so the caller fails closed.
+fn member_pattern_selects(pattern: &str, relative: &str) -> Option<bool> {
+    let pattern = pattern.replace('\\', "/");
+    let pattern = pattern.trim_start_matches("./").trim_end_matches('/');
+    if pattern.is_empty()
+        || pattern.starts_with('/')
+        || pattern.contains(['?', '[', '{'])
+        || pattern.contains("**")
+        || pattern
+            .split('/')
+            .any(|segment| segment == ".." || segment == ".")
+        || pattern.chars().nth(1) == Some(':')
+    {
+        return None;
+    }
+    let pattern_segments: Vec<&str> = pattern.split('/').collect();
+    let dir_segments: Vec<&str> = relative.split('/').collect();
+    Some(
+        pattern_segments.len() == dir_segments.len()
+            && pattern_segments
+                .iter()
+                .zip(&dir_segments)
+                .all(|(pattern, segment)| segment_matches(pattern, segment)),
+    )
+}
+
+/// Match one path segment against a pattern whose only metacharacter is `*`.
+fn segment_matches(pattern: &str, segment: &str) -> bool {
+    let mut parts = pattern.split('*');
+    let Some(first) = parts.next() else {
+        return false;
+    };
+    let Some(mut rest) = segment.strip_prefix(first) else {
+        return false;
+    };
+    let parts: Vec<&str> = parts.collect();
+    let Some((last, middle)) = parts.split_last() else {
+        return rest.is_empty();
+    };
+    for part in middle {
+        let Some(at) = rest.find(part) else {
+            return false;
+        };
+        rest = &rest[at + part.len()..];
+    }
+    rest.len() >= last.len() && rest.ends_with(last)
+}
+
 fn portable_manifest_dir_text(manifest_path: &Path) -> Option<String> {
     let dir = manifest_path.parent().unwrap_or_else(|| Path::new(""));
     Some(dir.to_str()?.replace('\\', "/"))
@@ -8061,6 +8189,90 @@ mod tests {
 
         ignore_remove_dir_all(&root);
         Ok(())
+    }
+
+    #[test]
+    fn unparsed_manifest_outside_every_member_pattern_is_not_a_limitation() -> Result<(), String> {
+        let root = isolated_dir("path-dep-unparsed-outside");
+        ignore_remove_dir_all(&root);
+        write_manifest(
+            &root,
+            "Cargo.toml",
+            "[workspace]\nmembers = [\"crates/*\"]\n",
+        )?;
+        write_manifest(
+            &root,
+            "crates/app/Cargo.toml",
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n",
+        )?;
+        write_manifest(&root, "tests/fixture/in/Cargo.toml", "[package\nname = ")?;
+
+        let provenance = workspace_graph_provenance(&root);
+        assert!(
+            provenance.path_dependency_limitations.is_empty(),
+            "a fixture manifest outside every member pattern is outside the graph: {:?}",
+            provenance.path_dependency_limitations
+        );
+
+        ignore_remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn unparsed_manifest_that_may_be_in_the_graph_stays_a_limitation() -> Result<(), String> {
+        let root = isolated_dir("path-dep-unparsed-inside");
+        ignore_remove_dir_all(&root);
+        write_manifest(
+            &root,
+            "Cargo.toml",
+            "[workspace]\nmembers = [\"crates/*\"]\n",
+        )?;
+        // Selected by `crates/*`.
+        write_manifest(&root, "crates/broken/Cargo.toml", "[package\nname = ")?;
+        // Reached by a path dependency of a parsed member.
+        write_manifest(
+            &root,
+            "crates/app/Cargo.toml",
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n\
+             [dependencies]\nvendored = { path = \"../../vendor/dep\" }\n",
+        )?;
+        write_manifest(&root, "vendor/dep/Cargo.toml", "[package\nname = ")?;
+
+        let provenance = workspace_graph_provenance(&root);
+        let manifests: Vec<&str> = provenance
+            .path_dependency_limitations
+            .iter()
+            .map(|limitation| limitation.manifest.as_str())
+            .collect();
+        assert_eq!(
+            manifests,
+            vec!["crates/broken/Cargo.toml", "vendor/dep/Cargo.toml"]
+        );
+
+        ignore_remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn unparsed_manifest_is_kept_when_member_syntax_is_not_modeled() {
+        for pattern in ["crates/**", "crates/[ab]*", "crates/?", "../x", "/abs"] {
+            assert_eq!(member_pattern_selects(pattern, "tests/fixture"), None);
+        }
+        assert_eq!(
+            member_pattern_selects("crates/*", "tests/fixture"),
+            Some(false)
+        );
+        assert_eq!(member_pattern_selects("crates/*", "crates/app"), Some(true));
+        assert_eq!(
+            member_pattern_selects("crates/a*p", "crates/app"),
+            Some(true)
+        );
+        assert_eq!(
+            member_pattern_selects("crates/*", "crates/a/b"),
+            Some(false)
+        );
+        assert!(!segment_matches("a*b*c", "abxbd"));
+        assert!(segment_matches("a*b*c", "axbyc"));
     }
 
     #[test]
