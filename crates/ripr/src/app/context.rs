@@ -164,6 +164,7 @@ pub(crate) fn collect_context_with_config_worktree_and_progress(
                 &worktree_list_command,
                 &committed_list_command,
                 worktree_from_default,
+                &output,
             ),
         )),
     }

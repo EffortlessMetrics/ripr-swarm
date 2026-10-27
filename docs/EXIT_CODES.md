@@ -116,6 +116,10 @@ reached the caller.
   usage-class errors keep stdout empty. Usage-class errors include argv
   errors and `context`/`explain` selector misses or ambiguity; their guidance
   and retry listing stay on stderr (RIPR-SPEC-0003).
+  Fresh selector misses also retain producer-owned language limitations for
+  that run, with the configured-off or unavailable-binary recovery. These
+  describe analysis scope rather than prove why the selector missed;
+  recorded `--from` lookups do not invent ambient language facts (#10720).
   [docs/OUTPUT_SCHEMA.md](OUTPUT_SCHEMA.md) documents the refusal
   shape and its `schema_version`.
 - **User error**: unknown command, missing required argument, or invalid
