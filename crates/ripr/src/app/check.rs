@@ -456,6 +456,16 @@ fn check_with_progress_and_origins_run(
             probes = crate::output::count_noun::count_noun(probe_count, "probe", "probes"),
             findings = crate::output::count_noun::count_noun(finding_count, "finding", "findings"),
         );
+        // #10725: persistent per-file fact-cache admissions, one line per
+        // language that did cache work. A zero-work run stays silent — the
+        // renderer returns None instead of borrowing counts.
+        for (language, stats) in &analysis.preview_fact_caches {
+            if let Some(line) =
+                crate::analysis::language::adapter::render_fact_cache_line(language.as_str(), stats)
+            {
+                eprintln!("ripr: {line}");
+            }
+        }
     }
 
     progress.emit(AnalysisProgressStage::BuildingOutput);
@@ -543,6 +553,7 @@ pub fn repo_seam_inventory_input(input: CheckInput) -> CheckOutput {
             rust_diagnostic_origins: Default::default(),
             rust_consumed_sources: Default::default(),
             language_view: None,
+            preview_fact_caches: Vec::new(),
         },
     )
 }
@@ -1434,6 +1445,7 @@ mod tests {
             rust_diagnostic_origins: Default::default(),
             rust_consumed_sources: Default::default(),
             language_view: None,
+            preview_fact_caches: Vec::new(),
         }
     }
 

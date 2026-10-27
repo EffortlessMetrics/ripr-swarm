@@ -124,7 +124,7 @@ pub(crate) fn facts_fingerprint(
 /// All per-file facts derived from one oxc parse (#10071): parse status,
 /// owners, export facts, and phase-2 facts. One parse per (path, content,
 /// root, alias-map) replaces the four separate parses per save.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct FileFacts {
     /// `None` when the source parsed cleanly; otherwise the same
     /// `"N parser error(s): <first message>"` string `parse_error_reason`
@@ -507,6 +507,65 @@ fn test_extraction_cached_with(
         }
     });
     extraction
+}
+
+/// Seed the process-lifetime facts cache with `facts` for
+/// `(relative, source)` under `(workspace_root, alias_map)` without parsing.
+/// The persistent per-file fact store (#10725) calls this after a disk hit so
+/// the unchanged loop body below serves memory; the key is computed exactly
+/// as `file_facts_cached` computes it, so a later in-process lookup for the
+/// same inputs is a hit.
+pub(crate) fn seed_file_facts(
+    relative: &Path,
+    source: &str,
+    workspace_root: &Path,
+    alias_map: Option<&TsAliasMap>,
+    facts: Rc<FileFacts>,
+) {
+    let path = normalized_path(relative);
+    let alias_digest = alias_map.map_or((0, 0), TsAliasMap::cache_digest);
+    let key = CacheKey {
+        fingerprint: facts_fingerprint(workspace_root, alias_digest, &path, source),
+        source_len: source.len(),
+        path,
+    };
+    FILE_FACTS_CACHE.with(|cache| {
+        if let Ok(mut cache) = cache.try_borrow_mut() {
+            let cache = cache.get_or_insert_with(FileFactsCache::default);
+            cache.insert(key, facts);
+        }
+    });
+}
+
+/// Seed the test-extraction cache with `extraction` for `(relative, source)`
+/// without extracting. The persistent per-file fact store (#10725) calls this
+/// after a disk hit; the key is computed exactly as
+/// `test_extraction_cached_with` computes it.
+pub(crate) fn seed_test_extraction(relative: &Path, source: &str, extraction: Rc<TestExtraction>) {
+    // Lossless path identity, matching `test_extraction_cached_with`.
+    let path = relative.to_string_lossy().into_owned();
+    let key = CacheKey {
+        fingerprint: facts_fingerprint(Path::new(""), (0, 0), &path, source),
+        source_len: source.len(),
+        path,
+    };
+    TEST_EXTRACTION_CACHE.with(|cache| {
+        if let Ok(mut cache) = cache.try_borrow_mut() {
+            let cache = cache.get_or_insert_with(|| {
+                TestExtractionCache::with_bounds(MAX_ENTRIES, MAX_APPROX_BYTES)
+            });
+            cache.insert(key, extraction);
+        }
+    });
+}
+
+/// Drop both process-lifetime extraction caches (tests only). The persistent
+/// store (#10725) tests exercise the disk layer between runs, so every
+/// scenario starts without in-memory facts.
+#[cfg(test)]
+pub(crate) fn reset_caches_for_test() {
+    FILE_FACTS_CACHE.with(|cache| *cache.borrow_mut() = None);
+    TEST_EXTRACTION_CACHE.with(|cache| *cache.borrow_mut() = None);
 }
 
 /// Number of entries in the test-extraction cache (tests only).

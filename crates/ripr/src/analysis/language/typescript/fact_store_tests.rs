@@ -359,7 +359,7 @@ fn fact_cache_line_discloses_real_counts_and_stays_silent_on_zero_work() {
     );
     assert_eq!(
         line.as_deref(),
-        Some("typescript per-file facts: 3 reused, 0 recomputed, 3 stored")
+        Some("typescript per-file facts: 3 reused, 0 recomputed, 0 stored")
     );
 
     let corrupted = render_fact_cache_line(

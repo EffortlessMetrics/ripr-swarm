@@ -20,7 +20,7 @@
 //! Rust fact extraction behind this trait, and add the preview adapters
 //! per RIPR-SPEC-0027 and RIPR-SPEC-0028.
 
-mod adapter;
+pub(crate) mod adapter;
 mod id;
 #[cfg(feature = "lang-perl")]
 mod perl;
@@ -35,8 +35,8 @@ pub(crate) use rust::producer_gap_names_seam_shape;
 mod typescript;
 
 pub(crate) use adapter::{
-    LanguageAdapter, LanguageDiffResult, LanguageRepoResult, RepoCapFired, RepoFileAccounting,
-    RepoLimitingStage,
+    LanguageAdapter, LanguageDiffResult, LanguageRepoResult, PreviewFactCacheStats, RepoCapFired,
+    RepoFileAccounting, RepoLimitingStage,
 };
 pub(crate) use id::LanguageId;
 #[cfg(all(test, feature = "lang-perl"))]

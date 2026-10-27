@@ -9,6 +9,70 @@ use crate::config::OraclePolicy;
 use crate::domain::Finding;
 use std::path::Path;
 
+/// Persistent per-file fact-cache admission counters for one adapter run
+/// (#10725). Real counts only: a `hits` increment means a content-keyed
+/// on-disk envelope was decoded and passed its integrity check — never an
+/// estimate. `invalidated_files` names the workspace files whose content
+/// changed under an entry the previous run persisted (the
+/// content-invalidation signal; a stat tuple is never consulted, #2175).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct PreviewFactCacheStats {
+    /// Files served from a persisted envelope that matched on content.
+    pub(crate) hits: usize,
+    /// Files recomputed because no usable envelope admitted them.
+    pub(crate) misses: usize,
+    /// Envelopes read but rejected (decode, identity, or integrity failure).
+    pub(crate) corrupt_ignored: usize,
+    /// Files whose recomputed facts were persisted.
+    pub(crate) stores: usize,
+    /// Persist attempts that failed (IO or encode).
+    pub(crate) store_errors: usize,
+    /// Files whose content changed while a prior-run envelope existed.
+    pub(crate) invalidated_files: std::collections::BTreeSet<std::path::PathBuf>,
+}
+
+impl PreviewFactCacheStats {
+    /// The counters a run that never touched the cache carries. `did_work`
+    /// stays false so the `-v` disclosure line stays silent instead of
+    /// borrowing numbers the run did not produce.
+    pub(crate) fn zero_work() -> Self {
+        Self::default()
+    }
+
+    pub(crate) fn did_work(&self) -> bool {
+        self.hits > 0
+            || self.misses > 0
+            || self.corrupt_ignored > 0
+            || self.stores > 0
+            || self.store_errors > 0
+    }
+}
+
+/// Renders the `-v` persistent fact-cache reuse disclosure for one language
+/// (#10725). `None` when the adapter did no cache work — a zero-work run
+/// stays silent instead of borrowing counts it did not produce. Re-exported
+/// by the typescript `fact_store` (its only producer today).
+pub(crate) fn render_fact_cache_line(
+    language: &str,
+    stats: &PreviewFactCacheStats,
+) -> Option<String> {
+    if !stats.did_work() {
+        return None;
+    }
+    let mut line = format!(
+        "{language} per-file facts: {hits} reused, {misses} recomputed, {stores} stored",
+        hits = stats.hits,
+        misses = stats.misses,
+        stores = stats.stores,
+    );
+    match stats.corrupt_ignored {
+        0 => {}
+        1 => line.push_str("; 1 corrupt entry ignored"),
+        count => line.push_str(&format!("; {count} corrupt entries ignored")),
+    }
+    Some(line)
+}
+
 /// Per-language results returned by [`LanguageAdapter::analyze_diff`].
 ///
 /// `findings` are unsorted; the orchestrating pipeline applies the
@@ -48,6 +112,10 @@ pub(crate) struct LanguageDiffResult {
     /// Empty for preview adapters.
     pub(crate) rust_diagnostic_origins: crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
     pub(crate) rust_consumed_sources: crate::analysis::consumed_source::ConsumedRustSources,
+    /// Persistent per-file fact-cache admissions for this run (#10725).
+    /// `zero_work()` unless the adapter consulted its on-disk store — the
+    /// pipeline renders the `-v` reuse line only from real counters.
+    pub(crate) preview_fact_cache: PreviewFactCacheStats,
 }
 
 /// The stage of a repo run at which a named bound first limited the working

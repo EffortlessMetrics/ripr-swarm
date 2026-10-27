@@ -14,8 +14,8 @@ pub(crate) use super::super::{
 // can call `probes::expected_sinks` / `probes::required_oracles` via `super::probes`.
 use super::read_limit_disclosure::bounded_read_limit_limitations;
 pub(crate) use super::{
-    LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, RepoCapFired,
-    RepoFileAccounting, RepoLimitingStage, route,
+    LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, PreviewFactCacheStats,
+    RepoCapFired, RepoFileAccounting, RepoLimitingStage, route,
 };
 pub(super) use crate::analysis::probes;
 pub(crate) use crate::analysis_outcome::{
@@ -79,6 +79,7 @@ mod dropped_term_guard;
 mod enum_member_guard;
 mod error_payload_guard;
 mod extraction_cache;
+mod fact_store;
 #[cfg(test)]
 mod fact_store_tests;
 mod field_update_guard;
@@ -589,10 +590,70 @@ impl TypeScriptAdapter {
         };
         let alias_map_ref: Option<&TsAliasMap> = alias_map.as_ref();
 
+        // #10725: persistent per-file fact store. One content-keyed lookup
+        // per workspace file; a hit rehydrates the process-lifetime caches
+        // below (so the loop body is unchanged), a miss or a corrupt entry
+        // recomputes and queues the facts for storing after the loop.
+        // Counts are real admissions only — the `-v` line renders them.
+        let fact_store = fact_store::TypeScriptFileFactStore::at(&options.root);
+        let mut fact_cache_stats = PreviewFactCacheStats::zero_work();
+        // `(key, approx bytes, facts, extraction)` for every file this run
+        // recomputed. Deferred so storing never interleaves with parsing;
+        // worker-refusal files never reach here, exactly like the memory
+        // cache, and are not persisted.
+        let mut pending_fact_stores: Vec<(
+            fact_store::TypeScriptFileFactKey,
+            usize,
+            std::rc::Rc<extraction_cache::FileFacts>,
+            Option<extraction_cache::TestExtraction>,
+        )> = Vec::new();
+
         for relative in &workspace_files {
             let Some(source) = source_cache.get(relative) else {
                 continue;
             };
+            let fact_key = fact_store::TypeScriptFileFactKey::new(
+                relative,
+                source,
+                &options.root,
+                alias_map_ref,
+            );
+            let mut recomputed_facts = false;
+            match fact_store.load(&fact_key) {
+                crate::analysis::seam_cache::CacheLoad::Hit(persisted) => {
+                    fact_cache_stats.hits += 1;
+                    extraction_cache::seed_file_facts(
+                        relative,
+                        source,
+                        &options.root,
+                        alias_map_ref,
+                        std::rc::Rc::new(persisted.file_facts),
+                    );
+                    if let Some(test_extraction) = persisted.test_extraction {
+                        extraction_cache::seed_test_extraction(
+                            relative,
+                            source,
+                            std::rc::Rc::new(test_extraction),
+                        );
+                    }
+                }
+                crate::analysis::seam_cache::CacheLoad::Miss => {
+                    fact_cache_stats.misses += 1;
+                    recomputed_facts = true;
+                    // A miss against a snapshot entry means the file's
+                    // content changed under a persisted envelope — the
+                    // content-invalidation signal (#2175: a stat tuple is
+                    // never consulted).
+                    if fact_store.knows_file(&normalized_path(relative)) {
+                        fact_cache_stats.invalidated_files.insert(relative.clone());
+                    }
+                }
+                crate::analysis::seam_cache::CacheLoad::CorruptIgnored { .. } => {
+                    fact_cache_stats.corrupt_ignored += 1;
+                    fact_cache_stats.misses += 1;
+                    recomputed_facts = true;
+                }
+            }
             // #10071: ONE combined parse per file yields the parse status
             // plus owners, export facts, and phase-2 facts; the re-export
             // index and phase 2 then reuse the cached entry instead of
@@ -638,6 +699,17 @@ impl TypeScriptAdapter {
                         reason: reason.clone(),
                     });
                 }
+                // Parse-error facts persist like clean ones: the envelope is
+                // content-keyed, so the cached default facts are as honest as
+                // the in-memory cache's.
+                if recomputed_facts {
+                    pending_fact_stores.push((
+                        fact_key,
+                        source.len(),
+                        std::rc::Rc::clone(&facts),
+                        None,
+                    ));
+                }
                 continue;
             }
             if is_test_file(relative) {
@@ -646,6 +718,21 @@ impl TypeScriptAdapter {
                 // what snapshot promotion mutates, so promotion still reads
                 // the filesystem on every run.
                 let extraction = extraction_cache::test_extraction_cached(relative, source);
+                if recomputed_facts {
+                    // Persist the raw cached extraction (pre-promotion), so a
+                    // warm run re-applies snapshot promotion from disk facts
+                    // exactly like a memory hit does.
+                    pending_fact_stores.push((
+                        fact_key,
+                        source.len(),
+                        std::rc::Rc::clone(&facts),
+                        Some((
+                            extraction.0.clone(),
+                            extraction.1.clone(),
+                            extraction.2.clone(),
+                        )),
+                    ));
+                }
                 let (mut tests, conditional_credit_gap, expansion) = (
                     extraction.0.clone(),
                     extraction.1.clone(),
@@ -704,7 +791,26 @@ impl TypeScriptAdapter {
                 // session re-save without re-parsing the whole workspace.
                 // Test extraction is cached separately (#10017): only its
                 // pure step, never snapshot promotion.
+                if recomputed_facts {
+                    pending_fact_stores.push((
+                        fact_key,
+                        source.len(),
+                        std::rc::Rc::clone(&facts),
+                        None,
+                    ));
+                }
                 all_owners.extend(facts.owners.clone());
+            }
+        }
+
+        // #10725: flush the envelopes this run recomputed — one content-keyed
+        // envelope per file, after parsing so the writes never interleave
+        // with it. Store failures disclose as counters, never as a failed run.
+        for (key, approx_bytes, facts, test_extraction) in pending_fact_stores {
+            match fact_store.store(&key, &facts, test_extraction.as_ref(), approx_bytes) {
+                Ok(true) => fact_cache_stats.stores += 1,
+                Ok(false) => {}
+                Err(_) => fact_cache_stats.store_errors += 1,
             }
         }
 
@@ -1417,6 +1523,7 @@ impl TypeScriptAdapter {
             limitations,
             rust_diagnostic_origins: Default::default(),
             rust_consumed_sources: Default::default(),
+            preview_fact_cache: fact_cache_stats,
         })
     }
 }

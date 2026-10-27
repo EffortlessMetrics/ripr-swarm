@@ -2783,6 +2783,7 @@ impl RustAdapter {
                 .collect(),
             rust_diagnostic_origins,
             rust_consumed_sources,
+            preview_fact_cache: Default::default(),
         })
     }
 }
