@@ -10,6 +10,9 @@ code = [
 tests = [
   "crates/ripr/tests/registered_proptest_profile.rs::canonical_property_is_exposed_and_revokes_warm_configuration_and_target_receipts",
   "crates/ripr/tests/registered_proptest_profile.rs::ordinary_qualified_typed_boundary_uses_the_same_discriminator",
+  "crates/ripr/tests/registered_proptest_profile.rs::typed_repository_inputs_require_the_boundary_and_the_owner",
+  "crates/ripr/tests/registered_proptest_profile.rs::property_mixed_owner_calls_cannot_lend_each_other_boundary_values",
+  "crates/ripr/tests/registered_proptest_profile.rs::raw_library_shadows_cannot_supply_generated_tests_or_activation_rows",
   "crates/ripr/tests/registered_proptest_profile.rs::classified_cache_revokes_nested_target_configuration_and_preserves_revert",
   "crates/ripr/tests/registered_proptest_profile.rs::unsupported_property_shapes_never_borrow_direct_assertion_credit",
   "crates/ripr/tests/registered_proptest_profile.rs::substituted_provider_and_lock_changes_revoke_the_profile",
@@ -21,4 +24,19 @@ id = "RIPR-SPEC-0197"
 tests = [
   "crates/ripr/tests/registered_proptest_profile.rs::canonical_property_is_exposed_and_revokes_warm_configuration_and_target_receipts",
   "crates/ripr/tests/registered_proptest_profile.rs::unsupported_property_shapes_never_borrow_direct_assertion_credit",
+]
+
+[[extend]]
+id = "RIPR-SPEC-0005"
+code = [
+  "crates/ripr/src/analysis/test_grip_evidence.rs",
+  "crates/ripr/src/analysis/test_grip_evidence/related_tests.rs",
+  "crates/ripr/src/analysis/classify/call_identity.rs",
+]
+tests = [
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::suffixed_decimal_arguments_preserve_whole_literal_boundaries",
+  "crates/ripr/tests/registered_proptest_profile.rs::property_mixed_owner_calls_cannot_lend_each_other_boundary_values",
+  "crates/ripr/tests/registered_proptest_profile.rs::ordinary_qualified_typed_boundary_uses_the_same_discriminator",
+  "crates/ripr/tests/registered_proptest_profile.rs::typed_repository_inputs_require_the_boundary_and_the_owner",
+  "crates/ripr/tests/registered_proptest_profile.rs::classified_cache_revokes_nested_target_configuration_and_preserves_revert",
 ]

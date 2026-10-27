@@ -104,13 +104,16 @@ fn closed_binding_context(root: &SyntaxNode) -> bool {
         {
             return false;
         }
-        if let Some(module) = ast::Module::cast(node.clone()) {
-            if module.item_list().is_none() {
-                return false;
-            }
+        if let Some(module) = ast::Module::cast(node.clone())
+            && module.item_list().is_none()
+        {
+            return false;
         }
-        if ast::Name::cast(node.clone())
-            .is_some_and(|name| matches!(name.text().trim_start_matches("r#"), "proptest" | "test"))
+        // The existing scope producer retains raw spelling, whereas Rust
+        // binds `r#name` and `name` identically. Do not lend generated
+        // owner-call authority through an unrecognized declaration.
+        if let Some(name) = ast::Name::cast(node.clone())
+            && (name.text().starts_with("r#") || matches!(name.text(), "proptest" | "test"))
         {
             return false;
         }
@@ -120,15 +123,15 @@ fn closed_binding_context(root: &SyntaxNode) -> bool {
                 "#[test]" | "#[cfg(test)]"
             );
         }
-        if let Some(call) = ast::MacroCall::cast(node) {
-            if is_item_position(call.syntax()) {
-                return call.path().is_some_and(|path| {
-                    matches!(
-                        compact(&path.syntax().text().to_string()).as_str(),
-                        "proptest::proptest" | "::proptest::proptest"
-                    )
-                });
-            }
+        if let Some(call) = ast::MacroCall::cast(node)
+            && is_item_position(call.syntax())
+        {
+            return call.path().is_some_and(|path| {
+                matches!(
+                    compact(&path.syntax().text().to_string()).as_str(),
+                    "proptest::proptest" | "::proptest::proptest"
+                )
+            });
         }
         true
     })
@@ -156,6 +159,11 @@ fn expand_functions(
             return None;
         }
         let name = row[3].to_string();
+        // These declarations are opaque tokens in the original source, so
+        // the file-level ast::Name check cannot inspect them.
+        if name.starts_with("r#") {
+            return None;
+        }
         let parameters = row[4].as_node()?;
         let body = row[5].as_node()?;
         let function_line = lines.line(row[2].text_range().start());
@@ -260,6 +268,9 @@ fn singleton_parameter(parameters: &SyntaxNode) -> Option<(String, String)> {
         return None;
     }
     let parameter = elements[0].to_string();
+    if parameter.starts_with("r#") {
+        return None;
+    }
     let strategy = elements
         .iter()
         .skip(2)
@@ -393,13 +404,13 @@ fn lower_assertion(call: &ast::MacroCall, parameter: &str, literal: &str) -> Opt
         if let Some(call) = owner_call(condition, parameter, literal) {
             return Some(format!("assert!({call})"));
         }
-        if let ast::Expr::PrefixExpr(prefix) = condition {
-            if prefix.syntax().first_token()?.text() == "!" {
-                return Some(format!(
-                    "assert!(!{})",
-                    owner_call(&prefix.expr()?, parameter, literal)?
-                ));
-            }
+        if let ast::Expr::PrefixExpr(prefix) = condition
+            && prefix.syntax().first_token()?.text() == "!"
+        {
+            return Some(format!(
+                "assert!(!{})",
+                owner_call(&prefix.expr()?, parameter, literal)?
+            ));
         }
         return None;
     }
@@ -456,6 +467,24 @@ mod tests {
         assert!(scopes[1].defines.contains("LibraryType"));
         assert!(scopes[1].defines.contains("OWNER"));
         assert!(scopes[1].defines.contains("boundary"));
+    }
+
+    #[test]
+    fn raw_spelled_declarations_and_bindings_receive_no_expansion() {
+        for declaration in [
+            "mod r#local_library {}",
+            "struct r#LibraryType;",
+            "const r#OWNER: u8 = 1;",
+        ] {
+            let source = format!("{declaration}\n{SOURCE}");
+            assert!(proptest_expansions(&source).is_empty(), "{declaration}");
+        }
+        let function = SOURCE.replace("fn boundary(", "fn r#boundary(");
+        assert!(proptest_expansions(&function).is_empty());
+        let parameter = SOURCE
+            .replace("n in", "r#n in")
+            .replace("owner(n,", "owner(r#n,");
+        assert!(proptest_expansions(&parameter).is_empty());
     }
 
     #[test]

@@ -90,6 +90,7 @@ mod verification_contracts;
 mod verify_test_shards;
 mod version;
 mod windows_advisory;
+mod windows_advisory_acl_evidence;
 mod windows_advisory_run;
 
 use command::{

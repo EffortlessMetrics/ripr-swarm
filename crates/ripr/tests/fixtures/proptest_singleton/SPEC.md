@@ -22,7 +22,10 @@ previous failure cannot replay a case in the deliberately zero-cases row.
 
 The static positive must be `exposed` on cold and warm reads. It is a file-level
 macro with an explicitly suffixed integer input; unsuffixed integers, inline
-modules and `prop_assert_ne!` remain unsupported. Changes to runner
+modules, raw-spelled declarations/bindings and `prop_assert_ne!` remain
+unsupported. Raw-spelled library module/type shadows must retain the macro
+limitation and supply no generated test or observed activation input row.
+Changes to runner
 environment, Cargo `[env]`, target registration, source, lock or provider must
 revoke the corresponding premise. The compiled positive must collect exactly
 `exact_boundary`, pass the original owner, and fail the same assertion with
@@ -32,6 +35,22 @@ A repository-exposure run must demonstrate a classified-cache hit, then lose
 property credit after a `tests/.cargo/config.toml` runner override without
 changing Rust, manifests or lockfile. The warm result must equal an independent
 cold result, and removing the override must recover the preserved positive.
+The equivalent ordinary assertion with `100i32` must also be strongly gripped
+in repository analysis. Off-boundary and opaque inputs remain unclosed;
+ordinary and property calls through shadowing library modules/types, including
+raw-spelled declarations, supply no activation values for the real owner.
+New typed ordinary rows must pass the existing free-owner binding checks before
+observed-value emission and equality pairing. Every property candidate passes
+that authority before any evidence stage, including a property with an unused
+parameter and literal-only call arguments. A shadowed property supplies no
+related test for any seam of the real owner.
+The body-level owner proof requires every same-name call to bind the owner:
+a real-owner call at 101 cannot borrow the boundary from a different callable
+at 100. Replacing only that different callable with the real owner restores
+the positive. The covered owner path is the canonical library-qualified one;
+registration alone does not establish bare, associated or unresolved paths.
+Numeric-prefix casts, methods,
+ranges and computed expressions are outside the added scalar reading.
 
 The wrong owner deliberately passes with zero generated cases, with an early
 successful return inside a diagnostic expression, and with a mere nonzero

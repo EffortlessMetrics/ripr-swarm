@@ -15,6 +15,7 @@ const PROPERTY: &str = include_str!("fixtures/proptest_singleton/input/tests/bou
 const MANIFEST: &str = include_str!("fixtures/proptest_singleton/input/Cargo.toml");
 const LOCK: &str = include_str!("fixtures/proptest_singleton/input/Cargo.lock");
 const DIFF: &str = include_str!("fixtures/proptest_singleton/diff.patch");
+const ORDINARY: &str = "#[test]\nfn exact_boundary() {\n    assert_eq!(lib_proptest::discounted_total(100i32, 100), 90);\n}\n";
 const PROBE_ROOT: &str = "RIPR_PROPTEST_PROFILE_PROBE_ROOT";
 const PROBE_REPO: &str = "RIPR_PROPTEST_PROFILE_REPO";
 const REPORT: &str = "RIPR_PROPERTY_REPORT=";
@@ -231,29 +232,29 @@ fn report(
     Ok((report, String::from_utf8_lossy(&output.stderr).into_owned()))
 }
 
+fn boundary(report: &Value) -> Result<Value, String> {
+    assert_eq!(report["run_status"], "complete", "{report}");
+    let matching = report["seams"]
+        .as_array()
+        .ok_or("missing repository seams")?
+        .iter()
+        .filter(|seam| {
+            seam["owner"] == "src/lib.rs::discounted_total" && seam["kind"] == "predicate_boundary"
+        })
+        .collect::<Vec<_>>();
+    let [seam] = matching.as_slice() else {
+        return Err(format!("expected one owned predicate boundary: {report}"));
+    };
+    Ok((*seam).clone())
+}
+
 #[test]
 fn classified_cache_revokes_nested_target_configuration_and_preserves_revert() -> Result<(), String>
 {
     let fixture = Fixture::new()?;
     let cache = fixture.0.join("target/repository-cache");
-    let boundary = |report: &Value| -> Result<Value, String> {
-        assert_eq!(report["run_status"], "complete", "{report}");
-        let matching = report["seams"]
-            .as_array()
-            .ok_or("missing repository seams")?
-            .iter()
-            .filter(|seam| {
-                seam["owner"] == "src/lib.rs::discounted_total"
-                    && seam["kind"] == "predicate_boundary"
-            })
-            .collect::<Vec<_>>();
-        let [seam] = matching.as_slice() else {
-            return Err(format!("expected one owned predicate boundary: {report}"));
-        };
-        Ok((*seam).clone())
-    };
     let (cold, _) = report(&fixture, "repo-cold", None, Some(&cache))?;
-    assert_eq!(boundary(&cold)?["grip_class"], "strongly_gripped");
+    assert_eq!(boundary(&cold)?["grip_class"], "strongly_gripped", "{cold}");
     let (warm, trace) = report(&fixture, "repo-warm", None, Some(&cache))?;
     assert_eq!(warm["seams"], cold["seams"]);
     assert!(
@@ -290,13 +291,173 @@ fn classified_cache_revokes_nested_target_configuration_and_preserves_revert() -
 #[test]
 fn ordinary_qualified_typed_boundary_uses_the_same_discriminator() -> Result<(), String> {
     let fixture = Fixture::new()?;
-    fixture.write(
-        "tests/boundary.rs",
-        "#[test]\nfn exact_boundary() {\n    assert_eq!(lib_proptest::discounted_total(100i32, 100), 90);\n}\n",
-    )?;
+    fixture.write("tests/boundary.rs", ORDINARY)?;
     assert_eq!(
         finding(&fixture, "ordinary-typed-boundary", None)?["classification"],
         "exposed"
+    );
+    let (repository, _) = report(
+        &fixture,
+        "ordinary-typed-repository",
+        None,
+        Some(&fixture.0.join("target/repository-cache")),
+    )?;
+    assert_eq!(
+        boundary(&repository)?["grip_class"],
+        "strongly_gripped",
+        "{repository}"
+    );
+    Ok(())
+}
+
+#[test]
+fn typed_repository_inputs_require_the_boundary_and_the_owner() -> Result<(), String> {
+    let fixture = Fixture::new()?;
+    let cache = fixture.0.join("target/repository-cache");
+    let unused_parameter = PROPERTY.replace("Just(100i32)", "Just(7i32)").replace(
+        "discounted_total(amount, 100)",
+        "discounted_total(100, 100)",
+    );
+    fixture.write("tests/boundary.rs", &unused_parameter)?;
+    let (literal_property, _) = report(&fixture, "unused-property", None, Some(&cache))?;
+    assert_eq!(
+        boundary(&literal_property)?["grip_class"],
+        "strongly_gripped",
+        "{literal_property}"
+    );
+    for (name, source) in [
+        (
+            "ordinary-off-boundary",
+            ORDINARY.replace("100i32, 100), 90", "99i32, 100), 99"),
+        ),
+        (
+            "property-off-boundary",
+            PROPERTY
+                .replace("Just(100i32)", "Just(99i32)")
+                .replace(", 90);", ", 99);"),
+        ),
+        (
+            "opaque-identifier",
+            ORDINARY
+                .replace(
+                    "    assert_eq!",
+                    "    let amount = std::hint::black_box(100i32);\n    assert_eq!",
+                )
+                .replace("discounted_total(100i32,", "discounted_total(amount,"),
+        ),
+    ] {
+        fixture.write("tests/boundary.rs", &source)?;
+        let (result, _) = report(&fixture, name, None, Some(&cache))?;
+        assert_ne!(
+            boundary(&result)?["grip_class"],
+            "strongly_gripped",
+            "{name}: {result}"
+        );
+    }
+    for (style, source) in [
+        ("ordinary", ORDINARY),
+        ("property", PROPERTY),
+        ("unused-property", unused_parameter.as_str()),
+    ] {
+        for (name, declaration) in [
+            (
+                "module",
+                "mod lib_proptest { pub fn discounted_total(_: i32, _: i32) -> i32 { 90 } }",
+            ),
+            (
+                "type",
+                "struct lib_proptest;\nimpl lib_proptest { fn discounted_total(_: i32, _: i32) -> i32 { 90 } }",
+            ),
+            (
+                "raw-module",
+                "mod r#lib_proptest { pub fn discounted_total(_: i32, _: i32) -> i32 { 90 } }",
+            ),
+            (
+                "raw-type",
+                "struct r#lib_proptest;\nimpl lib_proptest { fn discounted_total(_: i32, _: i32) -> i32 { 90 } }",
+            ),
+        ] {
+            fixture.write("tests/boundary.rs", &format!("{declaration}\n{source}"))?;
+            let label = format!("{style}-shadow-{name}");
+            let (result, _) = report(&fixture, &label, None, Some(&cache))?;
+            let seam = boundary(&result)?;
+            assert_ne!(seam["grip_class"], "strongly_gripped", "{label}: {result}");
+            assert_eq!(
+                seam["observed_values"].as_array().map(Vec::len),
+                Some(0),
+                "{label}: {result}"
+            );
+            if style != "ordinary" {
+                let owner_seams = result["seams"]
+                    .as_array()
+                    .ok_or("missing repository seams")?
+                    .iter()
+                    .filter(|seam| seam["owner"] == "src/lib.rs::discounted_total")
+                    .collect::<Vec<_>>();
+                assert!(!owner_seams.is_empty(), "{label}: {result}");
+                // Property attribution is refused before every stage,
+                // including direct-call activation on value-insensitive seams.
+                for seam in owner_seams {
+                    assert_eq!(seam["related_tests_total"], 0, "{label}: {result}");
+                    assert_ne!(seam["grip_class"], "strongly_gripped", "{label}: {result}");
+                }
+            }
+            if style == "ordinary" {
+                // The old unsuffixed input row remains available. Only
+                // the new typed threshold would establish equality, so
+                // this control independently requires its binding guard.
+                let threshold_only = ORDINARY.replace("100i32, 100", "100, 100i32");
+                fixture.write(
+                    "tests/boundary.rs",
+                    &format!("{declaration}\n{threshold_only}"),
+                )?;
+                let label = format!("ordinary-typed-threshold-shadow-{name}");
+                let (result, _) = report(&fixture, &label, None, Some(&cache))?;
+                assert_ne!(
+                    boundary(&result)?["grip_class"],
+                    "strongly_gripped",
+                    "{label}: {result}"
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn property_mixed_owner_calls_cannot_lend_each_other_boundary_values() -> Result<(), String> {
+    let fixture = Fixture::new()?;
+    let cache = fixture.0.join("target/repository-cache");
+    let mixed = format!(
+        "mod other {{ pub const discounted_total: fn(i32, i32) -> i32 = |_, _| 90; }}\n{}",
+        PROPERTY.replace(
+            "proptest::prop_assert_eq!(lib_proptest::discounted_total(amount, 100), 90);",
+            "proptest::prop_assert_eq!(lib_proptest::discounted_total(101, 100), 91);\n    proptest::prop_assert_eq!(other::discounted_total(100, 100), 90);",
+        ),
+    );
+    fixture.write("tests/boundary.rs", &mixed)?;
+    let (result, _) = report(&fixture, "mixed-owner-property", None, Some(&cache))?;
+    let seam = boundary(&result)?;
+    assert_eq!(seam["related_tests_total"], 0, "{result}");
+    assert_eq!(
+        seam["observed_values"].as_array().map(Vec::len),
+        Some(0),
+        "{result}"
+    );
+    assert_ne!(seam["grip_class"], "strongly_gripped", "{result}");
+
+    // The same declaration and both literal assertions are readable when
+    // every call names the real owner. An any-call identity test would
+    // wrongly accept the mixed property above and borrow the other boundary.
+    fixture.write(
+        "tests/boundary.rs",
+        &mixed.replace("other::discounted_total", "lib_proptest::discounted_total"),
+    )?;
+    let (result, _) = report(&fixture, "all-owner-property", None, Some(&cache))?;
+    assert_eq!(
+        boundary(&result)?["grip_class"],
+        "strongly_gripped",
+        "{result}"
     );
     Ok(())
 }
@@ -380,6 +541,44 @@ fn canonical_property_is_exposed_and_revokes_warm_configuration_and_target_recei
         finding(&fixture, "restored-source", None)?["classification"],
         "exposed"
     );
+    Ok(())
+}
+
+#[test]
+fn raw_library_shadows_cannot_supply_generated_tests_or_activation_rows() -> Result<(), String> {
+    let fixture = Fixture::new()?;
+    for (name, declaration) in [
+        (
+            "raw-library-module",
+            "mod r#lib_proptest { pub fn discounted_total(_: i32, _: i32) -> i32 { 90 } }",
+        ),
+        (
+            "raw-library-type",
+            "struct r#lib_proptest;\nimpl lib_proptest { fn discounted_total(_: i32, _: i32) -> i32 { 90 } }",
+        ),
+    ] {
+        // Both local paths return 90 without calling the changed library
+        // owner. A final non-exposed verdict alone would not detect borrowed
+        // generated-test or exact-boundary authority at an earlier stage.
+        fixture.write("tests/boundary.rs", &format!("{declaration}\n{PROPERTY}"))?;
+        let result = finding(&fixture, name, None)?;
+        assert_eq!(result["related_tests_total"], 0, "{name}: {result}");
+        assert_eq!(
+            result["related_tests"].as_array().map(Vec::len),
+            Some(0),
+            "{name}: {result}"
+        );
+        assert_eq!(
+            result["static_limit_kind"], "rust_macro_reach_unresolved",
+            "{name}: {result}"
+        );
+        for values in [
+            &result["observed_values"],
+            &result["activation"]["observed_values"],
+        ] {
+            assert_eq!(values.as_array().map(Vec::len), Some(0), "{name}: {result}");
+        }
+    }
     Ok(())
 }
 

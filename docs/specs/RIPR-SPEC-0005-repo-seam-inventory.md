@@ -239,6 +239,27 @@ produce `weakly_gripped`; the seam classifies `activation_unknown` and keeps
 its missing-discriminator guidance. A seam with established activation and
 the same evidence stays `weakly_gripped`.
 
+Repository activation and equality pairing read a whole decimal integer
+argument with a primitive integer suffix (`100i32`, `-100i64`, `1_00u32`)
+through the same literal-value reader used by diff boundaries. The source
+argument keeps its explicit type; only the observed value is normalized.
+This admission requires a complete digit/underscore token with a recognized
+suffix, with unary minus allowed only for signed types. It does not scan a
+numeric prefix from a cast, method, range, exponent or computed expression.
+Ordinary typed assertions and the admitted proptest singleton property use
+the same repository evidence path. Newly admitted typed ordinary rows must
+also pass the existing free-owner binding authority, including raw-name,
+module, type, import and competing-definition checks, before observed-value
+emission and equality pairing (including identical-text arguments).
+Every receipt-backed property candidate passes that authority before any
+evidence stage, including value-insensitive direct-call activation. An unused
+`Just` parameter cannot bypass it through literal-only call arguments.
+The older unsuffixed ordinary rows and general resolver are unchanged. An
+off-boundary value, opaque input or shadowed library name cannot borrow the exact
+boundary's strong grade.
+Full, sharded and compact classified cache generations change with this
+reader; old classifications cannot satisfy a warm read (#10839).
+
 ### Static-Language Boundaries
 
 All static output must use the conservative vocabulary defined in

@@ -462,6 +462,9 @@ admit a function-form property only when all of the following are established:
    `::`). The initial closed
    source binding context excludes imports, macro definitions, out-of-line
    modules, root/attribute rebinding and unknown item attributes/expansions.
+   Raw-spelled declarations and bindings also refuse, including property
+   names and parameters: the current scope producer retains `r#name` literally,
+   so it cannot prove its equivalence to the ordinary `name` spelling.
    Each property has one simple bool or explicitly suffixed primitive integer
    literal `Just` parameter (a negative literal requires a signed suffix), a
    one-line declaration header and one-line assertion invocations. At most 32
@@ -498,9 +501,18 @@ receipt also retains the normalized function-body scope and the original
 file-root bindings. Qualified owner-call input rows use the existing resolver
 with those scopes: a generated function has no original AST function, while a
 standalone synthetic file would incorrectly erase root module/type shadows.
+Raw-spelled module/type shadows receive no generated test or activation input
+row; a later non-exposed verdict alone would not establish that boundary.
 The existing owner identity, operand, equality-dispatch, activation, propagation
 and discriminator rules still decide the result. In particular, registration
 of a nonzero/inequality check does not make it an exact discriminator.
+Repository evidence additionally binds every owner-name call in an admitted
+property through the existing free-owner authority before any evidence stage.
+The covered positive uses a canonical library-qualified owner call. Bare,
+`self`/`super`, method/associated, generic, re-exported or otherwise unresolved
+forms stay withheld wherever that authority cannot establish them; registration
+and `Just` spelling alone do not grant owner credit. A mixed property cannot
+lend a different function's boundary input to a legitimate owner call.
 
 Admission is atomic for a macro's properties. Refused properties retain the
 existing `rust_macro_reach_unresolved` limitation, and a supported ordinary
