@@ -809,6 +809,88 @@ fn gate_gap_ledger_and_baseline_refuse_limited_findings_bound() -> Result<(), St
     Ok(())
 }
 
+/// #10733 repro, end to end at the cheapest level: the exact refusal envelope
+/// `render_diff_scope_limited_check_json` emits (exit 2, empty findings,
+/// `downstream_consumable: false`) is saved through the gap-ledger report and
+/// then read back as the gate's `--gap-ledger` input. The gate must refuse it
+/// with a config error naming the typed refusal — not pass on an empty
+/// denominator.
+#[test]
+fn gate_refuses_saved_refusal_ledger_with_named_reason() -> Result<(), String> {
+    let dir = temp_dir("gate-saved-refusal-ledger")?;
+    let refusal = serde_json::json!({
+        "schema_version": "0.2",
+        "tool": "ripr",
+        "mode": "fast",
+        "root": ".",
+        "summary": {
+            "changed_rust_files": 0,
+            "probes": 0,
+            "findings": 0,
+            "exposed": 0,
+            "weakly_exposed": 0,
+            "reachable_unrevealed": 0,
+            "no_static_path": 0,
+            "infection_unknown": 0,
+            "propagation_unknown": 0,
+            "static_unknown": 0,
+            "changed_files_by_language": []
+        },
+        "findings": [],
+        "analysis_scope": {
+            "scope": "diff",
+            "run_status": "diff_scope_oversized",
+            "basis": "rust_diff_scope_budget",
+            "downstream_consumable": false,
+            "limitation": "diff_scope_oversized",
+            "repair_route": "analysis/diff-scope-budget"
+        },
+        "run_limitations": [
+            {
+                "category": "diff_scope_oversized",
+                "run_status": "diff_scope_oversized",
+                "basis": "rust_diff_scope_budget",
+                "downstream_consumable": false,
+                "message": "diff_scope_oversized: changed Rust exceeds the diff scope budget",
+                "repair_route": "analysis/diff-scope-budget"
+            }
+        ]
+    });
+    let ledger = crate::output::gap_decision_ledger::build_gap_decision_ledger_report(
+        crate::output::gap_decision_ledger::GapDecisionLedgerInput {
+            root: ".".to_string(),
+            generated_at: "test".to_string(),
+            source_kind: crate::output::gap_decision_ledger::GapDecisionLedgerSourceKind::CheckOutput,
+            records_path: "check.json".to_string(),
+            records_json: Ok(refusal.to_string()),
+        },
+    );
+    let rendered = crate::output::gap_decision_ledger::render_gap_decision_ledger_json(&ledger)
+        .map_err(|error| format!("render saved refusal ledger: {error}"))?;
+    let ledger_path = dir.join("gap-ledger.json");
+    fs::write(&ledger_path, rendered)
+        .map_err(|error| format!("write saved refusal ledger: {error}"))?;
+
+    let (_fixture_input, mut input) = fixture_input(GateMode::VisibleOnly)?;
+    input.pr_guidance = None;
+    input.gap_ledger = Some(ledger_path);
+    let report = build_gate_decision_report(&input)?;
+
+    assert_eq!(report.status, "config_error");
+    assert!(gate_decision_should_fail(&report));
+    assert!(
+        report
+            .config_errors
+            .iter()
+            .any(|error| error.contains("diff_scope_oversized")
+                && error.contains("downstream_consumable")),
+        "saved-refusal rejection must name the typed run status and the consumable flag: {:?}",
+        report.config_errors
+    );
+    ignore_remove_dir_all(dir);
+    Ok(())
+}
+
 #[test]
 fn incomplete_analysis_outcome_detection_covers_typed_envelope() {
     assert!(discloses_incomplete_analysis_outcome(&json!({

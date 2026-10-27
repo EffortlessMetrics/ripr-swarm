@@ -3892,6 +3892,63 @@ mod tests {
         assert!(empty.warnings.is_empty());
     }
 
+    /// #10733: a producer refusal envelope (`diff_scope_oversized`, exit 2,
+    /// `downstream_consumable: false`, empty findings) parses cleanly to zero
+    /// records, but it is not a healthy empty run — nothing was analyzed.
+    /// Admitting it as `no_records` lets a saved refusal ride into a gate
+    /// pass; it must land on `blocked` with a warning naming the typed
+    /// refusal and the non-consumable flag.
+    #[test]
+    fn gap_decision_ledger_refuses_diff_scope_oversized_refusal_envelope() {
+        let report = report_from_check_output(serde_json::json!({
+            "schema_version": "0.2",
+            "tool": "ripr",
+            "mode": "fast",
+            "root": ".",
+            "summary": {
+                "changed_rust_files": 0,
+                "probes": 0,
+                "findings": 0,
+                "exposed": 0,
+                "weakly_exposed": 0,
+                "reachable_unrevealed": 0,
+                "no_static_path": 0,
+                "infection_unknown": 0,
+                "propagation_unknown": 0,
+                "static_unknown": 0,
+                "changed_files_by_language": []
+            },
+            "findings": [],
+            "analysis_scope": {
+                "scope": "diff",
+                "run_status": "diff_scope_oversized",
+                "basis": "rust_diff_scope_budget",
+                "downstream_consumable": false,
+                "limitation": "diff_scope_oversized",
+                "repair_route": "analysis/diff-scope-budget"
+            },
+            "run_limitations": [
+                {
+                    "category": "diff_scope_oversized",
+                    "run_status": "diff_scope_oversized",
+                    "basis": "rust_diff_scope_budget",
+                    "downstream_consumable": false,
+                    "message": "diff_scope_oversized: changed Rust exceeds the diff scope budget",
+                    "repair_route": "analysis/diff-scope-budget"
+                }
+            ]
+        }));
+        assert_eq!(report.status, "blocked");
+        assert_eq!(report.summary.records_total, 0);
+        assert!(
+            report.warnings.iter().any(|warning| {
+                warning.contains("diff_scope_oversized") && warning.contains("downstream_consumable")
+            }),
+            "refusal admission must name the typed run status and the consumable flag: {:?}",
+            report.warnings
+        );
+    }
+
     #[test]
     fn gap_decision_ledger_warns_on_unsafe_projection() {
         let record = serde_json::json!({
