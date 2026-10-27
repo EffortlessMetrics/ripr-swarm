@@ -7720,10 +7720,19 @@ fn a_parent_root_answer_is_computed_once_per_file_and_name() -> Result<(), Strin
         .get(&index, Path::new(HELPERS))
         .ok_or("helpers snapshot")?;
     assert_eq!(helpers.root_shadow_computations(), 1);
-    // A name the parent does not declare is answered without a parse, and is
-    // still its own memo entry.
+    // A name the parent never mentions is answered from the text and creates
+    // no memo entry; a name it mentions without declaring is its own entry.
     for _ in 0..20 {
         assert!(!parent_chain_shadows_type(test, "Gauge", owner, &index));
+    }
+    assert_eq!(helpers.root_shadow_computations(), 1);
+    for _ in 0..20 {
+        assert!(!parent_chain_shadows_type(
+            test,
+            "stack_tests",
+            owner,
+            &index
+        ));
     }
     assert_eq!(helpers.root_shadow_computations(), 2);
     Ok(())

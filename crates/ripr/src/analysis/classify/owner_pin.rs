@@ -13883,6 +13883,12 @@ fn parent_root_shadows_item(
     kind: ShadowKind,
     owner_ancestors: &[PathBuf],
 ) -> bool {
+    // A parent that never mentions the name cannot declare, alias or rename
+    // it, so it is answered from the text before a snapshot (and its parse)
+    // is created for a file nothing else needed (#10809).
+    if !parent_source.contains(base) {
+        return false;
+    }
     // The mask, the parse and the root-item scan depend only on the parent
     // file and the name, and every related test of every probe asks about the
     // same few parents, so they are answered once per file snapshot (#10809).
