@@ -60,11 +60,7 @@ fn assert_read(
     assert_eq!(entry.read.kind, kind, "{id}");
     assert_eq!(entry.read.subject, subject, "{id}");
     assert!(
-        entry
-            .read
-            .site
-            .file
-            .ends_with("probe_read_trace/tests/producer.rs"),
+        Path::new(entry.read.site.file).ends_with("probe_read_trace/tests/producer.rs"),
         "{id}: {:?}",
         entry.read.site
     );
