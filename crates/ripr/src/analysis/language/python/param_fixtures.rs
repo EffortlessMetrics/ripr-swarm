@@ -170,10 +170,10 @@ fn literal_strings(expr: &Expr) -> Option<usize> {
 /// `mark_isolated_fixture_defs`.
 pub(super) fn apply_literal_param_fixtures(tests: &mut [PythonTest]) {
     for test in tests {
-        if let Some((cases, unpack)) = literal_param_cases(test) {
-            if blank_range(&mut test.body_text, unpack) {
-                test.parametrize = Some(cases);
-            }
+        if let Some((cases, unpack)) = literal_param_cases(test)
+            && blank_range(&mut test.body_text, unpack)
+        {
+            test.parametrize = Some(cases);
         }
     }
 }
