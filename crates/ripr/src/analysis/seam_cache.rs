@@ -557,7 +557,9 @@ pub(crate) struct CachedSeamLimitInfo {
 /// (#10797); `1.114` credited a coincident row.
 /// `1.116`: a `let` literal that a tuple, struct, `for` or other pattern
 /// rebinds is not the owner call's argument (#10819); `1.115` paired it.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.116";
+/// `1.117`: whole suffixed decimal integer arguments supply repository
+/// activation and boundary equality values (#10839); older entries missed them.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.117";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -720,7 +722,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.116";
 /// `0.121`: same call-in-term accumulator as full `1.114` (#9478).
 /// `0.122`: same row-input oracle as full `1.115` (#10797).
 /// `0.123`: same rebound-let rule as full `1.116` (#10819).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.123";
+/// `0.124`: same suffixed decimal argument values as full `1.117` (#10839).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.124";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -885,7 +888,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.123";
 /// `0.121`: same call-in-term accumulator as full `1.114` (#9478).
 /// `0.122`: same row-input oracle as full `1.115` (#10797).
 /// `0.123`: same rebound-let rule as full `1.116` (#10819).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.123";
+/// `0.124`: same suffixed decimal argument values as full `1.117` (#10839).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.124";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -1638,6 +1642,19 @@ impl WorkspaceKeyContext<'_> {
         } else {
             workspace_manifests_hash
         };
+        let workspace_manifests_hash =
+            if super::workspace::eligible_proptest_root(self.workspace_root) {
+                let identity = super::workspace::verified_proptest_identity(self.workspace_root)
+                    .map_or_else(
+                        || "unverified".to_string(),
+                        |receipt| receipt.validation_digest,
+                    );
+                hash_str(&format!(
+                    "{workspace_manifests_hash}:proptest-1.11-singleton:{identity}"
+                ))
+            } else {
+                workspace_manifests_hash
+            };
         // The registered-harness premise is producer-owned Cargo metadata.
         // Raw configuration, including malformed bytes and absence, changes
         // that premise independently of Rust sources, HEAD and ripr.toml.
@@ -5054,7 +5071,8 @@ mod tests {
         // 1.113 -> 1.114: call-in-term accumulator (RIPR-SPEC-0360, #9478).
         // 1.114 -> 1.115: arrow row inputs substituted (RIPR-SPEC-0231 rule 9, #10797).
         // 1.115 -> 1.116: rebound let literal is not the argument (#10819).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.116");
+        // 1.116 -> 1.117: whole suffixed decimal arguments feed repository activation (#10839).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.117");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5157,8 +5175,9 @@ mod tests {
         // 0.120 -> 0.121: same call-in-term accumulator as full 1.114.
         // 0.121 -> 0.122: same row-input oracle as full 1.115.
         // 0.122 -> 0.123: same rebound-let rule as full 1.116.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.123");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.123");
+        // 0.123 -> 0.124: same suffixed decimal argument values as full 1.117.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.124");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.124");
     }
 
     #[test]
