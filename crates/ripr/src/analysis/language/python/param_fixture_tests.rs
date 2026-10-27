@@ -397,3 +397,39 @@ fn a_one_element_tuple_target_unpacks_each_row() -> Result<(), String> {
     );
     Ok(())
 }
+
+#[test]
+fn a_multi_line_signature_reads_like_a_one_line_signature() -> Result<(), String> {
+    // The parameter line of a multi-line signature declares the fixture; it
+    // is not a body use (#10685).
+    for signature in [
+        "(\n    fee_case,\n):\n",
+        "(\n    fee_case,  # rows from conftest\n) -> None:\n",
+        "(\n    fee_case: tuple[int, int],\n):\n",
+    ] {
+        let test = TEST.replace("(fee_case):\n", signature);
+        assert_ne!(test, TEST, "{signature:?}");
+        let finding = with_files(CONFTEST, &test)?;
+        assert_eq!(finding.class, ExposureClass::Exposed, "{signature:?}");
+        assert_eq!(finding.static_limit_kind, None, "{signature:?}");
+    }
+    // The body still counts: a later use of the fixture keeps the limit.
+    let used = TEST
+        .replace("(fee_case):\n", "(\n    fee_case,\n):\n")
+        .replace("== fee\n", "== fee\n    assert fee_case\n");
+    assert_fixture_limited(&with_files(CONFTEST, &used)?, "multi-line, body use");
+    Ok(())
+}
+
+#[test]
+fn a_one_line_body_after_the_signature_uses_the_fixture() -> Result<(), String> {
+    // Text after the signature's colon is body, though the line starts with
+    // `def` (#10685).
+    let one_line = TEST.replace(
+        "(fee_case):\n    amount, fee = fee_case\n    assert handling_fee(amount) == fee\n",
+        "(fee_case): assert handling_fee(fee_case[0]) == fee_case[1]\n",
+    );
+    assert_ne!(one_line, TEST);
+    assert_fixture_limited(&with_files(CONFTEST, &one_line)?, "one-line body");
+    Ok(())
+}

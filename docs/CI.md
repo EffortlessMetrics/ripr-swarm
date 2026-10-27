@@ -56,13 +56,30 @@ queued PR's claim and scope (#8192) through the same admission job: the PR
 number comes from the merge-group branch name
 (`gh-readonly-queue/<base>/pr-<n>-<sha>`) and the PR's labels are forwarded to
 the gate (`full-ci` still selects the advisory reports, `ripr-waive` still
-reaches the PR-evidence step). The exact-head binding is the head SHA in the
-queue branch name, so a push after enqueue fails admission. Admission is per
-PR, so the queue must use a group size of 1; the queued commit must be a single
+reaches the PR-evidence step). The resolver accepts a head-suffixed ref or a
+base-suffixed fallback; the latter does not authoritatively identify the queued
+H. Admission is per PR, so the queue must use a group size of 1; the queued commit must be a single
 squash commit of the queued PR sitting directly on the group's `base_sha`, or
 admission refuses it, so a batch fails closed even if the ruleset is misconfigured. Batching needs per-PR admission (#8082) and is a follow-up. The
 `merge-ready` label request below still works until the label request is
 retired in a follow-up, after the repository's merge queue is enabled.
+
+The terminal Result now pins the initially admitted PR/head and native
+run/attempt. After the children finish, it rechecks the open, non-draft,
+same-repository destination and head, the request label for label requests,
+the same queue-entry identity for queue requests, GitHub's current blocking
+review decision, and every page of review threads. Missing or malformed
+evidence refuses the result; a Result-only retry cannot reuse admission from
+an older attempt. Main/manual authorities and child-result checks remain.
+
+This is a late eligibility check, not queue-cutover acceptance. The current
+base-suffixed queue-ref fallback still uses a timestamp and does not establish
+the reviewed/admitted H or its composed G tree. Candidate-local admission code
+also remains a trusted-source prerequisite. Neither these API freshness reads
+nor a tree match authenticates an arbitrary caller workflow or makes the final
+read and protected merge atomic. Preserve the installed gates until the
+source, producer and live-enforcement migration in [MERGE_FLOW](MERGE_FLOW.md)
+is qualified.
 
 ## Merge-ready label flow
 
@@ -446,6 +463,17 @@ and single-platform CI was the root cause enabling both.
   `cargo xtask` step, `windows-advisory-summary`, which validates the two run
   logs and their captured exit statuses; it is evidence validation, not a test
   gate, and it fails the job when the evidence is missing or unusable.
+- **Real-ACL tests.** The three `doctor` cache probes and the xtask
+  unreadable-subtree sweep need a real directory deny, which Git for Windows
+  bash bypasses (it enables backup and restore privileges). The bash test steps
+  skip them (`ACL_SKIPS`) and a `shell: pwsh` step runs them with its own
+  `windows-acl.log` and `windows-acl.status`; they are not part of the
+  two-run verdict. The step ends with `cargo xtask
+  windows-advisory-acl-evidence`, which pins the four full libtest paths and
+  fails the step when the status or log is missing or unreadable, the runner
+  reported spawn status 127, or an expected test is missing, duplicated or
+  ignored in the log: a status file alone cannot tell these four tests from a
+  renamed filter that matched nothing (#10621).
 - **`Rust Test Shards`** (`rust-test-shards.yml`, called by `routed-rust.yml`) is the GitHub-hosted route's required test phase (#10507): four `cargo nextest run --workspace --profile ci --partition count:N/4` jobs that start only after the hosted `rust-gates.yml` job (called with `test-shards: 4`) passed every other gate, plus `rust-test-shards-verify`, which runs `cargo xtask verify-test-shards` and fails unless every shard has status 0, a current run context (repository, checkout, run, attempt, profile, partition, exit) and a complete JUnit report whose testcases are exactly its partition list, and the partition lists are a disjoint cover of the workspace list; it then retains the combined `junit.xml` and `run-context.txt` under the unsharded artifact name. `Ripr Rust Small Result` fails unless it passed; the self-hosted routes keep the single-command step. The shards restore their own `ripr-swarm-rust-shards` cache, written by shard 1 on `main` pushes, so the first run after a cold cache pays the full test build.
 - **`Linux Nextest Shards`** (`linux-nextest-shards.yml`, manual `workflow_dispatch` only) runs the required Rust test step as four `cargo nextest --partition count:N/4` jobs on hosted 4-core runners and reports each shard's build and run seconds and JUnit test count and checks the four partitions are a disjoint cover of the workspace test list, so the wall-clock of a sharded step can be measured (#10341; the hosted required route now shards, see `Rust Test Shards`). It is advisory, not wired to pull requests, and does not replace `Ripr Rust Small Result`.
 - **`Windows Advisory Shards`** (`windows-advisory-shards.yml`, manual `workflow_dispatch` only) runs the same workspace tests as four `cargo nextest --partition count:N/4` jobs plus a doctest job, each with its own log artifact and failure summary, so a Windows test failure is attributable to a shard without a 75-minute single step (#9272). The four tests that need a real directory deny ACL are excluded from those bash partitions and run in a `shell: pwsh` step of shard 1 (20-minute step timeout, own `acl.log` and `acl.status`), because Git for Windows bash enables backup and restore privileges that bypass the deny. It is advisory and does not replace the nightly lane.
@@ -506,9 +534,10 @@ and single-platform CI was the root cause enabling both.
 - **Merge-ready subset (#4938).** The `labeled` event for `merge-ready` on a
   PR also runs `windows-advisory-subset`, a fast advisory Windows job
   (`lsp::gap_artifacts` and Cargo-home identity lib tests, the #4918 cache-warning smoke,
-  the Windows process-ownership (`process_owner::tests`), xtask timed-capture
-  (`capture_output_with`) and LSP poisoned-initialize (#3802) controls, the VS Code managed-server install lock suite under
-  plain mocha on Node (#9498), and
+  the Windows process-ownership (`process_owner::tests`, including argument round-trip and spawn-error
+  controls), verify-execute cancellation containment, the VS Code managed-server install lock suite
+  under plain mocha on Node (#9498), xtask timed-capture
+  (`capture_output_with`) and LSP poisoned-initialize (#3802) controls, and
   `cargo clippy -p ripr --all-targets`) under the same advisory contract as
   the lane. It does not gate merges; #4337, #4918, and #4921 were each caught
   only by a native-Windows audit, so native-Windows verification of new
@@ -2372,6 +2401,21 @@ still name the old runner version; those, the frozen transcripts and the
 journeys themselves are re-checked by hand under the new runner
 (`cargo xtask check-fixture-contracts`, `cargo xtask blind-journey-execute`)
 before the update lands.
+
+The routed admission job checks out its executable bundle (the composite action
+wrapper and both admission interpreters) separately at the event's immutable
+PR base SHA, merge-group base SHA, or non-PR event SHA. The candidate checkout
+remains the input tree. The reserved `.admission-trusted` destination must be
+absent from that tree; before invoking either action mode the job verifies the
+trusted checkout's exact HEAD and all three executable file blobs. Missing or
+modified trusted bytes refuse admission without falling back to candidate code.
+Candidate `.gitattributes` declarations are still checked as data by the trusted
+interpreter, and generated exemptions still come only from the live base.
+
+This bundle pin does not authenticate a candidate-edited caller or its supplied
+thresholds and parameters. It does not establish reviewed-head/merge-group
+identity, same-head succession, atomic eligibility, or merge-queue activation.
+Those remain separate qualification and rollout obligations.
 
 The ordinary size envelope (files and changed lines) counts only what a human
 has to review. Generated files are declared once, with `linguist-generated` in

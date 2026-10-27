@@ -1100,6 +1100,36 @@ class TestTwice:
     );
 }
 
+/// #10685: a mark held by a module name (`@cases`) parametrizes the test as
+/// much as the spelled decorator, so literal-instance fixture credit, which
+/// skips parametrized tests, cannot treat its argname as a fixture. A name
+/// bound to anything else, or rebound, does not.
+#[test]
+fn a_module_name_holding_a_parametrize_mark_parametrizes_the_test() {
+    let flags = |source: &str| -> Vec<(String, bool, Vec<String>)> {
+        extract_tests(Path::new("tests/test_account.py"), source)
+            .into_iter()
+            .map(|test| (test.name, test.parametrized, test.direct_parametrized))
+            .collect()
+    };
+    assert_eq!(
+        flags(
+            "import pytest as pt\n\ncases = pt.mark.parametrize(\"account\", [1])\n\n@cases\ndef test_a(account):\n    pass\n"
+        ),
+        vec![("test_a".to_string(), true, vec!["account".to_string()])]
+    );
+    for source in [
+        "import pytest\n\ncases = pytest.mark.slow\n\n@cases\ndef test_a(account):\n    pass\n",
+        "import pytest\n\ncases = pytest.mark.parametrize(\"account\", [1])\ncases = pytest.mark.slow\n\n@cases\ndef test_a(account):\n    pass\n",
+    ] {
+        assert_eq!(
+            flags(source),
+            vec![("test_a".to_string(), false, Vec::new())],
+            "{source}"
+        );
+    }
+}
+
 #[test]
 fn extract_tests_recognizes_pytest_parametrize_and_unittest() {
     let tests = extract_tests(

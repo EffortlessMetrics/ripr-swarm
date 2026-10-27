@@ -123,3 +123,15 @@ def empty_table(a, b):
 
 def filled_table(a, b):
     return a * b
+
+
+def wrapped_partial(a, b):
+    return a * b
+
+
+def wrapped_conditional(a, b):
+    return a * b
+
+
+def wrapped_finally(a, b):
+    return a * b

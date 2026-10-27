@@ -899,3 +899,165 @@ fn a_workspace_macro_shadowing_a_pure_macro_in_test_setup_is_not_credited() -> R
     }
     Ok(())
 }
+
+/// #10058: a named payload is not evidence that the changed write adds data.
+/// The prefix makes each empty-payload test pass even if that write is deleted.
+#[test]
+fn identifier_valued_text_writes_are_not_credited() -> Result<(), String> {
+    let test = format!("{BUILD}        assert_eq!(s, \"+\");");
+    for binding in [
+        "        let payload = String::new();",
+        "        let payload = String::from(\"\");",
+        "        let payload = \"\";",
+        // Local value propagation is deliberately outside this refusal: even
+        // nonempty or computed locals need evidence beyond an identifier.
+        "        let payload = String::from(\"570\");",
+        "        let payload = format!(\"{}\", minutes);",
+    ] {
+        for changed in [
+            "        out.push_str(&payload);",
+            "        out.push_str(&&payload);",
+            "        out.insert_str(0, &payload);",
+            "        out.write_str(&payload).unwrap();",
+        ] {
+            let owner = owner_with(&[binding, NEW, changed]);
+            let finding = finding_custom_in(
+                "use std::fmt::Write;\n",
+                &owner,
+                "        // old",
+                changed,
+                &test,
+            )?;
+            assert_uncredited(&finding, &format!("{binding}\n{changed}"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn identifier_valued_byte_writes_are_not_credited() -> Result<(), String> {
+    let test = "        let mut s = Vec::new();\n        OffsetFormat.format(&mut s, 570);\n        assert_eq!(s, vec![b'+']);";
+    for binding in [
+        "        let payload = b\"\";",
+        "        let payload = Vec::<u8>::new();",
+        "        let payload = b\"570\";",
+    ] {
+        let changed = "        out.write_all(&payload).unwrap();";
+        let owner = format!(
+            "    pub fn format(&self, out: &mut Vec<u8>, minutes: i32) {{\n{binding}\n        out.push(b'+');\n{changed}\n    }}"
+        );
+        let finding = finding_custom_in(
+            "use std::io::Write;\n",
+            &owner,
+            "        // old",
+            changed,
+            test,
+        )?;
+        assert_uncredited(&finding, binding);
+    }
+    Ok(())
+}
+
+#[test]
+fn named_empty_collection_writes_remain_uncredited() -> Result<(), String> {
+    let test = "        let mut s = Vec::new();\n        OffsetFormat.format(&mut s, 570);\n        assert_eq!(s, vec![b'+']);";
+    for changed in [
+        "        out.extend(payload);",
+        "        out.extend_from_slice(&payload);",
+        "        out.append(&mut payload);",
+    ] {
+        let owner = format!(
+            "    pub fn format(&self, out: &mut Vec<u8>, minutes: i32) {{\n        let mut payload = Vec::<u8>::new();\n        out.push(b'+');\n{changed}\n    }}"
+        );
+        let finding = finding_custom(&owner, "        // old", changed, test)?;
+        assert_uncredited(&finding, changed);
+    }
+    Ok(())
+}
+
+#[test]
+fn nonempty_literal_writers_keep_out_parameter_credit() -> Result<(), String> {
+    let test = format!("{BUILD}        assert_eq!(s, \"+570\");");
+    for changed in [
+        "        out.push_str(\"570\");",
+        "        out.insert_str(1, \"570\");",
+        "        out.write_str(\"570\").unwrap();",
+        "        out.push_str(&format!(\"{:02}\", minutes.abs()));",
+    ] {
+        let owner = owner_with(&[NEW, changed]);
+        assert_credited(&finding_custom_in(
+            "use std::fmt::Write;\n",
+            &owner,
+            "        // old",
+            changed,
+            &test,
+        )?);
+    }
+    let test = "        let mut s = Vec::new();\n        OffsetFormat.format(&mut s, 570);\n        assert_eq!(s, vec![b'+', b'5']);";
+    for changed in [
+        "        out.write_all(b\"5\").unwrap();",
+        "        out.extend([b'5']);",
+        "        out.extend_from_slice(&[b'5']);",
+    ] {
+        let owner = format!(
+            "    pub fn format(&self, out: &mut Vec<u8>, minutes: i32) {{\n        out.push(b'+');\n{changed}\n    }}"
+        );
+        assert_credited(&finding_custom_in(
+            "use std::io::Write;\n",
+            &owner,
+            "        // old",
+            changed,
+            test,
+        )?);
+    }
+    Ok(())
+}
+
+/// The owner-wide allowlist refuses a named sibling even when the probe
+/// selects a literal write. Compare the passed local with a route-disabled
+/// unrelated local so another matching route cannot masquerade as credit.
+#[test]
+fn a_named_sibling_refuses_owner_wide_credit_for_a_literal_probe() -> Result<(), String> {
+    let passed = format!("{BUILD}        assert_eq!(s, \"+570\");");
+    let disabled = "        let mut s = String::new();\n        let mut t = String::new();\n        OffsetFormat.format(&mut s, 570);\n        t.push_str(\"+570\");\n        assert_eq!(t, \"+570\");";
+    let binding = "        let payload = String::new();";
+    let sibling = "        out.push_str(&payload);";
+    let tail = "        out.push_str(\"570\");";
+    let pin = |finding: &Value, expression: &str, class: &str, discriminator: &str| {
+        assert_eq!(finding["probe"]["family"], "call_deletion", "{finding}");
+        assert_eq!(finding["probe"]["expression"], expression, "{finding}");
+        assert_eq!(finding["classification"], class, "{finding}");
+        assert_eq!(
+            finding["ripr"]["discriminate"]["state"], discriminator,
+            "{finding}"
+        );
+    };
+    let plain = owner_with(&[NEW, tail]);
+    let positive = finding_custom(&plain, OLD, NEW, &passed)?;
+    pin(&positive, "out.push('+')", "exposed", "yes");
+    let plain_disabled = finding_custom(&plain, OLD, NEW, disabled)?;
+    pin(&plain_disabled, "out.push('+')", "weakly_exposed", "weak");
+    for lines in [
+        vec![binding, sibling, NEW, tail],
+        vec![binding, NEW, sibling, tail],
+    ] {
+        let owner = owner_with(&lines);
+        let selected = finding_custom(&owner, OLD, NEW, &passed)?;
+        let route_disabled = finding_custom(&owner, OLD, NEW, disabled)?;
+        pin(&selected, "out.push('+')", "weakly_exposed", "weak");
+        pin(&route_disabled, "out.push('+')", "weakly_exposed", "weak");
+        assert_eq!(selected["classification"], route_disabled["classification"]);
+        assert_eq!(
+            selected["ripr"]["discriminate"],
+            route_disabled["ripr"]["discriminate"]
+        );
+        let changed_named = finding_custom(&owner, "        // old", sibling, &passed)?;
+        pin(
+            &changed_named,
+            "out.push_str(&payload)",
+            "weakly_exposed",
+            "weak",
+        );
+    }
+    Ok(())
+}

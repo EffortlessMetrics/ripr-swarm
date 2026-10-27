@@ -1,5 +1,22 @@
 # Golden Output Changes
 
+## Pending — integration composition to cache generation 1.117 (#8610, #10792)
+
+Integration update:
+The `#8610` entry below was generated at the candidate's own `1.114`
+generation. Merging `main` composed that semantic transition onto main's
+`1.116` line (`1.114` #9478, `1.115` #10797, `1.116` #10819), so the
+admitted generation for this candidate is `1.117` (sharded/compact
+`0.124`). The two `unchanged-after-attempt` snapshots adopt
+`"cache_schema_version": "1.117"` with their content commitments
+recomputed through the same raw-JSON placeholder procedure, and
+`agent-verify.json` / `agent-receipt.json` adopt the derived commitments
+and artifact byte hashes. No boundary-gap evidence, movement class or
+envelope field changed; only the corpus generation and the commitments
+that cover it moved. The snapshots still carry producer facts frozen at
+the original run; a head-qualified regeneration remains hosted-proof
+work for the qualification lane.
+
 ## Pending — direct boolean boundary grip (#8610)
 
 Reason:
@@ -78,6 +95,27 @@ Updated:
 The same snapshots follow corpus cache generation 1.112 to 1.113 for a clean
 `#[test_case(.. => literal)]` row read as the harness-compared return
 (RIPR-SPEC-0231 rule 9, #9619), with the same scope: generation, content
+commitment, dependent verify commitments and receipt byte hashes only.
+
+### call-in-term accumulator classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.113 to 1.114 for an
+accumulator update that adds a same-file function's value, read as a
+`return_value` change (RIPR-SPEC-0360, #9478), with the same scope: generation,
+content commitment, dependent verify commitments and receipt byte hashes only.
+
+### test_case arrow row input substitution cache generation parity
+
+The same snapshots follow corpus cache generation 1.114 to 1.115 for the arrow row
+read with its inputs substituted into the returned expression (RIPR-SPEC-0231
+rule 9, #10797), with the same scope: generation, content commitment, dependent
+verify commitments and receipt byte hashes only.
+
+### rebound let literal classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.115 to 1.116 for a `let`
+literal that a tuple, struct or `for` pattern rebinds no longer pairing with the
+owner call (RIPR-SPEC-0158, #10819), with the same scope: generation, content
 commitment, dependent verify commitments and receipt byte hashes only.
 
 ## Pending — boundary_gap (9)

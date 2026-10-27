@@ -178,6 +178,46 @@ pub(in crate::analysis) fn withhold_implicit_call_gap(
     true
 }
 
+/// Withhold an `exposed` verdict on a standard `Drop::drop`. A destructor runs
+/// at scope end and cannot be named, so a test never calls it; every route to
+/// `exposed` (a reach the scope-end relation set, a name match on the free
+/// `drop`) credits an assertion no authority ties to that scope end, whichever
+/// probe family the changed line is (#10553). Returns `true` when rewritten.
+pub(in crate::analysis) fn withhold_destructor_credit(
+    finding: &mut Finding,
+    index: &RustIndex,
+) -> bool {
+    if finding.class != ExposureClass::Exposed || finding.static_limit_kind.is_some() {
+        return false;
+    }
+    let Some(owner_id) = finding.probe.owner.as_ref() else {
+        return false;
+    };
+    let changed_line = finding.probe.location.line;
+    let Some(owner) = index.functions().iter().find(|function| {
+        function.id == *owner_id
+            && function.start_line <= changed_line
+            && changed_line <= function.end_line
+    }) else {
+        return false;
+    };
+    if !super::is_drop_destructor(owner, index) {
+        return false;
+    }
+    let next_step = format!(
+        "`{}` runs at the end of a scope no test can name, and no assertion is tied to that scope end, so ripr does not report it exposed. Check that an assertion would fail if the destructor did the wrong thing.",
+        owner.name,
+    );
+    withhold_gap(
+        finding,
+        LIMIT,
+        "whether an assertion observes the effect of the scope end that runs the destructor",
+        next_step,
+        &[],
+    );
+    true
+}
+
 /// Whether the earlier stages are established and only the discriminator is
 /// unconfirmed, the way `pinned_shape` reads it: reach is already decided by
 /// the caller, infection is read, and propagation is read or weak. A finding

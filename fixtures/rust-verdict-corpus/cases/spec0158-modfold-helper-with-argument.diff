@@ -1,0 +1,10 @@
+diff --git a/src/m_harg.rs b/src/m_harg.rs
+--- a/src/m_harg.rs
++++ b/src/m_harg.rs
+@@ -1,5 +1,5 @@
+ pub fn tier_harg(qty: u32) -> u32 {
+-    if 10 <= qty {
++    if qty >= 10 {
+         5
+     } else {
+         0
