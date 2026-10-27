@@ -55,10 +55,27 @@ read generated stubs, or consume runtime test output.
 
 Diff mode reads the workspace under a file-count cap
 (`RIPR_PYTHON_MAX_WORKSPACE_FILES`) and byte budgets. The count cap refuses only
-unchanged context: changed `.py` files are always kept, the rest of the cap is
-filled from the sorted remainder, and any refusal is a named
-`diff_scope_oversized` limitation that says changed files were kept. The byte
-budgets still apply to changed files and disclose their own refusals.
+unchanged context: changed `.py` files are always kept. When the workspace
+exceeds the cap, the rest of it is filled from the files that may reach the diff
+(#10785): every `conftest.py` and the package `__init__.py` files above a
+changed file; files whose text names a name a changed file defines (a `def` or
+`class` name at any depth, a top-level assignment target, a word of a decorator
+route literal) or a pytest fixture a reaching test module or `conftest.py`
+defines over such a name (a `fixture as` decorator alias and an `import ... as`
+alias of the name count, and fixture hosts are rescanned as fixture names join);
+for a module-level change, files that import the
+changed module, and for a `__dunder__` method change, files that import from a
+package above it; and the workspace modules that a reaching test or a changed
+file imports. A refused
+file outside that set names nothing a related-test relation could match, so it
+does not make the run partial. A refused file inside it is a named
+`diff_scope_oversized` limitation that counts the refused reaching files and
+says changed files were kept. A changed route literal with no fixed word in it
+(`@app.get("/")`, `@app.get("/{item_id}")`), an unreadable changed file, a
+fixture closure that does not settle, or a workspace past the scan's own file
+bound keeps the earlier behavior: the earliest paths fill the cap and
+every refusal is disclosed. The byte budgets still apply to changed files and
+disclose their own refusals.
 
 ## Owner Facts
 
