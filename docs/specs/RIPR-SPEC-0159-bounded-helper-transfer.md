@@ -130,7 +130,9 @@ can only hint that a caller "may lead here" without changing anything.
   no local binding, `use .. as` rename or foreign import of the name (or of
   the type) in the caller's file, no other mention of the name in the caller
   (a parameter, nested `fn`/`const`/`static`/`let` or a glob import in its
-  body), defined in the caller's own file and inline module, called on a
+  body), defined in the caller's own file, inline module and enclosing
+  function scope, with a `Type::` qualifier that is the workspace type and
+  not a generic parameter, local item or import of the same name, called on a
   hop whose callee declares `Result<..>` or `Option<..>` with no workspace
   type of that name, and its whole body must be one
   unconditional `panic!`, `unreachable!`, `unimplemented!`, `todo!` (none

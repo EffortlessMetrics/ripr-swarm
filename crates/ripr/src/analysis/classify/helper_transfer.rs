@@ -2968,10 +2968,27 @@ fn module_path_at_line(source: &str, line: usize) -> Option<Vec<String>> {
         match character {
             '\n' => current += 1,
             '{' => {
-                let mut words = masked[..at].split_whitespace().rev();
-                let name = words.next().map(str::to_string);
+                let statement_start = masked[..at]
+                    .rfind([';', '{', '}'])
+                    .map_or(0, |found| found + 1);
+                let head = &masked[statement_start..at];
+                let mut words = head.split_whitespace().rev();
+                let last = words.next().map(str::to_string);
                 let is_mod = words.next() == Some("mod");
-                stack.push(if is_mod { name } else { None });
+                // An enclosing function body is a scope of its own: items
+                // declared in it are invisible outside and shadow outside.
+                let fn_name = head
+                    .split_whitespace()
+                    .skip_while(|word| *word != "fn")
+                    .nth(1)
+                    .map(|word| format!("fn {}", word.split(['(', '<']).next().unwrap_or(word)));
+                stack.push(if is_mod {
+                    last
+                } else if !head.contains("impl") {
+                    fn_name
+                } else {
+                    None
+                });
             }
             '}' => {
                 stack.pop()?;
@@ -3037,6 +3054,9 @@ fn handler_diverges(path: &str, caller: &FunctionSummary, index: &RustIndex) -> 
             != module_path_at_line(&file.source, caller.start_line)
         || module_path_at_line(&file.source, caller.start_line).is_none()
         || !name_only_used_as_handler(caller, path, name)
+        || qualifier.is_some_and(|q| {
+            q != "Self" && !qualifier_is_workspace_type(caller, path, q, &file.source)
+        })
     {
         return false;
     }
@@ -3054,6 +3074,69 @@ fn handler_diverges(path: &str, caller: &FunctionSummary, index: &RustIndex) -> 
         return false;
     }
     function_only_diverges(handler, index)
+}
+
+/// The qualifier `q` of a `q::name` handler names the workspace type, not a
+/// generic parameter or a local item: it appears in the caller only as the
+/// handler path's qualifier, and the enclosing `impl` header does not
+/// introduce it as a generic parameter (not independently pinned by a test: a
+/// same-impl generic of the type's own name does not form a bound chain).
+fn qualifier_is_workspace_type(
+    caller: &FunctionSummary,
+    path: &str,
+    qualifier: &str,
+    file_source: &str,
+) -> bool {
+    if !name_only_used_as_handler(caller, path, qualifier) {
+        return false;
+    }
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(file_source);
+    let line_start: usize = masked
+        .split_inclusive('\n')
+        .take(caller.start_line.saturating_sub(1))
+        .map(str::len)
+        .sum();
+    let before = &masked[..line_start.min(masked.len())];
+    // The nearest preceding `impl` header; none (a free caller) is fine.
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    let impl_positions: Vec<usize> = before
+        .match_indices("impl")
+        .map(|(at, _)| at)
+        .filter(|at| {
+            !before[..*at].chars().next_back().is_some_and(is_word)
+                && !before[at + 4..].chars().next().is_some_and(is_word)
+        })
+        .collect();
+    let Some(impl_at) = impl_positions.last().copied() else {
+        return true;
+    };
+    let header_end = before[impl_at..]
+        .find('{')
+        .map_or(before.len(), |end| impl_at + end);
+    let header = &before[impl_at + 4..header_end];
+    let header = header.trim_start();
+    let generics_mention = header.starts_with('<')
+        && matching_close_angle(header)
+            .is_some_and(|close| contains_word(&header[..close], qualifier));
+    !generics_mention
+}
+
+/// Index of the `>` closing the `<` that starts `text`.
+fn matching_close_angle(text: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    for (at, character) in text.char_indices() {
+        match character {
+            '<' => depth += 1,
+            '>' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(at);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Every whole-word mention of `name` in the caller (signature and body) is

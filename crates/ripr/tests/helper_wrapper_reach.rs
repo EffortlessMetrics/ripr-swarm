@@ -2353,3 +2353,82 @@ fn unwrap_tail_with_a_handler_in_another_file_is_not_credited() -> Result<(), St
     assert_ne!(finding["classification"], "exposed", "{finding}");
     Ok(())
 }
+
+// #9638 re-review: the qualifier of `Type::die` must really be the workspace
+// type, not a generic parameter, a local item or an import of the same name.
+const POOL_DIE: &str =
+    "impl Pool {\n    pub fn die<T>(_: Overflow) -> T {\n        panic!(\"overflow\")\n    }\n}\n";
+
+#[test]
+fn unwrap_tail_with_the_real_qualifier_type_is_credited() -> Result<(), String> {
+    let forwarder = unwrapping_forwarder("self.try_grow(wanted).unwrap_or_else(Pool::die)");
+    let finding = forwarder_finding(POOL_DIE, &forwarder, UNWRAP_TESTS)?;
+    assert_eq!(finding["classification"], "exposed", "{finding}");
+    Ok(())
+}
+
+#[test]
+fn unwrap_tail_qualifier_that_is_not_the_workspace_type_is_not_credited() -> Result<(), String> {
+    // `ExtTr` is an external trait: declaring it here would add a second `die`.
+    let ext_trait = "";
+    for (extra, forwarder) in [
+        (
+            POOL_DIE,
+            "    pub fn grow<Pool: ExtTr>(&mut self, wanted: usize) -> bool {\n        self.try_grow(wanted).unwrap_or_else(Pool::die)\n    }",
+        ),
+        (
+            POOL_DIE,
+            "    pub fn grow<Pool>(&mut self, wanted: usize) -> bool\n    where\n        Pool: ExtTr,\n    {\n        self.try_grow(wanted).unwrap_or_else(Pool::die)\n    }",
+        ),
+        (
+            POOL_DIE,
+            "    pub fn grow(&mut self, wanted: usize) -> bool {\n        type Pool = ExtTy;\n        self.try_grow(wanted).unwrap_or_else(Pool::die)\n    }",
+        ),
+        (
+            POOL_DIE,
+            "    pub fn grow(&mut self, wanted: usize) -> bool {\n        struct Pool;\n        impl Pool {\n            fn die<T>(_: Overflow) -> T {\n                loop {}\n            }\n        }\n        self.try_grow(wanted).unwrap_or_else(Pool::die)\n    }",
+        ),
+        (
+            POOL_DIE,
+            "    pub fn grow(&mut self, wanted: usize) -> bool {\n        use ext::Pool;\n        self.try_grow(wanted).unwrap_or_else(Pool::die)\n    }",
+        ),
+    ] {
+        let extra = format!("{ext_trait}{extra}");
+        assert_shadowed_handler_not_credited(&extra, forwarder, UNWRAP_TESTS)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn unwrap_tail_qualifier_generic_over_the_enclosing_impl_is_not_credited() -> Result<(), String> {
+    // `ExtTr` is an external trait: declaring it here would add a second `die`.
+    let ext_trait = "";
+    let forwarder = unwrapping_forwarder("self.try_grow(wanted).unwrap_or_else(Pool::die)");
+    for header in [
+        "impl<Pool: ExtTr> Pool {",
+        "impl<Pool> Pool where Pool: ExtTr {",
+    ] {
+        let source = forwarder_source(&format!("{ext_trait}{POOL_DIE}"), &forwarder, UNWRAP_TESTS)
+            .replacen(
+                "impl Pool {\n    pub fn try_grow",
+                &format!("{header}\n    pub fn try_grow"),
+                1,
+            );
+        let finding = predicate_finding(&source, FORWARDER_DIFF)?;
+        assert_ne!(finding["classification"], "exposed", "{header}: {finding}");
+    }
+    Ok(())
+}
+
+#[test]
+fn unwrap_tail_caller_nested_in_a_function_with_a_local_handler_is_not_credited()
+-> Result<(), String> {
+    // The nested impl sees the enclosing function's own `die`, not the
+    // module-level one.
+    let extra = format!(
+        "{DIVERGING_DIE}fn outer() {{\n    const die: fn(Overflow) -> bool = |_| false;\n    impl Pool {{\n        pub fn grow2(&mut self, wanted: usize) -> bool {{\n            self.try_grow(wanted).unwrap_or_else(die)\n        }}\n    }}\n}}\n"
+    );
+    let tests =
+        "        assert_eq!(pool.grow2(3), false);\n        assert_eq!(pool.grow2(4), true);";
+    assert_shadowed_handler_not_credited(&extra, "", tests)
+}
