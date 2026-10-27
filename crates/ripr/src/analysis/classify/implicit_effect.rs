@@ -220,6 +220,7 @@ impl ExpansionSurface {
             surface.scanned_sources += 1;
             let Some(parse) = parse_clean_source_file(source) else {
                 surface.bounded = false;
+                surface.bounded_apart_from_drop = false;
                 continue;
             };
             let tree = parse.tree();
@@ -1022,5 +1023,42 @@ mod tests {
         assert!(surface.excluded_receivers.contains("Counter"));
         assert!(surface.excluded_receivers.contains("Other"));
         assert!(!surface.excluded_receivers.contains("Unrelated"));
+    }
+
+    /// #10814: the Drop-owner admission is as bounded as the general one,
+    /// except for the owner's own `Drop` impl. An unreadable sibling file, a
+    /// second impl or an alias of the type each refuse it.
+    #[test]
+    fn drop_owner_admission_needs_a_complete_scan_and_one_impl() {
+        let guard = "struct Guard; impl Drop for Guard { fn drop(&mut self) {} }";
+        let admitted = |sources: &[&str]| {
+            let surface = ExpansionSurface::scan(sources.iter().copied());
+            surface.bounded_apart_from_drop
+                && !surface.excluded_apart_from_drop.contains("Guard")
+                && surface
+                    .drop_impl_types
+                    .iter()
+                    .filter(|ty| *ty == "Guard")
+                    .count()
+                    == 1
+        };
+        assert!(admitted(&[guard]));
+        assert!(!admitted(&[guard, "fn broken( {"]), "unparsed sibling");
+        assert!(
+            !admitted(&[
+                guard,
+                "mod m { struct Guard; impl Drop for Guard { fn drop(&mut self) {} } }"
+            ]),
+            "second impl for the type name"
+        );
+        assert!(!admitted(&[guard, "type Held = Guard;"]), "alias");
+        assert!(
+            !admitted(&[guard, "macro_rules! extra { () => {} }"]),
+            "item macro"
+        );
+        assert!(
+            !ExpansionSurface::scan([guard]).bounded,
+            "general admission still refuses a Drop impl"
+        );
     }
 }
