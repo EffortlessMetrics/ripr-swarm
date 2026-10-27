@@ -6,7 +6,7 @@ use super::measure::{
     check_args_without_explicit_mode, check_contradictions, classify_replay, contradiction_outcome,
     extract_commands, hostile_outcome, parse_test_result, permissive_json_exit_zero, probe_result,
     record_warm_check, repo_exposure_contradictions, rss_sample, scan_check_contradictions,
-    warm_check_args, warm_check_subject,
+    warm_check_args, warm_check_envs, warm_check_subject,
 };
 use super::*;
 use crate::run::{MeasuredOutput, TimedOutput, capture_output_measured};
@@ -4767,4 +4767,11 @@ fn corpus_pins_the_typescript_commit() -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+#[test]
+fn warm_check_renders_the_full_findings_set_for_the_contradiction_scan() {
+    let envs = warm_check_envs("/cache");
+    assert!(envs.contains(&("RIPR_CACHE_DIR", "/cache")));
+    assert!(envs.contains(&("RIPR_CHECK_FINDINGS_BYTES", "0")));
 }
