@@ -59,9 +59,6 @@ pub(in crate::analysis) fn assertion_observes_scope_end(
     {
         return false;
     }
-    if std::env::var("NEUT").is_ok() {
-        return true;
-    }
     let Some(field) = shared_field(owner, owner, expression) else {
         return false;
     };
@@ -84,9 +81,6 @@ pub(in crate::analysis) fn destructor_credit_established(
     owner: &FunctionSummary,
     index: &RustIndex,
 ) -> bool {
-    if std::env::var("NEUT2").is_ok() {
-        return true;
-    }
     use crate::domain::{OracleStrength, ProbeFamily, RelatedTestRole};
     if !matches!(
         finding.probe.family,
