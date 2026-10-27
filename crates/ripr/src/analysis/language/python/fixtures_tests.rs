@@ -289,7 +289,13 @@ fn given_a_parametrize_the_literal_parser_gives_up_on_then_the_argname_is_still_
         "@pytest.mark.parametrize('out', VALUES)",
         "@pytest.mark.parametrize('out', [pytest.param('abc', marks=pytest.mark.skip)])",
         "@pytest.mark.parametrize('out', ['abc'], indirect=False)",
+        // Collection errors (#10867): `indirect` naming a name the mark does
+        // not parametrize, or `None`; a name parametrized twice.
         "@pytest.mark.parametrize('out', ['abc'], indirect=['other'])",
+        "@pytest.mark.parametrize('out', VALUES, indirect=('other', 'out'))",
+        "@pytest.mark.parametrize('out', ['abc'], indirect=None)",
+        "@pytest.mark.parametrize('out', ['abc'], indirect=True)\n@pytest.mark.parametrize('out', ['abc'], indirect=True)",
+        "@pytest.mark.parametrize('out, out', [('a', 'b')], indirect=True)",
         // An `indirect=` value the read cannot settle makes no edge either
         // way (RIPR-SPEC-0028); the fixture limit still counts it (#10685).
         // A never-rebound module `IND = False` settles it as direct.
@@ -320,7 +326,7 @@ fn given_indirect_routing_the_argname_to_its_fixture_then_the_fixture_is_resolve
     for decorator in [
         "@pytest.mark.parametrize('out', ['abc'], indirect=True)",
         "@pytest.mark.parametrize('out', VALUES, indirect=['out'])",
-        "@pytest.mark.parametrize('out', VALUES, indirect=('other', 'out'))",
+        "@pytest.mark.parametrize('out', VALUES, indirect=('out',))",
         // A never-rebound module value routes like its literal (#10685).
         "IND = True\n\n\n@pytest.mark.parametrize('out', ['abc'], indirect=IND)",
     ] {
@@ -367,6 +373,43 @@ fn given_a_class_level_parametrize_naming_a_fixture_then_the_method_stays_unrela
     );
     assert_eq!(
         relations(&[("src/utils.py", UTILS_PY), ("tests/test_utils.py", &plain)])?,
+        vec![("test_short".to_string(), "fixture_owner_call")]
+    );
+    Ok(())
+}
+
+/// #10867: a class and its method, or a class and its ancestor, that both
+/// parametrize one name fail pytest collection ("duplicate parametrization"),
+/// so even a routed argname makes no fixture edge.
+#[test]
+fn given_a_name_parametrized_by_both_a_class_and_its_method_then_no_fixture_is_resolved()
+-> Result<(), String> {
+    let routed = "VALUES, indirect=True)";
+    let method = SAME_MODULE.replace(
+        "def test_short(out):\n    assert out == 'abc'\n",
+        &format!("@pytest.mark.parametrize('out', {routed}\nclass TestShort:\n    @pytest.mark.parametrize('out', {routed}\n    def test_short(self, out):\n        assert out == 'abc'\n"),
+    );
+    let ancestor = SAME_MODULE.replace(
+        "def test_short(out):\n    assert out == 'abc'\n",
+        &format!("@pytest.mark.parametrize('out', {routed}\nclass Base:\n    pass\n\n\n@pytest.mark.parametrize('out', {routed}\nclass TestShort(Base):\n    def test_short(self, out):\n        assert out == 'abc'\n"),
+    );
+    for test in [&method, &ancestor] {
+        assert!(
+            relations(&[
+                ("src/utils.py", UTILS_PY),
+                ("tests/test_utils.py", test.as_str())
+            ])?
+            .is_empty(),
+            "{test}"
+        );
+    }
+    // Control: the method alone routes to the fixture.
+    let single = SAME_MODULE.replace(
+        "def test_short(out):\n    assert out == 'abc'\n",
+        &format!("class TestShort:\n    @pytest.mark.parametrize('out', {routed}\n    def test_short(self, out):\n        assert out == 'abc'\n"),
+    );
+    assert_eq!(
+        relations(&[("src/utils.py", UTILS_PY), ("tests/test_utils.py", &single)])?,
         vec![("test_short".to_string(), "fixture_owner_call")]
     );
     Ok(())

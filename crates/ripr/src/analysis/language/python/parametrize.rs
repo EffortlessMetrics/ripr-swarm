@@ -69,16 +69,18 @@ impl PythonParametrizeCases {
 pub(super) fn parametrize_cases(
     source: &str,
     decorators: &[Expr],
+    scope: ParametrizeScope<'_>,
 ) -> Option<PythonParametrizeCases> {
     let mut product: Vec<BTreeMap<String, String>> = vec![BTreeMap::new()];
     let mut any = false;
     for decorator in decorators {
-        let Expr::Call(call) = decorator else {
-            continue;
+        // The same pytest mark the routing read accepts (#10867): a mark
+        // that may be another library's `parametrize` records nothing.
+        let call = match scope.parametrize_call(decorator) {
+            None => continue,
+            Some((_, MarkKind::Unsettled)) => return None,
+            Some((call, MarkKind::Pytest)) => call,
         };
-        if !expr_full_name(&call.func).is_some_and(|name| is_parametrize_name(&name)) {
-            continue;
-        }
         any = true;
         let rows = decorator_cases(source, call)?;
         let mut next = Vec::with_capacity(product.len().saturating_mul(rows.len()));
@@ -106,14 +108,17 @@ pub(super) fn parametrize_cases(
 /// How a parametrize argname reaches the test, read from `indirect=`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Routing {
-    /// pytest passes the value to the test (no `indirect=`, literal `False`
-    /// or `None`, or a literal string list that omits the name).
+    /// pytest passes the value to the test (no `indirect=`, literal
+    /// `False`, or a literal string list that omits the name).
     Direct,
     /// Literal `True` or a literal string list naming it: the value goes to
     /// the fixture of that name.
     Routed,
     /// A value the read cannot settle (`indirect=IND`, a computed list, a
-    /// non-boolean constant): either may happen (#10685).
+    /// non-boolean constant): either may happen (#10685). Also a mark pytest
+    /// refuses at collection (`indirect=None`, an `indirect` name the mark
+    /// does not parametrize, an argname parametrized twice): the test never
+    /// runs, so no reading of its value earns credit (#10867).
     Unsettled,
 }
 
@@ -286,18 +291,73 @@ fn argname_routings(decorators: &[Expr], scope: ParametrizeScope<'_>) -> Vec<(St
         else {
             continue;
         };
-        for name in names {
-            let routing = if splat || kind == MarkKind::Unsettled {
+        let indirect = indirect.map(|value| scope.resolve_value(value));
+        let refused = indirect.is_some_and(|value| names_unknown_indirect(value, &names));
+        for name in &names {
+            let routing = if splat || refused || kind == MarkKind::Unsettled {
                 Routing::Unsettled
             } else {
-                indirect.map_or(Routing::Direct, |value| {
-                    indirect_routing(scope.resolve_value(value), &name)
-                })
+                indirect.map_or(Routing::Direct, |value| indirect_routing(value, name))
             };
-            found.push((name, routing));
+            found.push((name.clone(), routing));
+        }
+    }
+    if has_duplicate(found.iter().map(|(name, _)| name.as_str())) {
+        // "duplicate parametrization of 'q'": a collection error.
+        for (_, routing) in &mut found {
+            *routing = Routing::Unsettled;
         }
     }
     found
+}
+
+/// Every argname the test's pytest parametrize decorators name, repeats
+/// kept, so a caller combining class and method marks can see a name
+/// parametrized twice (#10867).
+pub(super) fn parametrize_argnames(
+    decorators: &[Expr],
+    scope: ParametrizeScope<'_>,
+) -> Vec<String> {
+    let mut names = Vec::new();
+    for decorator in decorators {
+        let Some((call, _)) = scope.parametrize_call(decorator) else {
+            continue;
+        };
+        let argnames = call
+            .keywords
+            .iter()
+            .find(|keyword| {
+                keyword
+                    .arg
+                    .as_ref()
+                    .is_some_and(|arg| arg.as_str() == "argnames")
+            })
+            .map(|keyword| &keyword.value)
+            .or_else(|| call.args.first());
+        if let Some((found, _)) = argnames.and_then(|expr| argnames_list(scope.resolve_value(expr)))
+        {
+            names.extend(found);
+        }
+    }
+    names
+}
+
+/// Whether any name repeats.
+pub(super) fn has_duplicate<'n>(names: impl IntoIterator<Item = &'n str>) -> bool {
+    let mut seen = BTreeSet::new();
+    names.into_iter().any(|name| !seen.insert(name))
+}
+
+/// A literal `indirect` list naming something the mark does not
+/// parametrize: pytest stops with "indirect fixture 'x' doesn't exist".
+fn names_unknown_indirect(value: &Expr, names: &[String]) -> bool {
+    let elements = match value {
+        Expr::List(list) => &list.elts,
+        Expr::Tuple(tuple) => &tuple.elts,
+        _ => return false,
+    };
+    string_elements(elements)
+        .is_some_and(|listed| listed.iter().any(|listed| !names.contains(listed)))
 }
 
 /// Argnames not definitely routed to a fixture. They are never resolved as
@@ -334,7 +394,8 @@ fn indirect_routing(value: &Expr, name: &str) -> Routing {
     match value {
         Expr::Constant(constant) => match constant.value {
             ast::Constant::Bool(true) => Routing::Routed,
-            ast::Constant::Bool(false) | ast::Constant::None => Routing::Direct,
+            ast::Constant::Bool(false) => Routing::Direct,
+            // "expected Sequence or boolean for indirect, got NoneType".
             _ => Routing::Unsettled,
         },
         Expr::List(list) => listed(&list.elts),
@@ -479,7 +540,14 @@ mod tests {
         let Some(Stmt::FunctionDef(function)) = body.into_iter().last() else {
             return None;
         };
-        parametrize_cases(source, &function.decorator_list).map(|found| {
+        let module_values = PythonModuleNames::default();
+        let scope = ParametrizeScope {
+            imports: &[],
+            module_values: &module_values,
+            class_names: &[],
+            class_opaque: false,
+        };
+        parametrize_cases(source, &function.decorator_list, scope).map(|found| {
             found
                 .cases
                 .into_iter()

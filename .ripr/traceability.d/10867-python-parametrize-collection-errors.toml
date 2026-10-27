@@ -1,0 +1,13 @@
+# Registers the collection-error refusals for parametrize marks (#10867) under RIPR-SPEC-0238.
+[[extend]]
+id = "RIPR-SPEC-0238"
+tests = [
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::an_indirect_parametrize_argname_is_an_unresolved_fixture",
+  "crates/ripr/src/analysis/language/python/fixtures_tests.rs::given_a_name_parametrized_by_both_a_class_and_its_method_then_no_fixture_is_resolved",
+  "crates/ripr/src/analysis/language/python/fixtures_tests.rs::given_a_parametrize_the_literal_parser_gives_up_on_then_the_argname_is_still_not_a_fixture",
+  "crates/ripr/src/analysis/language/python/tests.rs::parametrize_cases_follow_the_routing_read_of_the_mark",
+]
+code = [
+  "crates/ripr/src/analysis/language/python/parametrize.rs",
+  "crates/ripr/src/analysis/language/python/owners_tests.rs",
+]

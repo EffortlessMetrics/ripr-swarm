@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Python: a parametrize mark that pytest refuses at collection no longer earns credit. `indirect=None`, an `indirect` list naming a name the mark does not parametrize, and an argname parametrized twice (in one mark, across stacked marks, or by a class and its test) leave every argname unsettled: it counts toward `unresolved_pytest_fixture` and makes no fixture edge. Literal parametrize cases now come from the same pytest mark the routing read accepts, so `import mylib as pytest` records no case values (#10867).

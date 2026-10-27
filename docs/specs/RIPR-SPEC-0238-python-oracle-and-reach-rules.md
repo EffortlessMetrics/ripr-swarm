@@ -415,9 +415,14 @@ This order is the existing behavior and is normative:
   other fixtures, and an `indirect=` argname is a fixture (#9619). An
   argname whose `indirect=` value the read cannot settle (`indirect=IND`, a
   computed list, a non-boolean constant) makes no fixture edge
-  (RIPR-SPEC-0028) but still counts here; only literal `False`, `None` or a
+  (RIPR-SPEC-0028) but still counts here; only literal `False` or a
   literal list or tuple of strings that omits it (an empty one included)
-  leaves the argname a direct value (#10685). `indirect` is read from the
+  leaves the argname a direct value (#10685). A mark pytest refuses at
+  collection gives no credit, so all of its argnames are unsettled:
+  `indirect=None`, a literal `indirect` list naming a name the mark does
+  not parametrize, and an argname parametrized twice (within one mark,
+  across stacked marks, or by the test's class or a local ancestor and the
+  test) (#10867). `indirect` is read from the
   keyword or the third positional argument; a `*args` or `**kwargs` splat in
   the mark leaves every argname unsettled. The mark is pytest's own when its
   root resolves through the imports in effect at the definition

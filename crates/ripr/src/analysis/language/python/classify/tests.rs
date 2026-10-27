@@ -1468,6 +1468,10 @@ fn an_indirect_parametrize_argname_is_an_unresolved_fixture() -> Result<(), Stri
         ", IND",
         ", **{\"indirect\": True}",
         ", *REST",
+        // Marks pytest refuses at collection (#10867): the test never runs.
+        ", indirect=None",
+        ", indirect=[\"other\"]",
+        ", indirect=(\"quantity\", \"other\")",
     ] {
         for (shape, tests) in [("module", module(mark)), ("class", class(mark))] {
             assert_eq!(
@@ -1480,9 +1484,8 @@ fn an_indirect_parametrize_argname_is_an_unresolved_fixture() -> Result<(), Stri
     // Control: values that leave the name direct keep it a pytest value.
     for mark in [
         ", indirect=False",
-        ", indirect=None",
-        ", indirect=[\"other\"]",
         ", indirect=()",
+        ", indirect=[]",
         ", False",
     ] {
         for (shape, tests) in [("module", module(mark)), ("class", class(mark))] {

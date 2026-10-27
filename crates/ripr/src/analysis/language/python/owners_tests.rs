@@ -556,6 +556,14 @@ pub(super) fn collect_tests_from_statements(
                 } else {
                     Vec::new()
                 };
+                let parametrize_argnames = if framework == PythonFramework::Pytest {
+                    super::parametrize::parametrize_argnames(
+                        &function.decorator_list,
+                        parametrize_scope,
+                    )
+                } else {
+                    Vec::new()
+                };
                 let fixtures: Vec<String> = fixture_parameter_names(&function.args, framework)
                     .into_iter()
                     .filter(|name| !generated_inputs.contains(name))
@@ -573,7 +581,7 @@ pub(super) fn collect_tests_from_statements(
                 // pytest does not parametrize unittest methods; Hypothesis
                 // `@example` rows run under either framework.
                 let parametrize = (framework == PythonFramework::Pytest)
-                    .then(|| parametrize_cases(source, &function.decorator_list))
+                    .then(|| parametrize_cases(source, &function.decorator_list, parametrize_scope))
                     .flatten()
                     .or_else(|| {
                         super::hypothesis::example_cases(
@@ -626,6 +634,7 @@ pub(super) fn collect_tests_from_statements(
                     fixture_defs: Vec::new(),
                     direct_parametrized,
                     unsettled_indirect,
+                    parametrize_argnames,
                     parametrized: is_parametrized(&function.decorator_list)
                         || super::parametrize::applies_parametrize(
                             &function.decorator_list,
@@ -672,6 +681,14 @@ pub(super) fn collect_tests_from_statements(
                 } else {
                     Vec::new()
                 };
+                let parametrize_argnames = if framework == PythonFramework::Pytest {
+                    super::parametrize::parametrize_argnames(
+                        &function.decorator_list,
+                        parametrize_scope,
+                    )
+                } else {
+                    Vec::new()
+                };
                 let fixtures: Vec<String> = fixture_parameter_names(&function.args, framework)
                     .into_iter()
                     .filter(|name| !generated_inputs.contains(name))
@@ -680,7 +697,7 @@ pub(super) fn collect_tests_from_statements(
                 // pytest does not parametrize unittest methods; Hypothesis
                 // `@example` rows run under either framework.
                 let parametrize = (framework == PythonFramework::Pytest)
-                    .then(|| parametrize_cases(source, &function.decorator_list))
+                    .then(|| parametrize_cases(source, &function.decorator_list, parametrize_scope))
                     .flatten()
                     .or_else(|| {
                         super::hypothesis::example_cases(
@@ -733,6 +750,7 @@ pub(super) fn collect_tests_from_statements(
                     fixture_defs: Vec::new(),
                     direct_parametrized,
                     unsettled_indirect,
+                    parametrize_argnames,
                     parametrized: is_parametrized(&function.decorator_list)
                         || super::parametrize::applies_parametrize(
                             &function.decorator_list,
@@ -846,6 +864,29 @@ pub(super) fn collect_tests_from_statements(
                                 .flatten()
                                 .cloned(),
                         );
+                        test.parametrize_argnames.extend(
+                            local_classes
+                                .class_parametrize_argnames
+                                .get(class_name)
+                                .into_iter()
+                                .flatten()
+                                .cloned(),
+                        );
+                        // A class and its method (or two classes) that
+                        // parametrize one name fail collection (#10867):
+                        // every argname is then unsettled.
+                        if super::parametrize::has_duplicate(
+                            test.parametrize_argnames.iter().map(String::as_str),
+                        ) {
+                            for name in &test.parametrize_argnames {
+                                if !test.direct_parametrized.contains(name) {
+                                    test.direct_parametrized.push(name.clone());
+                                }
+                                if !test.unsettled_indirect.contains(name) {
+                                    test.unsettled_indirect.push(name.clone());
+                                }
+                            }
+                        }
                         test.decorators.extend(
                             local_classes
                                 .class_decorators
@@ -1088,6 +1129,7 @@ struct LocalTestClasses<'a> {
     /// Argnames a class-level (or ancestor) pytest parametrize supplies.
     class_direct_parametrized: BTreeMap<&'a str, Vec<String>>,
     class_unsettled_indirect: BTreeMap<&'a str, Vec<String>>,
+    class_parametrize_argnames: BTreeMap<&'a str, Vec<String>>,
     class_activation_controls:
         BTreeMap<&'a str, Vec<super::test_activation::PythonActivationControl>>,
     definition_imports: BTreeMap<&'a str, Vec<PythonImport>>,
@@ -1185,6 +1227,17 @@ impl<'a> LocalTestClasses<'a> {
                     super::parametrize::unsettled_indirect_argnames(&class.decorator_list, within)
                 })
                 .collect();
+            let parametrize_argnames = scope
+                .ancestors_or_self(name)
+                .iter()
+                .filter_map(|ancestor| Some((scope.defs.get(ancestor)?, class_scope(ancestor))))
+                .flat_map(|((_, class), within)| {
+                    super::parametrize::parametrize_argnames(&class.decorator_list, within)
+                })
+                .collect();
+            found
+                .class_parametrize_argnames
+                .insert(name, parametrize_argnames);
             found
                 .class_direct_parametrized
                 .insert(name, direct_parametrized);

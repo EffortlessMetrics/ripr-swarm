@@ -437,6 +437,9 @@ struct PythonTest {
     /// cannot settle: not resolved as fixtures, but still counted toward the
     /// fixture limit (#10685).
     unsettled_indirect: Vec<String>,
+    /// Every argname the test's and its classes' pytest parametrize marks
+    /// name, repeats kept: a repeat is a collection error (#10867).
+    parametrize_argnames: Vec<String>,
     /// Literal `@pytest.mark.parametrize` cases, when statically certain (#4559).
     parametrize: Option<parametrize::PythonParametrizeCases>,
     /// Parameters Hypothesis `@given(...)` supplies (#6601); never fixtures.
