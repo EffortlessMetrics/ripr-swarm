@@ -141,3 +141,59 @@ fn check_never_reports_no_seam_where_repair_lists_seams_in_the_file() -> Result<
     );
     Ok(())
 }
+
+const GRIPPED_BOUNDARY_OLD: &str =
+    "pub fn f(x: i32) -> i32 {\n    let y = if x > 10 { 1 } else { 2 };\n    y\n}\n";
+const GRIPPED_BOUNDARY_NEW: &str =
+    "pub fn f(x: i32) -> i32 {\n    let y = if x >= 10 { 1 } else { 2 };\n    y\n}\n";
+const GRIPPED_BOUNDARY_TEST: &str = "use ar::f;\n\n#[test]\nfn a() {\n    assert_eq!(f(20), 1);\n    assert_eq!(f(10), 1);\n    assert_eq!(f(9), 2);\n}\n";
+
+#[test]
+fn gap_finding_on_a_whole_gripped_seam_names_the_disagreement_not_no_binding() -> Result<(), String>
+{
+    let repo = Repo::create(
+        GRIPPED_BOUNDARY_OLD,
+        GRIPPED_BOUNDARY_NEW,
+        GRIPPED_BOUNDARY_TEST,
+    )?;
+    let repair = repo.ripr(&["repair", "--root", "."])?;
+    assert!(
+        repair.contains("already grip it (exposed)"),
+        "precondition, repair reads the whole seam as gripped:\n{repair}"
+    );
+    let check = repo.ripr(&["check", "--base", "HEAD~1"])?;
+    assert!(
+        !check.contains("Static exposure: exposed"),
+        "precondition, check reads a gap or limit, not exposed:\n{check}"
+    );
+    assert!(
+        check.contains("`ripr check` reads a gap or limit for this change")
+            && check.contains("conflicting evidence"),
+        "check must name the one difference from repair:\n{check}"
+    );
+    assert!(
+        !check.contains("could not tie one to this finding's changed line"),
+        "a gripped seam that names the finding is not a missing binding:\n{check}"
+    );
+    Ok(())
+}
+
+#[test]
+fn unrelated_gripped_seam_does_not_stand_in_for_the_findings_seam() -> Result<(), String> {
+    // `g` is fully gripped but is not the changed owner; the changed `f`
+    // boundary is not gripped by any test, so the finding's seam is not
+    // gripped and the disagreement wording must not appear.
+    let old = format!("{GRIPPED_BOUNDARY_OLD}\npub fn g(x: i32) -> i32 {{\n    x * 2\n}}\n");
+    let new = format!("{GRIPPED_BOUNDARY_NEW}\npub fn g(x: i32) -> i32 {{\n    x * 2\n}}\n");
+    let repo = Repo::create(
+        &old,
+        &new,
+        "use ar::{f, g};\n\n#[test]\nfn a() {\n    assert_eq!(g(2), 4);\n    assert_eq!(f(20), 1);\n}\n",
+    )?;
+    let check = repo.ripr(&["check", "--base", "HEAD~1"])?;
+    assert!(
+        !check.contains("`ripr check` reads a gap or limit for this change"),
+        "an unrelated gripped seam is not this finding's seam:\n{check}"
+    );
+    Ok(())
+}

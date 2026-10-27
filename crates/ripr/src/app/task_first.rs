@@ -1123,6 +1123,21 @@ pub(crate) fn check_repair_route(
         .is_some_and(|bound_finding| bound_finding.id == finding.id)
     });
     let Some(entry) = bound.next() else {
+        // #10702: a strongly gripped seam has no canonical gap id, so the
+        // id-keyed join above never binds it. Name it by file, owner, kind
+        // and line instead, and only when it is the one such seam: the
+        // disagreement is then the whole story, not "no seam".
+        let mut gripped = classified.iter().filter(|entry| {
+            entry.class == crate::analysis::seams::SeamGripClass::StronglyGripped
+                && super::repair_card_handoff::finding_names_seam_by_location(
+                    finding,
+                    entry,
+                    &classified,
+                )
+        });
+        if gripped.next().is_some() && gripped.next().is_none() {
+            return CheckRepairRoute::Refused(RepairRouteRefusal::SeamGrippedFindingNot);
+        }
         return CheckRepairRoute::Refused(RepairRouteRefusal::NoBindingSeam {
             seams_in_file: classified.len(),
         });

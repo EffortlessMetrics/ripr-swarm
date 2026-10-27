@@ -848,6 +848,25 @@ pub(crate) fn finding_for_seam<'a>(
     Some(hit)
 }
 
+/// Whether `finding` names `entry` by its producer gap's file, owner, probe
+/// family and line, with no canonical gap id involved (#10702). A strongly
+/// gripped seam carries no canonical gap id (only headline-eligible classes
+/// do), so [`finding_for_seam`] can never bind a finding to it; this is the
+/// same producer-structured join and most-specific-claimant rule, asked
+/// without the content-hash ticket. It binds nothing for repair: the caller
+/// uses it only to name why a gap or limit finding sits on an already gripped
+/// seam.
+pub(crate) fn finding_names_seam_by_location(
+    finding: &crate::domain::Finding,
+    entry: &ClassifiedSeam,
+    candidate_seams: &[ClassifiedSeam],
+) -> bool {
+    finding
+        .canonical_gap
+        .as_ref()
+        .is_some_and(|gap| producer_candidate_qualifies(entry, finding, gap, candidate_seams))
+}
+
 /// The canonical gap id of the finding the shared [`finding_for_seam`] join
 /// binds to this seam, as `ripr check` / `ripr_list_gaps` print it. Binding is
 /// not projection: this is present for a bound finding that projects no
