@@ -371,6 +371,18 @@ corpus oracle accuracy 44/44 and overclaim rate 0/44. Each sample names its
 language corpus `corpus.json` blob and `expected/rows` tree. No target or
 threshold changed.
 
+#10809 re-records four of the five Perl (producer packets) rows after the Perl
+corpus grew from 27 to 54 packets and 36 case definitions changed, which left the
+8/27 population with no unchanged common case: false verdict 1/54, false
+actionable 0/28, false exposed 1/26 (the parked `perl-testmore-tier-far-from-boundary`
+known-false row, #8979) and false silent 0/26, at
+`ea5229fba660d284841b3954f73ca7948a88d0ea`. Every recorded rate is at or better than
+the one it replaces. The Perl abstention row is deliberately not re-recorded: its rate
+rose from 8/27 to 40/54 because the pinned producer emits only `file_proximity`
+relations for files whose first package is a sibling (#10525), so recording it would
+accept that regression. It keeps failing its comparison until #10525 lands or the
+owner accepts the rise as #7325 did for Rust.
+
 `testdata/7552-rust-abstention.json` freezes committed expected records at
 `6da363f9b630845d82d8a073c42429d90cd03732`, rather than executing the analyzer.
 It pins the actual retained regression, 58/203 to 74/203 (+16/203, above the
