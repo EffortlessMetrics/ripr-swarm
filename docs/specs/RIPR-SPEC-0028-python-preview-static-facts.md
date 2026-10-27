@@ -727,7 +727,13 @@ Another decorator named `parametrize` (a plugin or project helper) records
 no cases. Argvalues named by a variable, `indirect=`, starred rows, a `pytest.param`
 with any keyword but `id=` (a `marks=` skip or xfail case may never run), a
 unittest method (pytest does not parametrize it), and an argname the test
-body may rebind leave the call unresolved. A rebinding is read from the
+body may rebind leave the call unresolved. A test whose first statement after
+a docstring unpacks one argname (`quantity, rate = case`, alone on its lines)
+reads as parametrized by the target names, each case's tuple or list row split
+by arity, and the unpack is not a rebinding (#10832); a row of another arity or
+with a starred element, a target that is another parameter, and a later
+statement that names the argname or rebinds a target keep the argname's cases
+as they are. A rebinding is read from the
 parsed test body: any assignment, tuple, loop, `with` or `except` target, an
 import or `del` of the argname drops it from the cases, and a nested `def` or
 `class`, a `match` or a star import drops all cases. Any `lambda` in the test,
