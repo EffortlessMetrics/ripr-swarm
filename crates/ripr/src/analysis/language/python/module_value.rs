@@ -379,9 +379,59 @@ impl<'a> ForeignIndex<'a> {
             unknown,
         }
     }
+
+    /// The per-file rebuild [`Self::excluding`] replaced: the union of every
+    /// other source's writes. An independent oracle for the subtraction.
+    #[cfg(test)]
+    pub(super) fn rebuilt_excluding(&self, own: &Path) -> ForeignWrites {
+        let mut attributes = std::collections::BTreeSet::new();
+        let mut words = std::collections::BTreeSet::new();
+        let mut table_unsafe = std::collections::BTreeSet::new();
+        let mut reflective_words = std::collections::BTreeSet::new();
+        for indexed in self.files.iter().filter(|indexed| indexed.file != own) {
+            table_unsafe.extend(indexed.table_unsafe.iter().cloned());
+            if let Some(reflective) = &indexed.reflective_words {
+                reflective_words.extend(reflective.iter().map(|word| word.to_string()));
+            }
+            if let Some(assigned) = &indexed.assigned {
+                attributes.extend(assigned.iter().cloned());
+            }
+            if let Some(dynamic) = &indexed.dynamic_words {
+                words.extend(dynamic.iter().map(|word| word.to_string()));
+            }
+        }
+        ForeignWrites {
+            attributes: attributes.into_iter().collect(),
+            dynamic_words: words.into_iter().collect(),
+            table_unsafe: table_unsafe.into_iter().collect(),
+            reflective_words: reflective_words.into_iter().collect(),
+            reflective_reach: self
+                .reflective_reach
+                .iter()
+                .filter(|(file, _)| *file != own)
+                .flat_map(|(_, reach)| reach.iter().cloned())
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
+                .collect(),
+            ..self.excluding(own)
+        }
+    }
 }
 
 impl ForeignWrites {
+    /// Which write sets hold anything: attributes, dynamic words, unsafe
+    /// tables, reflective words, reflective reach.
+    #[cfg(test)]
+    pub(super) fn written_sets(&self) -> [bool; 5] {
+        [
+            !self.attributes.is_empty(),
+            !self.dynamic_words.is_empty(),
+            !self.table_unsafe.is_empty(),
+            !self.reflective_words.is_empty(),
+            !self.reflective_reach.is_empty(),
+        ]
+    }
+
     /// The writes in every source but `own`; one-shot form of
     /// [`ForeignIndex`] for callers that scan a single file.
     #[cfg(test)]
