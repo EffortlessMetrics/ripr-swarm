@@ -1455,7 +1455,7 @@ mod tests {
         assert_eq!(verdict_of(development), Some("infection_unknown"));
         // The bounded default render (#8165) leaves no wire token on the label line,
         // and the summary line before it must not decide the verdict.
-        let plain = "Summary: 1 probe (0 exposed, 1 weak, 0 unrevealed, 0 no path)\n\nStart here:\n  Static exposure: weak (severity: warning, confidence 0.40)\n  Why: exposed to the next test\n";
+        let plain = "Summary: 1 changed behavior checked: 0 well tested, 1 loosely tested, 0 reached but unnoticed, 0 no test path. 1 reported, 0 suppressed by your settings\n\nStart here:\n  Static exposure: weak (severity: warning, confidence 0.40)\n  Why: exposed to the next test\n";
         assert_eq!(verdict_of(plain), Some("weakly_exposed"));
         assert_eq!(
             verdict_of("Static exposure: unrevealed (severity: warning)\n"),

@@ -33,11 +33,11 @@ const BOUNDED_EVIDENCE_LEGEND: &str = concat!(
     "      discriminator = assertion distinguishes intended from wrong behavior\n",
     "    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;\n",
     "      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused\n",
-    "    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;\n",
-    "      unrevealed = tests reach it but nothing appears to notice; no path = no test path found\n",
-    "      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;\n",
-    "      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;\n",
-    "      candidate line = changed line ripr considers for probes\n",
+    "    Summary terms: changed behavior = one change point ripr checked; well tested = tests appear to notice it fully;\n",
+    "      loosely tested = tests notice it only partly; reached but unnoticed = tests reach it but nothing appears to notice;\n",
+    "      no test path = no test path found; unclear = analysis limited, not a verdict;\n",
+    "      reported = shown for review; suppressed by your settings = hidden by your suppression policy;\n",
+    "      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers\n",
 );
 
 /// Project only the new, exact selected-digest legend out of current human
@@ -120,6 +120,77 @@ fn bounded_legend_capture_projection_is_exact_and_preserves_evidence() -> Result
         );
     }
     Ok(())
+}
+
+/// Neutralize the human wording that #10691 moved to plain language, on BOTH
+/// the current output and the hash-bound historical capture (whose bytes must
+/// not change). Only renderer-owned labels and the Summary line are replaced
+/// by fixed slots; every other line, and the byte-exact `check.json`
+/// comparison that owns the counts and classes, is untouched.
+fn neutralize_plain_language_wording(bytes: &[u8]) -> Vec<u8> {
+    let text = String::from_utf8_lossy(bytes);
+    let mut out = String::new();
+    let mut in_terms = false;
+    let mut after_change_type = false;
+    for line in text.split_inclusive('\n') {
+        if in_terms {
+            if line.starts_with("  ") {
+                continue;
+            }
+            in_terms = false;
+        }
+        if line.starts_with("Terms: ") {
+            // human-full: a gloss block follows the Summary in current output.
+            in_terms = true;
+            continue;
+        }
+        if after_change_type {
+            after_change_type = false;
+            // Current output adds one plain type sentence under the heading;
+            // the historical capture goes straight to `family:`.
+            if !line.starts_with("  family: ") {
+                continue;
+            }
+        }
+        if line.starts_with("Summary: ") {
+            out.push_str("Summary: <counts>\n");
+        } else if line.starts_with("  Counts: ") {
+            out.push_str(
+                &line
+                    .replace("probe(s)", "<behaviors>")
+                    .replace("changed behavior(s) checked", "<behaviors>"),
+            );
+        } else if let Some(rest) = line
+            .strip_prefix("  Canonical gap: ")
+            .or_else(|| line.strip_prefix("  Gap ID (for scripts): "))
+        {
+            out.push_str(&format!("  <gap-id-label>: {rest}"));
+        } else if let Some(rest) = line
+            .strip_prefix("  canonical gap: ")
+            .or_else(|| line.strip_prefix("  gap id (for scripts): "))
+        {
+            out.push_str(&format!("  <gap-id-label>: {rest}"));
+        } else if let Some(rest) = line
+            .strip_prefix("  Missing discriminator")
+            .or_else(|| line.strip_prefix("  Missing check"))
+        {
+            out.push_str(&format!("  <missing-label>{rest}"));
+        } else if line == "Probe\n" || line == "Change type\n" {
+            out.push_str("<change-type-heading>\n");
+            after_change_type = true;
+        } else if line.starts_with("  delta:  ") {
+            let head = line
+                .split(" (")
+                .next()
+                .unwrap_or(line)
+                .trim_end_matches('\n');
+            out.push_str(head);
+            out.push('\n');
+        } else {
+            out.push_str(line);
+        }
+    }
+    out.into_bytes()
 }
 
 /// Normalize the two repair-route advisory sentences whose wording moved
@@ -383,7 +454,19 @@ fn discarded_matcher_cli_controls_reject_false_credit_and_retain_consumers() -> 
                     // `RepairRouteRefusal::advisory` (#9244); the historical
                     // human.txt capture keeps its original bytes and only that
                     // slot is compared, present on both sides or neither.
+                    let (actual, expected_bytes) = if file == "human-full.txt" {
+                        (
+                            neutralize_plain_language_wording(&actual),
+                            neutralize_plain_language_wording(&expected_bytes),
+                        )
+                    } else {
+                        (actual, expected_bytes)
+                    };
                     let (actual, expected_bytes) = if file == "human.txt" {
+                        let (actual, expected_bytes) = (
+                            neutralize_plain_language_wording(&actual),
+                            neutralize_plain_language_wording(&expected_bytes),
+                        );
                         let (actual, actual_slots) = normalize_moved_repair_advisories(&actual);
                         let (expected, expected_slots) =
                             normalize_moved_repair_advisories(&expected_bytes);

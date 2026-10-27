@@ -3,12 +3,12 @@ mode: fast
 root: fixtures/python_message_pin_no_exposed_credit/input
 config: <cwd>/fixtures/python_message_pin_no_exposed_credit/input/ripr.toml
 
-Summary: 1 probe (0 exposed, 1 weak, 0 unrevealed, 0 no path); 1 of 1 finding unsuppressed
+Summary: 1 changed behavior checked: 0 well tested, 1 loosely tested, 0 reached but unnoticed, 0 no test path. 1 reported, 0 suppressed by your settings
 
 Changed file(s) by language: python = 1
 
 Analysis outcome: findings below (analysis complete)
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
 
 Start here:
   State: preview language, advisory only
@@ -18,13 +18,13 @@ Start here:
   Language status: preview
   Static exposure: weak (severity: warning, confidence 0.40)
   Why weak: a related test reaches this change but does not observe the exact changed value
-  Canonical gap: gap:python:src/check.py:check:exception_path:error_path:valueerror_negative_value_must_be_at_most_zero
+  Gap ID (for scripts): gap:python:src/check.py:check:exception_path:error_path:valueerror_negative_value_must_be_at_most_zero
   Changed behavior: raise ValueError("negative value: must be at most zero")
-  Missing discriminator (1 of 2): A strong Python oracle reaches `check`, but every strong related
-    error assertion pins `ValueError` with a literal message pattern (`negative value`) that matches
-    the old message "negative value: must be at least zero" and the new message "negative value:
-    must be at most zero" alike, so it pins only the exception class. Add a `match=` pattern that
-    the old message does not satisfy
+  Missing check (1 of 2): A strong Python oracle reaches `check`, but every strong related error
+    assertion pins `ValueError` with a literal message pattern (`negative value`) that matches the
+    old message "negative value: must be at least zero" and the new message "negative value: must be
+    at most zero" alike, so it pins only the exception class. Add a `match=` pattern that the old
+    message does not satisfy
   Related test: tests/test_check.py:6 test_negative_is_rejected
   Suggested test file: tests/test_check.py
   Suggested test: test_negative_is_rejected
@@ -37,11 +37,11 @@ Start here:
       discriminator = assertion distinguishes intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
-    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
-      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
-      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;
-      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;
-      candidate line = changed line ripr considers for probes
+    Summary terms: changed behavior = one change point ripr checked; well tested = tests appear to notice it fully;
+      loosely tested = tests notice it only partly; reached but unnoticed = tests reach it but nothing appears to notice;
+      no test path = no test path found; unclear = analysis limited, not a verdict;
+      reported = shown for review; suppressed by your settings = hidden by your suppression policy;
+      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: 1 related Python test(s) found for owner `check`
     - infection yes: Changed Python error path can alter raised exception/control behavior: `raise ValueError("negative value: must be at most zero")`
     - 5 more detail line(s) in --format human-full

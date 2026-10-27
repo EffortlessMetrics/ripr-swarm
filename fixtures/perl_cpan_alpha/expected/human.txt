@@ -2,12 +2,12 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/perl_cpan_alpha/input
 
-Summary: 0 probes analyzed; 0 findings unsuppressed
+Summary: 0 changed behaviors checked
 
 Analysis outcome: limitations below (analysis incomplete)
   Zero findings is not a clean result because the analyzed scope is incomplete.
-  Limitation: no analyzer is available for a changed language during language analysis; affected items: 1; recovery: enable the language — Perl analysis is not available from this ripr binary. It needs both a ripr build with Cargo feature `lang-perl` (`cargo install ripr --features lang-perl`) and a compatible Perl fact exporter (`perl-ripr-facts`), which is not yet published; no released ripr setup analyzes Perl yet, and adding `perl` to ripr.toml [languages] alone does not enable it.
+  Not analyzed: 1 changed file(s) in a language ripr is not set up to analyze (see the note below).
 
-No diff-derived static exposure probes found.
+No changed behavior was found in this diff for ripr to check.
 
 Note: this diff contains 1 Perl file. The Perl adapter is not compiled into this ripr binary, so these files were not analyzed — this is NOT a clean Rust-grade result. Perl analysis is not available from this ripr binary. It needs both a ripr build with Cargo feature `lang-perl` (`cargo install ripr --features lang-perl`) and a compatible Perl fact exporter (`perl-ripr-facts`), which is not yet published; no released ripr setup analyzes Perl yet, and adding `perl` to ripr.toml [languages] alone does not enable it.

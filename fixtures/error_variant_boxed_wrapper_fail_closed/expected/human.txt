@@ -2,14 +2,14 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/error_variant_boxed_wrapper_fail_closed/input
 
-Summary: 4 probes (0 exposed, 4 weak, 0 unrevealed, 0 no path); 4 of 4 findings unsuppressed
+Summary: 4 changed behaviors checked: 0 well tested, 4 loosely tested, 0 reached but unnoticed, 0 no test path. 4 reported, 0 suppressed by your settings
 
 Analysis outcome: findings below (analysis complete)
-  Counts: 1 changed file(s), 4 changed line(s), 2 candidate line(s), 4 probe(s), 4 finding(s)
+  Counts: 1 changed file(s), 4 changed line(s), 2 candidate line(s), 4 changed behavior(s) checked, 4 finding(s)
 
 Start here:
-  State: limited by static analysis
-  Safe next action: inspect the named static limitation before treating this as repair-ready
+  State: ripr cannot tell from reading the code whether tests would notice this
+  Safe next action: look at the reason below before adding a test
   File: ./src/lib.rs:29
   Static exposure: weak (severity: warning, confidence 0.92)
   Why weak: a related test reaches this change but does not observe the exact changed value
@@ -26,11 +26,11 @@ Start here:
       discriminator = assertion distinguishes intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
-    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
-      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
-      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;
-      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;
-      candidate line = changed line ripr considers for probes
+    Summary terms: changed behavior = one change point ripr checked; well tested = tests appear to notice it fully;
+      loosely tested = tests notice it only partly; reached but unnoticed = tests reach it but nothing appears to notice;
+      no test path = no test path found; unclear = analysis limited, not a verdict;
+      reported = shown for review; suppressed by your settings = hidden by your suppression policy;
+      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: Related tests appear to reach checksum_summary: checksum_summary_pins_wrong_sibling_variant
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 7 more detail line(s) in --format human-full
@@ -38,7 +38,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/error_variant_boxed_wrapper_fail_closed/input --diff <cwd>/fixtures/error_variant_boxed_wrapper_fail_closed/diff.patch --mode fast probe:src_lib.rs:error_path:51fc5156
   ripr context --root <cwd>/fixtures/error_variant_boxed_wrapper_fail_closed/input --diff <cwd>/fixtures/error_variant_boxed_wrapper_fail_closed/diff.patch --mode fast --at probe:src_lib.rs:error_path:51fc5156
-  no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
+  no repair start offered: this finding has no gap ID, so there is no seam to start a repair from; follow the Next step above
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/error_variant_boxed_wrapper_fail_closed/input --at src/lib.rs:29 --kind error_path
 

@@ -79,6 +79,30 @@ fn display_severity(finding: &Finding, config: &RiprConfig) -> &'static str {
     }
 }
 
+/// Plain name for what kind of change a finding covers (#10691). A display
+/// mapping over the producer-owned family; it decides nothing.
+fn plain_change_type(family: &ProbeFamily) -> &'static str {
+    match family {
+        ProbeFamily::Predicate => "a condition or comparison changed",
+        ProbeFamily::ReturnValue => "a returned value changed",
+        ProbeFamily::ErrorPath => "error handling changed",
+        ProbeFamily::CallDeletion => "a call was removed",
+        ProbeFamily::FieldConstruction => "a constructed field changed",
+        ProbeFamily::SideEffect => "a side effect changed",
+        ProbeFamily::MatchArm => "a match arm changed",
+        ProbeFamily::StaticUnknown => "a change ripr could not classify",
+    }
+}
+
+fn plain_delta(delta: &crate::domain::DeltaKind) -> &'static str {
+    match delta {
+        crate::domain::DeltaKind::Value => "changes a computed value",
+        crate::domain::DeltaKind::Control => "changes which code path runs",
+        crate::domain::DeltaKind::Effect => "changes a side effect",
+        crate::domain::DeltaKind::Unknown => "kind of change not determined",
+    }
+}
+
 pub(crate) fn render_finding_digest_with_config(
     finding: &Finding,
     config: &RiprConfig,
@@ -124,7 +148,7 @@ pub(crate) fn render_finding_digest_with_config(
         }
     }
     if let Some(gap) = &finding.canonical_gap {
-        out.push_str(&format!("  Canonical gap: {}\n", gap.id));
+        out.push_str(&format!("  Gap ID (for scripts): {}\n", gap.id));
     }
     let changed = finding
         .probe
@@ -166,7 +190,7 @@ pub(crate) fn render_finding_digest_with_config(
         {
             "Analyzer limit"
         } else {
-            "Missing discriminator"
+            "Missing check"
         };
         // `decision.rs` builds these entries as `Missing discriminator value:
         // <value>`, which restates the label the renderer is about to print:
@@ -177,13 +201,14 @@ pub(crate) fn render_finding_digest_with_config(
         let missing = missing
             .strip_prefix(MISSING_DISCRIMINATOR_VALUE_PREFIX)
             .unwrap_or(missing);
+        let missing = &super::evidence_lines::plain_internal_wording(missing);
         // #4320: the digest renders one entry while the exhaustive form's
         // Weakness section may carry several; disclose the window the same way
         // the evidence window below does, so the reader knows more
         // missing-discriminator evidence exists in `--format human-full`.
         let total_weakness_entries = weakness_lines(finding).len();
-        let label = if label == "Missing discriminator" && total_weakness_entries > 1 {
-            format!("Missing discriminator (1 of {total_weakness_entries})")
+        let label = if label == "Missing check" && total_weakness_entries > 1 {
+            format!("Missing check (1 of {total_weakness_entries})")
         } else {
             label.to_string()
         };
@@ -284,15 +309,16 @@ pub(crate) fn render_finding_digest_with_config(
             "      discriminator = assertion distinguishes intended from wrong behavior\n",
             "    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;\n",
             "      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused\n",
-            "    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;\n",
-            "      unrevealed = tests reach it but nothing appears to notice; no path = no test path found\n",
-            "      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;\n",
-            "      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;\n",
-            "      candidate line = changed line ripr considers for probes\n",
+            "    Summary terms: changed behavior = one change point ripr checked; well tested = tests appear to notice it fully;\n",
+            "      loosely tested = tests notice it only partly; reached but unnoticed = tests reach it but nothing appears to notice;\n",
+            "      no test path = no test path found; unclear = analysis limited, not a verdict;\n",
+            "      reported = shown for review; suppressed by your settings = hidden by your suppression policy;\n",
+            "      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers\n",
         ));
         for line in evidence.iter().take(2) {
             // #7756: list-item values carry no trailing period.
-            out.push_str(&format!("    - {}\n", trim_field_period(&one_line(line))));
+            let line = super::evidence_lines::plain_internal_wording(line);
+            out.push_str(&format!("    - {}\n", trim_field_period(&one_line(&line))));
         }
         if evidence.len() > 2 {
             out.push_str(&format!(
@@ -560,17 +586,21 @@ pub(super) fn render_finding_with_shared_sections(
         ));
     }
 
-    out.push_str("\nProbe\n");
+    // #10691: lead with the plain change type; the stable family/delta tokens
+    // follow, glossed, so they still grep against JSON and docs.
+    out.push_str("\nChange type\n");
     out.push_str(&format!(
-        "  family: {}\n  delta:  {}\n",
+        "  {}\n  family: {}\n  delta:  {} ({})\n",
+        plain_change_type(&finding.probe.family),
         finding.probe.family.as_str(),
-        finding.probe.delta.as_str()
+        finding.probe.delta.as_str(),
+        plain_delta(&finding.probe.delta),
     ));
     if let Some(owner) = &finding.probe.owner {
         out.push_str(&format!("  owner:  {owner}\n"));
     }
     if let Some(gap) = &finding.canonical_gap {
-        out.push_str(&format!("  canonical gap: {}\n", gap.id));
+        out.push_str(&format!("  gap id (for scripts): {}\n", gap.id));
     }
 
     if should_render_language_metadata(finding) {
@@ -620,10 +650,11 @@ pub(super) fn render_finding_with_shared_sections(
     if !stop_reasons.is_empty() {
         out.push_str("\nStop reasons:\n");
         for reason in &stop_reasons {
+            // #10691: the sentence leads, the stable token follows.
             out.push_str(&format!(
-                "  - {} \u{2014} {}\n",
-                reason.as_str(),
-                reason.describe()
+                "  - {} ({})\n",
+                reason.describe(),
+                reason.as_str()
             ));
             // A gap-evidence stop always rides a named static limitation, whose
             // `Next:` line is specific; the generic stop-reason line would
@@ -735,7 +766,8 @@ pub(super) fn render_finding_with_shared_sections(
 pub(super) fn push_evidence_line(out: &mut String, line: &str) {
     // #7756: list-item values carry no trailing period, matching the sibling
     // stage lines; free-standing prose keeps its sentence period.
-    let line = trim_field_period(line);
+    let plain = super::evidence_lines::plain_internal_wording(line);
+    let line = trim_field_period(&plain);
     if is_wrappable_advisory_prose(line) {
         out.push_str(&wrap_human_prose(line, "  - ", "    "));
     } else {
@@ -1402,13 +1434,13 @@ fn classification_hint(
         // "reaches a sink" is a propagation claim: only a `yes` propagation
         // stage supports it (CodeRabbit review on #6796).
         ExposureClass::InfectionUnknown => Some(if ripr.propagate.state == StageState::Yes {
-            "the change reaches a sink but infection could not be determined statically".to_string()
+            "the change reaches something a test can check, but ripr could not tell which inputs would trigger it".to_string()
         } else {
-            "infection could not be determined statically, and no sink the change reaches was established"
+            "ripr could not tell which inputs would trigger the change, and could not follow it to something a test can check"
                 .to_string()
         }),
         ExposureClass::PropagationUnknown => Some(
-            "the path from the changed behavior to an observable sink is not statically clear"
+            "ripr could not follow the changed value to something a test can check (a return value or side effect)"
                 .to_string(),
         ),
         ExposureClass::StaticUnknown => {
@@ -1533,7 +1565,9 @@ mod classification_hint_tests {
         let reached = classification_hint(&ExposureClass::InfectionUnknown, &evidence);
         assert_eq!(
             reached.as_deref(),
-            Some("the change reaches a sink but infection could not be determined statically")
+            Some(
+                "the change reaches something a test can check, but ripr could not tell which inputs would trigger it"
+            )
         );
         for state in [StageState::Unknown, StageState::Weak, StageState::No] {
             evidence.propagate = StageEvidence::new(state.clone(), Confidence::Low, "x");

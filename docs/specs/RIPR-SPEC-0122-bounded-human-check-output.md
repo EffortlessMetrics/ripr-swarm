@@ -26,6 +26,11 @@ Linked issues:
 - [#8165](https://github.com/EffortlessMetrics/ripr-swarm/issues/8165) -
   the bounded default verdict uses plain language only; schema tokens stay
   in `human-full`, JSON, and `explain`.
+- [#10691](https://github.com/EffortlessMetrics/ripr-swarm/issues/10691) -
+  the default view and `human-full` drop internal nouns (probe, canonical gap,
+  observable sink): plain Summary words, `Gap ID (for scripts)`,
+  `Missing check`, plain static-limited wording; `human-full` keeps the stable
+  tokens glossed.
 - [#9346](https://github.com/EffortlessMetrics/ripr-swarm/issues/9346) -
   Start-here selection ranks changed-file role first, so an unknown probe
   seeded by a test-file edit cannot lead over a decisive production
@@ -93,10 +98,13 @@ Hidden:                                    (only when N > 0)
   Machine data: rerun with --format json
 ```
 
-The Summary denominator counts unsuppressed findings against the total
-(`N of M finding(s) unsuppressed`), disclosing the suppressed remainder; the
-word is never "shown", because the bounded digest renders exactly one finding
-and the `Hidden:` block below names the rest.
+The Summary names how many findings are reported and how many the reader's
+suppression policy removed (`N reported, M suppressed by your settings`),
+disclosing the suppressed remainder; the word is never "shown" and never
+"hidden", because the bounded digest renders exactly one finding and the
+`Hidden:` block below names the rest (#10691). `human-full` keeps the
+`N of M finding(s) unsuppressed` form with the stable class tokens, each
+glossed once on a `Terms:` line beneath the Summary.
 
 Human lines use plain words only (#8165): the default surface carries no
 snake_case schema token and no parenthesized stable id, so a reader never
@@ -104,12 +112,18 @@ needs the internal vocabulary: `State: a test gap to inspect or repair`,
 `Analysis outcome: findings below (analysis complete)`, the digest line
 `Static exposure: weak (severity: warning, confidence 0.92)`, the `Hidden:`
 bullets' plain class words, and a summary that names classes in plain words
-(`Summary: 4 probes (0 exposed, 2 weak, 1 unrevealed, 1 no path); 4 of 4
-findings unsuppressed`; with zero probes, `Summary: 0 probes analyzed; 0
-findings unsuppressed`). The three unknown classes share the one plain word
-`unknown` and sum into a single bucket named only when non-zero. Limitation
-lines on this surface likewise drop their parenthesized kind/stage and
-recovery tokens. The promise covers renderer-controlled labels on the
+(`Summary: 4 changed behaviors checked: 0 well tested, 2 loosely tested, 1
+reached but unnoticed, 1 no test path. 4 reported, 0 suppressed by your
+settings`; with zero changed behaviors, `Summary: 0 changed behaviors checked`, never
+"nothing to check", because a skipped language makes the run incomplete). The three unknown classes share the one plain word `unclear` and sum
+into a single bucket named only when non-zero. Limitation lines on this
+surface likewise drop their parenthesized kind/stage and recovery tokens; a
+`language_adapter_unavailable` limitation renders as one `Not analyzed:` pointer
+to the preview-language note, which carries the `ripr.toml` recovery block
+(#10691). The static-limited `State:` line reads `ripr cannot tell from reading
+the code whether tests would notice this`, and the internal noun "observable
+sink" never appears (`something a test can check (a return value or side
+effect)`). The canonical gap id is labelled `Gap ID (for scripts)`. The promise covers renderer-controlled labels on the
 bounded surface; producer prose (for example a next-step sentence), file
 paths, and required CLI or probe identifiers are data, not renderer labels,
 and are unchanged. The schema ids and their meanings are unchanged and stay
@@ -182,22 +196,22 @@ decisive stages behind a remainder count (#4324):
       discriminator = assertion distinguishes intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
-    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
-      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
-      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;
-      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;
-      candidate line = changed line ripr considers for probes
+    Summary terms: changed behavior = one change point ripr checked; well tested = tests appear to notice it fully;
+      loosely tested = tests notice it only partly; reached but unnoticed = tests reach it but nothing appears to notice;
+      no test path = no test path found; unclear = analysis limited, not a verdict;
+      reported = shown for review; suppressed by your settings = hidden by your suppression policy;
+      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
 ```
 
 The ten-line legend immediately follows the compact line, once for the selected
 digest, including an exposed finding when selected. It explains static evidence,
 not execution or test adequacy. `weak` means partial evidence across the stages,
 and `no` means evidence was not found, never that a behavior is impossible.
-The `Summary terms` lines define the words the `Summary:` count line prints (probe,
-exposed, weak, unrevealed, no path) in the same static vocabulary (#9244 item 4);
-its last three lines also define `finding`, `unsuppressed`, the `unknown`
-bucket, `base-side` and the Counts line's `candidate line` (#9244 item 4
-leftovers). They claim no runtime mutation outcome.
+The `Summary terms` lines define the words the `Summary:` count line prints
+(changed behavior, well tested, loosely tested, reached but unnoticed, no test
+path) in the same static vocabulary (#9244 item 4); its last lines also define
+`reported`, `suppressed by your settings`, the `unclear` bucket, `base-side`
+and the Counts line's `candidate line` (#9244 item 4 leftovers, #10691). They claim no runtime mutation outcome.
 No legend renders when there is no selected digest (empty, all-suppressed,
 base-side-only, or unresolved-currentness-only findings). The legend adds a fixed
 ten lines; it does not expand the per-stage detail window. Full human and
@@ -237,8 +251,9 @@ carded one, so `check` does not report "no repair card" while `ripr pilot` and
 
 The digest's discriminator line label reflects the discriminator state:
 
-- `Missing discriminator` — the finding is not `exposed`; the named
-  discriminator is absent from the related tests.
+- `Missing check` — the finding is not `exposed`; the named
+  discriminator is absent from the related tests (#10691: the digest says
+  "check"; the internal word stays in JSON and specs).
 - `Discriminator (observed, advisory)` — the finding is `exposed` and the
   field carries an observation rationale instead of a missing discriminator.
   Preview-language classifiers record that rationale in the same field, so an
@@ -252,7 +267,7 @@ builds as `Missing discriminator value: <value>`, with prose entries such as
 under the label produced
 `Missing discriminator: Missing discriminator value: AuthError::RevokedToken`,
 so the renderer strips that prefix and emits
-`Missing discriminator: AuthError::RevokedToken`. Prose entries carry no such
+`Missing check: AuthError::RevokedToken`. Prose entries carry no such
 prefix and are rendered unchanged. This governs the human digest only; no
 machine format reads the label.
 
@@ -763,6 +778,8 @@ not a head-only row and prints no note.
 
 ## Test Mapping
 
+- `crates/ripr/src/output/human.rs::tests::plain_language_default_and_glossed_human_full` (#10691: the default view carries none of probe, canonical gap, observable sink, unsuppressed, Missing discriminator; `human-full` keeps the glossed tokens)
+- `crates/ripr/src/output/human.rs::tests::bounded_adapter_unavailable_limitation_is_one_plain_pointer` (#10691)
 - `crates/ripr/src/output/human.rs::tests::render_finding_marks_a_match_arm_head_only_after_row`
 - `crates/ripr/src/output/human.rs::tests::render_finding_adds_no_arm_note_when_the_after_row_is_complete`
 - `crates/ripr/src/output/human.rs::tests::render_finding_arm_note_ignores_arrows_in_literals_and_comments`
