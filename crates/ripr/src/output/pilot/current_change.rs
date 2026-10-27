@@ -279,6 +279,18 @@ impl PilotCurrentChange {
         }
     }
 
+    /// Whether the change was read from the live working tree rather than
+    /// committed history.
+    pub(crate) fn is_working_tree(&self) -> bool {
+        matches!(
+            self,
+            Self::Changed {
+                working_tree: true,
+                ..
+            }
+        )
+    }
+
     /// The `ripr check` flags that select this same diff.
     pub(crate) fn check_selector(&self) -> &'static str {
         match self {

@@ -354,7 +354,8 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         eprintln!("{}", terminal_safe(format!("ripr pilot: {warning}")));
     }
 
-    let python_first_use = collect_pilot_python_first_use(&input, &config);
+    let python_first_use =
+        collect_pilot_python_first_use(&input, &config, current_change.is_working_tree());
     // #3906 / #7665: pilot ranks Rust seams only. Name the languages it did
     // not rank so an empty ranking is never read as a clean result for them;
     // when an enabled supported language is present, the headline names its
@@ -735,9 +736,14 @@ fn current_change_unavailable_reason(error: &CoreError, fallback: &'static str) 
     }
 }
 
+/// Pilot's Python preview reads the same diff pilot's current change and the
+/// printed `ripr check` command select. `from_working_tree` (uncommitted
+/// tracked changes) must use the worktree entry; the committed-history entry
+/// would see an empty diff and report zero findings (#10681).
 fn collect_pilot_python_first_use(
     input: &CheckInput,
     config: &RiprConfig,
+    from_working_tree: bool,
 ) -> Option<output::pilot::PilotPythonFirstUse> {
     if !config
         .languages()
@@ -749,12 +755,15 @@ fn collect_pilot_python_first_use(
 
     let mut check_input = input.clone();
     check_input.format = OutputFormat::Json;
-    Some(
-        match app::check_workspace_with_config(check_input, config) {
-            Ok(output) => output::pilot::PilotPythonFirstUse::from_check_output(&output),
-            Err(error) => output::pilot::PilotPythonFirstUse::analysis_unavailable(error),
-        },
-    )
+    let result = if from_working_tree {
+        app::check_workspace_worktree_with_config(check_input, config)
+    } else {
+        app::check_workspace_with_config(check_input, config)
+    };
+    Some(match result {
+        Ok(output) => output::pilot::PilotPythonFirstUse::from_check_output(&output),
+        Err(error) => output::pilot::PilotPythonFirstUse::analysis_unavailable(error),
+    })
 }
 
 fn parse_pilot_options(args: &[String]) -> Result<PilotOptions, String> {
@@ -1028,6 +1037,68 @@ mod tests {
 
     fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| value.to_string()).collect()
+    }
+
+    /// #10681: an uncommitted Python edit must reach pilot's Python preview
+    /// through the production path (`load_pilot_current_change` selects the
+    /// diff source, `collect_pilot_python_first_use` analyzes it), matching
+    /// what `ripr check` reports instead of `findings: 0`.
+    #[test]
+    fn pilot_python_preview_counts_uncommitted_python_change() -> Result<(), String> {
+        let root = std::env::temp_dir().join(format!("ripr-pilot-py-{}", std::process::id()));
+        let io = |error: std::io::Error| error.to_string();
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("tests")).map_err(io)?;
+        let git = |args: &[&str]| {
+            crate::git::run_git(&root, args).map_err(|err| format!("git {args:?} failed: {err}"))
+        };
+        git(&["init", "-q"])?;
+        std::fs::write(
+            root.join("pricing.py"),
+            "def discount(qty, price):\n    if qty >= 10:\n        return price * 0.1\n    return 0\n",
+        )
+        .map_err(io)?;
+        std::fs::write(
+            root.join("tests/test_pricing.py"),
+            "from pricing import discount\n\ndef test_discount():\n    assert discount(10, 10) > 0\n",
+        )
+        .map_err(io)?;
+        git(&["add", "-A"])?;
+        git(&[
+            "-c",
+            "user.email=a@b.c",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-q",
+            "-m",
+            "init",
+        ])?;
+        std::fs::write(
+            root.join("pricing.py"),
+            "def discount(qty, price):\n    if qty > 10:\n        return price * 0.1\n    return 0\n",
+        )
+        .map_err(io)?;
+
+        let input = CheckInput {
+            root: root.clone(),
+            ..CheckInput::default()
+        };
+        let config = load_for_root(&root)?;
+        let change = load_pilot_current_change(&input, Some(std::time::Duration::from_secs(30)));
+        assert!(
+            change.is_working_tree(),
+            "fixture must be read as a working-tree change: {change:?}"
+        );
+        let first_use = collect_pilot_python_first_use(&input, &config, change.is_working_tree())
+            .ok_or_else(|| "python is enabled by default".to_string())?;
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(first_use.analysis_error, None);
+        assert_eq!(
+            first_use.findings_total, 1,
+            "pilot must count the same Python finding `ripr check` reports"
+        );
+        Ok(())
     }
 
     #[test]

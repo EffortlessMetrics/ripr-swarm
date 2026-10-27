@@ -1,2 +1,2 @@
 <!-- section: Fixed -->
-- `ripr pilot` no longer prints `findings: 0` / `no_python_findings` for a Python repo whose changed code `ripr check` reports findings for: when pilot's repo-wide pass has no Python findings, the terminal and markdown summaries now say `not scanned by pilot; run ripr check` instead of a numeric zero. The JSON `python_first_use` projection is unchanged (#10681).
+- `ripr pilot` no longer prints `findings: 0` / `no_python_findings` for a Python repo with uncommitted Python edits: its Python preview now analyzes the same working-tree diff pilot's current change and printed `ripr check` command select, so the count matches `ripr check` (#10681).
