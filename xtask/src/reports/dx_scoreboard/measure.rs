@@ -26,6 +26,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const CACHE_ENV: &str = "RIPR_CACHE_DIR";
+/// Lifts the byte bound on `ripr check --format json` findings (`0` = full set).
+const FINDINGS_BYTES_ENV: &str = "RIPR_CHECK_FINDINGS_BYTES";
 const GIT_TIMEOUT: Duration = Duration::from_mins(10);
 const SHORT_TIMEOUT: Duration = Duration::from_mins(2);
 /// Warm-check samples are always draft. The flag is explicit so a checkout
@@ -323,6 +325,10 @@ fn measure_corpus_entry(
     let check_args = warm_check_args(&root, &base);
     let editor_base = base.clone();
     let subject = warm_check_subject(root, base, head);
+    // The contradiction scan reads every finding, so the measured check
+    // renders the full set instead of the byte-bounded prefix that a large
+    // diff (131 findings on `ripr-swarm-2026-10`) is otherwise cut to.
+    let check_envs = warm_check_envs(&cache_text);
     // The first run warms the cache for this exact diff; the second is the
     // edit-check loop a developer repeats. Warm-up success is required
     // before the measured population may be described as warm.
@@ -330,7 +336,7 @@ fn measure_corpus_entry(
         &binary.display().to_string(),
         &check_args,
         None,
-        &envs,
+        &check_envs,
         timeout,
         "dx-scoreboard warm-up check",
     );
@@ -339,7 +345,7 @@ fn measure_corpus_entry(
             &binary.display().to_string(),
             &check_args,
             None,
-            &envs,
+            &check_envs,
             timeout,
             "dx-scoreboard warm check",
         )
@@ -425,6 +431,13 @@ pub(crate) fn warm_check_args(root: &str, base: &str) -> Vec<String> {
         "--mode".to_string(),
         WARM_CHECK_MODE.to_string(),
     ]
+}
+
+/// Environment for the warm-check pair: the corpus cache plus the unbounded
+/// findings rendering the contradiction scan needs. Without the second entry
+/// a large diff is cut to a prefix and the scan reports `incomplete`.
+pub(crate) fn warm_check_envs(cache: &str) -> [(&str, &str); 2] {
+    [(CACHE_ENV, cache), (FINDINGS_BYTES_ENV, "0")]
 }
 
 pub(crate) fn warm_check_subject(root: String, base: String, head: Option<String>) -> CheckSubject {
