@@ -56,7 +56,9 @@ release ripr first, because developers run release builds.
   sample counts only when pilot exits 0 and `pilot-summary.json` says
   `complete`; otherwise it is `incomplete` and cannot meet its target.
 - **Warm check.** `ripr check --root <repo> --base HEAD~1 --format json` twice
-  on the cache pilot left behind; the second run is measured.
+  on the cache pilot left behind; the second run is measured. Both runs set
+  `RIPR_CHECK_FINDINGS_BYTES=0`: the contradiction scan reads every finding,
+  and a byte-bounded prefix would make a large-diff row `incomplete`.
 - **Peak memory.** `VmHWM` from `/proc/<pid>/status`, sampled in the same
   10 ms loop that enforces the deadline. Linux only; a lower bound.
 - **Workflow size.** `ripr init --root <tiny crate> --ci github`, then the
