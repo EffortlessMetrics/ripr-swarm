@@ -12,17 +12,18 @@ Analysis outcome: findings below (analysis complete)
 
 Start here:
   State: preview language, advisory only
-  Safe next action: this TypeScript preview finding's repair packet is not ready (no trusted related Jest/Vitest test or observer is available for a bounded TypeScript repair route); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add a test that calls it by hand, then rerun `ripr check`
+  Safe next action: this TypeScript preview finding's repair packet is not ready (no trusted related Jest/Vitest test or observer is available for a bounded TypeScript repair route); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; check by hand whether a test observes this change, then rerun `ripr check`
   File: src/audit.ts:10
   Language: typescript
   Language status: preview
   Static exposure: no path (severity: warning, confidence 0.40)
   Why no path: no related test was found that reaches this change
   Changed behavior: return amount * 1.2;
-  Missing check: No test references `computeTotal(` — add a test that calls the changed owner
-  Next step — TypeScript preview advisory: no statically linked test calls `computeTotal(`; add a
-    test that calls the changed owner and asserts the changed behavior with `toBe` / `toEqual`, run
-    the project's native test command, then rerun `ripr check` to refresh the finding
+  Missing check: No statically linked test call to `computeTotal(` was established; inspect existing test calls and their import/export paths
+  Next step — TypeScript preview advisory: no statically linked test calls `computeTotal(`; inspect
+    existing test calls and their import/export paths; if no suitable test exists, add a test that
+    calls the changed owner and asserts the changed behavior with `toBe` / `toEqual`. Then run the
+    project's native test command and rerun `ripr check` to refresh the finding
   Evidence: reach no · infection unknown · propagation unknown · observation no · discriminator no
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
