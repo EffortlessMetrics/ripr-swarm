@@ -523,8 +523,9 @@ fn test_pairs_boundary_element(
                 loan_pairs_boundary_element(owner, test, &loan, &assertion.text, element)
             });
         }
-        if !super::call_identity::boundary_owner_calls_resolve(index, owner, test, &assertion.text)
-        {
+        let operands = crate::analysis::extract::assertion_oracle_text(&assertion.text)
+            .unwrap_or_else(|| assertion.text.clone());
+        if !super::call_identity::boundary_owner_calls_resolve(index, owner, test, &operands) {
             return false;
         }
         whole_owner_call_operands(test, &assertion.text, owner)
@@ -833,16 +834,19 @@ fn boundary_bound_locals(
         let bound = let_binding_name(masked_line).and_then(|_| let_binding_name(original_line));
         if let Some(name) = bound.as_deref() {
             let line_number = test.start_line + offset;
-            let call = CallFact {
-                line: line_number,
-                name: owner.name.clone(),
-                text: original_line.trim().to_string().into(),
-            };
             // Only this binding's initializer supplies its result. An
             // unrelated sibling call later on the same physical line must
             // not defeat an otherwise established owner boundary binding.
-            let statement_end = masked_line.find(';').unwrap_or(original_line.len());
+            // Identity and activation must read the same balanced span: a
+            // semicolon inside a block or array is not its statement end.
+            let statement_end = crate::analysis::value_resolution::top_level_semicolon(masked_line)
+                .unwrap_or(original_line.len());
             let binding = original_line.get(..statement_end).unwrap_or(original_line);
+            let call = CallFact {
+                line: line_number,
+                name: owner.name.clone(),
+                text: binding.trim().to_string().into(),
+            };
             let is_boundary = calls_resolve(binding)
                 && owner_call_activates_boundary(probe, owner, test, &call, activation, scope);
             if let Some(existing) = last.iter_mut().find(|(tracked, _)| tracked == name) {

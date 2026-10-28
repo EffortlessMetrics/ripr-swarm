@@ -94,9 +94,12 @@ resolver cannot place (`use a::gate`). A crate-anchored import
 (`use crate::a::gate`) and direct or let-bound owner-qualified calls retain
 their existing credit. These restrictions do not replace helper or wrapper
 pairing with a new owner-return-pin requirement.
-The same identity rule applies to inline adaptor-element oracles. A let-bound
+The same identity rule applies to inline adaptor-element oracles, using the
+compared operands rather than diagnostic formatting arguments. A let-bound
 owner call keeps its identity when an unrelated sibling call follows its
-initializer statement on the same physical line.
+initializer statement on the same physical line. Identity and activation read
+the same balanced initializer span; later statements cannot lend it a boundary
+call, and a block-internal semicolon does not truncate its identity check.
 
 An owner-call argument is a boundary input only when it is the literal itself
 (including a type suffix such as `10u32`), a named local bound to that literal,

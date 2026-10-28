@@ -46,6 +46,30 @@ const CASES: &[(&str, &str, bool, bool)] = &[
         true,
     ),
     (
+        "sibling_block_initializer",
+        "    let got = { let _padding = (); b::gate(10) };\n    assert_eq!(got, true);",
+        false,
+        false,
+    ),
+    (
+        "owner_block_initializer",
+        "    let got = { let _padding = (); a::gate(10) };\n    assert_eq!(got, true);",
+        true,
+        true,
+    ),
+    (
+        "constant_beside_sibling_call",
+        "    let got = true; let _ = b::gate(10);\n    assert_eq!(got, true);",
+        false,
+        false,
+    ),
+    (
+        "constant_beside_owner_call",
+        "    let got = true; let _ = a::gate(10);\n    assert_eq!(got, true);",
+        false,
+        false,
+    ),
+    (
         "owner_relative_import_unresolved",
         "    use a::gate;\n    assert_eq!(gate(10), true);",
         false,
@@ -170,6 +194,24 @@ fn element_boundary_pairing_keeps_the_asserted_calls_definition() -> Result<(), 
             "owner_element",
             original.replace("use crate::b::gate;", "use crate::a::gate;"),
             true,
+        ),
+        (
+            "owner_element_with_sibling_diagnostic",
+            original
+                .replace("use crate::b::gate;", "use crate::a::gate;")
+                .replace(
+                    "assert_eq!(gate(&[0]), [false]);",
+                    "assert_eq!(\n        gate(&[0]),\n        [false],\n        \"diagnostic {:?}\",\n        b::gate(&[5])\n    );",
+                ),
+            true,
+        ),
+        (
+            "sibling_element_with_owner_diagnostic",
+            original.replace(
+                "assert_eq!(gate(&[0]), [false]);",
+                "assert_eq!(\n        gate(&[0]),\n        [false],\n        \"diagnostic {:?}\",\n        a::gate(&[0])\n    );",
+            ),
+            false,
         ),
     ] {
         check_case(&fixture, &source, case, "x > 0", exposed)?;
