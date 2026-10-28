@@ -1,5 +1,5 @@
 use super::{FunctionFact, FunctionSourceRole, RustIndex, TestFact};
-use crate::analysis::extract::{extract_assertions, extract_literal_facts};
+use crate::analysis::extract::{arrow_row_oracles, extract_assertions, extract_literal_facts};
 use crate::analysis::syntax::parser_oracles_for_function;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -109,8 +109,16 @@ fn test_fact(function: &FunctionFact) -> TestFact {
         end_line: function.end_line,
         body: function.body.clone(),
         calls: function.calls.clone(),
-        assertions: parser_oracles_for_function(&function.body, function.start_line)
-            .unwrap_or_else(|| extract_assertions(&function.body, function.start_line)),
+        assertions: {
+            let mut assertions = parser_oracles_for_function(&function.body, function.start_line)
+                .unwrap_or_else(|| extract_assertions(&function.body, function.start_line));
+            assertions.extend(arrow_row_oracles(
+                &function.attrs,
+                &function.body,
+                function.start_line,
+            ));
+            assertions
+        },
         literals,
         attrs: function.attrs.clone(),
         // #3727 Slice A: the promotion mirrors the source function's

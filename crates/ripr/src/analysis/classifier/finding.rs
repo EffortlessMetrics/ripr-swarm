@@ -3,7 +3,7 @@ use crate::analysis::classify::{
     ASSERTION_CONTEXT_UNESTABLISHED, ProbeContext, body_contains_owner_call,
     ensure_unknown_stop_reason, exact_error_variant, exact_oracle_gap_next_step,
     is_partial_eq_method, missing_evidence, oracle_crediting_relations, recommended_next_step,
-    stop_reasons, wrapper_error_seam_expression,
+    recommended_next_step_with_boundary, stop_reasons, wrapper_error_seam_expression,
 };
 use crate::analysis::rust_index::TestSummary;
 use crate::domain::*;
@@ -212,11 +212,21 @@ pub(in crate::analysis) fn build_finding_with_origins(
     } else if class == ExposureClass::NoStaticPath && context.unmounted_build_script {
         Some(crate::domain::BUILD_SCRIPT_NO_STATIC_PATH_NEXT_STEP.to_string())
     } else {
-        recommended_next_step(
+        recommended_next_step_with_boundary(
             context.probe,
             &class,
             context.owner_assertion_shaped,
             &stop_reasons,
+            // #10622: infection `yes` means a related test already supplies
+            // the changed boundary input; only the oracle is weak.
+            boundary_input_observed_with_weak_oracle(
+                &class,
+                &context.probe.family,
+                &evidence.infect,
+                &evidence.discriminate,
+                &related_tests,
+                &stop_reasons,
+            ),
         )
     };
     let invalid_propagation_witness = evidence.propagation_witness().is_some_and(|diagnostic| {
@@ -236,6 +246,11 @@ pub(in crate::analysis) fn build_finding_with_origins(
         && evidence.refusals_are_analyzer_limits
     {
         evidence_lines.push(crate::analysis::classify::REFUSALS_ARE_ANALYZER_LIMITS.to_string());
+    }
+    // #5431: an admitted weak oracle beside a refused owner-calling
+    // `assert_eq!` whose refusal is an analyzer limit.
+    if class == ExposureClass::WeaklyExposed && evidence.mixed_refusal_is_analyzer_limit {
+        evidence_lines.push(crate::analysis::classify::MIXED_REFUSAL_IS_ANALYZER_LIMIT.to_string());
     }
     // #8051: hand the `debug_assert_eq!` pins to the gap-admission post-pass,
     // which consumes the marker.
@@ -1162,6 +1177,7 @@ mod tests {
             reach_ruled_out: true,
             assertion_refusal: None,
             refusals_are_analyzer_limits: false,
+            mixed_refusal_is_analyzer_limit: false,
             implicit_dispatch_tests: Default::default(),
             debug_assert_eq_pins: Vec::new(),
             related_call_budget_saturated: false,

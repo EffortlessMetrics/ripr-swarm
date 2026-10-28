@@ -33,7 +33,7 @@
       "silent"
     ]
   },
-  "reasoning": "RIPR-SPEC-0238 example 33: `getattr (x, \"b\")` reads attribute b (2) instead of a (1), and test_label_getattr asserts 1, so it fails. ripr credits exposed (ideal); the spec adds a dynamic_dispatch limit for a spaced getattr call, which would read limited.",
+  "reasoning": "RIPR-SPEC-0238 example 33: `getattr (x, \"b\")` reads attribute b (2) instead of a (1), and test_label_getattr asserts 1, so it fails. ripr reads a spaced getattr call as a dynamic_dispatch call and abstains (limited), as the spec requires; credited stays the ideal because the edit does discriminate.",
   "labeling_observation": {
     "ripr_commit": "127309619",
     "full_checkout_verdict": "credited",

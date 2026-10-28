@@ -601,3 +601,27 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_unrelated_test_mention (24)
+
+Reason:
+RIPR-SPEC-0122: plain-language wording for the default and human-full check views (#10691); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless python_unrelated_test_mention --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_unrelated_test_mention (25)
+
+Reason:
+RIPR-SPEC-0028: #10708 untested Python owner gains honest add-test/native-verifier/refresh guidance
+
+Command:
+`cargo xtask goldens bless python_unrelated_test_mention --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

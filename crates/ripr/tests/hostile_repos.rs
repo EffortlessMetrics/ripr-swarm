@@ -214,9 +214,11 @@ fn summary_line(ran: &Ran) -> &str {
 
 fn assert_found_change(ran: &Ran, what: &str) -> Result<(), String> {
     assert_sane(ran, what)?;
-    if ran.code != Some(0) || !summary_line(ran).starts_with("Summary: 1 probe (") {
+    if ran.code != Some(0)
+        || !summary_line(ran).starts_with("Summary: 1 changed behavior checked: ")
+    {
         return Err(format!(
-            "{what}: expected one probe, got {:?}\n{}\n{}",
+            "{what}: expected one changed behavior, got {:?}\n{}\n{}",
             ran.code, ran.stdout, ran.stderr
         ));
     }
@@ -573,6 +575,38 @@ fn detached_head_worktree_and_submodule_roots_work() -> Result<(), String> {
 }
 
 #[test]
+fn dirty_submodule_is_a_skipped_pointer_not_a_non_source_file() -> Result<(), String> {
+    // A submodule with uncommitted edits diffs as `Subproject commit <sha>-dirty`
+    // with no mode header; it was reported as a non-source file whose empty
+    // result "is correct" (#10648).
+    let scratch = Scratch::new("submodule-dirty")?;
+    let inner = plain(&scratch, "inner")?;
+    let outer = plain(&scratch, "outer")?;
+    let inner_arg = inner.to_string_lossy().into_owned();
+    git(
+        &outer,
+        &["submodule", "add", "-q", &inner_arg, "vendor/dep"],
+    )?;
+    git(&outer, &["commit", "-q", "-m", "add submodule"])?;
+    git(&outer, &["branch", "-f", "main", "HEAD"])?;
+    let inner_lib = outer.join("vendor/dep/src/lib.rs");
+    let mut text = fs::read_to_string(&inner_lib).map_err(|e| e.to_string())?;
+    text.push_str("// edited\n");
+    fs::write(&inner_lib, text).map_err(|e| e.to_string())?;
+
+    let ran = ripr(&outer, &["check"], &[])?;
+    assert_sane(&ran, "dirty submodule")?;
+    let notice = "skipped 1 submodule pointer change(s); ripr does not analyze submodule contents.";
+    if ran.code != Some(0) || !ran.stderr.contains(notice) || ran.stderr.contains("non-source") {
+        return Err(format!(
+            "expected the submodule notice and no non-source claim; got {:?}\n{}\n{}",
+            ran.code, ran.stdout, ran.stderr
+        ));
+    }
+    Ok(())
+}
+
+#[test]
 fn submodule_ignore_settings_cannot_hide_pointer_changes() -> Result<(), String> {
     let scratch = Scratch::new("submodule-ignore")?;
     let inner = plain(&scratch, "inner")?;
@@ -639,7 +673,9 @@ fn submodule_ignore_settings_cannot_hide_pointer_changes() -> Result<(), String>
                     return Err(format!("wrong changed behavior: {finding}"));
                 }
             }
-        } else if !summary_line(&ran).starts_with(&format!("Summary: {expected_count} probe")) {
+        } else if !summary_line(&ran)
+            .starts_with(&format!("Summary: {expected_count} changed behavior"))
+        {
             return Err(format!("unexpected human summary: {}", ran.stdout));
         }
         Ok(())

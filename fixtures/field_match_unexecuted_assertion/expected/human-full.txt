@@ -2,10 +2,15 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/field_match_unexecuted_assertion/input
 
-Summary: 3 probe(s), 0 exposed, 0 weakly_exposed, 3 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 3 of 3 finding(s) unsuppressed (2 base-side evidence, not candidate edit targets)
+Summary: 3 changed behavior(s) checked: 0 exposed, 0 weakly_exposed, 3 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 3 of 3 finding(s) unsuppressed (2 base-side evidence, not candidate edit targets)
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
 
 Analysis outcome: findings below (analysis complete; complete_with_findings)
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 3 probe(s), 3 finding(s)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 3 changed behavior(s) checked, 3 finding(s)
 
 Shared evidence and guidance
   E1 [findings 2, 3]: reach yes: Related tests appear to reach charge: selected
@@ -23,11 +28,12 @@ Changed
   before: Some(ms) => 1,
   after:  Some(ms) =>
           (arm head only; open the arm at ./src/lib.rs:4 to read its new body)
-Probe
+Change type
+  a match arm changed
   family: match_arm
-  delta:  control
+  delta:  control (changes which code path runs)
   owner:  src/lib.rs::charge
-  canonical gap: gap:rust:src/lib.rs:charge:match_arm:match_arm:some_ms
+  gap id (for scripts): gap:rust:src/lib.rs:charge:match_arm:match_arm:some_ms
 Static exposure
   reachable_unrevealed (warning, confidence 0.79)
 Evidence
@@ -56,11 +62,12 @@ Changed
   before: Some(ms) => 1,
   expr:   Some(ms) => 1,
   source:  base_deleted — base-side evidence, not a candidate edit target
-Probe
+Change type
+  a match arm changed
   family: match_arm
-  delta:  control
+  delta:  control (changes which code path runs)
   owner:  src/lib.rs::charge
-  canonical gap: gap:rust:src/lib.rs:charge:match_arm:match_arm:some_ms=>1
+  gap id (for scripts): gap:rust:src/lib.rs:charge:match_arm:match_arm:some_ms=>1
 Static exposure
   reachable_unrevealed (note, confidence 0.79)
 Evidence
@@ -84,11 +91,12 @@ Changed
   before: Some(ms) => 1,
   expr:   Some(ms) => 1,
   source:  base_deleted — base-side evidence, not a candidate edit target
-Probe
+Change type
+  a returned value changed
   family: return_value
-  delta:  value
+  delta:  value (changes a computed value)
   owner:  src/lib.rs::charge
-  canonical gap: gap:rust:src/lib.rs:charge:return_value:return_value:some_ms=>1
+  gap id (for scripts): gap:rust:src/lib.rs:charge:return_value:return_value:some_ms=>1
 Static exposure
   reachable_unrevealed (note, confidence 0.66)
 Evidence

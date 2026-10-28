@@ -28,6 +28,11 @@ use crate::domain::*;
 pub(in crate::analysis) const REFUSALS_ARE_ANALYZER_LIMITS: &str =
     "gap_admission: every refused related assertion rests on an analyzer limit";
 
+/// Classifier-to-post-pass marker (#5431): a weaker oracle was admitted
+/// beside a refused `assert_eq!` that calls the owner, and every such
+/// refusal rests on an analyzer limit.
+pub(in crate::analysis) const MIXED_REFUSAL_IS_ANALYZER_LIMIT: &str = "gap_admission: an owner-calling assertion was refused for an analyzer limit beside an admitted weaker oracle";
+
 const LIMIT: StaticLimitKind = StaticLimitKind::RustAssertionContextUnresolved;
 const JUDGED_TEST_LIMIT: usize = 3;
 
@@ -55,6 +60,35 @@ pub(in crate::analysis) fn withhold_unsupported_gap(finding: &mut Finding) -> bo
         LIMIT,
         &first_unresolved_edge,
         next_step(&judged, macro_name),
+        &judged,
+    );
+    true
+}
+
+/// #5431: a `weakly_exposed` gap asks for a stronger assertion, but a refused
+/// `assert_eq!` on the owner may already be that assertion. Withhold the gap
+/// when the refusal rests on an analyzer limit. Returns `true` when the
+/// finding was rewritten to `static_unknown`.
+pub(in crate::analysis) fn withhold_mixed_refusal_gap(finding: &mut Finding) -> bool {
+    let before = finding.evidence.len();
+    finding
+        .evidence
+        .retain(|line| line != MIXED_REFUSAL_IS_ANALYZER_LIMIT);
+    let marked = finding.evidence.len() != before;
+    if !(marked
+        && finding.static_limit_kind.is_none()
+        && finding.class == ExposureClass::WeaklyExposed)
+    {
+        return false;
+    }
+    let judged = judged_tests(finding);
+    let first_unresolved_edge =
+        "whether the refused related `assert_eq!` compares the changed value exactly";
+    withhold_gap(
+        finding,
+        LIMIT,
+        first_unresolved_edge,
+        next_step(&judged, "assert_eq"),
         &judged,
     );
     true

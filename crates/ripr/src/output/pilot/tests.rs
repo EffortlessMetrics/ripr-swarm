@@ -2196,7 +2196,10 @@ fn pilot_next_steps_name_the_dirty_target_precondition_only_when_it_applies() ->
     });
     let precondition = "if `src/pricing.rs` has uncommitted edits, commit or stash them";
     let change = changed("src/pricing.rs", 3);
-    let no_change = PilotCurrentChange::NoChange { base: None };
+    let no_change = PilotCurrentChange::NoChange {
+        base: None,
+        working_tree: false,
+    };
 
     let render = |entry: &ClassifiedSeam, change: &PilotCurrentChange| -> Result<String, String> {
         let route = commands::repair_start_command(root, entry)
