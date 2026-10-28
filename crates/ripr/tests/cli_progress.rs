@@ -899,12 +899,12 @@ fn verbose_pilot_prints_a_stage_table_and_leaves_stdout_and_packet_bytes_unchang
     assert!(verbose.status.success(), "{}", stderr_text(&verbose));
     let verbose_err = stderr_text(&verbose);
     assert!(
-        verbose_err.contains("ripr pilot: stage timings"),
+        verbose_err.contains("ripr pilot: stage timings ("),
         "missing stage table: {verbose_err}"
     );
     let table: Vec<&str> = verbose_err
         .lines()
-        .skip_while(|line| *line != "ripr pilot: stage timings")
+        .skip_while(|line| !line.starts_with("ripr pilot: stage timings"))
         .skip(1)
         .take_while(|line| line.starts_with("  "))
         .collect();
@@ -918,6 +918,7 @@ fn verbose_pilot_prints_a_stage_table_and_leaves_stdout_and_packet_bytes_unchang
             "load_change",
             "inventory",
             "change_classification",
+            "diff_only_files",
             "seam_budget",
             "language_scan",
             "write_artifacts",

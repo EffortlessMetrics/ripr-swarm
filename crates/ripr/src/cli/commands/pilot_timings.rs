@@ -47,7 +47,9 @@ impl PilotTimings {
     /// The stage table. Stage names are static tokens and every other field
     /// is a number, so the text needs no terminal escaping.
     pub(super) fn render(&self) -> String {
-        let mut out = String::from("ripr pilot: stage timings\n");
+        let mut out = String::from(
+            "ripr pilot: stage timings (total is wall clock; rows need not sum to it)\n",
+        );
         for stage in &self.stages {
             out.push_str(&format!("  {:<22} {:>9} ms", stage.stage, stage.elapsed_ms));
             if let Some(items) = stage.items {
@@ -81,7 +83,7 @@ mod tests {
         let text = timings.render();
         let lines: Vec<&str> = text.lines().collect();
         assert_eq!(lines.len(), 5, "{text}");
-        assert_eq!(lines[0], "ripr pilot: stage timings");
+        assert!(lines[0].starts_with("ripr pilot: stage timings"), "{text}");
         assert_eq!(lines[1], "  load_change                   12 ms  items=3");
         assert_eq!(
             lines[2],

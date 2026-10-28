@@ -291,12 +291,14 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         spent_timeout_ms.saturating_sub(elapsed_ms(analysis_started)),
         !options.quiet,
     );
+    let classify_ms = elapsed_ms(change_started);
     // #6944: name the changed files `ripr check` analyzes but the repo
     // inventory leaves out (build scripts, `xtask/`, roots outside `src`),
     // so a change there is not read as a change with no seams. It runs after
     // the change's own classification, so this explanation never spends the
     // deadline that ranks changed seams. Without Rust enabled neither
     // command analyzes these files, so there is nothing to name.
+    let diff_only_started = Instant::now();
     let current_change = if rust_enabled {
         let diff_only = name_diff_only_files(
             &input.root,
@@ -308,6 +310,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     } else {
         current_change
     };
+    let diff_only_ms = elapsed_ms(diff_only_started);
     let folded = current_change.fold_classified_change(
         &mut classified,
         &mut inventory_limit_info,
@@ -321,7 +324,10 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
             ))
         );
     }
-    timings.record("change_classification", change_started, Some(folded.added));
+    timings.record_ms("change_classification", classify_ms, Some(folded.added));
+    if rust_enabled {
+        timings.record_ms("diff_only_files", diff_only_ms, None);
+    }
     // A snapshot holding seams `ripr check` never classifies is not the same
     // population as its after snapshot, so it is written without identity.
     let change_seams_added = folded.added > 0;
@@ -477,8 +483,12 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         )
     );
     // #10727: stderr only, so stdout and the artifacts stay byte-identical.
+    // Through the shadowed `eprintln!`, so a held-open TTY progress row is
+    // finished before the table starts instead of being glued onto.
     if crate::is_verbose() {
-        eprint!("{}", timings.render());
+        for line in timings.render().lines() {
+            eprintln!("{line}");
+        }
     }
     // #5019: producer `completed` was held until every artifact write and
     // the terminal render succeeded; commit it now. An earlier failure
