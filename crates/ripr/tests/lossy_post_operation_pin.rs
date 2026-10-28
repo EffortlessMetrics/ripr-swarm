@@ -55,6 +55,12 @@ fn a_pin_the_lossy_operation_hides_the_change_from_never_credits_exposed() -> Re
             true,
         ),
         (
+            "narrow_literal_saturation_shows_it",
+            "(x * 3).saturating_sub(if 255u8.saturating_add(1) == 255 { 0 } else { 5 })",
+            "assert_eq!(scale(1), 3);",
+            true,
+        ),
+        (
             "saturation_hides_it",
             "(x * 3).saturating_sub(100)",
             "assert_eq!(scale(4), 0);",

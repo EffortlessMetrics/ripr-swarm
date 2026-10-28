@@ -729,6 +729,23 @@ fn fold_function_text(body: &str, arguments: &[i128]) -> Option<i128> {
         crate::analysis::extract::mask_comments_and_strings(&block.syntax().text().to_string());
     let tokens = tokenize(&masked)?;
     let uniform = fold_range.filter(|range| widths.iter().all(|width| *width == Some(*range)));
+    // A suffixed literal can introduce a different receiver width even when
+    // all parameters and the return type agree. Without type inference the
+    // saturation range is then unknown; inspect the entire body because the
+    // literal can occur inside a receiver expression or method chain.
+    if tokens.iter().any(|token| {
+        matches!(token, Token::Ident(name) if name == "saturating_add" || name == "saturating_sub")
+    }) && let Some(range) = uniform
+        && block.syntax().descendants().filter_map(ast::Literal::cast).any(|literal| {
+            if let ast::LiteralKind::IntNumber(number) = literal.kind() {
+                number.suffix().is_some_and(|suffix| declared_integer_range(suffix) != Some(range))
+            } else {
+                false
+            }
+        })
+    {
+        return None;
+    }
     fold_block(&tokens, &environment, fold_range, uniform)
 }
 
@@ -2036,6 +2053,30 @@ mod tests {
         assert_eq!(fold("a.clamp(2, 5)", 0), Some(2));
         assert_eq!(fold("a.saturating_sub(10)", 4), Some(0));
         assert_eq!(fold("a.saturating_add(10)", 4), Some(14));
+    }
+
+    #[test]
+    fn saturation_uses_the_actual_receiver_width() {
+        for body in [
+            "fn f(a: u32) -> u32 { if 255u8.saturating_add(1) == 255 { a + 1 } else { a } }",
+            "fn f(a: u32) -> u32 { if 0i8.saturating_sub(1) < 0 { a + 1 } else { a } }",
+            "fn f(a: u32) -> u32 { if 255u8.min(255).saturating_add(1) == 255 { a + 1 } else { a } }",
+            "fn f(a: u32) -> u32 { if 1usize.saturating_add(1) == 2 { a + 1 } else { a } }",
+        ] {
+            assert_eq!(fold_text(body, &[2]), None, "{body}");
+        }
+        assert_eq!(
+            fold_text("fn f(a: u32) -> u32 { a.saturating_add(10u32) }", &[2]),
+            Some(12)
+        );
+        assert_eq!(
+            fold_text("fn f(a: u8) -> u8 { a.saturating_add(10u8) }", &[250]),
+            Some(255)
+        );
+        assert_eq!(
+            fold_text("fn f(a: i8) -> i8 { a.saturating_sub(10i8) }", &[-125]),
+            Some(-128)
+        );
     }
 
     #[test]

@@ -3081,7 +3081,9 @@ unmet condition keeps today's reading:
    #6026 fold, which also evaluates `.pow(n)`, `.min(n)` and `.max(n)` on
    integer values, and, since #10737, the bitwise operators `& | ^`, the
    shifts `<< >>`, `.clamp(lo, hi)` and `.saturating_add`/`.saturating_sub`
-   through the declared return width), the probe carries its `before` text,
+   through the declared return width; a saturating body with a differently
+   suffixed or unsupported-width integer literal stays not evaluable because
+   its receiver width is not established), the probe carries its `before` text,
    and that text replaces the current text exactly once in the owner's body.
 2. No other function calls the owner by name (the same guard the `&&`/`||`
    skipped-operand reading uses).
