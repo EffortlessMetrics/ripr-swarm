@@ -656,9 +656,13 @@ impl TypeScriptAdapter {
                 || extraction_cache::test_extraction_in_memory(relative, source));
             // An envelope is named by the normalized path, but a test
             // extraction embeds the exact one; a Unix filename with a literal
-            // backslash would share an envelope with its folded twin, so such
-            // a file is neither read nor persisted (#10725 review).
-            let path_is_lossless = relative.to_string_lossy() == normalized_path(relative);
+            // backslash (or a non-UTF-8 name) would share an envelope with its
+            // folded twin, so such a file is neither read nor persisted
+            // (#10725 review). On Windows the backslash is the separator, so
+            // folding it loses nothing.
+            let path_is_lossless = relative
+                .to_str()
+                .is_some_and(|path| cfg!(windows) || !path.contains('\\'));
             let lookup = if fact_store_usable && path_is_lossless && !in_memory {
                 Some(fact_store.load(&fact_key))
             } else {
