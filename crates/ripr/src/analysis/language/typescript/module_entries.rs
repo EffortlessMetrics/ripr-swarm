@@ -31,7 +31,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 const MODULE_ENTRY_MAX_HOPS: usize = 3;
 
 /// An exported name of the owner's module whose code reaches the owner.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub(crate) struct TypeScriptModuleEntry {
     /// Exported name a test imports (`default` for the default export).
     pub(crate) name: String,
@@ -52,7 +52,7 @@ pub(crate) struct TypeScriptModuleEntry {
 /// The decorated method a pass-through decorator owner reaches, with the
 /// lines of the wrapper's final return, the only line whose change the
 /// method's call result carries.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub(crate) struct TypeScriptDecoratedMethod {
     pub(crate) class_name: String,
     /// The class is its module's `export default class`, so a test names it

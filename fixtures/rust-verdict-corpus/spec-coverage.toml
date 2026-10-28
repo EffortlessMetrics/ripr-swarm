@@ -995,3 +995,8 @@ reason = "probe-seeding hygiene for pure Rust reformats; not an exposure-verdict
 id = "RIPR-SPEC-0361"
 scope = "out"
 reason = "Pipeline diff-scope line-budget guard behavior; not a rust verdict example"
+
+[[spec]]
+id = "RIPR-SPEC-0363"
+scope = "out"
+reason = "TypeScript per-file fact persistence; a cache-admission behavior, not an exposure-verdict example a rust case labels"
