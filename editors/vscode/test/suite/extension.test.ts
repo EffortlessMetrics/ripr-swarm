@@ -934,7 +934,7 @@ suite('Extension Smoke', () => {
         (entry) => entry.source === 'ripr' && diagnosticCode(entry) === 'ripr-gap-MissingBoundaryAssertion',
         60000
       );
-      assert.ok(diagnostic.message.includes('preview advisory evidence'), diagnostic.message);
+      assert.ok(diagnostic.message.includes('Preview language: advisory'), diagnostic.message);
 
       const hoverPosition = new vscode.Position(
         diagnostic.range.start.line,

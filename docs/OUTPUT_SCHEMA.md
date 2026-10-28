@@ -17405,6 +17405,11 @@ contains a local file and line. These diagnostics are sourced from the explicit
 GapRecord; they do not infer projectability from raw findings and do not make
 gate or badge decisions.
 
+The diagnostic `message` is plain English for the editor Problems panel: the
+gap kind is spoken as a phrase ("Missing boundary assertion"), and the
+CamelCase kind and repair route stay machine-side in `code` and `data`
+(#10695).
+
 GapRecord diagnostic shape:
 
 ```jsonc
@@ -17413,7 +17418,7 @@ GapRecord diagnostic shape:
   "severity": 2,
   "code": "ripr-gap-MissingBoundaryAssertion",
   "source": "ripr",
-  "message": "ripr gap: MissingBoundaryAssertion; repair route: AddBoundaryAssertion; changed behavior: amount >= threshold; suggested check: assert_eq!(...)",
+  "message": "Missing boundary assertion: amount >= threshold. Suggested check: assert_eq!(...).",
   "data": {
     "schema_version": "0.1",
     "source": "gap_decision_ledger",

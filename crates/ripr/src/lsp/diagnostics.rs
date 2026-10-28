@@ -2782,29 +2782,49 @@ fn gap_record_diagnostic_severity(record: &GapRecord) -> DiagnosticSeverity {
 }
 
 fn gap_record_diagnostic_message(record: &GapRecord) -> String {
-    let kind = non_empty(&record.kind).unwrap_or("Unknown");
-    let route = record
-        .repair_route
-        .as_ref()
-        .and_then(|route| non_empty(&route.route_kind))
-        .unwrap_or("InspectGap");
-    let mut message = if route == "InspectGap" {
-        format!("ripr gap: {kind}; Hover the highlighted code to inspect the static evidence.")
-    } else {
-        format!("ripr gap: {kind}; repair route: {route}")
+    // The Problems panel reads plain words: the CamelCase gap kind is spoken
+    // as a phrase, and the repair route stays machine-side in the diagnostic
+    // `data` payload (#10695).
+    let kind = camel_case_words(non_empty(&record.kind).unwrap_or("Unknown"));
+    let route = record.repair_route.as_ref();
+    let changed = route
+        .and_then(|route| route.changed_behavior.as_deref())
+        .and_then(non_empty);
+    let assertion = route
+        .and_then(|route| route.assertion_shape.as_deref())
+        .and_then(non_empty);
+    let mut message = match changed {
+        Some(changed) => format!("{kind}: {changed}."),
+        None => format!("{kind}."),
     };
-    if let Some(route) = &record.repair_route {
-        if let Some(changed) = route.changed_behavior.as_deref().and_then(non_empty) {
-            message.push_str(&format!("; changed behavior: {changed}"));
-        }
-        if let Some(assertion) = route.assertion_shape.as_deref().and_then(non_empty) {
-            message.push_str(&format!("; suggested check: {assertion}"));
-        }
+    if let Some(assertion) = assertion {
+        message.push_str(&format!(" Suggested check: {assertion}."));
+    }
+    if changed.is_none() && assertion.is_none() {
+        message.push_str(" Hover for details.");
     }
     if record.language_status == "preview" {
-        message.push_str("; preview advisory evidence");
+        message.push_str(" (Preview language: advisory.)");
     }
     message
+}
+
+/// `MissingBoundaryAssertion` -> `Missing boundary assertion`: split a
+/// CamelCase identifier into a sentence-case phrase. A value without an
+/// uppercase boundary comes back unchanged apart from its first letter.
+fn camel_case_words(identifier: &str) -> String {
+    let mut words = String::with_capacity(identifier.len());
+    for (index, ch) in identifier.chars().enumerate() {
+        if index == 0 {
+            words.extend(ch.to_uppercase());
+        } else if ch.is_uppercase() {
+            words.push(' ');
+            words.extend(ch.to_lowercase());
+        } else {
+            words.push(ch);
+        }
+    }
+    words
 }
 
 /// FIX (round-2 review): a serialization failure must not collapse into an
@@ -3985,10 +4005,14 @@ mod seam_diagnostic_tests {
             Some(NumberOrString::String(code)) if code == "ripr-gap-MissingBoundaryAssertion" => {}
             other => return Err(format!("unexpected diagnostic code: {other:?}")),
         }
+        // #10695: plain words in the Problems panel; the CamelCase kind and
+        // route stay in the code and `data` payload asserted below.
         if !diagnostic
             .message
-            .contains("repair route: AddBoundaryAssertion")
-            || !diagnostic.message.contains("amount >= threshold")
+            .starts_with("Missing boundary assertion: amount >= threshold.")
+            || !diagnostic.message.contains("Suggested check:")
+            || diagnostic.message.contains("AddBoundaryAssertion")
+            || diagnostic.message.contains("MissingBoundaryAssertion")
             || diagnostic.message.contains("confidence")
         {
             return Err(format!(
@@ -4294,10 +4318,10 @@ mod seam_diagnostic_tests {
                 diagnostic.severity
             ));
         }
-        if !diagnostic.message.contains("Hover the highlighted code")
+        if !diagnostic.message.contains("Hover for details.")
             || diagnostic.message.contains("code action")
-            || diagnostic.message.contains("repair route: InspectGap")
-            || !diagnostic.message.contains("preview advisory evidence")
+            || diagnostic.message.contains("InspectGap")
+            || !diagnostic.message.contains("(Preview language: advisory.)")
         {
             return Err(format!(
                 "unexpected preview gap diagnostic message: {}",
