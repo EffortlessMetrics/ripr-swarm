@@ -65,7 +65,8 @@ pub(in crate::analysis) use builder_override::{
     setter_plainly_writes,
 };
 pub(in crate::analysis) use call_identity::{
-    CallIdentityMemos, CallTarget, OwnerCallIdentity, shared_owner_call_identity,
+    CallIdentityMemos, CallTarget, OwnerCallIdentity, bound_free_owner_calls,
+    shared_owner_call_identity,
 };
 pub(in crate::analysis) use caller_loop_selector::withhold_caller_loop_selector_gap;
 pub(in crate::analysis) use const_readers::same_file_const_readers;

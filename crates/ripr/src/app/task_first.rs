@@ -212,6 +212,15 @@ fn repair_refusal(
                 // hunting for what to strengthen (#9604). The parenthetical
                 // matches the agent card's readiness line so both surfaces
                 // read the same way.
+                // #10683: when a related test already reaches the boundary and
+                // only its assertion is weak, reuse `check`'s wording and point
+                // at that test: no internal evidence jargon, no new test.
+                if let [only] = eligibility.readiness.missing_evidence.as_slice()
+                    && is_boundary_value_discriminator(only)
+                    && let Some(guidance) = weak_oracle_guidance(entry)
+                {
+                    return (RefusalKind::RouteNotReady, format!("{label}: {guidance}"));
+                }
                 // #10644: the refusal reads on a human surface, so name each
                 // missing fact in plain words; the machine readiness strings
                 // behind it stay internal.
@@ -268,6 +277,20 @@ fn repair_refusal(
 /// producer's own format (`analysis/repair_route.rs`), not by parsing text here.
 pub(super) fn is_boundary_value_discriminator(item: &str) -> bool {
     crate::analysis::repair_route::is_boundary_value_discriminator_evidence(item)
+}
+
+/// `check`'s boundary-observed weak-oracle wording (the one domain constant)
+/// followed by the existing related test, when the seam is in that case
+/// (#10683). Shared by the repair refusal and `agent stub`.
+pub(crate) fn weak_oracle_guidance(entry: &crate::analysis::ClassifiedSeam) -> Option<String> {
+    let test = crate::analysis::repair_route::boundary_observed_weak_oracle_test(entry)?;
+    Some(format!(
+        "{} Related test: {}:{} {}",
+        crate::domain::BOUNDARY_OBSERVED_WEAK_ORACLE_NEXT_STEP,
+        crate::analysis::stable_path_text(&test.file),
+        test.line,
+        test.test_name
+    ))
 }
 
 /// Plain-language rendering of one route missing-evidence string for human
@@ -1149,6 +1172,86 @@ fn non_rust_language(file: &Path) -> Option<&'static str> {
     }
 }
 
+/// A non-Rust language the changed code under the selected root touches, and
+/// whether any of its changes adds or edits lines (`false`: deletion-only).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ChangedNonRust {
+    pub(crate) language: &'static str,
+    pub(crate) adds_code: bool,
+}
+
+/// The non-Rust languages in the diff `ripr check` would analyze under `root`
+/// (#10682). Reads check's own diff-source selection (committed history, or
+/// the working tree when it holds uncommitted work), base resolution and
+/// root scoping through the shared loaders, and the diff parser's own path
+/// decoding, so a committed-only branch, a package root and a C-quoted
+/// filename agree with `check`. Best effort: an unreadable diff reads as no
+/// such languages, so the caller keeps its generic message.
+pub(crate) fn changed_non_rust_languages(root: &Path) -> Vec<ChangedNonRust> {
+    let source = super::diff_source::select_live_diff_source(
+        root,
+        super::diff_source::DiffSourceRequest::Default,
+        None,
+    );
+    let text = if source.is_working_tree() {
+        crate::analysis::load_worktree_diff(root, None, None)
+    } else {
+        crate::analysis::load_diff(root, None, None, None)
+    };
+    let Ok(text) = text else {
+        return Vec::new();
+    };
+    let mut found: Vec<ChangedNonRust> = Vec::new();
+    for file in crate::analysis::parse_unified_diff(&text) {
+        let Some(language) = non_rust_language(&file.path) else {
+            continue;
+        };
+        let adds_code = !file.added_lines.is_empty();
+        match found.iter_mut().find(|entry| entry.language == language) {
+            Some(entry) => entry.adds_code |= adds_code,
+            None => found.push(ChangedNonRust {
+                language,
+                adds_code,
+            }),
+        }
+    }
+    found.sort_by_key(|entry| entry.language);
+    found
+}
+
+/// The `ripr repair` zero-seam message when the changed code is non-Rust
+/// (#10682): the seam inventory behind `ripr repair` covers Rust only, so
+/// "analyze the workspace" would loop through `ripr pilot` and `ripr check`.
+/// Names the gap-bound start for TypeScript and Python (#10373) and the
+/// manual route otherwise. A deletion-only change gets no `check` finding,
+/// so it is not promised one.
+pub(crate) fn non_rust_repair_guidance(root_display: &str, changed: &[ChangedNonRust]) -> String {
+    let languages = changed
+        .iter()
+        .map(|entry| entry.language)
+        .collect::<Vec<_>>()
+        .join(" and ");
+    let head = format!(
+        "the changed code under {root_display} is {languages}, and `ripr repair` works from Rust seams only"
+    );
+    if !changed.iter().any(|entry| entry.adds_code) {
+        return format!(
+            "{head}. The change only removes code, so `ripr check --root {root_display}` names no gap for it; look at the tests of the remaining behavior by hand"
+        );
+    }
+    let start = if changed
+        .iter()
+        .any(|entry| !gap_bound_start_pointer(entry.language).is_empty())
+    {
+        "; once it is committed and the repair packet is complete, `ripr check` also prints a `ripr agent repair --gap-id <gap> --base <base> --phase before` start"
+    } else {
+        ""
+    };
+    format!(
+        "{head}. Run `ripr check --root {root_display}` for the test to add by hand and its verify command{start}"
+    )
+}
+
 /// Display name of the non-Rust language a repair item names, or `None` for
 /// any other item: a canonical gap id (`gap:<language>:<file>:...`) or the
 /// preview-adapter finding id `ripr check` prints
@@ -1803,16 +1906,26 @@ pub(crate) mod tests {
             relation_reason: crate::domain::RelationReason::DirectOwnerCall,
             relation_confidence: crate::analysis::test_grip_evidence::RelationConfidence::High,
         };
-        let boundary_only = gate_entry(SeamGripClass::WeaklyGripped, vec![targeted]);
+        let mut boundary_only = gate_entry(SeamGripClass::WeaklyGripped, vec![targeted.clone()]);
+        // Activation not observed: the boundary input is what is missing, so
+        // the stub route applies (an observed boundary is #10683, below).
+        boundary_only.evidence.activate = crate::domain::StageEvidence::new(
+            crate::domain::StageState::Unknown,
+            crate::domain::Confidence::Low,
+            "test stage",
+        );
         let refusal = repair_start_refusal_for_entry(root, &boundary_only, policy)
             .ok_or("a boundary-only not-ready seam must be refused")?;
+        // `/repo` gains a drive on Windows and is console-quoted when it needs
+        // it, so the expected root goes through the same binding the refusal
+        // prints.
+        let printed_root = shell_arg(&bound_root(&root.to_string_lossy()));
         assert!(
-            refusal
+            refusal.reason.contains(&format!(
+                "ripr agent stub --root {printed_root} --at src/pricing.rs:88 --kind predicate"
+            )) && refusal
                 .reason
-                .contains("ripr agent stub --root /repo --at src/pricing.rs:88 --kind predicate")
-                && refusal
-                    .reason
-                    .contains("writes a fill-in skeleton for the changed comparison")
+                .contains("writes a fill-in skeleton for the changed comparison")
                 && refusal.reason.contains("prefilled when it derives")
                 && refusal.reason.contains("then rerun `ripr repair`"),
             "{}",
@@ -1826,6 +1939,60 @@ pub(crate) mod tests {
         let bare = repair_start_refusal_for_entry(root, &also_missing_target, policy)
             .ok_or("a target-missing not-ready seam must be refused")?;
         assert!(!bare.reason.contains("--kind predicate"), "{}", bare.reason);
+
+        // #10683: activation observed and only a weak oracle on an admitted
+        // direct test: reuse `check`'s wording, name that test, no stub route
+        // and no internal jargon. Eligibility stays fail-closed.
+        let mut observed = gate_entry(SeamGripClass::WeaklyGripped, vec![targeted.clone()]);
+        // The discriminate stage grades the oracle weak (finding-side parity).
+        observed.evidence.discriminate = crate::domain::StageEvidence::new(
+            crate::domain::StageState::Weak,
+            crate::domain::Confidence::High,
+            "Only relational oracle found",
+        );
+        assert!(!repair_packet_eligibility(&observed).eligible());
+        let refusal = repair_start_refusal_for_entry(root, &observed, policy)
+            .ok_or("a weak-oracle boundary seam must be refused")?;
+        assert_eq!(
+            refusal.reason,
+            format!(
+                "repair route not ready: {} Related test: src/lib.rs:14 it_works",
+                crate::domain::BOUNDARY_OBSERVED_WEAK_ORACLE_NEXT_STEP
+            )
+        );
+        assert!(
+            !refusal.reason.contains("producer-owned")
+                && !refusal.reason.contains("agent stub")
+                && !refusal.reason.contains("boundary test"),
+            "{}",
+            refusal.reason
+        );
+
+        // Discriminating negative: a credited strong oracle elsewhere is a
+        // different gap, so the weak-oracle wording must not apply.
+        let mut not_weak = observed.clone();
+        not_weak.evidence.discriminate = crate::domain::StageEvidence::new(
+            crate::domain::StageState::Unknown,
+            crate::domain::Confidence::Low,
+            "test stage",
+        );
+        assert!(super::weak_oracle_guidance(&observed).is_some());
+        assert!(super::weak_oracle_guidance(&not_weak).is_none());
+        // Several related tests: the boundary observer is ambiguous.
+        let mut two = observed.clone();
+        let mut other = targeted.clone();
+        other.test_name = "other".to_string();
+        two.evidence.related_tests.push(std::sync::Arc::new(other));
+        assert!(super::weak_oracle_guidance(&two).is_none());
+
+        let mut strong = targeted;
+        strong.test_name = "pinned".to_string();
+        strong.oracle_strength = crate::domain::OracleStrength::Strong;
+        let mixed = gate_entry(
+            SeamGripClass::WeaklyGripped,
+            vec![weak_related_test(), strong],
+        );
+        assert!(super::weak_oracle_guidance(&mixed).is_none());
         Ok(())
     }
 

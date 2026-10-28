@@ -198,18 +198,29 @@ Test discovery:
   unresolved relative import, a computed `import()` / `require()`,
   `import.meta.glob` / `require.context` / `createRequire`, a bare specifier a
   tsconfig path, workspace package or the root package name could resolve, a
-  `~`, `#`, `$`, `/` or `@/` specifier, a `baseUrl`, `rootDirs`, a relative
-  `extends`, a package-level `paths`, any bundler, transpiler or test-runner
-  config that declares an alias or module directory, a Rust change related
-  through the Bun bridge, and a closure over 400 files. The conditional
+  `~`, `#`, `$`, `/` or `@/` specifier, a `baseUrl`, `rootDirs`, an uninspected
+  `extends` (including an npm package base, after JSONC key decoding), a
+  project `references` entry, a package-level `paths`, any bundler, transpiler or test-runner config that
+  declares an alias or module directory, a Rust change related through the Bun
+  bridge, and a closure over 400 files. The conditional
   assertion credit and owner-extraction disclosures keep their own scopes.
 - a symlink or junction the walk does not follow is counted for
   `typescript_workspace_links_skipped` / `typescript_repo_links_skipped`
   (#10614) unless it is a link to an existing regular file whose own name the
   adapter would not index (a docs `index.md -> README.md`): the walk indexes by
   the entry's own path, so such a link hides no test or source. A directory
-  link, a source-named link, a dangling link and a link whose target cannot be
-  read stay counted.
+  link is not counted either when it aliases a directory the walk already
+  visits (#10829): its canonical target is a listable directory inside the
+  canonical root with no excluded component (`.tools/skills ->
+  ../.agent/skills`), so its files are indexed at their real path, unless an
+  indexed file's text names the link as a path component (`/<link name>` not
+  continued by another name character, in raw text or in a decoded literal,
+  quoting and comments ignored:
+  `../alias/sum` with `alias -> src`, `'../my lib/sum'`): that import names a
+  path the walk never indexes, so the alias is counted (an unreadable or
+  oversized indexed file counts as naming one; so does a file that does not parse cleanly and contains a `\u`, `\x` or octal escape. Decoded string and template literal values are compared too, so `'..\u002falias/sum'` matches). A directory link that leaves the root, points into an excluded directory or at a
+  directory the walk cannot list, a source-named link, a dangling link and a
+  link whose target cannot be read stay counted.
 - a file named `*.d.ts`, `*.d.mts` or `*.d.cts` is parsed as a TypeScript
   declaration file (#10812): its top-level declarations are ambient, so
   `export const x: T;` is not a parse error there. The same text in an

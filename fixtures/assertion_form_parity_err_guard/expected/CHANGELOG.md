@@ -431,3 +431,27 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — assertion_form_parity_err_guard (33)
+
+Reason:
+RIPR-SPEC-0287: #10683 check no longer prints an agent stub command for a weak-oracle boundary finding that agent stub now refuses; it prints the refusal reason naming the existing test
+
+Command:
+`cargo xtask goldens bless assertion_form_parity_err_guard --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — assertion_form_parity_err_guard (34)
+
+Reason:
+RIPR-SPEC-0122: plain-language wording for the default and human-full check views (#10691); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless assertion_form_parity_err_guard --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
