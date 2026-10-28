@@ -35,6 +35,10 @@ use super::reveal::contains_as_whole_word;
 use crate::analysis::facts::TestFact;
 use crate::analysis::rust_index::{FunctionSummary, RustIndex};
 use crate::domain::*;
+use ra_ap_syntax::{
+    AstNode, ast,
+    ast::{HasModuleItem, HasName},
+};
 
 const LIMIT: StaticLimitKind = StaticLimitKind::RustImplicitCallUnresolved;
 const FIRST_UNRESOLVED_EDGE: &str = "whether the operator, drop glue, iterator or virtual call a test makes lands on the changed method";
@@ -272,11 +276,127 @@ fn reached_only_through_syntax(
             .is_some_and(|test| {
                 let code = crate::analysis::extract::mask_comments_and_strings(&test.body);
                 !calls_method_named(&code, &owner.name)
-                    && !path_owner
-                        .as_ref()
-                        .is_some_and(|path| calls_by_type_path(&code, &owner.name, path))
+                    && !path_owner.as_ref().is_some_and(|path| {
+                        type_path_scope_is_clear(test, owner, index, path)
+                            && calls_by_type_path(&code, &owner.name, path)
+                    })
             })
     })
+}
+
+/// Check only the scopes enclosing this test, not sibling modules. An
+/// unresolved import is not proof that a bare type or trait names the owner.
+fn type_path_scope_is_clear(
+    test: &TestFact,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+    path: &TypePathOwner,
+) -> bool {
+    if test.file != owner.file {
+        return false;
+    }
+    let Some(snapshot) = index.source_syntax.get(index, &test.file) else {
+        return false;
+    };
+    let (Some(scopes), Some(tree)) = (snapshot.lexical_items(), snapshot.tree()) else {
+        return false;
+    };
+    let mut tests = scopes.functions.iter().filter(|f| {
+        f.name == test.name && f.start_line <= test.end_line && test.start_line <= f.end_line
+    });
+    let Some(test_scope) = tests.next() else {
+        return false;
+    };
+    if tests.next().is_some() {
+        return false;
+    }
+    let mut owners = scopes.functions.iter().filter(|f| {
+        f.name == owner.name && f.start_line <= owner.start_line && owner.start_line <= f.end_line
+    });
+    let Some(owner_scope) = owners.next() else {
+        return false;
+    };
+    if owners.next().is_some() {
+        return false;
+    }
+    let owner_module = owner_scope.modules.first().copied();
+    if owner_module.is_some_and(|module| !test_scope.modules.contains(&module)) {
+        return false;
+    }
+    let root = tree.syntax();
+    let clear = |item: ast::Item, module, parent| {
+        let owner_path =
+            |value: &str| value == format!("super::{}", path.self_type) && parent == owner_module;
+        if let ast::Item::Use(ref item) = item {
+            return super::reveal::flattened_use_paths(&item.syntax().text().to_string())
+                .iter()
+                .all(|import| {
+                    let bound = import
+                        .alias
+                        .as_deref()
+                        .unwrap_or_else(|| import.path.rsplit("::").next().unwrap_or(""));
+                    let bound = bound.strip_prefix("r#").unwrap_or(bound);
+                    if bound == "*" {
+                        return matches!(
+                            import.path.as_str(),
+                            "super::*" | "self::*" | "std::ops::*" | "core::ops::*"
+                        );
+                    }
+                    if bound == path.self_type {
+                        return owner_path(&import.path);
+                    }
+                    if bound == path.trait_name {
+                        return import.path == format!("std::ops::{}", path.trait_name)
+                            || import.path == format!("core::ops::{}", path.trait_name);
+                    }
+                    true
+                });
+        }
+        if let ast::Item::Module(ref module) = item {
+            return !module.name().is_some_and(|name| {
+                let name = name.text().to_string();
+                name.strip_prefix("r#").unwrap_or(&name) == path.self_type
+            });
+        }
+        let text =
+            crate::analysis::extract::mask_comments_and_strings(&item.syntax().text().to_string());
+        if matches!(item, ast::Item::Fn(_) | ast::Item::Impl(_)) {
+            return true;
+        }
+        if matches!(
+            item,
+            ast::Item::MacroCall(_) | ast::Item::MacroRules(_) | ast::Item::MacroDef(_)
+        ) {
+            return !contains_as_whole_word(&text, &path.self_type)
+                && !contains_as_whole_word(&text, &path.trait_name);
+        }
+        if module == owner_module {
+            return true;
+        }
+        !rebinds_type_name(&text, &path.self_type) && !rebinds_type_name(&text, &path.trait_name)
+    };
+    if !tree.items().all(|item| clear(item, None, None)) {
+        return false;
+    }
+    let mut enclosing: Vec<_> = scopes
+        .modules
+        .iter()
+        .filter(|m| test_scope.modules.contains(&m.range))
+        .collect();
+    enclosing.sort_by_key(|m| m.range.start());
+    let mut parent = None;
+    for module in enclosing {
+        let node = module.item.to_node(root);
+        if !node.item_list().is_some_and(|items| {
+            items
+                .items()
+                .all(|item| clear(item, Some(module.range), parent))
+        }) {
+            return false;
+        }
+        parent = Some(module.range);
+    }
+    true
 }
 
 /// How the language reaches the owner without a call that names it.
