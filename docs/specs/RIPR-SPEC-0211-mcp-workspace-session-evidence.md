@@ -255,7 +255,12 @@ official SDK transport:
   ready; otherwise the typed first failing gate), matching `ripr_get_gap`.
   `continuation.next_page.arguments` pins the snapshot, filters, and explicit
   limit; replay cannot cross a completed refresh that replaced the snapshot.
-- Gap-list success and refusal documents use `ripr-mcp-gap-list-v3`.
+- Gap-list success and refusal documents use `ripr-mcp-gap-list-v4`.
+  v4 adds `omitted_page` and the `omitted_offset` argument (#9360): the
+  omission disclosure pages on its own axis, 200 identities per response, so
+  a large truncated selection no longer fails the listing with
+  `result_too_large`. `continuation.next_omitted_page` pins the snapshot;
+  walking `omitted_page.next_offset` covers every omission once.
   The former v1 success schema closed its top level with
   `additionalProperties: false`, so adding `filtered` and `filters` cannot
   retain strict v1 compatibility. Clients must rediscover `tools/list`, accept
@@ -519,6 +524,10 @@ unknown route into a recognized one.
 
 ## Test Mapping
 
+- `crates/ripr/src/mcp/workspace.rs::tests::omission_disclosure_pages_independently_of_items`
+  — with more omitted identities than one window, each response carries at
+  most 200, `omitted_page`/`continuation.next_omitted_page` walk every
+  omission exactly once, and a past-end window is empty and closed (#9360).
 - `crates/ripr/src/mcp/workspace.rs::tests::status_serves_per_language_completeness_from_the_view`
   and `status_without_a_view_keeps_the_unchanged_shape` — literal
   `language_completeness` rows and absence without a view.

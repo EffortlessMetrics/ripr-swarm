@@ -91,7 +91,17 @@ pub(crate) const RECOVERY_TOO_LONG: &str = "literal recovery is unavailable beca
 pub(crate) struct GapListWindow {
     pub(crate) offset: usize,
     pub(crate) limit: Option<usize>,
+    /// Start index within the stored omission disclosure (#9360). The
+    /// omission list pages on its own axis, [`OMITTED_WINDOW`] entries at a
+    /// time, so a large truncated selection cannot make the shell outgrow
+    /// the wire bound.
+    pub(crate) omitted_offset: usize,
 }
+
+/// Omitted identities disclosed inline per response. Each entry is a short
+/// identity plus a reason token, so this keeps the omission window well under
+/// the page ceiling; the remainder is reached through `omitted_page`.
+pub(crate) const OMITTED_WINDOW: usize = 200;
 
 /// Caller-narrowed filters over already-projected commit-time facts
 /// (#7464): `file` (exact, prefix, or trailing-segment match after `./`
@@ -206,6 +216,8 @@ struct GapListScope<'a> {
 /// full stored-selection count while `page.returned` counts this page.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct GapPage {
+    /// Requested start of the omission window; see [`GapListWindow`].
+    omitted_offset: usize,
     offset: usize,
     limit: Option<usize>,
     returned: usize,
@@ -788,6 +800,10 @@ impl WorkspaceSession {
         // item summaries; its measured size sets the page budget. The
         // reserve absorbs the small byte difference between this shell's
         // zeroed page fields and the filled ones the caller receives.
+        let shell_page = GapPage {
+            omitted_offset: window.omitted_offset,
+            ..GapPage::default()
+        };
         let shell = {
             let scope = GapListScope {
                 selection,
@@ -795,7 +811,7 @@ impl WorkspaceSession {
                 filter,
                 filtered,
             };
-            self.gap_list_document(snapshot, &scope, Vec::new(), &GapPage::default())?
+            self.gap_list_document(snapshot, &scope, Vec::new(), &shell_page)?
         };
         let shell_bytes = document_bytes(&shell)?;
         // The same shell with an empty filter echo isolates the echo's
@@ -811,7 +827,7 @@ impl WorkspaceSession {
                 filter: &GapListFilter::default(),
                 filtered,
             };
-            self.gap_list_document(snapshot, &scope, Vec::new(), &GapPage::default())?
+            self.gap_list_document(snapshot, &scope, Vec::new(), &shell_page)?
         };
         let shell_without_filter_bytes = document_bytes(&shell_without_filter)?;
         let shell_envelope_overflows =
@@ -881,6 +897,7 @@ impl WorkspaceSession {
         // keep it whole when it fits; only then bisect the strictly
         // monotone continuation prefixes for the largest fitting page.
         let page_fields = |count: usize| GapPage {
+            omitted_offset: window.omitted_offset,
             // The window echoes the requested offset; a past-end request is
             // an empty disclosed page at that offset, not a renumbered one.
             offset: window.offset,
@@ -995,6 +1012,27 @@ impl WorkspaceSession {
             "tool": "ripr_get_gap",
             "resource_template": "ripr://gap/{canonical_id}",
         });
+        // The omission list is windowed independently of the item page: a
+        // past-end offset is an empty disclosed window, never a renumbered
+        // one (#9360).
+        let omitted_start = page.omitted_offset.min(selection.omitted.len());
+        let omitted_end = omitted_start
+            .saturating_add(OMITTED_WINDOW)
+            .min(selection.omitted.len());
+        let omitted_window = &selection.omitted[omitted_start..omitted_end];
+        let omitted_next = (omitted_end < selection.omitted.len()).then_some(omitted_end);
+        if let Some(next_omitted) = omitted_next {
+            // `limit: 1` keeps the walk cheap: the route exists to read the
+            // next omission window, not to re-fetch item summaries.
+            continuation["next_omitted_page"] = json!({
+                "tool": "ripr_list_gaps",
+                "arguments": {
+                    "snapshot_id": snapshot.snapshot_id,
+                    "omitted_offset": next_omitted,
+                    "limit": 1,
+                },
+            });
+        }
         if let Some(next_offset) = page.next_offset {
             // The generated route pins the snapshot identity and the caller
             // filters: a refresh between pages fails closed with
@@ -1059,14 +1097,19 @@ impl WorkspaceSession {
                 "has_more": page.has_more,
                 "next_offset": page.next_offset,
             },
-            "omitted_items": selection
-                .omitted
+            "omitted_items": omitted_window
                 .iter()
                 .map(|item| json!({
                     "canonical_id": item.canonical_id,
                     "reason": omitted_reason_as_str(item.reason),
                 }))
                 .collect::<Vec<_>>(),
+            "omitted_page": {
+                "offset": page.omitted_offset,
+                "returned": omitted_window.len(),
+                "has_more": omitted_next.is_some(),
+                "next_offset": omitted_next,
+            },
             "continuation": continuation,
             "claim_boundary": "Bounded working-set projection over one completed snapshot. Selection is the shared CLI/LSP budget authority; omitted identities and reasons are disclosed, never silently truncated, and no business-risk ranking is inferred. Filters narrow the stored selection over commit-time facts before paging; they never widen it.",
             "limitations": [
@@ -2799,6 +2842,7 @@ mod tests {
                 GapListWindow {
                     offset: 0,
                     limit: Some(1),
+                    ..GapListWindow::default()
                 },
                 &file("src/checkout.rs"),
                 crate::mcp::MAX_RESPONSE_BYTES,
@@ -2836,6 +2880,7 @@ mod tests {
                 GapListWindow {
                     offset: 1,
                     limit: Some(1),
+                    ..GapListWindow::default()
                 },
                 &file("src/checkout.rs"),
                 crate::mcp::MAX_RESPONSE_BYTES,
@@ -3024,6 +3069,96 @@ mod tests {
         Ok(())
     }
 
+    /// #9360: the omission disclosure pages on its own axis. A selection with
+    /// more omitted identities than one window used to render all of them
+    /// inside the non-pageable shell, so enough omissions failed the whole
+    /// listing with `result_too_large`. Now each response carries at most
+    /// [`OMITTED_WINDOW`] identities and `omitted_page` walks the rest
+    /// exactly once.
+    #[test]
+    fn omission_disclosure_pages_independently_of_items() -> Result<(), String> {
+        let session = session_with_findings(700)?;
+        let list = |omitted_offset: usize| -> Result<Value, String> {
+            session
+                .list_gaps(
+                    None,
+                    GapListWindow {
+                        limit: Some(1),
+                        omitted_offset,
+                        ..GapListWindow::default()
+                    },
+                    &GapListFilter::default(),
+                    crate::mcp::MAX_RESPONSE_BYTES,
+                )
+                .map_err(|failure| failure.detail)
+        };
+        let first = list(0)?;
+        let total = first["omitted"].as_u64().ok_or("missing omitted count")? as usize;
+        if total <= OMITTED_WINDOW {
+            return Err(format!(
+                "fixture must omit more than one window ({OMITTED_WINDOW}), got {total}"
+            ));
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        let mut document = first;
+        let mut windows = 0usize;
+        loop {
+            let ids = document["omitted_items"]
+                .as_array()
+                .ok_or("omitted_items must be an array")?;
+            if ids.len() > OMITTED_WINDOW {
+                return Err(format!("window exceeded the cap: {}", ids.len()));
+            }
+            if document["omitted_page"]["returned"] != json!(ids.len()) {
+                return Err(format!("returned must count the window: {document}"));
+            }
+            for item in ids {
+                let id = item["canonical_id"].as_str().ok_or("omitted id")?;
+                if !seen.insert(id.to_string()) {
+                    return Err(format!("omitted identity repeated across windows: {id}"));
+                }
+            }
+            windows += 1;
+            let page = &document["omitted_page"];
+            match page["next_offset"].as_u64() {
+                Some(next) => {
+                    if page["has_more"] != json!(true)
+                        || document["continuation"]["next_omitted_page"]["arguments"]["omitted_offset"]
+                            != json!(next)
+                    {
+                        return Err(format!(
+                            "continuation must name the next window: {document}"
+                        ));
+                    }
+                    document = list(next as usize)?;
+                }
+                None => {
+                    if page["has_more"] != json!(false)
+                        || !document["continuation"]["next_omitted_page"].is_null()
+                    {
+                        return Err(format!("last window must close the route: {document}"));
+                    }
+                    break;
+                }
+            }
+        }
+        if seen.len() != total || windows < 2 {
+            return Err(format!(
+                "walk must cover every omission once: saw {} of {total} in {windows} windows",
+                seen.len()
+            ));
+        }
+        // A past-end window is an empty disclosed window at the echoed offset.
+        let past = list(total + 50)?;
+        if past["omitted_items"] != json!([])
+            || past["omitted_page"]["offset"] != json!(total + 50)
+            || past["omitted_page"]["has_more"] != json!(false)
+        {
+            return Err(format!("past-end window must be empty and closed: {past}"));
+        }
+        Ok(())
+    }
+
     /// #6021: an aggregate listing too large for one wire response degrades
     /// to disclosed pages. The old behavior returned the whole budget-
     /// approved document and let the tool envelope fail `result_too_large`
@@ -3141,6 +3276,7 @@ mod tests {
                     GapListWindow {
                         offset,
                         limit: None,
+                        ..GapListWindow::default()
                     },
                     &GapListFilter::default(),
                     crate::mcp::MAX_RESPONSE_BYTES,
@@ -3192,6 +3328,7 @@ mod tests {
                 GapListWindow {
                     offset: 0,
                     limit: Some(1),
+                    ..GapListWindow::default()
                 },
                 &GapListFilter::default(),
                 crate::mcp::MAX_RESPONSE_BYTES,
@@ -3215,6 +3352,7 @@ mod tests {
                 GapListWindow {
                     offset: requested_offset,
                     limit: None,
+                    ..GapListWindow::default()
                 },
                 &GapListFilter::default(),
                 crate::mcp::MAX_RESPONSE_BYTES,
@@ -3291,6 +3429,7 @@ mod tests {
                 GapListWindow {
                     offset: 10,
                     limit: None,
+                    ..GapListWindow::default()
                 },
                 &GapListFilter::default(),
                 crate::mcp::MAX_RESPONSE_BYTES,
@@ -3365,6 +3504,7 @@ mod tests {
         let window = |offset: usize| GapListWindow {
             offset,
             limit: None,
+            ..GapListWindow::default()
         };
         let echo = |len: usize| GapListFilter {
             file: Some("x".repeat(len)),
