@@ -5808,6 +5808,63 @@ fn perl_direct_row_without_a_strong_owner_oracle_keeps_no_miss() -> Result<(), S
     Ok(())
 }
 
+/// RIPR-SPEC-0235 rule 16 with `oracle_matcher_grading`: the producer separates
+/// an assertion that carries a matcher for the raised error (`strong_exact`)
+/// from a bare `weak_broad` one, so the strong exception assertion is unknown
+/// and the broad one is a gap again. A packet without the capability keeps the
+/// older reading, which the tests above pin.
+#[test]
+fn perl_matcher_grading_separates_pinned_errors_from_broad_assertions() -> Result<(), String> {
+    let graded = |kind: &str, strength: &str| {
+        edited_packet(EXACT_RETURN_PACKET, |packet| {
+            packet
+                .get_mut("producer")
+                .and_then(|producer| producer.get_mut("capabilities"))
+                .and_then(serde_json::Value::as_array_mut)
+                .ok_or("producer has no capabilities")?
+                .push("oracle_matcher_grading".into());
+            set_first(packet, "oracles", "kind", kind.into())?;
+            set_first(packet, "oracles", "strength", strength.into())
+        })
+    };
+    // A graded strong exception assertion pins the error, not the boundary.
+    let pinned = graded("exception_observer", "strong_exact")?;
+    assert_eq!(
+        first_finding_misses(&pinned)?,
+        (ExposureClass::StaticUnknown, vec![None])
+    );
+    let findings = findings_from_packet(&pinned)?;
+    let finding = findings.first().ok_or("expected one finding")?;
+    assert!(finding.canonical_gap.is_none());
+    assert!(
+        finding
+            .recommended_next_step
+            .as_deref()
+            .is_some_and(|step| step.contains("class or message matcher")),
+        "{:?}",
+        finding.recommended_next_step
+    );
+    // A bare broad exception assertion is a gap again.
+    assert_eq!(
+        first_finding_misses(&graded("exception_observer", "weak_broad")?)?.0,
+        ExposureClass::ReachableUnrevealed
+    );
+    // A strong assertion on any other kind keeps the ordinary reading.
+    assert_eq!(
+        first_finding_misses(&graded("exact_return_assertion", "strong_exact")?)?.0,
+        ExposureClass::WeaklyExposed
+    );
+    // Without the capability the same strong exception assertion stays a gap.
+    let ungraded = edited_packet(EXACT_RETURN_PACKET, |packet| {
+        set_first(packet, "oracles", "kind", "exception_observer".into())
+    })?;
+    assert_eq!(
+        first_finding_misses(&ungraded)?.0,
+        ExposureClass::WeaklyExposed
+    );
+    Ok(())
+}
+
 #[test]
 fn perl_broad_oracle_explains_why_it_is_unknown() -> Result<(), String> {
     let broad = EXACT_RETURN_PACKET.replace("\"strong_exact\"", "\"weak_broad\"");

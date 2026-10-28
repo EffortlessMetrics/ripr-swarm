@@ -335,6 +335,18 @@ For each change, the first match wins:
     `dynamic_framework_indirection` kinds stay `reachable_unrevealed`. The
     recommended next step says the producer grades the assertion broad and that
     no change is needed if it asserts the message, class or value.
+
+    **Matcher grading.** A packet whose `producer.capabilities` lists
+    `oracle_matcher_grading` promises that the producer separates these
+    assertions: `throws_ok` with a class or regex and `like(dies {...}, ...)`
+    are `strong_exact`, a bare `dies_ok` or a value `like` stays `weak_broad`,
+    and an exception block nested in such an assertion is not a second oracle.
+    For such a packet a `weak_broad` oracle is an ordinary weak oracle
+    (`reachable_unrevealed`, the gap), and a bound `strong_exact`
+    `exception_observer` reads `static_unknown`: a class or message matcher
+    pins that an error is raised, not which boundary raises it. The recommended
+    next step says so. A packet without the capability keeps the reading above,
+    including example 5. No producer advertises the capability yet.
 17. **`isnt` pins nothing.** An oracle whose recorded expression begins with
     the call `isnt` (bare, or qualified `Test::More::`, `Test2::V0::` or
     `Test2::V1::`) is read as `weak_smoke` when the producer graded it
@@ -634,10 +646,16 @@ cases.
     from code, not probed).
 32. `changed_observable: null` (or blank) on the change: `static_unknown`, no gap, no
     location (rule 18; was `weakly_exposed`).
+33. Example 5's oracle with `producer.capabilities` also listing
+    `oracle_matcher_grading`: `static_unknown`, no gap, no location (rule 16
+    matcher grading). The same packet with the oracle `weak_broad`:
+    `reachable_unrevealed`, gap (without the capability: `static_unknown`).
 
 ## Test Mapping
 
 - Existing: `crates/ripr/src/analysis/language/perl/tests.rs`:
+  `perl_matcher_grading_separates_pinned_errors_from_broad_assertions`
+  (rule 16 matcher grading, example 33),
   `perl_related_test_linking_classifies_reachability_and_revealability`
   (rules 3, 4, 6), `perl_to_domain_oracle_mapping_preserves_signal_kinds`
   (rule 12 kind), `h2_sink_aligned_oracle_classifies_exposed_and_suppresses_repair_gap`
