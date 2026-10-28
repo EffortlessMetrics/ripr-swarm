@@ -11,9 +11,11 @@ Its `Just(100i32)` strategy supplies the boundary, and a direct
 
 ## When
 
-`registered_proptest_profile.rs` invokes public `check_workspace`, renders its
-JSON, and independently compiles/lists/runs the actual `boundary` Cargo test
-target. Hosted preparation fetches this exact lockfile before the offline
+`registered_proptest_profile.rs` runs an isolated child that invokes public
+`ripr::cli::run`, loads the fixture's configuration, and captures the complete
+JSON for diff and repository-exposure checks. It independently compiles, lists
+and runs the actual `boundary` Cargo test target. Hosted preparation fetches
+this exact lockfile before the offline
 checks; missing resolution is an instrument/setup failure, never a skipped
 positive. The native controls disable failure persistence consistently so a
 previous failure cannot replay a case in the deliberately zero-cases row.
@@ -68,6 +70,29 @@ assertion. Those controls must never receive the positive static credit.
 An independent ordinary assertion remains useful beside an unsupported
 property. All counts and exits are test obligations, not a claim that this
 document itself supplies an executed receipt.
+
+Four additional acceptance controls start with an admitted property, revoke one
+premise, and restore the original evidence. A literal `[patch.crates-io]`
+replacement uses a consistent lockfile and successful offline Cargo metadata.
+A canonical dev dependency plus a build dependency must resolve both edge kinds
+to the real provider yet remain outside the admitted dependency contexts.
+An unreferenced `tests/support/property.rs` must not borrow registration from
+the real, independent ordinary test target. `#[cfg(all())]` must collect and
+pass one actual native test while remaining outside this reader's cfg grammar.
+Each refusal checks absent property relations, assertion/value/activation
+evidence and unknown/none oracle fields, not only the final classification.
+
+The internal index controls compare fresh, cold/warm file-cache,
+reconstructed-role and incremental-addition paths through actual seam
+inventory, evidence and classification consumers. The positive requires the
+exact generated TestFact, full receipt source/line offset/name scopes, one
+related property, boundary 100 and established stages. With Rust bytes fixed,
+root Cargo `[env] PROPTEST_CASES='0'` and a changed provider checksum must revoke
+the same authority through reconstruction and incremental reuse; restoring
+each premise must recover the original classified predicate. A separately
+named ordinary witness retains its complete facts. Raw cached parsing and its
+wire round-trip retain the unresolved macro and never store promoted property
+authority.
 
 ## Must Not
 

@@ -920,6 +920,298 @@ fn substituted_provider_and_lock_changes_revoke_the_profile() -> Result<(), Stri
     Ok(())
 }
 
+fn admitted_property(fixture: &Fixture, label: &str) -> Result<(Value, Value), String> {
+    let diff = finding(fixture, &format!("{label}-diff"), None)?;
+    assert_eq!(diff["classification"], "exposed", "{diff}");
+    assert_eq!(diff["related_tests_total"], 1, "{diff}");
+    assert_eq!(diff["related_tests"][0]["name"], "exact_boundary", "{diff}");
+    let cache = fixture.0.join("target/acceptance-cache");
+    let (repo, _) = report(fixture, &format!("{label}-repo"), None, Some(&cache))?;
+    let seam = boundary(&repo)?;
+    assert_eq!(seam["grip_class"], "strongly_gripped", "{repo}");
+    assert_eq!(seam["related_tests_total"], 1, "{repo}");
+    Ok((diff, seam))
+}
+
+fn refused_property(fixture: &Fixture, label: &str) -> Result<(), String> {
+    let diff = finding(fixture, &format!("{label}-diff"), None)?;
+    assert_eq!(diff["classification"], "no_static_path", "{diff}");
+    assert_eq!(diff["related_tests_total"], 0, "{diff}");
+    for values in [
+        &diff["related_tests"],
+        &diff["observed_values"],
+        &diff["activation"]["observed_values"],
+    ] {
+        assert_eq!(values.as_array().map(Vec::len), Some(0), "{diff}");
+    }
+    assert_eq!(
+        diff["assertion_texts"]
+            .as_object()
+            .map(serde_json::Map::len),
+        Some(0),
+        "{diff}"
+    );
+    assert_eq!(diff["oracle_kind"], "unknown", "{diff}");
+    assert_eq!(diff["oracle_strength"], "none", "{diff}");
+    assert_eq!(
+        diff["static_limit_kind"], "rust_macro_reach_unresolved",
+        "{diff}"
+    );
+    let cache = fixture.0.join("target/acceptance-cache");
+    let (repo, _) = report(fixture, &format!("{label}-repo"), None, Some(&cache))?;
+    let seam = boundary(&repo)?;
+    assert_ne!(seam["grip_class"], "strongly_gripped", "{repo}");
+    assert_eq!(seam["related_tests_total"], 0, "{repo}");
+    for key in ["related_tests", "observed_values"] {
+        assert_eq!(seam[key].as_array().map(Vec::len), Some(0), "{repo}");
+    }
+    Ok(())
+}
+
+fn metadata(fixture: &Fixture, label: &str) -> Result<Value, String> {
+    let output = run(
+        fixture,
+        OsStr::new("cargo"),
+        &["metadata", "--offline", "--locked", "--format-version", "1"].map(OsStr::new),
+        label,
+        None,
+        false,
+        None,
+    )?;
+    assert!(
+        output.status.success(),
+        "{label}: metadata setup failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).map_err(|error| error.to_string())
+}
+
+fn package<'a>(metadata: &'a Value, name: &str) -> Result<&'a Value, String> {
+    let matches = metadata["packages"]
+        .as_array()
+        .ok_or("missing Cargo packages")?
+        .iter()
+        .filter(|package| package["name"] == name)
+        .collect::<Vec<_>>();
+    let [package] = matches.as_slice() else {
+        return Err(format!("expected one resolved {name} package: {metadata}"));
+    };
+    Ok(package)
+}
+
+#[test]
+fn patched_registry_dependency_cannot_register_a_property() -> Result<(), String> {
+    let fixture = Fixture::new()?;
+    let before = admitted_property(&fixture, "before-patch")?;
+    std::fs::create_dir(fixture.0.join("fake")).map_err(|error| error.to_string())?;
+    fixture.write(
+        "fake/Cargo.toml",
+        "[package]\nname='proptest'\nversion='1.11.0'\nedition='2021'\n[lib]\npath='lib.rs'\n",
+    )?;
+    fixture.write(
+        "fake/lib.rs",
+        "#[macro_export]\nmacro_rules! proptest { ($($ignored:tt)*) => {} }\n",
+    )?;
+    fixture.write(
+        "Cargo.toml",
+        &format!("{MANIFEST}\n[patch.crates-io]\nproptest={{path='fake'}}\n"),
+    )?;
+    fixture.write("Cargo.lock", "version=4\n[[package]]\nname='lib_proptest'\nversion='0.1.0'\ndependencies=['proptest']\n[[package]]\nname='proptest'\nversion='1.11.0'\n")?;
+    let resolved = metadata(&fixture, "patch-metadata")?;
+    let provider = package(&resolved, "proptest")?;
+    assert_eq!(provider["version"], "1.11.0");
+    assert!(provider["source"].is_null(), "{resolved}");
+    let expected = fixture
+        .0
+        .join("fake/Cargo.toml")
+        .canonicalize()
+        .map_err(|error| error.to_string())?;
+    assert_eq!(
+        Path::new(
+            provider["manifest_path"]
+                .as_str()
+                .ok_or("missing patched manifest")?
+        )
+        .canonicalize()
+        .map_err(|error| error.to_string())?,
+        expected
+    );
+    refused_property(&fixture, "patched")?;
+    fixture.write("Cargo.toml", MANIFEST)?;
+    fixture.write("Cargo.lock", LOCK)?;
+    std::fs::remove_dir_all(fixture.0.join("fake")).map_err(|error| error.to_string())?;
+    assert_eq!(admitted_property(&fixture, "patch-restored")?, before);
+    Ok(())
+}
+
+#[test]
+fn mixed_build_dependency_cannot_register_a_property() -> Result<(), String> {
+    let fixture = Fixture::new()?;
+    let before = admitted_property(&fixture, "before-build-edge")?;
+    // Retain the canonical dev declaration: a build-only manifest would be
+    // refused before the resolved dependency-context consumer is reached.
+    fixture.write(
+        "Cargo.toml",
+        &format!("{MANIFEST}\n[build-dependencies]\nproptest='=1.11.0'\n"),
+    )?;
+    let resolved = metadata(&fixture, "build-edge-metadata")?;
+    let owner = package(&resolved, "lib_proptest")?;
+    let provider = package(&resolved, "proptest")?;
+    assert_eq!(provider["version"], "1.11.0");
+    assert_eq!(
+        provider["source"],
+        "registry+https://github.com/rust-lang/crates.io-index"
+    );
+    let node = resolved["resolve"]["nodes"]
+        .as_array()
+        .ok_or("missing resolved nodes")?
+        .iter()
+        .find(|node| node["id"] == owner["id"])
+        .ok_or("missing owner node")?;
+    let edges = node["deps"]
+        .as_array()
+        .ok_or("missing dependency edges")?
+        .iter()
+        .filter(|edge| edge["name"] == "proptest")
+        .collect::<Vec<_>>();
+    let [edge] = edges.as_slice() else {
+        return Err(format!("expected one proptest edge: {resolved}"));
+    };
+    assert_eq!(edge["pkg"], provider["id"]);
+    let kinds = edge["dep_kinds"]
+        .as_array()
+        .ok_or("missing dependency contexts")?;
+    assert_eq!(kinds.len(), 2, "{resolved}");
+    assert!(
+        kinds.iter().all(|kind| kind["target"].is_null()),
+        "{resolved}"
+    );
+    assert!(kinds.iter().any(|kind| kind["kind"] == "dev"), "{resolved}");
+    assert!(
+        kinds.iter().any(|kind| kind["kind"] == "build"),
+        "{resolved}"
+    );
+    refused_property(&fixture, "build-edge")?;
+    fixture.write("Cargo.toml", MANIFEST)?;
+    assert_eq!(admitted_property(&fixture, "build-edge-restored")?, before);
+    Ok(())
+}
+
+#[test]
+fn unreferenced_property_file_cannot_borrow_an_ordinary_test_target() -> Result<(), String> {
+    let fixture = Fixture::new()?;
+    fixture.write(
+        "src/lib.rs",
+        &format!("{SOURCE}\npub fn ordinary_total(value: i32) -> i32 {{ value + 1 }}\n"),
+    )?;
+    fixture.write(
+        "tests/ordinary.rs",
+        "#[test]\nfn ordinary_witness() { assert_eq!(lib_proptest::ordinary_total(2), 3); }\n",
+    )?;
+    let before = admitted_property(&fixture, "before-unreferenced")?;
+    let ordinary = |label: &str| -> Result<Vec<Value>, String> {
+        let cache = fixture.0.join("target/acceptance-cache");
+        let (report, _) = report(&fixture, label, None, Some(&cache))?;
+        let seams = report["seams"]
+            .as_array()
+            .ok_or("missing ordinary seams")?
+            .iter()
+            .filter(|seam| seam["owner"] == "src/lib.rs::ordinary_total")
+            .cloned()
+            .collect::<Vec<_>>();
+        assert!(!seams.is_empty(), "{report}");
+        assert!(
+            seams.iter().any(|seam| seam["related_tests_total"] == 1),
+            "{report}"
+        );
+        Ok(seams)
+    };
+    let ordinary_before = ordinary("ordinary-before")?;
+    std::fs::create_dir(fixture.0.join("tests/support")).map_err(|error| error.to_string())?;
+    std::fs::rename(
+        fixture.0.join("tests/boundary.rs"),
+        fixture.0.join("tests/support/property.rs"),
+    )
+    .map_err(|error| error.to_string())?;
+    let resolved = metadata(&fixture, "unreferenced-metadata")?;
+    let owner = package(&resolved, "lib_proptest")?;
+    let targets = owner["targets"].as_array().ok_or("missing Cargo targets")?;
+    let unreferenced = fixture
+        .0
+        .join("tests/support/property.rs")
+        .canonicalize()
+        .map_err(|error| error.to_string())?;
+    let ordinary_path = fixture
+        .0
+        .join("tests/ordinary.rs")
+        .canonicalize()
+        .map_err(|error| error.to_string())?;
+    let target_paths = targets
+        .iter()
+        .map(|target| {
+            Path::new(target["src_path"].as_str().ok_or("missing target source")?)
+                .canonicalize()
+                .map_err(|error| error.to_string())
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    assert!(!target_paths.contains(&unreferenced), "{resolved}");
+    assert!(target_paths.contains(&ordinary_path), "{resolved}");
+    refused_property(&fixture, "unreferenced")?;
+    assert_eq!(ordinary("ordinary-unreferenced")?, ordinary_before);
+    std::fs::rename(&unreferenced, fixture.0.join("tests/boundary.rs"))
+        .map_err(|error| error.to_string())?;
+    std::fs::remove_dir(fixture.0.join("tests/support")).map_err(|error| error.to_string())?;
+    assert_eq!(
+        admitted_property(&fixture, "unreferenced-restored")?,
+        before
+    );
+    assert_eq!(ordinary("ordinary-restored")?, ordinary_before);
+    Ok(())
+}
+
+#[test]
+fn active_unsupported_cfg_cannot_register_a_property() -> Result<(), String> {
+    let fixture = Fixture::new()?;
+    let before = admitted_property(&fixture, "before-cfg")?;
+    let configured = PROPERTY.replace("#[test]", "#[cfg(all())]\n    #[test]");
+    assert_ne!(configured, PROPERTY);
+    fixture.write("tests/boundary.rs", &configured)?;
+    let listed = cargo(
+        &fixture,
+        "cfg-list",
+        &["--", "--list", "--format", "terse"],
+        None,
+    )?;
+    assert!(
+        listed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&listed.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&listed.stdout)
+            .lines()
+            .filter(|line| line.ends_with(": test"))
+            .collect::<Vec<_>>(),
+        ["exact_boundary: test"]
+    );
+    let native = cargo(
+        &fixture,
+        "cfg-native",
+        &["exact_boundary", "--", "--exact"],
+        None,
+    )?;
+    assert!(
+        native.status.success(),
+        "{}",
+        String::from_utf8_lossy(&native.stderr)
+    );
+    assert!(String::from_utf8_lossy(&native.stdout).contains("1 passed; 0 failed"));
+    refused_property(&fixture, "active-unsupported-cfg")?;
+    fixture.write("tests/boundary.rs", PROPERTY)?;
+    assert_eq!(admitted_property(&fixture, "cfg-restored")?, before);
+    Ok(())
+}
+
 fn cargo(
     fixture: &Fixture,
     label: &str,
