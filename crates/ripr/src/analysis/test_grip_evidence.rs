@@ -1059,10 +1059,13 @@ fn test_pins_owner_call_by_equality(
 fn test_assertion_observes_owner(test: &TestSummary, owner_name: &str) -> bool {
     let locals = owner_result_locals(&test.body, owner_name);
     test.assertions.iter().any(|oracle| {
-        mentions_owner_call(&oracle.text, owner_name)
+        // Comments and string literals (including `assert!` messages) are not
+        // observations.
+        let masked = crate::analysis::extract::mask_comments_and_strings(&oracle.text);
+        mentions_owner_call(&masked, owner_name)
             || locals
                 .iter()
-                .any(|local| mentions_identifier(&oracle.text, local))
+                .any(|local| mentions_identifier(&masked, local))
     })
 }
 

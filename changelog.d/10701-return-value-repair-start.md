@@ -23,3 +23,6 @@
   with `where Self: Sized` also withholds (an over-withhold).
   `ripr repair <seam>` does not apply the finding-level static-limited verdict
   that `ripr check` uses; it relies on the seam-level evidence and these gates.
+ Assertion observation matches the owner by its function name, not its module
+  path: a same-name call in another module (`other::dbl(2)`) counts as
+  observing the owner. This only offers a start, and is tracked in #10948.

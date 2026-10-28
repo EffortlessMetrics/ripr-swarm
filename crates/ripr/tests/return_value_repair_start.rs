@@ -878,6 +878,38 @@ fn identifier_collisions_with_the_owner_name_are_not_a_repair_start() -> Result<
     Ok(())
 }
 
+/// Comments and string literals in an assertion are not observations of the
+/// owner; a message argument beside a real call does not hide the call.
+#[test]
+fn owner_named_only_in_a_comment_or_string_is_not_a_repair_start() -> Result<(), String> {
+    for (case, assertion) in [
+        ("block-comment", "assert!(1 > 0 /* dbl(2) */);"),
+        ("line-comment", "assert!(1 > 0 // dbl(2)\n    );"),
+        ("message", "assert!(1 > 0, \"dbl(2) wrong\");"),
+        ("literals", "assert_eq!(\"dbl(\", \"dbl(\");"),
+    ] {
+        assert_no_start(
+            &format!("masked-{case}"),
+            DBL_OLD,
+            DBL_NEW,
+            &format!(
+                "use ar::dbl;\n\n#[test]\nfn t() {{\n    let _ = dbl(2);\n    {assertion}\n}}\n"
+            ),
+        )?;
+    }
+    Ok(())
+}
+
+#[test]
+fn owner_call_beside_a_message_argument_still_reaches_repair() -> Result<(), String> {
+    assert_repair_ready(
+        "call-with-message",
+        DBL_OLD,
+        DBL_NEW,
+        "use ar::dbl;\n\n#[test]\nfn t() {\n    assert!(dbl(2) > 0, \"dbl(2) wrong\");\n}\n",
+    )
+}
+
 #[test]
 fn one_letter_owner_is_not_observed_through_a_longer_name() -> Result<(), String> {
     let old = "pub fn f(x: i32) -> i32 {\n    x * 2\n}\n";

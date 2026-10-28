@@ -10447,6 +10447,8 @@ tests = [
   "crates/ripr/tests/return_value_repair_start.rs::bound_owner_result_with_relational_assertion_still_reaches_repair",
   "crates/ripr/tests/return_value_repair_start.rs::identifier_collisions_with_the_owner_name_are_not_a_repair_start",
   "crates/ripr/tests/return_value_repair_start.rs::one_letter_owner_is_not_observed_through_a_longer_name",
+  "crates/ripr/tests/return_value_repair_start.rs::owner_named_only_in_a_comment_or_string_is_not_a_repair_start",
+  "crates/ripr/tests/return_value_repair_start.rs::owner_call_beside_a_message_argument_still_reaches_repair",
   "crates/ripr/tests/return_value_repair_start.rs::qualified_owner_call_in_an_assertion_still_reaches_repair",
   "crates/ripr/tests/return_value_repair_start.rs::equality_assert_pinning_the_owner_is_not_a_repair_start",
   "crates/ripr/tests/return_value_repair_start.rs::terminal_err_return_guard_pinning_the_owner_is_not_a_repair_start",
