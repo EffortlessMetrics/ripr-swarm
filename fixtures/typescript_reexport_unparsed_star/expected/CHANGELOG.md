@@ -11,3 +11,16 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_reexport_unparsed_star (2)
+
+Reason:
+RIPR-SPEC-0108: retain the full human projection required by the independent expected-class assertion for unavailable star facts.
+
+Command:
+`cargo xtask goldens bless typescript_reexport_unparsed_star --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
