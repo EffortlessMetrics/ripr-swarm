@@ -183,6 +183,39 @@ fn counted_removal_receiver_identity_controls() -> Result<(), String> {
     Ok(())
 }
 
+const TWO_METHOD_MODULE: &str = "export const sink = { write(event: string) { void event; }, flush(event: string) { void event; } };\nexport function record(event: string): void {\n  void event;\n}\n";
+
+#[test]
+fn counted_removal_requires_the_spy_on_the_removed_method() -> Result<(), String> {
+    // A positive control on the same module shape, so the sibling-key
+    // refusal below cannot pass merely because the module is unusable.
+    control(
+        "spy-on-removed-method",
+        TWO_METHOD_MODULE,
+        &format!("{SPY} record('a'); {PIN}"),
+        MODULE_IMPORT,
+        true,
+    )?;
+    control(
+        "spy-on-sibling-method",
+        TWO_METHOD_MODULE,
+        "const flush = mock.method(sink, 'flush'); record('a'); assert.equal(flush.mock.callCount(), 1);",
+        MODULE_IMPORT,
+        false,
+    )
+}
+
+#[test]
+fn counted_removal_admits_the_calls_length_count_form() -> Result<(), String> {
+    control(
+        "calls-length-count",
+        MODULE,
+        &format!("{SPY} record('a'); assert.equal(write.mock.calls.length, 1);"),
+        MODULE_IMPORT,
+        true,
+    )
+}
+
 #[test]
 fn counted_removal_refuses_unresolved_execution() -> Result<(), String> {
     for (label, body) in [
