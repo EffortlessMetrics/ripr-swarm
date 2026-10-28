@@ -5822,7 +5822,7 @@ fn perl_matcher_grading_separates_pinned_errors_from_broad_assertions() -> Resul
                 .and_then(|producer| producer.get_mut("capabilities"))
                 .and_then(serde_json::Value::as_array_mut)
                 .ok_or("producer has no capabilities")?
-                .push("oracle_matcher_grading".into());
+                .push(PERL_ORACLE_MATCHER_GRADING.into());
             set_first(packet, "oracles", "kind", kind.into())?;
             set_first(packet, "oracles", "strength", strength.into())
         })

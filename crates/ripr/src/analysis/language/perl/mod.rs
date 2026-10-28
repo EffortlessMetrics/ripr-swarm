@@ -50,11 +50,6 @@ fn is_supported_perl_fact_exporter(name: &str) -> bool {
     )
 }
 
-/// Stable reason marker for a *configured* managed Perl facts producer that
-/// was invoked and failed (#6828). The adapter returns this marked reason so
-/// the pipeline's `perl_run_status_for_err` can map it to
-/// [`LanguageRunStatus::Failed`], whose typed limitation is `producer_failure`
-/// with `inspect_failure` recovery — not the generic missing-packet advice.
 /// Producer capability promising the oracle grading RIPR-SPEC-0235 rule 16
 /// reads: an assertion that carries a matcher for the raised error
 /// (`throws_ok` with a class or regex, `like(dies {...}, ...)`) is
@@ -62,6 +57,11 @@ fn is_supported_perl_fact_exporter(name: &str) -> bool {
 /// exception block nested in such an assertion is not a separate oracle.
 const PERL_ORACLE_MATCHER_GRADING: &str = "oracle_matcher_grading";
 
+/// Stable reason marker for a *configured* managed Perl facts producer that
+/// was invoked and failed (#6828). The adapter returns this marked reason so
+/// the pipeline's `perl_run_status_for_err` can map it to
+/// [`LanguageRunStatus::Failed`], whose typed limitation is `producer_failure`
+/// with `inspect_failure` recovery — not the generic missing-packet advice.
 pub(crate) const PERL_PRODUCER_FAILURE_REASON_PREFIX: &str = "producer failure: ";
 
 /// Mark a threaded `AnalysisOptions::perl_producer_failure` reason so the
