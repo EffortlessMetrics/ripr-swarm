@@ -286,6 +286,7 @@ fn given_the_file_rebinds_names_dynamically_then_the_helper_is_not_credited() {
         "exec(\"np = fake\")",
         "sys.modules[\"numpy\"] = fake",
         "np = importlib.import_module(\"fake\")",
+        "np.testing.assert_array_equal.__code__ = (lambda *args: None).__code__",
     ] {
         assert_not_credited(NP, &format!("    {marker}\n{CALL}"));
     }

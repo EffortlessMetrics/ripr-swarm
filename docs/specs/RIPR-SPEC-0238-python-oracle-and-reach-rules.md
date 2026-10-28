@@ -1097,7 +1097,7 @@ mutant calibrates the rule; ripr reports only the static shape.
     only as `head.` (a module alias) or `head(` (an imported callable), so
     it is never stored or passed along, and `np.testing` is only dotted
     into. No line that patches, mocks or `setattr`s mentions the library or
-    the helper, and `globals(`, `vars(`, `exec(`, `eval(`, `__dict__`,
+    the helper, and `globals(`, `vars(`, `exec(`, `eval(`, `__dict__`, `__code__`,
     `sys.modules`, `importlib`, `__import__` or `import *` anywhere refuses
     the file. The call is not under a `with`, `try` or `match`, where it may
     be expected to fail (`with pytest.raises(AssertionError)`). A numpy

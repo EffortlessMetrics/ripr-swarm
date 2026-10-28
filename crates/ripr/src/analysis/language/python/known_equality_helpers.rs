@@ -25,7 +25,7 @@
 //!   `head(` (an imported callable), so it is never stored or passed along
 //!   where a second name could be rebound;
 //! - the file does not rebind names dynamically (`globals(`, `vars(`, `exec(`,
-//!   `eval(`, `__dict__`, `sys.modules`, `importlib`, `__import__`,
+//!   `eval(`, `__dict__`, `__code__`, `sys.modules`, `importlib`, `__import__`,
 //!   `import *`), and no line that patches, mocks or `setattr`s mentions the
 //!   library or the helper;
 //! - the call is not under a `with`, `try` or `match`, where it may be
@@ -236,6 +236,7 @@ fn writes_names_dynamically(source: &str) -> bool {
         "exec(",
         "eval(",
         "__dict__",
+        "__code__",
         "sys.modules",
         "importlib",
         "__import__",
