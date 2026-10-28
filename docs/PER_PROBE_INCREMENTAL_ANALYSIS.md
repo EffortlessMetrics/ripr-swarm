@@ -4,7 +4,8 @@ Design note for #9784. It is the first acceptance item of that issue: the set
 of facts a probe classification reads, how a stored result is validated against
 them, and why an unrecorded read cannot produce a stale result. It builds
 nothing. The measurement in [Phases](#phases) decides whether the later phases
-are worth building.
+are worth building. The first implementation below observes index reads only;
+it does not yet close Phase A's dependency coverage.
 
 ## Problem
 
@@ -177,6 +178,54 @@ change, each with the same-diff A/B and byte-identical reports that the
 performance rule already requires. These are improvements without a cache.
 
 **C. The store, with `verify` mode on in CI before it is on by default.**
+
+## First implementation: index-read observations
+
+Set `RIPR_PROBE_READ_TRACE=1` before starting the process to enable bounded
+stderr JSON lines with the prefix `ripr_probe_read_trace` followed by one space. Presence enables the
+trace, like the existing latency-trace knob; the process reads this setting
+once. No new command or result cache is introduced.
+
+Each `classify_probe_with_candidate_index_and_origins` invocation owns its
+recording scope, including when one Rayon worker handles several probes.
+`IndexFiles::get/get_key_value` record `file` or `absent`; `iter/values` and
+file-set length record `universe(files)`; `functions/tests` record their
+conservative whole-set views. A view is a whole-set dependency even when the
+caller later narrows it. The site names the calling Rust source location.
+
+Rows contain a probe id when representable, reads grouped by kind/subject/site
+and count, `universe_observed`, and observed/dropped event counts. Repeated
+reads at one site are counted. Identity and subject text is retained only when
+UTF-8 and at most 512 bytes; it is never truncated into another path. At most
+64 distinct read entries are retained per invocation. The JSON body is capped
+at 32 KiB; if its escaped encoding exceeds that bound, all read detail is
+omitted with an explicit flag and dropped-event count. The whole-set flag
+survives either bound. A failed stderr write may leave missing or incomplete
+trace data; it does not change analysis or panic. Reject an incomplete JSON
+line rather than counting it as a finished observation.
+
+Every row reports `coverage: "unknown"`, `reusable: false`, and
+`analysis_completion: "not_established"`. This first increment does not seal
+memo inputs, scalar fields, disk reads or dependency digests, and it does not
+propagate recording into nested worker work. A missing
+`universe` entry is therefore not a closed dependency set or evidence of reuse
+eligibility. `classification_returned` describes only that function returning;
+`interrupted` names an observed cancellation flag. Neither is proof that the
+whole analysis completed or published a result. A forcibly stopped process may
+emit only some observations, or none; it supplies no complete denominator.
+
+The useful first measurement is a lower bound on observed whole-set reads and
+their sites. Preserve unknown and dropped-detail counts. Do not use these rows
+to report the complete no-whole-set-read fraction, claim invalidation or enable
+Phase C. Remaining Phase A work must record memo dependencies on every read
+(including warm hits and pre-primed answers), replace direct scalar access with
+recording accessors, and cover or explicitly refuse the named disk inputs.
+
+The controls compare actual traced and untraced findings plus private
+`ValueOrigins`, exercise real index hits/misses and whole-set views, isolate
+invocations and workers, and require a real nonempty CLI result with identical
+stdout. Native completion and semantic parity are separate from a performance
+measurement; no speedup is claimed by this diagnostic increment.
 
 ## Not in scope
 
