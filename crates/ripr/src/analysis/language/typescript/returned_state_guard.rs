@@ -108,6 +108,43 @@ pub(crate) fn ts_returned_state_change(
     other_writes_are_declarations(&body, target, statement_at, return_at)
 }
 
+/// The old and new right-hand operand of a changed compound assignment to
+/// state the owner returns (`this.total += amount` to `this.total += amount * 2`),
+/// when both statements write the same target with the same operator. The new
+/// state is then a function of the prior state and the operand alone, so two
+/// operands that agree on a call's inputs leave the returned state equal on
+/// both versions whatever the prior state was (#10850).
+pub(crate) fn ts_returned_state_operands<'a>(
+    owner: &TypeScriptOwner,
+    line_text: &'a str,
+    old_line_text: Option<&'a str>,
+) -> Option<(&'a str, &'a str)> {
+    let old_line_text = old_line_text?;
+    if !ts_returned_state_change(owner, line_text, Some(old_line_text)) {
+        return None;
+    }
+    let operand = |line: &'a str, other: &'a str| -> Option<(&'a str, &'static str, &'a str)> {
+        let statement = changed_statement(line, Some(other))?
+            .trim()
+            .trim_end_matches(';')
+            .trim();
+        let masked = ts_mask_literals_and_comments(statement);
+        let target = compound_assignment_target(masked.trim())?;
+        let rest = statement.get(target.len()..)?.trim_start();
+        let operator = COMPOUND_OPERATORS
+            .iter()
+            .find(|operator| rest.starts_with(**operator))?;
+        Some((
+            statement.get(..target.len())?,
+            operator,
+            rest.get(operator.len()..)?.trim(),
+        ))
+    };
+    let (new_target, new_operator, new_operand) = operand(line_text, old_line_text)?;
+    let (old_target, old_operator, old_operand) = operand(old_line_text, line_text)?;
+    (new_target == old_target && new_operator == old_operator).then_some((old_operand, new_operand))
+}
+
 /// Whether `text` holds a call expression: a `(` that follows an identifier,
 /// `)` or `]` and is not the head of a control keyword.
 fn has_call(text: &str) -> bool {

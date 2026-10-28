@@ -198,18 +198,29 @@ Test discovery:
   unresolved relative import, a computed `import()` / `require()`,
   `import.meta.glob` / `require.context` / `createRequire`, a bare specifier a
   tsconfig path, workspace package or the root package name could resolve, a
-  `~`, `#`, `$`, `/` or `@/` specifier, a `baseUrl`, `rootDirs`, a relative
-  `extends`, a package-level `paths`, any bundler, transpiler or test-runner
-  config that declares an alias or module directory, a Rust change related
-  through the Bun bridge, and a closure over 400 files. The conditional
+  `~`, `#`, `$`, `/` or `@/` specifier, a `baseUrl`, `rootDirs`, an uninspected
+  `extends` (including an npm package base, after JSONC key decoding), a
+  project `references` entry, a package-level `paths`, any bundler, transpiler or test-runner config that
+  declares an alias or module directory, a Rust change related through the Bun
+  bridge, and a closure over 400 files. The conditional
   assertion credit and owner-extraction disclosures keep their own scopes.
 - a symlink or junction the walk does not follow is counted for
   `typescript_workspace_links_skipped` / `typescript_repo_links_skipped`
   (#10614) unless it is a link to an existing regular file whose own name the
   adapter would not index (a docs `index.md -> README.md`): the walk indexes by
   the entry's own path, so such a link hides no test or source. A directory
-  link, a source-named link, a dangling link and a link whose target cannot be
-  read stay counted.
+  link is not counted either when it aliases a directory the walk already
+  visits (#10829): its canonical target is a listable directory inside the
+  canonical root with no excluded component (`.tools/skills ->
+  ../.agent/skills`), so its files are indexed at their real path, unless an
+  indexed file's text names the link as a path component (`/<link name>` not
+  continued by another name character, in raw text or in a decoded literal,
+  quoting and comments ignored:
+  `../alias/sum` with `alias -> src`, `'../my lib/sum'`): that import names a
+  path the walk never indexes, so the alias is counted (an unreadable or
+  oversized indexed file counts as naming one; so does a file that does not parse cleanly and contains a `\u`, `\x` or octal escape. Decoded string and template literal values are compared too, so `'..\u002falias/sum'` matches). A directory link that leaves the root, points into an excluded directory or at a
+  directory the walk cannot list, a source-named link, a dangling link and a
+  link whose target cannot be read stay counted.
 - a file named `*.d.ts`, `*.d.mts` or `*.d.cts` is parsed as a TypeScript
   declaration file (#10812): its top-level declarations are ambient, so
   `export const x: T;` is not a parse error there. The same text in an
@@ -497,14 +508,18 @@ boundary without changing the guards (#4104 E):
   witness whose numeric expectation equals neither. When the changed line is a
   plain `if (` that opens a brace but the scan cannot read its pair (a one-line
   `if (c) { return 1; }`, which would hand it the enclosing block's returns, or
-  an `if` nested in an arrow or `function`, whose returns belong to that
-  function), the check withholds as well: a pin that cannot be shown live does
+  an `if` nested in an arrow, a `function` or an object-literal or class
+  method such as `pick(n) {` or `async pick(n): T {`, whose returns belong to
+  that function), the check withholds as well: a pin that cannot be shown live does
   not witness the boundary, live or dead. The rule applies after the existing
   gates (an owner body, a numeric expectation, a unique changed line); where one
   of those fails, the witness decision stands as before. A changed ternary,
   `else if` head, brace-less one-line `if` (#10463) or a condition that
-  continues onto the next line keeps its previous behavior. Method shorthand
-  and class methods are not recognized as nested functions (#10776).
+  continues onto the next line keeps its previous behavior. A method head is
+  recognized by its signature (a name, a parameter list, an optional return
+  type); a computed or string-literal name, an optional method (`pick?(n)`), an
+  object-type return and a method named like a control keyword are not, and keep
+  their previous behavior (#10776).
 
 When the adapter cannot classify, it emits one of the `static_limit_kind`
 values defined in RIPR-SPEC-0026:

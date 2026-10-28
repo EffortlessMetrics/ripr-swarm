@@ -15736,6 +15736,67 @@ fn branch_return_expressions_refuses_a_changed_if_in_a_nested_function() {
     }
 }
 
+/// #10776: a changed `if` inside an object-literal or class method belongs to
+/// that method's returns, not the owner's. Method shorthand carries neither
+/// `=>` nor `function`, so the signature itself is what marks the body.
+#[test]
+fn branch_return_expressions_refuses_a_changed_if_in_a_method_shorthand() {
+    for header in [
+        "    const o = { pick(n: number) {",
+        "    const o = { pick(n: number): number {",
+        "    const o = { async pick(n: number) {",
+        "    const o = { get pick() {",
+        "    const o = { *pick(n: number) {",
+        "    const o = { pick<T>(n: T) {",
+    ] {
+        let lines: Vec<&str> = [
+            "export function f(s: number): number {",
+            header,
+            "        if (n === 404) {",
+            "            return 1;",
+            "        }",
+            "        return 2;",
+            "    } };",
+            "    return o.pick(s);",
+            "}",
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(branch_return_expressions(&lines, 2), None, "{header}");
+    }
+}
+
+/// #10776 controls: a control head (`for`, `while`, `switch`, `catch`) or a
+/// call that passes an object is not a method, so the scan still reads the
+/// enclosing owner's returns.
+#[test]
+fn branch_return_expressions_keeps_control_heads_and_object_arguments() {
+    for header in [
+        "    for (const k of keys) {",
+        "    while (go(s)) {",
+        "    try {",
+        "    } catch (e) {",
+        "    run(s, {",
+        "    const o = {",
+        "    f(s) < limit {",
+    ] {
+        let lines: Vec<&str> = [
+            "export function f(s: number): number {",
+            header,
+            "        if (s === 404) {",
+            "            return 1;",
+            "        }",
+            "        return 2;",
+            "    }",
+            "    return 3;",
+            "}",
+        ]
+        .into_iter()
+        .collect();
+        assert!(branch_return_expressions(&lines, 2).is_some(), "{header}");
+    }
+}
+
 /// #7433 controls: a multi-line `if` nested in a plain block, an arrow owner,
 /// and braces or `=>` inside earlier strings and comments keep the scan.
 #[test]
@@ -15870,6 +15931,109 @@ fn expected_side_is_live_withholds_a_changed_if_in_a_nested_function() {
         expected_side_is_live(
             &owner,
             "        if (n === 404) {",
+            "n",
+            "404",
+            &["404".to_string()],
+            "1",
+        ),
+        Some(false)
+    );
+}
+
+/// #10776 control: a statement without a trailing `;` stays in the text before
+/// the next block head, but the call is not that block's signature, so the
+/// block is plain and the scan still reads the owner's returns. A decorator on
+/// its own line does not hide the method it decorates.
+#[test]
+fn branch_return_expressions_reads_a_block_after_a_semicolon_less_call() {
+    let after_call: Vec<&str> = [
+        "export function f(s: number): number {",
+        "    log(s)",
+        "    while (go(s)) {",
+        "        if (s === 404) {",
+        "            return 1;",
+        "        }",
+        "        return 2;",
+        "    }",
+        "    return 3;",
+        "}",
+    ]
+    .into_iter()
+    .collect();
+    assert!(branch_return_expressions(&after_call, 3).is_some());
+    let decorated: Vec<&str> = [
+        "export function f(s: number): number {",
+        "    class C {",
+        "        @Get()",
+        "        pick(n: number) {",
+        "            if (n === 404) {",
+        "                return 1;",
+        "            }",
+        "            return 2;",
+        "        }",
+        "    }",
+        "    return new C().pick(s);",
+        "}",
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(branch_return_expressions(&decorated, 4), None);
+    // A multi-line parameter list and a brace on its own line keep the name.
+    for (header, changed) in [
+        (
+            vec!["        pick(", "            n: number", "        ) {"],
+            5,
+        ),
+        (vec!["        pick(n: number)", "        {"], 4),
+    ] {
+        let mut lines: Vec<&str> =
+            vec!["export function f(s: number): number {", "    const o = {"];
+        lines.extend(header);
+        lines.extend([
+            "            if (n === 404) {",
+            "                return 1;",
+            "            }",
+            "            return 2;",
+            "        }",
+            "    };",
+            "    return o.pick(s);",
+            "}",
+        ]);
+        assert_eq!(
+            branch_return_expressions(&lines, changed),
+            None,
+            "{lines:?}"
+        );
+    }
+}
+
+/// #10776: a changed `if` inside a class method is withheld the same way.
+#[test]
+fn expected_side_is_live_withholds_a_changed_if_in_a_method_shorthand() {
+    let owner = TypeScriptOwner {
+        source_text: Some(
+            concat!(
+                "export function f(s: number): number {\n",
+                "    const o = {\n",
+                "        async pick(n: number): Promise<number> {\n",
+                "            if (n === 404) {\n",
+                "                return 1;\n",
+                "            }\n",
+                "            return 2;\n",
+                "        },\n",
+                "    };\n",
+                "    return o.pick(s);\n",
+                "}",
+            )
+            .to_string(),
+        ),
+        params: vec!["s".to_string()],
+        ..boundary_witness_owner()
+    };
+    assert_eq!(
+        expected_side_is_live(
+            &owner,
+            "            if (n === 404) {",
             "n",
             "404",
             &["404".to_string()],
@@ -18794,6 +18958,7 @@ mod dropped_term_tests;
 mod enum_member_tests;
 mod error_payload_tests;
 mod function_reference_callback_tests;
+mod gap_reach_config_tests;
 mod guard_entry_tests;
 mod instance_class_tests;
 mod issue7507_shadow_tests;
@@ -18826,6 +18991,7 @@ mod rounding_mode_tests;
 mod scope_receiver_tests;
 mod spec0243_owner_tests;
 mod spy_module_object_tests;
+mod string_write_scan_tests;
 mod suite_factory_tests;
 mod table_case_tests;
 mod table_loop_tests;
@@ -19493,4 +19659,91 @@ fn finding_resting_only_on_a_guarded_test_reads_static_unknown() -> Result<(), S
     );
     let _ = std::fs::remove_dir_all(&root);
     Ok(())
+}
+
+fn cart_add_owner() -> TypeScriptOwner {
+    TypeScriptOwner {
+        name: "add".to_string(),
+        owner_kind: OwnerKind::Method,
+        class_name: Some("Cart".to_string()),
+        params: vec!["amount".to_string()],
+        arity: Some(1),
+        source_text: Some(
+            concat!(
+                "add(amount: number): number {\n",
+                "    this.total += amount * 2;\n",
+                "    return this.total;\n",
+                "}",
+            )
+            .to_string(),
+        ),
+        ..boundary_witness_owner()
+    }
+}
+
+/// #10850: a changed compound assignment to returned state is judged on its
+/// operand, and only when both statements use the same target and operator.
+#[test]
+fn returned_state_operands_pair_an_edited_operand_of_the_same_operator() {
+    let owner = cart_add_owner();
+    assert_eq!(
+        classifier::returned_state_operands(
+            "    this.total += amount * 2;",
+            Some("    this.total += amount;"),
+            &owner,
+        ),
+        Some(("amount", "amount * 2"))
+    );
+    // A different operator changes how the prior state combines with the operand.
+    assert_eq!(
+        classifier::returned_state_operands(
+            "    this.total -= amount * 2;",
+            Some("    this.total += amount;"),
+            &owner,
+        ),
+        None
+    );
+    // A parameter the owner rebinds is not the call's argument.
+    let rebinding = TypeScriptOwner {
+        source_text: Some(
+            concat!(
+                "add(amount: number): number {\n",
+                "    amount = amount + 1;\n",
+                "    this.total += amount * 2;\n",
+                "    return this.total;\n",
+                "}",
+            )
+            .to_string(),
+        ),
+        ..cart_add_owner()
+    };
+    assert_eq!(
+        classifier::returned_state_operands(
+            "    this.total += amount * 2;",
+            Some("    this.total += amount;"),
+            &rebinding,
+        ),
+        None
+    );
+    // An added statement has no old operand to compare.
+    assert_eq!(
+        classifier::returned_state_operands("    this.total += amount * 2;", None, &owner),
+        None
+    );
+}
+
+/// #10850: a state update is read through whatever plain receiver the test
+/// calls the method on; a chained receiver is left unnamed.
+#[test]
+fn instance_call_receivers_name_plain_receivers_only() {
+    assert_eq!(
+        classifier::instance_call_receivers("cart.add(0)", "add"),
+        vec!["cart".to_string()]
+    );
+    assert_eq!(
+        classifier::instance_call_receivers("a.add(1) + b.add(2)", "add"),
+        vec!["a".to_string(), "b".to_string()]
+    );
+    assert!(classifier::instance_call_receivers("a.b.add(1)", "add").is_empty());
+    assert!(classifier::instance_call_receivers("add(1)", "add").is_empty());
 }

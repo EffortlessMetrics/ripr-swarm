@@ -1292,6 +1292,110 @@ pub(crate) fn plain_changed_return<'t>(
     Some((old_expression, new_expression))
 }
 
+/// Whether the test file names `name` anywhere outside its test bodies (a
+/// hook, a describe-level binding or a file-level helper); `None` when the file
+/// cannot be read or a body cannot be blanked unambiguously. Unlike
+/// [`test_file_names_owner_only_in_test_bodies`] it tolerates ordinary
+/// statements outside the tests (a shared instance, a fixture definition): it
+/// only asks whether the owner is called there.
+fn test_file_names_owner_outside_test_bodies(
+    test: &TypeScriptTest,
+    sibling_tests: &[TypeScriptTest],
+    name: &str,
+    root: &Path,
+) -> Option<bool> {
+    // The test bodies come from the analyzed snapshot, so the file text is
+    // read from the same one (a committed-history diff reads HEAD).
+    let mut source = String::from_utf8(
+        crate::analysis::committed_source::read_source_bytes(root, &test.file).ok()??,
+    )
+    .ok()?;
+    let bodies: Vec<&str> = sibling_tests
+        .iter()
+        .filter(|sibling| sibling.file == test.file && !sibling.body_text.is_empty())
+        .map(|sibling| sibling.body_text.as_str())
+        .collect();
+    // Blanking a body that occurs twice would also blank its copy outside
+    // the tests, hiding a call there; refuse instead.
+    if source.matches(test.body_text.as_str()).count() != 1
+        || bodies.iter().any(|body| source.matches(body).count() != 1)
+    {
+        return None;
+    }
+    for body in bodies {
+        source = source.replace(body, "");
+    }
+    Some(word_occurrences(&source, name) > 0)
+}
+
+/// Whether every call that can move the owner's state is one the rule reads
+/// (#10850). A hook, a describe-level binding or a file-level helper that names
+/// the owner can seed state this test body does not show, and a sibling test of
+/// the file that calls the owner but is not itself a related candidate could
+/// share an instance, so either leaves the existing verdict.
+fn state_update_calls_are_all_seen(
+    test: &TypeScriptTest,
+    candidates: &[TypeScriptRelatedCandidate<'_>],
+    all_tests: &[TypeScriptTest],
+    owner: &TypeScriptOwner,
+    workspace_root: Option<&Path>,
+) -> bool {
+    let Some(root) = workspace_root else {
+        return false;
+    };
+    if test_file_names_owner_outside_test_bodies(test, all_tests, &owner.name, root) != Some(false)
+    {
+        return false;
+    }
+    all_tests
+        .iter()
+        .filter(|sibling| {
+            sibling.file == test.file && word_occurrences(&sibling.body_text, &owner.name) > 0
+        })
+        .all(|sibling| {
+            candidates.iter().any(|candidate| {
+                candidate.test.file == sibling.file && candidate.test.line == sibling.line
+            })
+        })
+}
+
+/// The plain receivers of every `<receiver>.<owner_name>(` call in `observed`.
+pub(crate) fn instance_call_receivers(observed: &str, owner_name: &str) -> Vec<String> {
+    observed
+        .match_indices(owner_name)
+        .filter_map(|(at, _)| {
+            let before = observed.get(..at)?;
+            before
+                .trim_end()
+                .ends_with('.')
+                .then(|| receiver_before_dot(before))
+        })
+        .filter(|receiver| !receiver.is_empty())
+        .collect()
+}
+
+/// The old and new operand of a changed compound assignment to returned state
+/// (#10850), when the owner declares parameters and never rebinds one, so the
+/// operand reads the call's arguments.
+pub(crate) fn returned_state_operands<'t>(
+    line_text: &'t str,
+    old_line_text: Option<&'t str>,
+    owner: &TypeScriptOwner,
+) -> Option<(&'t str, &'t str)> {
+    if owner.arity.is_none() || owner.params.is_empty() {
+        return None;
+    }
+    let source = owner.source_text.as_deref()?;
+    if owner
+        .params
+        .iter()
+        .any(|param| identifier_written_in(source, param))
+    {
+        return None;
+    }
+    returned_state_guard::ts_returned_state_operands(owner, line_text, old_line_text)
+}
+
 /// Whether the changed `return` at `line` runs for every call of a plain,
 /// synchronous owner: nothing between the signature and the return branches,
 /// returns or throws early, and the owner is neither `async` nor a generator.
@@ -1354,6 +1458,7 @@ pub(crate) fn ts_returned_expression_unexercised(
     old_line_text: Option<&str>,
     owner: &TypeScriptOwner,
     candidates: &[TypeScriptRelatedCandidate<'_>],
+    all_tests: &[TypeScriptTest],
     alias_map: Option<&TsAliasMap>,
     workspace_root: Option<&Path>,
     other_credit_present: bool,
@@ -1361,9 +1466,16 @@ pub(crate) fn ts_returned_expression_unexercised(
     if other_credit_present {
         return false;
     }
-    let Some((old_expression, new_expression)) =
-        plain_changed_return(line, line_text, old_line_text, owner, workspace_root)
-    else {
+    // #10850: a changed compound assignment to returned state (`this.total +=
+    // amount` to `+= amount * 2`) is judged on its operand. The state
+    // accumulates across calls, so every owner call in a test must be one of
+    // the evaluated assertions' calls.
+    let plain = plain_changed_return(line, line_text, old_line_text, owner, workspace_root);
+    let state_operands = match plain {
+        Some(_) => None,
+        None => returned_state_operands(line_text, old_line_text, owner),
+    };
+    let Some((old_expression, new_expression)) = plain.or(state_operands) else {
         return false;
     };
     let mut evaluated = false;
@@ -1374,7 +1486,18 @@ pub(crate) fn ts_returned_expression_unexercised(
         if local_identifier_declared_in_test_body(&candidate.test.body_text, &owner.name) {
             return false;
         }
-        let receivers =
+        if state_operands.is_some()
+            && !state_update_calls_are_all_seen(
+                candidate.test,
+                candidates,
+                all_tests,
+                owner,
+                workspace_root,
+            )
+        {
+            return false;
+        }
+        let mut receivers =
             unshadowed_owner_namespace_receivers(candidate.test, owner, alias_map, workspace_root);
         for assertion in &candidate.test.assertions {
             if assertion.oracle_strength.rank() < OracleStrength::Strong.rank() {
@@ -1383,6 +1506,12 @@ pub(crate) fn ts_returned_expression_unexercised(
             let Some(observed) = assertion.observed_expression.as_deref() else {
                 return false;
             };
+            if state_operands.is_some() {
+                // A state update is read through an instance (`cart.add(0)`),
+                // not a namespace import. The whole-body call count below
+                // rejects a call on a receiver this reading cannot name.
+                receivers.extend(instance_call_receivers(observed, &owner.name));
+            }
             let mut argument_lists = owner_call_arguments(observed, &owner.name, &receivers);
             if argument_lists.is_empty()
                 && let Some(arguments) = ts_observed_local_owner_call_arguments(
@@ -1401,6 +1530,35 @@ pub(crate) fn ts_returned_expression_unexercised(
             // other call (`g(2)` that itself calls the owner) is opaque.
             if observed_has_other_call(observed, &owner.name) {
                 return false;
+            }
+            if state_operands.is_some() {
+                let masked_body = ts_mask_literals_and_comments(&candidate.test.body_text);
+                let owner_calls = masked_body
+                    .match_indices(owner.name.as_str())
+                    .filter(|(at, _)| {
+                        // Every mention counts, not only `name(`: a bound,
+                        // extracted or destructured method value can move the
+                        // state without that syntax, so it must stay unequal
+                        // to the asserted calls and keep the verdict.
+                        !masked_body[..*at]
+                            .chars()
+                            .next_back()
+                            .is_some_and(|c| c.is_alphanumeric() || matches!(c, '_' | '$'))
+                    })
+                    .count();
+                let asserted_calls: usize = candidate
+                    .test
+                    .assertions
+                    .iter()
+                    .filter(|assertion| {
+                        assertion.oracle_strength.rank() >= OracleStrength::Strong.rank()
+                    })
+                    .filter_map(|assertion| assertion.observed_expression.as_deref())
+                    .map(|observed| owner_call_arguments(observed, &owner.name, &receivers).len())
+                    .sum();
+                if owner_calls != asserted_calls {
+                    return false;
+                }
             }
             for arguments in argument_lists {
                 match literal_eval::return_expressions_agree(
@@ -5048,8 +5206,8 @@ pub(crate) fn branch_return_expressions(lines: &[&str], start: usize) -> Option<
 /// starts at depth 1, so a one-line `if (c) { return 1; }` would read the
 /// enclosing block's next `return` as the true branch, and a changed `if`
 /// inside a nested arrow or `function` would read that inner function's
-/// returns instead of the owner's (method shorthand carries neither token and
-/// is not recognized). Braces in strings and comments are blanked
+/// returns instead of the owner's; an object-literal or class method counts as a
+/// nested function too (#10776). Braces in strings and comments are blanked
 /// first; `None` means the text could not be lined up, which also fails the scan.
 fn changed_if_opens_its_own_body(lines: &[&str], start: usize) -> Option<bool> {
     lines.get(start)?;
@@ -5078,7 +5236,11 @@ fn changed_if_opens_its_own_body(lines: &[&str], start: usize) -> Option<bool> {
                     let names_function = segment
                         .split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
                         .any(|token| token == "function");
-                    opened_by_function.push(segment.trim_end().ends_with("=>") || names_function);
+                    opened_by_function.push(
+                        segment.trim_end().ends_with("=>")
+                            || names_function
+                            || opens_method_body(&segment),
+                    );
                     segment.clear();
                 }
                 '}' => {
@@ -5091,6 +5253,126 @@ fn changed_if_opens_its_own_body(lines: &[&str], start: usize) -> Option<bool> {
         }
     }
     Some(!opened_by_function.iter().skip(1).any(|nested| *nested))
+}
+
+/// Whether the text before a `{` is a method signature (`name(args)`,
+/// `async name(args): T`, `static get name()`): a name, a parameter list that
+/// closes before the brace, and an optional return type. Control heads
+/// (`if (c)`, `for (...)`, `catch (e)`) have the same shape and are excluded by
+/// keyword; a call that passes an object (`f(a, {`) never closes its list.
+fn opens_method_body(segment: &str) -> bool {
+    const MODIFIERS: [&str; 9] = [
+        "public",
+        "private",
+        "protected",
+        "static",
+        "async",
+        "get",
+        "set",
+        "readonly",
+        "override",
+    ];
+    const NOT_A_NAME: [&str; 12] = [
+        "if", "else", "for", "while", "switch", "catch", "with", "do", "return", "new", "function",
+        "class",
+    ];
+    // A statement without a trailing `;` stays in `segment`, so the signature
+    // is only the text after the last newline outside a parameter list
+    // (`log(x)\nwhile (go) {` must not read `log(x)` as a method head).
+    let mut depth = 0i64;
+    let mut head_start = 0;
+    let mut previous_head_start = 0;
+    for (index, c) in segment.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            '\n' if depth == 0 => {
+                previous_head_start = head_start;
+                head_start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    if depth != 0 {
+        return false;
+    }
+    // A brace on its own line (`pick(n)\n{`) leaves nothing after the last
+    // newline, so the signature is the line before it.
+    if segment[head_start..].trim().is_empty() {
+        head_start = previous_head_start;
+    }
+    if !segment[head_start..].contains(')') {
+        return false;
+    }
+    let mut rest = segment[head_start..]
+        .trim_start()
+        .trim_start_matches('*')
+        .trim_start();
+    loop {
+        let word_end = rest
+            .find(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
+            .unwrap_or(rest.len());
+        let word = &rest[..word_end];
+        let after = rest[word_end..].trim_start();
+        let another_name_follows = after
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_alphanumeric() || matches!(c, '_' | '$' | '[' | '*'));
+        if MODIFIERS.contains(&word) && another_name_follows {
+            rest = after.trim_start_matches('*').trim_start();
+            continue;
+        }
+        if word.is_empty() || NOT_A_NAME.contains(&word) {
+            return false;
+        }
+        return signature_tail(after).is_some_and(|tail| tail.is_empty() || tail.starts_with(':'));
+    }
+}
+
+/// The text after a method's optional `<...>` type-parameter list and its
+/// balanced `(...)` parameter list, trimmed; `None` when `text` does not open
+/// with them. `pick<T>(n)` is a head and a comparison like `f(s) < limit` has
+/// trailing text that is not a return type.
+fn signature_tail(text: &str) -> Option<&str> {
+    let mut rest = text;
+    if rest.starts_with('<') {
+        let mut depth = 0i64;
+        let mut previous = ' ';
+        let mut end = None;
+        for (index, c) in rest.char_indices() {
+            match c {
+                '<' => depth += 1,
+                // `=>` inside a type argument is an arrow, not a closing bracket.
+                '>' if previous != '=' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = Some(index + 1);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+            previous = c;
+        }
+        rest = rest[end?..].trim_start();
+    }
+    if !rest.starts_with('(') {
+        return None;
+    }
+    let mut depth = 0i64;
+    for (index, c) in rest.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(rest[index + 1..].trim());
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// The expression of a single-line `return <expr>;` statement, when `trimmed`
@@ -6619,6 +6901,7 @@ pub(crate) fn classify_resolved_owner(
             old_line_text,
             owner,
             related_candidates,
+            all_tests,
             alias_map,
             workspace_root,
             !pin_facts.is_empty() || lookup_change.is_some(),
@@ -6770,6 +7053,14 @@ pub(crate) fn classify_resolved_owner(
                     )
                 })
                 .unwrap_or_else(|| {
+                    if returned_state_guard::ts_returned_state_operands(owner, line_text, old_line_text)
+                        .is_some()
+                    {
+                        return format!(
+                            "Every related assertion calls `{}` with literal inputs on which the old and the changed state update add the same amount; an exact assertion on those inputs passes on both versions. Add an input on which the two updates differ.",
+                            owner.name
+                        );
+                    }
                     format!(
                         "Every related assertion calls `{}` with literal inputs on which the old and the changed returned expression evaluate to the same value; the changed arm or bound is not exercised, so an exact assertion on those inputs passes on both versions. Add an input that reaches the changed arm.",
                         owner.name
@@ -7091,6 +7382,8 @@ pub(crate) fn classify_resolved_owner(
                 .first()
                 .map_or("see missing evidence.", String::as_str)
         )
+    } else if returned_expression_unexercised {
+        "TypeScript preview adapter: strong oracle found but its literal inputs give the old and the changed code the same value; the assertion does not discriminate the change.".to_string()
     } else if strongest_strength >= OracleStrength::Strong.rank() {
         // RIPR-SPEC-0098: strong oracle exists but observation guard failed.
         "TypeScript preview adapter: strong oracle found but no assertion's observed_expression flows from the changed sub-expression; observation_unverified — discriminate unknown.".to_string()

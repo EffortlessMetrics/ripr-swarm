@@ -597,6 +597,9 @@ impl OwnerCallIdentity {
     }
 
     fn name_scopes(&self, test: &TestSummary, index: &RustIndex) -> Option<Arc<NameScopes>> {
+        if let Some(scopes) = index.proptest_name_scopes(test) {
+            return Some(scopes);
+        }
         index
             .source_syntax
             .get(index, &test.file)?
@@ -1789,6 +1792,32 @@ pub(super) fn qualified_owner_calls_resolve(
             Some(segments) if segments.is_empty() => true,
             Some(segments) if names_a_type(&segments) => true,
             Some(segments) => qualified_call_names_owner(index, owner, test, &segments),
+        })
+}
+
+/// Binding for new typed and receipt-backed property repository inputs. Reuse
+/// the existing free-owner authority, including raw twins and crate-root shadows;
+/// the general qualified-call resolver and its old consumers stay unchanged.
+pub(in crate::analysis) fn bound_free_owner_calls(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+    test: &TestSummary,
+    call_text: &str,
+    syntax: &super::owner_pin::OwnerPinSyntax,
+) -> bool {
+    let qualifiers = call_qualifiers(call_text, &owner.name);
+    !qualifiers.is_empty()
+        && qualifiers.into_iter().all(|qualifier| {
+            qualifier.is_some_and(|segments| {
+                let prefix = (!segments.is_empty()).then(|| segments.join("::"));
+                super::owner_pin::targeted_free_call_reaches_owner(
+                    test,
+                    owner,
+                    prefix.as_deref(),
+                    index,
+                    syntax,
+                )
+            })
         })
 }
 

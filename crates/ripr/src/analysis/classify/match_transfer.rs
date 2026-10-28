@@ -60,6 +60,11 @@ struct MatchArm {
     /// matches AND the guard evaluates to `true` over the exact inputs.
     /// `None` is an unguarded arm.
     guard: Option<String>,
+    /// A bare lowercase binding pattern (`other => ..`), read as a
+    /// catch-all only when the file shows the name is not a constant, a
+    /// static or another item (#10680, RIPR-SPEC-0164#4). `pattern` is
+    /// `None` for it.
+    binding: Option<String>,
     value: MatchValue,
 }
 
@@ -80,7 +85,18 @@ pub(crate) fn match_return_value(
     };
     for arm in &shape.arms {
         let selected = match &arm.pattern {
-            None => true,
+            None => {
+                // A binding that may be a constant or another item could
+                // select only some scrutinees: refuse the whole match.
+                if arm
+                    .binding
+                    .as_deref()
+                    .is_some_and(|name| binding_may_name_item(name, helper, eval))
+                {
+                    return None;
+                }
+                true
+            }
             Some(literals) => {
                 // A literal of the other type would not compile against
                 // this scrutinee; refuse rather than guess a mismatch.
@@ -196,11 +212,20 @@ fn parse_arm(line: &str) -> Option<MatchArm> {
     let trimmed = line.trim().trim_end_matches(',').trim();
     let (pattern, value) = trimmed.split_once(" => ")?;
     let (pattern, guard) = split_guard(pattern)?;
-    let pattern = if pattern == "_" {
+    let binding = bare_binding(pattern);
+    let pattern = if pattern == "_" || binding.is_some() {
         None
     } else {
         Some(literal_alternatives(pattern)?)
     };
+    // The binding holds the scrutinee, so a guard or a value that names it
+    // would need that value: only an unguarded arm whose value never
+    // mentions the name is read.
+    if let Some(name) = &binding
+        && (guard.is_some() || mentions_word(value, name))
+    {
+        return None;
+    }
     let value = if let Some(literal) = literal_string(value) {
         MatchValue::Literal(literal)
     } else {
@@ -210,7 +235,150 @@ fn parse_arm(line: &str) -> Option<MatchArm> {
     Some(MatchArm {
         pattern,
         guard,
+        binding,
         value,
+    })
+}
+
+/// A lone lowercase identifier pattern: `other`, `_rest`. Not `_`, a
+/// keyword literal, a path, a `ref`/`mut` binding or a capitalized name
+/// (a unit variant or constant by convention).
+fn bare_binding(pattern: &str) -> Option<String> {
+    let name = pattern.trim();
+    let mut characters = name.chars();
+    let first = characters.next()?;
+    (name != "_"
+        && (first.is_ascii_lowercase() || first == '_')
+        && name
+            .chars()
+            .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_')
+        && !matches!(
+            name,
+            "true" | "false" | "self" | "ref" | "mut" | "box" | "r#"
+        ))
+    .then(|| name.to_string())
+}
+
+fn mentions_word(text: &str, word: &str) -> bool {
+    let masked = mask_rust_comments_and_strings(text);
+    masked.match_indices(word).any(|(at, _)| {
+        let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+        !masked[..at].chars().next_back().is_some_and(is_word)
+            && !masked[at + word.len()..]
+                .chars()
+                .next()
+                .is_some_and(is_word)
+    })
+}
+
+/// `source` with every inline `#[cfg(test)] mod name { .. }` body blanked
+/// (newlines and byte offsets kept), so its imports and items are not read as the helper's
+/// scope. Unparseable source is returned as it is.
+fn without_test_modules(source: &str) -> String {
+    use ra_ap_syntax::AstNode;
+    use ra_ap_syntax::ast::{self, HasAttrs};
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(source) else {
+        return source.to_string();
+    };
+    let mut blanked = source.to_string();
+    for module in parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Module::cast)
+    {
+        let gated = module.attrs().any(|attr| {
+            crate::analysis::facts::cfg_predicates::attribute_is_plain_test_gate(
+                &attr.syntax().text().to_string(),
+            )
+        });
+        let Some(body) = module.item_list().filter(|_| gated) else {
+            continue;
+        };
+        let range = body.syntax().text_range();
+        let (start, end) = (usize::from(range.start()), usize::from(range.end()));
+        if let Some(text) = source.get(start..end) {
+            let spaces: String = text
+                .chars()
+                .flat_map(|ch| {
+                    // Keep every byte offset: later ranges index the original.
+                    let fill = if ch == '\n' { '\n' } else { ' ' };
+                    std::iter::repeat_n(fill, ch.len_utf8())
+                })
+                .collect();
+            blanked.replace_range(start..end, &spaces);
+        }
+    }
+    blanked
+}
+
+/// Whether a bare pattern name may be something other than a fresh
+/// binding where `helper` is defined: a `const`/`static` of that name or an
+/// import that brings it in (including a module glob) in the file or in the
+/// helper's own body, a unit struct, enum, function, type or module of that
+/// name, or no file text to read. Fails closed.
+fn binding_may_name_item(
+    name: &str,
+    helper: &crate::analysis::facts::FunctionSummary,
+    eval: &HelperEval<'_>,
+) -> bool {
+    use super::arm_selection::may_name_constant;
+    let Some(source) = eval.source_of(helper) else {
+        return true;
+    };
+    // A `#[cfg(test)] mod tests { use super::*; }` glob imports into the
+    // test module only, never into the helper's scope.
+    let source = without_test_modules(&source);
+    if may_name_constant(&source, name) || may_name_constant(&helper.body, name) {
+        return true;
+    }
+    let masked = mask_rust_comments_and_strings(&source);
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    // `include!` and item-level macro invocations (a line starting at
+    // column 0 with `name!`) can declare a constant this text never shows.
+    let item_macro = masked.lines().any(|line| {
+        let head = line
+            .split(['(', '{', '['])
+            .next()
+            .unwrap_or_default()
+            .trim_end();
+        head.ends_with('!')
+            && !head.starts_with(char::is_whitespace)
+            && head[..head.len() - 1]
+                .chars()
+                .all(|ch| is_word(ch) || ch == ':')
+    });
+    if item_macro || masked.contains("include!") || masked.contains("macro_rules!") {
+        return true;
+    }
+    masked.match_indices(name).any(|(at, _)| {
+        if masked[..at].chars().next_back().is_some_and(is_word)
+            || masked[at + name.len()..]
+                .chars()
+                .next()
+                .is_some_and(is_word)
+        {
+            return false;
+        }
+        let before = masked[..at].trim_end();
+        [
+            "struct",
+            "enum",
+            "fn",
+            "type",
+            "mod",
+            "union",
+            "trait",
+            "macro_rules!",
+        ]
+        .iter()
+        .any(|keyword| {
+            before.ends_with(keyword)
+                && !before[..before.len() - keyword.len()]
+                    .chars()
+                    .next_back()
+                    .is_some_and(is_word)
+        })
     })
 }
 
@@ -689,6 +857,128 @@ mod tests {
             );
         }
         Ok(())
+    }
+
+    fn index_with_source(source: &str) -> RustIndex {
+        let mut index = RustIndex::default();
+        index.insert_file_only(
+            PathBuf::from("src/lib.rs"),
+            crate::analysis::facts::FileFacts {
+                source: source.into(),
+                ..Default::default()
+            },
+        );
+        index
+    }
+
+    const BINDING_BODY: &str = "pub fn label(kind: &str) -> &'static str {
+    match kind {
+        \"word\" => \"alpha\",
+        other => \"beta\",
+    }
+}";
+
+    #[test]
+    fn a_fresh_lowercase_binding_is_a_catch_all_in_source_order() -> Result<(), String> {
+        let helper = match_fn("label", BINDING_BODY);
+        let index = index_with_source(BINDING_BODY);
+        let eval = root_eval(&index);
+        let value = |kind: &str| {
+            match_return_value(&helper, &inputs(&[("kind", kind)]), &eval)
+                .map(|value| value.render())
+        };
+        assert_eq!(value("\"word\"").as_deref(), Some("\"alpha\""));
+        assert_eq!(value("\"anything\"").as_deref(), Some("\"beta\""));
+        // A glob inside `#[cfg(test)] mod tests` is not the helper's scope.
+        let index = index_with_source(&format!(
+            "{BINDING_BODY}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n}}\n"
+        ));
+        let eval = root_eval(&index);
+        assert_eq!(
+            match_return_value(&helper, &inputs(&[("kind", "\"anything\"")]), &eval)
+                .map(|value| value.render())
+                .as_deref(),
+            Some("\"beta\"")
+        );
+        // A binding placed first wins everything, like `_`.
+        let first = BINDING_BODY.replace(
+            "        \"word\" => \"alpha\",\n        other => \"beta\",",
+            "        other => \"beta\",\n        \"word\" => \"alpha\",",
+        );
+        assert_ne!(first, BINDING_BODY, "the reorder substitution must apply");
+        let helper = match_fn("label", &first);
+        let eval_first = root_eval(&index);
+        assert_eq!(
+            match_return_value(&helper, &inputs(&[("kind", "\"word\"")]), &eval_first)
+                .map(|value| value.render())
+                .as_deref(),
+            Some("\"beta\"")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn blanking_test_modules_keeps_byte_offsets_with_non_ascii_text() {
+        let source = "#[cfg(test)]\nmod a { const s: &str = \"é—ü\"; }\n#[cfg(test)]\nmod b { const word: u8 = 1; }\nfn keep() {}\n";
+        let blanked = without_test_modules(source);
+        assert_eq!(blanked.len(), source.len());
+        assert!(!blanked.contains("word") && !blanked.contains('é'));
+        assert!(blanked.contains("fn keep()"));
+    }
+
+    #[test]
+    fn a_bare_name_that_may_be_an_item_or_is_not_a_plain_binding_refuses() {
+        let helper = match_fn("label", BINDING_BODY);
+        for (name, source) in [
+            ("a constant", "const other: &str = \"x\";\n"),
+            ("a static", "static other: &str = \"x\";\n"),
+            ("a module glob", "use consts::*;\n"),
+            ("an import", "use consts::other;\n"),
+            ("a renamed import", "use consts::Other as other;\n"),
+            ("a unit struct", "struct other;\n"),
+            ("a function", "fn other() {}\n"),
+            ("a type alias", "type other = u8;\n"),
+            ("an include", "include!(\"consts.rs\");\n"),
+            ("an item macro", "generate_consts!();\n"),
+            ("a path item macro", "mac::generate! { }\n"),
+            ("a macro definition", "macro_rules! m { () => {}; }\n"),
+            (
+                "a module-level glob beside a test glob",
+                "use consts::*;\n#[cfg(test)]\nmod tests {\n    use super::*;\n}\n",
+            ),
+        ] {
+            let index = index_with_source(&format!("{source}{BINDING_BODY}"));
+            let eval = root_eval(&index);
+            // A scrutinee an earlier literal arm names never reaches the
+            // name; one it does not name would, so it refuses.
+            assert!(
+                match_return_value(&helper, &inputs(&[("kind", "\"anything\"")]), &eval).is_none(),
+                "{name} must refuse a scrutinee that reaches the bare name"
+            );
+        }
+        // No file text to read: fail closed.
+        let empty = RustIndex::default();
+        let eval = root_eval(&empty);
+        assert!(match_return_value(&helper, &inputs(&[("kind", "\"x\"")]), &eval).is_none());
+        // A guard or a value that needs the bound scrutinee, a capitalized
+        // name and a `ref`/`mut` binding are not read.
+        for arm in [
+            "        other if other.len() > 1 => \"beta\",",
+            "        other => pick(other),",
+            "        Other => \"beta\",",
+            "        ref other => \"beta\",",
+            "        mut other => \"beta\",",
+        ] {
+            let body = BINDING_BODY.replace("        other => \"beta\",", arm);
+            assert_ne!(body, BINDING_BODY, "the {arm} substitution must apply");
+            let helper = match_fn("label", &body);
+            let index = index_with_source(&body);
+            let eval = root_eval(&index);
+            assert!(
+                match_return_value(&helper, &inputs(&[("kind", "\"x\"")]), &eval).is_none(),
+                "{arm} must refuse the match"
+            );
+        }
     }
 
     #[test]

@@ -1699,11 +1699,9 @@ fn collect_hook_assignment(
                 .iter()
                 .filter_map(|declarator| declarator.init.as_ref())
             {
-                let span = init.span();
-                let text = source
-                    .get(span.start as usize..span.end as usize)
-                    .unwrap_or_default();
-                for name in assigned_identifier_names(text) {
+                let mut strings = StringLiteralSpans::default();
+                oxc_ast_visit::Visit::visit_expression(&mut strings, init);
+                for name in assigned_names_outside_strings(source, init.span(), &strings) {
                     out.push((name, ScopeValue::Other));
                 }
             }
@@ -1726,13 +1724,53 @@ fn collect_hook_assignment(
         }
         _ => {}
     }
-    let span = stmt.span();
-    let text = source
-        .get(span.start as usize..span.end as usize)
-        .unwrap_or_default();
-    for name in assigned_identifier_names(text) {
+    let mut strings = StringLiteralSpans::default();
+    oxc_ast_visit::Visit::visit_statement(&mut strings, stmt);
+    for name in assigned_names_outside_strings(source, stmt.span(), &strings) {
         out.push((name, ScopeValue::Other));
     }
+}
+
+/// Spans of plain string literals. Their text is data, never code, so a
+/// write-shaped substring inside one (`"?test=1"`) is not a write. Template
+/// literals are left out: a `${...}` expression inside one can write.
+#[derive(Default)]
+struct StringLiteralSpans(Vec<std::ops::Range<usize>>);
+
+impl<'a> oxc_ast_visit::Visit<'a> for StringLiteralSpans {
+    fn visit_string_literal(&mut self, literal: &oxc_ast::ast::StringLiteral<'a>) {
+        self.0
+            .push(literal.span.start as usize..literal.span.end as usize);
+    }
+}
+
+/// [`assigned_identifier_names`] over the source slice `span`, with the
+/// contents of `strings` blanked (#10820): a quoted `"test=1"` argument made
+/// the hook-write scan read the runner `test` as reassigned and withheld
+/// every registration in the file.
+fn assigned_names_outside_strings(
+    source: &str,
+    span: oxc_span::Span,
+    strings: &StringLiteralSpans,
+) -> Vec<String> {
+    let (start, end) = (span.start as usize, span.end as usize);
+    let Some(text) = source.get(start..end) else {
+        return Vec::new();
+    };
+    // A string handed to `eval` or `Function` is code, so a write inside it
+    // must stay visible (fail closed).
+    if identifier_occurrences(text, "eval").next().is_some()
+        || identifier_occurrences(text, "Function").next().is_some()
+    {
+        return assigned_identifier_names(text);
+    }
+    let relative: Vec<std::ops::Range<usize>> = strings
+        .0
+        .iter()
+        .filter(|range| range.start >= start && range.end <= end)
+        .map(|range| range.start - start..range.end - start)
+        .collect();
+    assigned_identifier_names(&blank_ranges(text, &relative))
 }
 
 /// `true` when `stmt` may leave the enclosing callback early: a `return`

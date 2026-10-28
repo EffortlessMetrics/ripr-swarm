@@ -27,6 +27,19 @@ type ShadowKey = (
     Option<(PathBuf, String, usize)>,
 );
 
+/// What a parent file's root says about one receiver name, before the
+/// per-owner exemptions: the part of the parent-chain shadow check that
+/// depends only on the file and the name (#10809).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RootShadow {
+    /// The root neither declares nor renames the name: no shadow.
+    NotShadowing,
+    /// The name is declared but the file does not parse cleanly: refuse.
+    Unparseable,
+    /// A root item declares or renames the name; the owner exemptions decide.
+    Declared,
+}
+
 pub(crate) struct FunctionScope {
     pub(crate) name: String,
     pub(crate) start_line: usize,
@@ -96,8 +109,12 @@ pub(crate) struct SourceSnapshot {
     nesting: Mutex<BTreeMap<(String, usize, bool), Option<ItemNesting>>>,
     lexical_items: OnceLock<Option<SourceScopes>>,
     shadows: Mutex<BTreeMap<ShadowKey, bool>>,
+    root_shadows: Mutex<BTreeMap<(String, bool), RootShadow>>,
+    masked: OnceLock<String>,
     #[cfg(test)]
     shadow_computations: std::sync::atomic::AtomicUsize,
+    #[cfg(test)]
+    root_shadow_computations: std::sync::atomic::AtomicUsize,
 }
 
 impl SourceSnapshot {
@@ -114,8 +131,12 @@ impl SourceSnapshot {
             nesting: Mutex::default(),
             lexical_items: OnceLock::new(),
             shadows: Mutex::default(),
+            root_shadows: Mutex::default(),
+            masked: OnceLock::new(),
             #[cfg(test)]
             shadow_computations: std::sync::atomic::AtomicUsize::new(0),
+            #[cfg(test)]
+            root_shadow_computations: std::sync::atomic::AtomicUsize::new(0),
         }
     }
 
@@ -174,6 +195,44 @@ impl SourceSnapshot {
             Ok(mut memo) => *memo.entry(key).or_insert_with(compute),
             Err(_) => compute(),
         }
+    }
+
+    /// The file's comment-and-string-masked source, built once per snapshot.
+    pub(crate) fn masked_source(&self, mask: impl FnOnce() -> String) -> &str {
+        self.masked.get_or_init(mask)
+    }
+
+    /// The owner-independent answer for one name, computed outside the lock
+    /// so a slow parse never stalls a reader of another name. The answer is
+    /// pure in the snapshot's source and the key, so two workers that miss
+    /// together agree and the first insert wins; the memo bounds repeated
+    /// work to the workers that race on one first miss, not to exactly one.
+    pub(crate) fn root_shadow(
+        &self,
+        base: &str,
+        trait_kind: bool,
+        compute: impl FnOnce() -> RootShadow,
+    ) -> RootShadow {
+        let key = (base.to_string(), trait_kind);
+        if let Ok(memo) = self.root_shadows.lock()
+            && let Some(found) = memo.get(&key)
+        {
+            return *found;
+        }
+        let answer = compute();
+        #[cfg(test)]
+        self.root_shadow_computations
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        match self.root_shadows.lock() {
+            Ok(mut memo) => *memo.entry(key).or_insert(answer),
+            Err(_) => answer,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn root_shadow_computations(&self) -> usize {
+        self.root_shadow_computations
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     #[cfg(test)]
