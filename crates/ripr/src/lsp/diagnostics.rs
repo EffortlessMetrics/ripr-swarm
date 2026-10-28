@@ -2794,7 +2794,7 @@ fn gap_record_diagnostic_message(record: &GapRecord) -> String {
         .and_then(|route| route.assertion_shape.as_deref())
         .and_then(non_empty);
     let mut message = match changed {
-        Some(changed) => format!("{kind}: {changed} changed."),
+        Some(changed) => format!("{kind}: {changed}."),
         None => format!("{kind}."),
     };
     if let Some(assertion) = assertion {
@@ -2813,7 +2813,7 @@ fn gap_record_diagnostic_message(record: &GapRecord) -> String {
 /// CamelCase identifier into a sentence-case phrase. A value without an
 /// uppercase boundary comes back unchanged apart from its first letter.
 fn camel_case_words(identifier: &str) -> String {
-    let mut words = String::new();
+    let mut words = String::with_capacity(identifier.len());
     for (index, ch) in identifier.chars().enumerate() {
         if index == 0 {
             words.extend(ch.to_uppercase());
@@ -4009,7 +4009,7 @@ mod seam_diagnostic_tests {
         // route stay in the code and `data` payload asserted below.
         if !diagnostic
             .message
-            .starts_with("Missing boundary assertion: amount >= threshold changed.")
+            .starts_with("Missing boundary assertion: amount >= threshold.")
             || !diagnostic.message.contains("Suggested check:")
             || diagnostic.message.contains("AddBoundaryAssertion")
             || diagnostic.message.contains("MissingBoundaryAssertion")

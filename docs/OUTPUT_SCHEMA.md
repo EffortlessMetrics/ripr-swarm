@@ -17418,7 +17418,7 @@ GapRecord diagnostic shape:
   "severity": 2,
   "code": "ripr-gap-MissingBoundaryAssertion",
   "source": "ripr",
-  "message": "Missing boundary assertion: amount >= threshold changed. Suggested check: assert_eq!(...).",
+  "message": "Missing boundary assertion: amount >= threshold. Suggested check: assert_eq!(...).",
   "data": {
     "schema_version": "0.1",
     "source": "gap_decision_ledger",
