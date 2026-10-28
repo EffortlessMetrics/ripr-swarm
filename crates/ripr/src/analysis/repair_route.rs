@@ -37,6 +37,11 @@ const SAFE_TEST_TARGET_EVIDENCE: &str = "safe test target";
 /// through unchanged rather than inventing a taxonomy.
 pub(crate) fn humanize_evidence(evidence: &str) -> String {
     const FACT_PREFIX: &str = "producer-owned missing discriminator fact: ";
+    // #10691: the internal "observable sink" noun becomes plain words on the
+    // human screens; the machine list keeps the stable code.
+    if evidence == "observable sink localization" {
+        return "a way to follow the changed value to something a test can check".to_string();
+    }
     if let Some(kind) = evidence.strip_prefix(FACT_PREFIX) {
         let phrase = match kind {
             "boundary_value" => "a test assertion that pins the changed boundary value exactly",
@@ -1035,6 +1040,11 @@ mod tests {
             (
                 "producer-owned missing discriminator fact: call_site",
                 "a test that reaches the changed call",
+            ),
+            // #10691: the internal "observable sink" noun is rendered in words.
+            (
+                "observable sink localization",
+                "a way to follow the changed value to something a test can check",
             ),
         ];
         for (internal, plain) in cases {

@@ -324,6 +324,12 @@ pub(crate) fn first_macro_call(
     source: &str,
     names: &std::collections::BTreeSet<String>,
 ) -> Option<usize> {
+    // A `name!` token pair needs the name's text in the source, so a file that
+    // mentions no generator at all skips the parse and the token walk (#10809).
+    // A text hit is only a candidate: the walk below still decides.
+    if !names.iter().any(|name| source.contains(name.as_str())) {
+        return None;
+    }
     let parse = parse_clean_source_file(source)?;
     let mut previous: Option<ra_ap_syntax::SyntaxToken> = None;
     for token in parse
@@ -547,6 +553,13 @@ mod tests {
             "macro_rules! unused { () => { t!(earlier); } }\n#[macro_use] mod macros;\nt!(x);\n";
         assert_eq!(first_macro_call(inert, &names), inert.rfind("t!(x)"));
         assert_eq!(first_macro_call("const S: &str = \"t!(x)\";", &names), None);
+        // Text that names a generator only inside a longer identifier passes
+        // the prefilter and is still rejected by the token walk.
+        assert_eq!(first_macro_call("fn tt() { tt!(a); }", &names), None);
+        // A file that mentions no generator and one that does not parse both
+        // yield nothing.
+        assert_eq!(first_macro_call("fn f() { g!(a); }", &names), None);
+        assert_eq!(first_macro_call("t!(", &names), None);
     }
 
     fn calls_of(source: &str, name: &str) -> GeneratorCalls {

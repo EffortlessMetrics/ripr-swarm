@@ -209,8 +209,22 @@ Test discovery:
   (#10614) unless it is a link to an existing regular file whose own name the
   adapter would not index (a docs `index.md -> README.md`): the walk indexes by
   the entry's own path, so such a link hides no test or source. A directory
-  link, a source-named link, a dangling link and a link whose target cannot be
-  read stay counted.
+  link is not counted either when it aliases a directory the walk already
+  visits (#10829): its canonical target is a listable directory inside the
+  canonical root with no excluded component (`.tools/skills ->
+  ../.agent/skills`), so its files are indexed at their real path, unless an
+  indexed file reaches it (#10829, #10899): a string or template literal (decoded, so
+  `'..\u002falias/sum'` counts) that is a relative specifier (`./x`, `../x`)
+  resolving lexically from the importing file's directory to the link or a path
+  beneath it (`../alias/sum` with `alias -> src`, `'../my lib/sum'`) names a path
+  the walk never indexes, so the alias is counted. The specifier is resolved
+  rather than matched by characters, so the link's real target spelled by prose,
+  a comment or a bare string is not an import through it. An absolute-looking
+  literal counts when it spells `/<link name>` as a component; an unreadable or
+  oversized indexed file counts; so does a file that does not parse cleanly and
+  has `/<link name>` in its text or a `\u`, `\x` or octal escape. A directory link that leaves the root, points into an excluded directory or at a
+  directory the walk cannot list, a source-named link, a dangling link and a
+  link whose target cannot be read stay counted.
 - a file named `*.d.ts`, `*.d.mts` or `*.d.cts` is parsed as a TypeScript
   declaration file (#10812): its top-level declarations are ambient, so
   `export const x: T;` is not a parse error there. The same text in an

@@ -7871,6 +7871,7 @@ index 0000000..1111111 100644
             uninspected_changed_lines_lower_bound: uninspected_lines,
             stop_reason,
             next_file_changed_lines: (uninspected_lines > 0).then_some(uninspected_lines),
+            whole_diff_budgets: None,
             partition_identity: "sha256:partition".to_string(),
         }
     }

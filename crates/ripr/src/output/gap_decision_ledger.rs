@@ -4934,7 +4934,9 @@ mod tests {
         // #10832: `python_parametrize_tuple_unpack` reads a tuple argname's
         // off-boundary rows through its leading unpack, so the boundary is
         // `weakly_exposed` and carries one direct-aligned card.
-        if (direct, no_strong, orthogonal, family_selection) != (11, 27, 30, 1) {
+        // #10842: `python_rewrite_shifted_bound` names the row its shifted
+        // bound needs, one more direct-aligned `weakly_exposed` card.
+        if (direct, no_strong, orthogonal, family_selection) != (12, 27, 30, 1) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));

@@ -505,3 +505,39 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_cross_package_test (26)
+
+Reason:
+RIPR-SPEC-0122: plain-language wording for the default and human-full check views (#10691); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless ts_cross_package_test --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_cross_package_test (27)
+
+Reason:
+RIPR-SPEC-0113: honest no-static-path next step names the owner and the ordered add-test, native verifier, refresh route (#10708)
+
+Command:
+`cargo xtask goldens bless ts_cross_package_test --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_cross_package_test (28)
+
+Reason:
+RIPR-SPEC-0088: TypeScript preview check JSON states top-level canonical_gap_id (#10709)
+
+Command:
+`cargo xtask goldens bless ts_cross_package_test --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

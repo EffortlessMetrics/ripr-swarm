@@ -1,0 +1,177 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/rust_qualified_helper_effect_reach/input",
+  "summary": {"changed_rust_files":1,"probes":2,"findings":2,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":2,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:8684e11a2a248589c3be123a2e0a285af533678bad8846185b6add694a672c9c","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":2,"finding_count":2},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:call_deletion:05331642",
+      "canonical_gap_id": "gap:rust:src/lib.rs:record:call_deletion:call_deletion:out.push_10",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:record:call_deletion:call_deletion:out.push_10",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "record",
+        "behavior_kind": "call_deletion",
+        "probe_kind": "call_deletion",
+        "normalized_discriminator": "out.push_10"
+
+      },
+      "classification": "propagation_unknown",
+      "severity": "note",
+      "confidence": 0.66,
+      "probe": {
+        "id": "probe:src_lib.rs:call_deletion:05331642",
+        "family": "call_deletion",
+        "delta": "effect",
+        "file": "./src/lib.rs",
+        "line": 2,
+        "expression": "out.push(10)"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach record: observes_record"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"unknown","confidence":"low","summary":"Propagation unknown: the related tests reach `record` only through a caller that does not pass the changed state through from its own parameter (helper_result_not_forwarded)"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach record: observes_record", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation unknown: Propagation unknown: the related tests reach `record` only through a caller that does not pass the changed state through from its own parameter (helper_result_not_forwarded)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator not established (propagation_unknown); related oracle: Strong oracle found: exact value or pattern assertion", "local flow reaches state write: out.push(10) (line 2)", "related test src/lib.rs:14 observes_record uses strong exact value oracle: assert_eq!(out, vec![10]);", "source assertion argument value 10 at line 17"],
+      "flow_sinks": [
+        {"kind":"state_write","text":"out.push(10)","line":2}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Propagation unknown: the related tests reach `record` only through a caller that does not pass the changed state through from its own parameter (helper_result_not_forwarded)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach record: observes_record", "Strong oracle found: exact value or pattern assertion"],
+      "missing": ["No clear propagation path from changed behavior to an observable sink"],
+      "assertion_texts": {
+        "17": "assert_eq!(out, vec![10]);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 17,
+            "value": "10",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 17,
+          "value": "10",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "observes_record",
+          "file": "src/lib.rs",
+          "line": 14,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(out, vec![10]);",
+          "relation_reason": "helper_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": ["propagation_evidence_unknown"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "suggested_next_action": "Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:side_effect:2ead93ea",
+      "canonical_gap_id": "gap:rust:src/lib.rs:record:side_effect:side_effect:out.push_10",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:record:side_effect:side_effect:out.push_10",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "record",
+        "behavior_kind": "side_effect",
+        "probe_kind": "side_effect",
+        "normalized_discriminator": "out.push_10"
+
+      },
+      "classification": "propagation_unknown",
+      "severity": "note",
+      "confidence": 0.66,
+      "probe": {
+        "id": "probe:src_lib.rs:side_effect:2ead93ea",
+        "family": "side_effect",
+        "delta": "effect",
+        "file": "./src/lib.rs",
+        "line": 2,
+        "expression": "out.push(10)"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach record: observes_record"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"unknown","confidence":"low","summary":"Propagation unknown: the related tests reach `record` only through a caller that does not pass the changed state through from its own parameter (helper_result_not_forwarded)"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach record: observes_record", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation unknown: Propagation unknown: the related tests reach `record` only through a caller that does not pass the changed state through from its own parameter (helper_result_not_forwarded)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator not established (propagation_unknown); related oracle: Strong oracle found: exact value or pattern assertion", "local flow reaches state write: out.push(10) (line 2)", "related test src/lib.rs:14 observes_record uses strong exact value oracle: assert_eq!(out, vec![10]);", "source assertion argument value 10 at line 17"],
+      "flow_sinks": [
+        {"kind":"state_write","text":"out.push(10)","line":2}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Propagation unknown: the related tests reach `record` only through a caller that does not pass the changed state through from its own parameter (helper_result_not_forwarded)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach record: observes_record", "Strong oracle found: exact value or pattern assertion"],
+      "missing": ["No clear propagation path from changed behavior to an observable sink"],
+      "assertion_texts": {
+        "17": "assert_eq!(out, vec![10]);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 17,
+            "value": "10",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 17,
+          "value": "10",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "observes_record",
+          "file": "src/lib.rs",
+          "line": 14,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(out, vec![10]);",
+          "relation_reason": "helper_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": ["propagation_evidence_unknown"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "suggested_next_action": "Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ]
+}
