@@ -25,3 +25,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_call_removal_absent_method (3)
+
+Reason:
+RIPR-SPEC-0088: TypeScript check JSON findings state canonical_gap_id (#10709, #10919); fixture added by #10466 before it landed
+
+Command:
+`cargo xtask goldens bless typescript_call_removal_absent_method --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
