@@ -3,12 +3,17 @@ mode: fast
 root: fixtures/python_factor_reorder/input
 config: <cwd>/fixtures/python_factor_reorder/input/ripr.toml
 
-Summary: 4 probe(s), 0 exposed, 4 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 4 of 4 finding(s) unsuppressed
+Summary: 4 changed behavior(s) checked: 0 exposed, 4 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 4 of 4 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
 
 Changed file(s) by language: python = 1
 
 Analysis outcome: findings below (analysis complete; complete_with_findings)
-  Counts: 1 changed file(s), 8 changed line(s), 4 candidate line(s), 4 probe(s), 4 finding(s)
+  Counts: 1 changed file(s), 8 changed line(s), 4 candidate line(s), 4 changed behavior(s) checked, 4 finding(s)
 
 WARNING src/shop.py:2
   id: probe:src_shop.py:python_preview:f5eb84b2
@@ -16,11 +21,12 @@ WARNING src/shop.py:2
 Changed
   after:      return b * a
 
-Probe
+Change type
+  a returned value changed
   family: return_value
-  delta:  value
+  delta:  value (changes a computed value)
   owner:  python:src/shop.py::area
-  canonical gap: gap:python:src/shop.py:area:return_value:return_value:b*a
+  gap id (for scripts): gap:python:src/shop.py:area:return_value:return_value:b*a
 
 Language
   language: python
@@ -81,11 +87,12 @@ WARNING src/shop.py:6
 Changed
   after:      return b * a
 
-Probe
+Change type
+  a returned value changed
   family: return_value
-  delta:  value
+  delta:  value (changes a computed value)
   owner:  python:src/shop.py::float_area
-  canonical gap: gap:python:src/shop.py:float_area:return_value:return_value:b*a
+  gap id (for scripts): gap:python:src/shop.py:float_area:return_value:return_value:b*a
 
 Language
   language: python
@@ -146,11 +153,12 @@ WARNING src/shop.py:10
 Changed
   after:      return (b * a,)
 
-Probe
+Change type
+  a returned value changed
   family: return_value
-  delta:  value
+  delta:  value (changes a computed value)
   owner:  python:src/shop.py::boxed_area
-  canonical gap: gap:python:src/shop.py:boxed_area:return_value:return_value:b*a
+  gap id (for scripts): gap:python:src/shop.py:boxed_area:return_value:return_value:b*a
 
 Language
   language: python
@@ -211,11 +219,12 @@ WARNING src/shop.py:14
 Changed
   after:      return b * a, '#'
 
-Probe
+Change type
+  a returned value changed
   family: return_value
-  delta:  value
+  delta:  value (changes a computed value)
   owner:  python:src/shop.py::hashed_area
-  canonical gap: gap:python:src/shop.py:hashed_area:return_value:return_value:b*a
+  gap id (for scripts): gap:python:src/shop.py:hashed_area:return_value:return_value:b*a
 
 Language
   language: python

@@ -59,3 +59,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_factor_reorder (6)
+
+Reason:
+RIPR-SPEC-0238: align human expectations with inherited current-main display vocabulary after native exact-main reproduction. Preserve all four weak findings, complete order-sensitive remedies, compact hidden-finding disclosure, and byte-identical structured JSON; no semantic verdict or threshold change.
+
+Command:
+`cargo xtask goldens bless python_factor_reorder --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
