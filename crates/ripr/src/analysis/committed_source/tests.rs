@@ -109,6 +109,10 @@ fn cargo_authority_uses_real_committed_overlay() -> Result<(), String> {
         probe(&repo.0, DEADLINE)?.ok_or("deleted/untracked manifests must produce an overlay")?;
     assert!(overlay.committed_paths_missing_on_disk().is_empty());
     with_overlay(Some(Arc::new(overlay)), || {
+        assert_eq!(
+            committed_workspace_paths_missing_on_disk(&repo.0),
+            ["app/Cargo.toml"]
+        );
         assert!(members.is_default_binary_root(bin));
         assert!(members.binary_imports_macro(bin, macro_file, "my_macros"));
     });

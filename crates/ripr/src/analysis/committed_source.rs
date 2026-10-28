@@ -158,6 +158,18 @@ impl CommittedSourceOverlay {
             .collect()
     }
 
+    /// Missing HEAD inputs needed to make the Rust workspace listing complete.
+    /// Cargo manifests are authority inputs, but are not source-disclosure paths.
+    fn committed_workspace_paths_missing_on_disk(&self) -> Vec<String> {
+        self.entries
+            .iter()
+            .filter(|(path, _)| path.ends_with(".rs") || path.ends_with("Cargo.toml"))
+            .filter(|(_, bytes)| bytes.is_some())
+            .filter(|(path, _)| !self.root.join(path.as_str()).exists())
+            .map(|(path, _)| path.clone())
+            .collect()
+    }
+
     /// Dirty paths a language adapter routes (source and test files alike),
     /// in order. Only these make a `--worktree` run read different bytes, so
     /// an edited README or workflow file does not raise the
@@ -292,17 +304,16 @@ pub(crate) fn current_overlay() -> Option<Arc<CommittedSourceOverlay>> {
     CURRENT_OVERLAY.with(|slot| slot.borrow().clone())
 }
 
-/// Root-relative paths the installed overlay serves from `HEAD` although the
-/// working tree lacks them; empty without an overlay for `root`. A caller
-/// that lists the working tree adds these to see the committed file set.
-pub(crate) fn committed_paths_missing_on_disk(root: &Path) -> Vec<String> {
+/// Missing committed Rust files and manifests that make a working-tree
+/// workspace listing incomplete; empty without an overlay for `root`.
+pub(crate) fn committed_workspace_paths_missing_on_disk(root: &Path) -> Vec<String> {
     CURRENT_OVERLAY.with(|slot| {
         slot.borrow()
             .as_ref()
             .filter(|overlay| {
                 overlay.root == root || overlay.canonical_root.as_deref() == Some(root)
             })
-            .map(|overlay| overlay.committed_paths_missing_on_disk())
+            .map(|overlay| overlay.committed_workspace_paths_missing_on_disk())
             .unwrap_or_default()
     })
 }
