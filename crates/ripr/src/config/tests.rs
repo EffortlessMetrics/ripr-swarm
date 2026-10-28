@@ -2880,7 +2880,10 @@ fn missing_config_ignores_nested_typescript_that_is_vendored_hidden_too_deep_or_
         ("ts-nested-declaration", "library/src/types.d.ts"),
         ("ts-nested-non-container", "tools/pkg/tsconfig.json"),
         ("ts-nested-hidden-source", "library/src/.private/entry.ts"),
-        ("ts-container-hidden-source", "packages/lib/.cache/entry.ts"),
+        (
+            "ts-container-hidden-source",
+            "packages/lib/src/.private/entry.ts",
+        ),
     ];
     for (label, file) in negatives {
         let root = temp_root(label)?;
