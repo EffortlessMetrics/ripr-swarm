@@ -3,7 +3,7 @@ mode: fast
 root: fixtures/ts_parse_depth_budget/input
 config: <cwd>/fixtures/ts_parse_depth_budget/input/ripr.toml
 
-Summary: 3 probes (0 exposed, 0 weak, 0 unrevealed, 2 no path, 1 unknown); 3 of 3 findings unsuppressed
+Summary: 3 changed behaviors checked: 0 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 2 no test path, 1 unclear. 3 found, 0 suppressed by your settings
 
 Changed file(s) by language: typescript = 3
 
@@ -20,7 +20,7 @@ Start here:
   Static exposure: no path (severity: warning, confidence 0.40)
   Why no path: no related test was found that reaches this change
   Changed behavior: const r = ((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((…
-  Missing discriminator: No test references `deepUnderBudget(` — add a test that calls the changed owner
+  Missing check: No test references `deepUnderBudget(` — add a test that calls the changed owner
   Next step — TypeScript preview advisory: no test references the changed owner; add a test that
     calls the owner and asserts the changed behavior with `toBe` / `toEqual` before any repair
     packet is emitted
@@ -30,11 +30,11 @@ Start here:
       discriminator = assertion distinguishes intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
-    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
-      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
-      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;
-      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;
-      candidate line = changed line ripr considers for probes
+    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      no test path = no test path found; unclear = analysis limited, not a verdict;
+      found = listed for review; suppressed by your settings = hidden by your suppression policy;
+      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach no: 0 related test(s) found for owner `deepUnderBudget`
     - infection unknown: TypeScript preview adapter does not yet model infection
     - 8 more detail line(s) in --format human-full
@@ -42,7 +42,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/ts_parse_depth_budget/input --diff <cwd>/fixtures/ts_parse_depth_budget/diff.patch --mode fast probe:src_deep_under_budget.ts:typescript_preview:85293064
   ripr context --root <cwd>/fixtures/ts_parse_depth_budget/input --diff <cwd>/fixtures/ts_parse_depth_budget/diff.patch --mode fast --at probe:src_deep_under_budget.ts:typescript_preview:85293064
-  no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
+  no repair start offered: this finding has no gap ID, so there is no seam to start a repair from; follow the Next step above
 
 Hidden:
   2 lower-priority finding(s) omitted from default human output (TypeScript preview: 2).

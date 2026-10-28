@@ -83,6 +83,7 @@ mod enum_member_guard;
 mod error_payload_guard;
 mod extraction_cache;
 mod field_update_guard;
+mod fixture_receivers;
 mod gap_reach;
 mod guard_entry_guard;
 mod helper_inline;
@@ -153,6 +154,7 @@ mod tests;
 // Declared here, not in `tests.rs`, so #7813/#7815 do not collide with #8476.
 mod assertion_helper;
 mod boolean_pin_guard;
+mod close_to_guard;
 #[cfg(test)]
 #[path = "tests/issue7813_alias_member_tests.rs"]
 mod issue7813_alias_member_tests;
@@ -186,6 +188,7 @@ pub(crate) use bounded_read::*;
 pub(crate) use bun_bridge::*;
 pub(crate) use class_entries::*;
 pub(crate) use classifier::*;
+pub(crate) use close_to_guard::*;
 pub(crate) use committed_snapshot::*;
 pub(crate) use comparison_edit_guard::*;
 pub(crate) use custom_matcher_guard::*;
@@ -235,6 +238,21 @@ pub(crate) use value_hiding_guard::*;
 pub(crate) struct TypeScriptAdapter;
 
 pub(crate) fn source_type_for(path: &Path) -> SourceType {
+    let source_type = source_type_for_extension(path);
+    // `*.d.ts` / `*.d.mts` / `*.d.cts` are declaration files: every top-level
+    // declaration is ambient, so `export const x: T;` is valid there and a
+    // parse error only when read as ordinary TypeScript (#10812).
+    let declaration_file = matches!(
+        path.extension().and_then(|ext| ext.to_str()),
+        Some("ts" | "mts" | "cts")
+    ) && path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .is_some_and(|stem| stem.ends_with(".d"));
+    source_type.with_typescript_definition(declaration_file)
+}
+
+fn source_type_for_extension(path: &Path) -> SourceType {
     match path.extension().and_then(|ext| ext.to_str()) {
         Some("tsx") => SourceType::tsx(),
         Some("ts") => SourceType::ts(),
@@ -701,6 +719,14 @@ impl TypeScriptAdapter {
             &options.root,
             alias_map_ref,
             is_test_file,
+        );
+
+        // A named import of `export * as ns from` reads as the namespace import
+        // it binds (RIPR-SPEC-0095).
+        reexport_index.rewrite_namespace_reexport_imports(
+            &mut all_tests,
+            alias_map_ref,
+            Some(&options.root),
         );
 
         // #10028: invert the test corpus once so each owner's relation scans

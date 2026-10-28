@@ -162,6 +162,10 @@ jobs:
         if: steps.surface.outputs.rust == 'true'
         run: cargo fetch --locked --manifest-path fixtures/owner_return_pin_json_real_literal/input/Cargo.toml
 
+      - name: Prepare locked proptest profile dependencies
+        if: steps.surface.outputs.rust == 'true'
+        run: cargo fetch --locked --manifest-path crates/ripr/tests/fixtures/proptest_singleton/input/Cargo.toml
+
       - name: Test --no-default-features --features lang-rust
         if: steps.surface.outputs.rust == 'true'
         run: cargo test -p ripr --locked --no-default-features --features lang-rust --no-fail-fast

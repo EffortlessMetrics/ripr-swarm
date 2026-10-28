@@ -17,7 +17,11 @@ mod model;
 mod perl_executable_tests;
 mod python;
 mod toolchain_file;
-#[cfg(feature = "lang-typescript")]
+// The exclusion path authorities are pure predicates, needed by the
+// diff-scope guard's admission counting in every feature lane (mirroring the
+// always-compiled Python authorities), so the module compiles unconditionally.
+// Only the detection surface below stays feature-gated: without
+// `lang-typescript` no-config detection must never select the adapter.
 mod typescript;
 
 pub(crate) use diagnostic::ConfigDiagnostic;
@@ -51,15 +55,22 @@ pub(crate) use toolchain_file::{repository_toolchain_path_pin, toolchain_path_pi
 pub(crate) use typescript::{
     TYPESCRIPT_PROJECT_MARKERS, TYPESCRIPT_SOURCE_DIR_MARKERS,
     declared_typescript_handwritten_under, detect_typescript_project,
-    is_declared_handwritten_typescript_path, is_detectable_excluded_typescript_path,
-    is_detectable_generated_typescript_path, is_detectable_typescript_source_name,
-    is_typescript_dir_pruned_from_discovery, is_typescript_excluded_dir_everywhere,
+    is_detectable_typescript_source_name, is_typescript_dir_pruned_from_discovery,
     source_dir_contains_detectable_typescript, typescript_project_marker_name,
     typescript_source_dir_marker_name,
 };
+// Admission/exclusion predicates for the diff-scope guard and the adapters:
+// real in every lane, like the Python authorities above, so an adapter's
+// generated-name and excluded-directory refusals measure the same diff in a
+// rust-only build as in a full build (#10730).
+pub(crate) use typescript::{
+    is_declared_handwritten_typescript_path, is_detectable_excluded_typescript_path,
+    is_detectable_generated_typescript_path, is_typescript_excluded_dir_everywhere,
+};
 
 /// Without `lang-typescript` no-config detection never selects the adapter,
-/// so these inert forms keep the shared call sites unconditional.
+/// so these inert forms keep the shared call sites unconditional. Exclusion
+/// predicates are NOT mirrored here: they are real in every lane (see above).
 #[cfg(not(feature = "lang-typescript"))]
 mod typescript_absent {
     use std::path::Path;
@@ -68,10 +79,6 @@ mod typescript_absent {
     pub(crate) const TYPESCRIPT_SOURCE_DIR_MARKERS: &[&str] = &[];
 
     pub(crate) fn detect_typescript_project(_root: &Path) -> bool {
-        false
-    }
-
-    pub(crate) fn is_typescript_excluded_dir_everywhere(_name: &str) -> bool {
         false
     }
 
@@ -94,9 +101,8 @@ mod typescript_absent {
 #[cfg(not(feature = "lang-typescript"))]
 pub(crate) use typescript_absent::{
     TYPESCRIPT_PROJECT_MARKERS, TYPESCRIPT_SOURCE_DIR_MARKERS, detect_typescript_project,
-    is_detectable_typescript_source_name, is_typescript_excluded_dir_everywhere,
-    source_dir_contains_detectable_typescript, typescript_project_marker_name,
-    typescript_source_dir_marker_name,
+    is_detectable_typescript_source_name, source_dir_contains_detectable_typescript,
+    typescript_project_marker_name, typescript_source_dir_marker_name,
 };
 
 pub(crate) const CONFIG_FILE_NAME: &str = "ripr.toml";
@@ -550,9 +556,10 @@ pub(crate) fn parse_config_diagnostic(text: &str) -> Result<RiprConfig, Box<Conf
     let raw: RawConfig = toml::from_str(text).map_err(|err| {
         // A valid key in the wrong table names its table (#4534). The hint is
         // built from the fixed KEY_HOME_TABLES allowlist, never from file text.
-        let err = err.to_string();
-        let hint = misplaced_key_hint(&err)
-            .or_else(|| retired_key_hint(&err))
+        // Display includes the source excerpt, whose comments or values can
+        // themselves contain `unknown field ...`. Only inspect the reason.
+        let hint = misplaced_key_hint(err.message())
+            .or_else(|| retired_key_hint(err.message()))
             .unwrap_or_default();
         Box::new(ConfigDiagnostic::structural(format!(
             "invalid ripr.toml: {err}{hint}"
@@ -587,10 +594,19 @@ const KEY_HOME_TABLES: &[(&str, &str)] = &[
 /// The table an unknown-field key belongs in, when serde rejected a real key
 /// that sits in the wrong table (for example a top-level `mode`).
 fn misplaced_key_hint(error: &str) -> Option<String> {
-    let (_, rest) = error.split_once("unknown field `")?;
-    let (key, _) = rest.split_once('`')?;
+    let key = unknown_field_key(error)?;
     let (key, table) = KEY_HOME_TABLES.iter().find(|(known, _)| *known == key)?;
     Some(format!("\n{}", misplaced_key_hint_line(key, table)))
+}
+
+/// Read a complete unknown-field reason, not a substring of a type error or
+/// a prefix of a quoted key containing backticks. Serde's expected-field list
+/// contains only the fixed raw-config field names, so the final delimiter
+/// separates it from the full rejected key.
+fn unknown_field_key(error: &str) -> Option<&str> {
+    let rest = error.strip_prefix("unknown field `")?;
+    let (key, _) = rest.rsplit_once("`, expected ")?;
+    Some(key)
 }
 
 fn misplaced_key_hint_line(key: &str, table: &str) -> String {
@@ -631,8 +647,7 @@ fn retired_key_hint(error: &str) -> Option<String> {
 /// no table, so a typo that equals a key retired from a different table could
 /// be labelled with that retirement.
 fn retired_key_hint_in(retired: &[RetiredKey], error: &str) -> Option<String> {
-    let (_, rest) = error.split_once("unknown field `")?;
-    let (key, _) = rest.split_once('`')?;
+    let key = unknown_field_key(error)?;
     let entry = retired.iter().find(|entry| entry.key == key)?;
     Some(format!("\n{}", retired_key_hint_line(entry)))
 }

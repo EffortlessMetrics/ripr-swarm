@@ -4929,7 +4929,12 @@ mod tests {
         // #10151: `python_caplog_alias_in_literal` keeps a captured-log alias
         // spelled inside the asserted literal a weak gap (RIPR-SPEC-0238 rule
         // 22), which carries one no-strong-oracle card.
-        if (direct, no_strong, orthogonal, family_selection) != (10, 27, 28, 1) {
+        // #10178: both pre-call effect observations stay orthogonal and
+        // packet-ineligible; native fixture output adds two weak cards.
+        // #10832: `python_parametrize_tuple_unpack` reads a tuple argname's
+        // off-boundary rows through its leading unpack, so the boundary is
+        // `weakly_exposed` and carries one direct-aligned card.
+        if (direct, no_strong, orthogonal, family_selection) != (11, 27, 30, 1) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));

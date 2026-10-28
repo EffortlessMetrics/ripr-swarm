@@ -2,9 +2,9 @@ use super::PythonFramework;
 use super::admission::{PythonAdmissionContext, PythonTestFunction, assertion_admission};
 use super::conditional_defs::live_conditional_functions;
 use super::module_constants::{
-    PythonModuleConstant, constants_visible_in_function, python_test_rebinding,
+    PythonModuleConstant, PythonModuleNames, constants_visible_in_function, python_test_rebinding,
 };
-use super::parametrize::parametrize_cases;
+use super::parametrize::{ParametrizeScope, parametrize_cases};
 #[cfg(test)]
 use super::source_facts::extract_source_facts;
 use super::source_utils::{
@@ -440,11 +440,46 @@ fn class_is_listed_as_base(statements: &[Stmt], class_name: &str) -> bool {
 pub(super) struct TestImportContext<'a> {
     pub(super) body: &'a [PythonImport],
     pub(super) definition: &'a [PythonImport],
+    /// The module's never-rebound `NAME = <value>` bindings a parametrize
+    /// decorator may name (#10685).
+    pub(super) module_values: &'a PythonModuleNames<'a>,
     pub(super) admission: &'a PythonAdmissionContext,
     pub(super) standard_unittest_list: bool,
     /// Another local class lists this one as a base, so a subclass may replace
     /// its setup hooks.
     pub(super) subclassed: bool,
+}
+
+/// Preserve each assertion's native byte position inside the exact test slice.
+fn test_assertions(
+    statements: &[Stmt],
+    source: &SourceText<'_>,
+    test_range: TextRange,
+    standard_unittest_list: bool,
+) -> Vec<super::PythonAssertion> {
+    let mut assertions =
+        collect_assertions_from_statements(statements, source, standard_unittest_list);
+    for assertion in &mut assertions {
+        assertion.source_range = assertion.source_range.and_then(|range| {
+            (range.start() >= test_range.start() && range.end() <= test_range.end()).then(|| {
+                TextRange::new(
+                    range.start() - test_range.start(),
+                    range.end() - test_range.start(),
+                )
+            })
+        });
+        assertion.observed_operands.retain_mut(|(_, range)| {
+            if range.start() < test_range.start() || range.end() > test_range.end() {
+                return false;
+            }
+            *range = TextRange::new(
+                range.start() - test_range.start(),
+                range.end() - test_range.start(),
+            );
+            true
+        });
+    }
+    assertions
 }
 
 /// Follow the default pytest `python_functions` and unittest
@@ -462,7 +497,24 @@ pub(super) fn collect_tests_from_statements(
     let imports = import_context.body;
     let admission = import_context.admission;
     let mut definition_imports = import_context.definition.to_vec();
-    let local_classes = LocalTestClasses::of(file, statements, import_context.definition);
+    // A decorator in a class body looks a name up there before the module.
+    let class_names = if class_context.is_some() {
+        super::module_constants::class_scope_names(statements)
+    } else {
+        Some(Vec::new())
+    };
+    let base_parametrize_scope = ParametrizeScope {
+        imports: &[],
+        module_values: import_context.module_values,
+        class_names: class_names.as_deref().unwrap_or_default(),
+        class_opaque: class_names.is_none(),
+    };
+    let local_classes = LocalTestClasses::of(
+        file,
+        statements,
+        import_context.definition,
+        base_parametrize_scope,
+    );
     let setup_receivers = if class_context.is_some() {
         super::setup_receivers::setup_receivers(
             source,
@@ -487,8 +539,20 @@ pub(super) fn collect_tests_from_statements(
                     &function.args,
                     &function.decorator_list,
                 );
+                let parametrize_scope = ParametrizeScope {
+                    imports: &definition_imports,
+                    ..base_parametrize_scope
+                };
                 let direct_parametrized = if framework == PythonFramework::Pytest {
-                    super::parametrize::direct_argnames(&function.decorator_list)
+                    super::parametrize::direct_argnames(&function.decorator_list, parametrize_scope)
+                } else {
+                    Vec::new()
+                };
+                let unsettled_indirect = if framework == PythonFramework::Pytest {
+                    super::parametrize::unsettled_indirect_argnames(
+                        &function.decorator_list,
+                        parametrize_scope,
+                    )
                 } else {
                     Vec::new()
                 };
@@ -496,9 +560,10 @@ pub(super) fn collect_tests_from_statements(
                     .into_iter()
                     .filter(|name| !generated_inputs.contains(name))
                     .collect();
-                let assertions = collect_assertions_from_statements(
+                let assertions = test_assertions(
                     &function.body,
                     source,
+                    function.range,
                     import_context.standard_unittest_list
                         && super::oracles::unittest_list::eligible_method(
                             &function.args,
@@ -530,12 +595,20 @@ pub(super) fn collect_tests_from_statements(
                     parametrize.as_ref().map(|cases| cases.argnames()).as_ref(),
                     admission,
                 );
+                let (parametrize, body_text) = unpack_parametrize_argname(
+                    source,
+                    function.range,
+                    &function.decorator_list,
+                    &function.body,
+                    parametrize,
+                    &fixtures,
+                );
                 out.push(PythonTest {
                     qualified_name: qualified_test_name(class_context, &name),
                     name,
                     file: file.to_path_buf(),
                     line: line_for_range_start(source, function.range),
-                    body_text: text_for_range(source, function.range),
+                    body_text,
                     imports,
                     decorators: decorator_names(&function.decorator_list),
                     activation_controls: super::test_activation::activation_controls(
@@ -552,9 +625,13 @@ pub(super) fn collect_tests_from_statements(
                     setup_receivers: setup_receivers.clone(),
                     fixture_defs: Vec::new(),
                     direct_parametrized,
-                    parametrized: is_parametrized(&function.decorator_list),
-                    parametrize: parametrize
-                        .and_then(|cases| cases.excluding_body_bindings(&function.body)),
+                    unsettled_indirect,
+                    parametrized: is_parametrized(&function.decorator_list)
+                        || super::parametrize::applies_parametrize(
+                            &function.decorator_list,
+                            parametrize_scope,
+                        ),
+                    parametrize,
                     generated_inputs,
                     framework,
                     assertions,
@@ -578,8 +655,20 @@ pub(super) fn collect_tests_from_statements(
                     &function.args,
                     &function.decorator_list,
                 );
+                let parametrize_scope = ParametrizeScope {
+                    imports: &definition_imports,
+                    ..base_parametrize_scope
+                };
                 let direct_parametrized = if framework == PythonFramework::Pytest {
-                    super::parametrize::direct_argnames(&function.decorator_list)
+                    super::parametrize::direct_argnames(&function.decorator_list, parametrize_scope)
+                } else {
+                    Vec::new()
+                };
+                let unsettled_indirect = if framework == PythonFramework::Pytest {
+                    super::parametrize::unsettled_indirect_argnames(
+                        &function.decorator_list,
+                        parametrize_scope,
+                    )
                 } else {
                     Vec::new()
                 };
@@ -587,7 +676,7 @@ pub(super) fn collect_tests_from_statements(
                     .into_iter()
                     .filter(|name| !generated_inputs.contains(name))
                     .collect();
-                let assertions = collect_assertions_from_statements(&function.body, source, false);
+                let assertions = test_assertions(&function.body, source, function.range, false);
                 // pytest does not parametrize unittest methods; Hypothesis
                 // `@example` rows run under either framework.
                 let parametrize = (framework == PythonFramework::Pytest)
@@ -613,12 +702,20 @@ pub(super) fn collect_tests_from_statements(
                     parametrize.as_ref().map(|cases| cases.argnames()).as_ref(),
                     admission,
                 );
+                let (parametrize, body_text) = unpack_parametrize_argname(
+                    source,
+                    function.range,
+                    &function.decorator_list,
+                    &function.body,
+                    parametrize,
+                    &fixtures,
+                );
                 out.push(PythonTest {
                     qualified_name: qualified_test_name(class_context, &name),
                     name,
                     file: file.to_path_buf(),
                     line: line_for_range_start(source, function.range),
-                    body_text: text_for_range(source, function.range),
+                    body_text,
                     imports,
                     decorators: decorator_names(&function.decorator_list),
                     activation_controls: super::test_activation::activation_controls(
@@ -635,9 +732,13 @@ pub(super) fn collect_tests_from_statements(
                     setup_receivers: setup_receivers.clone(),
                     fixture_defs: Vec::new(),
                     direct_parametrized,
-                    parametrized: is_parametrized(&function.decorator_list),
-                    parametrize: parametrize
-                        .and_then(|cases| cases.excluding_body_bindings(&function.body)),
+                    unsettled_indirect,
+                    parametrized: is_parametrized(&function.decorator_list)
+                        || super::parametrize::applies_parametrize(
+                            &function.decorator_list,
+                            parametrize_scope,
+                        ),
+                    parametrize,
                     generated_inputs,
                     framework,
                     assertions,
@@ -668,6 +769,7 @@ pub(super) fn collect_tests_from_statements(
                         TestImportContext {
                             body: imports,
                             definition: &definition_imports,
+                            module_values: import_context.module_values,
                             admission,
                             standard_unittest_list: class_context.is_none()
                                 && super::oracles::unittest_list::eligible_class(
@@ -701,6 +803,7 @@ pub(super) fn collect_tests_from_statements(
                                     .get(mixin.name.as_str())
                                     .map(Vec::as_slice)
                                     .unwrap_or(&definition_imports),
+                                module_values: import_context.module_values,
                                 admission,
                                 standard_unittest_list: false,
                                 // A consumer class runs the mixin's tests under its own hooks.
@@ -735,6 +838,14 @@ pub(super) fn collect_tests_from_statements(
                                 .flatten()
                                 .cloned(),
                         );
+                        test.unsettled_indirect.extend(
+                            local_classes
+                                .class_unsettled_indirect
+                                .get(class_name)
+                                .into_iter()
+                                .flatten()
+                                .cloned(),
+                        );
                         test.decorators.extend(
                             local_classes
                                 .class_decorators
@@ -749,6 +860,43 @@ pub(super) fn collect_tests_from_statements(
             _ => {}
         }
     }
+}
+
+/// The test's cases without the argnames its body rebinds, read through a
+/// leading `a, b = argname` unpack when there is one (#10832), and its body
+/// text with that unpack blanked (offsets kept).
+fn unpack_parametrize_argname(
+    source: &str,
+    range: TextRange,
+    decorators: &[Expr],
+    body: &[Stmt],
+    parametrize: Option<super::parametrize::PythonParametrizeCases>,
+    parameters: &[String],
+) -> (Option<super::parametrize::PythonParametrizeCases>, String) {
+    let mut body_text = text_for_range(source, range);
+    let parametrize = parametrize.and_then(|cases| cases.excluding_body_bindings(body));
+    // A decorator other than a pytest mark may call the test with another
+    // row, as the literal-params fixture path also refuses.
+    if !decorator_names(decorators)
+        .iter()
+        .all(|decorator| decorator.starts_with("pytest.mark."))
+    {
+        return (parametrize, body_text);
+    }
+    let Some((cases, span)) = parametrize.as_ref().and_then(|cases| {
+        super::param_fixtures::unpacked_parametrize_cases(cases, body, source, parameters)
+    }) else {
+        return (parametrize, body_text);
+    };
+    let start = usize::from(range.start());
+    let (Some(from), Some(to)) = (span.start.checked_sub(start), span.end.checked_sub(start))
+    else {
+        return (parametrize, body_text);
+    };
+    if !super::param_fixtures::blank_range(&mut body_text, from..to) {
+        return (parametrize, body_text);
+    }
+    (Some(cases), body_text)
 }
 
 /// Module imports plus the imports at the top level of the test body
@@ -939,13 +1087,19 @@ struct LocalTestClasses<'a> {
     class_decorators: BTreeMap<&'a str, Vec<String>>,
     /// Argnames a class-level (or ancestor) pytest parametrize supplies.
     class_direct_parametrized: BTreeMap<&'a str, Vec<String>>,
+    class_unsettled_indirect: BTreeMap<&'a str, Vec<String>>,
     class_activation_controls:
         BTreeMap<&'a str, Vec<super::test_activation::PythonActivationControl>>,
     definition_imports: BTreeMap<&'a str, Vec<PythonImport>>,
 }
 
 impl<'a> LocalTestClasses<'a> {
-    fn of(file: &Path, statements: &'a [Stmt], initial_imports: &[PythonImport]) -> Self {
+    fn of(
+        file: &Path,
+        statements: &'a [Stmt],
+        initial_imports: &[PythonImport],
+        parametrize_scope: ParametrizeScope<'_>,
+    ) -> Self {
         let scope = ScopeClasses::of(statements);
         let mut found = Self {
             last_definitions: scope
@@ -1005,15 +1159,38 @@ impl<'a> LocalTestClasses<'a> {
                 .flat_map(|(_, class)| decorator_names(&class.decorator_list))
                 .collect();
             found.class_decorators.insert(name, decorators);
+            // Each class decorator reads the imports in effect where its
+            // class is defined.
+            let class_scope = |ancestor: &&'a str| ParametrizeScope {
+                imports: found
+                    .definition_imports
+                    .get(ancestor)
+                    .map(Vec::as_slice)
+                    .unwrap_or_default(),
+                ..parametrize_scope
+            };
             let direct_parametrized = scope
                 .ancestors_or_self(name)
                 .iter()
-                .filter_map(|ancestor| scope.defs.get(ancestor))
-                .flat_map(|(_, class)| super::parametrize::direct_argnames(&class.decorator_list))
+                .filter_map(|ancestor| Some((scope.defs.get(ancestor)?, class_scope(ancestor))))
+                .flat_map(|((_, class), within)| {
+                    super::parametrize::direct_argnames(&class.decorator_list, within)
+                })
+                .collect();
+            let unsettled_indirect = scope
+                .ancestors_or_self(name)
+                .iter()
+                .filter_map(|ancestor| Some((scope.defs.get(ancestor)?, class_scope(ancestor))))
+                .flat_map(|((_, class), within)| {
+                    super::parametrize::unsettled_indirect_argnames(&class.decorator_list, within)
+                })
                 .collect();
             found
                 .class_direct_parametrized
                 .insert(name, direct_parametrized);
+            found
+                .class_unsettled_indirect
+                .insert(name, unsettled_indirect);
             let controls = scope
                 .ancestors_or_self(name)
                 .iter()

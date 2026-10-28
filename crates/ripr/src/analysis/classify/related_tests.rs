@@ -24,8 +24,12 @@ use crate::domain::{Probe, RelationConfidence, RelationReason};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
+mod drop_dispatch;
 mod equality_dispatch;
+mod implicit_dispatch;
+mod iterator_dispatch;
 mod operator_dispatch;
+pub(in crate::analysis::classify) use operator_dispatch::stringified_ranges;
 
 pub(in crate::analysis) use equality_dispatch::is_partial_eq_method;
 pub(in crate::analysis) use fmt_dispatch::{
@@ -369,9 +373,9 @@ impl RelatedTestCandidateIndex {
         if owner_fn.is_some_and(equality_dispatch::has_partial_eq_shape) {
             extend_bucket(&mut selected, Some(self.by_equality_assert.as_slice()));
         }
-        // Operator syntax has no token worth indexing; same-file tests of an
-        // operator-trait impl are scanned in full.
-        if owner_fn.is_some_and(operator_dispatch::has_operator_shape) {
+        // Operator, loop and scope-end syntax has no token worth indexing;
+        // same-file tests of such an impl are scanned in full.
+        if owner_fn.is_some_and(implicit_dispatch::has_implicit_shape) {
             scan_all = true;
         }
 
@@ -866,8 +870,9 @@ fn find_related_tests_with_candidates<'a>(
     let owner_name_is_unique = workspace_complete && same_name_function_count == 1;
     // #8999: a user `PartialEq::eq`/`ne` a comparison macro runs unnamed.
     let equality_owner = owner_fn.and_then(|owner| equality_dispatch::equality_owner(owner, index));
-    // #9567: a user operator-trait method that operator syntax runs unnamed.
-    let operator_owner = owner_fn.and_then(|owner| operator_dispatch::operator_owner(owner, index));
+    // #9567: a user operator, `Iterator::next` or `Drop::drop` that syntax runs
+    // unnamed.
+    let implicit_owner = owner_fn.and_then(|owner| implicit_dispatch::implicit_owner(owner, index));
     // Same-crate trait impls share a method name (`size_hint` on WhileSome
     // and Combinations). The uniqueness bypass above only gates *cross-crate*
     // package-prefix filtering; this count is the receiver-identity gate
@@ -1040,8 +1045,29 @@ fn find_related_tests_with_candidates<'a>(
                 .collect()
         })
         .unwrap_or_default();
+    #[cfg(test)]
+    let full_scan_pin_syntax;
+    let pin_syntax = match candidates {
+        RelatedTestCandidates::Indexed(candidate_index) => candidate_index.owner_pin_syntax(),
+        #[cfg(test)]
+        RelatedTestCandidates::FullScan => {
+            full_scan_pin_syntax = super::OwnerPinSyntax::default();
+            &full_scan_pin_syntax
+        }
+    };
     for test_index in candidate_indices {
         let test = index.tests().at(test_index);
+        // Registration proves the callback, not its owner. Match the repo
+        // path before any relation can lend evidence, and keep a later
+        // policy-modified fact from falling through as an ordinary test.
+        if index.is_registered_proptest(test)
+            && (index.proptest_source(test).is_none()
+                || owner_fn.is_none_or(|owner| {
+                    !super::bound_free_owner_calls(index, owner, test, &test.body, pin_syntax)
+                }))
+        {
+            continue;
+        }
         // Compute calls_owner BEFORE the package-prefix guard so a cross-crate
         // test that genuinely calls a uniquely-named owner is not filtered out
         // before the strong signal can save it.
@@ -1087,10 +1113,11 @@ fn find_related_tests_with_candidates<'a>(
                 .get(&test.file)
                 .map(|facts| facts.data().source.as_ref())
         };
-        // Operator syntax (#9567) is the same kind of unnamed owner call as
-        // an equality macro (#8999), so it shares the signal.
+        // Operator, loop and scope-end syntax (#9567) is the same kind of
+        // unnamed owner call as an equality macro (#8999), so it shares the
+        // signal.
         let equality_asserts_owner = !property_only_owner_call
-            && match (owner_fn, equality_owner.as_ref(), operator_owner.as_ref()) {
+            && match (owner_fn, equality_owner.as_ref(), implicit_owner.as_ref()) {
                 (Some(owner), Some(equality), _) => {
                     equality_dispatch::test_asserts_equality_through_owner(
                         test,
@@ -1100,15 +1127,13 @@ fn find_related_tests_with_candidates<'a>(
                         index,
                     )
                 }
-                (Some(owner), None, Some(operator)) => {
-                    operator_dispatch::test_applies_operator_to_owner(
-                        test,
-                        owner,
-                        operator,
-                        test_source(),
-                        index,
-                    )
-                }
+                (Some(owner), None, Some(implicit)) => implicit_dispatch::test_reaches_owner(
+                    test,
+                    owner,
+                    implicit,
+                    test_source(),
+                    index,
+                ),
                 _ => false,
             };
         // #3714: captured `calls` facts only — the same authority as
@@ -1374,9 +1399,33 @@ fn find_related_tests_with_candidates<'a>(
                     index,
                 )
             });
+        // #9638: a receiver call of a method hop's caller (`v.grow(8)` for
+        // `fn grow(&mut self, ..) { self.try_grow(..) }`). It does not ride
+        // the free-call bypasses of `calls_helper_entry`: a receiver call has
+        // no crate path that could tie it to the owner's package, so only a
+        // test in the owner's package qualifies. The cross-package test pins
+        // the outcome; this explicit prefix check is defense in depth that no
+        // mutation test pins on its own (the later cross-package `continue`
+        // and the receiver-type check refuse the same test).
+        let calls_method_entry = !calls_helper_entry
+            && match &owner_package_prefix {
+                Some(prefix) => normalize_path(&test.file).starts_with(prefix),
+                // A root-package owner has no prefix. Only a test that is
+                // itself outside every member package (`tests/..`, `src/..`
+                // of the root) shares its package; a workspace member's
+                // test, and any path that cannot be scoped, fails closed.
+                None => {
+                    package_prefix(&test.file).is_none()
+                        && !path_is_absolute_form(&test.file)
+                        && owner_fn.is_some_and(|owner| !path_is_absolute_form(&owner.file))
+                }
+            }
+            && helper_chain.is_some_and(|chain| {
+                super::helper_transfer::test_calls_method_entry(index, test, chain)
+            });
         let helper_chain_reaches = !calls_owner
             && !assertions_reference_owner
-            && (calls_helper_entry || dispatches_to_helper_fmt_entry);
+            && (calls_helper_entry || calls_method_entry || dispatches_to_helper_fmt_entry);
 
         if !calls_owner
             && !equality_asserts_owner
@@ -1492,13 +1541,18 @@ fn find_related_tests_with_candidates<'a>(
             .cmp(&relation_rank(*a_reason))
             .then_with(|| a.name.cmp(&b.name))
             .then_with(|| a.file.cmp(&b.file))
+            .then_with(|| a.start_line.cmp(&b.start_line))
     });
     // A test related through two reasons is no longer adjacent to itself
     // once confidence leads the sort; keep its first (strongest) entry.
-    // The touched signal is deliberately applied only after this dedup, so
-    // it can never change which same-named entry survives and is analyzed.
+    // A test is its name, file and start line: same-named tests in different
+    // inline modules of one file are different tests, and dropping the later
+    // one loses its assertions (#9567). The touched signal is deliberately
+    // applied only after this dedup, so it can never change which entry
+    // survives and is analyzed.
     let mut seen = BTreeSet::new();
-    related.retain(|(test, _)| seen.insert((test.name.clone(), test.file.clone())));
+    related
+        .retain(|(test, _)| seen.insert((test.name.clone(), test.file.clone(), test.start_line)));
     // Stable: name then file order holds within one (tier, touched) group.
     related.sort_by(|(a, a_reason), (b, b_reason)| {
         relation_rank(*b_reason)
@@ -4492,6 +4546,40 @@ pub(in crate::analysis) fn resolves_method_in_prefix(
     text_resolves_method_to_type(prefix, method, impl_type, impl_trait, prefix, true)
 }
 
+/// Whether `owner` is `drop` of a plain `impl Drop for T` of the standard
+/// trait. Rust forbids calling a destructor by name, so a test that reaches one
+/// does so through scope end, and no assertion-local authority exists that ties
+/// its effect to that end (#10553): a sibling-effect read of a shared cell
+/// cannot credit it. A local trait named `Drop` is an ordinary trait whose
+/// method a test can call.
+pub(in crate::analysis) fn is_drop_destructor(owner: &FunctionSummary, index: &RustIndex) -> bool {
+    drop_dispatch::drop_owner(owner, index).is_some()
+}
+
+/// Whether `test` ends a scope over, or drops, an owned value of the type whose
+/// standard `Drop::drop` is `owner` before an assertion. The relation the
+/// scope-end carrier builds on (#10814).
+pub(in crate::analysis) fn test_drops_destructor_value(
+    test: &TestSummary,
+    owner: &FunctionSummary,
+    test_source: Option<&str>,
+    index: &RustIndex,
+) -> bool {
+    drop_dispatch::drop_owner(owner, index).is_some_and(|drop| {
+        drop_dispatch::test_drops_owner_value(test, owner, &drop, test_source, index)
+    })
+}
+
+/// Whether a `drop(..)` spelled in `source` is the standard function: no local
+/// `fn drop`, `mod mem`, renamed or foreign import or binding named `drop`.
+pub(in crate::analysis) fn standard_drop_call_unshadowed(
+    source: &str,
+    file: &std::path::Path,
+    index: &RustIndex,
+) -> bool {
+    !drop_dispatch::standard_drop_may_be_shadowed(source, file, index)
+}
+
 /// A bounded, test-local dispatch witness for an indexed trait impl. Naming
 /// its type elsewhere, an unknown method, or a same-name free/inherent function
 /// is not a witness. Reuse the established receiver binding rules (#4760).
@@ -4628,7 +4716,8 @@ fn impl_identity_is_shadowed(
             test,
             source,
             impl_type,
-            owner_scope.in_file(&test.file),
+            Some(owner_scope),
+            index,
         ) || super::owner_pin::file_renames_to(source, impl_type)
             || super::owner_pin::file_renames_to(source, raw_impl_type.as_str())
     }) || super::owner_pin::parent_chain_shadows_type(test, impl_type, owner_scope, index)
@@ -4650,7 +4739,8 @@ fn impl_identity_is_shadowed(
                 test,
                 source,
                 trait_name,
-                owner_scope.in_file(&test.file),
+                Some(owner_scope),
+                index,
             )
         })
     }) || owner_trait.as_deref().is_some_and(|trait_name| {
@@ -4717,7 +4807,8 @@ fn owner_call_relation_reason(
                         test,
                         source,
                         trait_name,
-                        owner_scope.in_file(&test.file),
+                        Some(owner_scope),
+                        index,
                     )
                 }) || super::owner_pin::parent_chain_shadows_trait(
                     test,
@@ -5805,9 +5896,10 @@ mod tests {
     }
 
     /// #8387: the diff-touched signal is a pure ranking key. Two same-named
-    /// tests in one file must resolve to the same analyzed body, and so the
-    /// same classification, reach, oracle strength and credited oracle, with
-    /// or without the signal.
+    /// tests in one file are two tests (#9567), and both are analyzed: the
+    /// same classification, reach, and set of related rows (line, oracle
+    /// strength, credited oracle) come out with or without the signal, which
+    /// may only reorder them.
     #[test]
     fn diff_touched_signal_does_not_change_which_duplicate_name_is_analyzed() -> Result<(), String>
     {
@@ -5879,18 +5971,31 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
         );
         assert_eq!(plain.class, ranked.class);
         assert_eq!(plain.ripr.reach.state, ranked.ripr.reach.state);
+        let rows = |finding: &crate::domain::Finding| {
+            let mut rows: Vec<_> = finding
+                .related_tests
+                .iter()
+                .map(|t| {
+                    (
+                        t.name.clone(),
+                        t.line,
+                        t.oracle_strength.clone(),
+                        t.oracle.clone(),
+                    )
+                })
+                .collect();
+            rows.sort_by_key(|row| (row.0.clone(), row.1));
+            rows
+        };
         assert_eq!(
-            plain
-                .related_tests
-                .iter()
-                .map(|t| (&t.name, t.line, t.oracle_strength.clone(), &t.oracle))
-                .collect::<Vec<_>>(),
-            ranked
-                .related_tests
-                .iter()
-                .map(|t| (&t.name, t.line, t.oracle_strength.clone(), &t.oracle))
-                .collect::<Vec<_>>(),
-            "the touched signal must not change the analyzed body or credited oracle"
+            rows(&plain).iter().filter(|row| row.0 == "dup").count(),
+            2,
+            "both same-named tests are analyzed: {plain:?}"
+        );
+        assert_eq!(
+            rows(&plain),
+            rows(&ranked),
+            "the touched signal must not change the analyzed bodies or credited oracles"
         );
         Ok(())
     }
@@ -5960,6 +6065,8 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
                 arguments: vec!["value".to_string()],
                 receiver: None,
                 through_macro: false,
+                transparent_macros_rebound: false,
+                diverging_handlers: Vec::new(),
             }],
             stop_above: None,
         };
@@ -6070,6 +6177,8 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
                 arguments: vec!["qty".to_string()],
                 receiver: None,
                 through_macro: false,
+                transparent_macros_rebound: false,
+                diverging_handlers: Vec::new(),
             }],
             stop_above: None,
         };
@@ -6124,6 +6233,8 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
                 arguments: vec!["qty".to_string()],
                 receiver: None,
                 through_macro: false,
+                transparent_macros_rebound: false,
+                diverging_handlers: Vec::new(),
             }],
             stop_above: None,
         };

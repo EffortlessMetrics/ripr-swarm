@@ -539,7 +539,29 @@ pub(crate) struct CachedSeamLimitInfo {
 /// cross-package wrapper reach limit of #10163, which landed at `1.102` without
 /// its own bump, is invalidated by this generation too. Old entries keep the
 /// weak reading.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.109";
+/// `1.110`: a grouped `use crate::{a, b};` names each plain
+/// `#[macro_export]` test generator member like a single import (#10298).
+/// `1.111`: an `async` owner called through a test-local polling helper
+/// (`block_on(owner(..))`) credits like `.await` (RIPR-SPEC-0197, #9478). Old
+/// entries keep the indirect-owner limit.
+/// `1.112`: a `=>` between the elements of a local `macro_rules!` test-table
+/// row splits rows like `,`, `;` and `:` (#10298).
+/// `1.113`: a clean `#[test_case(.. => literal)]` row credits as the
+/// harness-compared return (RIPR-SPEC-0231 rule 9, #9619). Old entries keep
+/// the row unread.
+/// `1.114`: an update that adds a same-file function's value
+/// (`t += double(*x).await * 1`) is a `return_value` change credited by a pin
+/// whose run folds through that function (RIPR-SPEC-0360, #9478). Old entries
+/// keep the update's `static_unknown` probe.
+/// `1.115`: the row's inputs are substituted into the returned expression
+/// (#10797); `1.114` credited a coincident row.
+/// `1.116`: a `let` literal that a tuple, struct, `for` or other pattern
+/// rebinds is not the owner call's argument (#10819); `1.115` paired it.
+/// `1.117`: whole suffixed decimal integer arguments supply repository
+/// activation and boundary equality values (#10839); older entries missed them.
+/// `1.118`: a standard `Drop::drop` can be credited through a scope-end
+/// carrier (RIPR-SPEC-0240, #10814).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.118";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -696,7 +718,15 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.109";
 /// `0.115`: same `#[test_case]` row and generated-assertion limit as full
 /// `1.108` (#10190).
 /// `0.116`: same indirect-owner limit and `cfg_attr` test reading as full `1.109`.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.116";
+/// `0.118`: same polling-helper owner pin as full `1.111` (#9478).
+/// `0.119`: same arrow-row table splitting as full `1.112` (#10298).
+/// `0.120`: same arrow-row oracle as full `1.113` (#9619).
+/// `0.121`: same call-in-term accumulator as full `1.114` (#9478).
+/// `0.122`: same row-input oracle as full `1.115` (#10797).
+/// `0.123`: same rebound-let rule as full `1.116` (#10819).
+/// `0.124`: same suffixed decimal argument values as full `1.117` (#10839).
+/// `0.125`: same scope-end carrier as full `1.118` (#10814).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.125";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -855,7 +885,15 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.116";
 /// `0.115`: same `#[test_case]` row and generated-assertion limit as full
 /// `1.108` (#10190).
 /// `0.116`: same indirect-owner limit and `cfg_attr` test reading as full `1.109`.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.116";
+/// `0.118`: same polling-helper owner pin as full `1.111` (#9478).
+/// `0.119`: same arrow-row table splitting as full `1.112` (#10298).
+/// `0.120`: same arrow-row oracle as full `1.113` (#9619).
+/// `0.121`: same call-in-term accumulator as full `1.114` (#9478).
+/// `0.122`: same row-input oracle as full `1.115` (#10797).
+/// `0.123`: same rebound-let rule as full `1.116` (#10819).
+/// `0.124`: same suffixed decimal argument values as full `1.117` (#10839).
+/// `0.125`: same scope-end carrier as full `1.118` (#10814).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.125";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -1043,7 +1081,14 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// `1.46`: call facts retain safe typed function-pointer aliases (#9478).
 /// `1.47`: `#[cfg_attr(<known-true>, test)]` marks a function as a test
 /// (#9442); `1.46` facts leave it a production function.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.47";
+/// `1.48`: a clean `#[test_case(.. => literal)]` row carries the
+/// `assert_eq!` the harness runs (RIPR-SPEC-0231 rule 9, #9619); `1.47`
+/// facts have no oracle for it.
+/// `1.49`: an accumulator update with a call term is probed as
+/// `return_value` (RIPR-SPEC-0360, #9478); `1.48` facts keep it unmapped.
+/// `1.50`: the row's literal arguments are substituted into the returned
+/// expression (#10797); `1.49` facts keep the unsubstituted row.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.50";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -1601,6 +1646,19 @@ impl WorkspaceKeyContext<'_> {
         } else {
             workspace_manifests_hash
         };
+        let workspace_manifests_hash =
+            if super::workspace::eligible_proptest_root(self.workspace_root) {
+                let identity = super::workspace::verified_proptest_identity(self.workspace_root)
+                    .map_or_else(
+                        || "unverified".to_string(),
+                        |receipt| receipt.validation_digest,
+                    );
+                hash_str(&format!(
+                    "{workspace_manifests_hash}:proptest-1.11-singleton:{identity}"
+                ))
+            } else {
+                workspace_manifests_hash
+            };
         // The registered-harness premise is producer-owned Cargo metadata.
         // Raw configuration, including malformed bytes and absence, changes
         // that premise independently of Rust sources, HEAD and ripr.toml.
@@ -4047,7 +4105,11 @@ pub(crate) fn workspace_graph_provenance(root: &Path) -> WorkspaceGraphProvenanc
     feature_facts.sort();
     path_dep_edges.sort();
     path_dep_edges.dedup();
+    let graph_context = UnparsedManifestContext::new(root, &parsed_manifests, &path_dep_edges);
     for (manifest, detail) in unparsed_manifests {
+        if graph_context.proves_outside_graph(&manifest) {
+            continue;
+        }
         path_dep_limitations.push(PathDependencyLimitation {
             manifest,
             kind: PathDependencyLimitationKind::ManifestUnparsed,
@@ -4074,6 +4136,195 @@ pub(crate) fn workspace_graph_provenance(root: &Path) -> WorkspaceGraphProvenanc
 /// Repo-relative, `/`-separated directory text of a manifest path, or `None`
 /// when the path is not valid UTF-8 (the supported-path boundary: no lossy
 /// conversion). The root manifest's directory is the empty string.
+/// What the parsed manifests prove about where an unparsed manifest can sit.
+struct UnparsedManifestContext {
+    /// `(workspace root directory, member patterns)` for every parsed manifest
+    /// with a `[workspace]` table; `None` patterns mean `members` is present
+    /// but not a plain string array and so cannot be evaluated.
+    workspaces: Vec<(String, Option<Vec<String>>)>,
+    /// Directories of every parsed manifest.
+    parsed_dirs: Vec<String>,
+    /// Directories named as a path-dependency, `[patch]` or `[replace]` target.
+    targets: BTreeSet<String>,
+}
+
+impl UnparsedManifestContext {
+    fn new(
+        root: &Path,
+        parsed_manifests: &[(&PathBuf, String, toml::Value)],
+        edges: &[PathDependencyEdge],
+    ) -> Self {
+        let mut workspaces = Vec::new();
+        let mut parsed_dirs = Vec::new();
+        let mut targets: BTreeSet<String> = edges
+            .iter()
+            .filter_map(|edge| edge.resolved_path.clone())
+            .collect();
+        for (path, _, value) in parsed_manifests {
+            let Some(dir) = portable_manifest_dir_text(path) else {
+                continue;
+            };
+            if let Some(workspace) = value.get("workspace").and_then(toml::Value::as_table) {
+                let patterns = match workspace.get("members") {
+                    None => Some(Vec::new()),
+                    Some(members) => members.as_array().and_then(|items| {
+                        items
+                            .iter()
+                            .map(|item| item.as_str().map(str::to_string))
+                            .collect::<Option<Vec<_>>>()
+                    }),
+                };
+                workspaces.push((dir.clone(), patterns));
+            }
+            // `[patch.<source>]` and `[replace]` entries are graph members
+            // that the edge inventory does not capture.
+            let mut patched = Vec::new();
+            if let Some(patch) = value.get("patch").and_then(toml::Value::as_table) {
+                patched.extend(patch.values().filter_map(toml::Value::as_table));
+            }
+            if let Some(replace) = value.get("replace").and_then(toml::Value::as_table) {
+                patched.push(replace);
+            }
+            for entries in patched {
+                for entry in entries.values() {
+                    if let Some(declared) = entry
+                        .as_table()
+                        .and_then(|table| table.get("path"))
+                        .and_then(toml::Value::as_str)
+                    {
+                        let declared = declared.replace('\\', "/");
+                        targets.insert(resolve_repo_relative(&dir, &declared).0);
+                    }
+                }
+            }
+            parsed_dirs.push(dir);
+        }
+        // The scanned manifest identity replaces `\\` with `/` and does not
+        // follow symlinked directories, so a target can spell the same
+        // directory differently from the unparsed manifest: add the
+        // separator-normalised spelling and the resolved real location.
+        let canonical_root = root.canonicalize().ok();
+        let mut spellings = BTreeSet::new();
+        for target in &targets {
+            spellings.insert(target.replace('\\', "/"));
+            if let (Some(canonical_root), Ok(real)) =
+                (&canonical_root, root.join(target).canonicalize())
+                && let Ok(relative) = real.strip_prefix(canonical_root)
+            {
+                spellings.insert(relative.to_string_lossy().replace('\\', "/"));
+            }
+        }
+        targets.extend(spellings);
+        Self {
+            workspaces,
+            parsed_dirs,
+            targets,
+        }
+    }
+
+    /// True when an unparsed manifest provably cannot be part of the
+    /// path-dependency graph: no path-dependency, `[patch]` or `[replace]`
+    /// target is its directory, no parsed manifest lives beneath it (it could
+    /// be a workspace root whose members inherit from it), and at least one
+    /// ancestor workspace exists, every ancestor workspace enumerates
+    /// `members` with patterns this matcher fully understands, and none
+    /// selects it. Cargo refuses a workspace whose member or path-dependency
+    /// target fails to parse, so a stray fixture manifest (for example a
+    /// deliberately invalid `Cargo.toml` under a test directory) is outside
+    /// the graph and must not mark the inventory partial. Anything unproven
+    /// stays a limitation (fail closed).
+    fn proves_outside_graph(&self, manifest: &str) -> bool {
+        let dir = manifest.rsplit_once('/').map_or("", |(dir, _)| dir);
+        if dir.is_empty() || self.targets.contains(dir) {
+            return false;
+        }
+        let beneath = format!("{dir}/");
+        if self
+            .parsed_dirs
+            .iter()
+            .any(|parsed| parsed.starts_with(&beneath))
+        {
+            return false;
+        }
+        let mut ancestors = 0usize;
+        for (root_dir, patterns) in &self.workspaces {
+            let relative = if root_dir.is_empty() {
+                dir
+            } else {
+                match dir
+                    .strip_prefix(root_dir.as_str())
+                    .and_then(|rest| rest.strip_prefix('/'))
+                {
+                    Some(rest) => rest,
+                    None => continue,
+                }
+            };
+            ancestors += 1;
+            let Some(patterns) = patterns else {
+                return false;
+            };
+            if !patterns
+                .iter()
+                .all(|pattern| matches!(member_pattern_selects(pattern, relative), Some(false)))
+            {
+                return false;
+            }
+        }
+        ancestors > 0
+    }
+}
+
+/// Evaluate one `[workspace] members` pattern against a root-relative
+/// directory. Supports literal segments and `*` wildcards inside a segment;
+/// returns `None` for syntax it does not model (`**`, `?`, classes, braces,
+/// absolute or `..` paths) so the caller fails closed.
+fn member_pattern_selects(pattern: &str, relative: &str) -> Option<bool> {
+    let pattern = pattern.replace('\\', "/");
+    let pattern = pattern.trim_start_matches("./").trim_end_matches('/');
+    if pattern.is_empty()
+        || pattern.starts_with('/')
+        || pattern.contains(['?', '[', '{'])
+        || pattern.contains("**")
+        || pattern
+            .split('/')
+            .any(|segment| segment == ".." || segment == ".")
+        || pattern.chars().nth(1) == Some(':')
+    {
+        return None;
+    }
+    let pattern_segments: Vec<&str> = pattern.split('/').collect();
+    let dir_segments: Vec<&str> = relative.split('/').collect();
+    Some(
+        pattern_segments.len() == dir_segments.len()
+            && pattern_segments
+                .iter()
+                .zip(&dir_segments)
+                .all(|(pattern, segment)| segment_matches(pattern, segment)),
+    )
+}
+
+/// Match one path segment against a pattern whose only metacharacter is `*`.
+fn segment_matches(pattern: &str, segment: &str) -> bool {
+    let mut parts = pattern.split('*');
+    let Some(first) = parts.next() else {
+        return false;
+    };
+    let Some(mut rest) = segment.strip_prefix(first) else {
+        return false;
+    };
+    let parts: Vec<&str> = parts.collect();
+    let Some((last, middle)) = parts.split_last() else {
+        return rest.is_empty();
+    };
+    for part in middle {
+        let Some(at) = rest.find(part) else {
+            return false;
+        };
+        rest = &rest[at + part.len()..];
+    }
+    rest.len() >= last.len() && rest.ends_with(last)
+}
+
 fn portable_manifest_dir_text(manifest_path: &Path) -> Option<String> {
     let dir = manifest_path.parent().unwrap_or_else(|| Path::new(""));
     Some(dir.to_str()?.replace('\\', "/"))
@@ -4874,7 +5125,10 @@ mod tests {
         // 1.44 -> 1.45: never-executed oracle statements dropped (#7638).
         // 1.45 -> 1.46: typed function-pointer alias facts (#9478).
         // 1.46 -> 1.47: `cfg_attr(<known-true>, test)` marks a test (#9442).
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.47");
+        // 1.47 -> 1.48: arrow-row oracles (RIPR-SPEC-0231 rule 9, #9619).
+        // 1.48 -> 1.49: call-in-term accumulator probe (RIPR-SPEC-0360, #9478).
+        // 1.49 -> 1.50: arrow row inputs substituted (RIPR-SPEC-0231 rule 9, #10797).
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.50");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -5008,7 +5262,15 @@ mod tests {
         // 1.104 -> 1.106: table-driven loop-accumulator pin (#6485).
         // 1.106 -> 1.108: literal-row `#[test_case]` bodies (#10190); 1.107 is #10298's.
         // 1.108 -> 1.109: indirect-owner limit and `cfg_attr` test (RIPR-SPEC-0240).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.109");
+        // 1.110 -> 1.111: polling-helper owner pin (RIPR-SPEC-0197, #9478).
+        // 1.111 -> 1.112: arrow-separated macro table rows (#10298).
+        // 1.112 -> 1.113: arrow-row oracles (RIPR-SPEC-0231 rule 9, #9619).
+        // 1.113 -> 1.114: call-in-term accumulator (RIPR-SPEC-0360, #9478).
+        // 1.114 -> 1.115: arrow row inputs substituted (RIPR-SPEC-0231 rule 9, #10797).
+        // 1.115 -> 1.116: rebound let literal is not the argument (#10819).
+        // 1.116 -> 1.117: whole suffixed decimal arguments feed repository activation (#10839).
+        // 1.117 -> 1.118: scope-end carrier for a standard Drop (#10814).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.118");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5105,8 +5367,16 @@ mod tests {
         // 0.111 -> 0.113: same table-driven loop-accumulator pin as full 1.106.
         // 0.113 -> 0.115: same `#[test_case]` transition as the outer cache.
         // 0.115 -> 0.116: same indirect-owner limit and `cfg_attr` test as full 1.109.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.116");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.116");
+        // 0.117 -> 0.118: same polling-helper owner pin as full 1.111.
+        // 0.118 -> 0.119: same arrow-row transition as full 1.112.
+        // 0.119 -> 0.120: same arrow-row oracle as full 1.113.
+        // 0.120 -> 0.121: same call-in-term accumulator as full 1.114.
+        // 0.121 -> 0.122: same row-input oracle as full 1.115.
+        // 0.122 -> 0.123: same rebound-let rule as full 1.116.
+        // 0.123 -> 0.124: same suffixed decimal argument values as full 1.117.
+        // 0.124 -> 0.125: same scope-end carrier as full 1.118.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.125");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.125");
     }
 
     #[test]
@@ -8009,6 +8279,191 @@ mod tests {
 
         ignore_remove_dir_all(&root);
         Ok(())
+    }
+
+    #[test]
+    fn unparsed_manifest_outside_every_member_pattern_is_not_a_limitation() -> Result<(), String> {
+        let root = isolated_dir("path-dep-unparsed-outside");
+        ignore_remove_dir_all(&root);
+        write_manifest(
+            &root,
+            "Cargo.toml",
+            "[workspace]\nmembers = [\"crates/*\"]\n",
+        )?;
+        write_manifest(
+            &root,
+            "crates/app/Cargo.toml",
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n",
+        )?;
+        write_manifest(&root, "tests/fixture/in/Cargo.toml", "[package\nname = ")?;
+
+        let provenance = workspace_graph_provenance(&root);
+        assert!(
+            provenance.path_dependency_limitations.is_empty(),
+            "a fixture manifest outside every member pattern is outside the graph: {:?}",
+            provenance.path_dependency_limitations
+        );
+
+        ignore_remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn unparsed_manifest_that_may_be_in_the_graph_stays_a_limitation() -> Result<(), String> {
+        let root = isolated_dir("path-dep-unparsed-inside");
+        ignore_remove_dir_all(&root);
+        write_manifest(
+            &root,
+            "Cargo.toml",
+            "[workspace]\nmembers = [\"crates/*\"]\n",
+        )?;
+        // Selected by `crates/*`.
+        write_manifest(&root, "crates/broken/Cargo.toml", "[package\nname = ")?;
+        // Reached by a path dependency of a parsed member.
+        write_manifest(
+            &root,
+            "crates/app/Cargo.toml",
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n\
+             [dependencies]\nvendored = { path = \"../../vendor/dep\" }\n",
+        )?;
+        write_manifest(&root, "vendor/dep/Cargo.toml", "[package\nname = ")?;
+
+        let provenance = workspace_graph_provenance(&root);
+        let manifests: Vec<&str> = provenance
+            .path_dependency_limitations
+            .iter()
+            .map(|limitation| limitation.manifest.as_str())
+            .collect();
+        assert_eq!(
+            manifests,
+            vec!["crates/broken/Cargo.toml", "vendor/dep/Cargo.toml"]
+        );
+
+        ignore_remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn unparsed_manifest_stays_a_limitation_when_any_boundary_is_unproven() -> Result<(), String> {
+        let root = isolated_dir("path-dep-unparsed-unproven");
+        ignore_remove_dir_all(&root);
+        write_manifest(
+            &root,
+            "Cargo.toml",
+            "[workspace]\nmembers = [\"crates/*\"]\n\n\
+             [patch.crates-io]\npatched = { path = \"vendor/patched\" }\n",
+        )?;
+        write_manifest(
+            &root,
+            "crates/app/Cargo.toml",
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n",
+        )?;
+        // Nested workspace that selects `m` although the root does not.
+        write_manifest(
+            &root,
+            "tools/ws/Cargo.toml",
+            "[workspace]\nmembers = [\"m\"]\n",
+        )?;
+        write_manifest(&root, "tools/ws/m/Cargo.toml", "[package\nname = ")?;
+        // `[patch]` target.
+        write_manifest(&root, "vendor/patched/Cargo.toml", "[package\nname = ")?;
+        // Unparsed manifest that may itself be a workspace root.
+        write_manifest(&root, "sub/Cargo.toml", "[workspace\nmembers = ")?;
+        write_manifest(
+            &root,
+            "sub/inner/Cargo.toml",
+            "[package]\nname = \"inner\"\nversion = \"0.1.0\"\n",
+        )?;
+        let provenance = workspace_graph_provenance(&root);
+        let manifests: Vec<&str> = provenance
+            .path_dependency_limitations
+            .iter()
+            .map(|limitation| limitation.manifest.as_str())
+            .collect();
+        assert_eq!(
+            manifests,
+            vec![
+                "sub/Cargo.toml",
+                "tools/ws/m/Cargo.toml",
+                "vendor/patched/Cargo.toml"
+            ]
+        );
+
+        ignore_remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unparsed_manifest_reached_through_a_symlink_or_backslash_spelling_stays_a_limitation()
+    -> Result<(), String> {
+        let root = isolated_dir("path-dep-unparsed-spellings");
+        ignore_remove_dir_all(&root);
+        write_manifest(&root, "Cargo.toml", "[workspace]\nmembers = [\"app\"]\n")?;
+        write_manifest(
+            &root,
+            "app/Cargo.toml",
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n\
+             [dependencies]\nlinked = { path = \"../linked\" }\nodd = { path = \"../odd\\\\dir\" }\n",
+        )?;
+        write_manifest(&root, "vendor/bad/Cargo.toml", "[package\nname = ")?;
+        write_manifest(&root, "odd/dir/Cargo.toml", "[package\nname = ")?;
+        std::os::unix::fs::symlink(root.join("vendor/bad"), root.join("linked"))
+            .map_err(|err| err.to_string())?;
+
+        let provenance = workspace_graph_provenance(&root);
+        let manifests: Vec<&str> = provenance
+            .path_dependency_limitations
+            .iter()
+            .map(|limitation| limitation.manifest.as_str())
+            .collect();
+        assert_eq!(
+            manifests,
+            vec!["odd/dir/Cargo.toml", "vendor/bad/Cargo.toml"]
+        );
+
+        ignore_remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn unparsed_manifest_without_any_ancestor_workspace_stays_a_limitation() -> Result<(), String> {
+        let root = isolated_dir("path-dep-unparsed-no-workspace");
+        ignore_remove_dir_all(&root);
+        write_manifest(
+            &root,
+            "app/Cargo.toml",
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n",
+        )?;
+        write_manifest(&root, "other/Cargo.toml", "[package\nname = ")?;
+
+        let provenance = workspace_graph_provenance(&root);
+        assert_eq!(provenance.path_dependency_limitations.len(), 1);
+
+        ignore_remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn unparsed_manifest_is_kept_when_member_syntax_is_not_modeled() {
+        for pattern in ["crates/**", "crates/[ab]*", "crates/?", "../x", "/abs"] {
+            assert_eq!(member_pattern_selects(pattern, "tests/fixture"), None);
+        }
+        assert_eq!(
+            member_pattern_selects("crates/*", "tests/fixture"),
+            Some(false)
+        );
+        assert_eq!(member_pattern_selects("crates/*", "crates/app"), Some(true));
+        assert_eq!(
+            member_pattern_selects("crates/a*p", "crates/app"),
+            Some(true)
+        );
+        assert_eq!(
+            member_pattern_selects("crates/*", "crates/a/b"),
+            Some(false)
+        );
+        assert!(!segment_matches("a*b*c", "abxbd"));
+        assert!(segment_matches("a*b*c", "axbyc"));
     }
 
     #[test]

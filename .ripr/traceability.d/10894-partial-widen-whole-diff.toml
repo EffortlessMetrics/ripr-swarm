@@ -1,0 +1,18 @@
+# Registers the whole-diff budget in the partial-scope widen hint (#10894) as
+# a new behavior spec under RIPR-PROP-0019.
+[[behavior]]
+id = "RIPR-SPEC-0364"
+name = "partial widen whole-diff budget"
+spec = "docs/specs/RIPR-SPEC-0364-partial-widen-whole-diff-budget.md"
+tests = [
+  "crates/ripr/src/analysis/language/rust/mod.rs::tests::partial_widen_minimums_admit_the_next_file_and_one_less_does_not",
+  "crates/ripr/src/analysis/language/rust/mod.rs::tests::partial_widen_names_the_whole_diff_only_when_its_limits_can_grant_it",
+  "crates/ripr/src/analysis/language/rust/mod.rs::tests::partial_widen_counts_every_language_against_the_line_clamp",
+  "crates/ripr/src/analysis/language/rust/mod.rs::tests::partial_widen_omits_the_whole_diff_when_its_packages_exceed_the_index_guard",
+]
+code = [
+  "crates/ripr/src/analysis/language/rust/mod.rs",
+]
+metrics = [
+  "unit_test_pass_rate",
+]

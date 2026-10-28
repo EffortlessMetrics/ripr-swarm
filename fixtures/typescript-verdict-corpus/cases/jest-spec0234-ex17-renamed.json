@@ -33,7 +33,7 @@
       "silent"
     ]
   },
-  "reasoning": "The test default-imports `priceRenamed` as `cost` and pins `expect(cost(150)).toBe(140)`; the edit makes it 130 and the test fails. ripr relates the test only through `import_path_affinity` and reports `weakly_exposed` although the exact-value oracle runs the changed code. (matches spec: import_path_affinity, weakly_exposed). Spec cells: RIPR-SPEC-0243 example 17",
+  "reasoning": "The test default-imports `priceRenamed` as `cost` and pins `expect(cost(150)).toBe(140)`; the edit makes it 130 and the test fails. ripr now reports exposed with an exact_value oracle (observed cost(150), expected 140), so the renamed default import is related to the owner and credited. The labeling-time reading was weakly_exposed through import_path_affinity alone. Spec cells: RIPR-SPEC-0243 example 17",
   "labeling_observation": {
     "ripr_commit": "1273096",
     "full_checkout_verdict": "gap",

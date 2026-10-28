@@ -29,7 +29,7 @@
 use super::gap_admission::{is_ignored, withhold_gap};
 use super::related_tests::{
     expr_ending_at_has_type, impl_self_type_name, let_binding_certain_type_head,
-    let_binding_mentions_type, owner_trait_name,
+    let_binding_mentions_type, owner_trait_name, stringified_ranges,
 };
 use super::reveal::contains_as_whole_word;
 use crate::analysis::facts::TestFact;
@@ -131,9 +131,12 @@ pub(in crate::analysis) fn withhold_implicit_call_gap(
     // reach that syntax alone established (operator crediting, #9567) and
     // whose observation no assertion confirmed: relating the test says the
     // owner runs, not that an assertion would notice it change, so the gap
-    // stays withheld instead of becoming a "add a test" signal (#9567).
+    // stays withheld instead of becoming a "add a test" signal (#9567). A
+    // weakness with another cause (the test never drives the changed branch)
+    // is a real gap and keeps its class.
     if finding.ripr.reach.state != StageState::Weak
         && !(matches!(kind, ImplicitCall::Syntax(_))
+            && only_discrimination_unconfirmed(finding)
             && reached_only_through_syntax(finding, owner, index))
     {
         return false;
@@ -175,6 +178,67 @@ pub(in crate::analysis) fn withhold_implicit_call_gap(
     true
 }
 
+/// Withhold an `exposed` verdict on a standard `Drop::drop`. A destructor runs
+/// at scope end and cannot be named, so a test never calls it; every route to
+/// `exposed` (a reach the scope-end relation set, a name match on the free
+/// `drop`) credits an assertion no authority ties to that scope end, whichever
+/// probe family the changed line is (#10553). The one exception is the
+/// scope-end carrier (#10814): when every strong contributing test ends the
+/// guard's scope over a handle its assertion reads, the verdict stands.
+/// Returns `true` when rewritten.
+pub(in crate::analysis) fn withhold_destructor_credit(
+    finding: &mut Finding,
+    index: &RustIndex,
+) -> bool {
+    if finding.class != ExposureClass::Exposed || finding.static_limit_kind.is_some() {
+        return false;
+    }
+    let Some(owner_id) = finding.probe.owner.as_ref() else {
+        return false;
+    };
+    let changed_line = finding.probe.location.line;
+    let Some(owner) = index.functions().iter().find(|function| {
+        function.id == *owner_id
+            && function.start_line <= changed_line
+            && changed_line <= function.end_line
+    }) else {
+        return false;
+    };
+    if !super::is_drop_destructor(owner, index) {
+        return false;
+    }
+    // #10814: an assertion the scope-end carrier ties to this destructor's
+    // write stands; every other route to `exposed` is still withheld.
+    if super::destructor_credit_established(finding, owner, index) {
+        return false;
+    }
+    let next_step = format!(
+        "`{}` runs at the end of a scope no test can name, and no assertion is tied to that scope end, so ripr does not report it exposed. Check that an assertion would fail if the destructor did the wrong thing.",
+        owner.name,
+    );
+    withhold_gap(
+        finding,
+        LIMIT,
+        "whether an assertion observes the effect of the scope end that runs the destructor",
+        next_step,
+        &[],
+    );
+    true
+}
+
+/// Whether the earlier stages are established and only the discriminator is
+/// unconfirmed, the way `pinned_shape` reads it: reach is already decided by
+/// the caller, infection is read, and propagation is read or weak. A finding
+/// whose infection or propagation is not read has a different missing leg and
+/// keeps its own gap. Stage states, not summary text, carry this: the summary
+/// differs between "an assertion matched but cannot confirm" and "no assertion
+/// matched", and both leave the credit unconfirmed.
+fn only_discrimination_unconfirmed(finding: &Finding) -> bool {
+    let ripr = &finding.ripr;
+    ripr.infect.state == StageState::Yes
+        && matches!(ripr.propagate.state, StageState::Yes | StageState::Weak)
+}
+
 /// Whether every test related to the owner by a direct call reaches it only
 /// through syntax: none of them calls `.name(` on the owner's method, so the relation
 /// came from an operator, loop or scope exit the language runs. A finding with
@@ -193,14 +257,32 @@ fn reached_only_through_syntax(
     if direct.peek().is_none() {
         return false;
     }
+    let path_owner = type_path_owner(owner, index);
+    // The related rows are capped for display. When some were cut, a test that
+    // names the owner may be among them, and which tests survive depends on
+    // test names, so the cut finding is never judged syntax-only on the rows
+    // that happen to remain (#10551): it stays withheld, whatever the order.
+    if finding
+        .related_tests_matched_total
+        .is_some_and(|total| finding.related_tests.len() < total)
+    {
+        return true;
+    }
     direct.all(|related| {
         index
             .tests()
             .iter()
-            .find(|test| test.name == related.name && test.file == related.file)
+            .find(|test| {
+                test.name == related.name
+                    && test.file == related.file
+                    && test.start_line == related.line
+            })
             .is_some_and(|test| {
                 let code = crate::analysis::extract::mask_comments_and_strings(&test.body);
                 !calls_method_named(&code, &owner.name)
+                    && !path_owner
+                        .as_ref()
+                        .is_some_and(|path| calls_by_type_path(&code, &owner.name, path))
             })
     })
 }
@@ -953,6 +1035,141 @@ fn calls_method_named(code: &str, name: &str) -> bool {
     })
 }
 
+/// What a type-path call must name to be a call of this owner.
+struct TypePathOwner {
+    self_type: String,
+    trait_name: String,
+    /// The impl type has no other method of this name (inherent or another
+    /// trait's), so `Type::name(..)` cannot resolve elsewhere.
+    sole_method: bool,
+    /// No other impl of the same trait for this type defines the method
+    /// (`Add<f64>` beside `Add<Money>`), so `<Type as Trait>::name` names one.
+    trait_unique: bool,
+}
+
+fn type_path_owner(owner: &FunctionSummary, index: &RustIndex) -> Option<TypePathOwner> {
+    let self_type = impl_self_type_name(&owner.id.0)?;
+    let trait_name = owner_trait_name(&owner.id.0)?;
+    let trait_name = trait_name
+        .rsplit("::")
+        .next()
+        .unwrap_or(&trait_name)
+        .to_string();
+    let same_name = index
+        .functions()
+        .iter()
+        .filter(|function| {
+            function.name == owner.name
+                && impl_self_type_name(&function.id.0).as_deref() == Some(self_type.as_str())
+        })
+        .count();
+    let same_trait = index
+        .functions()
+        .iter()
+        .filter(|function| {
+            function.name == owner.name
+                && impl_self_type_name(&function.id.0).as_deref() == Some(self_type.as_str())
+                && owner_trait_name(&function.id.0)
+                    .is_some_and(|other| other.rsplit("::").next() == Some(trait_name.as_str()))
+        })
+        .count();
+    Some(TypePathOwner {
+        self_type,
+        trait_name,
+        sole_method: same_name == 1,
+        trait_unique: same_trait == 1,
+    })
+}
+
+/// Whether the test body brings another item in under the impl type's name, by
+/// a `use` or a local `type`, `struct`, `enum`, `trait` or `union`. A path
+/// through that name may then name a different type (`use crate::other::Money;
+/// Money::add(..)`), so no path call of it is attributed to this impl.
+fn rebinds_type_name(code: &str, self_type: &str) -> bool {
+    let word = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let whole =
+        |at: usize, len: usize| !code[..at].ends_with(word) && !code[at + len..].starts_with(word);
+    let imports = code.match_indices("use").any(|(at, _)| {
+        whole(at, 3)
+            && code[at + 3..]
+                .split(';')
+                .next()
+                .is_some_and(|statement| contains_as_whole_word(statement, self_type))
+    });
+    imports
+        || ["type", "struct", "enum", "trait", "union"]
+            .iter()
+            .any(|keyword| {
+                code.match_indices(keyword).any(|(at, _)| {
+                    whole(at, keyword.len())
+                        && code[at + keyword.len()..]
+                            .trim_start()
+                            .strip_prefix(self_type)
+                            .is_some_and(|rest| !rest.starts_with(word))
+                })
+            })
+}
+
+/// Whether `code` (comments and strings masked) calls `name` through the
+/// owner's own type: `<Type as Trait>::name(..)` with the owner's trait, or
+/// `Type::name(..)` when no other method of that name exists on the type. The
+/// qualifier must be exactly the impl type: another type's `add`, another
+/// trait's, a longer identifier ending in the type, a longer method name, and
+/// text inside `stringify!` (never evaluated) are not a call of this impl and
+/// leave the test syntax-only (#10551).
+fn calls_by_type_path(code: &str, name: &str, owner: &TypePathOwner) -> bool {
+    let word = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let self_type = owner.self_type.as_str();
+    if rebinds_type_name(code, self_type) {
+        return false;
+    }
+    // A trait the test imports from elsewhere under the owner's trait name is
+    // another trait.
+    let trait_rebound = rebinds_type_name(code, &owner.trait_name);
+    let unevaluated = stringified_ranges(code);
+    code.match_indices(name).any(|(at, _)| {
+        if unevaluated.iter().any(|range| range.contains(&at)) {
+            return false;
+        }
+        let rest = code[at + name.len()..].trim_start();
+        if !(rest.starts_with('(') || rest.starts_with("::<")) {
+            return false;
+        }
+        let Some(qualifier) = code[..at].trim_end().strip_suffix("::") else {
+            return false;
+        };
+        let qualifier = qualifier.trim_end();
+        // Comments are masked to blanks, so `crate::other:: Money` and
+        // `crate::other::/* x */Money` are module paths too.
+        let is_type = |text: &str| {
+            text.strip_suffix(self_type)
+                .is_some_and(|rest| !rest.ends_with(word) && !rest.trim_end().ends_with("::"))
+        };
+        (owner.sole_method && is_type(qualifier))
+            || qualifier.strip_suffix('>').is_some_and(|inner| {
+                // The `<` must open the qualified path itself, not a generic
+                // argument list (`Wrapper<Money as X>::add` is not this call).
+                let Some((head, inner)) = inner.rsplit_once('<') else {
+                    return false;
+                };
+                !head.ends_with(word)
+                    && owner.trait_unique
+                    && !trait_rebound
+                    && inner.split_once(" as ").is_some_and(|(ty, trait_path)| {
+                        // Bare, or a std/core operator path: a path through
+                        // another module may be a different trait of the
+                        // same name.
+                        let trait_path = trait_path.trim();
+                        let trait_path = trait_path
+                            .strip_prefix("std::ops::")
+                            .or_else(|| trait_path.strip_prefix("core::ops::"))
+                            .unwrap_or(trait_path);
+                        ty.trim() == self_type && trait_path == owner.trait_name
+                    })
+            })
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1103,5 +1320,110 @@ mod tests {
         assert!(!calls_method_named("s.areas()", "area"));
         assert!(!calls_method_named("s.total_area()", "area"));
         assert!(!calls_method_named("s.area", "area"));
+    }
+
+    #[test]
+    fn type_path_calls_need_the_owner_type_and_a_whole_name() {
+        let path_owner = |sole_method| TypePathOwner {
+            self_type: "Money".into(),
+            trait_name: "Add".into(),
+            sole_method,
+            trait_unique: true,
+        };
+        assert!(calls_by_type_path(
+            "Money::add(a, b)",
+            "add",
+            &path_owner(true)
+        ));
+        assert!(calls_by_type_path(
+            "Money::add::<u8>(a, b)",
+            "add",
+            &path_owner(true)
+        ));
+        assert!(calls_by_type_path(
+            "<Money as Add>::add(a, b)",
+            "add",
+            &path_owner(true)
+        ));
+        // A module-qualified path may name another module's `Money`; stay
+        // conservative and leave the test syntax-only.
+        assert!(!calls_by_type_path(
+            "crate::Money::add(a, b)",
+            "add",
+            &path_owner(true)
+        ));
+        assert!(!calls_by_type_path(
+            "Other::add(a, b)",
+            "add",
+            &path_owner(true)
+        ));
+        assert!(!calls_by_type_path(
+            "MyMoney::add(a, b)",
+            "add",
+            &path_owner(true)
+        ));
+        assert!(!calls_by_type_path(
+            "Money::address(a)",
+            "add",
+            &path_owner(true)
+        ));
+        assert!(!calls_by_type_path("Money::add", "add", &path_owner(true)));
+        assert!(!calls_by_type_path(
+            "<Other as Add>::add(a, b)",
+            "add",
+            &path_owner(true)
+        ));
+        assert!(!calls_by_type_path("m.add(a)", "add", &path_owner(true)));
+        // Another trait's method of the same name, an inherent method that
+        // wins `Type::name`, and stringified tokens are not this call.
+        assert!(!calls_by_type_path(
+            "<Money as Audit>::add(a, b)",
+            "add",
+            &path_owner(true)
+        ));
+        assert!(!calls_by_type_path(
+            "Money::add(a, b)",
+            "add",
+            &path_owner(false)
+        ));
+        assert!(calls_by_type_path(
+            "<Money as std::ops::Add>::add(a, b)",
+            "add",
+            &path_owner(false)
+        ));
+        assert!(!calls_by_type_path(
+            "stringify!(Money::add(1, 2))",
+            "add",
+            &path_owner(true)
+        ));
+        // Another module's trait of the same name, an import of that trait, and
+        // a second impl of the same trait for the type are not this call.
+        assert!(!calls_by_type_path(
+            "<Money as other::Add>::add(a, b)",
+            "add",
+            &path_owner(true)
+        ));
+        assert!(!calls_by_type_path(
+            "use other::Add; <Money as Add>::add(a, b)",
+            "add",
+            &path_owner(true)
+        ));
+        let mut twice = path_owner(true);
+        twice.trait_unique = false;
+        assert!(!calls_by_type_path(
+            "<Money as Add>::add(a, b)",
+            "add",
+            &twice
+        ));
+        assert!(calls_by_type_path(
+            "<Money as core::ops::Add>::add(a, b)",
+            "add",
+            &path_owner(true)
+        ));
+        assert!(calls_by_type_path(
+            "let _ = stringify!(x); Money::add(1, 2)",
+            "add",
+            &path_owner(true)
+        ));
     }
 }

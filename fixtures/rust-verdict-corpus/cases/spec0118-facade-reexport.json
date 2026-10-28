@@ -1,0 +1,47 @@
+{
+  "case_id": "spec0118-facade-reexport",
+  "subject_id": "authored-spec0118-facade",
+  "diff": "cases/spec0118-facade-reexport.diff",
+  "anchor": {
+    "file": "inner/src/lib.rs",
+    "line": 3
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "facade_reexport_integration_test",
+  "hard_case": "Spec example 4: `facade` has `pub use inner::*;` and an `Ext` trait; its integration test has `use facade::*;` and calls only `v.go(3)`, so the facade-package test may reach the changed owner through the re-export but never names it.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test --workspace",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "buf.len() + 1",
+        "mutated_line": "buf.len() + 1",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: bump_counter(&mut v, 3) turns 2 instead of 1, but `Ext::go` pushes and counts by itself and never calls it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "`facade/tests/t.rs` pins `v.go(3)`, but `Ext::go` for `Vec<u8>` does not call `inner::bump_counter`, so no mutant of it can fail. The test never names the owner and the facade re-exports it, so ripr names the untraced path (`no_static_path` with `rust_integration_public_api_path_unresolved`) and stays non-actionable instead of reading a definite absence. Spec cells: RIPR-SPEC-0118 example 4.",
+  "labeling_observation": {
+    "ripr_commit": "49be7676",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0118#4"
+  ]
+}

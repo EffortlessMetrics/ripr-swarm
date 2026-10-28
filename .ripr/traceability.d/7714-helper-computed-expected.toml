@@ -1,0 +1,6 @@
+# Registers the helper-computed expected value controls (#7714) under RIPR-SPEC-0197.
+[[extend]]
+id = "RIPR-SPEC-0197"
+tests = [
+  "crates/ripr/tests/helper_computed_expected_owner_pin.rs::helper_computed_expected_values_do_not_credit_the_owner_pin",
+]
