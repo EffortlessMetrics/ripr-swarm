@@ -437,7 +437,10 @@ comments, strings, and docstrings:
   before the name, its closing bracket or the `=` / `in` / `as` after it, and
   a run of blanks after `for`, `as`, `def` or `class`, do not hide the rebind.
   A `for` or `as` inside a string or after a `#` comment is text, so
-  `assert "for" and ((r)) in [r]` stays a credited read. Known limits, none of
+  `assert "for" and ((r)) in [r]` stays a credited read. Loop-keyword masking
+  retains earlier lines for multiline literals while searching only the current
+  line; an unterminated literal supplies no parsed test or protocol-entry credit.
+  Known limits, none of
   them closed by this: a multi-line tuple target whose earlier elements sit on
   other lines (`(x,\n r) = ...`) is not seen, so the receiver stays credited
   (the credit-keeping direction); and a dict key at the start of a continuation

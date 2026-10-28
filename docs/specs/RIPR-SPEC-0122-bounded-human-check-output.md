@@ -396,6 +396,11 @@ An empty list renders as `nearest: none`. A suffix selector searches reported
 gaps rather than every seam shape; an empty list must not claim that a filtered
 family has no seam in the file.
 
+A stub owner parameter typed `impl Into<T>` (plain, non-generic `T`) is declared
+as `T`, and `impl AsRef<str>` / `impl AsRef<[u8]>` as `&str` / `&[u8]` (#8361).
+Any other `impl Trait` parameter, including `impl AsRef<Path>` whose `Path`
+could be shadowed, still refuses as `parameter_unsupported`.
+
 Direct JSON stub refusals distinguish an absent selector (`seam_not_found`)
 from a suffix naming several files or disjoint same-kind seams that tie
 (`selector_ambiguous`). Both remain decisions (exit 3), with the schema

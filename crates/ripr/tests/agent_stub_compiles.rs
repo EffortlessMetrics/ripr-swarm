@@ -109,6 +109,11 @@ pub fn rename(name: &mut str, n: usize) -> usize {
     if n > 14 { n } else { name.len() }
 }
 
+pub fn tag(name: impl Into<String>, path: impl AsRef<str>, n: u8) -> usize {
+    let name: String = name.into();
+    if n > 15 { name.len() } else { path.as_ref().len() }
+}
+
 pub mod shapes {
     pub struct S {
         pub v: u8,
@@ -292,6 +297,9 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
         ("n > 12", Expect::StopsAtRiprTodo),
         ("n > 13", Expect::StopsAtRiprTodo),
         ("n > 14", Expect::StopsAtRiprTodo),
+        // `impl Into<String>` / `impl AsRef<str>` parameters are declared
+        // with the concrete `String` / `&str` the argument accepts (#8361).
+        ("n > 15", Expect::StopsAtRiprTodo),
         // A trait method with a `&self` receiver is called through
         // `<Parser as std::fmt::Display>::fmt(&subject, ..)`.
         ("self.max > 3", Expect::StopsAtRiprTodo),
@@ -646,10 +654,10 @@ fn check_prints_the_stub_route_only_when_the_printed_command_yields_a_stub() -> 
 
 /// #8361: families beyond predicate/return_value/error_path/match_arm used to
 /// print neither a route nor a reason. A field_construction finding whose
-/// owner takes `impl Into<String>` now prints the stub producer's refusal.
+/// owner takes `impl Display` now prints the stub producer's refusal.
 #[test]
 fn check_prints_the_stub_refusal_for_a_field_construction_finding() -> Result<(), String> {
-    const FIELD_LIB: &str = "pub struct Opts { pub jobs: usize }\nimpl Opts { pub fn new(name: impl Into<String>) -> Self { let _n: String = name.into(); Self { jobs: 2 } } }\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn builds() {\n        let _ = Opts::new(\"x\");\n    }\n}\n";
+    const FIELD_LIB: &str = "pub struct Opts { pub jobs: usize }\nimpl Opts { pub fn new(name: impl std::fmt::Display) -> Self { let _n = name.to_string(); Self { jobs: 2 } } }\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn builds() {\n        let _ = Opts::new(\"x\");\n    }\n}\n";
     let scratch = Scratch::new()?;
     let root = scratch.directory.clone();
     std::fs::write(
