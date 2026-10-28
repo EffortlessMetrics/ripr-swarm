@@ -13,7 +13,7 @@ use super::classify::{
     NO_REACHABLE_TEST_OBSERVE_SUMMARY, ProbeContext, RelatedTestCandidateIndex,
     TransitiveReachIndex, ambiguous_helper_entry_called_by_tests, confidence_score,
     evaluate_const_flow, find_related_tests_with_candidate_index, is_assertion_shaped_owner,
-    relation_establishes_reach, same_file_const_readers,
+    relation_establishes_reach, same_file_const_readers, shares_module_scope,
 };
 use super::probes::parser_expression_for_probe;
 use super::rust_index::{RustIndex, TestSummary, find_file_facts};
@@ -150,6 +150,16 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins(
                 .as_deref()
                 .and_then(|file| find_file_facts(index, file))
                 .and_then(|facts| {
+                    // Spelling cannot tell an imported or sibling-module
+                    // constant from the edited one: the declaration and every
+                    // reader must share one module scope.
+                    let lines: Vec<usize> = const_readers
+                        .iter()
+                        .map(|reader| reader.start_line)
+                        .collect();
+                    if !shares_module_scope(&facts.source, probe.location.line, &lines) {
+                        return None;
+                    }
                     evaluate_const_flow(change, &const_readers, &reader_tests, &|name| {
                         facts.functions.iter().filter(|f| f.name == name).count()
                     })

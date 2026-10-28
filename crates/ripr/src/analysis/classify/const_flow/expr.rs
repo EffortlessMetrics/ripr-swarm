@@ -389,6 +389,39 @@ impl Expr {
         }
     }
 
+    /// No call and no variable anywhere: the expression is its own literal value.
+    fn is_literal_only(&self) -> bool {
+        match self {
+            Self::Literal(_) => true,
+            Self::Var(_) | Self::Call(..) => false,
+            Self::Not(inner) | Self::Neg(inner) => inner.is_literal_only(),
+            Self::Bin(_, left, right) => left.is_literal_only() && right.is_literal_only(),
+            Self::Method(receiver, _, args) => {
+                receiver.is_literal_only() && args.iter().all(Self::is_literal_only)
+            }
+            Self::Format(_, args) => args.iter().all(Self::is_literal_only),
+        }
+    }
+
+    /// A boolean assertion body in which each comparison has a literal side,
+    /// joined by `&&`, `||` and `!`; a bare reader call is a boolean verdict.
+    fn is_pinned(&self) -> bool {
+        match self {
+            Self::Not(inner) => inner.is_pinned(),
+            Self::Bin(BinOp::And | BinOp::Or, left, right) => {
+                (left.is_pinned() || left.is_literal_only())
+                    && (right.is_pinned() || right.is_literal_only())
+            }
+            Self::Bin(
+                BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge,
+                left,
+                right,
+            ) => compares_to_literal(left, right),
+            Self::Call(..) | Self::Method(..) => self.first_call().is_some(),
+            _ => false,
+        }
+    }
+
     /// Every called name, in source order.
     pub(super) fn call_names(&self, names: &mut Vec<String>) {
         match self {
@@ -551,6 +584,17 @@ pub(super) enum Assertion {
 }
 
 impl Assertion {
+    /// Every comparison pits a reader's result against an expected value
+    /// written out in the test: a literal-only expression, with no call and
+    /// no constant. `assert_eq!(read(), read())` and `assert_eq!(read(), LIMIT)`
+    /// move with the edit and pin nothing.
+    pub(super) fn has_literal_expectation(&self) -> bool {
+        match self {
+            Self::True(expr) => expr.is_pinned(),
+            Self::Eq(left, right) | Self::Ne(left, right) => compares_to_literal(left, right),
+        }
+    }
+
     pub(super) fn call_names(&self) -> Vec<String> {
         let mut names = Vec::new();
         match self {
@@ -562,6 +606,11 @@ impl Assertion {
         }
         names
     }
+}
+
+fn compares_to_literal(left: &Expr, right: &Expr) -> bool {
+    (left.is_literal_only() && right.first_call().is_some())
+        || (right.is_literal_only() && left.first_call().is_some())
 }
 
 /// `assert!(e)`, `assert_eq!(a, b)` or `assert_ne!(a, b)`, with no message.

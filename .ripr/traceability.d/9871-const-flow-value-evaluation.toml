@@ -18,4 +18,8 @@ tests = [
   "crates/ripr/src/analysis/classify/const_flow/tests.rs::a_value_keeping_rewrite_is_asked_about_its_neighbours",
   "crates/ripr/src/analysis/classify/const_flow/tests.rs::both_neighbours_must_break_a_pinned_boundary",
   "crates/ripr/src/analysis/classify/const_flow/tests.rs::the_explained_result_is_the_readers_return_not_the_comparison",
+  "crates/ripr/src/analysis/classify/const_flow/tests.rs::only_a_literal_written_in_the_test_is_an_expectation",
+  "crates/ripr/src/analysis/classify/const_flow/tests.rs::a_reader_in_another_module_does_not_share_the_declarations_scope",
+  "crates/ripr/src/analysis/classify/const_flow/tests.rs::a_declaration_inside_a_block_is_not_shared_with_a_free_function",
+  "crates/ripr/src/analysis/classify/const_flow/tests.rs::modules_with_the_same_chain_share_a_scope",
 ]

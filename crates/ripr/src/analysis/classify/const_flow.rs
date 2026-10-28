@@ -95,6 +95,53 @@ impl ChangedConsts {
     }
 }
 
+/// Whether the declaration at `declaration_line` and every function starting
+/// at one of `function_lines` sit directly in the same module of `source`
+/// (no enclosing block but `mod name { .. }`, the same chain of modules).
+/// Spelling cannot tell an imported or sibling-module constant from the
+/// edited one, so a reader in another module, or a declaration inside a
+/// block, is not evaluated.
+pub(in crate::analysis) fn shares_module_scope(
+    source: &str,
+    declaration_line: usize,
+    function_lines: &[usize],
+) -> bool {
+    let masked = crate::analysis::extract::mask_comments_and_strings(source);
+    let mut stack: Vec<Option<String>> = Vec::new();
+    let mut scopes: BTreeMap<usize, Vec<Option<String>>> = BTreeMap::new();
+    for (at, line) in masked.lines().enumerate() {
+        let number = at + 1;
+        scopes.insert(number, stack.clone());
+        let mut words = line.split_whitespace().peekable();
+        let mut module: Option<String> = None;
+        while let Some(word) = words.next() {
+            if word == "mod"
+                && let Some(name) = words.peek()
+            {
+                module = Some(name.trim_end_matches('{').to_string());
+            }
+        }
+        for ch in line.chars() {
+            match ch {
+                '{' => stack.push(module.take()),
+                '}' => {
+                    stack.pop();
+                }
+                _ => {}
+            }
+        }
+    }
+    let Some(declared) = scopes.get(&declaration_line) else {
+        return false;
+    };
+    if declared.iter().any(Option::is_none) {
+        return false;
+    }
+    function_lines
+        .iter()
+        .all(|line| scopes.get(line) == Some(declared))
+}
+
 /// What evaluating the related tests under the old and new value showed.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::analysis) enum ConstFlow {
@@ -115,7 +162,10 @@ pub(in crate::analysis) struct ConstFlowDetail {
     pub test: String,
     pub assertion: String,
     pub old_result: String,
+    /// The reader's return under `new_result_at`.
     pub new_result: String,
+    /// The constant value that produced `new_result`.
+    pub new_result_at: String,
     pub tests_evaluated: usize,
     /// The edit kept the value; `new_value` lists the neighbours tried.
     pub rewrite: bool,
@@ -182,7 +232,6 @@ pub(in crate::analysis) fn evaluate_const_flow(
             .collect::<Vec<_>>()
             .join(" and "),
         before: &before,
-        after: first_after,
     };
     let reader_names: Vec<&str> = parsed.iter().map(|reader| reader.name.as_str()).collect();
 
@@ -201,7 +250,8 @@ pub(in crate::analysis) fn evaluate_const_flow(
             }
             let assertion = parse_assertion(&oracle.text)?;
             let names = assertion.call_names();
-            if names.is_empty()
+            if !assertion.has_literal_expectation()
+                || names.is_empty()
                 || !names
                     .iter()
                     .all(|name| reader_names.contains(&name.as_str()))
@@ -215,15 +265,22 @@ pub(in crate::analysis) fn evaluate_const_flow(
             }
             evaluated += 1;
             calls_evaluated += names.len();
-            let detail = explain.detail(test, &oracle.text, &assertion);
             if first_seen.is_none() {
-                first_seen = Some(detail.clone());
+                first_seen = Some(explain.detail(
+                    test,
+                    &oracle.text,
+                    &assertion,
+                    (first_after, &alternatives[0]),
+                ));
             }
-            for (after, flip) in afters.iter().zip(flipped.iter_mut()) {
+            for ((after, value), flip) in afters.iter().zip(&alternatives).zip(flipped.iter_mut()) {
                 if !after.holds(&assertion)? {
                     *flip = true;
+                    // The cited result is the one that broke the assertion,
+                    // not the first value tried.
                     if failing.is_none() {
-                        failing = Some(detail.clone());
+                        failing =
+                            Some(explain.detail(test, &oracle.text, &assertion, (after, value)));
                     }
                 }
             }
@@ -280,11 +337,16 @@ struct Explain<'a> {
     old_value: &'a Value,
     new_value: String,
     before: &'a Machine<'a>,
-    after: &'a Machine<'a>,
 }
 
 impl Explain<'_> {
-    fn detail(&self, test: &TestSummary, text: &str, assertion: &Assertion) -> ConstFlowDetail {
+    fn detail(
+        &self,
+        test: &TestSummary,
+        text: &str,
+        assertion: &Assertion,
+        (after, at): (&Machine<'_>, &Value),
+    ) -> ConstFlowDetail {
         let render = |machine: &Machine<'_>| {
             machine
                 .call_result(assertion)
@@ -303,7 +365,8 @@ impl Explain<'_> {
             test: test.name.clone(),
             assertion: text.split_whitespace().collect::<Vec<_>>().join(" "),
             old_result: render(self.before),
-            new_result: render(self.after),
+            new_result: render(after),
+            new_result_at: at.render(),
             tests_evaluated: 0,
             rewrite: false,
         }

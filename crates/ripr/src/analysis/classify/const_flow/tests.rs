@@ -378,3 +378,53 @@ fn the_explained_result_is_the_readers_return_not_the_comparison() -> Result<(),
     }
     Ok(())
 }
+
+#[test]
+fn only_a_literal_written_in_the_test_is_an_expectation() -> Result<(), String> {
+    for (text, pinned) in [
+        ("assert_eq!(should_retry(1), false);", true),
+        ("assert!(should_retry(3) && !should_retry(12));", true),
+        ("assert!(render(1).len() == 5);", true),
+        // Both sides move with the edit, or the expectation names the constant.
+        ("assert_eq!(should_retry(1), should_retry(2));", false),
+        ("assert_eq!(should_retry(1), LIMIT > 3);", false),
+        ("assert!(should_retry(1) == should_retry(2));", false),
+        ("assert!(should_retry(1) && LIMIT > 3);", false),
+    ] {
+        let assertion = parse_assertion(text).ok_or(format!("parses: {text}"))?;
+        assert_eq!(assertion.has_literal_expectation(), pinned, "{text}");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_reader_in_another_module_does_not_share_the_declarations_scope() {
+    let source = "pub const LIMIT: u32 = 10;\n\
+                  pub fn within(n: u32) -> bool { n < LIMIT }\n\
+                  mod other {\n\
+                  use crate::elsewhere::LIMIT;\n\
+                  pub fn other_within(n: u32) -> bool { n < LIMIT }\n\
+                  }\n";
+    assert!(super::shares_module_scope(source, 1, &[2]));
+    assert!(!super::shares_module_scope(source, 1, &[5]));
+    assert!(!super::shares_module_scope(source, 1, &[2, 5]));
+}
+
+#[test]
+fn a_declaration_inside_a_block_is_not_shared_with_a_free_function() {
+    let source = "pub fn charge() -> u32 {\n\
+                  const RATE: u32 = 3;\n\
+                  RATE\n\
+                  }\n\
+                  pub fn rate() -> u32 { RATE }\n";
+    assert!(!super::shares_module_scope(source, 2, &[5]));
+}
+
+#[test]
+fn modules_with_the_same_chain_share_a_scope() {
+    let source = "mod tuning {\n\
+                  pub const FLOOR: u32 = 1;\n\
+                  pub fn floored(n: u32) -> u32 { n.max(FLOOR) }\n\
+                  }\n";
+    assert!(super::shares_module_scope(source, 2, &[3]));
+}

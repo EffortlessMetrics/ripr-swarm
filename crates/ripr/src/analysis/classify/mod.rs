@@ -66,7 +66,9 @@ pub(in crate::analysis) use call_identity::{
     CallIdentityMemos, CallTarget, OwnerCallIdentity, shared_owner_call_identity,
 };
 pub(in crate::analysis) use caller_loop_selector::withhold_caller_loop_selector_gap;
-pub(in crate::analysis) use const_flow::{ChangedConsts, ConstFlow, evaluate_const_flow};
+pub(in crate::analysis) use const_flow::{
+    ChangedConsts, ConstFlow, evaluate_const_flow, shares_module_scope,
+};
 pub(in crate::analysis) use const_readers::same_file_const_readers;
 pub(in crate::analysis) use context::ProbeContext;
 pub(in crate::analysis) use decision::{

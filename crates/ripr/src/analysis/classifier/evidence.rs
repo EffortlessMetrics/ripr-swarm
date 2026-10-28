@@ -1637,8 +1637,12 @@ impl ClassifiedProbeEvidence {
             self.propagate = stage(
                 StageState::Yes,
                 format!(
-                    "`{}` returns {} instead of {} for the tested inputs",
-                    detail.reader, detail.new_result, detail.old_result
+                    "`{}` returns {} instead of {} when `{}` is {}",
+                    detail.reader,
+                    detail.new_result,
+                    detail.old_result,
+                    detail.constant,
+                    detail.new_result_at
                 ),
             );
             self.discriminate = stage(
@@ -1659,8 +1663,8 @@ impl ClassifiedProbeEvidence {
             self.propagate = stage(
                 StageState::Weak,
                 format!(
-                    "`{}` returns {} under both values for the {} tested input set(s)",
-                    detail.reader, detail.old_result, detail.tests_evaluated
+                    "Each of the {} related test(s) gives the same assertion outcome under both values; for the cited assertion `{}` returns {} before and {} after",
+                    detail.tests_evaluated, detail.reader, detail.old_result, detail.new_result
                 ),
             );
             self.discriminate = stage(

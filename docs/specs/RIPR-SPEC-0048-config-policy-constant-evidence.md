@@ -228,8 +228,15 @@ evaluates the test's assertion on each result.
   misread; the flow is unevaluable rather than credited.
 - Integer arithmetic stays inside the declared type and `i64`; an overflow,
   underflow or division by zero makes the flow unevaluable.
+- Each comparison in the assertion has a literal-only side written in the test.
+  `assert_eq!(read(), read())`, an expected value naming the constant, or a
+  comparison between two calls moves with the edit and pins nothing.
 - The reader must be the only function of its name in the file and must not be
   behind a `cfg` attribute.
+- The declaration and every reader sit in the same module scope of the file
+  (the same chain of inline `mod` blocks, no enclosing function or `impl`
+  block). A same-spelled constant imported into another module cannot be told
+  from the edited one by name, so a reader there is not evaluated.
 
 Outcomes, over every related test that calls a reader:
 
