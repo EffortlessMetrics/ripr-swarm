@@ -136,7 +136,8 @@ can only hint that a caller "may lead here" without changing anything.
   literal (`inner(x) + 1`, `1 + inner(x)`, `inner(x) - 1`) when the owner and
   every observed hop caller declare a builtin integer return type that no
   workspace type or `use` item (an import or rename of the name, or a glob import other
-  than `super::*` / `self::*`) shadows: adding or subtracting a constant is injective on an
+  than a `super::*` / `self::*` glob in a scope that does not enclose the
+  function, such as an inline `mod tests`) shadows: adding or subtracting a constant is injective on an
   integer type, so the exact value at the entry moves with the owner's.
   Multiplication, division, remainder, bit operations, negation, `1 - call`,
   a second operand that is not a literal, `as` casts, literal suffixes,

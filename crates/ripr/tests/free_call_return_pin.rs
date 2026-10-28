@@ -78,6 +78,9 @@ fn return_finding_in_files(files: &[(&str, &str, &str)], tests: &str) -> Result<
     std::fs::write(scratch.0.join("Cargo.toml"), MANIFEST).map_err(|error| error.to_string())?;
     let mut diff = String::new();
     for (path, before, after) in files {
+        if let Some(parent) = scratch.0.join(path).parent() {
+            std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
         std::fs::write(scratch.0.join(path), after).map_err(|error| error.to_string())?;
         diff.push_str(&unified_diff(path, before, after));
     }
@@ -515,5 +518,49 @@ fn free_call_entry_offset_literal_follows_rust_integer_lexing() -> Result<(), St
         )?;
         assert_eq!(class_of(&finding), class, "{literal}: {finding}");
     }
+    Ok(())
+}
+
+#[test]
+fn free_call_entry_under_a_parent_glob_that_may_import_an_integer_name_is_not_credited()
+-> Result<(), String> {
+    let wide = "#[derive(Debug, PartialEq)]\npub struct Wide(pub u8);\nimpl std::ops::Add<u8> for Wide {\n    type Output = Wide;\n    fn add(self, _other: u8) -> Wide {\n        Wide(11)\n    }\n}\n";
+    let child = |owner_body: &str, glob: &str| {
+        format!(
+            "{glob}\npub fn outer(x: i64) -> u8 {{\n    inner(x) + 1\n}}\n\nfn inner(x: i64) -> u8 {{\n    {owner_body}\n}}\n"
+        )
+    };
+    let pin = "use free_pin::parent::child::outer;\nuse free_pin::Wide;\n\n#[test]\nfn outer_is_pinned() {\n    assert_eq!(outer(5), Wide(11));\n}\n";
+    let lib = format!("{wide}pub mod parent;\n");
+    let parent = "use crate::Wide as u8;\npub mod child;\n";
+    // An out-of-line child whose `use super::*;` brings the parent's rebound
+    // `u8` in, and the `self::*` spelling of the same glob.
+    for glob in ["use super::*;", "use self::*;"] {
+        let finding = return_finding_in_files(
+            &[
+                ("src/lib.rs", &lib, &lib),
+                ("src/parent.rs", parent, parent),
+                (
+                    "src/parent/child.rs",
+                    &child("Wide(x * 2)", glob),
+                    &child("Wide(x * 3)", glob),
+                ),
+            ],
+            pin,
+        )?;
+        assert_ne!(class_of(&finding), "exposed", "{glob}: {finding}");
+    }
+    // An inline module holding the glob together with the owner and entry.
+    let inline = |owner_body: &str| {
+        format!(
+            "{wide}use Wide as u8;\npub mod parent {{\n    use super::*;\n    pub fn outer(x: i64) -> u8 {{\n        inner(x) + 1\n    }}\n    fn inner(x: i64) -> u8 {{\n        {owner_body}\n    }}\n}}\n"
+        )
+    };
+    let finding = return_finding(
+        &inline("Wide(x * 2)"),
+        &inline("Wide(x * 3)"),
+        "use free_pin::Wide;\nuse free_pin::parent::outer;\n\n#[test]\nfn outer_is_pinned() {\n    assert_eq!(outer(5), Wide(11));\n}\n",
+    )?;
+    assert_ne!(class_of(&finding), "exposed", "{finding}");
     Ok(())
 }

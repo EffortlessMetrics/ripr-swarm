@@ -2598,10 +2598,12 @@ fn owner_and_hops_return_builtin_integers(
             let returned = returned.trim();
             INTEGERS.contains(&returned)
                 && super::owner_pin::workspace_type_name_count(returned, index) == 0
-                && !index
-                    .files()
-                    .get(&function.file)
-                    .is_some_and(|file| file_use_binds_name(&file.source, returned))
+                && !index.files().get(&function.file).is_some_and(|file| {
+                    let masked =
+                        crate::analysis::language::mask_rust_comments_and_strings(&file.source);
+                    let scopes = scopes_enclosing_fn(&masked, function.start_line, &function.name);
+                    file_use_binds_name(&file.source, returned, scopes.as_deref())
+                })
         })
     };
     // Uniqueness of each name is the identity check's, which callers AND in.
@@ -2615,21 +2617,55 @@ fn owner_and_hops_return_builtin_integers(
 
 /// Whether some `use` item of `source` binds `name`, by path or rename
 /// (`use ext::Wide as i64;`, `use ext::i64;`), or is a glob import that could
-/// bring such a name in (`use ext::*;`); `super::*` and `self::*` add nothing
-/// the same file's own `use` items do not already show.
-fn file_use_binds_name(source: &str, name: &str) -> bool {
-    super::reveal::flattened_use_paths(source)
-        .iter()
-        .any(|import| {
-            if import.path.ends_with('*') {
-                return !matches!(import.path.as_str(), "super::*" | "self::*");
-            }
-            import
-                .alias
-                .as_deref()
-                .unwrap_or_else(|| import.path.rsplit("::").next().unwrap_or(""))
-                == name
-        })
+/// bring such a name in (`use ext::*;`). A `super::*` / `self::*` glob stands
+/// for the parent module's imports, which this file cannot show, so it is
+/// exempt only where it sits in a scope that does not enclose the function
+/// (an inline `mod tests { use super::*; }` beside it); a glob at file top
+/// level or in the function's own module, or one whose scope cannot be read
+/// (`function_scopes` is `None`), answers `true`.
+fn file_use_binds_name(source: &str, name: &str, function_scopes: Option<&[BlockScope]>) -> bool {
+    let is_parent_glob = |path: &str| matches!(path, "super::*" | "self::*");
+    let imports = super::reveal::flattened_use_paths(source);
+    let binds = imports.iter().any(|import| {
+        if import.path.ends_with('*') {
+            return !is_parent_glob(import.path.as_str());
+        }
+        import
+            .alias
+            .as_deref()
+            .unwrap_or_else(|| import.path.rsplit("::").next().unwrap_or(""))
+            == name
+    });
+    if binds {
+        return true;
+    }
+    if !imports.iter().any(|import| is_parent_glob(&import.path)) {
+        return false;
+    }
+    let Some(function_scopes) = function_scopes else {
+        return true;
+    };
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(source);
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    masked.match_indices("use").any(|(at, _)| {
+        if masked[..at].chars().next_back().is_some_and(is_word)
+            || masked[at + 3..].chars().next().is_some_and(is_word)
+        {
+            return false;
+        }
+        let end = masked[at..]
+            .find(';')
+            .map_or(masked.len(), |found| at + found + 1);
+        let statement = &masked[at..end];
+        if !super::reveal::flattened_use_paths(statement)
+            .iter()
+            .any(|import| is_parent_glob(&import.path))
+        {
+            return false;
+        }
+        scopes_before(&masked, at)
+            .is_none_or(|glob_scopes| function_scopes.starts_with(&glob_scopes))
+    })
 }
 
 /// `text` (masked) is one exact direct call of `callee` with a decimal
@@ -3303,8 +3339,14 @@ fn scopes_enclosing_fn(masked: &str, line: usize, name: &str) -> Option<Vec<Bloc
                     .strip_prefix(name)
                     .is_some_and(|rest| !rest.chars().next().is_some_and(is_word))
         })?;
+    scopes_before(masked, fn_at)
+}
+
+/// The block scopes open at byte `offset` of the masked `source`, outermost
+/// first; `None` when the braces do not balance.
+fn scopes_before(masked: &str, offset: usize) -> Option<Vec<BlockScope>> {
     let mut stack: Vec<BlockScope> = Vec::new();
-    for (at, character) in masked[..fn_at].char_indices() {
+    for (at, character) in masked[..offset].char_indices() {
         match character {
             '{' => {
                 let statement_start = masked[..at]
@@ -5544,17 +5586,32 @@ mod tests {
             "pub use ext::prelude::*;\n",
             "use std::io::*;\n",
         ] {
-            assert!(file_use_binds_name(source, "i64"), "{source}");
+            assert!(file_use_binds_name(source, "i64", Some(&[])), "{source}");
         }
         for source in [
-            "use super::*;\n",
-            "use self::*;\n",
             "use ext::Wide as Other;\n",
             "use ext::{a, b};\n",
             "use ext::i32;\n",
             "fn f() {}\n",
         ] {
-            assert!(!file_use_binds_name(source, "i64"), "{source}");
+            assert!(!file_use_binds_name(source, "i64", Some(&[])), "{source}");
+        }
+        // A parent glob is exempt only beside, never around, the function.
+        let tests_glob = "fn f() {}\n#[cfg(test)]\nmod tests {\n    use super::*;\n}\n";
+        assert!(!file_use_binds_name(tests_glob, "i64", Some(&[])));
+        assert!(file_use_binds_name(tests_glob, "i64", None));
+        for source in [
+            "use super::*;\nfn f() {}\n",
+            "use self::*;\nfn f() {}\n",
+            "mod m {\n    use super::*;\n    fn f() {}\n}\n",
+        ] {
+            let masked = crate::analysis::language::mask_rust_comments_and_strings(source);
+            let line = source.lines().position(|l| l.contains("fn f")).unwrap_or(0) + 1;
+            let scopes = scopes_enclosing_fn(&masked, line, "f");
+            assert!(
+                file_use_binds_name(source, "i64", scopes.as_deref()),
+                "{source}"
+            );
         }
     }
 
