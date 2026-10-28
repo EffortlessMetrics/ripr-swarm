@@ -2402,6 +2402,21 @@ journeys themselves are re-checked by hand under the new runner
 (`cargo xtask check-fixture-contracts`, `cargo xtask blind-journey-execute`)
 before the update lands.
 
+The routed admission job checks out its executable bundle (the composite action
+wrapper and both admission interpreters) separately at the event's immutable
+PR base SHA, merge-group base SHA, or non-PR event SHA. The candidate checkout
+remains the input tree. The reserved `.admission-trusted` destination must be
+absent from that tree; before invoking either action mode the job verifies the
+trusted checkout's exact HEAD and all three executable file blobs. Missing or
+modified trusted bytes refuse admission without falling back to candidate code.
+Candidate `.gitattributes` declarations are still checked as data by the trusted
+interpreter, and generated exemptions still come only from the live base.
+
+This bundle pin does not authenticate a candidate-edited caller or its supplied
+thresholds and parameters. It does not establish reviewed-head/merge-group
+identity, same-head succession, atomic eligibility, or merge-queue activation.
+Those remain separate qualification and rollout obligations.
+
 The ordinary size envelope (files and changed lines) counts only what a human
 has to review. Generated files are declared once, with `linguist-generated` in
 `.gitattributes` (dependency lockfiles, blessed `expected/` rows and goldens,
@@ -2448,14 +2463,18 @@ and fails when:
 - a cell `proof_refs` entry has no `docs/specs/RIPR-SPEC-NNNN-*.md`.
 
 It is separate from `check-capabilities`, which validates
-`metrics/capabilities.toml` against `docs/CAPABILITY_MATRIX.md` and does not read
-the registry. Limits: it does not check cell states, tier ceilings or docs text
+`metrics/capabilities.toml` against `docs/CAPABILITY_MATRIX.md` and joins explicit
+`cells` identities to the source-built whole registry. Product status and cell
+support remain separate authorities. The producer inventory does not check cell
+states, tier ceilings or docs text
 (in-crate tests and `check-support-tiers`), framework-level producers (the
 per-language disposition tests), the registry's relation to
 `metrics/capabilities.toml`, or non-default feature builds. `--registry-json`
 reads a saved registry without building and can be stale; the report says so.
-It is not part of `precommit` or `check-pr` (it requires a `ripr` build, which
-`precommit` must not force). It is hosted: `rust-gates.yml` runs it as the
+The producer inventory is not part of `precommit` or `check-pr`; those paths
+run the separate identity join through `check-capabilities`, which reads a
+source-built registry with default features. Producer inventory is hosted:
+`rust-gates.yml` runs it as the
 unconditional `capability_producers` step after `fixtures` (the `ripr` build is
 already warm), and the `routed-rust.yml` docs-gate runs it when a docs-only PR
 changes `docs/specs/**` or `docs/status/SUPPORT_TIERS.md` (a renamed spec is the

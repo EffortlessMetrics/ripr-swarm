@@ -29,6 +29,7 @@
 //! still has to observe the sink through the ordinary evidence stages.
 
 mod macro_argument;
+mod qualified_hop;
 mod returned_ledger;
 pub(crate) use returned_ledger::{ReturnedLedger, returned_ledger};
 #[cfg(test)]
@@ -77,6 +78,14 @@ impl<'a> HelperEval<'a> {
             depth: 0,
             states: Vec::new(),
         }
+    }
+
+    /// The source text of the file that holds `helper`, when the index has it.
+    pub(super) fn source_of(&self, helper: &FunctionSummary) -> Option<String> {
+        self.index
+            .files()
+            .get(&helper.file)
+            .map(|facts| facts.source.to_string())
     }
 
     /// Enter the evaluation of `helper` over `inputs`: refuse a state
@@ -160,6 +169,10 @@ pub(crate) struct HelperHop {
     /// forwards the callee's result, binds no argument rows, and has no
     /// `arguments`.
     pub(crate) through_macro: bool,
+    /// Bound by the own-module qualified-call route (#8999). Its receiver
+    /// entry needs the stricter identity rules, and the hop establishes only
+    /// reach, never result forwarding. Preserve this provenance through chains.
+    pub(crate) module_qualified: bool,
     /// Some indexed file binds a [`TRANSPARENT_STD_MACROS`] name to
     /// something other than the standard macro (a `macro_rules!`, an
     /// import, a glob or `#[macro_use]`), so no bare macro in the caller
@@ -1004,6 +1017,7 @@ pub(crate) fn resolve_chain(
             arguments: Vec::new(),
             receiver: None,
             through_macro: true,
+            module_qualified: false,
             transparent_macros_rebound: transparent_macro_name_rebound(&caller.body, index),
             diverging_handlers: diverging_handlers(caller, callee_name, index),
         };
@@ -1101,6 +1115,11 @@ fn chain_through_caller(
         if let Some(hop) = method_hop(caller, callee_name, index) {
             return extend_chain(hop, callee_name, index, workspace_complete, visited);
         }
+        // #8999: a call spelled through an own-crate module path that
+        // resolves to the callee's module.
+        if let Some(hop) = qualified_hop::qualified_free_hop(caller, callee_name, index) {
+            return extend_chain(hop, callee_name, index, workspace_complete, visited);
+        }
         return stopped(format!(
             "call site for `{callee_name}` in `{}` is not statically splittable",
             caller.name
@@ -1120,6 +1139,7 @@ fn chain_through_caller(
         arguments,
         receiver: None,
         through_macro: false,
+        module_qualified: false,
         transparent_macros_rebound: transparent_macro_name_rebound(&caller.body, index),
         diverging_handlers: diverging_handlers(caller, callee_name, index),
     };
@@ -1221,7 +1241,9 @@ pub(crate) fn test_calls_method_entry(
         let entry = &hop.caller;
         matches!(entry.item.container, FunctionContainer::Inherent { .. })
             && !entry.source_role.is_evidence_role()
-            && chain.hops[..=at].iter().all(|below| !below.through_macro)
+            && chain.hops[..=at]
+                .iter()
+                .all(|below| !below.through_macro && !below.module_qualified)
             && super::activation::signature_parameter_texts(entry)
                 .first()
                 .is_some_and(|first| matches!(first.trim(), "self" | "&self" | "&mut self"))
@@ -1461,6 +1483,7 @@ fn method_hop(caller: &FunctionSummary, callee_name: &str, index: &RustIndex) ->
         arguments,
         receiver: Some(receiver.to_string()),
         through_macro: false,
+        module_qualified: false,
         transparent_macros_rebound: transparent_macro_name_rebound(&caller.body, index),
         diverging_handlers: diverging_handlers(caller, callee_name, index),
     })
@@ -2724,13 +2747,14 @@ pub(crate) fn chain_passes_effect_target_to_observed_hops(
         .map(|(index, _)| index)
         .collect();
     // #6614: a macro-argument hop passes no state the analyzer can follow.
+    // #8999: qualified-hop identity establishes reach, not effect propagation.
     // #9329: a method hop hands its callee the receiver's state as well as
     // its arguments; the effect target is not followed through it.
     if tracked.is_empty()
         || hops.is_empty()
         || hops
             .iter()
-            .any(|hop| hop.through_macro || hop.receiver.is_some())
+            .any(|hop| hop.through_macro || hop.module_qualified || hop.receiver.is_some())
     {
         return false;
     }
@@ -2894,9 +2918,10 @@ fn hops_forward_owner_result_with(
         && hops.iter().enumerate().all(|(step, hop)| {
             // #6614: a macro-argument hop is not expanded; whether the
             // macro hands the callee's result on is unknown.
+            // #8999: a module-qualified hop has no result-forwarding proof.
             // #9329: a method hop never forwards: its caller makes a
             // receiver call whose result no tail-forwarding rule reads.
-            if hop.through_macro || hop.receiver.is_some() {
+            if hop.through_macro || hop.module_qualified || hop.receiver.is_some() {
                 return false;
             }
             let callee = match step.checked_sub(1) {
@@ -2984,6 +3009,25 @@ fn transparent_macro_name_rebound(caller_body: &str, index: &RustIndex) -> bool 
         })
 }
 
+/// Method-entry reach permits only evaluated assertion/collection macros.
+/// Forwarding-transparent macros such as `matches!` can bind caller patterns,
+/// and `stringify!` never evaluates its tokens, so they establish no entry.
+pub(super) fn body_has_unresolved_macro_bindings(body: &str, index: &RustIndex) -> bool {
+    macro_invocation_is_unestablished(
+        body,
+        transparent_macro_name_rebound(body, index),
+        &[
+            "assert",
+            "assert_eq",
+            "assert_ne",
+            "debug_assert",
+            "debug_assert_eq",
+            "debug_assert_ne",
+            "vec",
+        ],
+    )
+}
+
 /// Whether `body` invokes a macro whose expansion is not known to hold no
 /// `return` (#10284). Only a bare [`TRANSPARENT_STD_MACROS`] name, with no
 /// rebinding anywhere in the index, is transparent. A path-qualified macro
@@ -2991,6 +3035,10 @@ fn transparent_macro_name_rebound(caller_body: &str, index: &RustIndex) -> bool 
 /// (`use crate as tracing;`) can route the path to an exported user macro,
 /// and ripr does not resolve path roots here (#10351).
 fn caller_invokes_opaque_macro(body: &str, transparent_macros_rebound: bool) -> bool {
+    macro_invocation_is_unestablished(body, transparent_macros_rebound, TRANSPARENT_STD_MACROS)
+}
+
+fn macro_invocation_is_unestablished(body: &str, macros_rebound: bool, permitted: &[&str]) -> bool {
     // Expression keywords may precede a prefix `!` (`if !(a)`, `return !(b)`);
     // any other path before `!` and a delimiter is a macro path, even with
     // whitespace between (`bail ! (qty)` is valid Rust).
@@ -3016,8 +3064,7 @@ fn caller_invokes_opaque_macro(body: &str, transparent_macros_rebound: bool) -> 
         if PREFIX_KEYWORDS.contains(name) {
             return false;
         }
-        transparent_macros_rebound
-            || !TRANSPARENT_STD_MACROS.contains(&name.trim_start_matches("r#"))
+        macros_rebound || !permitted.contains(&name.trim_start_matches("r#"))
     })
 }
 
@@ -3945,7 +3992,7 @@ fn matching_close(text: &str, open: usize) -> Option<usize> {
     None
 }
 
-fn is_identifier(text: &str) -> bool {
+pub(super) fn is_identifier(text: &str) -> bool {
     text.chars()
         .next()
         .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_')
@@ -4790,11 +4837,53 @@ mod tests {
                 arguments: Vec::new(),
                 receiver: None,
                 through_macro: false,
+                module_qualified: false,
                 transparent_macros_rebound: false,
                 diverging_handlers: Vec::new(),
             }],
             stop_above: None,
         }
+    }
+
+    #[test]
+    fn method_entry_checks_only_the_prefix_the_test_enters() -> Result<(), String> {
+        let path = PathBuf::from("src/lib.rs");
+        let source = "pub struct Pool {}\nimpl Pool {\n    pub fn grow(&mut self) -> usize { 1 }\n}\npub fn above() {}\n#[test]\nfn enters_lower() {\n    let mut pool = Pool {};\n    assert_eq!(pool.grow(), 1);\n}\n";
+        let facts = crate::analysis::syntax::ra::summarize_file_with_parser(&path, source)?;
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: facts.functions.clone(),
+            tests: facts.tests.clone(),
+            files: [(path, facts)].into_iter().collect(),
+            ..Default::default()
+        });
+        let hop = |name, module_qualified| -> Result<HelperHop, String> {
+            Ok(HelperHop {
+                caller: index
+                    .functions()
+                    .iter()
+                    .find(|item| item.name == name)
+                    .ok_or_else(|| format!("missing caller {name}"))?
+                    .clone(),
+                call_text: String::new(),
+                arguments: Vec::new(),
+                receiver: None,
+                through_macro: false,
+                module_qualified,
+                transparent_macros_rebound: false,
+                diverging_handlers: Vec::new(),
+            })
+        };
+        // Exercise the entry consumer directly: production chain selection may
+        // prune an unused upper caller before this boundary is reached.
+        let mut chain = HelperChain {
+            hops: vec![hop("grow", false)?, hop("above", true)?],
+            stop_above: None,
+        };
+        let test = index.tests().iter().next().ok_or("missing test")?;
+        assert!(test_calls_method_entry(&index, test, &chain));
+        chain.hops[0].module_qualified = true;
+        assert!(!test_calls_method_entry(&index, test, &chain));
+        Ok(())
     }
 
     // #10284 review: keyword-prefixed negation is not a macro, while a
@@ -5111,6 +5200,7 @@ mod tests {
             arguments: Vec::new(),
             receiver: None,
             through_macro: false,
+            module_qualified: false,
             transparent_macros_rebound: false,
             diverging_handlers: Vec::new(),
         };
@@ -5195,6 +5285,7 @@ mod tests {
                     arguments: Vec::new(),
                     receiver: None,
                     through_macro: false,
+                    module_qualified: false,
                     transparent_macros_rebound: false,
                     diverging_handlers: Vec::new(),
                 }],

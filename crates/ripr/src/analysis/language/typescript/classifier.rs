@@ -1292,6 +1292,110 @@ pub(crate) fn plain_changed_return<'t>(
     Some((old_expression, new_expression))
 }
 
+/// Whether the test file names `name` anywhere outside its test bodies (a
+/// hook, a describe-level binding or a file-level helper); `None` when the file
+/// cannot be read or a body cannot be blanked unambiguously. Unlike
+/// [`test_file_names_owner_only_in_test_bodies`] it tolerates ordinary
+/// statements outside the tests (a shared instance, a fixture definition): it
+/// only asks whether the owner is called there.
+fn test_file_names_owner_outside_test_bodies(
+    test: &TypeScriptTest,
+    sibling_tests: &[TypeScriptTest],
+    name: &str,
+    root: &Path,
+) -> Option<bool> {
+    // The test bodies come from the analyzed snapshot, so the file text is
+    // read from the same one (a committed-history diff reads HEAD).
+    let mut source = String::from_utf8(
+        crate::analysis::committed_source::read_source_bytes(root, &test.file).ok()??,
+    )
+    .ok()?;
+    let bodies: Vec<&str> = sibling_tests
+        .iter()
+        .filter(|sibling| sibling.file == test.file && !sibling.body_text.is_empty())
+        .map(|sibling| sibling.body_text.as_str())
+        .collect();
+    // Blanking a body that occurs twice would also blank its copy outside
+    // the tests, hiding a call there; refuse instead.
+    if source.matches(test.body_text.as_str()).count() != 1
+        || bodies.iter().any(|body| source.matches(body).count() != 1)
+    {
+        return None;
+    }
+    for body in bodies {
+        source = source.replace(body, "");
+    }
+    Some(word_occurrences(&source, name) > 0)
+}
+
+/// Whether every call that can move the owner's state is one the rule reads
+/// (#10850). A hook, a describe-level binding or a file-level helper that names
+/// the owner can seed state this test body does not show, and a sibling test of
+/// the file that calls the owner but is not itself a related candidate could
+/// share an instance, so either leaves the existing verdict.
+fn state_update_calls_are_all_seen(
+    test: &TypeScriptTest,
+    candidates: &[TypeScriptRelatedCandidate<'_>],
+    all_tests: &[TypeScriptTest],
+    owner: &TypeScriptOwner,
+    workspace_root: Option<&Path>,
+) -> bool {
+    let Some(root) = workspace_root else {
+        return false;
+    };
+    if test_file_names_owner_outside_test_bodies(test, all_tests, &owner.name, root) != Some(false)
+    {
+        return false;
+    }
+    all_tests
+        .iter()
+        .filter(|sibling| {
+            sibling.file == test.file && word_occurrences(&sibling.body_text, &owner.name) > 0
+        })
+        .all(|sibling| {
+            candidates.iter().any(|candidate| {
+                candidate.test.file == sibling.file && candidate.test.line == sibling.line
+            })
+        })
+}
+
+/// The plain receivers of every `<receiver>.<owner_name>(` call in `observed`.
+pub(crate) fn instance_call_receivers(observed: &str, owner_name: &str) -> Vec<String> {
+    observed
+        .match_indices(owner_name)
+        .filter_map(|(at, _)| {
+            let before = observed.get(..at)?;
+            before
+                .trim_end()
+                .ends_with('.')
+                .then(|| receiver_before_dot(before))
+        })
+        .filter(|receiver| !receiver.is_empty())
+        .collect()
+}
+
+/// The old and new operand of a changed compound assignment to returned state
+/// (#10850), when the owner declares parameters and never rebinds one, so the
+/// operand reads the call's arguments.
+pub(crate) fn returned_state_operands<'t>(
+    line_text: &'t str,
+    old_line_text: Option<&'t str>,
+    owner: &TypeScriptOwner,
+) -> Option<(&'t str, &'t str)> {
+    if owner.arity.is_none() || owner.params.is_empty() {
+        return None;
+    }
+    let source = owner.source_text.as_deref()?;
+    if owner
+        .params
+        .iter()
+        .any(|param| identifier_written_in(source, param))
+    {
+        return None;
+    }
+    returned_state_guard::ts_returned_state_operands(owner, line_text, old_line_text)
+}
+
 /// Whether the changed `return` at `line` runs for every call of a plain,
 /// synchronous owner: nothing between the signature and the return branches,
 /// returns or throws early, and the owner is neither `async` nor a generator.
@@ -1354,6 +1458,7 @@ pub(crate) fn ts_returned_expression_unexercised(
     old_line_text: Option<&str>,
     owner: &TypeScriptOwner,
     candidates: &[TypeScriptRelatedCandidate<'_>],
+    all_tests: &[TypeScriptTest],
     alias_map: Option<&TsAliasMap>,
     workspace_root: Option<&Path>,
     other_credit_present: bool,
@@ -1361,9 +1466,16 @@ pub(crate) fn ts_returned_expression_unexercised(
     if other_credit_present {
         return false;
     }
-    let Some((old_expression, new_expression)) =
-        plain_changed_return(line, line_text, old_line_text, owner, workspace_root)
-    else {
+    // #10850: a changed compound assignment to returned state (`this.total +=
+    // amount` to `+= amount * 2`) is judged on its operand. The state
+    // accumulates across calls, so every owner call in a test must be one of
+    // the evaluated assertions' calls.
+    let plain = plain_changed_return(line, line_text, old_line_text, owner, workspace_root);
+    let state_operands = match plain {
+        Some(_) => None,
+        None => returned_state_operands(line_text, old_line_text, owner),
+    };
+    let Some((old_expression, new_expression)) = plain.or(state_operands) else {
         return false;
     };
     let mut evaluated = false;
@@ -1374,7 +1486,18 @@ pub(crate) fn ts_returned_expression_unexercised(
         if local_identifier_declared_in_test_body(&candidate.test.body_text, &owner.name) {
             return false;
         }
-        let receivers =
+        if state_operands.is_some()
+            && !state_update_calls_are_all_seen(
+                candidate.test,
+                candidates,
+                all_tests,
+                owner,
+                workspace_root,
+            )
+        {
+            return false;
+        }
+        let mut receivers =
             unshadowed_owner_namespace_receivers(candidate.test, owner, alias_map, workspace_root);
         for assertion in &candidate.test.assertions {
             if assertion.oracle_strength.rank() < OracleStrength::Strong.rank() {
@@ -1383,6 +1506,12 @@ pub(crate) fn ts_returned_expression_unexercised(
             let Some(observed) = assertion.observed_expression.as_deref() else {
                 return false;
             };
+            if state_operands.is_some() {
+                // A state update is read through an instance (`cart.add(0)`),
+                // not a namespace import. The whole-body call count below
+                // rejects a call on a receiver this reading cannot name.
+                receivers.extend(instance_call_receivers(observed, &owner.name));
+            }
             let mut argument_lists = owner_call_arguments(observed, &owner.name, &receivers);
             if argument_lists.is_empty()
                 && let Some(arguments) = ts_observed_local_owner_call_arguments(
@@ -1401,6 +1530,35 @@ pub(crate) fn ts_returned_expression_unexercised(
             // other call (`g(2)` that itself calls the owner) is opaque.
             if observed_has_other_call(observed, &owner.name) {
                 return false;
+            }
+            if state_operands.is_some() {
+                let masked_body = ts_mask_literals_and_comments(&candidate.test.body_text);
+                let owner_calls = masked_body
+                    .match_indices(owner.name.as_str())
+                    .filter(|(at, _)| {
+                        // Every mention counts, not only `name(`: a bound,
+                        // extracted or destructured method value can move the
+                        // state without that syntax, so it must stay unequal
+                        // to the asserted calls and keep the verdict.
+                        !masked_body[..*at]
+                            .chars()
+                            .next_back()
+                            .is_some_and(|c| c.is_alphanumeric() || matches!(c, '_' | '$'))
+                    })
+                    .count();
+                let asserted_calls: usize = candidate
+                    .test
+                    .assertions
+                    .iter()
+                    .filter(|assertion| {
+                        assertion.oracle_strength.rank() >= OracleStrength::Strong.rank()
+                    })
+                    .filter_map(|assertion| assertion.observed_expression.as_deref())
+                    .map(|observed| owner_call_arguments(observed, &owner.name, &receivers).len())
+                    .sum();
+                if owner_calls != asserted_calls {
+                    return false;
+                }
             }
             for arguments in argument_lists {
                 match literal_eval::return_expressions_agree(
@@ -6036,6 +6194,9 @@ pub(crate) struct OwnerLineContext<'a> {
     pub(crate) mock_paths: Vec<String>,
     pub(crate) named_limitations_from_ownership: Vec<TypeScriptNamedLimitation>,
     pub(crate) named_limitations_from_spy: Vec<TypeScriptNamedLimitation>,
+    /// Whole-file one-for-one replacement established by the diff-owning driver.
+    /// A per-line old counterpart alone cannot rule out other removed calls.
+    pub(crate) single_line_replacement: bool,
 }
 
 pub(crate) fn owner_line_context<'a>(
@@ -6081,6 +6242,7 @@ pub(crate) fn owner_line_context<'a>(
         mock_paths,
         named_limitations_from_ownership,
         named_limitations_from_spy,
+        single_line_replacement: false,
     }
 }
 
@@ -6451,6 +6613,33 @@ pub(crate) fn classify_resolved_owner(
     } else {
         probe_shape
     };
+    // #10157: additional credit only after receiver identity and spy order
+    // have been established together. Generic oracle projection is unchanged.
+    let counted_removal = !probe_shape.specific
+        && context.single_line_replacement
+        && super::call_removal_guard::removed_method_call(line_text, old_line_text).is_some_and(
+            |removed| {
+                super::call_removal_guard::call_count_pins_removed_call(
+                    &removed,
+                    line_text,
+                    owner,
+                    related_candidates,
+                    alias_map,
+                    workspace_root,
+                ) && owner.source_text.as_deref().is_some_and(|source| {
+                    super::mock_payload_guard::runs_changed_line_once(
+                        source,
+                        &owner.name,
+                        line_text,
+                    )
+                })
+            },
+        );
+    let probe_shape = if counted_removal {
+        TypeScriptProbeShape::new(ProbeFamily::CallDeletion, DeltaKind::Effect)
+    } else {
+        probe_shape
+    };
     let mut related = related_tests_for_candidates(related_candidates, Some(&probe_shape.family));
     let bun_array_buffer_facts = collect_related_bun_array_buffer_facts(related_candidates);
     let bun_bridge_hints = collect_related_bun_bridge_hints(&bun_array_buffer_facts);
@@ -6743,6 +6932,7 @@ pub(crate) fn classify_resolved_owner(
             old_line_text,
             owner,
             related_candidates,
+            all_tests,
             alias_map,
             workspace_root,
             !pin_facts.is_empty() || lookup_change.is_some(),
@@ -6894,6 +7084,14 @@ pub(crate) fn classify_resolved_owner(
                     )
                 })
                 .unwrap_or_else(|| {
+                    if returned_state_guard::ts_returned_state_operands(owner, line_text, old_line_text)
+                        .is_some()
+                    {
+                        return format!(
+                            "Every related assertion calls `{}` with literal inputs on which the old and the changed state update add the same amount; an exact assertion on those inputs passes on both versions. Add an input on which the two updates differ.",
+                            owner.name
+                        );
+                    }
                     format!(
                         "Every related assertion calls `{}` with literal inputs on which the old and the changed returned expression evaluate to the same value; the changed arm or bound is not exercised, so an exact assertion on those inputs passes on both versions. Add an input that reaches the changed arm.",
                         owner.name
@@ -7215,6 +7413,8 @@ pub(crate) fn classify_resolved_owner(
                 .first()
                 .map_or("see missing evidence.", String::as_str)
         )
+    } else if returned_expression_unexercised {
+        "TypeScript preview adapter: strong oracle found but its literal inputs give the old and the changed code the same value; the assertion does not discriminate the change.".to_string()
     } else if strongest_strength >= OracleStrength::Strong.rank() {
         // RIPR-SPEC-0098: strong oracle exists but observation guard failed.
         "TypeScript preview adapter: strong oracle found but no assertion's observed_expression flows from the changed sub-expression; observation_unverified — discriminate unknown.".to_string()
@@ -8975,7 +9175,17 @@ pub(crate) fn no_static_path_recommendation(owner: &TypeScriptOwner) -> String {
             "TypeScript preview advisory: module initializer observer is missing context; add a direct `expect(IMPORTED_CONST).toBe(...)` or `expect(namespace.EXPORT).toEqual(...)` observer when safe, and keep helper-derived or dynamic initialization evidence advisory.".to_string()
         }
         _ => {
-            "TypeScript preview advisory: no test references the changed owner; add a test that calls the owner and asserts the changed behavior with `toBe` / `toEqual` before any repair packet is emitted.".to_string()
+            // #10708: NoStaticPath establishes no statically linked test
+            // call, not the universal absence of a test, so the wording
+            // names the honest ordered route: add a relevant test/call and
+            // assertion, run the project's native verifier, then refresh.
+            // No exact test file or verify command is named: neither is
+            // evidenced for an owner with no static link. Repair readiness
+            // stays suppressed on the finding itself.
+            format!(
+                "TypeScript preview advisory: no statically linked test calls `{}(`; add a test that calls the changed owner and asserts the changed behavior with `toBe` / `toEqual`, run the project's native test command, then rerun `ripr check` to refresh the finding.",
+                owner.name
+            )
         }
     }
 }

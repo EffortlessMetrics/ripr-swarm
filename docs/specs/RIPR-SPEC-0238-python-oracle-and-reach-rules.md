@@ -415,11 +415,34 @@ This order is the existing behavior and is normative:
   other fixtures, and an `indirect=` argname is a fixture (#9619). An
   argname whose `indirect=` value the read cannot settle (`indirect=IND`, a
   computed list, a non-boolean constant) makes no fixture edge
-  (RIPR-SPEC-0028) but still counts here; only literal `False`, `None` or a
-  literal string list that omits it leaves the argname a direct value
-  (#10685). `indirect` is read from the keyword or the third positional
-  argument; a `*args` or `**kwargs` splat in the mark leaves every argname
-  unsettled. A fixture is resolved, and does not
+  (RIPR-SPEC-0028) but still counts here; only literal `False` or a
+  literal list or tuple of strings that omits it (an empty one included)
+  leaves the argname a direct value (#10685). A mark pytest refuses at
+  collection (`indirect=None`, a literal `indirect` list naming a name the
+  mark does not parametrize, an argname parametrized twice within one mark,
+  across stacked marks, or by the test's class or a local ancestor and the
+  test) makes the whole test uncollectible: every argname of every mark on
+  it is unsettled, a healthy sibling's routed fixture included, and the test
+  carries the `pytest.mark.parametrize(collection error)` activation control,
+  so it lends no credit through assertions, boundary inputs or fixtures
+  (#10867). `indirect` is read from the
+  keyword or the third positional argument; a `*args` or `**kwargs` splat in
+  the mark leaves every argname unsettled. The mark is pytest's own when its
+  root resolves through the imports in effect at the definition
+  (`import pytest as pt`, `from pytest import mark as m`) or, with no import
+  binding the root, is spelled `pytest.mark.parametrize` or
+  `mark.parametrize`. An import root counts only when the module binds it
+  exactly once (that import) and the enclosing class body does not bind
+  it; a canonical spelling whose root is not pinned that way (another
+  library's `mark`, a rebound or class-local root) leaves every argname
+  unsettled. A bare decorator name (`@cases`), the mark's callee
+  (`parametrize = pytest.mark.parametrize`), argnames and `indirect` may
+  each be one module-scope `NAME = <value>` binding that nothing in the
+  module rebinds, bound before the test and not shadowed by the enclosing
+  class body; argnames and `indirect` read through a name only a constant
+  or a tuple, since a module list may be changed in place before
+  collection. Any other name leaves the mark unread, so its argnames count
+  as fixtures (#10685). A fixture is resolved, and does not
   count, when it hands a module-level test a fresh literal-built instance
   of a method owner's class (#9619, `py-fixtures-deposit`). The fixture
   is a single argument-free fixture decorator (`@pytest.fixture`,

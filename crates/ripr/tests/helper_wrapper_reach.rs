@@ -834,6 +834,46 @@ fn helper_side_effect_behind_a_discarding_wrapper_keeps_its_propagation() -> Res
     Ok(())
 }
 
+#[test]
+fn qualified_helper_effect_keeps_reach_without_propagation() -> Result<(), String> {
+    for (entry, imports, call) in [
+        (
+            "pub fn wrapper(out: &mut Vec<u32>) { crate::record(out); }",
+            "use super::wrapper;",
+            "wrapper(&mut out);",
+        ),
+        (
+            "pub struct Recorder {}\nimpl Recorder {\n    pub fn record_all(&self, out: &mut Vec<u32>) {\n        crate::record(out);\n    }\n}",
+            "use super::Recorder;",
+            "let recorder = Recorder {};\n        recorder.record_all(&mut out);",
+        ),
+    ] {
+        let source = format!(
+            "fn record(out: &mut Vec<u32>) {{\n    out.push(10);\n}}\n\n{entry}\n\n#[cfg(test)]\nmod tests {{\n    {imports}\n    #[test]\n    fn observes_record() {{\n        let mut out = Vec::new();\n        {call}\n        assert_eq!(out, vec![10]);\n    }}\n}}\n"
+        );
+        let report = all_findings(&source, RECORD_DIFF)?;
+        let findings = report["findings"].as_array().ok_or("missing findings")?;
+        let mut families = Vec::new();
+        for finding in findings {
+            assert_eq!(finding["probe"]["expression"], "out.push(10)", "{finding}");
+            assert_eq!(
+                relation_of(finding, "observes_record"),
+                Some("helper_owner_call"),
+                "{entry}: {finding}"
+            );
+            assert_not_forwarded(finding);
+            families.push(
+                finding["probe"]["family"]
+                    .as_str()
+                    .ok_or("missing family")?,
+            );
+        }
+        families.sort();
+        assert_eq!(families, ["call_deletion", "side_effect"], "{report}");
+    }
+    Ok(())
+}
+
 fn all_findings(source: &str, diff: &str) -> Result<Value, String> {
     let scratch = Scratch::create()?;
     std::fs::write(scratch.0.join("Cargo.toml"), MANIFEST).map_err(|error| error.to_string())?;
@@ -1633,6 +1673,22 @@ fn forwarder_method_relates_and_pairs_its_boundary_pin() -> Result<(), String> {
         "{finding}"
     );
     assert_eq!(finding["ripr"]["reach"]["state"], "yes", "{finding}");
+    assert_eq!(finding["classification"], "exposed", "{finding}");
+    Ok(())
+}
+
+#[test]
+fn qualified_hop_above_a_tested_method_keeps_the_lower_forwarder() -> Result<(), String> {
+    let finding = forwarder_finding(
+        "pub fn bridge(wanted: usize) -> Result<bool, Overflow> { Pool { spilled: false }.grow(wanted) }\npub fn above(wanted: usize) -> Result<bool, Overflow> { crate::bridge(wanted) }",
+        FORWARDING_METHOD,
+        GROW_TESTS,
+    )?;
+    assert_eq!(
+        relation_of(&finding, "grow_pins_the_boundary"),
+        Some("helper_owner_call"),
+        "{finding}"
+    );
     assert_eq!(finding["classification"], "exposed", "{finding}");
     Ok(())
 }

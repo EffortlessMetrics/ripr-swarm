@@ -480,6 +480,7 @@ fn observed_discriminator_values(
         .then(|| boundary_constant(owner, &right, index))
         .flatten();
     let mut facts = Vec::new();
+    let replaced = replaced_equality_constant(probe);
 
     for row in call_values {
         let inputs: super::value_transfer::ExactInputs = row
@@ -533,6 +534,25 @@ fn observed_discriminator_values(
             });
             continue;
         }
+        if let (Some(left_value), Some(old)) = (&left_exact, &replaced)
+            && exact_values_equal(&old.value, &left_value.value)
+        {
+            facts.push(ValueFact {
+                file: row.first().and_then(|cell| cell.file.clone()),
+                line: row.first().map(|cell| cell.line).unwrap_or_default(),
+                text: format!(
+                    "{} | {}; replaced constant {}",
+                    row.first()
+                        .map(|cell| cell.text.clone())
+                        .unwrap_or_default(),
+                    left_value.provenance,
+                    old.text,
+                ),
+                value: format!("{left} == {}", old.text),
+                context: ValueContext::FunctionArgument,
+            });
+            continue;
+        }
         let Some(left_credit) = left_credit.as_deref() else {
             continue;
         };
@@ -555,6 +575,18 @@ fn observed_discriminator_values(
                 line: left_value.line,
                 text: left_value.text.clone(),
                 value: format!("{left} == {right}"),
+                context: ValueContext::FunctionArgument,
+            });
+        } else if let Some(old) = &replaced
+            && same_literal_value(&old.value, &left_value.value)
+        {
+            // The row sits on the constant the edit replaced; it flips the
+            // same way a row on the new constant does (#10680).
+            facts.push(ValueFact {
+                file: left_value.file.clone(),
+                line: left_value.line,
+                text: format!("{} | replaced constant {}", left_value.text, old.text),
+                value: format!("{left} == {}", old.text),
                 context: ValueContext::FunctionArgument,
             });
         }
@@ -2562,7 +2594,27 @@ fn missing_boundary_discriminator(
                 .is_empty()
             })
     };
+    // RIPR-SPEC-0164 (#10304): a changed equality constant (`label == "alpha"`
+    // to `label == "beta"`) flips every row that sits on either constant, so
+    // a row on the replaced constant discriminates the swap as a row on the
+    // new one does. Only a bare `left == literal` / `left != literal` line
+    // on both sides of the edit qualifies; a compound predicate, a changed
+    // operand or a non-literal constant keeps the missing equality.
+    let replaced_constant = replaced_equality_constant(probe);
+    let replaced_row_observed = replaced_constant.as_ref().is_some_and(|old| {
+        exact_rows.iter().any(|(lefts, _)| {
+            lefts
+                .iter()
+                .any(|left_value| exact_values_equal(&old.value, &left_value.value))
+        }) || left_credit.as_deref().is_some_and(|name| {
+            call_values.iter().any(|row| {
+                parameter_value(row, name)
+                    .is_some_and(|cell| same_literal_value(&cell.value, &old.value))
+            })
+        })
+    });
     let equality_observed = exact_equality_observed
+        || replaced_row_observed
         || parameter_equality(left_credit.as_deref(), right_credit.as_deref());
     let constant_named = constant_passed(left_credit.as_deref());
     if equality_observed || constant_named {
@@ -5709,6 +5761,73 @@ fn same_comparison_shape(before: &str, after: &str) -> bool {
     }
 }
 
+/// The literal a changed bare equality line replaced: `before` and
+/// `probe.expression` are both exactly `left == literal` (or `!=`, after
+/// an optional leading `if` and trailing `{`) with the same left operand and
+/// operator, and two different single literals (a string, a char or a plain
+/// integer). `None` for anything else, so a compound predicate, a changed
+/// left operand and a computed or named constant never qualify.
+struct ReplacedConstant {
+    /// The literal as it was spelled before the edit (`"alpha"`).
+    text: String,
+    /// Its value in the shared operand rendering.
+    value: String,
+}
+
+fn replaced_equality_constant(probe: &Probe) -> Option<ReplacedConstant> {
+    fn bare_equality(text: &str) -> Option<(String, &'static str, String)> {
+        let text = text.trim();
+        let text = text.strip_prefix("if ").unwrap_or(text);
+        let text = text.strip_suffix('{').unwrap_or(text).trim();
+        let masked = crate::analysis::language::mask_rust_comments_and_strings(text);
+        if masked.len() != text.len()
+            || ["&&", "||", ">=", "<=", "<", ">", "?", ";", "=>", "|"]
+                .iter()
+                .any(|token| masked.contains(token))
+        {
+            return None;
+        }
+        let operator = match (masked.matches("==").count(), masked.matches("!=").count()) {
+            (1, 0) => "==",
+            (0, 1) => "!=",
+            _ => return None,
+        };
+        let at = masked.find(operator)?;
+        let left = text.get(..at)?;
+        let right = text.get(at + operator.len()..)?.trim();
+        let literal = !right.is_empty()
+            && if right.starts_with('"') || right.starts_with('\'') {
+                super::match_transfer::is_single_literal(right)
+            } else {
+                right.chars().all(|ch| ch.is_ascii_digit() || ch == '_')
+            };
+        (literal && !left.trim().is_empty()).then(|| {
+            (
+                left.split_whitespace().collect::<String>(),
+                operator,
+                right.to_string(),
+            )
+        })
+    }
+    let (before_left, before_operator, before_literal) = bare_equality(probe.before.as_deref()?)?;
+    let (after_left, after_operator, after_literal) = bare_equality(&probe.expression)?;
+    if before_left != after_left
+        || before_operator != after_operator
+        || before_literal == after_literal
+    {
+        return None;
+    }
+    let value = literal_operand_value(&before_literal)?;
+    // `5` to `05` or `"a"` to `"\u{61}"` is the same value: nothing flips.
+    if same_literal_value(&value, &literal_operand_value(&after_literal)?) {
+        return None;
+    }
+    Some(ReplacedConstant {
+        text: before_literal,
+        value,
+    })
+}
+
 pub(in crate::analysis) fn comparison_operands(expression: &str) -> Option<(String, String)> {
     for operator in [">=", "<=", "==", "!=", ">", "<"] {
         if let Some((left, right)) = expression.split_once(operator) {
@@ -6031,6 +6150,14 @@ fn is_float_exponent_sign(chars: &[char], sign: usize) -> bool {
         && mantissa
             .iter()
             .all(|ch| ch.is_ascii_digit() || matches!(ch, '_' | '.'))
+}
+
+/// Two literal values are the same constant: equal text or the same plain
+/// decimal, never merely equal once underscores are erased (`"a_b"` is not
+/// `"ab"`), which `comparable_value` would claim.
+fn same_literal_value(left: &str, right: &str) -> bool {
+    let bare = |value: &'_ str| value.trim().trim_matches('"').to_string();
+    exact_values_equal(left, right) || bare(left) == bare(right)
 }
 
 fn comparable_value(value: &str) -> String {
@@ -9154,6 +9281,55 @@ assert_eq!(input.amount, 100);"#
         }
     }
 
+    /// #10304: only a bare `left == literal` line on both sides of the edit
+    /// names the constant the edit replaced.
+    #[test]
+    fn replaced_equality_constant_needs_a_bare_literal_swap() {
+        let replaced = |before: &str, after: &str| {
+            let mut p = probe(ProbeFamily::Predicate, after);
+            p.before = Some(before.to_string());
+            replaced_equality_constant(&p).map(|c| c.text)
+        };
+        assert_eq!(
+            replaced("if label == \"alpha\" {", "if label == \"beta\" {"),
+            Some("\"alpha\"".to_string())
+        );
+        assert_eq!(
+            replaced("if n == 5 {", "if n == 6 {"),
+            Some("5".to_string())
+        );
+        assert_eq!(
+            replaced("if label != \"alpha\" {", "if label != \"beta\" {"),
+            Some("\"alpha\"".to_string())
+        );
+        // The same value spelled twice is no swap.
+        assert_eq!(replaced("if n == 5 {", "if n == 05 {"), None);
+        assert_eq!(
+            replaced("if n == 5 {", "if n == 5_0 {"),
+            Some("5".to_string())
+        );
+        assert!(same_literal_value("\"a\"", "a"));
+        assert!(!same_literal_value("\"a_b\"", "\"ab\""));
+        // A compound predicate, a changed operand or operator, a named or
+        // computed constant, an unchanged literal and a missing `before`
+        // all keep the missing equality.
+        for (before, after) in [
+            ("label == \"alpha\" && on", "label == \"beta\" && on"),
+            ("a == \"x\"", "b == \"x\""),
+            ("a == \"x\"", "a != \"y\""),
+            ("n == LIMIT", "n == OTHER"),
+            ("n == 5", "n == 5 + 1"),
+            ("a == \"x\"", "a == \"x\""),
+            ("n >= 5", "n >= 6"),
+            ("a == \"x == y\"", "a == \"x == z\" || b"),
+        ] {
+            assert_eq!(replaced(before, after), None, "{before} -> {after}");
+        }
+        let mut no_before = probe(ProbeFamily::Predicate, "n == 6");
+        no_before.before = None;
+        assert!(replaced_equality_constant(&no_before).is_none());
+    }
+
     /// #9116: an explicit `return` normalises only to a top-level comparison.
     #[test]
     fn explicit_return_normalises_only_a_top_level_comparison() {
@@ -10199,6 +10375,7 @@ assert_eq!(input.amount, 100);"#
                     arguments: vec![owner_argument.to_string()],
                     receiver: None,
                     through_macro: false,
+                    module_qualified: false,
                     transparent_macros_rebound: false,
                     diverging_handlers: Vec::new(),
                 },
@@ -10208,6 +10385,7 @@ assert_eq!(input.amount, 100);"#
                     arguments: vec!["x".to_string()],
                     receiver: None,
                     through_macro: false,
+                    module_qualified: false,
                     transparent_macros_rebound: false,
                     diverging_handlers: Vec::new(),
                 },

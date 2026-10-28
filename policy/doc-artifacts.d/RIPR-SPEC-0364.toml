@@ -1,0 +1,7 @@
+[[artifact]]
+id = "RIPR-SPEC-0364"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0364-partial-widen-whole-diff-budget.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Issue #10894 records that the partial-scope widen hint named only the next-file minimum, so following it on a Django diff stayed partial; the spec pins the whole-diff budget figure, its clamp-ceiling and enabled-language rules, and that the Rust index guard can still refuse the wider run."

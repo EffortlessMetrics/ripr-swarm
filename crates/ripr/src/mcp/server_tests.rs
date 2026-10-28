@@ -347,7 +347,7 @@ async fn oversized_gap_item_leaves_mcp_through_the_real_routes() -> Result<(), S
             "routed tool response missed typed refusal: {rendered}"
         ));
     }
-    if !rendered.contains("ripr check --committed --format json")
+    if !rendered.contains("--committed --json")
         || !rendered.contains("related tests are capped per finding")
     {
         return Err(format!(
@@ -379,7 +379,12 @@ async fn oversized_gap_item_leaves_mcp_through_the_real_routes() -> Result<(), S
     let data = error
         .data
         .ok_or_else(|| "the gap resource failure carries typed data".to_string())?;
-    if data["recovery"].as_str() != Some(workspace::RECOVERY_GAP_ITEM_TOO_LARGE) {
+    let recovery = data["recovery"]
+        .as_str()
+        .ok_or("gap resource lost recovery")?;
+    if !recovery.contains("--committed --json")
+        || !recovery.contains("related tests are capped per finding")
+    {
         return Err(format!("gap resource recovery drifted: {data}"));
     }
     Ok(())
@@ -489,7 +494,9 @@ async fn window_sized_gap_item_refuses_typed_instead_of_dropping_structured_cont
         .pointer("/structuredContent/failure/recovery")
         .and_then(Value::as_str)
         .ok_or_else(|| "window gap refusal omitted recovery".to_string())?;
-    if recovery != workspace::RECOVERY_GAP_ITEM_TOO_LARGE {
+    if !recovery.contains("--committed --json")
+        || !recovery.contains("related tests are capped per finding")
+    {
         return Err(format!("window gap refusal recovery drifted: {recovery}"));
     }
     Ok(())
@@ -1315,7 +1322,7 @@ fn resource_id_document_resolves_raw_decoded_and_ambiguous_spellings() -> Result
     }
 
     // Non-miss failures pass through untouched.
-    match resource_id_document("gap:rust:src/lib.rs:owner", |_id| {
+    match resource_id_document::<Value>("gap:rust:src/lib.rs:owner", |_id| {
         Err(workspace::AttemptFailure::new(
             workspace::CODE_ANALYSIS_FAILED,
             "instrument failure",

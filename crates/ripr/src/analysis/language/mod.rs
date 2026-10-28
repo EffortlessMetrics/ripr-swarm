@@ -57,10 +57,13 @@ pub(crate) use router::{
     is_ts_js_source_extension, route, snapshot_input, ts_js_source_kind,
     unanalyzed_source_language,
 };
+#[cfg(test)]
+pub(crate) use rust::with_forced_diff_limit_env;
 pub(crate) use rust::{
     DIFF_SCOPE_OVERSIZED_PREFIX, GeneratedRustSources, RustAdapter, changed_let_binding,
-    diff_changed_rust_line_limit, is_diff_scope_oversized, is_generated_rust_file_with_patterns,
-    mask_rust_char_literals, mask_rust_comments_and_strings,
+    diff_changed_rust_line_limit, diff_limit_env, is_diff_scope_oversized,
+    is_generated_rust_file_with_patterns, mask_rust_char_literals, mask_rust_comments_and_strings,
+    positive_limit_from_env,
 };
 pub use rust::{
     PARTIAL_DIFF_LANGUAGE_TIER_VERSION, PARTIAL_DIFF_SELECTION_VERSION, PartialDiffScope,
