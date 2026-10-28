@@ -160,6 +160,7 @@ fn unvaried_arithmetic_operand(
         arithmetic_operand_name(&old_arith)?
     };
     let mut saw_table = false;
+    let mut saw_rebound_factor = false;
     for candidate in related_candidates {
         if !candidate.relation.uses_oracle() {
             continue;
@@ -183,24 +184,35 @@ fn unvaried_arithmetic_operand(
         {
             return None;
         }
-        if strong_assertions.iter().any(|assertion| {
-            !arithmetic_rows_agree(
+        for assertion in strong_assertions {
+            if factor_swap
+                && factor_input_rebound(candidate.test, owner, &old_arith, &table, assertion)
+            {
+                saw_rebound_factor = true;
+                continue;
+            }
+            if !arithmetic_rows_agree(
                 candidate.test,
                 owner,
                 &old_arith,
                 &new_arith,
                 &table,
                 assertion,
-            )
-        }) {
-            return None;
+            ) {
+                return None;
+            }
         }
         saw_table = true;
     }
     saw_table.then(|| {
         if factor_swap {
             UnvariedTableOperand {
-                reason: "numeric table rows agree under factor reordering".to_string(),
+                reason: if saw_rebound_factor {
+                    "a test rebinds a table operand, so its call value is not established"
+                        .to_string()
+                } else {
+                    "numeric table rows agree under factor reordering".to_string()
+                },
                 discriminator: "a table row whose operands distinguish multiplication order"
                     .to_string(),
                 action: "Add a table row whose operands distinguish multiplication order."
@@ -577,6 +589,38 @@ fn arithmetic_rows_agree(
             _ => false,
         }
     })
+}
+
+fn factor_input_rebound(
+    test: &PythonTest,
+    owner: &PythonOwner,
+    product: &Expr,
+    table: &PythonParametrizeCases,
+    assertion: &PythonAssertion,
+) -> bool {
+    let Expr::BinOp(product) = product else {
+        return false;
+    };
+    let Some(stmts) = assertion_stmts(&assertion.gate_text) else {
+        return false;
+    };
+    let Some(call) = owner_call_from_equality(&stmts, &owner_names(owner, test)) else {
+        return false;
+    };
+    let Some(bindings) = row_argument_env(call, owner, expr_plain_name) else {
+        return false;
+    };
+    let columns = table.argnames();
+    [product.left.as_ref(), product.right.as_ref()]
+        .into_iter()
+        .filter_map(expr_plain_name)
+        .any(|name| {
+            bindings.get(&name).is_some_and(|column| {
+                test.takes_parametrize_value(column)
+                    && test.parametrize_argnames.contains(column)
+                    && !columns.contains(column)
+            })
+        })
 }
 
 fn numeric_swap_row_agrees(

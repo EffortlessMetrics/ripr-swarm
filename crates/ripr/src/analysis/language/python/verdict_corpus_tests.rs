@@ -2391,6 +2391,17 @@ fn factor_swap_sibling_proof_refuses_unobserved_or_uncertain_rows() -> Result<()
 }
 
 #[test]
+fn rebound_factor_table_does_not_hide_independent_strong_test() -> Result<(), String> {
+    let owner = "def area(a, b):\n    return (b * a, 2)\n";
+    let tests = "import pytest\nfrom src.shop import area\n\n@pytest.mark.parametrize(\"a,b,want\", [(1.5, 2.0, (3.0, 1))])\ndef test_table(a, b, want):\n    a = 9\n    assert area(a, b) == want\n\ndef test_independent():\n    assert area(1.5, 2.0) == (3.0, 1)\n";
+    assert_eq!(
+        classify(owner, 2, "    return (a * b, 1)", tests)?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+#[test]
 fn a_reorder_beside_a_sibling_edit_is_not_a_pure_reorder() -> Result<(), String> {
     let owner = "def area(a, b, c):\n    return b * a, d\n";
     let table = "import pytest\nfrom src.shop import area\n\n\n@pytest.mark.parametrize(\"a,b,c,want\", [(3, 7, 1, (21, 1))])\ndef test_area(a, b, c, want):\n    assert area(a, b, c) == want\n";
