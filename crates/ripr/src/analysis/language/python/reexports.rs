@@ -695,7 +695,7 @@ mod primed_tests {
             ("broken.py", "def (:\n"),
             (
                 "branches.py",
-                "if X:\n    def f():\n        pass\nelse:\n    def f():\n        pass\n",
+                "if FLAG:\n    def f():\n        pass\nelse:\n    def f():\n        pass\n",
             ),
         ]
         .into_iter()
