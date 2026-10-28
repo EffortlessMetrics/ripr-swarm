@@ -24,6 +24,54 @@ fn some(observed: &str, expected: &str, line: usize) -> (Option<String>, Option<
 }
 
 #[test]
+fn promise_matchers_must_be_awaited_or_returned_to_the_runner() {
+    for modifier in ["resolves", "rejects"] {
+        for (statement, count) in [
+            (format!("await expect(price(150)).{modifier}.toBe(140);"), 1),
+            (
+                format!("return expect(price(150)).{modifier}.toBe(140);"),
+                1,
+            ),
+            (
+                format!("return await expect(price(150)).{modifier}.toBe(140);"),
+                1,
+            ),
+            (format!("expect(price(150)).{modifier}.toBe(140);"), 0),
+        ] {
+            let source = format!("test('price', async () => {{ {statement} }});");
+            assert_eq!(
+                observed("tests/price.test.ts", &source).len(),
+                count,
+                "{statement}"
+            );
+        }
+    }
+    let synchronous = "test('price', () => { expect(price(150)).toBe(140); });";
+    assert_eq!(observed("tests/price.test.ts", synchronous).len(), 1);
+    let discarded = "test('price', () => { [150].forEach(v => { return expect(price(v)).resolves.toBe(140); }); });";
+    assert_eq!(observed("tests/price.test.ts", discarded).len(), 0);
+    let negated = "test('price', async () => { expect(price(150)).resolves.not.toBe(140); });";
+    assert_eq!(observed("tests/price.test.ts", negated).len(), 0);
+    let concise = "test('price', () => expect(price(150)).resolves.toBe(140));";
+    assert_eq!(observed("tests/price.test.ts", concise).len(), 1);
+    let then = "test('price', () => { return ready().then(() => expect(price(150)).resolves.toBe(140)); });";
+    assert_eq!(observed("tests/price.test.ts", then).len(), 1);
+    let each = "test.each([[150]])('price', v => expect(price(v)).resolves.toBe(140));";
+    assert_eq!(observed("tests/price.test.ts", each).len(), 1);
+    let step = "import { test, expect } from '@playwright/test'; test('price', async () => { await test.step('one', () => expect(price(150)).resolves.toBe(140)); });";
+    assert_eq!(observed("tests/price.test.ts", step).len(), 1);
+    let subtest = "import test from 'node:test'; test('price', async t => { await t.test('one', () => expect(price(150)).resolves.toBe(140)); });";
+    assert_eq!(observed("tests/price.test.ts", subtest).len(), 1);
+    let parsed = extract_tests(Path::new("tests/price.test.ts"), concise);
+    assert_eq!(parsed.len(), 1);
+    assert_eq!(parsed[0].assertions.len(), 1);
+    assert_eq!(
+        parsed[0].assertions[0].oracle_strength,
+        OracleStrength::Strong
+    );
+}
+
+#[test]
 fn literal_foreach_reads_one_case_per_element() {
     let source = "import { price } from \"../src/price\";\ntest(\"price\", () => {\n  [150, 200].forEach((v) => { expect(price(v)).toBe(140); });\n});\n";
     assert_eq!(

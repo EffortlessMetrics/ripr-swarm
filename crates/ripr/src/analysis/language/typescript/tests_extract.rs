@@ -3671,6 +3671,8 @@ fn test_name_and_assertions_from_registration(
                 source,
                 receiver.as_deref(),
                 bindings,
+                referenced.is_none()
+                    && matches!(callback, oxc_ast::ast::Argument::ArrowFunctionExpression(arrow) if arrow.expression),
             )
         })
         .unwrap_or_default();

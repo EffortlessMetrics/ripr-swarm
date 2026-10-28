@@ -102,6 +102,24 @@ fn an_awaited_test_step_body_is_walked() -> Result<(), String> {
 }
 
 #[test]
+fn floating_promise_matcher_does_not_expose_a_boundary_change() -> Result<(), String> {
+    let source = "export async function shipping(weightKg: number): Promise<number> {\n  return weightKg > 25 ? 900 : 400;\n}\n";
+    let test = |prefix: &str| {
+        playwright(
+            "import { shipping } from \"../src/steps\";",
+            &format!(
+                "test(\"quotes\", async () => {{\n  {prefix}expect(shipping(20)).resolves.toBe(900);\n}});"
+            ),
+        )
+    };
+    let awaited = shipping_finding("promise-awaited", source, &test("await "))?;
+    assert_eq!(awaited.class, ExposureClass::Exposed);
+    let floating = shipping_finding("promise-floating", source, &test(""))?;
+    assert_ne!(floating.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
 fn a_moved_threshold_is_witnessed_between_the_old_and_new_value() -> Result<(), String> {
     let spec = |body: &str| {
         playwright(

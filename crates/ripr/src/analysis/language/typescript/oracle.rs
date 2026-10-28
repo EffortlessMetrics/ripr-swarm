@@ -155,6 +155,7 @@ pub(crate) fn collect_expect_assertions_in_statements(
         source,
         receiver,
         &TypeScriptAssertionBindings::default(),
+        false,
     )
 }
 
@@ -166,8 +167,16 @@ pub(crate) fn collect_assertions_in_statements_with_bindings(
     source: &SourceText<'_>,
     receiver: Option<&str>,
     bindings: &TypeScriptAssertionBindings,
+    implicit_return: bool,
 ) -> Vec<TypeScriptAssertion> {
-    collect_callback_assertions(statements, source, receiver, bindings, true)
+    collect_callback_assertions(
+        statements,
+        source,
+        receiver,
+        bindings,
+        true,
+        implicit_return,
+    )
 }
 
 /// Like [`collect_assertions_in_statements_with_bindings`] for a callback
@@ -180,6 +189,7 @@ pub(crate) fn collect_callback_assertions(
     receiver: Option<&str>,
     bindings: &TypeScriptAssertionBindings,
     returns_to_runner: bool,
+    implicit_return: bool,
 ) -> Vec<TypeScriptAssertion> {
     let literal_consts = loose_literal_consts(statements, source);
     let match_object_consts = match_object_consts(statements, source);
@@ -202,7 +212,11 @@ pub(crate) fn collect_callback_assertions(
     };
     let mut out = Vec::new();
     for stmt in statements {
-        collect_expect_assertions_in_statement(stmt, source, &context, &mut out);
+        if implicit_return {
+            collect_expect_assertions_in_statement(stmt, source, &context.returning(), &mut out);
+        } else {
+            collect_expect_assertions_in_statement(stmt, source, &context, &mut out);
+        }
         if statement_completes_abruptly(stmt) {
             break;
         }
@@ -426,7 +440,14 @@ fn assertion_from_expression_any(
             context
                 .bindings
                 .runner_expect_reachable()
-                .then(|| expect_assertion_from_expression(expr, source, context.bindings))
+                .then(|| {
+                    expect_assertion_from_expression(
+                        expr,
+                        source,
+                        context.bindings,
+                        context.returned_to_runner,
+                    )
+                })
                 .flatten()
         })
         .or_else(|| {
@@ -877,12 +898,7 @@ fn collect_nested_callback_assertions(
             }
             if callback_parameter_count(callback) == Some(0) {
                 if let Some(statements) = function_body_statements_from_argument(callback) {
-                    collect_expect_assertions_from_statement_vec(
-                        statements,
-                        source,
-                        &context.nested(),
-                        out,
-                    );
+                    collect_callback_body(callback, statements, source, &context.nested(), out);
                 }
             } else if let Some(assertions) = callback_case_assertions(
                 callback,
@@ -916,12 +932,7 @@ fn collect_nested_callback_assertions(
                 return;
             }
             if let Some(statements) = function_body_statements_from_argument(callback) {
-                collect_expect_assertions_from_statement_vec(
-                    statements,
-                    source,
-                    &context.nested(),
-                    out,
-                );
+                collect_callback_body(callback, statements, source, &context.nested(), out);
             }
         }
         "test" if awaited => {
@@ -962,9 +973,25 @@ fn collect_nested_callback_assertions(
                 returned_to_runner: false,
                 table_consts: &table_consts,
             };
-            collect_expect_assertions_from_statement_vec(statements, source, &subtest, out);
+            collect_callback_body(callback, statements, source, &subtest, out);
         }
         _ => {}
+    }
+}
+
+/// A concise arrow returns its expression to the callback's caller.
+fn collect_callback_body(
+    callback: &oxc_ast::ast::Argument<'_>,
+    statements: &oxc_allocator::Vec<'_, Statement<'_>>,
+    source: &SourceText<'_>,
+    context: &AssertionContext<'_>,
+    out: &mut Vec<TypeScriptAssertion>,
+) {
+    if matches!(callback, oxc_ast::ast::Argument::ArrowFunctionExpression(arrow) if arrow.expression)
+    {
+        collect_expect_assertions_from_statement_vec(statements, source, &context.returning(), out);
+    } else {
+        collect_expect_assertions_from_statement_vec(statements, source, context, out);
     }
 }
 
@@ -1231,7 +1258,9 @@ pub(crate) fn expect_assertion_from_expression(
     expr: &Expression<'_>,
     source: &SourceText<'_>,
     bindings: &TypeScriptAssertionBindings,
+    returned_to_runner: bool,
 ) -> Option<TypeScriptAssertion> {
+    let awaited = matches!(expr, Expression::AwaitExpression(_));
     let expr = match expr {
         Expression::AwaitExpression(await_expr) => &await_expr.argument,
         _ => expr,
@@ -1251,6 +1280,9 @@ pub(crate) fn expect_assertion_from_expression(
     // RIPR-SPEC-0243 rule 2).
     let inner = &outer_member.object;
     let (expect_call, async_modifier, negated) = expect_assertion_chain(inner)?;
+    if async_modifier.is_some() && !awaited && !returned_to_runner {
+        return None;
+    }
 
     // RIPR-SPEC-0243 rule 2 (#8712): under `.not` the matcher operand is not
     // an expected value, so neither a mock-call payload nor an exact error

@@ -387,6 +387,11 @@ Each assertion expression is tried in this order; the first match wins:
    assertion binding;
 4. `node:assert` or chai `assert` through an imported binding.
 
+Jest/Vitest `.resolves` and `.rejects` matchers return promises. Their
+assertions are collected only when directly awaited or returned to a callback
+whose return reaches the runner, including a concise arrow body. A floating
+matcher or a return discarded by `forEach` supplies no assertion credit.
+
 **Rule 2. Jest negation is an assertion with capped strength.** `.not`
 between `expect(...)` (or `.resolves` / `.rejects`) and the matcher is
 recognised. The negated matcher reads:
