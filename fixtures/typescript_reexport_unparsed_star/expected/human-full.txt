@@ -79,7 +79,7 @@ TypeScript repair packet (advisory)
   next capability needed: trusted related test or observer, target shape, verify command, receipt command, and edit boundaries
 
 Next step
-  TypeScript preview advisory: no test references the changed owner; add a test that calls the owner and asserts the changed behavior with `toBe` / `toEqual` before any repair packet is emitted
+  TypeScript preview advisory: no statically linked test calls `price(`; add a test that calls the changed owner and asserts the changed behavior with `toBe` / `toEqual`, run the project's native test command, then rerun `ripr check` to refresh the finding
 Drill in:
   ripr explain --root <cwd>/fixtures/typescript_reexport_unparsed_star/input --diff <cwd>/fixtures/typescript_reexport_unparsed_star/diff.patch --mode fast probe:src_price.ts:typescript_preview:368e4177
   ripr context --root <cwd>/fixtures/typescript_reexport_unparsed_star/input --diff <cwd>/fixtures/typescript_reexport_unparsed_star/diff.patch --mode fast --at probe:src_price.ts:typescript_preview:368e4177
