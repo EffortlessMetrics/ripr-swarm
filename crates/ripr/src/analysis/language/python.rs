@@ -498,6 +498,9 @@ struct PythonFixtureDef {
     scope_imports: Vec<(PathBuf, PythonImport)>,
 }
 
+// An impossible dotted module name, distinct from a plain import's empty source.
+const UNRESOLVED_RELATIVE_IMPORT: &str = ".";
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct PythonImport {
     imported: String,
@@ -505,7 +508,8 @@ struct PythonImport {
     /// The dotted source module of a `from M import Y` statement (e.g. `src.handler`).
     /// Relative imports are resolved against the importing file when possible (for
     /// example, `from .handler import validate` in `tests/test_api.py` resolves to
-    /// `tests.handler`). Empty for a plain `import X`.
+    /// `tests.handler`). Empty for a plain `import X`; an unresolved relative
+    /// import uses `UNRESOLVED_RELATIVE_IMPORT` and still retains its binding.
     source_module: String,
 }
 

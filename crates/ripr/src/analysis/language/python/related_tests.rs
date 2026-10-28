@@ -3,8 +3,9 @@ use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion
 use super::fixtures::literal_owner_instance_fixture;
 use super::source_utils::normalized_path;
 use super::{
-    PythonImport, PythonOwner, PythonTest, first_python_string_literal, line_prefix_before,
-    python_callee_start_has_boundary, python_prefix_hides_code, python_string_literal_value,
+    PythonImport, PythonOwner, PythonTest, UNRESOLVED_RELATIVE_IMPORT, first_python_string_literal,
+    line_prefix_before, python_callee_start_has_boundary, python_prefix_hides_code,
+    python_string_literal_value,
 };
 use crate::domain::{ExposureClass, OracleKind, OracleStrength, OwnerKind, RelatedTest};
 use rayon::prelude::*;
@@ -2006,6 +2007,9 @@ pub(super) fn import_module_may_be_owners(
     owner: &PythonOwner,
     test_file: &Path,
 ) -> bool {
+    if import.source_module == UNRESOLVED_RELATIVE_IMPORT {
+        return false;
+    }
     if import.source_module.is_empty() {
         return module_name_identifies_owner_for(owner, &import.imported, test_file);
     }
@@ -2433,9 +2437,15 @@ fn client_app_identity(
         .iter()
         .find(|import| import_bound_name(import) == owner_receiver)
         .map(|import| (import.source_module.as_str(), import.imported.as_str()));
+    if owner_origin.is_some_and(|(source, _)| source == UNRESOLVED_RELATIVE_IMPORT) {
+        return ClientApp::Unidentified;
+    }
     let mut identity = ClientApp::Unidentified;
     for import in imports {
-        if import_bound_name(import) != app_name || import.source_module.is_empty() {
+        if import_bound_name(import) != app_name
+            || import.source_module.is_empty()
+            || import.source_module == UNRESOLVED_RELATIVE_IMPORT
+        {
             continue;
         }
         let verdict = match owner_origin {

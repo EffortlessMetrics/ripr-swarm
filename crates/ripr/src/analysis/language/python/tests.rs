@@ -2601,9 +2601,85 @@ fn free_function_relative_import_from_sibling_module_stays_fail_closed() -> Resu
 }
 
 #[test]
+fn relative_import_at_top_level_boundary_fails_closed() -> Result<(), String> {
+    // Python resolves ..handler from pkg.sub to pkg.handler, but rejects the
+    // same import from pkg as beyond the top-level package.
+    for (owner_file, test_file, expected_exposed) in [
+        ("pkg/handler.py", "pkg/sub/test_handler.py", true),
+        ("handler.py", "pkg/test_handler.py", false),
+    ] {
+        let owners = extract_owners(Path::new(owner_file), HANDLER_SOURCE);
+        let tests = extract_tests(
+            Path::new(test_file),
+            "from ..handler import normalize as clean\n\n\ndef test_clean():\n    assert clean(\" ok \") == \"ok\"\n",
+        );
+        let finding = classify_change(
+            Path::new(owner_file),
+            2,
+            HANDLER_CHANGED_LINE,
+            &owners,
+            &tests,
+        )
+        .ok_or_else(|| "changed return inside normalize should classify".to_string())?;
+        assert_eq!(
+            finding.class == ExposureClass::Exposed,
+            expected_exposed,
+            "{test_file}: {:?}",
+            finding.class
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn relative_module_alias_at_top_level_boundary_fails_closed() -> Result<(), String> {
+    for (owner_file, test_file, expected_exposed) in [
+        ("pkg/handler.py", "pkg/sub/test_handler.py", true),
+        ("handler.py", "pkg/test_handler.py", false),
+    ] {
+        let owners = extract_owners(Path::new(owner_file), HANDLER_SOURCE);
+        let tests = extract_tests(
+            Path::new(test_file),
+            "from .. import handler as h\n\n\ndef test_clean():\n    assert h.normalize(\" ok \") == \"ok\"\n",
+        );
+        let finding = classify_change(
+            Path::new(owner_file),
+            2,
+            HANDLER_CHANGED_LINE,
+            &owners,
+            &tests,
+        )
+        .ok_or_else(|| "changed return inside normalize should classify".to_string())?;
+        assert_eq!(
+            finding.class == ExposureClass::Exposed,
+            expected_exposed,
+            "{test_file}: {:?}",
+            finding.class
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn unresolved_relative_import_keeps_its_shadowing_binding() {
+    let tests = extract_tests(
+        Path::new("pkg/test_handler.py"),
+        "import handler as h\n\n\ndef test_clean():\n    from .. import handler as h\n    assert h.normalize(\" ok \") == \"ok\"\n",
+    );
+    assert_eq!(tests.len(), 1);
+    let bindings: Vec<_> = tests[0]
+        .imports
+        .iter()
+        .filter(|import| import.alias == "h")
+        .collect();
+    assert_eq!(bindings.len(), 1);
+    assert_eq!(bindings[0].source_module, UNRESOLVED_RELATIVE_IMPORT);
+}
+
+#[test]
 fn relative_import_escaping_the_package_fails_closed() -> Result<(), String> {
     // `from ...handler import normalize` from a shallow file traverses above
-    // the package root: the resolver must fail closed to an empty module
+    // the package root: the resolver must retain an unresolved module
     // rather than fabricate an identity.
     let owners = extract_owners(Path::new("src/handler.py"), HANDLER_SOURCE);
     let tests = extract_tests(

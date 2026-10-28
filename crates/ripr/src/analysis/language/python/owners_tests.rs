@@ -12,8 +12,8 @@ use super::source_utils::{
 };
 use super::static_limits::{collect_static_cli_receiver_names, is_static_route_decorator};
 use super::{
-    PythonImport, PythonOwner, PythonParameter, PythonTest, collect_assertions_from_statements,
-    expr_full_name, first_parenthesized_string_argument,
+    PythonImport, PythonOwner, PythonParameter, PythonTest, UNRESOLVED_RELATIVE_IMPORT,
+    collect_assertions_from_statements, expr_full_name, first_parenthesized_string_argument,
 };
 use crate::domain::OwnerKind;
 use rustpython_parser::{
@@ -1035,11 +1035,12 @@ fn import_source_module(file: &Path, import: &ast::StmtImportFrom) -> String {
     let mut parts = normalized.split('/').collect::<Vec<_>>();
     parts.pop();
     let package_depth = level.saturating_sub(1);
-    for _ in 0..package_depth {
-        if parts.pop().is_none() {
-            return String::new();
-        }
+    // A relative import must retain a top-level package. Reaching the
+    // filesystem root would otherwise fabricate an absolute module name.
+    if package_depth >= parts.len() {
+        return UNRESOLVED_RELATIVE_IMPORT.to_string();
     }
+    parts.truncate(parts.len() - package_depth);
     if !module.is_empty() {
         parts.extend(module.split('.').filter(|part| !part.is_empty()));
     }

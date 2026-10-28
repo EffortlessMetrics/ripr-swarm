@@ -155,6 +155,17 @@ fn a_shared_app_imported_by_owner_and_test_relates() -> Result<(), String> {
 }
 
 #[test]
+fn unresolved_relative_imports_do_not_identify_a_shared_app() -> Result<(), String> {
+    let routes = "from ..shared import app\n\n@app.get(\"/items\")\ndef items():\n    return []\n";
+    let test = "from starlette.testclient import TestClient\nfrom ..shared import app\n\ndef test_items():\n    client = TestClient(app)\n    assert client.get(\"/items\")\n";
+    assert_eq!(
+        route_relation("app/routes.py", routes, test)?,
+        Some(PythonRelationKind::ApiClientRouteUnidentifiedApp)
+    );
+    Ok(())
+}
+
+#[test]
 fn a_package_that_re_exports_the_owners_app_relates() -> Result<(), String> {
     // `pkg/main.py` defines `app`; the test imports it from the package.
     let test = "from starlette.testclient import TestClient\nfrom pkg import app\n\ndef test_items():\n    client = TestClient(app)\n    assert client.get(\"/items\")\n";
