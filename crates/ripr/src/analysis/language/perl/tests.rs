@@ -5844,11 +5844,41 @@ fn perl_matcher_grading_separates_pinned_errors_from_broad_assertions() -> Resul
         "{:?}",
         finding.recommended_next_step
     );
+    // Equal sink text does not turn the graded assertion into "already observed".
+    let aligned = pinned
+        .replace(
+            "\"changed_text_digest\": \"sha256:return\",",
+            "\"changed_text_digest\": \"sha256:return\",\n      \"changed_observable\": \"die 'bad'\",",
+        )
+        .replace(
+            "\"expression\": \"is($got, 10, 'discount threshold')\",",
+            "\"expression\": \"is($got, 10, 'discount threshold')\",\n      \"observed_sink\": \"die 'bad'\",",
+        );
+    assert_ne!(aligned, pinned, "the aligned sink edit must apply");
+    let findings = findings_from_packet(&aligned)?;
+    let finding = findings.first().ok_or("expected one finding")?;
+    assert_eq!(finding.class, ExposureClass::StaticUnknown);
+    assert!(finding.canonical_gap.is_none());
+    assert!(
+        !finding
+            .evidence
+            .iter()
+            .any(|line| line.starts_with("perl_already_discriminated:")),
+        "{:?}",
+        finding.evidence
+    );
     // A bare broad exception assertion is a gap again.
+    let broad = graded("exception_observer", "weak_broad")?.replace(
+        "\"changed_text_digest\": \"sha256:return\"",
+        "\"changed_text_digest\": \"discriminator:$amount == $threshold\"",
+    );
     assert_eq!(
-        first_finding_misses(&graded("exception_observer", "weak_broad")?)?.0,
+        first_finding_misses(&broad)?.0,
         ExposureClass::ReachableUnrevealed
     );
+    let broad_findings = findings_from_packet(&broad)?;
+    let broad_finding = broad_findings.first().ok_or("expected one finding")?;
+    assert!(broad_finding.canonical_gap.is_some());
     // A strong assertion on any other kind keeps the ordinary reading.
     assert_eq!(
         first_finding_misses(&graded("exact_return_assertion", "strong_exact")?)?.0,

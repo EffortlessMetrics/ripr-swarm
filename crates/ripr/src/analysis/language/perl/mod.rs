@@ -3516,6 +3516,12 @@ fn sink_aligned_observation(
         if !oracle.is_strong_exact() {
             continue;
         }
+        // RIPR-SPEC-0235 rule 16 matcher grading: a graded exception
+        // assertion pins that an error is raised, not which boundary raises
+        // it, so equal sink text never establishes observation.
+        if packet.grades_oracle_matchers() && oracle.kind == OracleKind::ExceptionObserver {
+            continue;
+        }
         if oracle.target_owner_id.as_deref() != Some(change.owner_id.as_str()) {
             continue;
         }
