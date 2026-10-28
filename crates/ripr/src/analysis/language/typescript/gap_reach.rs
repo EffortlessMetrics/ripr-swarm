@@ -262,12 +262,42 @@ fn resolution_config_hides_imports(root: &Path, alias_map: Option<&TsAliasMap>) 
                 return true;
             }
             if is_ts_config {
-                // `baseUrl` resolves any bare specifier into the workspace, with
-                // or without `paths`, and the alias map does not model that.
-                if text.contains("\"baseUrl\"") {
+                // TypeScript decodes JSONC keys, including `\u` escapes. The
+                // alias loader does too, so a raw spelling check could hide a
+                // reaching extraction gap behind inherited paths (#10522).
+                let Some(config) =
+                    super::tsconfig::strip_jsonc(&text)
+                        .ok()
+                        .and_then(|normalized| {
+                            serde_json::from_str::<serde_json::Value>(&normalized).ok()
+                        })
+                else {
+                    return true;
+                };
+                if !config.is_object() {
                     return true;
                 }
-                let resolves = text.contains("\"paths\"") || extends_a_workspace_config(&text);
+                let mut pending = vec![&config];
+                let mut resolves = false;
+                while let Some(value) = pending.pop() {
+                    match value {
+                        serde_json::Value::Object(entries) => {
+                            for (key, child) in entries {
+                                // `baseUrl` and `rootDirs` can redirect imports
+                                // even when a root alias map loaded successfully.
+                                if matches!(key.as_str(), "baseUrl" | "rootDirs") {
+                                    return true;
+                                }
+                                if matches!(key.as_str(), "paths" | "extends" | "references") {
+                                    resolves = true;
+                                }
+                                pending.push(child);
+                            }
+                        }
+                        serde_json::Value::Array(items) => pending.extend(items),
+                        _ => {}
+                    }
+                }
                 // Only the root config feeds the alias map, and only when it
                 // loaded. Anything else that remaps resolution is invisible.
                 let loaded_root = depth == 0 && alias_map.is_some_and(TsAliasMap::has_tsconfig);
@@ -278,17 +308,6 @@ fn resolution_config_hides_imports(root: &Path, alias_map: Option<&TsAliasMap>) 
         }
     }
     false
-}
-
-/// `"extends"` naming a config in the workspace (`./base.json`, `../tsconfig`).
-/// A package base config (`@sindresorhus/tsconfig`) is shared compiler
-/// settings, not a path map for this workspace; the alias map ignores it too.
-fn extends_a_workspace_config(text: &str) -> bool {
-    text.match_indices("\"extends\"").any(|(at, key)| {
-        let rest = &text[at + key.len()..];
-        let window: String = rest.chars().take(120).collect();
-        window.contains("\"./") || window.contains("\"../")
-    })
 }
 
 /// Build, transpile and test-runner configs that can alias module names.
@@ -635,7 +654,7 @@ mod tests {
                 "pkg-extends",
                 "tsconfig.json",
                 r#"{"extends": "@scope/tsconfig", "include": ["src"]}"#,
-                false,
+                true,
             ),
             (
                 "rel-extends",
@@ -644,9 +663,45 @@ mod tests {
                 true,
             ),
             (
+                "escaped-extends",
+                "tsconfig.json",
+                r#"{"\u0065xtends": "@scope/tsconfig"}"#,
+                true,
+            ),
+            (
+                "array-extends",
+                "tsconfig.json",
+                r#"{"extends": ["@scope/tsconfig"]}"#,
+                true,
+            ),
+            (
+                "commented-extends",
+                "tsconfig.json",
+                r#"{"extends" /* comment */ : "@scope/tsconfig",}"#,
+                true,
+            ),
+            (
                 "paths",
                 "packages/a/tsconfig.json",
                 r#"{"compilerOptions": {"paths": {"x": ["./y"]}}}"#,
+                true,
+            ),
+            (
+                "escaped-paths",
+                "tsconfig.json",
+                r#"{"compilerOptions": {"\u0070aths": {"x": ["./y"]}}}"#,
+                true,
+            ),
+            (
+                "escaped-unrelated-key",
+                "tsconfig.json",
+                r#"{"\u0069nclude": ["src"]}"#,
+                false,
+            ),
+            (
+                "unparseable-config",
+                "tsconfig.json",
+                r#"{"compilerOptions": {"paths": "#,
                 true,
             ),
             (

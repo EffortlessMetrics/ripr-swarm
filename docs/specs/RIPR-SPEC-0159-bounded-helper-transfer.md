@@ -117,7 +117,40 @@ can only hint that a caller "may lead here" without changing anything.
   `propagation_unknown`, and an owner name with two candidates never forms
   the chain (`helper_transfer::test_calls_method_entry`). A forwarder that
   unwraps the owner's result with `unwrap_or_else` or `?` is a transform and
-  still abstains; `mut self` (by value) is not admitted.
+  still abstains, except an `unwrap_or_else` whose handler is a diverging
+  workspace function (the diverging unwrap tail below); `mut self` (by value)
+  is not admitted.
+- Diverging unwrap tail (#9638): a hop caller whose tail is exactly
+  `<hop call>.unwrap_or_else(<handler>)` forwards the owner's result when
+  `<handler>` is a path to a workspace function that only diverges, so the
+  owner's `Ok` value passes through unchanged and the error path never
+  returns. The handler is `name` (a free function) or `Type::name` (an
+  inherent associated function of that type, or `Self::name`); it must be the
+  one workspace function of its name, outside test or evidence source, with
+  no local binding, `use .. as` rename or foreign import of the name (or of
+  the type) in the caller's file, no other mention of the name in the caller
+  (a parameter, nested `fn`/`const`/`static`/`let` or a glob import in its
+  body), defined in the caller's own file, inline module and enclosing
+  function scope (read by whole-word item parsing, so a function whose
+  signature or name spells `impl` still opens its own scope), with a `Type::` qualifier that is the workspace type and
+  not a generic parameter, local item or import of the same name, called on a
+  hop whose callee declares `Result<..>` or `Option<..>` with no workspace
+  type of that name and no `use` in the callee's file binding that name to a non-std item or glob-importing a non-`super`/`self` module, and its whole body must be one
+  unconditional `panic!`, `unreachable!`, `unimplemented!`, `todo!` (none
+  rebound by a user macro or import) or `std::process::abort()` /
+  `std::process::exit(..)` (with no item, import or `use` binding named `std`
+  other than the standard crate anywhere in the workspace). Everything else keeps the abstention: a
+  closure (even one that panics), a substituting handler (`unwrap_or(..)`,
+  `unwrap_or_default()`, `|_| false`), a handler that sometimes returns, a
+  module-qualified, generic or external path, `.ok()`, `.is_ok()`,
+  `.unwrap()`, `.expect(..)`, and any further operation on the unwrapped
+  value. A handler declared `-> !` is not read: it does not type-check as a
+  handler for a value-returning forwarder. The forwarder resolved this way
+  must still return a value an exact assertion can pin. A unit-returning
+  forwarder (`fn grow(&mut self, n) { self.try_grow(n).unwrap_or_else(..) }`)
+  stays out of scope: its effect is observed through state
+  (`!v.spilled()`), which needs a state-observation rule this slice does not
+  add (`helper_transfer::diverging_handlers`).
 - The chain relation outranks any file-path, test-name or token
   proximity reason (#6694, #6672): a test that calls a resolved hop's
   caller relates as `HelperOwnerCall`, not `same_test_file`,
@@ -479,6 +512,75 @@ helpers, let-bound or transformed projections, aliases, custom impls, generated
 code, test-helper wrappers, or general interprocedural evaluation. It does not
 change punctuation extraction. Existing direct-field observation remains valid.
 
+## A public inherent method entry and a module-qualified hop (#8999)
+
+A changed private helper (`matches_caret`) that integration tests reach only
+through a public method (`req.matches(&version)`) read "no test is seen
+calling the helper": the chain entry is a method, not a free function, and the
+hop into the helper layer is spelled `eval::matches_req(..)`, a path-qualified
+call that name identity alone does not bind (#3296 review B1). Two additions
+close that gap, both reach-only and both fail-closed:
+
+- **Module-qualified hop.** A hop whose caller spells the call
+  `<qualifier>::<callee>(..)` binds when the callee is the one function of its
+  name, a module-level `fn` with a body, caller and callee both items of the
+  root package's library (composing under `src/lib.rs`, no `#[path]` remap,
+  every module segment declared once), the caller mentions the name exactly
+  once, and the qualifier (`crate::`, `self::`, `super::` or a child module of
+  the caller's module; no import, crate alias, type alias, generic parameter,
+  local declaration or item expansion can rebind a bare first segment) resolves to the callee's module path. Anything else keeps the
+  "not statically splittable" stop. The bound hop carries the same positional
+  arguments as a direct call.
+- **Inherent method entry.** A test relates to the helper as
+  `helper_owner_call` when it calls a hop caller that is a plain inherent
+  method taking `self` (not a `fmt` owner, which keeps its own route) on a
+  receiver the established receiver rules bind to the impl's self type (a
+  struct literal or a `let` annotated with the type). Constructor calls and
+  `Type::method(..)` paths remain unbound on this route. The
+  method's name must be defined exactly once in the index, every hop from the
+  helper up through that method must be an identity-bound non-macro call (a macro-argument hop
+  carries reach only), the test must be in the owner's package, and the test
+  must not rebind the type (a same-named type in its module scope or an
+  out-of-line parent module, or a `use .. as Type` rename).
+
+The receiver name must resolve through the shared call-identity authority to
+one nongeneric declared struct, enum or union in the method impl's own module. The
+root-package library declaration path and the test's import must be established;
+foreign unrenamed imports, sibling namesakes, aliases, generic self types and
+unreadable or generated bindings decline. Qualified type references and
+constructor calls in the test decline even beside a genuine unused import.
+Method sites must use a plain ASCII receiver name bound by a distinct top-level
+`let` with a direct record literal or a whole bare type annotation, taking the
+value rather than a reference pattern. The inherent method must take `&self`;
+the shared owner-pin prelude-method veto also applies. Visible imports must name
+unique unconditional data declarations in the owner's module, without competing
+declarations or imports. Source attributes must satisfy the shared source-item
+preservation rule (with the built-in `#[test]` admitted); unsupported attributes,
+including derives, remain outside this narrow route. Foreign, renamed (including
+`as _`), glob and unresolved imports, and local trait declarations, decline.
+Local item bindings, field/path suffixes, inline/parenthesized receivers, non-ASCII identifiers, nested,
+closure, destructuring and later shadow bindings remain unestablished. The receiver route permits only unrebound bare standard assertion and `vec!`
+macros; pattern macros and stringified tokens establish no reach. Qualified-hop
+callers with any macro invocation decline. These checks share the helper-transfer
+macro binding and invocation authority, with a narrower entry allowlist.
+This bounded route intentionally does not infer factory return types or re-export
+chains. Non-ASCII qualified helper paths decline without slicing inside UTF-8.
+
+A chain prefix containing a module-qualified hop uses only these stricter
+method-entry rules. Ordinary direct/self-method forwarders retain the separate
+rule in examples 10 and 11; that route cannot restore a refused qualified
+entry. A qualified hop above a tested lower entry does not change that lower
+entry's authority. The qualified-hop provenance also refuses result forwarding and effect-target
+propagation; the existing bare-call effect rule cannot restore either.
+
+This is reach only. The helper's result is not shown to be forwarded to the
+test's assertion, so findings remain below `exposed`; the version-requirement
+example reads `infection_unknown` with `helper_result_not_forwarded`. Named limit: the route does not
+look at how a hop uses the callee; a call inside a loop, a branch or a `match`
+arm still reads as reached because the chain records one call site and no
+control-flow condition. That is acceptable only because the route credits
+reach and nothing else.
+
 ## Relation to RIPR-SPEC-0114
 
 The 0114 transitive-reach walk is **lexical** (name-match only) and
@@ -551,8 +653,10 @@ Reach on that rewritten finding is `unknown` and the stop reason is
 4. Reject: relating through a method call site (`gauge.span_of(input)`)
    in a hop's callee position; a test's receiver-call entry into a method
    forwarder (`pool.grow(4)`) is the separate rule in examples 10 and 11.
-5. Reject: relating through a path-qualified call site
-   (`meter::reach_of(input)`).
+5. Reject: relating through a path-qualified call site whose qualifier
+   is not shown to name the callee's own module (`meter::reach_of(input)`
+   where `meter` is imported, or names another module). A qualifier that
+   resolves to the one callee's module binds (#8999).
 6. Reject: relating through a partial index.
 7. Reject: relating through recursion.
 8. Reject: relating through multiple callers.
@@ -580,6 +684,15 @@ Reach on that rewritten finding is `unknown` and the stop reason is
     like a std method (`len`, `insert`, `is_empty`, `next`) is entered only by
     a receiver built as the owner's own type, never by the std receiver
     (`helper_wrapper_reach`, `forwarder_method_named_like_a_std_method_*`).
+12. Accept: a forwarder `self.try_dock(wanted).unwrap_or_else(die)` where `die`
+    is the one workspace function whose body is `panic!`, with a test pinning
+    `dock(4)` (`forwarder-hop-unwrap-diverging-handler`). The verdict is
+    `exposed`.
+13. Reject: a forwarder that collapses the result with `.is_ok()`
+    (`forwarder-hop-unwrap-is-ok-tail`), a substituting or closure handler, a
+    non-diverging, conditional, ambiguous, module-qualified, shadowed or
+    external handler: none is credited
+    (`helper_wrapper_reach`, `unwrap_tail_*`).
 
 ## Test Mapping
 
@@ -602,10 +715,21 @@ foreign-qualified entry, nested comparison, imported constructor), and the
 unselected `match_arm` control);
 `crates/ripr/tests/helper_wrapper_reach.rs` (`forwarder_method_*`: the method
 entry credit and its swallowed, transformed, shared-name, two-candidate,
-shadowed, path-call, std-receiver, unestablished-receiver, same-named-type, root-package-member, external-trait-impl,
+shadowed, path-call, unwrap-tail (including shadowed-name, other-module, other-file and custom-type controls), std-receiver, unestablished-receiver, same-named-type, root-package-member, external-trait-impl,
 `#[cfg(test)]`, no-self, macro-hop and other-package controls);
 `crates/ripr/tests/crate_qualified_entry_reach.rs` (own-crate qualified
 entry call, `[lib] name` and hyphen spellings, and each refusal above).
+`crates/ripr/tests/helper_wrapper_reach.rs` (qualified effect refusal and lower
+forwarder preservation), `helper_transfer.rs::tests::method_entry_checks_only_the_prefix_the_test_enters`;
+fixture `rust_qualified_helper_effect_reach` and its honesty-corpus rows;
+`crates/ripr/tests/pub_api_method_entry_reach.rs` (#8999 public inherent
+method entry through a module-qualified hop: typed-receiver positives, and the
+untyped/constructor-factory, `str::matches`, second-method, foreign/renamed
+imports, foreign UFCS, sibling namesakes, crate/type aliases and Unicode
+qualifier refusals; the class stays below `exposed`);
+`analysis/classify/helper_transfer/qualified_hop.rs` `tests` (the qualifier
+resolution and each decline); corpus cases `spec-b-0159-path-qualified-call-site` (accept shape of
+example 5) and `spec-b-0159-path-qualified-imported-module` (reject shape).
 
 ## Non-Goals
 
@@ -623,6 +747,9 @@ entry call, `[lib] name` and hyphen spellings, and each refusal above).
 
 - `analysis/classify/helper_transfer.rs` — the authority.
 - `analysis/classify/related_tests.rs` — the relation branch.
+- `analysis/classify/helper_transfer/qualified_hop.rs` — the module-qualified
+  hop (#8999); `analysis/classify/related_tests.rs` `method_entry_hops` and
+  `calls_helper_method_entry` — the inherent method entry (#8999).
 - `analysis/classify/activation.rs` — transferred rows, call operands.
 - `analysis/classify/context.rs` — the chain on `ProbeContext`.
 - `analysis/classifier/evidence.rs` — the hop-propagation stop

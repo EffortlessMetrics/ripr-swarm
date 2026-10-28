@@ -89,6 +89,14 @@ wrong in three shapes, each of which an earlier candidate credited:
 
 ## Behavior
 
+The bounded provider-backed proptest profile in RIPR-SPEC-0117 (#10839) may
+supply a generated test with a receipt for an ordinary-assertion interpretation.
+Only the exact generation-owned TestFact borrows that short source and its line
+mapping. Its provider, Cargo registration, source/configuration and callback
+failure premises are proved before registration; ordinary owner/operand and
+discriminator rules below still apply. This does not add `prop_assert*` to the
+non-returning trusted macro set or establish model/helper failure propagation.
+
 An `assert_eq!` confirms a `return_value` probe's discriminator (or an
 `error_path` probe's, for a changed early `return Err(..)`; rule 3) when all
 of the following hold. Each rule fails closed: when ripr cannot establish it,
@@ -1523,6 +1531,40 @@ taken any other exit, because the unwrap panics on `Err`/`None`.
    written file refuses. `assert_ne!`, a different owner and a discarded
    unwrap do not pin.
 
+### Claims payload pins (#9619)
+
+claims' `assert_ok!(call)` and `assert_some!(call)` evaluate `call` once, panic
+unless it has the named variant, and yield the payload, so
+`let q = assert_ok!(owner(..)); assert_eq!(q, literal)` reads as the unwrapped
+`Ok`/`Some` pin above (`let q = owner(..).unwrap();`).
+
+1. Trusted import. `assert_ok`, `assert_err`, `assert_some` and `assert_none`
+   are trusted test-scoped macros (like `expect!`): trusted only through a
+   `use claims::{..}` import under their own name that the test's file carries
+   and whose `claims` package is a plain registry requirement on the same
+   manifest terms as `pretty_assertions` (Required Evidence below). A rename,
+   another crate's import, a local `macro_rules!`, a `path`, `git` or
+   `package` dependency or a missing dependency leaves the macro opaque, as
+   any unknown macro is.
+2. The owner call. An owner call inside a verified claims macro binds nothing,
+   so it does not trip the bare-call rebinding refusal that other macros'
+   arguments do.
+3. The payload. Only `assert_ok!`/`assert_some!` holding exactly the owner call
+   as their whole operand read as the unwrap; `assert_some!(call.ok())`, an
+   operand with anything around the call, and `assert_err!`/`assert_none!`
+   (which yield the other side) pin nothing. The binding, expected value and
+   exit-gate rules are the unwrapped pin's.
+4. Direction. The macro must match the pin's wrapper: `assert_ok!` reads only
+   an `Ok` pin and `assert_some!` only a `Some` pin. A pin on the `Err` exit
+   (`ErrVariant`, or a field gate wrapped in `Err`) is the opposite direction,
+   since the macro panics on that exit before any comparison.
+
+Accepted limitation: the import is read at file granularity, as `expect!`'s is.
+A `use claims::assert_ok;` inside one inner module admits the name for a test
+elsewhere in the file that has no such import in scope; such a subject does not
+compile, so the credit is for a test that cannot run. Scoping the import to the
+asserting test's module chain is a follow-up.
+
 ### Bool-owner pins
 
 An owner whose signature declares `-> bool` has two values, so a bare
@@ -2596,6 +2638,13 @@ assertions. This repair shares the existing callback without that larger migrati
 
 ## Test Mapping
 
+- Claims payload pins (#9619): `crates/ripr/tests/claims_payload_owner_pin.rs`
+  (single and grouped import, trailing `assert_err!`, `assert_some!`
+  positives; missing, foreign, renamed, locally redefined import, `mut`,
+  owner-derived expected value, wrapped operand, method use, converted
+  `assert_some!` operand, `path`/`package`/absent dependency and opposite-exit
+  binding negatives); verdict-corpus case `lib-claims-assert-ok-unwrap-then-eq`.
+
 - `crates/ripr/tests/result_map_callback.rs`: exact and block-tail forwarding;
   discard/recompute/constant and changed-payload refusals; receiver, binding,
   conditional, chained-adaptor and alias boundaries; per-test Ok/Err, reach-only
@@ -3114,6 +3163,23 @@ same value and keeps its credit.
 Only unqualified owner calls supply separating inputs: a module-qualified or method call of the same name (`rival::thr(101)`) may be another function and is never counted by this path, and helper-transferred rows are not read (#9147). The shared producer's resolver (#9218, below) is more permissive for equality-boundary inputs; this path keeps its stricter rule.
 
 The shared owner call-value producer (`call_values_for_owner`, which feeds the equality-boundary reading `equality_observed`/`exact_rows` and the helper-transferred entry rows) reads a module-qualified free call of the owner's name only when its spelled path settles on the owner: through the same-named-rival call identity when the owner has rivals, otherwise through the owner-alone identity, which reads `crate`/`self`/`super`, in-file `mod` names, `use`-bound modules (`use crate::pricing; pricing::thr(..)`, renames included) and the owner crate's own name from another crate's test, and finally a path anchored at the owner's crate whose target module re-exports the owner through a top-level `pub use` item of the owner crate target's own module file (a `main.rs`, `src/bin` or `tests` file never counts), whose leaf is not renamed and whose path resolves to the owner's own module (`pub use internal::inner;`, `pub use crate::internal::*;`). Explicit leaves take precedence over globs (an explicit dependency export beats an owner glob and an explicit owner export beats a dependency glob), a dependency glob beside an owner glob is ambiguous and declines, and a leading `::`, an undeclared first segment, a nested-scope `use` or an unreadable tree does not qualify (`pub use other_dep::thr;`, `pub use other_dep::*;`). A `crate::` qualifier counts only from a test in the owner's own crate target. A bare call, a type-path call and a method call keep their reading; any other qualified spelling (`rival::thr(101)`, a module bound to something else, a dependency path, a glob-bound or unreadable qualifier, a `#[path]`-remapped package) supplies no input row (#9218).
+
+Grouped re-exports recurse through syntax-tree use groups, including nested
+`crate::{internal::{thr}}` leaves. A leading `::` belongs only to its leaf and
+descendants; an unrelated absolute sibling cannot invalidate a local owner leaf.
+Renames are read from syntax, including intervening newlines and `as _`, and never
+turn into unrenamed owner credit. A `cfg`/`cfg_attr`-gated use remains a possible
+binding that cannot establish owner credit, so it cannot silently reveal an owner
+glob underneath it (#10047). The nested positive and dependency-glob, renamed-leaf
+and cfg controls are pinned in `returned_comparison_boundary` and the
+`rust_nested_use_*` fixtures; the conservative fixtures also join RIPR-SPEC-0108.
+These controls assert the infection-stage boundary summary and presence or absence
+of the exact `x == 101` input row, independently of final gap admission. On the
+current integrated main, the same-name path-qualifier false refusal (#10604)
+leaves all four fixture return-value findings `static_unknown` before and after
+the re-export repair and clears final missing-discriminator arrays. The fixtures
+use direct calls, not function values; their retained limitation is a known
+independent defect, not evidence that the qualifier names a function value.
 
 Accepted tradeoff: a genuine owner call spelled through a path ripr cannot resolve is declined, so its input is not read and a missing-equality gap can stay open although a test exercises the boundary. That direction was chosen because crediting an unresolved qualified call lets another function's input suppress the gap and reads `Exposed` wrongly. The filter covers the direct owner calls and the helper-transferred entry rows (`chain_entry_rows`). It does not cover the computed-input continuation (`computed_input_parameters`), which reads calls by name and stays unfiltered because it is conservative (it only ever unresolves a boundary), nor the adaptor element-run reader (`sequence_runs`): dropping only some of its calls could remove the discriminating element and create an actionable gap. The call-value producer and the chain entry rows are the only consumers filtered. A re-export counts only from the owner crate target's own module file (a `main.rs`, `src/bin` or `tests` file is another crate) and only from a top-level `pub use` item whose leaf is not renamed; a `use` inside a nested module binds there and never counts.
 

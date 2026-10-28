@@ -226,6 +226,94 @@ fn the_crate_qualified_attribute_is_read_like_the_imported_one() -> Result<(), S
     Ok(())
 }
 
+/// The owner sits on line 2; the rewrite scales what it returns.
+const SCALE_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs
+index 1111111..2222222 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -2,1 +2,1 @@
+-    x * 2
++    x * 3
+";
+
+fn scale_classes(rows: &str, body: &str) -> Result<Vec<ExposureClass>, String> {
+    let lib = format!(
+        "pub fn scale(x: i64) -> i64 {{\n    x * 3\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n{IMPORT}\n{rows}{body}}}\n"
+    );
+    let found: Vec<ExposureClass> = TempRepo::create(&lib, SCALE_DIFF)?
+        .findings()?
+        .into_iter()
+        .filter(|finding| finding.probe.location.line == 2)
+        .map(|finding| finding.class)
+        .collect();
+    if found.is_empty() {
+        return Err("premise: a finding on the rewritten line".to_string());
+    }
+    Ok(found)
+}
+
+const SCALE_BODY: &str = "    fn rows(x: i64) -> i64 {\n        scale(x)\n    }\n";
+
+// Runtime label: `0 * 2 == 0 * 3`, so no input of the row can tell the edit
+// apart (#10797). The plain `assert_eq!(scale(0), 0)` grades the same way.
+#[test]
+fn a_row_whose_input_cannot_tell_the_edit_apart_is_not_credited() -> Result<(), String> {
+    let found = scale_classes("    #[test_case(0 => 0)]\n", SCALE_BODY)?;
+    if found.contains(&ExposureClass::Exposed) {
+        return Err(format!("a coincident row must not be credited: {found:?}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn one_discriminating_row_among_coincident_rows_is_credited() -> Result<(), String> {
+    let rows = "    #[test_case(0 => 0)]\n    #[test_case(2 => 6)]\n";
+    let found = scale_classes(rows, SCALE_BODY)?;
+    if !found.contains(&ExposureClass::Exposed) {
+        return Err(format!("the discriminating row must credit: {found:?}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn a_parameter_the_body_may_rebind_or_read_through_a_field_is_not_read() -> Result<(), String> {
+    for (label, body) in [
+        (
+            "closure parameter",
+            "    fn rows(x: i64) -> i64 {\n        Some(x).map(|x| scale(x)).unwrap_or(0)\n    }\n",
+        ),
+        (
+            "field of the same name",
+            "    fn rows(x: i64) -> i64 {\n        scale(Pair { x: 1, y: 2 }.x)\n    }\n",
+        ),
+        (
+            "macro argument",
+            "    fn rows(x: i64) -> i64 {\n        scale(dbg!(x))\n    }\n",
+        ),
+    ] {
+        let found = scale_classes("    #[test_case(2 => 6)]\n", body)?;
+        if found.contains(&ExposureClass::Exposed) {
+            return Err(format!("{label} must not be credited: {found:?}"));
+        }
+    }
+    Ok(())
+}
+
+// A negated argument keeps its sign as a method receiver: `scale((-5).abs())`
+// is 15 under the edit and 10 before, so the row discriminates. Spliced bare
+// (`-5.abs()` is `-(5.abs())`) the oracle would read -15 and miss it.
+#[test]
+fn a_negated_row_argument_keeps_its_sign_as_a_receiver() -> Result<(), String> {
+    let found = scale_classes(
+        "    #[test_case(-5 => 15)]\n",
+        "    fn rows(x: i64) -> i64 {\n        scale(x.abs())\n    }\n",
+    )?;
+    if !found.contains(&ExposureClass::Exposed) {
+        return Err(format!("the discriminating row must credit: {found:?}"));
+    }
+    Ok(())
+}
+
 /// The changed line sits in a branch only a large input enters. A row whose
 /// input misses it earns no credit, and a sibling row's literals do not lend
 /// it any (the promoted test carries every row's literals).

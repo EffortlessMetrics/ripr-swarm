@@ -23,6 +23,30 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[test]
+fn suffixed_decimal_arguments_preserve_whole_literal_boundaries() {
+    for (literal, expected) in [
+        ("100i32", "100"),
+        ("-100i32", "-100"),
+        ("1_00u64", "1_00"),
+        ("0usize", "0"),
+    ] {
+        assert_eq!(scalar_values(literal), [expected], "{literal}");
+    }
+    for expression in [
+        "100i32 as i8",
+        "100i32.abs()",
+        "100i32..101i32",
+        "100i32 + 1",
+        "value100i32",
+        "1e2f64",
+        "0x64u8",
+        "-100u32",
+    ] {
+        assert!(scalar_values(expression).is_empty(), "{expression}");
+    }
+}
+
 fn index_from_files(files: &[(PathBuf, &str)]) -> Result<FixtureIndex, String> {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -20086,5 +20110,25 @@ fn a_header_on_the_owners_own_line_is_read() -> Result<(), String> {
     let trait_lib = |ret: &str| format!("pub trait Tr<T> {{ fn f(x: T) -> {ret} {{ x }} }}\n");
     assert!(may_name_non_plain_drop(&trait_lib("T"), "f", "x")?);
     assert!(!may_name_non_plain_drop(&trait_lib("u32"), "f", "x")?);
+    Ok(())
+}
+
+#[test]
+fn a_header_after_an_earlier_fn_on_the_owners_line_is_read() -> Result<(), String> {
+    let lib = |second: &str, signature: &str| {
+        format!(
+            "pub struct S<T>(pub T);\nimpl S<u32> {{ fn g() {{}} }} {second} {{ pub fn f{signature} {{ x }} }}\n"
+        )
+    };
+    assert!(may_name_non_plain_drop(
+        &lib("impl<T> S<T>", "(x: T) -> T"),
+        "f",
+        "x"
+    )?);
+    assert!(!may_name_non_plain_drop(
+        &lib("impl S<u8>", "(x: u8) -> u8"),
+        "f",
+        "x"
+    )?);
     Ok(())
 }

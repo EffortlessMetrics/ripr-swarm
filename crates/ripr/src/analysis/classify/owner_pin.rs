@@ -67,6 +67,7 @@ use crate::analysis::extract::{
 #[cfg(test)]
 use crate::analysis::facts::FileFactsView;
 use crate::analysis::facts::drop_in::DropInManifests;
+use crate::analysis::facts::expanded_assertion_view;
 use crate::analysis::facts::{
     DOCTEST_FUNCTION_NAME, ExecutionContext, FunctionContainer, ModulePathTarget,
     SourceRoleProvenanceEdgeKind,
@@ -75,12 +76,12 @@ use crate::analysis::sync_memo::SyncMemo;
 use crate::analysis::syntax::fn_signature::{LocalTypeEquality, local_type_equality};
 use crate::analysis::syntax::{
     AssertionContextRefusal, GeneratedTestPins, HelperLoan, ItemNesting, MacroBindingCandidates,
-    MacroBindingKind, MacroBindingSite, OwnerPinAssertions, PatternPins, TRUSTED_MACRO_NAMES,
-    attribute_settles_test_outcome, drop_in_assertion_leaf, empty_macro_binding_ambiguities,
-    err_return_guard_key, generated_test_pins, local_empty_macro_names, macro_binding_scan,
-    owner_pin_assertions, parse_clean_source_file, pattern_pins, returns_leave_the_function,
-    source_binds_value_name, source_declares_value_name, trusted_macro_binding_site_sets,
-    trusted_macro_binding_sites,
+    MacroBindingKind, MacroBindingSite, OwnerPinAssertions, PatternPins, RootShadow,
+    TRUSTED_MACRO_NAMES, attribute_settles_test_outcome, drop_in_assertion_leaf,
+    empty_macro_binding_ambiguities, err_return_guard_key, generated_test_pins,
+    local_empty_macro_names, macro_binding_scan, owner_pin_assertions, parse_clean_source_file,
+    pattern_pins, returns_leave_the_function, source_binds_value_name, source_declares_value_name,
+    source_imported_claims_macros, trusted_macro_binding_site_sets, trusted_macro_binding_sites,
 };
 use crate::domain::{Probe, ProbeFamily};
 use ra_ap_syntax::{
@@ -373,6 +374,8 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     /// run. A doctest is its own crate, so the file holding the comment
     /// declares no function its assertions could be read under.
     doctest_pins: SyncMemo<BTreeMap<(PathBuf, usize), OwnerPinAssertions>>,
+    /// Only generation-owned provider receipts can populate this source view.
+    proptest_pins: SyncMemo<BTreeMap<(PathBuf, usize), OwnerPinAssertions>>,
     /// Per file: the exact pattern pins of its tests through a verified
     /// local `assert_matches!` (#6616), parsed once per run.
     pattern_pins: SyncMemo<BTreeMap<PathBuf, PatternPins>>,
@@ -1350,6 +1353,11 @@ impl OwnerPinSyntax {
         if let Some(refusal) = self.source_provenance_refusal(test, index) {
             return Err(Box::new(refusal));
         }
+        if index.proptest_source(test).is_some() {
+            // These ordinary assertion spellings are a checked interpretation
+            // of $crate-bound property assertions, not caller macro imports.
+            return Ok(BTreeSet::new());
+        }
         let resolved_modules = self.resolved_module_declarations(index);
         let module_resolved = |file: &Path, line: usize, declaration: &str| {
             resolved_modules.contains(&(file.to_path_buf(), line, declaration.to_string()))
@@ -1512,7 +1520,10 @@ impl OwnerPinSyntax {
         };
         self.by_file
             .get_or_build(&test.file, || {
-                owner_pin_assertions(&facts.source, &assertion_context_macros())
+                owner_pin_assertions(
+                    &expanded_assertion_view(&facts.source, facts.tests.iter()),
+                    &assertion_context_macros(),
+                )
             })
             .refusal_trusting_comparison_macros(
                 (test.start_line, test.end_line, &test.name),
@@ -1550,6 +1561,32 @@ impl OwnerPinSyntax {
         assertion: &OracleFact,
         index: &RustIndex,
     ) -> Option<AssertionRefusal> {
+        if let Some((source, offset)) = index.proptest_source(test) {
+            if let Some(refusal) = self.source_provenance_refusal(test, index) {
+                return Some(refusal);
+            }
+            let (Some(start), Some(end), Some(line)) = (
+                test.start_line.checked_sub(offset),
+                test.end_line.checked_sub(offset),
+                assertion.line.checked_sub(offset),
+            ) else {
+                return Some(AssertionRefusal::Syntax(
+                    AssertionContextRefusal::UnidentifiedTest,
+                ));
+            };
+            return self
+                .proptest_pins
+                .borrow_mut()
+                .entry((test.file.clone(), test.start_line))
+                .or_insert_with(|| owner_pin_assertions(source, &assertion_context_macros()))
+                .refusal(
+                    (start, end, &test.name),
+                    &test.body,
+                    (line, &assertion.text),
+                    &BTreeSet::new(),
+                )
+                .map(AssertionRefusal::Syntax);
+        }
         let ambiguous = match self.context_ambiguities(test, assertion.line, index) {
             Ok(ambiguous) => ambiguous,
             Err(refusal) => return Some(*refusal),
@@ -1593,7 +1630,10 @@ impl OwnerPinSyntax {
         let file_refusal = self
             .by_file
             .get_or_build(&test.file, || {
-                owner_pin_assertions(&facts.source, &assertion_context_macros())
+                owner_pin_assertions(
+                    &expanded_assertion_view(&facts.source, facts.tests.iter()),
+                    &assertion_context_macros(),
+                )
             })
             .refusal(
                 (test.start_line, test.end_line, &test.name),
@@ -4128,6 +4168,36 @@ impl OwnerReturnPin {
                                             })
                                             .map(|call| (call, true))
                                     })
+                                    // claims' `assert_ok!(call)` / `assert_some!(call)`
+                                    // yield the payload exactly as `.unwrap()` does,
+                                    // on a verified `use claims::..` import.
+                                    .or_else(|| {
+                                        let (name, call) = claims_payload_call(initializer)?;
+                                        let imported =
+                                            index.files().get(&test.file).is_some_and(|facts| {
+                                                source_imported_claims_macros(&facts.source)
+                                                    .contains(&name)
+                                            });
+                                        // The macro panics on the other variant and yields
+                                        // the payload, so only a pin on that same payload
+                                        // reads: an `Err` pin (`ErrVariant`, or a field
+                                        // gate wrapped in `Err`) is the opposite direction.
+                                        let direction = matches!(
+                                            (name, unwrap_wrapper),
+                                            ("assert_ok", Some("Ok"))
+                                                | ("assert_some", Some("Some"))
+                                        );
+                                        (direction && imported)
+                                            .then(|| {
+                                                self.awaited_call_shape(
+                                                    poll_context,
+                                                    call,
+                                                    &self.name,
+                                                )
+                                            })
+                                            .flatten()
+                                            .map(|call| (call, true))
+                                    })
                             };
                             match (bound_whole(0), bound_whole(1)) {
                                 (Some((call, unwraps)), None) => {
@@ -4551,6 +4621,13 @@ impl OwnerReturnPin {
         let owner_scope =
             OwnerScope::new(self.name.as_str(), self.owner_start_line, &self.owner_file);
         let masked_body = mask_comments_and_strings(&test.body);
+        // claims' assertion macros the test's file imports from the crate
+        // (the syntax admission settles the manifest and shadowing): they
+        // evaluate their operand and bind nothing, so an owner call inside
+        // one is no rebinding.
+        let claims_macros: Vec<&str> = test_source
+            .map(source_imported_claims_macros)
+            .unwrap_or_default();
         match (&self.call, call) {
             // #7082: a cfg on the owner or an enclosing module may compile
             // a same-named `static`, `const` or `use` in its place, which
@@ -4570,7 +4647,7 @@ impl OwnerReturnPin {
                     })
                     && !test_body_shadows_owner(test, &self.name)
                     && !binds_outside_let(&masked_body, &self.name)
-                    && !bound_by_macro(&masked_body, &self.name)
+                    && !bound_by_macro_with(&masked_body, &self.name, &claims_macros)
                     && helper.as_deref().is_none_or(|helper| {
                         helper_pins_owner_call(helper, &masked_body, &self.name)
                     })
@@ -4638,9 +4715,7 @@ impl OwnerReturnPin {
                 }
                 let shadowed_by_std = match &receiver_type {
                     ReceiverType::ByteSlice => BYTE_SLICE_METHODS.contains(&self.name.as_str()),
-                    ReceiverType::Named(_) => {
-                        BY_VALUE_PRELUDE_METHODS.contains(&self.name.as_str())
-                    }
+                    ReceiverType::Named(_) => method_may_dispatch_through_prelude(&self.name),
                 };
                 !shadowed_by_std
                     && trait_scope.as_ref().is_none_or(|scope| {
@@ -5512,6 +5587,16 @@ pub(in crate::analysis) fn function_declaration_is_async(
         .declaration_is_async(owner)
 }
 
+/// A whole free call, not an unrelated method or associated call with the
+/// same name and a free call nested inside its arguments. Definition identity
+/// remains the caller's authority.
+pub(super) fn is_whole_free_owner_call(operand: &str, name: &str) -> bool {
+    matches!(
+        owner_call_shape(operand, name),
+        Some(CallShape::Bare | CallShape::Path(_))
+    )
+}
+
 /// The operand as a complete call of `name`: `name(..)` or `recv.name(..)`
 /// with a plain identifier receiver and nothing chained after the call.
 fn owner_call_shape<'a>(operand: &'a str, name: &str) -> Option<CallShape<'a>> {
@@ -5641,6 +5726,32 @@ fn bound_owner_initializer<'a>(
         return None;
     };
     test.body.get(equals + 1..end)
+}
+
+/// The claims macro name and operand call when `operand` is exactly
+/// `assert_ok!(<call>)` or `assert_some!(<call>)`: each evaluates its operand
+/// once, panics on the other variant and yields the payload, so a passing
+/// test read the call's `Ok`/`Some` payload as `.unwrap()` would. The caller
+/// verifies the `claims` import.
+fn claims_payload_call(operand: &str) -> Option<(&'static str, &str)> {
+    let operand = operand.trim();
+    let masked = mask_comments_and_strings(operand);
+    let name = ["assert_ok", "assert_some"]
+        .into_iter()
+        .find(|name| masked.starts_with(name))?;
+    let after_bang = masked[name.len()..]
+        .trim_start()
+        .strip_prefix('!')?
+        .trim_start();
+    let open = masked.len() - after_bang.len();
+    if masked.as_bytes().get(open) != Some(&b'(') {
+        return None;
+    }
+    let close = matching_close(&masked, open, b'(', b')')?;
+    masked[close + 1..]
+        .trim()
+        .is_empty()
+        .then_some((name, operand[open + 1..close].trim()))
 }
 
 /// RIPR-SPEC-0225 decision 6: the call `operand` unwraps, when it is
@@ -6381,7 +6492,14 @@ fn assertion_context_macros() -> Vec<&'static str> {
 /// verifies `use expect_test::{expect, expect_file};`, a bare one is a
 /// crate's own (a try-style `expect!(x)` may hide a `return`), so owner
 /// bodies and binding reads never count it as bounded.
-const TEST_SCOPED_TRUSTED_MACROS: &[&str] = &["expect", "expect_file"];
+const TEST_SCOPED_TRUSTED_MACROS: &[&str] = &[
+    "assert_err",
+    "assert_none",
+    "assert_ok",
+    "assert_some",
+    "expect",
+    "expect_file",
+];
 
 /// Whether a macro named `name` neither returns nor binds a name, whatever
 /// file it sits in.
@@ -8896,9 +9014,15 @@ fn is_assert_eq_over(text: &str, spelling: &str, expansion: &str) -> bool {
 /// its arguments: `let_assert!(Ok(p) = ..)` and similar macros bind
 /// patterns ripr does not read.
 fn bound_by_macro(masked: &str, name: &str) -> bool {
+    bound_by_macro_with(masked, name, &[])
+}
+
+/// [`bound_by_macro`] where the macros in `bounded` are also known to bind
+/// nothing: the caller verified their import (claims' assertion macros).
+fn bound_by_macro_with(masked: &str, name: &str, bounded: &[&str]) -> bool {
     macro_invocations(masked)
         .into_iter()
-        .filter(|(macro_name, _)| !is_bounded_macro(macro_name))
+        .filter(|(macro_name, _)| !is_bounded_macro(macro_name) && !bounded.contains(macro_name))
         .any(|(_, delimiter)| {
             let (open, close) = match masked.as_bytes()[delimiter] {
                 b'(' => (b'(', b')'),
@@ -13496,7 +13620,7 @@ pub(in crate::analysis) fn test_receiver_named_type(
 /// How many `struct`, `enum`, `union` or `type` items named `name` the
 /// workspace declares, across every module and file. The per-name table is
 /// built once per index (every file masked once), then looked up.
-fn workspace_type_name_count(name: &str, index: &RustIndex) -> usize {
+pub(super) fn workspace_type_name_count(name: &str, index: &RustIndex) -> usize {
     index
         .call_identity_memos
         .type_name_counts(|| {
@@ -13772,6 +13896,7 @@ fn parent_chain_shadows_item(
             return true;
         };
         parent_root_shadows_item(
+            index,
             &parent.source,
             &edge.parent,
             base,
@@ -13791,6 +13916,7 @@ fn parent_chain_shadows_item(
 /// owner) is the production declaration's scope, never a shadow; every
 /// other declaring root refuses.
 fn parent_root_shadows_item(
+    index: &RustIndex,
     parent_source: &str,
     parent_file: &Path,
     base: &str,
@@ -13798,43 +13924,75 @@ fn parent_root_shadows_item(
     kind: ShadowKind,
     owner_ancestors: &[PathBuf],
 ) -> bool {
-    let masked = mask_comments_and_strings(parent_source);
-    // `r#Window` denotes `Window`: a raw-identifier declaration shadows too.
-    let raw = format!("r#{base}");
-    // Aliases and renames rebind a type name only; a trait is shadowed by a
-    // declaration (#7087), matching the in-file trait check (#7053).
-    let declared = match kind {
-        ShadowKind::Type => {
-            declares_type(&masked, base)
-                || file_aliases_type(parent_source, base)
-                || file_renames_to(parent_source, base)
-        }
-        ShadowKind::Trait => declares_trait(&masked, base),
-    };
-    if !declared && !masked.contains(raw.as_str()) {
+    // A parent that never mentions the name cannot declare, alias or rename
+    // it, so it is answered from the text before a snapshot (and its parse)
+    // is created for a file nothing else needed (#10809).
+    if !parent_source.contains(base) {
         return false;
     }
-    let Some(parse) = parse_clean_source_file(parent_source) else {
-        return true;
-    };
-    let root = parse.tree().syntax().clone();
-    let root_items: Vec<ast::Item> = root.children().filter_map(ast::Item::cast).collect();
-    if !root_items
-        .iter()
-        .any(|item| module_item_names(item, base, kind))
-        && !root_items.iter().any(|item| {
-            if kind == ShadowKind::Trait || !matches!(item, ast::Item::Use(_)) {
-                return false;
+    // The mask, the parse and the root-item scan depend only on the parent
+    // file and the name, and every related test of every probe asks about the
+    // same few parents, so they are answered once per file snapshot (#10809).
+    // The owner exemptions below differ per call and stay out of the memo.
+    let snapshot = index.source_syntax.get(index, parent_file);
+    let candidate = || {
+        let masked_here;
+        let masked: &str = match snapshot.as_deref() {
+            Some(snapshot) => snapshot.masked_source(|| mask_comments_and_strings(parent_source)),
+            None => {
+                masked_here = mask_comments_and_strings(parent_source);
+                &masked_here
             }
-            let text = item.syntax().text().to_string();
-            // `r#Window` denotes `Window`: a raw-identifier alias rebinds
-            // the name too.
-            file_renames_to(&text, base) || file_renames_to(&text, raw.as_str())
-        })
-    {
-        return false;
+        };
+        // `r#Window` denotes `Window`: a raw-identifier declaration shadows too.
+        let raw = format!("r#{base}");
+        // Aliases and renames rebind a type name only; a trait is shadowed by a
+        // declaration (#7087), matching the in-file trait check (#7053).
+        let declared = match kind {
+            ShadowKind::Type => {
+                declares_type(masked, base)
+                    || file_aliases_type(parent_source, base)
+                    || file_renames_to(parent_source, base)
+            }
+            ShadowKind::Trait => declares_trait(masked, base),
+        };
+        if !declared && !masked.contains(raw.as_str()) {
+            return RootShadow::NotShadowing;
+        }
+        let Some(root) = parent_root_node(snapshot.as_deref(), parent_source) else {
+            return RootShadow::Unparseable;
+        };
+        let root_items: Vec<ast::Item> = root.children().filter_map(ast::Item::cast).collect();
+        if !root_items
+            .iter()
+            .any(|item| module_item_names(item, base, kind))
+            && !root_items.iter().any(|item| {
+                if kind == ShadowKind::Trait || !matches!(item, ast::Item::Use(_)) {
+                    return false;
+                }
+                let text = item.syntax().text().to_string();
+                // `r#Window` denotes `Window`: a raw-identifier alias rebinds
+                // the name too.
+                file_renames_to(&text, base) || file_renames_to(&text, raw.as_str())
+            })
+        {
+            return RootShadow::NotShadowing;
+        }
+        RootShadow::Declared
+    };
+    let answer = match snapshot.as_deref() {
+        Some(snapshot) => snapshot.root_shadow(base, kind == ShadowKind::Trait, candidate),
+        None => candidate(),
+    };
+    match answer {
+        RootShadow::NotShadowing => return false,
+        RootShadow::Unparseable => return true,
+        RootShadow::Declared => {}
     }
-    if owner.file == parent_file && owner_at_file_root(&root, parent_source, owner) {
+    if owner.file == parent_file
+        && parent_root_node(snapshot.as_deref(), parent_source)
+            .is_some_and(|root| owner_at_file_root(&root, parent_source, owner))
+    {
         return false;
     }
     // A trait is commonly declared in an ancestor file of the file holding
@@ -13847,6 +14005,19 @@ fn parent_root_shadows_item(
         return false;
     }
     true
+}
+
+/// The root of a parent file's clean parse: the snapshot's shared green tree
+/// when the file is indexed, a fresh parse otherwise. `None` when the file
+/// does not parse cleanly.
+fn parent_root_node(
+    snapshot: Option<&crate::analysis::syntax::SourceSnapshot>,
+    source: &str,
+) -> Option<SyntaxNode> {
+    match snapshot {
+        Some(snapshot) => snapshot.tree().map(|tree| tree.syntax().clone()),
+        None => parse_clean_source_file(source).map(|parse| parse.tree().syntax().clone()),
+    }
 }
 
 /// The files whose module scope encloses the owner's file: the file itself
@@ -14439,6 +14610,10 @@ const BYTE_SLICE_METHODS: &[&str] = &[
 /// cannot see which std traits a workspace type implements (derives,
 /// blanket impls), so a named receiver never credits a pin through these
 /// names.
+pub(super) fn method_may_dispatch_through_prelude(name: &str) -> bool {
+    BY_VALUE_PRELUDE_METHODS.contains(&name)
+}
+
 const BY_VALUE_PRELUDE_METHODS: &[&str] = &[
     "all",
     "any",

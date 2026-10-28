@@ -15,6 +15,9 @@ mod boundary_gap;
 #[path = "common/mod.rs"]
 mod common;
 
+#[path = "boundary_gap_closure/ordinary_daily_loop.rs"]
+mod ordinary_daily_loop;
+
 use boundary_gap::{
     AFTER_TESTS, BEFORE_TESTS, EQUALITY_DISCRIMINATOR, EQUALITY_SELECTOR, FocusedExecution,
     SIBLING_TESTS, WitnessFacts, assert_shared_witness, boundary_seam, commit_all,

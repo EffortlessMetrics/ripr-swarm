@@ -62,6 +62,9 @@ mod boundary_input;
 mod boundary_input_tests;
 mod bounded_read;
 mod bun_bridge;
+mod call_removal_guard;
+#[cfg(test)]
+mod call_removal_tests;
 #[cfg(test)]
 mod capability_disposition_tests;
 mod catch_arm_guard;
@@ -235,6 +238,21 @@ pub(crate) use value_hiding_guard::*;
 pub(crate) struct TypeScriptAdapter;
 
 pub(crate) fn source_type_for(path: &Path) -> SourceType {
+    let source_type = source_type_for_extension(path);
+    // `*.d.ts` / `*.d.mts` / `*.d.cts` are declaration files: every top-level
+    // declaration is ambient, so `export const x: T;` is valid there and a
+    // parse error only when read as ordinary TypeScript (#10812).
+    let declaration_file = matches!(
+        path.extension().and_then(|ext| ext.to_str()),
+        Some("ts" | "mts" | "cts")
+    ) && path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .is_some_and(|stem| stem.ends_with(".d"));
+    source_type.with_typescript_definition(declaration_file)
+}
+
+fn source_type_for_extension(path: &Path) -> SourceType {
     match path.extension().and_then(|ext| ext.to_str()) {
         Some("tsx") => SourceType::tsx(),
         Some("ts") => SourceType::ts(),
@@ -957,14 +975,19 @@ impl TypeScriptAdapter {
                         // index: unique within this changed file, so the key
                         // needs no cloned Strings.
                         let context = owner_contexts.entry(owner_idx).or_insert_with(|| {
-                            owner_line_context(
+                            let mut context = owner_line_context(
                                 owner,
                                 &all_tests,
                                 Some(&options.root),
                                 &reexport_index,
                                 &relation_index,
                                 alias_map_ref,
-                            )
+                            );
+                            context.single_line_replacement = matches!(
+                                (changed.added_lines.as_slice(), changed.removed_lines.as_slice()),
+                                ([added], [removed]) if added.line == removed.new_side_line
+                            );
+                            context
                         });
                         classify_resolved_owner(
                             &changed.path,

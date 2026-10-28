@@ -5,6 +5,54 @@
   "description": "Cross-language pinned adversarial corpus: evidence may not promote to exposed/strong unless it structurally matches the seam.",
   "cases": [
     {
+      "id": "rust_qualified_helper_effect_side_effect",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_qualified_helper_effect_reach",
+      "vector": "qualified_helper_reach_borrows_effect_target_propagation",
+      "probe_family": "side_effect",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "propagation_unknown"
+        }
+      ]
+    },
+    {
+      "id": "rust_qualified_helper_effect_call_deletion",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_qualified_helper_effect_reach",
+      "vector": "qualified_helper_reach_borrows_effect_target_propagation",
+      "probe_family": "call_deletion",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "propagation_unknown"
+        }
+      ]
+    },
+    {
       "id": "rust_wrapper_macro_bang_bidi_whitespace_predicate",
       "language": "rust",
       "tier": "pure",
@@ -1103,6 +1151,98 @@
         },
         {
           "type": "must_not_promote"
+        }
+      ]
+    },
+    {
+      "id": "typescript_call_removal_multiple_calls",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_call_removal_multiple_calls",
+      "vector": "multiple_removed_owner_calls_do_not_supply_count_of_one_discriminator",
+      "assertions": [
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 2
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "typescript_call_removal_unbound_argument",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_call_removal_unbound_argument",
+      "vector": "removed_argument_reads_unbound_identifier_before_count",
+      "assertions": [
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "typescript_call_removal_absent_method",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_call_removal_absent_method",
+      "vector": "missing_selected_method_prevents_spy_installation",
+      "assertions": [
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "typescript_call_removal_throwing_method",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_call_removal_throwing_method",
+      "vector": "default_spy_calls_throwing_original_before_count",
+      "assertions": [
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
         }
       ]
     },
@@ -13271,6 +13411,29 @@
       ]
     },
     {
+      "id": "rust_out_parameter_named_empty_writer",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/out_parameter_named_empty_no_promote",
+      "vector": "named_empty_payload_does_not_make_an_unchanged_prefix_pin_observe_the_changed_write",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
       "id": "rust_out_parameter_empty_expected_value",
       "language": "rust",
       "tier": "pure",
@@ -14570,6 +14733,78 @@
         { "type": "expected_finding_count", "count": 1 },
         { "type": "must_not_promote" },
         { "type": "expected_class", "class": "static_unknown" }
+      ]
+    },
+    {
+      "id": "rust_nested_use_dependency_glob",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_nested_use_dependency_glob",
+      "vector": "nested_dependency_glob_does_not_supply_owner_input",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        }
+      ]
+    },
+    {
+      "id": "rust_nested_use_dependency_alias",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_nested_use_dependency_alias",
+      "vector": "newline_dependency_alias_beats_owner_glob",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        }
+      ]
+    },
+    {
+      "id": "rust_nested_use_cfg",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_nested_use_cfg",
+      "vector": "cfg_disabled_nested_export_does_not_supply_owner_input",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        }
       ]
     }
   ]

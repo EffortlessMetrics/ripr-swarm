@@ -6,7 +6,7 @@ use super::measure::{
     check_args_without_explicit_mode, check_contradictions, classify_replay, contradiction_outcome,
     extract_commands, hostile_outcome, parse_test_result, permissive_json_exit_zero, probe_result,
     record_warm_check, repo_exposure_contradictions, rss_sample, scan_check_contradictions,
-    warm_check_args, warm_check_subject,
+    warm_check_args, warm_check_envs, warm_check_subject,
 };
 use super::*;
 use crate::run::{MeasuredOutput, TimedOutput, capture_output_measured};
@@ -415,6 +415,41 @@ fn contradiction_rules_fire_only_on_self_inconsistent_rows() -> Result<(), Strin
         {"file": "c.rs", "line": 3, "evidence": {"reach": "yes"}, "related_tests_total": 4},
     ]});
     assert_eq!(repo_exposure_contradictions(&exposure).0, 1);
+
+    // Proximity relations are listed beside `reach: no` by design (#6866).
+    let listed = |reason: &str| {
+        json!({"seams": [{"file": "d.rs", "line": 4, "evidence": {"reach": "no"},
+            "related_tests_total": 1,
+            "related_tests": [{"name": "t", "relation_reason": reason}]}]})
+    };
+    for proximity in ["same_test_file", "same_module", "assertion_target_affinity"] {
+        assert_eq!(
+            repo_exposure_contradictions(&listed(proximity)).0,
+            0,
+            "{proximity}"
+        );
+    }
+    for reaching in [
+        "direct_owner_call",
+        "helper_owner_call",
+        "re_export_chain_followed",
+    ] {
+        assert_eq!(
+            repo_exposure_contradictions(&listed(reaching)).0,
+            1,
+            "{reaching}"
+        );
+    }
+    // A capped window can hide a reaching test ranked behind the listed ones.
+    let capped = json!({"seams": [{"file": "e.rs", "line": 5, "evidence": {"reach": "no"},
+        "related_tests_total": 9,
+        "related_tests": vec![json!({"name": "t", "relation_reason": "same_test_file"}); 8]}]});
+    assert_eq!(repo_exposure_contradictions(&capped).0, 1);
+    // A relation this scan cannot read is not read as clean.
+    assert_eq!(
+        repo_exposure_contradictions(&listed("brand_new_relation")).0,
+        1
+    );
 
     let check = json!({"findings": [
         {"id": "p1", "classification": "no_static_path", "related_tests_total": 2, "evidence": []},
@@ -4695,8 +4730,8 @@ fn repo_view_rows_carry_the_corpus_language() -> Result<(), String> {
 /// TypeScript row (#10338). The exact pin is asserted so moving it is a
 /// deliberate two-place edit that re-asks whether the commit still edits
 /// TypeScript source and its test. Only repositories that complete are pinned
-/// (defu, ky, h3): zod and execa are partial on the commits tried, and a
-/// repository that stops short fails the completion gate even when new.
+/// (defu, ky, h3, execa, destr, zod): a repository that stops short fails the
+/// completion gate even when new, so a pinned diff must complete.
 #[test]
 fn corpus_pins_the_typescript_commit() -> Result<(), String> {
     let config = parse_config(include_str!(
@@ -4725,11 +4760,33 @@ fn corpus_pins_the_typescript_commit() -> Result<(), String> {
             "3444ff78970e95c65e481ed2ff9a7d43c880ab1c",
             false,
         ),
+        (
+            "execa-typescript",
+            "ed80079bc4e21a259fdc521c5a4b27126b308c9a",
+            false,
+        ),
+        (
+            "destr-typescript",
+            "f9c78d402556aba3e50f94d46176f36a0570acbd",
+            false,
+        ),
+        (
+            "zod-typescript",
+            "680d19f7d1e042e55934209caeb79bc843b94f44",
+            false,
+        ),
     ];
     if typescript != expected {
         return Err(format!(
-            "expected only the verified defu, ky and h3 TypeScript rows, got {typescript:?}"
+            "expected only the verified defu, ky, h3, execa, destr and zod TypeScript rows, got {typescript:?}"
         ));
     }
     Ok(())
+}
+
+#[test]
+fn warm_check_renders_the_full_findings_set_for_the_contradiction_scan() {
+    let envs = warm_check_envs("/cache");
+    assert!(envs.contains(&("RIPR_CACHE_DIR", "/cache")));
+    assert!(envs.contains(&("RIPR_CHECK_FINDINGS_BYTES", "0")));
 }

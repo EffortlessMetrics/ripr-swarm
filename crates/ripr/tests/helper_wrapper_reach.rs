@@ -832,6 +832,46 @@ fn helper_side_effect_behind_a_discarding_wrapper_keeps_its_propagation() -> Res
     Ok(())
 }
 
+#[test]
+fn qualified_helper_effect_keeps_reach_without_propagation() -> Result<(), String> {
+    for (entry, imports, call) in [
+        (
+            "pub fn wrapper(out: &mut Vec<u32>) { crate::record(out); }",
+            "use super::wrapper;",
+            "wrapper(&mut out);",
+        ),
+        (
+            "pub struct Recorder {}\nimpl Recorder {\n    pub fn record_all(&self, out: &mut Vec<u32>) {\n        crate::record(out);\n    }\n}",
+            "use super::Recorder;",
+            "let recorder = Recorder {};\n        recorder.record_all(&mut out);",
+        ),
+    ] {
+        let source = format!(
+            "fn record(out: &mut Vec<u32>) {{\n    out.push(10);\n}}\n\n{entry}\n\n#[cfg(test)]\nmod tests {{\n    {imports}\n    #[test]\n    fn observes_record() {{\n        let mut out = Vec::new();\n        {call}\n        assert_eq!(out, vec![10]);\n    }}\n}}\n"
+        );
+        let report = all_findings(&source, RECORD_DIFF)?;
+        let findings = report["findings"].as_array().ok_or("missing findings")?;
+        let mut families = Vec::new();
+        for finding in findings {
+            assert_eq!(finding["probe"]["expression"], "out.push(10)", "{finding}");
+            assert_eq!(
+                relation_of(finding, "observes_record"),
+                Some("helper_owner_call"),
+                "{entry}: {finding}"
+            );
+            assert_not_forwarded(finding);
+            families.push(
+                finding["probe"]["family"]
+                    .as_str()
+                    .ok_or("missing family")?,
+            );
+        }
+        families.sort();
+        assert_eq!(families, ["call_deletion", "side_effect"], "{report}");
+    }
+    Ok(())
+}
+
 fn all_findings(source: &str, diff: &str) -> Result<Value, String> {
     let scratch = Scratch::create()?;
     std::fs::write(scratch.0.join("Cargo.toml"), MANIFEST).map_err(|error| error.to_string())?;
@@ -1636,6 +1676,22 @@ fn forwarder_method_relates_and_pairs_its_boundary_pin() -> Result<(), String> {
 }
 
 #[test]
+fn qualified_hop_above_a_tested_method_keeps_the_lower_forwarder() -> Result<(), String> {
+    let finding = forwarder_finding(
+        "pub fn bridge(wanted: usize) -> Result<bool, Overflow> { Pool { spilled: false }.grow(wanted) }\npub fn above(wanted: usize) -> Result<bool, Overflow> { crate::bridge(wanted) }",
+        FORWARDING_METHOD,
+        GROW_TESTS,
+    )?;
+    assert_eq!(
+        relation_of(&finding, "grow_pins_the_boundary"),
+        Some("helper_owner_call"),
+        "{finding}"
+    );
+    assert_eq!(finding["classification"], "exposed", "{finding}");
+    Ok(())
+}
+
+#[test]
 fn forwarder_method_that_drops_or_transforms_the_result_is_not_credited() -> Result<(), String> {
     for forwarder in [
         "    pub fn grow(&mut self, wanted: usize) -> bool {\n        let _ = self.try_grow(wanted);\n        true\n    }",
@@ -2044,5 +2100,558 @@ fn forwarder_method_called_from_a_member_of_a_root_package_is_not_related() -> R
         Some("helper_owner_call"),
         "{finding}"
     );
+    Ok(())
+}
+
+// #9638 (tail slice): a forwarder that unwraps the owner's `Result` with a
+// handler that only diverges (`.unwrap_or_else(die)`) hands the owner's `Ok`
+// value through unchanged. Every other tail stays a transform and abstains.
+const DIVERGING_DIE: &str = "fn die<T>(_: Overflow) -> T {\n    panic!(\"overflow\")\n}\n";
+const UNWRAP_TESTS: &str =
+    "        assert_eq!(pool.grow(3), false);\n        assert_eq!(pool.grow(4), true);";
+
+fn unwrapping_forwarder(tail: &str) -> String {
+    format!("    pub fn grow(&mut self, wanted: usize) -> bool {{\n        {tail}\n    }}")
+}
+
+fn assert_unwrap_tail_not_credited(extra: &str, tail: &str) -> Result<(), String> {
+    let finding = forwarder_finding(extra, &unwrapping_forwarder(tail), UNWRAP_TESTS)?;
+    assert_ne!(finding["classification"], "exposed", "{tail}: {finding}");
+    // When the chain does resolve to the forwarder, the tail is the reason it
+    // abstains; an unresolved caller keeps its file-proximity reading.
+    if relation_of(&finding, "grow_pins_the_boundary") == Some("helper_owner_call") {
+        assert_eq!(
+            finding["classification"], "propagation_unknown",
+            "{tail}: {finding}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn unwrap_tail_with_a_value_substituting_handler_is_not_credited() -> Result<(), String> {
+    for tail in [
+        "self.try_grow(wanted).unwrap_or_else(|_| false)",
+        "self.try_grow(wanted).unwrap_or(false)",
+        "self.try_grow(wanted).unwrap_or_default()",
+        "self.try_grow(wanted).ok().unwrap_or(false)",
+        "self.try_grow(wanted).is_ok()",
+        "self.try_grow(wanted).unwrap()",
+        "self.try_grow(wanted).expect(\"grow\")",
+        "!self.try_grow(wanted).unwrap_or_else(die)",
+        "self.try_grow(wanted).map(|spilled| !spilled).unwrap_or_else(die)",
+        "self.try_grow(wanted).unwrap_or_else(die) && wanted > 100",
+        "let _ = self.try_grow(wanted).unwrap_or_else(die);\n        true",
+    ] {
+        assert_unwrap_tail_not_credited(DIVERGING_DIE, tail)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn unwrap_tail_with_a_non_diverging_or_conditional_handler_is_not_credited() -> Result<(), String> {
+    for (extra, tail) in [
+        (
+            "fn soft<T: Default>(_: Overflow) -> T {\n    T::default()\n}\n",
+            "self.try_grow(wanted).unwrap_or_else(soft)",
+        ),
+        (
+            "fn maybe<T: Default>(_: Overflow) -> T {\n    if std::env::var(\"STRICT\").is_ok() {\n        panic!(\"overflow\");\n    }\n    T::default()\n}\n",
+            "self.try_grow(wanted).unwrap_or_else(maybe)",
+        ),
+        (
+            "fn early<T: Default>(_: Overflow) -> T {\n    return T::default();\n    #[allow(unreachable_code)]\n    panic!(\"overflow\")\n}\n",
+            "self.try_grow(wanted).unwrap_or_else(early)",
+        ),
+        (
+            "fn guarded<T: Default>(_: Overflow) -> T {\n    let strict = false;\n    if strict {\n        panic!(\"overflow\");\n    } else {\n        T::default()\n    }\n}\n",
+            "self.try_grow(wanted).unwrap_or_else(guarded)",
+        ),
+    ] {
+        assert_unwrap_tail_not_credited(extra, tail)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn unwrap_tail_with_an_ambiguous_or_external_handler_is_not_credited() -> Result<(), String> {
+    let twin = "mod elsewhere {\n    pub fn die<T: Default>(_: super::Overflow) -> T {\n        T::default()\n    }\n}\n";
+    for (extra, tail) in [
+        // A second workspace function of the name.
+        (
+            format!("{DIVERGING_DIE}{twin}"),
+            "self.try_grow(wanted).unwrap_or_else(die)",
+        ),
+        // A module-qualified or external path.
+        (
+            format!("{DIVERGING_DIE}{twin}"),
+            "self.try_grow(wanted).unwrap_or_else(elsewhere::die)",
+        ),
+        (
+            DIVERGING_DIE.to_string(),
+            "self.try_grow(wanted).unwrap_or_else(std::process::abort)",
+        ),
+        (
+            DIVERGING_DIE.to_string(),
+            "self.try_grow(wanted).unwrap_or_else(Default::default)",
+        ),
+        // A unique module-qualified path, a free fn named through a type, a
+        // renamed import and a handler that exists only in test code.
+        (
+            "mod util {\n    pub fn die<T>(_: super::Overflow) -> T {\n        panic!(\"overflow\")\n    }\n}\n".to_string(),
+            "self.try_grow(wanted).unwrap_or_else(util::die)",
+        ),
+        (
+            DIVERGING_DIE.to_string(),
+            "self.try_grow(wanted).unwrap_or_else(Overflow::die)",
+        ),
+        (
+            format!("{DIVERGING_DIE}use std::mem::drop as die;\n"),
+            "self.try_grow(wanted).unwrap_or_else(die)",
+        ),
+        (
+            "#[cfg(test)]\nmod helpers {\n    pub fn die<T>(_: super::Overflow) -> T {\n        panic!(\"overflow\")\n    }\n}\n".to_string(),
+            "self.try_grow(wanted).unwrap_or_else(die)",
+        ),
+        // A user macro that replaces `panic!` makes the body non-diverging.
+        (
+            format!("macro_rules! panic {{\n    ($($t:tt)*) => {{ Default::default() }};\n}}\n{DIVERGING_DIE}"),
+            "self.try_grow(wanted).unwrap_or_else(die)",
+        ),
+        // A local binding that shadows the handler name.
+        (
+            DIVERGING_DIE.to_string(),
+            "let die = |_: Overflow| false;\n        self.try_grow(wanted).unwrap_or_else(die)",
+        ),
+    ] {
+        assert_unwrap_tail_not_credited(&extra, tail)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn unwrap_tail_with_a_closure_handler_is_not_credited() -> Result<(), String> {
+    for tail in [
+        "self.try_grow(wanted).unwrap_or_else(|_| panic!(\"overflow\"))",
+        "self.try_grow(wanted).unwrap_or_else(|error| { drop(error); false })",
+        "self.try_grow(wanted).unwrap_or_else(|_| { let _quiet = 1; false })",
+        "self.try_grow(wanted).unwrap_or_else(|error| die(error))",
+    ] {
+        assert_unwrap_tail_not_credited(DIVERGING_DIE, tail)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn unwrap_tail_with_a_diverging_workspace_handler_pairs_the_boundary_pin() -> Result<(), String> {
+    for (extra, tail) in [
+        (DIVERGING_DIE, "self.try_grow(wanted).unwrap_or_else(die)"),
+        (
+            "impl Overflow {\n    pub fn handle<T>(self) -> T {\n        panic!(\"overflow\")\n    }\n}\n",
+            "self.try_grow(wanted).unwrap_or_else(Overflow::handle)",
+        ),
+        (
+            "fn die<T>(_: Overflow) -> T {\n    unreachable!(\"overflow\");\n}\n",
+            "self.try_grow(wanted).unwrap_or_else(die)",
+        ),
+        (
+            "fn die<T>(_: Overflow) -> T {\n    std::process::abort()\n}\n",
+            "self.try_grow(wanted).unwrap_or_else(die)",
+        ),
+    ] {
+        let finding = forwarder_finding(extra, &unwrapping_forwarder(tail), UNWRAP_TESTS)?;
+        assert_eq!(
+            relation_of(&finding, "grow_pins_the_boundary"),
+            Some("helper_owner_call"),
+            "{tail}: {finding}"
+        );
+        assert_eq!(finding["classification"], "exposed", "{tail}: {finding}");
+    }
+    Ok(())
+}
+
+// #9638 review of the diverging tail: the handler name must really denote the
+// unique workspace function at the call, not a parameter, a nested item, a
+// glob-imported item, or a method of a custom return type.
+fn assert_shadowed_handler_not_credited(
+    extra: &str,
+    forwarder: &str,
+    tests: &str,
+) -> Result<(), String> {
+    let finding = forwarder_finding(extra, forwarder, tests)?;
+    assert_ne!(
+        finding["classification"], "exposed",
+        "{forwarder}: {finding}"
+    );
+    Ok(())
+}
+
+#[test]
+fn unwrap_tail_handler_name_bound_by_the_caller_is_not_credited() -> Result<(), String> {
+    let tests = "        assert_eq!(pool.grow(3, |_| false), false);\n        assert_eq!(pool.grow(4, |_| false), true);";
+    for signature in [
+        "wanted: usize, die: fn(Overflow) -> bool",
+        "wanted: usize, die: impl FnOnce(Overflow) -> bool",
+        "wanted: usize, die: F",
+    ] {
+        let generics = if signature.ends_with(": F") {
+            "<F: FnOnce(Overflow) -> bool>"
+        } else {
+            ""
+        };
+        let forwarder = format!(
+            "    pub fn grow{generics}(&mut self, {signature}) -> bool {{\n        self.try_grow(wanted).unwrap_or_else(die)\n    }}"
+        );
+        assert_shadowed_handler_not_credited(DIVERGING_DIE, &forwarder, tests)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn unwrap_tail_handler_name_declared_inside_the_caller_is_not_credited() -> Result<(), String> {
+    for local in [
+        "fn die(_: Overflow) -> bool {\n            false\n        }",
+        "const die: fn(Overflow) -> bool = |_| false;",
+        "static die: fn(Overflow) -> bool = |_| false;",
+        "let die = |_: Overflow| false;",
+        "use external_crate::*;",
+    ] {
+        let forwarder = format!(
+            "    pub fn grow(&mut self, wanted: usize) -> bool {{\n        {local}\n        self.try_grow(wanted).unwrap_or_else(die)\n    }}"
+        );
+        assert_shadowed_handler_not_credited(DIVERGING_DIE, &forwarder, UNWRAP_TESTS)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn unwrap_tail_handler_in_another_module_or_behind_a_foreign_glob_is_not_credited()
+-> Result<(), String> {
+    let forwarder = unwrapping_forwarder("self.try_grow(wanted).unwrap_or_else(die)");
+    for extra in [
+        // The unique `die` lives in a module the caller does not import; a
+        // foreign glob may supply the `die` the caller actually names.
+        "use external_crate::*;\nmod hidden {\n    pub fn die<T>(_: super::Overflow) -> T {\n        panic!(\"overflow\")\n    }\n}\n",
+        // The same without a glob: the module is simply not in scope.
+        "mod hidden {\n    pub fn die<T>(_: super::Overflow) -> T {\n        panic!(\"overflow\")\n    }\n}\n",
+    ] {
+        assert_shadowed_handler_not_credited(extra, &forwarder, UNWRAP_TESTS)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn unwrap_tail_on_a_custom_type_with_its_own_unwrap_or_else_is_not_credited() -> Result<(), String>
+{
+    let custom = "pub struct Answer(bool);\nimpl Answer {\n    pub fn unwrap_or_else<F: FnOnce(Overflow) -> bool>(self, _handler: F) -> bool {\n        !self.0\n    }\n}\n";
+    let pool_extra = format!("{DIVERGING_DIE}{custom}");
+    // `try_grow` itself must return the custom type for the hop to matter, so
+    // the owner is replaced by a wrapper-free variant of the fixture.
+    let source = forwarder_source(
+        &pool_extra,
+        &unwrapping_forwarder("self.try_grow(wanted).unwrap_or_else(die)"),
+        UNWRAP_TESTS,
+    )
+    .replace(
+        "pub fn try_grow(&mut self, wanted: usize) -> Result<bool, Overflow> {",
+        "pub fn try_grow(&mut self, wanted: usize) -> Answer {",
+    )
+    .replace("return Ok(true);", "return Answer(true);")
+    .replace(
+        "        Ok(false)\n    }\n\n",
+        "        Answer(false)\n    }\n\n",
+    );
+    let finding = predicate_finding(&source, FORWARDER_DIFF)?;
+    assert_ne!(finding["classification"], "exposed", "{finding}");
+    Ok(())
+}
+
+#[test]
+fn unwrap_tail_with_a_workspace_result_alias_is_not_credited() -> Result<(), String> {
+    // A workspace type named `Result` may carry its own `unwrap_or_else`.
+    let extra = format!("{DIVERGING_DIE}pub type Result<T> = core::result::Result<T, Overflow>;\n");
+    let forwarder = unwrapping_forwarder("self.try_grow(wanted).unwrap_or_else(die)");
+    assert_shadowed_handler_not_credited(&extra, &forwarder, UNWRAP_TESTS)
+}
+
+#[test]
+fn unwrap_tail_with_a_handler_in_another_file_is_not_credited() -> Result<(), String> {
+    let scratch = Scratch::create()?;
+    let root = &scratch.0;
+    std::fs::write(root.join("Cargo.toml"), MANIFEST).map_err(|error| error.to_string())?;
+    let forwarder = unwrapping_forwarder("self.try_grow(wanted).unwrap_or_else(die)");
+    let source = forwarder_source("mod util;\nuse util::die;\n", &forwarder, UNWRAP_TESTS);
+    std::fs::write(root.join("src/lib.rs"), source).map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("src/util.rs"),
+        "use super::Overflow;\n\npub fn die<T>(_: Overflow) -> T {\n    panic!(\"overflow\")\n}\n",
+    )
+    .map_err(|error| error.to_string())?;
+    let diff_file = root.join("change.diff");
+    std::fs::write(&diff_file, FORWARDER_DIFF).map_err(|error| error.to_string())?;
+    let report = check_workspace(CheckInput {
+        root: root.clone(),
+        diff_file: Some(diff_file),
+        mode: Mode::Fast,
+        format: OutputFormat::Json,
+        include_unchanged_tests: true,
+        ..CheckInput::default()
+    })?;
+    let json: Value = serde_json::from_str(&render_check(&report, &OutputFormat::Json)?)
+        .map_err(|error| error.to_string())?;
+    let finding = json["findings"]
+        .as_array()
+        .ok_or("missing findings")?
+        .iter()
+        .find(|finding| finding["probe"]["family"] == "predicate")
+        .cloned()
+        .ok_or_else(|| format!("no predicate finding: {json}"))?;
+    assert_ne!(finding["classification"], "exposed", "{finding}");
+    Ok(())
+}
+
+// #9638 re-review: the qualifier of `Type::die` must really be the workspace
+// type, not a generic parameter, a local item or an import of the same name.
+const POOL_DIE: &str =
+    "impl Pool {\n    pub fn die<T>(_: Overflow) -> T {\n        panic!(\"overflow\")\n    }\n}\n";
+
+#[test]
+fn unwrap_tail_with_the_real_qualifier_type_is_credited() -> Result<(), String> {
+    let forwarder = unwrapping_forwarder("self.try_grow(wanted).unwrap_or_else(Pool::die)");
+    let finding = forwarder_finding(POOL_DIE, &forwarder, UNWRAP_TESTS)?;
+    assert_eq!(finding["classification"], "exposed", "{finding}");
+    Ok(())
+}
+
+#[test]
+fn unwrap_tail_qualifier_that_is_not_the_workspace_type_is_not_credited() -> Result<(), String> {
+    // `ExtTr` is an external trait: declaring it here would add a second `die`.
+    let ext_trait = "";
+    for (extra, forwarder) in [
+        (
+            POOL_DIE,
+            "    pub fn grow<Pool: ExtTr>(&mut self, wanted: usize) -> bool {\n        self.try_grow(wanted).unwrap_or_else(Pool::die)\n    }",
+        ),
+        (
+            POOL_DIE,
+            "    pub fn grow<Pool>(&mut self, wanted: usize) -> bool\n    where\n        Pool: ExtTr,\n    {\n        self.try_grow(wanted).unwrap_or_else(Pool::die)\n    }",
+        ),
+        (
+            POOL_DIE,
+            "    pub fn grow(&mut self, wanted: usize) -> bool {\n        type Pool = ExtTy;\n        self.try_grow(wanted).unwrap_or_else(Pool::die)\n    }",
+        ),
+        (
+            POOL_DIE,
+            "    pub fn grow(&mut self, wanted: usize) -> bool {\n        struct Pool;\n        impl Pool {\n            fn die<T>(_: Overflow) -> T {\n                loop {}\n            }\n        }\n        self.try_grow(wanted).unwrap_or_else(Pool::die)\n    }",
+        ),
+        (
+            POOL_DIE,
+            "    pub fn grow(&mut self, wanted: usize) -> bool {\n        use ext::Pool;\n        self.try_grow(wanted).unwrap_or_else(Pool::die)\n    }",
+        ),
+    ] {
+        let extra = format!("{ext_trait}{extra}");
+        assert_shadowed_handler_not_credited(&extra, forwarder, UNWRAP_TESTS)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn unwrap_tail_qualifier_generic_over_the_enclosing_impl_is_not_credited() -> Result<(), String> {
+    // `ExtTr` is an external trait: declaring it here would add a second `die`.
+    let ext_trait = "";
+    let forwarder = unwrapping_forwarder("self.try_grow(wanted).unwrap_or_else(Pool::die)");
+    for header in [
+        "impl<Pool: ExtTr> Pool {",
+        "impl<Pool> Pool where Pool: ExtTr {",
+    ] {
+        let source = forwarder_source(&format!("{ext_trait}{POOL_DIE}"), &forwarder, UNWRAP_TESTS)
+            .replacen(
+                "impl Pool {\n    pub fn try_grow",
+                &format!("{header}\n    pub fn try_grow"),
+                1,
+            );
+        let finding = predicate_finding(&source, FORWARDER_DIFF)?;
+        assert_ne!(finding["classification"], "exposed", "{header}: {finding}");
+    }
+    Ok(())
+}
+
+#[test]
+fn unwrap_tail_caller_nested_in_a_function_with_a_local_handler_is_not_credited()
+-> Result<(), String> {
+    // The nested impl sees the enclosing function's own `die`, not the
+    // module-level one.
+    let extra = format!(
+        "{DIVERGING_DIE}fn outer() {{\n    const die: fn(Overflow) -> bool = |_| false;\n    impl Pool {{\n        pub fn grow2(&mut self, wanted: usize) -> bool {{\n            self.try_grow(wanted).unwrap_or_else(die)\n        }}\n    }}\n}}\n"
+    );
+    let tests =
+        "        assert_eq!(pool.grow2(3), false);\n        assert_eq!(pool.grow2(4), true);";
+    assert_shadowed_handler_not_credited(&extra, "", tests)
+}
+
+// #9638 re-review: an enclosing function keeps its scope however its
+// signature or name spells `impl`, and a handler in another (one-line)
+// module is not the caller's.
+fn nested_grow2_extra(outer_head: &str) -> String {
+    format!(
+        "{DIVERGING_DIE}{outer_head} {{\n    const die: fn(Overflow) -> bool = |_| false;\n    impl Pool {{\n        pub fn grow2(&mut self, wanted: usize) -> bool {{\n            self.try_grow(wanted).unwrap_or_else(die)\n        }}\n    }}\n}}\n"
+    )
+}
+
+const GROW2_TESTS: &str =
+    "        assert_eq!(pool.grow2(3), false);\n        assert_eq!(pool.grow2(4), true);";
+
+#[test]
+fn unwrap_tail_caller_in_a_function_whose_spelling_contains_impl_is_not_credited()
+-> Result<(), String> {
+    for head in [
+        "fn outer(_a: impl Copy)",
+        "fn outer() -> impl Copy",
+        "fn implode()",
+        "fn simple_impl()",
+        "pub unsafe fn outer()",
+    ] {
+        assert_shadowed_handler_not_credited(&nested_grow2_extra(head), "", GROW2_TESTS)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn unwrap_tail_handler_in_the_callers_own_module_stays_credited() -> Result<(), String> {
+    let extra = format!(
+        "mod m {{\n    use super::*;\n{}\n    impl Pool {{\n        pub fn grow2(&mut self, wanted: usize) -> bool {{\n            self.try_grow(wanted).unwrap_or_else(die)\n        }}\n    }}\n}}\n",
+        DIVERGING_DIE.replace("fn die", "pub fn die")
+    );
+    let finding = forwarder_finding(&extra, "", GROW2_TESTS)?;
+    assert_eq!(finding["classification"], "exposed", "{finding}");
+    Ok(())
+}
+
+#[test]
+fn unwrap_tail_handler_in_a_one_line_sibling_module_is_not_credited() -> Result<(), String> {
+    for extra in [
+        "mod a { pub fn die<T>(_: super::Overflow) -> T { panic!(\"overflow\") } }\nimpl Pool {\n    pub fn grow2(&mut self, wanted: usize) -> bool {\n        self.try_grow(wanted).unwrap_or_else(die)\n    }\n}\n",
+        "mod a { pub fn die<T>(_: super::Overflow) -> T { panic!(\"overflow\") } } impl Pool { pub fn grow2(&mut self, wanted: usize) -> bool { self.try_grow(wanted).unwrap_or_else(die) } }\n",
+    ] {
+        assert_shadowed_handler_not_credited(extra, "", GROW2_TESTS)?;
+    }
+    Ok(())
+}
+
+// #9638 review lead: a qualifier or `std` path must really denote the
+// workspace type / the standard library.
+#[test]
+fn unwrap_tail_type_qualified_handler_on_a_different_or_ambiguous_type_is_not_credited()
+-> Result<(), String> {
+    // `Self::die` from an impl of a different type than the one defining it.
+    let other = "pub struct Other;\nimpl Other {\n    pub fn die<T>(_: Overflow) -> T {\n        panic!(\"overflow\")\n    }\n}\n";
+    let forwarder = unwrapping_forwarder("self.try_grow(wanted).unwrap_or_else(Self::die)");
+    assert_shadowed_handler_not_credited(other, &forwarder, UNWRAP_TESTS)?;
+    // `Pool::die` when two workspace types are named `Pool` (the second in
+    // another module, with the inherent `die`).
+    let twin = "mod alt {\n    pub struct Pool;\n    impl Pool {\n        pub fn die<T>(_: super::Overflow) -> T {\n            panic!(\"overflow\")\n        }\n    }\n}\n";
+    let forwarder = unwrapping_forwarder("self.try_grow(wanted).unwrap_or_else(Pool::die)");
+    assert_shadowed_handler_not_credited(twin, &forwarder, UNWRAP_TESTS)?;
+    Ok(())
+}
+
+#[test]
+fn unwrap_tail_process_exit_handler_with_a_rebound_std_is_not_credited() -> Result<(), String> {
+    let abort_die = "fn die<T>(_: Overflow) -> T {\n    std::process::abort()\n}\n";
+    let forwarder = unwrapping_forwarder("self.try_grow(wanted).unwrap_or_else(die)");
+    for rebinding in [
+        "mod std {\n    pub mod process {\n        pub fn abort() {}\n    }\n}\n",
+        "use other_crate as std;\n",
+        "extern crate other_crate as std;\n",
+    ] {
+        let extra = format!("{abort_die}{rebinding}");
+        assert_shadowed_handler_not_credited(&extra, &forwarder, UNWRAP_TESTS)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn unwrap_tail_process_exit_handler_with_a_std_bound_by_a_use_is_not_credited() -> Result<(), String>
+{
+    let abort_die = "fn die<T>(_: Overflow) -> T {\n    std::process::abort()\n}\n";
+    let forwarder = unwrapping_forwarder("self.try_grow(wanted).unwrap_or_else(die)");
+    for rebinding in [
+        "use ext_dep::std;\n",
+        "use ext_dep::{other, std};\n",
+        "pub use ext_dep::inner::std;\n",
+        "use ext_dep::{inner::{std, more}, other};\n",
+        "use crate::std;\n",
+        "use ::ext_dep::std;\n",
+    ] {
+        let extra = format!("{abort_die}{rebinding}");
+        assert_shadowed_handler_not_credited(&extra, &forwarder, UNWRAP_TESTS)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn unwrap_tail_self_qualified_handler_on_a_generic_or_repeated_type_is_not_credited()
+-> Result<(), String> {
+    let pool_die = POOL_DIE;
+    let forwarder = unwrapping_forwarder("self.try_grow(wanted).unwrap_or_else(Self::die)");
+    // The control: `Self::die` on the one real `Pool` is credited.
+    let finding = forwarder_finding(pool_die, &forwarder, UNWRAP_TESTS)?;
+    assert_eq!(finding["classification"], "exposed", "{finding}");
+    // A second workspace type named `Pool`.
+    let twin = format!("{pool_die}mod alt {{\n    pub struct Pool;\n}}\n");
+    assert_shadowed_handler_not_credited(&twin, &forwarder, UNWRAP_TESTS)?;
+    Ok(())
+}
+
+#[test]
+fn unwrap_tail_on_a_result_or_option_the_file_imports_is_not_credited() -> Result<(), String> {
+    let tail = "self.try_grow(wanted).unwrap_or_else(die)";
+    // The control: no import rebinds the name, so the std method is credited.
+    let finding = forwarder_finding(DIVERGING_DIE, &unwrapping_forwarder(tail), UNWRAP_TESTS)?;
+    assert_eq!(finding["classification"], "exposed", "{finding}");
+    for import in [
+        "use dep::Result;\n",
+        "use dep::{Overflow2, Result};\n",
+        "use dep::Res as Result;\n",
+        "use dep::*;\n",
+        "use dep::prelude::*;\n",
+        "use std::fmt::Result;\n",
+        "use std::io::*;\n",
+        "pub use dep::Result;\n",
+    ] {
+        assert_unwrap_tail_not_credited(&format!("{DIVERGING_DIE}{import}"), tail)?;
+    }
+    // The std spellings of the import keep the credit.
+    for import in ["use std::result::Result;\n", "use core::result::Result;\n"] {
+        let finding = forwarder_finding(
+            &format!("{DIVERGING_DIE}{import}"),
+            &unwrapping_forwarder(tail),
+            UNWRAP_TESTS,
+        )?;
+        assert_eq!(finding["classification"], "exposed", "{import}: {finding}");
+    }
+    Ok(())
+}
+
+#[test]
+fn unwrap_tail_handler_reached_through_a_local_alias_is_not_credited() -> Result<(), String> {
+    // `halt` is not a workspace function, so it is not a known handler even
+    // though it is bound to the unique diverging `die`.
+    for (extra, tail) in [
+        (
+            format!("{DIVERGING_DIE}use crate::die as halt;\n"),
+            "self.try_grow(wanted).unwrap_or_else(halt)",
+        ),
+        (
+            DIVERGING_DIE.to_string(),
+            "let halt = die;\n        self.try_grow(wanted).unwrap_or_else(halt)",
+        ),
+        (
+            DIVERGING_DIE.to_string(),
+            "const halt: fn(Overflow) -> bool = die;\n        self.try_grow(wanted).unwrap_or_else(halt)",
+        ),
+    ] {
+        assert_unwrap_tail_not_credited(&extra, tail)?;
+    }
     Ok(())
 }

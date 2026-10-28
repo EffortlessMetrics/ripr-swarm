@@ -15,6 +15,10 @@ mod process_observation;
 #[cfg(feature = "lang-rust")]
 #[path = "support/mcp_scope_contract.rs"]
 mod scope_contract;
+
+#[cfg(feature = "lang-rust")]
+#[path = "support/mcp_worktree_recovery.rs"]
+mod worktree_recovery;
 use process_observation::Observation;
 
 fn workspace_root() -> Result<PathBuf, String> {
@@ -1033,10 +1037,17 @@ fn pre_call_contract_discloses_committed_scope_on_wire_and_help() -> Result<(), 
     if refresh
         .pointer("/inputSchema/properties")
         .and_then(Value::as_object)
-        .is_none_or(|properties| properties.len() != 1 || !properties.contains_key("base"))
+        .is_none_or(|properties| {
+            properties.len() != 2
+                || !properties.contains_key("base")
+                || !properties.contains_key("source")
+        })
+        || refresh.pointer("/inputSchema/properties/source/enum")
+            != Some(&json!(["committed", "worktree"]))
+        || refresh.pointer("/inputSchema/required").is_some()
     {
         return Err(format!(
-            "refresh must accept exactly the optional base argument: {refresh}"
+            "refresh must accept exactly the optional base and source arguments: {refresh}"
         ));
     }
     let discovery = line(json!({ "jsonrpc": "2.0", "id": 1,
@@ -1072,7 +1083,10 @@ fn pre_call_contract_discloses_committed_scope_on_wire_and_help() -> Result<(), 
         let text = normalized(text);
         for required in [
             "committed default-branch diff",
+            "By default",
             "staged and unstaged tracked edits and untracked files are outside",
+            "source: \"worktree\"",
+            "unsaved buffers and untracked files remain outside",
             "`ripr check` defaults to the working tree when staged or unstaged tracked edits exist",
             "shared check authority does not mean identical input",
             "`ripr check --committed`",
@@ -1081,15 +1095,27 @@ fn pre_call_contract_discloses_committed_scope_on_wire_and_help() -> Result<(), 
                 failures.push(format!("{surface} omitted {required:?}"));
             }
         }
+        if text.contains("Scope: committed input only") {
+            failures.push(format!(
+                "{surface} unconditionally excludes the advertised worktree input"
+            ));
+        }
         if text.contains("the same analysis `ripr check`") {
             failures.push(format!("{surface} promises identical CLI input"));
         }
     }
     let description = normalized(description);
-    for required in ["committed input only", "INSTRUCTIONS"] {
+    for required in [
+        "By default: committed input only",
+        "source: \"worktree\"",
+        "INSTRUCTIONS",
+    ] {
         if !description.contains(required) {
             failures.push(format!("tools/list ripr_refresh omitted {required:?}"));
         }
+    }
+    if description.contains("Scope: committed input only") {
+        failures.push("refresh unconditionally excludes its advertised worktree input".to_string());
     }
     if description.contains("the same analysis `ripr check`") {
         failures.push("tools/list ripr_refresh promises identical CLI input".to_string());
@@ -2869,7 +2895,7 @@ fn check_filtered_gap_page(
         || document["filtered"] != json!(filtered)
         || document["page"]["returned"] != json!(expected_ids.len())
         || document["snapshot_id"] != snapshot_id
-        || document["schema_version"] != "ripr-mcp-gap-list-v3"
+        || document["schema_version"] != "ripr-mcp-gap-list-v4"
     {
         return Err(format!(
             "filtered transport page differs from exact IDs/counts: expected {expected_ids:?}, selected={selected}, filtered={filtered}: {document}"
@@ -2980,7 +3006,7 @@ fn empty_gap_pages_keep_structured_outcomes_at_the_response_bound() -> Result<()
             if refused.get("error").is_some()
                 || refused.pointer("/result/isError") != Some(&json!(true))
                 || refused.pointer("/result/structuredContent/schema_version")
-                    != Some(&json!("ripr-mcp-gap-list-v3"))
+                    != Some(&json!("ripr-mcp-gap-list-v4"))
                 || refused.pointer("/result/structuredContent/failure/code")
                     != Some(&json!("result_too_large"))
                 || refused.pointer("/result/structuredContent/failure/data/current_snapshot_id")
@@ -3134,6 +3160,8 @@ fn refreshed_gap_filters_narrow_real_stdio_and_replay_bound_continuation() -> Re
     legacy_object.remove("filtered");
     legacy_object.remove("filters");
     legacy_object.remove("outcome");
+    // v4 added the independently windowed omission disclosure (#9360).
+    legacy_object.remove("omitted_page");
     legacy_object.insert("schema_version".into(), json!("ripr-mcp-gap-list-v1"));
     if v1["additionalProperties"] != false || !accepts_v1_shape(&legacy) || accepts_v1_shape(&all) {
         return Err(
@@ -5645,5 +5673,461 @@ fn weak_boundary_naming_its_discriminator_is_repair_ready_only_where_the_cli_adm
             "control needs one CLI-admitted and one CLI-refused item; admitted={cli_admitted} refused={cli_refused}"
         ));
     }
+    Ok(())
+}
+
+/// `ripr_refresh` `source: "worktree"` (#7357): the opt-in saved
+/// tracked-worktree input. Real temporary tracked Git repository, production
+/// stdio, committed -> worktree -> committed switching with an equal-findings
+/// control, staged-only / unstaged-only / mixed edits, failed-refresh
+/// retention with distinct requested and captured source, and withheld
+/// repair claims.
+#[cfg(feature = "lang-rust")]
+#[test]
+fn refresh_source_worktree_analyzes_saved_tracked_edits_without_cross_kind_reuse()
+-> Result<(), String> {
+    const TIMEOUT: Duration = Duration::from_mins(3);
+    let root = install_b4_repair_ready_fixture()?;
+    let _cleanup = FixtureGuard { root: root.clone() };
+    std::fs::write(root.join(".gitignore"), "/target/\n").map_err(|error| error.to_string())?;
+    commit_fixture(&root, "ignore generated analysis artifacts")?;
+    fixture_git_ok(&root, &["update-ref", "refs/heads/main", "HEAD"])?;
+    let source = root.join("src/lib.rs");
+    let committed_text = std::fs::read_to_string(&source).map_err(|error| error.to_string())?;
+    let head_before = common::fixture_git::fixture_git_output(&root, &["rev-parse", "HEAD"])?;
+
+    let mut session = SequentialStdio::spawn(&root)?;
+    session.call("discover", "server/discover", json!({}), TIMEOUT)?;
+    let refresh = |session: &mut SequentialStdio, id: &str, arguments: Value| {
+        let reply = session.call_tool(id, "ripr_refresh", arguments, TIMEOUT)?;
+        structured_tool_success(&reply, "ripr_refresh")
+    };
+    let snapshot_id = |document: &Value| -> Result<String, String> {
+        document
+            .pointer("/snapshot/snapshot_id")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| format!("refresh returned no snapshot id: {document}"))
+    };
+
+    // Omitted `source` is the unchanged committed default: clean checkout,
+    // empty committed diff, v1 shape with no source facts.
+    let committed = refresh(&mut session, "committed-1", json!({}))?;
+    let committed_id = snapshot_id(&committed)?;
+    if committed.pointer("/snapshot/outcome_kind") != Some(&json!("no_scope"))
+        || committed.get("requested_source").is_some()
+        || committed.get("captured_source").is_some()
+        || committed.pointer("/snapshot/source").is_some()
+    {
+        return Err(format!(
+            "omitted source must keep the committed v1 shape: {committed}"
+        ));
+    }
+    // The explicit committed spelling is the same request.
+    let explicit = refresh(
+        &mut session,
+        "committed-2",
+        json!({ "source": "committed" }),
+    )?;
+    if snapshot_id(&explicit)? != committed_id {
+        return Err(format!("explicit committed must equal omitted: {explicit}"));
+    }
+
+    // Unstaged-only saved edit.
+    std::fs::write(
+        &source,
+        committed_text.replace("amount - 10", "amount - 15"),
+    )
+    .map_err(|error| error.to_string())?;
+    let porcelain = common::fixture_git::fixture_git_output(&root, &["status", "--porcelain"])?;
+    if !porcelain.contains(" M src/lib.rs") {
+        return Err(format!("fixture must be unstaged-only: {porcelain}"));
+    }
+    let unstaged = refresh(&mut session, "wt-unstaged", json!({ "source": "worktree" }))?;
+    let unstaged_id = snapshot_id(&unstaged)?;
+    if unstaged.pointer("/attempt/state") != Some(&json!("completed"))
+        || unstaged.get("requested_source") != Some(&json!("worktree"))
+        || unstaged.get("captured_source") != Some(&json!("worktree"))
+        || unstaged.pointer("/snapshot/source") != Some(&json!("worktree"))
+        || unstaged
+            .pointer("/scope/analyzed")
+            .and_then(Value::as_str)
+            .is_none_or(|analyzed| !analyzed.starts_with("saved tracked-worktree diff"))
+        || unstaged.pointer("/scope/consumed_source_commitment") != Some(&json!("not_established"))
+        || unstaged.pointer("/scope/repair_cards") != Some(&json!("withheld"))
+        || unstaged
+            .pointer("/snapshot/total_items")
+            .and_then(Value::as_u64)
+            .is_none_or(|total| total == 0)
+    {
+        return Err(format!(
+            "worktree refresh must analyze the saved edit and disclose its limits: {unstaged}"
+        ));
+    }
+    if unstaged_id == committed_id {
+        return Err("a worktree snapshot must never share a committed identity".to_string());
+    }
+
+    // Canonical semantics agree with CLI worktree analysis over the same input.
+    let cli = worktree_ripr()
+        .args(["check", "--worktree", "--format", "json", "--root"])
+        .arg(&root)
+        .output()
+        .map_err(|error| error.to_string())?;
+    if !cli.status.success() {
+        return Err(format!(
+            "CLI worktree check failed: {}",
+            String::from_utf8_lossy(&cli.stderr)
+        ));
+    }
+    let cli: Value = serde_json::from_slice(&cli.stdout).map_err(|error| error.to_string())?;
+    let cli_count = cli
+        .get("findings")
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .ok_or("CLI worktree output lost findings")?;
+    let listed = session.call_tool("list-wt", "ripr_list_gaps", json!({}), TIMEOUT)?;
+    let listed = structured_tool_success(&listed, "ripr_list_gaps")?;
+    let items = listed["items"].as_array().ok_or("list omitted items")?;
+    if items.len() != cli_count || items.is_empty() {
+        return Err(format!(
+            "MCP worktree items must match the {cli_count} CLI worktree findings: {listed}"
+        ));
+    }
+    for item in items {
+        // A finding that fails its own gate keeps that first reason; a
+        // finding-ready one is refused with the worktree-source reason.
+        if item["repair_packet_ready"] != json!(false) || item["repair_ineligibility"].is_null() {
+            return Err(format!("worktree items must never be repair ready: {item}"));
+        }
+    }
+
+    // Requests pinned to the earlier committed snapshot fail stale.
+    let stale = session.call_tool(
+        "stale",
+        "ripr_list_gaps",
+        json!({ "snapshot_id": committed_id }),
+        TIMEOUT,
+    )?;
+    if stale
+        .pointer("/result/structuredContent/failure/code")
+        .and_then(Value::as_str)
+        != Some("stale_snapshot")
+    {
+        return Err(format!("pinned committed id must be stale: {stale}"));
+    }
+
+    // Unchanged replay is deterministic; a staged-only copy of the same
+    // saved bytes is the same input, so it is the same snapshot.
+    let replay = refresh(&mut session, "wt-replay", json!({ "source": "worktree" }))?;
+    if snapshot_id(&replay)? != unstaged_id {
+        return Err(format!("unchanged replay must be deterministic: {replay}"));
+    }
+    fixture_git_ok(&root, &["add", "src/lib.rs"])?;
+    let porcelain = common::fixture_git::fixture_git_output(&root, &["status", "--porcelain"])?;
+    if !porcelain.contains("M  src/lib.rs") {
+        return Err(format!("fixture must be staged-only: {porcelain}"));
+    }
+    let staged = refresh(&mut session, "wt-staged", json!({ "source": "worktree" }))?;
+    if staged.pointer("/attempt/state") != Some(&json!("completed"))
+        || staged
+            .pointer("/snapshot/total_items")
+            .and_then(Value::as_u64)
+            != unstaged
+                .pointer("/snapshot/total_items")
+                .and_then(Value::as_u64)
+    {
+        return Err(format!("staged-only edit must be analyzed: {staged}"));
+    }
+
+    // Mixed: the staged edit plus a further unstaged edit changes the input.
+    std::fs::write(
+        &source,
+        committed_text.replace("amount - 10", "amount - 16"),
+    )
+    .map_err(|error| error.to_string())?;
+    let porcelain = common::fixture_git::fixture_git_output(&root, &["status", "--porcelain"])?;
+    if !porcelain.contains("MM src/lib.rs") {
+        return Err(format!("fixture must be mixed: {porcelain}"));
+    }
+    let mixed = refresh(&mut session, "wt-mixed", json!({ "source": "worktree" }))?;
+    let mixed_id = snapshot_id(&mixed)?;
+    if mixed.pointer("/attempt/state") != Some(&json!("completed")) || mixed_id == unstaged_id {
+        return Err(format!(
+            "a further unstaged edit must move the worktree snapshot identity: {mixed}"
+        ));
+    }
+
+    // Committed again, with the dirty edits present: still the committed
+    // result (empty diff, dirty-tree scope disclosure folded into its own
+    // committed identity), never either worktree identity, and stable.
+    let again = refresh(&mut session, "committed-3", json!({}))?;
+    let dirty_committed_id = snapshot_id(&again)?;
+    if dirty_committed_id == mixed_id
+        || dirty_committed_id == unstaged_id
+        || again.pointer("/snapshot/outcome_kind") != Some(&json!("no_scope"))
+        || again.get("captured_source").is_some()
+        || again.pointer("/scope/uncommitted_edits") != Some(&json!("outside this analysis"))
+    {
+        return Err(format!(
+            "committed after worktree must not reuse the worktree result: {again}"
+        ));
+    }
+    // And warm worktree again reproduces the mixed identity.
+    let warm = refresh(&mut session, "wt-warm", json!({ "source": "worktree" }))?;
+    if snapshot_id(&warm)? != mixed_id {
+        return Err(format!("warm worktree must reproduce its identity: {warm}"));
+    }
+
+    // Failed committed request over a worktree last-good: the retained
+    // snapshot stays tagged worktree and is not relabeled.
+    let failed = refresh(
+        &mut session,
+        "failed-committed",
+        json!({ "source": "committed", "base": "no-such-ref" }),
+    )?;
+    if failed.pointer("/attempt/state") != Some(&json!("failed"))
+        || failed.get("requested_source") != Some(&json!("committed"))
+        || failed.get("captured_source") != Some(&json!("worktree"))
+        || failed.pointer("/last_known_good/snapshot_id") != Some(&json!(mixed_id))
+        || failed.pointer("/last_known_good/source") != Some(&json!("worktree"))
+    {
+        return Err(format!(
+            "failed committed request must keep the worktree last-good tagged: {failed}"
+        ));
+    }
+    // Failed worktree request over a committed last-good, the converse.
+    let committed_again = refresh(&mut session, "committed-4", json!({}))?;
+    if snapshot_id(&committed_again)? != dirty_committed_id {
+        return Err(format!(
+            "committed replay must be deterministic: {committed_again}"
+        ));
+    }
+    let failed = refresh(
+        &mut session,
+        "failed-worktree",
+        json!({ "source": "worktree", "base": "no-such-ref" }),
+    )?;
+    if failed.pointer("/attempt/state") != Some(&json!("failed"))
+        || failed.get("requested_source") != Some(&json!("worktree"))
+        || failed.get("captured_source") != Some(&json!("committed"))
+        || failed.pointer("/last_known_good/snapshot_id") != Some(&json!(dirty_committed_id))
+        || failed.pointer("/last_known_good/source").is_some()
+    {
+        return Err(format!(
+            "failed worktree request must not relabel the committed last-good: {failed}"
+        ));
+    }
+    let status = session.call_tool("status", "ripr_workspace_status", json!({}), TIMEOUT)?;
+    let status = structured_tool_success(&status, "ripr_workspace_status")?;
+    if status.pointer("/session/current_desired_input/source") != Some(&json!("worktree"))
+        || status.pointer("/session/last_known_good/snapshot_id")
+            != Some(&json!(dirty_committed_id))
+        || status.pointer("/session/last_known_good/source").is_some()
+    {
+        return Err(format!(
+            "status must keep requested and captured source distinct: {status}"
+        ));
+    }
+
+    // Unsupported or malformed selectors fail structurally.
+    for bad in [
+        json!({ "source": "staged" }),
+        json!({ "source": "Worktree" }),
+        json!({ "source": "" }),
+        json!({ "source": 1 }),
+        json!({ "source": null }),
+        json!({ "source": ["worktree"] }),
+    ] {
+        let reply = session.call_tool("bad-source", "ripr_refresh", bad.clone(), TIMEOUT)?;
+        if reply.pointer("/error/code").and_then(Value::as_i64) != Some(-32602) {
+            return Err(format!("{bad} must be invalid params: {reply}"));
+        }
+    }
+    drop(session);
+
+    // MCP only inspects: the repository is exactly as the test left it.
+    if common::fixture_git::fixture_git_output(&root, &["rev-parse", "HEAD"])? != head_before {
+        return Err("worktree refresh moved HEAD".to_string());
+    }
+    let after = std::fs::read_to_string(&source).map_err(|error| error.to_string())?;
+    if after != committed_text.replace("amount - 10", "amount - 16") {
+        return Err("worktree refresh edited the source".to_string());
+    }
+    Ok(())
+}
+
+/// Untracked and excluded input never becomes an all-clear (#7357): an
+/// untracked-only change analyzes nothing and says so with the real remedy,
+/// and intent-to-add (the named remedy) makes the file analyzable.
+#[cfg(feature = "lang-rust")]
+#[test]
+fn refresh_source_worktree_discloses_untracked_input_and_the_intent_to_add_remedy()
+-> Result<(), String> {
+    const TIMEOUT: Duration = Duration::from_mins(3);
+    let root = install_b4_repair_ready_fixture()?;
+    let _cleanup = FixtureGuard { root: root.clone() };
+    std::fs::write(root.join(".gitignore"), "/target/\n").map_err(|error| error.to_string())?;
+    commit_fixture(&root, "ignore generated analysis artifacts")?;
+    fixture_git_ok(&root, &["update-ref", "refs/heads/main", "HEAD"])?;
+    std::fs::write(
+        root.join("src/gate.rs"),
+        "pub fn gate(x: i32) -> bool {\n    x > 3\n}\n",
+    )
+    .map_err(|error| error.to_string())?;
+    let mut session = SequentialStdio::spawn(&root)?;
+    session.call("discover", "server/discover", json!({}), TIMEOUT)?;
+    let reply = session.call_tool(
+        "wt-untracked",
+        "ripr_refresh",
+        json!({ "source": "worktree" }),
+        TIMEOUT,
+    )?;
+    let untracked = structured_tool_success(&reply, "ripr_refresh")?;
+    if untracked.pointer("/attempt/state") != Some(&json!("completed"))
+        || untracked
+            .pointer("/snapshot/total_items")
+            .and_then(Value::as_u64)
+            != Some(0)
+        || untracked
+            .pointer("/scope/untracked_edits/total")
+            .and_then(Value::as_u64)
+            != Some(1)
+        || untracked
+            .pointer("/scope/untracked_edits/remedy")
+            .and_then(Value::as_str)
+            .is_none_or(|remedy| !remedy.contains("git add -N"))
+        || untracked
+            .pointer("/scope/note")
+            .and_then(Value::as_str)
+            .is_none_or(|note| !note.contains("unsaved editor buffers"))
+    {
+        return Err(format!(
+            "untracked-only input must be disclosed, not an all-clear: {untracked}"
+        ));
+    }
+    fixture_git_ok(&root, &["add", "-N", "src/gate.rs"])?;
+    let reply = session.call_tool(
+        "wt-intent",
+        "ripr_refresh",
+        json!({ "source": "worktree" }),
+        TIMEOUT,
+    )?;
+    let intent = structured_tool_success(&reply, "ripr_refresh")?;
+    if intent.pointer("/attempt/state") != Some(&json!("completed"))
+        || intent.pointer("/snapshot/outcome_kind") == Some(&json!("no_scope"))
+        || intent.pointer("/scope/untracked_edits").is_some()
+    {
+        return Err(format!(
+            "intent-to-add must make the file analyzable: {intent}"
+        ));
+    }
+    Ok(())
+}
+
+/// A repair-ready committed item is withheld under the worktree source
+/// (#7357): same item, same repository, but no repair readiness, no attempt
+/// and no card, because no consumed-source commitment spans the worktree
+/// findings and the later live seam inventory.
+#[cfg(feature = "lang-rust")]
+#[test]
+fn refresh_source_worktree_withholds_repair_card_and_readiness_for_a_ready_item()
+-> Result<(), String> {
+    const TIMEOUT: Duration = Duration::from_mins(3);
+    // `main` holds `>=`, the checked-out `journey` branch narrows to `>`:
+    // a clean tree whose committed diff yields a repair-ready item.
+    let root = install_b4_repair_ready_fixture()?;
+    let _cleanup = FixtureGuard { root: root.clone() };
+    std::fs::write(root.join(".gitignore"), "/target/\n").map_err(|error| error.to_string())?;
+    commit_fixture(&root, "ignore generated analysis artifacts")?;
+    let mut session = SequentialStdio::spawn(&root)?;
+    session.call("discover", "server/discover", json!({}), TIMEOUT)?;
+    let reply = session.call_tool("committed", "ripr_refresh", json!({}), TIMEOUT)?;
+    structured_tool_success(&reply, "ripr_refresh")?;
+    let listed = session.call_tool("list-c", "ripr_list_gaps", json!({}), TIMEOUT)?;
+    let listed = structured_tool_success(&listed, "ripr_list_gaps")?;
+    let ready_id = listed["items"]
+        .as_array()
+        .ok_or("list omitted items")?
+        .iter()
+        .find(|item| item["repair_packet_ready"] == true)
+        .and_then(|item| item["canonical_id"].as_str())
+        .ok_or_else(|| format!("control must yield a repair-ready item: {listed}"))?
+        .to_string();
+    let card = session.call_tool(
+        "card-c",
+        "ripr_get_repair_card",
+        json!({ "canonical_id": ready_id }),
+        TIMEOUT,
+    )?;
+    structured_tool_success(&card, "committed card control")?;
+
+    let reply = session.call_tool(
+        "worktree",
+        "ripr_refresh",
+        json!({ "source": "worktree" }),
+        TIMEOUT,
+    )?;
+    let worktree = structured_tool_success(&reply, "ripr_refresh")?;
+    if worktree.pointer("/attempt/state") != Some(&json!("completed"))
+        || worktree.get("captured_source") != Some(&json!("worktree"))
+    {
+        return Err(format!("worktree refresh must complete: {worktree}"));
+    }
+    let listed = session.call_tool("list-w", "ripr_list_gaps", json!({}), TIMEOUT)?;
+    let listed = structured_tool_success(&listed, "ripr_list_gaps")?;
+    let items = listed["items"].as_array().ok_or("list omitted items")?;
+    if items.is_empty()
+        || items
+            .iter()
+            .any(|item| item["repair_packet_ready"] != json!(false))
+        || !items.iter().any(|item| {
+            item["canonical_id"] == ready_id.as_str()
+                && item["repair_ineligibility"] == json!("worktree_source_not_committed")
+        })
+    {
+        return Err(format!(
+            "the previously ready item must be refused for the worktree source: {listed}"
+        ));
+    }
+    let card = session.call_tool(
+        "card-w",
+        "ripr_get_repair_card",
+        json!({ "canonical_id": ready_id }),
+        TIMEOUT,
+    )?;
+    let failure = card
+        .pointer("/result/structuredContent/failure")
+        .ok_or_else(|| format!("worktree card must be refused: {card}"))?;
+    if failure.get("code") != Some(&json!("incomplete_inventory"))
+        || card.pointer("/result/structuredContent/card").is_some()
+        || !failure.to_string().contains("tracked-worktree")
+    {
+        return Err(format!(
+            "worktree card must disclose unavailability: {card}"
+        ));
+    }
+    let prepared = session.call_tool(
+        "prepare-w",
+        "ripr_prepare_repair",
+        json!({ "canonical_id": ready_id }),
+        TIMEOUT,
+    )?;
+    let prepared = structured_tool_success(&prepared, "ripr_prepare_repair")?;
+    if prepared.get("repair_packet_ready") != Some(&json!(false))
+        || !prepared.get("attempt").is_none_or(Value::is_null)
+    {
+        return Err(format!("worktree must not prepare a repair: {prepared}"));
+    }
+    // Switching back restores the committed card: nothing leaked across kinds.
+    let reply = session.call_tool("committed-2", "ripr_refresh", json!({}), TIMEOUT)?;
+    structured_tool_success(&reply, "ripr_refresh")?;
+    let card = session.call_tool(
+        "card-c2",
+        "ripr_get_repair_card",
+        json!({ "canonical_id": ready_id }),
+        TIMEOUT,
+    )?;
+    structured_tool_success(&card, "committed card after worktree")?;
     Ok(())
 }

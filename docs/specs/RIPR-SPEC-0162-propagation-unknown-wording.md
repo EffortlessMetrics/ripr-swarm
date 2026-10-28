@@ -35,6 +35,17 @@ classification in two places (`output/human/sections.rs`):
   renderer-owned (the `missing` entry in `analysis/classify/decision.rs`
   is shared and unchanged).
 
+## Amendment (#10691)
+
+The sentence above still names an "observable sink", an internal noun. The
+renderer now says "ripr could not follow the changed value to something a test
+can check (a return value or side effect)" for the why-hint and for the
+producer's fixed `missing` entry, and the `Missing discriminator` label became
+`Missing check`. Classification, JSON, SARIF and the decision-layer text are
+unchanged; this is still renderer-owned wording. The wording is pinned by
+`output/human.rs` tests `propagation_unknown_wording_is_honest` and
+`plain_language_default_and_glossed_human_full`.
+
 ## Required Evidence
 
 - The blast radius measured before the change: 32 fixtures drift, all

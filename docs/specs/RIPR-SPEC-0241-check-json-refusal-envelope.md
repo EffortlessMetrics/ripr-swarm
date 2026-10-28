@@ -185,9 +185,9 @@ machine-readable `check` formats carry their own refusal documents:
 
 - `ripr diff --json`, `ripr rerun --json`, `ripr context` (JSON only), `ripr
   agent brief --json`, and `ripr agent packet --json` write the same envelope
-  as `check --json` for every post-argv-parse failure, keyed with the refusing
-  command's own `schema_version` (`"0.1"` for diff and agent brief,
-  `"ripr-targeted-rerun-v1"` for rerun, `"1.0"` for context, `"0.5"` for agent
+  as `check --json` for every post-argv-parse operational failure, keyed with
+  the refusing command's own `schema_version` (`"0.1"` for diff and agent brief,
+  `"ripr-targeted-rerun-v1"` for rerun, `"1.1"` for context, `"0.5"` for agent
   packet). `mode` appears only on commands that accept `--mode` (check, diff,
   context); `scope` is `"diff"` for diff-scoped commands and `"repo"` for
   agent brief and agent packet; agent brief echoes the caller-supplied
@@ -232,6 +232,9 @@ all renderers.
 - `crates/ripr/tests/cli_smoke.rs::diff_json_outside_work_tree_emits_refusal_envelope`
 - `crates/ripr/tests/cli_smoke.rs::rerun_json_unreadable_gap_ledger_emits_refusal_envelope`
 - `crates/ripr/tests/cli_smoke.rs::context_json_missing_artifact_emits_refusal_envelope`
+- `crates/ripr/tests/cli_smoke.rs::context_json_fresh_analysis_preserves_base_failures`
+- `crates/ripr/tests/cli_smoke.rs::context_json_fresh_analysis_preserves_repository_root_failure`
+- `crates/ripr/tests/cli_smoke.rs::context_json_fresh_analysis_keeps_untyped_failure_fallback`
 - `crates/ripr/tests/cli_smoke.rs::agent_brief_json_unresolvable_base_emits_refusal_envelope`
 - `crates/ripr/tests/cli_smoke.rs::agent_packet_json_unknown_seam_id_emits_refusal_envelope`
 - `crates/ripr/tests/cli_smoke.rs::check_sarif_refusal_emits_a_schema_valid_run`
@@ -269,3 +272,17 @@ all renderers.
 - `crates/ripr/src/cli/commands/agent.rs::{refuse_agent_brief, refuse_agent_packet}`
 - `crates/ripr/src/app/check_artifact.rs::load_findings_for_reuse_core`
 - `crates/ripr/src/cli/rerun.rs::rerun_gap` (typed ledger errors)
+
+## Amendment (#10720): preserve fresh context analysis failures
+
+The fresh `context` pipeline retains the check producer's `CoreError` through
+both committed and working-tree analysis. A named base or repository-root
+failure reaches the existing refusal renderer with its original identity and
+repair route. Unmigrated loader failures retain `analysis_failed`; no message
+parsing or new failure family is introduced. The context envelope uses version
+`1.1`, as established by RIPR-SPEC-0284.
+
+Selector misses and ambiguity remain usage-class under RIPR-SPEC-0003: exit 2,
+empty stdout, and recovery guidance on stderr. Supplied-artifact refusals retain
+`check_artifact_unusable`. Public String-returning library compatibility wrappers
+keep their existing error text.

@@ -28,6 +28,7 @@ mod blind_journey_execute;
 mod branch_inventory;
 mod cache;
 mod check_fast_cli;
+mod check_fast_selector;
 mod command;
 pub mod convergence;
 mod dispatch;
@@ -90,6 +91,7 @@ mod verification_contracts;
 mod verify_test_shards;
 mod version;
 mod windows_advisory;
+mod windows_advisory_acl_evidence;
 mod windows_advisory_run;
 
 use command::{
@@ -812,32 +814,38 @@ pub(crate) fn check_fast() -> Result<(), String> {
 /// (#3549 review).
 fn check_fast_in(repository_root: &Path) -> Result<(), String> {
     ensure_reports_dir()?;
-    let changed = match changed_files_vs_base(repository_root) {
+    let selection = match check_fast_selector::discover(repository_root) {
         Ok(changed) => changed,
         Err(error) => {
             write_report("check-fast.md", &check_fast_selector_failure_report(&error))?;
             return Err(check_fast_selector_failure(&error));
         }
     };
-    let categories = categorize_changed_files(&changed);
+    eprintln!("{}", selection.diagnostic());
+    let changed = &selection.files;
+    let categories = categorize_changed_files(changed);
     let mut ran = Vec::new();
     let mut skipped = Vec::new();
 
     let mut child_diagnostics = Vec::new();
     if let Err(error) = check_fast_gates(
-        &changed,
+        changed,
         &categories,
         &mut ran,
         &mut skipped,
         &mut child_diagnostics,
     ) {
         return check_fast_failure_report(&error, &child_diagnostics, |body| {
-            write_report("check-fast.md", body)
+            write_report(
+                "check-fast.md",
+                &format!("{body}\n{}", selection.diagnostic()),
+            )
         });
     }
 
     let body = format!(
-        "# check-fast report\n\nStatus: pass\n\nSelector: passed\nBase: origin/main\n\nRan:\n{}\n\nSkipped:\n{}\n",
+        "# check-fast report\n\nStatus: pass\n\nSelector: passed\nBase: origin/main\n{}\nRan:\n{}\n\nSkipped:\n{}\n",
+        selection.diagnostic(),
         ran.iter()
             .map(|g| format!("- {g}"))
             .collect::<Vec<_>>()
@@ -1060,10 +1068,11 @@ fn git_changed_files(root: &Path, rev: &str) -> Result<Vec<String>, String> {
     // Raw NUL-delimited inventory (#4006): `-z` output is never C-quoted,
     // so exotic names survive byte-exact; parsing rules come from the
     // shared authority in `decode_changed_files`, not from line splitting
-    // here. The spawn site is unchanged (gate-runner policy entry).
+    // here. Keep both sides of renames: the removed path can select checks
+    // that the destination does not. The spawn site is unchanged.
     let output = std::process::Command::new("git")
         .current_dir(root)
-        .args(["diff", "--name-only", "-z", rev])
+        .args(["diff", "--no-renames", "--name-only", "-z", rev])
         .output()
         .map_err(|err| format!("git diff --name-only failed: {err}"))?;
     if !output.status.success() {
@@ -1101,13 +1110,6 @@ fn decode_changed_files(output: &[u8]) -> Result<Vec<String>, String> {
         })
 }
 
-/// Origin-main rooted selector for callers that run from the repository
-/// root — including the strict check-fast module, which binds this
-/// function as its discovery authority.
-fn changed_files_vs_origin_main() -> Result<Vec<String>, String> {
-    changed_files_vs_base(Path::new("."))
-}
-
 fn check_fast_selector_failure(error: &str) -> String {
     format!("check-fast selector unavailable (instrument_failure): {error}")
 }
@@ -1117,6 +1119,10 @@ fn check_fast_selector_failure_report(error: &str) -> String {
         "# check-fast report\n\nStatus: instrument_failure\n\nSelector: failed\nBase: origin/main\n\nError: {error}\n\nRemediation: run `git fetch origin main` and retry `cargo xtask check-fast`.\n"
     )
 }
+
+#[cfg(test)]
+#[path = "tests/check_fast_renames.rs"]
+mod check_fast_rename_tests;
 
 #[cfg(test)]
 mod check_fast_selector_tests {
@@ -1786,8 +1792,106 @@ fn vscode_package() -> Result<(), String> {
 fn vscode_verify_vsix(args: &[String]) -> Result<(), String> {
     let vsix_path = vscode_verify_vsix_path(args)?;
     let notices = load_repository_license_notices(&repo_root()?)?;
-    println!("{}", verify_packaged_vsix(&vsix_path, &notices)?);
+    let summary = verify_packaged_vsix(&vsix_path, &notices)?;
+    verify_packaged_vsix_version(&vsix_path)?;
+    println!("{summary}");
     Ok(())
+}
+
+/// The VSIX file name carries the release version (`ripr-<version>.vsix`);
+/// its own `extension/package.json` and `extension.vsixmanifest` must agree
+/// (#10731: `ripr-0.10.0.vsix` shipped extension 0.8.0).
+fn verify_packaged_vsix_version(vsix_path: &Path) -> Result<(), String> {
+    let name = vsix_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+    let expected = name
+        .strip_prefix("ripr-")
+        .and_then(|rest| rest.strip_suffix(".vsix"))
+        .filter(|version| !version.is_empty())
+        .ok_or_else(|| {
+            format!("VSIX file name {name:?} must be ripr-<version>.vsix to bind its version")
+        })?;
+    let file = fs::File::open(vsix_path)
+        .map_err(|err| format!("packaged VSIX {} is missing: {err}", vsix_path.display()))?;
+    let mut archive = zip::ZipArchive::new(file)
+        .map_err(|err| format!("packaged VSIX {} is not a zip: {err}", vsix_path.display()))?;
+    let package_json = read_vsix_text_member(&mut archive, "extension/package.json", vsix_path)?;
+    let package: Value = serde_json::from_str(&package_json).map_err(|err| {
+        format!(
+            "packaged VSIX {} extension/package.json is not JSON: {err}",
+            vsix_path.display()
+        )
+    })?;
+    let manifest_version = package.get("version").and_then(Value::as_str).unwrap_or("");
+    let vsixmanifest = read_vsix_text_member(&mut archive, "extension.vsixmanifest", vsix_path)?;
+    let identity_version = vsixmanifest_identity_version(&vsixmanifest);
+    if manifest_version != expected || identity_version != expected {
+        return Err(format!(
+            "packaged VSIX {} is named for version {expected} but carries extension/package.json version {manifest_version:?} and extension.vsixmanifest Identity Version {identity_version:?}",
+            vsix_path.display()
+        ));
+    }
+    Ok(())
+}
+
+/// Version of the `<Identity>` element inside `<Metadata>`, read after removing
+/// XML comments and CDATA so Identity-like text there cannot be mistaken for
+/// the real element (no XML dependency exists in the workspace).
+fn vsixmanifest_identity_version(text: &str) -> String {
+    let mut cleaned = text.to_string();
+    for (open, close) in [("<!--", "-->"), ("<![CDATA[", "]]>")] {
+        while let Some(start) = cleaned.find(open) {
+            let end = cleaned[start..]
+                .find(close)
+                .map_or(cleaned.len(), |offset| start + offset + close.len());
+            cleaned.replace_range(start..end, "");
+        }
+    }
+    let Some(metadata) = cleaned.find("<Metadata") else {
+        return String::new();
+    };
+    let rest = &cleaned[metadata..];
+    let mut search = 0;
+    while let Some(found) = rest[search..].find("<Identity") {
+        let tag_start = search + found + "<Identity".len();
+        search = tag_start;
+        if !rest[tag_start..].starts_with(|c: char| c.is_whitespace() || c == '/' || c == '>') {
+            continue;
+        }
+        let tag = rest[tag_start..].split('>').next().unwrap_or("");
+        for quote in ['"', '\''] {
+            let needle = format!("Version={quote}");
+            let mut from = 0;
+            while let Some(at) = tag[from..].find(&needle) {
+                let abs = from + at;
+                from = abs + needle.len();
+                if tag[..abs].ends_with(|c: char| c.is_whitespace()) {
+                    return tag[from..].split(quote).next().unwrap_or("").to_string();
+                }
+            }
+        }
+        return String::new();
+    }
+    String::new()
+}
+
+fn read_vsix_text_member(
+    archive: &mut zip::ZipArchive<fs::File>,
+    member: &str,
+    vsix_path: &Path,
+) -> Result<String, String> {
+    let mut entry = archive.by_name(member).map_err(|err| {
+        format!(
+            "packaged VSIX {} is missing {member}: {err}",
+            vsix_path.display()
+        )
+    })?;
+    let mut text = String::new();
+    std::io::Read::read_to_string(&mut entry, &mut text)
+        .map_err(|err| format!("failed to read {member} in {}: {err}", vsix_path.display()))?;
+    Ok(text)
 }
 
 fn vscode_verify_vsix_path(args: &[String]) -> Result<PathBuf, String> {
@@ -13520,6 +13624,9 @@ fn check_capabilities() -> Result<(), String> {
     violations.extend(parse_violations);
     validate_capabilities(&capabilities, &mut violations)?;
     validate_capability_matrix(&capabilities, &mut violations)?;
+    if violations.is_empty() {
+        policy::check_capability_cells(&capabilities, &mut violations)?;
+    }
     finish_capabilities_report(&violations)
 }
 
@@ -13858,6 +13965,10 @@ fn assign_capability_array(
     match key {
         "evidence" => capability.evidence = values,
         "fixtures" => capability.fixtures = values,
+        "cells" if capability.cells.is_none() => capability.cells = Some(values),
+        "cells" => violations.push(format!(
+            "capability line {line_number} repeats `cells` field"
+        )),
         _ => violations.push(format!(
             "capability line {line_number} uses unsupported array field `{key}`"
         )),

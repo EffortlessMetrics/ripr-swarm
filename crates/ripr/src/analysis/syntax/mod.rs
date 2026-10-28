@@ -13,6 +13,8 @@ mod nesting;
 mod owner_pin;
 mod passthrough_item_macros;
 mod pattern_pin;
+mod proptest;
+pub(crate) use proptest::proptest_expansions;
 pub(crate) mod run_memo;
 mod source_snapshot;
 pub(crate) use constant_return::returns_only_a_literal;
@@ -29,9 +31,9 @@ pub(crate) use owner_pin::{
     empty_macro_binding_ambiguities, err_return_guard_key, local_empty_macro_names,
     macro_binding_scan, macro_call_is_statement, node_has_macro_escape, owner_pin_assertions,
     owner_reference_count, returns_leave_the_function, skipping_table_column,
-    source_binds_value_name, source_declares_value_name, standard_derive_names,
-    supported_targeted_item_context, trusted_macro_binding_site_sets, trusted_macro_binding_sites,
-    use_rebinds_crate_name,
+    source_binds_value_name, source_declares_value_name, source_imported_claims_macros,
+    standard_derive_names, supported_targeted_item_context, trusted_macro_binding_site_sets,
+    trusted_macro_binding_sites, use_rebinds_crate_name,
 };
 pub(crate) use owner_pin::{decimal_u8, literal_check_syntax, literal_owner_syntax};
 pub(crate) use pattern_pin::{PatternPins, pattern_pins};
@@ -46,6 +48,8 @@ pub(crate) use local_test_macros::expand_local_test_macros;
 pub(crate) use local_test_macros::{
     GeneratedTestPins, expand_local_test_macros_with, generated_test_pins,
 };
+#[cfg(test)]
+pub(crate) use macro_scope::splice_imported_macros;
 pub(crate) use macro_scope::{
     ImportedMacros, MacroScope, first_macro_call, generator_calls, macro_scope,
 };
@@ -68,4 +72,6 @@ pub(crate) use ra::{
     inline_unit_module_layout, invoked_callback_params, macro_call_columns, module_item_scopes,
     passes_call_making_closure,
 };
-pub(crate) use source_snapshot::{ItemNesting, SourceSnapshot, SourceSyntaxMemos, has_cfg_attr};
+pub(crate) use source_snapshot::{
+    ItemNesting, RootShadow, SourceSnapshot, SourceSyntaxMemos, has_cfg_attr,
+};

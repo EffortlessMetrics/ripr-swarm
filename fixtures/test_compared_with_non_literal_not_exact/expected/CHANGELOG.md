@@ -160,10 +160,12 @@ Updated:
 ## Pending — test_compared_with_non_literal_not_exact (13)
 
 Reason:
-RIPR-SPEC-0122: #10701 a weak assertion on a changed return value or error with a direct caller test now reaches a repair start
+RIPR-SPEC-0122: plain-language wording for the default and human-full check views (#10691); human text only, check.json unchanged
 
 Command:
 `cargo xtask goldens bless test_compared_with_non_literal_not_exact --reason "..."`
 
 Updated:
+- `expected/check.json`
 - `expected/human.txt`
+- `expected/human-full.txt`
