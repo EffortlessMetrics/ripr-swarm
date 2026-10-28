@@ -11439,13 +11439,138 @@ fn unresolved_alias_import_names_the_import_in_no_reach_text() -> Result<(), Str
         finding.missing.first().map(String::as_str),
         Some("No test references `applyDiscount(` — add a test that calls the changed owner.")
     );
+    // #10708: the ordinary owner with no static link carries the honest
+    // ordered next step — owner name, add-test route, native verifier,
+    // then refresh — without claiming universal test absence or naming an
+    // unevidenced file/command. Classification, confidence, related-test
+    // evidence and repair eligibility stay put.
+    let step = finding
+        .recommended_next_step
+        .as_deref()
+        .ok_or_else(|| "owner with no static link must carry guidance".to_string())?;
+    for expected in [
+        "no statically linked test calls `applyDiscount(`",
+        "add a test that calls the changed owner",
+        "asserts the changed behavior with `toBe` / `toEqual`",
+        "run the project's native test command",
+        "rerun `ripr check`",
+    ] {
+        assert!(
+            step.contains(expected),
+            "next step must contain {expected:?}; got: {step}"
+        );
+    }
+    for forbidden in ["vitest run", "npx vitest", "tests/owner.test.ts", "test_owner"] {
+        assert!(
+            !step.contains(forbidden),
+            "no invented exact file/command may appear; found {forbidden:?} in: {step}"
+        );
+    }
     assert!(
-        finding
-            .recommended_next_step
-            .as_deref()
-            .is_some_and(|next| next.contains("no test references the changed owner")),
-        "control keeps the generic next step, got: {:?}",
-        finding.recommended_next_step
+        !step.contains("no test references the changed owner"),
+        "must not claim universal test absence; got: {step}"
+    );
+    assert_eq!(finding.confidence, 0.4);
+    assert!(finding.related_tests.is_empty());
+    Ok(())
+}
+
+/// #10708: a directly resolved ordinary function owner with no static link
+/// carries the honest ordered next step — owner-named add-test/call and
+/// assertion, native verifier, then refresh — while classification,
+/// confidence, related-test evidence and repair eligibility stay put.
+#[test]
+fn untested_function_owner_guidance_names_owner_and_ordered_route() -> Result<(), String> {
+    let tests = [exact_value_test("shippingFee", "result", "0")];
+    let finding = classify_boundary_line("shippingFee", "  if (total >= 50) {", &tests)?;
+    assert_eq!(finding.class, ExposureClass::NoStaticPath);
+    assert_eq!(finding.ripr.reach.state, StageState::No);
+    assert_eq!(finding.confidence, 0.4);
+    assert!(finding.related_tests.is_empty());
+    assert_eq!(finding.static_limit_kind, None);
+    // Repair eligibility stays suppressed: the NoStaticPath actionability
+    // lands advisory (the preview card's `repair_packet_ready` remains
+    // false, pinned by the fixture goldens), so no packet may be emitted
+    // on this evidence.
+    assert_evidence_contains(&finding, "gap_state: advisory");
+    let step = finding
+        .recommended_next_step
+        .as_deref()
+        .ok_or_else(|| "owner with no static link must carry guidance".to_string())?;
+    for expected in [
+        "no statically linked test calls `shippingFee(`",
+        "add a test that calls the changed owner",
+        "asserts the changed behavior with `toBe` / `toEqual`",
+        "run the project's native test command",
+        "rerun `ripr check`",
+    ] {
+        assert!(
+            step.contains(expected),
+            "next step must contain {expected:?}; got: {step}"
+        );
+    }
+    for forbidden in ["vitest run", "npx vitest", "tests/lib.test.ts", "test_shipping"] {
+        assert!(
+            !step.contains(forbidden),
+            "no invented exact file/command may appear; found {forbidden:?} in: {step}"
+        );
+    }
+    assert!(
+        !step.contains("no test references the changed owner"),
+        "must not claim universal test absence; got: {step}"
+    );
+    Ok(())
+}
+
+/// #10708 negative controls: method, class-method, module-initializer and
+/// alias/static-limit lanes keep their own qualifiers — the ordinary-owner
+/// wording must not leak into them, and unresolved/transitive relations
+/// keep their uncertainty without the direct-call advice.
+#[test]
+fn qualified_owner_lanes_keep_their_own_guidance() -> Result<(), String> {
+    // Method owner keeps the receiver-uncertainty qualifier.
+    let mut method = test_owner("total", "src/cart.ts");
+    method.owner_kind = OwnerKind::Method;
+    let method_step = no_static_path_recommendation(&method);
+    assert!(
+        method_step.contains("receiver"),
+        "method guidance must keep the receiver qualifier; got: {method_step}"
+    );
+    assert!(
+        !method_step.contains("no statically linked test calls"),
+        "method guidance must not use the ordinary-owner wording; got: {method_step}"
+    );
+    // Class-method owner keeps its own qualifier.
+    let mut class_method = test_owner("build", "src/owners.ts");
+    class_method.owner_kind = OwnerKind::ClassMethod;
+    class_method.class_name = Some("Cart".to_string());
+    let class_step = no_static_path_recommendation(&class_method);
+    assert!(
+        class_step.contains("class-method relation"),
+        "class-method guidance must keep its qualifier; got: {class_step}"
+    );
+    assert!(
+        !class_step.contains("no statically linked test calls"),
+        "class-method guidance must not use the ordinary-owner wording; got: {class_step}"
+    );
+    // Module-initializer owner keeps its own observer qualifier.
+    let mut module_fn = test_owner("CART_LIMIT", "src/cart.ts");
+    module_fn.owner_kind = OwnerKind::ModuleFunction;
+    let module_step = no_static_path_recommendation(&module_fn);
+    assert!(
+        module_step.contains("module initializer observer"),
+        "module-function guidance must keep its qualifier; got: {module_step}"
+    );
+    assert!(
+        !module_step.contains("no statically linked test calls"),
+        "module-function guidance must not use the ordinary-owner wording; got: {module_step}"
+    );
+    // Alias-gap disclosure keeps its own unresolved-import route.
+    let ordinary = test_owner("applyDiscount", "src/owner.ts");
+    let ordinary_step = no_static_path_recommendation(&ordinary);
+    assert!(
+        ordinary_step.contains("no statically linked test calls `applyDiscount(`"),
+        "ordinary-owner guidance must name the owner; got: {ordinary_step}"
     );
     Ok(())
 }
