@@ -279,10 +279,22 @@ pub(in crate::cli) fn agent(args: &[String]) -> Result<(), CommandError> {
     }
 }
 
+/// A seam-selection typed refusal (exit 3): the id is unknown, or the seam is
+/// known but agent policy withholds it (#10712).
+fn is_seam_refusal(error: &CoreError) -> bool {
+    matches!(
+        error.check_failure_kind(),
+        Some(
+            crate::core_error::CheckFailureKind::SeamIdUnknown
+                | crate::core_error::CheckFailureKind::SeamPolicyOmitted
+        )
+    )
+}
+
 fn run_agent_start(options: AgentStartOptions) -> Result<(), CommandError> {
     let json = options.json;
     let written = write_agent_start(options).map_err(|error| {
-        if error.check_failure_kind() == Some(crate::core_error::CheckFailureKind::SeamIdUnknown) {
+        if is_seam_refusal(&error) {
             CommandError::Decision(String::from(error))
         } else {
             CommandError::Failure(String::from(error))
@@ -382,23 +394,29 @@ fn write_agent_start_with_report(
         AgentBriefPolicy::from_config(config),
     );
     if selection.top_seams.is_empty() {
-        let message = format!(
-            "agent start seam_id {} was not found or is hidden by config. {}",
-            options.seam_id,
-            unknown_seam_id_hint(&options.root, &options.seam_id)
-        );
-        // Like `agent packet`: only an id absent from the inventory is the
-        // typed unknown-seam refusal (exit 3). A known seam withheld by agent
-        // policy keeps the plain failure (exit 2).
-        let in_inventory = report
+        // Like `agent packet`: an id absent from the inventory is the unknown
+        // refusal, and a known seam that agent policy withholds is the
+        // policy-omitted refusal naming the policy reason. Both are typed
+        // refusals (exit 3), never a "not found" for a seam the inventory has.
+        let entry = report
             .classified
             .iter()
-            .any(|entry| entry.seam.id().as_str() == options.seam_id);
-        return Err(if in_inventory {
-            CoreError::from(message)
-        } else {
-            CoreError::seam_id_unknown(message)
-        });
+            .find(|entry| entry.seam.id().as_str() == options.seam_id);
+        let Some(entry) = entry else {
+            return Err(CoreError::seam_id_unknown(format!(
+                "agent start seam_id {} was not found. {}",
+                options.seam_id,
+                unknown_seam_id_hint(&options.root, &options.seam_id)
+            )));
+        };
+        let reason = AgentBriefPolicy::from_config(config)
+            .omission_reason_for_class(entry.class)
+            .unwrap_or_else(|| "was not selected for an agent workflow".to_string());
+        return Err(CoreError::seam_policy_omitted(format!(
+            "agent start seam_id {} {reason}. {}",
+            options.seam_id,
+            policy_omitted_seam_hint(&options.root, &options.seam_id)
+        )));
     }
     add_agent_brief_provenance_warning(&input.root, &mut selection);
 
@@ -540,8 +558,7 @@ fn run_agent_packet(options: AgentPacketOptions) -> Result<(), CommandError> {
         // failure: exit 3, like `agent card` and `agent stub` for the same
         // cause. Every other packet failure stays exit 2.
         Err(error) => {
-            let unknown_seam = error.check_failure_kind()
-                == Some(crate::core_error::CheckFailureKind::SeamIdUnknown);
+            let unknown_seam = is_seam_refusal(&error);
             match refuse_agent_packet(&options, error, json) {
                 Ok(message) if unknown_seam => Err(CommandError::Decision(message)),
                 Ok(message) | Err(message) => Err(CommandError::Failure(message)),
@@ -772,7 +789,7 @@ fn render_agent_packet_for_seam_with_report(
 
     let policy = AgentBriefPolicy::from_config(config);
     if let Some(reason) = policy.omission_reason_for_class(entry.class) {
-        return Err(CoreError::from(format!(
+        return Err(CoreError::seam_policy_omitted(format!(
             "agent packet seam_id {seam_id} {reason}. {}",
             policy_omitted_seam_hint(root, seam_id)
         )));

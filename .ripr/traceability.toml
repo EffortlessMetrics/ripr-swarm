@@ -1949,7 +1949,7 @@ tests = [
   "crates/ripr/tests/cli_smoke.rs::agent_receipt_writes_one_seam_handoff_json",
   "crates/ripr/tests/cli_smoke.rs::agent_start_writes_source_edit_free_workflow_packet",
   "crates/ripr/tests/cli_smoke.rs::agent_start_unknown_seam_id_exits_3_while_other_failures_exit_2",
-  "crates/ripr/tests/cli_smoke.rs::agent_start_config_hidden_known_seam_stays_exit_2",
+  "crates/ripr/tests/cli_smoke.rs::agent_start_config_hidden_known_seam_is_a_policy_refusal",
   "crates/ripr/src/lsp/tests.rs::agent_loop_command_payloads_stay_root_anchored_for_platform_roots",
   "editors/vscode/test/suite/extension.test.ts::agent loop commands must equal the body the server renders from the payload (#4225)",
   "editors/vscode/test/suite/extension.test.ts::real server surfaces seam diagnostic, hover provider, and agent actions",
@@ -14793,6 +14793,7 @@ spec = "docs/specs/RIPR-SPEC-0202-agent-card-typed-refusals.md"
 tests = [
   "crates/ripr/tests/cli_smoke/agent_policy_guidance.rs::policy_omitted_card_prose_agrees_with_typed_remedy",
   "crates/ripr/tests/cli_smoke/agent_policy_guidance.rs::policy_omitted_packet_preserves_refusal_channels",
+  "crates/ripr/tests/cli_smoke/agent_policy_guidance.rs::policy_omitted_start_is_a_typed_refusal_naming_the_policy",
   "crates/ripr/tests/cli_smoke/agent_policy_guidance.rs::policy_omitted_repair_before_preserves_refusal_channels",
   "crates/ripr/tests/cli_smoke/agent_policy_guidance.rs::genuinely_unknown_seam_keeps_pilot_guidance_under_omitting_policy",
   "crates/ripr/tests/cli_smoke.rs::agent_card_hands_off_one_seam_as_the_default_repair_card",

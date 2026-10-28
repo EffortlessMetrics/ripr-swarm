@@ -92,6 +92,12 @@ pub(crate) enum CheckFailureKind {
     /// A `ripr agent packet --seam-id` names no seam in the current
     /// inventory (#7331).
     SeamIdUnknown,
+    /// A `ripr agent packet|start --seam-id` names a seam the inventory has
+    /// but agent policy withholds (configured off, already gripped, or not
+    /// agent-visible). A typed refusal like [`Self::SeamIdUnknown`], with its
+    /// own cause so callers never read "not found" for a seam they can see
+    /// (#10712).
+    SeamPolicyOmitted,
     /// A `--at`/`--finding`/`explain` selector matched no finding. This is
     /// usage-class, not an operational failure: the CLI keeps it prose-only
     /// (empty stdout, exit 2) instead of writing a refusal envelope, so the
@@ -116,6 +122,7 @@ impl CheckFailureKind {
             Self::CheckArtifactUnusable => "check_artifact_unusable",
             Self::GapLedgerUnusable => "gap_ledger_unusable",
             Self::SeamIdUnknown => "seam_id_unknown",
+            Self::SeamPolicyOmitted => "seam_policy_omitted",
             Self::SelectorMiss => "selector_miss",
             Self::AnalysisTimeout => "analysis_timeout",
             Self::DiffInputUnsupported => "diff_input_unsupported",
@@ -133,6 +140,7 @@ impl CheckFailureKind {
             Self::CheckArtifactUnusable => "analysis/check-artifact",
             Self::GapLedgerUnusable => "analysis/gap-ledger",
             Self::SeamIdUnknown => "analysis/seam-inventory",
+            Self::SeamPolicyOmitted => "analysis/seam-policy",
             Self::SelectorMiss => "analysis/selector",
             Self::AnalysisTimeout => "analysis/timeout",
             Self::DiffInputUnsupported => "analysis/diff-input",
@@ -243,6 +251,15 @@ impl CoreError {
     pub(crate) fn seam_id_unknown(detail: impl Into<String>) -> Self {
         Self::CheckFailure {
             kind: CheckFailureKind::SeamIdUnknown,
+            detail: detail.into(),
+        }
+    }
+
+    /// A `ripr agent packet|start --seam-id` for a seam agent policy withholds
+    /// (#10712). `detail` is the exact human diagnostic, kept verbatim.
+    pub(crate) fn seam_policy_omitted(detail: impl Into<String>) -> Self {
+        Self::CheckFailure {
+            kind: CheckFailureKind::SeamPolicyOmitted,
             detail: detail.into(),
         }
     }

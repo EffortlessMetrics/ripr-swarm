@@ -8104,11 +8104,13 @@ fn agent_start_unknown_seam_id_exits_3_while_other_failures_exit_2()
     Ok(())
 }
 
-/// #10537 review: a KNOWN seam withheld by agent policy is not an unknown
-/// seam. `agent start` keeps the plain failure (exit 2), as `agent packet`
-/// does for the same case; only an id absent from the inventory exits 3.
+/// #10537 review, revised by #10712: a KNOWN seam withheld by agent policy is
+/// not an unknown seam, but it is still a typed refusal. `agent start` exits 3
+/// like `agent card` and `agent packet` and names the policy cause; an id
+/// absent from the inventory also exits 3 with the "not found" cause.
 #[test]
-fn agent_start_config_hidden_known_seam_stays_exit_2() -> Result<(), Box<dyn std::error::Error>> {
+fn agent_start_config_hidden_known_seam_is_a_policy_refusal()
+-> Result<(), Box<dyn std::error::Error>> {
     let (root, diff) = agent_brief_sample_workspace("agent-start-config-hidden")?;
     let root_path = root.display().to_string();
     let diff = diff.display().to_string();
@@ -8144,11 +8146,13 @@ fn agent_start_config_hidden_known_seam_stays_exit_2() -> Result<(), Box<dyn std
     ]);
     assert_eq!(
         hidden.status.code(),
-        Some(2),
+        Some(3),
         "stderr:\n{}",
         String::from_utf8_lossy(&hidden.stderr)
     );
-    assert!(String::from_utf8_lossy(&hidden.stderr).contains("hidden by config"));
+    let hidden_stderr = String::from_utf8_lossy(&hidden.stderr);
+    assert!(hidden_stderr.contains("configured off for weakly_gripped seams"));
+    assert!(!hidden_stderr.contains("not found"));
 
     // Discriminator: a truly absent id under the same config exits 3.
     let absent = run_ripr(&[
@@ -8160,6 +8164,7 @@ fn agent_start_config_hidden_known_seam_stays_exit_2() -> Result<(), Box<dyn std
         "no-such-seam",
     ]);
     assert_eq!(absent.status.code(), Some(3));
+    assert!(String::from_utf8_lossy(&absent.stderr).contains("was not found"));
     std::fs::remove_dir_all(root)?;
     Ok(())
 }

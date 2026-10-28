@@ -630,6 +630,13 @@ mod tests {
                 "analysis/seam-inventory",
             ),
             (
+                CoreError::seam_policy_omitted(
+                    "agent packet seam_id s is configured off for weakly_gripped seams",
+                ),
+                "seam_policy_omitted",
+                "analysis/seam-policy",
+            ),
+            (
                 CoreError::analysis_timeout(
                     "analysis_timeout: ripr check exceeded its 600s wall-clock budget",
                 ),
