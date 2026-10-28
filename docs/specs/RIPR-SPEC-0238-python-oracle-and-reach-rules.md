@@ -595,8 +595,9 @@ same-named call neither supplies nor cancels the refusal. Pinned by the
     the same rules apply as for a one-line literal.
     A direct literal-index equality on an undecorated synchronous function
     whose body is an optional docstring followed by a literal-string return,
-    called by its owner name with only positional literal arguments,
-    cannot credit when the indexed Unicode character is present and equal in
+    called by its bare owner name with only positional AST constant arguments
+    and no keywords, cannot credit a direct equality against a string constant
+    when the indexed Unicode character is present and equal in
     both versions; negative indices use each string’s character length. Other
     string assertions and unsupported forms retain their existing treatment.
 11. **The f-string length gate reads the crediting assertion.** For a
