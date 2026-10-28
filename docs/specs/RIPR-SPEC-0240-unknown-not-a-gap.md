@@ -429,7 +429,8 @@ non-ignored related test matches one of these shapes:
   The test begins with its empty struct-literal double, an unqualified owner
   call, and an immediately following exact comparison of that field (or its
   standard `clone()`) to a nonempty vector of independent string literals.
-  The equality has exactly two arguments, with an optional trailing comma.
+  The equality has exactly two arguments, with an optional trailing comma
+  followed by ordinary line or block comments.
   Diagnostic arguments refuse this bounded credit: they execute on comparison
   failure and may prevent the test harness from reporting that failure.
   The existing free-call binding authority must resolve the actual call to

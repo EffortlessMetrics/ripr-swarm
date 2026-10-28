@@ -9,7 +9,7 @@ use crate::analysis::facts::cfg_predicates::attribute_is_plain_test_gate;
 use crate::analysis::syntax::parse_clean_source_file;
 use crate::domain::{OracleKind, Probe, ProbeFamily};
 use ra_ap_syntax::{
-    AstNode, SyntaxNode,
+    AstNode, AstToken, SyntaxNode,
     ast::{self, HasArgList, HasAttrs, HasGenericArgs, HasName},
 };
 use std::collections::BTreeMap;
@@ -648,8 +648,28 @@ impl RecordingDouble {
             return None;
         }
         // Failure-only diagnostics may exit before the comparison reports failure.
-        if equality_assertion_arguments(&assertion.text)?.len() != 2 {
-            return None;
+        let arguments = equality_assertion_arguments(&assertion.text)?;
+        if arguments.len() != 2 {
+            let [_, _, trailing] = arguments.as_slice() else {
+                return None;
+            };
+            if trailing.trim().is_empty() {
+                return None;
+            }
+            // A final comma can leave ordinary comments, but never a diagnostic
+            // string, an empty extra argument or a documentation attribute.
+            let trailing = parse_clean_source_file(trailing)?.tree();
+            if trailing
+                .syntax()
+                .descendants_with_tokens()
+                .filter_map(|element| element.into_token())
+                .any(|token| {
+                    !token.kind().is_trivia()
+                        || ast::Comment::cast(token).is_some_and(|comment| comment.is_doc())
+                })
+            {
+                return None;
+            }
         }
         let [left, right] = assertion_comparison_operands(&assertion.text)?;
         let expected = match (compact(left), compact(right)) {

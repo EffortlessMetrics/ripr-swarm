@@ -156,6 +156,10 @@ fn exact_recorded_argument_is_credited() -> Result<(), String> {
         "assert_eq!(recorder.lines, vec![\"n=3\".to_string()],);",
         "assert_eq!(vec![\"n=3\".to_string()], recorder.lines,);",
         "assert_eq!(recorder.lines.clone(), vec![\"n=3\".to_string()],);",
+        "assert_eq!(recorder.lines, vec![\"n=3\".to_string()], /* trailing */);",
+        "assert_eq!(recorder.lines, vec![\"n=3\".to_string()], // trailing\n        );",
+        "assert_eq!(vec![\"n=3\".to_string()], recorder.lines, /* trailing */);",
+        "assert_eq!(recorder.lines.clone(), vec![\"n=3\".to_string()], /* outer /* nested */ comment */);",
     ] {
         assert_reading(
             assertion,
@@ -176,6 +180,12 @@ fn assertion_diagnostic_arguments_cannot_supply_recording_credit() -> Result<(),
         r#""{message}", message = { std::process::exit(0); "" }"#,
         r#""""#,
         r#""recorded value", "#,
+        r#""", /* trailing */"#,
+        r#"/* before */ """#,
+        r##"r#"/* diagnostic */"#"##,
+        // Extra empty arguments and doc attributes are outside the grammar too.
+        ",",
+        "/*! documentation */",
     ] {
         assert_reading(
             diagnostic,
