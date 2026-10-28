@@ -137,6 +137,12 @@ file occurrence under a closed rule set:
   and recomputed on every index build (`serde(skip)`: composed state stays out
   of the on-disk file-fact cache, which stores pre-composition parse facts
   only; the cache schema bumps so composition-blind entries cannot serve).
+- **Scope widening preserves fresh composition.** Reusing a composed index
+  for a larger file set must produce the same identities and provenance as a
+  fresh build over that set. An added include site can invalidate a previously
+  unique include parent, so its discovery gate also governs the decision to
+  rebuild from raw facts. Separating whitespace in `include !` cannot retain
+  an earlier compilation-unit identity after ownership becomes ambiguous.
 - **Dual contextual ownership** (one physical file both declared as a module
   and included as a fragment) composes only when both contexts agree;
   disagreement fails closed. The two-occurrence identity the issue prefers is

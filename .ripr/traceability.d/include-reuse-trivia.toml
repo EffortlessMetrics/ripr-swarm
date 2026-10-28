@@ -1,0 +1,12 @@
+[[extend]]
+id = "RIPR-SPEC-0169"
+tests = [
+  "crates/ripr/src/analysis/seam_inventory.rs::tests::reuse_with_added_compact_include_matches_fresh",
+  "crates/ripr/src/analysis/seam_inventory.rs::tests::reuse_with_added_spaced_include_matches_fresh",
+  "crates/ripr/src/analysis/seam_inventory.rs::tests::reuse_with_added_multiline_include_matches_fresh",
+  "crates/ripr/src/analysis/seam_inventory.rs::tests::reuse_with_added_crlf_tab_include_matches_fresh",
+]
+code = [
+  "crates/ripr/src/analysis/facts/mod.rs",
+  "crates/ripr/src/analysis/facts/includes.rs",
+]

@@ -6355,6 +6355,82 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
         Ok(())
     }
 
+    fn reuse_with_added_include_spelling(spelling: &str) -> Result<(), String> {
+        let extra = format!("{spelling}(\"frag.rs\");\n");
+        let all = [
+            ("src/lib.rs", "include!(\"frag.rs\");\npub mod extra;\n"),
+            ("src/frag.rs", "pub fn fragment() -> i32 { 2 }\n"),
+            ("src/extra.rs", extra.as_str()),
+        ];
+        let root = reuse_fixture_root("reuse-include-trivia", &all)?;
+        let result = (|| {
+            let core = bytes_of(&all[..2]);
+            let target = bytes_of(&all);
+            let core_index = rust_index::build_analysis_index_from_loaded_files(&root, &core, &[])?;
+            let fragment_id = |index: &RustIndex| {
+                index
+                    .functions()
+                    .iter()
+                    .find(|function| {
+                        function.file == Path::new("src/frag.rs") && function.name == "fragment"
+                    })
+                    .map(|function| function.id.0.clone())
+                    .ok_or_else(|| "fixture must retain the fragment function".to_string())
+            };
+            assert_eq!(fragment_id(&core_index.index)?, "src/lib.rs::fragment");
+            assert_eq!(core_index.index.include_parents.len(), 1);
+            let reused =
+                rust_index::reuse_cached_index_with_loaded_files(core_index, &root, &target, &[])?;
+            let fresh = rust_index::build_analysis_index_from_loaded_files(&root, &target, &[])?;
+            assert!(fresh.index.include_parents.is_empty());
+            let ambiguous_parents = fresh
+                .index
+                .include_limitations
+                .iter()
+                .filter(|limitation| limitation.reason_code == "rust_include_ambiguous_parent")
+                .map(|limitation| limitation.parent.as_path())
+                .collect::<BTreeSet<_>>();
+            assert_eq!(
+                ambiguous_parents,
+                BTreeSet::from([Path::new("src/lib.rs"), Path::new("src/extra.rs")])
+            );
+            assert_eq!(fragment_id(&fresh.index)?, "src/frag.rs::fragment");
+            assert_eq!(
+                fragment_id(&reused.index)?,
+                "src/frag.rs::fragment",
+                "added {spelling:?} must retract the old unique include parent"
+            );
+            assert_eq!(
+                serde_json::to_value(&reused.index).map_err(|err| err.to_string())?,
+                serde_json::to_value(&fresh.index).map_err(|err| err.to_string())?,
+                "scope widening must agree with a fresh build for {spelling:?}"
+            );
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        result
+    }
+
+    #[test]
+    fn reuse_with_added_compact_include_matches_fresh() -> Result<(), String> {
+        reuse_with_added_include_spelling("include!")
+    }
+
+    #[test]
+    fn reuse_with_added_spaced_include_matches_fresh() -> Result<(), String> {
+        reuse_with_added_include_spelling("include !")
+    }
+
+    #[test]
+    fn reuse_with_added_multiline_include_matches_fresh() -> Result<(), String> {
+        reuse_with_added_include_spelling("include \n !")
+    }
+
+    #[test]
+    fn reuse_with_added_crlf_tab_include_matches_fresh() -> Result<(), String> {
+        reuse_with_added_include_spelling("include\r\n\t!")
+    }
+
     /// An addition with an unknown `#[path]` target makes module composition
     /// unknowable, so a retained file's `outside_module_tree` claim must be
     /// withdrawn exactly as a fresh build does.

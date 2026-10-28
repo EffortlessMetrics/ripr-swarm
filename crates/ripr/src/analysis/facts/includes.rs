@@ -209,7 +209,8 @@ pub(super) fn resolve_repository_local_includes(root: &Path, index: &mut RustInd
     rebase_function_identities(index);
 }
 
-fn might_contain_include_macro(source: &str) -> bool {
+/// Conservative gate shared by include discovery and index-reuse admission.
+pub(super) fn might_contain_include_macro(source: &str) -> bool {
     let bytes = source.as_bytes();
     let mut offset = 0;
     while let Some(relative) = source[offset..].find("include") {

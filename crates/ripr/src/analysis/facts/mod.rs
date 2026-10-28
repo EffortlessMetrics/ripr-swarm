@@ -263,9 +263,11 @@ pub(crate) fn reuse_cached_index_with_loaded_files(
         || extras
             .iter()
             .any(|(path, _)| cached.index.files().get(path).is_some());
-    let rebases_includes = extras
-        .iter()
-        .any(|(_, bytes)| bytes.windows(8).any(|w| w == b"include!"));
+    // Reuse admission must recognize every spelling include discovery can
+    // resolve, including whitespace between the macro name and `!`.
+    let rebases_includes = extras.iter().any(|(_, bytes)| {
+        includes::might_contain_include_macro(&build::rust_source_text(bytes).text)
+    });
     if retracts || rebases_includes {
         drop(cached);
         return build_cached_index_with_test_harnesses(
