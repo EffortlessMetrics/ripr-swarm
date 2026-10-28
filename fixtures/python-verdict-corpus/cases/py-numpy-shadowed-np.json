@@ -33,5 +33,13 @@
     ]
   },
   "reasoning": "Trap: `np` is a test-local object whose `assert_array_equal` is a no-op, with no numpy import to prove otherwise.",
+  "labeling_observation": {
+    "ripr_commit": "ba58624c",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  },
   "spec_examples": []
 }

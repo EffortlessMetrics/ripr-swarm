@@ -33,5 +33,13 @@
     ]
   },
   "reasoning": "Trap: the test replaces `np.testing.assert_array_equal` with a no-op through `monkeypatch.setattr` before calling it, so the import no longer names the code that runs.",
+  "labeling_observation": {
+    "ripr_commit": "ba58624c",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  },
   "spec_examples": []
 }

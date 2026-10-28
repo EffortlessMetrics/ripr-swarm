@@ -34,5 +34,13 @@
     ]
   },
   "reasoning": "`assert_that(total(\"1\")).is_equal_to(2)` imported from assertpy is the test's only assertion, so `+ 2` fails it. RIPR-SPEC-0238 rule 28 reads the chain as `assert total(\"1\") == 2` because the test file imports `assert_that` from assertpy and nothing rebinds it.",
+  "labeling_observation": {
+    "ripr_commit": "ba58624c",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
   "spec_examples": []
 }

@@ -26,6 +26,7 @@ Linked issues:
 - #6603 (mutation evidence for rules 12 to 14, from the #6597 corpus)
 - #6599, #6600, #6601 (false actionable, false `exposed` and Hypothesis
   fixture verdicts in the #6597 corpus; rules 15 to 19)
+- #10936 (numpy.testing and assertpy equality helpers; rule 28, example 10)
 - #6733 (a removed term that is zero at every asserted input; rule 20)
 - #9185 (a message-only change under a literal pattern that fits both
   messages; rule 2)
@@ -70,6 +71,13 @@ Support-tier impact:
   the test shape of examples 8, 20 and 21 fails on a non-equivalent
   mutant of its owner, so today's `weakly_exposed` is a false actionable
   verdict there. Those findings move to `exposed`.
+- Rule 28 adds credit that no earlier spec promised, and only where the
+  test file proves the helper is numpy's or assertpy's. A numpy.testing
+  `assert_array_equal` / `assert_equal` or an assertpy
+  `assert_that(..).is_equal_to(..)` call that fails exactly when its two
+  operands differ moves from `static_unknown` to the class the equivalent
+  `assert a == b` reads (example 10, #10936). Every unproven name keeps
+  `static_unknown`.
 - Rules 15 to 19 (amended 2026-10-05) come from the same corpus (#6599,
   #6600, #6601). Rules 15, 16, 17 and 19 add credit where the corpus
   case's test fails on a non-equivalent mutant of its owner, so the
@@ -188,7 +196,7 @@ A call statement or `with` item, by the last dotted segment of its callee:
 | `raises` as `pytest.raises` or bare `raises`, as a `with` item, with `match=` | `exact_error_variant` / strong |
 | the same without `match=` | `broad_error` / weak |
 | `assert_called`, `assert_called_once`, `assert_called_with`, `assert_called_once_with`, `assert_any_call`, `assert_has_calls`, `assert_not_called` | `mock_expectation` / medium |
-| other segment starting `assert_`, or `assert_that` | `unknown`, shape `unknown_custom_helper` |
+| other segment starting `assert_`, or `assert_that` | `unknown`, shape `unknown_custom_helper` (rule 28 re-reads proven numpy.testing and assertpy equality) |
 | anything else | no assertion recorded |
 
 Strength ranks are strong 5, medium 4, weak 3, smoke 2, unknown 1. Only
@@ -251,6 +259,8 @@ as strong for one credit branch only; its table row is unchanged.
    `unknown`, shape `unknown_custom_helper`, when the table gives no
    other kind for the outermost call. Today only the outermost segment is
    read, so the chain records no assertion and the owner reads as a gap.
+   Rule 28 re-reads the numpy.testing and assertpy forms of this shape as
+   equality when the test file proves whose they are.
 
 ### Per-test oracle selection
 
@@ -1066,6 +1076,45 @@ mutant calibrates the rule; ripr reports only the static shape.
     `py-trap-wrapped-conditional` and `py-trap-wrapped-finally` stay
     non-credited, #9619).
 
+28. **numpy.testing and assertpy equality helpers are the equality they
+    run.** `numpy.testing.assert_array_equal(a, b)`,
+    `numpy.testing.assert_equal(a, b)` and
+    `assertpy.assert_that(a).is_equal_to(b)` fail exactly when the two
+    operands differ, like `assert a == b`. Extraction still assigns them
+    `unknown`, `unknown_custom_helper` (rule 3), because the name alone does
+    not say whose helper it is. A pass over the test file then reads such a
+    call as `assert a == b`, `exact_value` / strong, only when all of these
+    hold. The call is `a`, `b` as exactly two positional operands (keywords
+    only `err_msg`, `verbose` and `strict` for numpy; none for assertpy,
+    and the chain is `assert_that(a).is_equal_to(b)` and nothing more). The
+    head name (`np`, `numpy`, `npt`, an imported `assert_equal` or
+    `assert_that`) resolves, through a top-level `import` or
+    `from numpy.testing import` / `from assertpy import` of the same file,
+    to that library's function, and is bound exactly once in the file;
+    relative and star imports and a second import of the name resolve
+    nothing. No name after the head (`np.testing = fake`) and no
+    `is_equal_to` is bound anywhere in the file. The head is otherwise used
+    only as `head.` (a module alias) or `head(` (an imported callable), so
+    it is never stored or passed along, and `np.testing` is only dotted
+    into. No line that patches, mocks or `setattr`s mentions the library or
+    the helper, and `globals(`, `vars(`, `exec(`, `eval(`, `__dict__`,
+    `sys.modules`, `importlib`, `__import__` or `import *` anywhere refuses
+    the file. The call is not under a `with`, `try` or `match`, where it may
+    be expected to fail (`with pytest.raises(AssertionError)`). The reported
+    oracle text stays the call as written; the equality gates (rule 4, the
+    tautology and wrapped-argument gates) read the equivalent comparison.
+    `assert_allclose`, `assert_almost_equal`, `assert_array_almost_equal`,
+    `assert_array_less`, an `np` or `assert_that` the file did not import
+    from the library, a project-local fluent helper (example 11), a name
+    renamed away from `assert_array_equal` or `assert_equal`, and a helper
+    re-exported through a project module keep the rule 3 reading. Another
+    file that patches the library (a conftest fixture, a plugin) is not
+    seen, as for every helper this module resolves
+    (`py-numpy-assertpy-equal-to` and `py-numpy-assert-equal-import`
+    credited; `py-numpy-allclose-tolerance`, `py-numpy-under-raises`,
+    `py-numpy-shadowed-np`, `py-numpy-patched-helper` and
+    `py-numpy-tautology` stay non-credited, #10936).
+
 ### Verdict ladder
 
 No finding is produced for docstring, comment or blank changes, header-only
@@ -1329,12 +1378,18 @@ and the test is `tests/test_subject.py`, which imports each owner from
    mock the test passed. With the change `handler(abs(int(text)))`
    instead: `weakly_exposed` (unchanged), since `abs` hands the mock 1 at
    that input.
-10. `np.testing.assert_array_equal(parse('1'), [2])` only: `unknown`
-    helper, `static_unknown`, `opaque_custom_assertion_helper`
-    (unchanged).
-11. `assert_that(parse('1')).is_equal_to(2)` only: `unknown` helper,
-    `static_unknown`, `opaque_custom_assertion_helper` (today no
-    assertion, `weakly_exposed`).
+10. `np.testing.assert_array_equal(parse('1'), [2])` only, with
+    `import numpy as np` in the test file: `exact_value` / strong,
+    `exposed` (today `unknown` helper, `static_unknown`,
+    `opaque_custom_assertion_helper`; rule 28, #10936). Without that import,
+    or with `np` bound by anything else: `unknown` helper, `static_unknown`,
+    `opaque_custom_assertion_helper` (unchanged). `assertpy`'s
+    `assert_that(parse('1')).is_equal_to(2)` with `from assertpy import
+    assert_that` reads the same way.
+11. `assert_that(parse('1')).is_equal_to(2)` only, where `assert_that` is
+    a project helper (`from tests.fluent import assert_that`): `unknown`
+    helper, `static_unknown`, `opaque_custom_assertion_helper` (today no
+    assertion, `weakly_exposed`; rule 3).
 12. `assert parse('1') == 2` then `assert other == 3`: `exposed`,
     `direct`, reported oracle `assert parse('1') == 2` (today
     `weakly_exposed`, `orthogonal`).
