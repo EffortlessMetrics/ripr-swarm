@@ -846,7 +846,13 @@ fn given_a_large_test_set_then_the_parallel_scan_keeps_the_first_caller_per_test
         .iter()
         .find(|owner| owner.qualified_name == "leaf")
         .ok_or("fixture must parse owner `leaf`")?;
+    let before = related_tests::PARALLEL_HELPER_SCANS.with(std::cell::Cell::get);
     let found = related_tests::helper_owner_call_candidates(leaf, &owners, &parsed);
+    assert_eq!(
+        related_tests::PARALLEL_HELPER_SCANS.with(std::cell::Cell::get) - before,
+        2,
+        "each of the two callers must scan on the rayon workers"
+    );
 
     assert_eq!(found.len(), 401, "200 mid + 200 top + test_both");
     let callers: std::collections::BTreeMap<&str, &str> = found
