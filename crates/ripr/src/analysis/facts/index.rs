@@ -170,6 +170,8 @@ pub struct RustIndex {
     /// own crate: its scopes come from this text, not from the file that
     /// holds the comment.
     pub(super) doctest_sources: BTreeMap<(PathBuf, usize), (String, std::sync::Arc<str>)>,
+    pub(super) proptest_receipts:
+        BTreeMap<(PathBuf, usize, String), super::proptest::ProptestReceipt>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -467,6 +469,40 @@ impl serde::Serialize for IndexFiles<'_> {
 const SLACK_CHECKPOINT_STRIDE: usize = 4096;
 
 impl RustIndex {
+    /// Registration provenance survives later policy changes to a generated
+    /// fact. It is not interpretation authority: consumers must separately
+    /// require the exact receipt before crediting that property.
+    pub(crate) fn is_registered_proptest(&self, test: &TestFact) -> bool {
+        self.proptest_receipts.contains_key(&(
+            test.file.clone(),
+            test.start_line,
+            test.name.clone(),
+        ))
+    }
+
+    /// A generation-owned interpretation of an exact provider-bound property.
+    /// Raw/cached/deserialized TestFacts cannot manufacture this authority.
+    pub(crate) fn proptest_source(&self, test: &TestFact) -> Option<(&str, usize)> {
+        self.proptest_receipt(test)
+            .map(|receipt| (receipt.source.as_ref(), receipt.line_offset))
+    }
+
+    /// The normalized body keeps the original file-root namespace. This is
+    /// the same private registration receipt used for assertion admission.
+    pub(crate) fn proptest_name_scopes(
+        &self,
+        test: &TestFact,
+    ) -> Option<std::sync::Arc<crate::analysis::syntax::NameScopes>> {
+        self.proptest_receipt(test)
+            .map(|receipt| std::sync::Arc::clone(&receipt.name_scopes))
+    }
+
+    fn proptest_receipt(&self, test: &TestFact) -> Option<&super::proptest::ProptestReceipt> {
+        self.proptest_receipts
+            .get(&(test.file.clone(), test.start_line, test.name.clone()))
+            .filter(|receipt| &receipt.test == test)
+    }
+
     /// Crate names whose glob imports the trusted-macro scan treats as
     /// workspace-owned: `macro_owned_crates` when the build computed it,
     /// else `package_names` (an index assembled without a manifest walk).
@@ -653,6 +689,8 @@ impl RustIndex {
         // register its examples from its new bytes, never the old text.
         self.doctest_sources
             .retain(|(file, _), _| file.as_path() != path);
+        self.proptest_receipts
+            .retain(|(file, _, _), _| file.as_path() != path);
         // Positions follow the retained orders; rebuild them now so slot
         // lookups never answer from the pre-removal layout.
         self.function_positions.clear();

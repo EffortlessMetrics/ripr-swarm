@@ -46,6 +46,9 @@ Evidence
 
 Weakness
   - No Python test references `validate(`; add a pytest or unittest test that calls the changed owner
+
+Next step
+  Python preview: no statically linked test calls `validate(`; add a test that calls the changed owner with an exact return-value assertion, run the project's native Python test command, then rerun `ripr check` to refresh the finding
 Drill in:
   ripr explain --root <cwd>/fixtures/python_adversarial_free_function_module_collision/input --diff <cwd>/fixtures/python_adversarial_free_function_module_collision/diff.patch --mode fast probe:src_handler.py:python_preview:c48883f0
   ripr context --root <cwd>/fixtures/python_adversarial_free_function_module_collision/input --diff <cwd>/fixtures/python_adversarial_free_function_module_collision/diff.patch --mode fast --at probe:src_handler.py:python_preview:c48883f0

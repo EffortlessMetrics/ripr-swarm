@@ -23,6 +23,30 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[test]
+fn suffixed_decimal_arguments_preserve_whole_literal_boundaries() {
+    for (literal, expected) in [
+        ("100i32", "100"),
+        ("-100i32", "-100"),
+        ("1_00u64", "1_00"),
+        ("0usize", "0"),
+    ] {
+        assert_eq!(scalar_values(literal), [expected], "{literal}");
+    }
+    for expression in [
+        "100i32 as i8",
+        "100i32.abs()",
+        "100i32..101i32",
+        "100i32 + 1",
+        "value100i32",
+        "1e2f64",
+        "0x64u8",
+        "-100u32",
+    ] {
+        assert!(scalar_values(expression).is_empty(), "{expression}");
+    }
+}
+
 fn index_from_files(files: &[(PathBuf, &str)]) -> Result<FixtureIndex, String> {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)

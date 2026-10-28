@@ -89,6 +89,14 @@ wrong in three shapes, each of which an earlier candidate credited:
 
 ## Behavior
 
+The bounded provider-backed proptest profile in RIPR-SPEC-0117 (#10839) may
+supply a generated test with a receipt for an ordinary-assertion interpretation.
+Only the exact generation-owned TestFact borrows that short source and its line
+mapping. Its provider, Cargo registration, source/configuration and callback
+failure premises are proved before registration; ordinary owner/operand and
+discriminator rules below still apply. This does not add `prop_assert*` to the
+non-returning trusted macro set or establish model/helper failure propagation.
+
 An `assert_eq!` confirms a `return_value` probe's discriminator (or an
 `error_path` probe's, for a changed early `return Err(..)`; rule 3) when all
 of the following hold. Each rule fails closed: when ripr cannot establish it,
