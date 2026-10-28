@@ -5,6 +5,54 @@
   "description": "Cross-language pinned adversarial corpus: evidence may not promote to exposed/strong unless it structurally matches the seam.",
   "cases": [
     {
+      "id": "rust_qualified_helper_effect_side_effect",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_qualified_helper_effect_reach",
+      "vector": "qualified_helper_reach_borrows_effect_target_propagation",
+      "probe_family": "side_effect",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "propagation_unknown"
+        }
+      ]
+    },
+    {
+      "id": "rust_qualified_helper_effect_call_deletion",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_qualified_helper_effect_reach",
+      "vector": "qualified_helper_reach_borrows_effect_target_propagation",
+      "probe_family": "call_deletion",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "propagation_unknown"
+        }
+      ]
+    },
+    {
       "id": "rust_wrapper_macro_bang_bidi_whitespace_predicate",
       "language": "rust",
       "tier": "pure",
@@ -14118,6 +14166,30 @@
       ]
     },
     {
+      "id": "python_factor_reorder_unknown_operands",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_factor_reorder",
+      "vector": "numeric_table_rows_cannot_establish_runtime_commutativity_of_named_operands",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 4
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
       "id": "python_table_bool_key_get_fallback",
       "language": "python",
       "tier": "pure",
@@ -14596,11 +14668,11 @@
       ]
     },
     {
-      "id": "python_factor_reorder_unknown_operands",
-      "language": "python",
+      "id": "rust_nested_use_dependency_glob",
+      "language": "rust",
       "tier": "pure",
-      "source_fixture": "fixtures/python_factor_reorder",
-      "vector": "numeric_table_rows_cannot_establish_runtime_commutativity_of_named_operands",
+      "source_fixture": "fixtures/rust_nested_use_dependency_glob",
+      "vector": "nested_dependency_glob_does_not_supply_owner_input",
       "probe_family": "return_value",
       "assertions": [
         {
@@ -14608,14 +14680,62 @@
         },
         {
           "type": "expected_finding_count",
-          "count": 4
+          "count": 1
         },
         {
           "type": "must_not_promote"
         },
         {
           "type": "expected_class",
-          "class": "weakly_exposed"
+          "class": "static_unknown"
+        }
+      ]
+    },
+    {
+      "id": "rust_nested_use_dependency_alias",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_nested_use_dependency_alias",
+      "vector": "newline_dependency_alias_beats_owner_glob",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        }
+      ]
+    },
+    {
+      "id": "rust_nested_use_cfg",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_nested_use_cfg",
+      "vector": "cfg_disabled_nested_export_does_not_supply_owner_input",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
         }
       ]
     }

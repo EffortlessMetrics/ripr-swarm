@@ -503,6 +503,11 @@ fn list_gaps_tool_descriptor() -> Value {
                     "minimum": 0,
                     "description": "Start index within the narrowed items, in snapshot order. Default 0."
                 },
+                "omitted_offset": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Start index within the omitted identities, which page on their own axis (bounded by count and bytes per response). Follow continuation.next_omitted_page. Default 0."
+                },
                 "limit": {
                     "type": "integer",
                     "minimum": 1,
@@ -1250,6 +1255,20 @@ fn gap_list_output_schema() -> Value {
                         "additionalProperties": false
                     },
                     "omitted_items": { "type": "array" },
+                    "omitted_page": {
+                        "type": "object",
+                        "properties": {
+                            "offset": { "type": "integer", "minimum": 0 },
+                            "returned": { "type": "integer", "minimum": 0 },
+                            "has_more": { "type": "boolean" },
+                            "next_offset": {
+                                "type": ["integer", "null"],
+                                "minimum": 0
+                            }
+                        },
+                        "required": ["offset", "returned", "has_more", "next_offset"],
+                        "additionalProperties": false
+                    },
                     "continuation": { "type": "object" },
                     "claim_boundary": { "type": "string" },
                     "limitations": {
@@ -1278,6 +1297,7 @@ fn gap_list_output_schema() -> Value {
                     "items",
                     "page",
                     "omitted_items",
+                    "omitted_page",
                     "continuation",
                     "claim_boundary",
                     "limitations"
@@ -1478,7 +1498,7 @@ mod tests {
     -> Result<(), String> {
         let rows = |count: usize| {
             json!({
-                "schema_version": "ripr-mcp-gap-list-v3",
+                "schema_version": "ripr-mcp-gap-list-v4",
                 "rows": (0..count)
                     .map(|index| {
                         json!({
@@ -1519,7 +1539,7 @@ mod tests {
         }
         let reparsed: Value = serde_json::from_str(small_text)
             .map_err(|error| format!("text copy is not JSON: {error}"))?;
-        if reparsed.get("schema_version") != Some(&json!("ripr-mcp-gap-list-v3")) {
+        if reparsed.get("schema_version") != Some(&json!("ripr-mcp-gap-list-v4")) {
             return Err(format!("text copy drifted from the document: {reparsed}"));
         }
 

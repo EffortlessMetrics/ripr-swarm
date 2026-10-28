@@ -8911,6 +8911,109 @@ fn protocol_entry_receiver_read_in_bracketed_call_arguments_is_still_credited() 
 }
 
 #[test]
+fn protocol_entry_quoted_for_membership_reads_keep_receiver_credit() -> Result<(), String> {
+    for literal in [
+        "'word'",
+        "'for'",
+        r#""for""#,
+        "r'for'",
+        "u'for'",
+        "b'for'",
+        "f'for'",
+        "'''for'''",
+        r#""""for""""#,
+        "rf'''for'''",
+        "\"\"\"prefix\nfor\"\"\"",
+        "r'''prefix\nfor'''",
+        // The extra quote makes the receiver visible to the line-local mask;
+        // only full-prefix masking can identify `for` as literal text here.
+        "\"\"\"prefix\nfor\" \"\"\"",
+        "r'''prefix\nfor' '''",
+        "\"\"\"é prefix\nfor for\" \"\"\"",
+        "'é for for'",
+        "'foré'",
+    ] {
+        let test_src = format!(
+            "from src.nr import numeric_range\n\n\ndef test_reads():\n    r = numeric_range(1)\n    assert {literal} and ((r)) in [r]\n    assert list(reversed(r)) == [0]\n"
+        );
+        let (finding, relations) = classify_reversed_guard(&test_src)?;
+        assert_eq!(
+            relations,
+            vec![("test_reads".to_string(), "protocol_entry_call")],
+            "{test_src}"
+        );
+        assert_eq!(finding.class, ExposureClass::Exposed, "{test_src}");
+        assert_eq!(finding.oracle_alignment.as_deref(), Some("direct"));
+    }
+    Ok(())
+}
+
+#[test]
+fn protocol_entry_real_for_targets_still_withhold_receiver_credit() -> Result<(), String> {
+    for (target, items) in [
+        ("(r)", "[[1]]"),
+        ("((r))", "[[1]]"),
+        ("(( r ))", "[[1]]"),
+        ("[r]", "[[[1]]]"),
+        ("(\n        (r)\n    )", "[[1]]"),
+        ("[\n        r\n    ]", "[[[1]]]"),
+    ] {
+        let test_src = format!(
+            "from src.nr import numeric_range\n\n\ndef test_rebound():\n    r = numeric_range(0)\n    note = 'for'\n    for {target} in {items}:\n        pass\n    assert list(reversed(r)) == [1]\n"
+        );
+        let (finding, relations) = classify_reversed_guard(&test_src)?;
+        assert_ne!(finding.class, ExposureClass::Exposed, "{test_src}");
+        assert!(
+            relations
+                .iter()
+                .all(|(_, kind)| *kind != "protocol_entry_call"),
+            "{test_src}: {relations:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn protocol_entry_unterminated_literals_do_not_invent_receiver_credit() -> Result<(), String> {
+    for delimiter in ["\"\"\"", "'''", "r\"\"\"", "rf'''"] {
+        let source = format!(
+            "from src.nr import numeric_range\n\ndef test_unterminated():\n    r = numeric_range(1)\n    note = {delimiter}prefix\nfor ((r)) in [[1]]:\n    assert list(reversed(r)) == [0]\n"
+        );
+        for needle in ["for ((r))", "r)) in", "reversed(r)"] {
+            let at = source
+                .find(needle)
+                .ok_or_else(|| format!("missing {needle}"))?;
+            assert!(super::related_tests::python_text_hides_code(&source, at));
+        }
+        let facts =
+            super::source_facts::extract_source_facts(Path::new("tests/test_nr.py"), &source);
+        assert!(super::source_facts::source_facts_syntax_parse_error(&facts).is_some());
+        assert!(
+            facts.tests.is_empty(),
+            "malformed source must retain no test facts"
+        );
+        let file = Path::new("src/nr.py");
+        let owners = extract_owners(file, REVERSED_OWNER);
+        let owner = owners
+            .iter()
+            .find(|owner| owner.name == "__reversed__")
+            .ok_or_else(|| "missing __reversed__ owner".to_string())?;
+        assert!(candidate_relations(owner, &facts.tests).is_empty());
+        let finding = classify_change_with_old(
+            file,
+            6,
+            "        if not self.stop:",
+            Some("        if self.stop:"),
+            &owners,
+            &facts.tests,
+        )
+        .ok_or_else(|| "missing reversed guard finding".to_string())?;
+        assert_ne!(finding.class, ExposureClass::Exposed);
+    }
+    Ok(())
+}
+
+#[test]
 fn protocol_entry_stays_uncredited_without_a_bound_owner_receiver() -> Result<(), String> {
     for test_src in [
         // Another dunder's entry point does not reach `__reversed__`.

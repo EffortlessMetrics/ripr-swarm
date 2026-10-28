@@ -1,0 +1,14 @@
+# Pin input-evidence discrimination separately from final classification (#10047).
+[[extend]]
+id = "RIPR-SPEC-0197"
+tests = [
+  "crates/ripr/tests/returned_comparison_boundary.rs::nested_use_groups_keep_the_owner_leaf",
+  "crates/ripr/tests/returned_comparison_boundary.rs::nested_use_groups_preserve_dependency_and_rename_refusals",
+  "crates/ripr/tests/returned_comparison_boundary.rs::nested_use_groups_preserve_cfg_refusals",
+]
+fixtures = [
+  "fixtures/rust_nested_use_owner",
+  "fixtures/rust_nested_use_dependency_glob",
+  "fixtures/rust_nested_use_dependency_alias",
+  "fixtures/rust_nested_use_cfg",
+]

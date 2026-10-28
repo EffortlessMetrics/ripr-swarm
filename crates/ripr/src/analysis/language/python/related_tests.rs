@@ -928,7 +928,7 @@ fn chained_or_bracketed_target(body: &str, idx: usize, before: &str, after: &str
         // `for (r)in items`, `for x, (r) in items`); a membership test such as
         // `assert ((r)) in items` rebinds nothing.
         || (rest.strip_prefix("in").is_some_and(|after_in| {
-            !after_in.starts_with(is_python_identifier_char) && is_inside_for_target(head_line)
+            !after_in.starts_with(is_python_identifier_char) && is_inside_for_target(head)
         }))
         || head.trim_end().strip_suffix("as").is_some_and(|before_as| {
             before_as.ends_with([' ', '\t']) || before_as.ends_with(['(', ','])
@@ -1015,16 +1015,19 @@ fn skip_blank_backward(text: &str, across_lines: bool) -> &str {
     }
 }
 
-/// Whether `head` (the text of a line before a peeled target) sits in the
-/// target list of a `for` statement: the last whole word `for` has no `in`,
-/// `=` or `:` after it.
+/// Whether `head` (the body prefix before a peeled target) sits in the
+/// target list of a `for` statement: the last whole code word `for` on the
+/// current line has no `in`, `=` or `:` after it. Keep earlier lines available
+/// to the string mask, since a triple-quoted string can start on one of them.
 fn is_inside_for_target(head: &str) -> bool {
+    let line_start = head.rfind('\n').map_or(0, |at| at + 1);
     let mut search = head.len();
-    while let Some(at) = head[..search].rfind("for") {
+    while let Some(offset) = head[line_start..search].rfind("for") {
+        let at = line_start + offset;
         let boundary_before = !head[..at].ends_with(is_python_identifier_char);
         let boundary_after = !head[at + 3..].starts_with(is_python_identifier_char);
         // A `for` inside a string or after a comment is text, not a keyword.
-        let hidden = python_prefix_hides_code(&head[..at]);
+        let hidden = python_text_hides_code(head, at);
         if boundary_before && boundary_after && !hidden {
             let targets = &head[at + 3..];
             return !targets.contains(['=', ':'])
