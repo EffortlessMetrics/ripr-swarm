@@ -11,3 +11,7 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+The full human projection from that same fixture execution is also retained as
+`expected/human-full.txt`; the family-specific honesty cases require it to
+check that human output agrees with the two JSON propagation refusals.
