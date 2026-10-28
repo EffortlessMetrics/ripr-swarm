@@ -25,6 +25,8 @@ use crate::value_origins::LocatedActivationEvidence as ActivationEvidence;
 #[cfg(test)]
 use crate::value_origins::LocatedValueFact as ValueFact;
 
+mod bound_result;
+
 /// Token carried in the discriminate summary when a predicate would otherwise
 /// read `exposed` without an admitted oracle on the boundary call.
 pub(in crate::analysis) const SAME_TEST_PAIRING_MISSING: &str = "same_test_pairing_missing";
@@ -847,8 +849,13 @@ fn boundary_bound_locals(
                 name: owner.name.clone(),
                 text: binding.trim().to_string().into(),
             };
-            let is_boundary = calls_resolve(binding)
-                && owner_call_activates_boundary(probe, owner, test, &call, activation, scope);
+            let is_boundary =
+                bound_result::boundary_call(binding, owner, &test.body).is_some_and(|result| {
+                    calls_resolve(&result.text)
+                        && owner_call_activates_boundary(
+                            probe, owner, test, &call, activation, scope, &result,
+                        )
+                });
             if let Some(existing) = last.iter_mut().find(|(tracked, _)| tracked == name) {
                 existing.1 = is_boundary;
             } else {
@@ -999,11 +1006,12 @@ fn owner_call_activates_boundary(
     call: &CallFact,
     activation: &ActivationEvidence,
     scope: super::argument_fold::FoldScope<'_>,
+    result: &bound_result::BoundResult<'_>,
 ) -> bool {
     if call.name != owner.name {
         return false;
     }
-    let sites = owner_call_sites(&call.text, owner);
+    let sites = owner_call_sites(&result.text, owner);
     if let Some(arguments) = sites.first() {
         if argument_list_activates_boundary(probe, owner, test, arguments, scope) {
             return true;
@@ -1012,7 +1020,10 @@ fn owner_call_activates_boundary(
             return false;
         }
     }
-    sites.len() == 1 && activation_marks_boundary_call(activation, call)
+    // A projected block tail cannot borrow an earlier discarded call's
+    // line-level activation. Keep the original binding fact for the
+    // unchanged nonblock fallback, never the shortened result text.
+    !result.block_tail && sites.len() == 1 && activation_marks_boundary_call(activation, call)
 }
 
 fn argument_list_activates_boundary(

@@ -5589,6 +5589,16 @@ pub(in crate::analysis) fn function_declaration_is_async(
         .declaration_is_async(owner)
 }
 
+/// A whole free call, not an unrelated method or associated call with the
+/// same name and a free call nested inside its arguments. Definition identity
+/// remains the caller's authority.
+pub(super) fn is_whole_free_owner_call(operand: &str, name: &str) -> bool {
+    matches!(
+        owner_call_shape(operand, name),
+        Some(CallShape::Bare | CallShape::Path(_))
+    )
+}
+
 /// The operand as a complete call of `name`: `name(..)` or `recv.name(..)`
 /// with a plain identifier receiver and nothing chained after the call.
 fn owner_call_shape<'a>(operand: &'a str, name: &str) -> Option<CallShape<'a>> {

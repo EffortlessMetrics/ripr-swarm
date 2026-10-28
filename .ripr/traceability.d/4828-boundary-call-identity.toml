@@ -7,4 +7,7 @@ tests = [
   "crates/ripr/tests/owner_pin_execution/boundary_call_identity.rs::element_boundary_pairing_keeps_the_asserted_calls_definition",
 ]
 fixtures = ["fixtures/boundary_pairing_sibling_owner", "fixtures/boundary_pairing_sibling_element"]
-code = ["crates/ripr/src/analysis/classify/call_identity.rs"]
+code = [
+  "crates/ripr/src/analysis/classify/call_identity.rs",
+  "crates/ripr/src/analysis/classify/boundary_pairing/bound_result.rs",
+]

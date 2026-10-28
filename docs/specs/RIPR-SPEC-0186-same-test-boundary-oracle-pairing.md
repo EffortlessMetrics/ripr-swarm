@@ -100,6 +100,14 @@ owner call keeps its identity when an unrelated sibling call follows its
 initializer statement on the same physical line. Identity and activation read
 the same balanced initializer span; later statements cannot lend it a boundary
 call, and a block-internal semicolon does not truncate its identity check.
+For a free-owner block initializer, both checks use its returned whole call through
+plain nested block tails and parentheses. Discarded owner or sibling calls
+cannot lend that result either identity or activation. Constant, far-input,
+wrapper, conditional and alias tails do not establish an owner-boundary result.
+Projected block tails do not borrow coarse line-level activation; unresolved
+arguments stay unconfirmed. Labelled, deferred, early-exit or locally rebound
+bare-call block forms remain outside this bounded proof. Inherent-owner binding
+analysis retains its separate existing authority; this rule adds no receiver proof.
 
 An owner-call argument is a boundary input only when it is the literal itself
 (including a type suffix such as `10u32`), a named local bound to that literal,
