@@ -5373,12 +5373,23 @@ fn boundary_operand_parameter(
     operand: &str,
     at_line: usize,
 ) -> Option<String> {
+    if match_guard_at(function, operand, at_line, true) {
+        return boundary_local_operand_parameter(
+            function,
+            owner_source,
+            parameters,
+            operand,
+            at_line,
+        );
+    }
     parameters
         .iter()
         .find(|parameter| parameter.as_str() == operand)
         .cloned()
         .or_else(|| mut_boundary_parameter(function, parameters, operand, at_line))
-        .or_else(|| boundary_local_operand_parameter(function, owner_source, parameters, operand))
+        .or_else(|| {
+            boundary_local_operand_parameter(function, owner_source, parameters, operand, at_line)
+        })
 }
 
 /// A `mut n` parameter as the operand `n` (#10306): the signature keeps the
@@ -5407,9 +5418,32 @@ fn boundary_local_operand_parameter(
     owner_source: Option<&str>,
     parameters: &[String],
     operand: &str,
+    at_line: usize,
 ) -> Option<String> {
     if operand.is_empty() {
         return None;
+    }
+    // A match guard owns its binding. An earlier unrelated if-let
+    // or local alias must not steal attribution from that arm.
+    if match_guard_at(function, operand, at_line, false) {
+        if !match_guard_at(function, operand, at_line, true) {
+            return parameters
+                .iter()
+                .find(|parameter| {
+                    body_contains_direct_local_alias(&function.body, operand, parameter)
+                })
+                .cloned();
+        }
+        return parameters
+            .iter()
+            .find(|parameter| {
+                owner_source.is_some_and(|source| {
+                    !may_name_constant(source, operand)
+                        && !may_declare_items_in_owner_scope(source, &function.name)
+                }) && (match_wrapped_alias_at(function, operand, parameter, at_line)
+                    || body_contains_guard_binding_alias(&function.body, operand, parameter))
+            })
+            .cloned();
     }
     for parameter in parameters {
         if body_contains_wrapped_local_alias(&function.body, "Some", operand, parameter)
@@ -5433,6 +5467,53 @@ fn boundary_local_operand_parameter(
     None
 }
 
+fn match_guard_at(
+    function: &FunctionSummary,
+    operand: &str,
+    at_line: usize,
+    pattern_mentions_operand: bool,
+) -> bool {
+    use ra_ap_syntax::{AstNode, ast};
+    if !function.body.contains("match") || !function.body.contains(operand) {
+        return false;
+    }
+    let Some((start, end)) = function_line_range(function, at_line) else {
+        return false;
+    };
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(&function.body) else {
+        return false;
+    };
+    parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::MatchArm::cast)
+        .any(|arm| {
+            (!pattern_mentions_operand
+                || arm.pat().is_some_and(|pat| {
+                    mentions_identifier(&pat.syntax().text().to_string(), operand)
+                }))
+                && arm.guard().is_some_and(|guard| {
+                    let range = guard.syntax().text_range();
+                    usize::from(range.start()) <= end
+                        && usize::from(range.end()) > start
+                        && mentions_identifier(&guard.syntax().text().to_string(), operand)
+                })
+        })
+}
+
+fn function_line_range(function: &FunctionSummary, at_line: usize) -> Option<(usize, usize)> {
+    let offset = at_line.checked_sub(function.start_line)?;
+    let start = function
+        .body
+        .split_inclusive('\n')
+        .take(offset)
+        .map(str::len)
+        .try_fold(0usize, usize::checked_add)?;
+    let line = function.body.get(start..)?.lines().next()?;
+    Some((start, start + line.len()))
+}
+
 fn body_contains_wrapped_local_alias(
     body: &str,
     wrapper: &str,
@@ -5446,6 +5527,118 @@ fn body_contains_wrapped_local_alias(
             .is_some_and(|rest| starts_with_identifier_token(rest, parameter))
     }) || (body_contains_match_parameter(body, parameter)
         && body_contains_wrapper_pattern(body, wrapper, operand))
+}
+
+/// Bind a wrapped match pattern only to the arm containing the changed line.
+/// Ambiguous lines, shadowed bindings and parameter uses elsewhere abstain.
+fn match_wrapped_alias_at(
+    function: &FunctionSummary,
+    operand: &str,
+    parameter: &str,
+    at_line: usize,
+) -> bool {
+    use ra_ap_syntax::{
+        AstNode,
+        ast::{self, HasName},
+    };
+    let Some((start, end)) = function_line_range(function, at_line) else {
+        return false;
+    };
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(&function.body) else {
+        return false;
+    };
+    let Some(owner) = parse.tree().syntax().descendants().find_map(ast::Fn::cast) else {
+        return false;
+    };
+    let Some(body) = owner.body() else {
+        return false;
+    };
+    // A line-only probe cannot distinguish two comparisons on the same line.
+    let comparisons: Vec<_> = body
+        .syntax()
+        .descendants()
+        .filter_map(ast::BinExpr::cast)
+        .filter(|expr| {
+            let range = expr.syntax().text_range();
+            usize::from(range.start()) <= end && usize::from(range.end()) > start
+        })
+        .collect();
+    if comparisons.len() != 1 {
+        return false;
+    }
+    if body
+        .syntax()
+        .descendants()
+        .any(|node| ast::ClosureExpr::can_cast(node.kind()))
+    {
+        return false;
+    }
+    let parameter_uses = body
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| token.text() == parameter)
+        .count();
+    let bindings = body
+        .syntax()
+        .descendants()
+        .filter_map(ast::IdentPat::cast)
+        .filter(|pat| pat.name().is_some_and(|name| name.text() == operand))
+        .count();
+    if parameter_uses != 1 || bindings != 1 {
+        return false;
+    }
+    let mut hits = body
+        .syntax()
+        .descendants()
+        .filter_map(ast::MatchExpr::cast)
+        .flat_map(|matched| {
+            let direct = matched
+                .expr()
+                .is_some_and(|expr| expr.syntax().text() == parameter);
+            matched
+                .match_arm_list()
+                .into_iter()
+                .flat_map(move |arms| arms.arms().map(move |arm| (direct, arm)))
+        })
+        .filter(|(_, arm)| {
+            arm.guard().is_some_and(|guard| {
+                let range = guard.syntax().text_range();
+                usize::from(range.start()) <= end && usize::from(range.end()) > start
+            })
+        });
+    let Some((direct, arm)) = hits.next() else {
+        return false;
+    };
+    if hits.next().is_some() || !direct {
+        return false;
+    }
+    if !arm.guard().is_some_and(|guard| {
+        guard
+            .syntax()
+            .text_range()
+            .contains_range(comparisons[0].syntax().text_range())
+    }) {
+        return false;
+    }
+    if arm.guard().is_some_and(|guard| {
+        guard
+            .syntax()
+            .descendants()
+            .any(|node| ast::MacroCall::can_cast(node.kind()))
+    }) {
+        return false;
+    }
+    arm.pat().is_some_and(|pat| {
+        let text: String = pat
+            .syntax()
+            .text()
+            .to_string()
+            .chars()
+            .filter(|ch| !ch.is_whitespace())
+            .collect();
+        text == format!("Some({operand})") || text == format!("Ok({operand})")
+    })
 }
 
 fn body_contains_match_parameter(body: &str, parameter: &str) -> bool {
@@ -7604,11 +7797,11 @@ mod tests {
         let parameters = function_parameters(&owner);
 
         assert_eq!(
-            boundary_local_operand_parameter(&owner, None, &parameters, "amount"),
+            boundary_local_operand_parameter(&owner, None, &parameters, "amount", 2),
             Some("raw_amount".to_string())
         );
         assert_eq!(
-            boundary_local_operand_parameter(&owner, None, &parameters, ""),
+            boundary_local_operand_parameter(&owner, None, &parameters, "", 2),
             None
         );
         assert!(body_contains_wrapped_local_alias(
@@ -7654,6 +7847,145 @@ mod tests {
             " raw_amount_extra.required_discriminator()",
             "raw_amount"
         ));
+    }
+
+    #[test]
+    fn wrapped_guard_boundary_uses_the_matching_scrutinee() {
+        let make_owner = |prefix: &str| {
+            function(&format!(
+                "pub fn score(first: Option<i32>, second: Option<i32>, threshold: i32) -> bool {{\n{prefix}    match second {{\n        Some(amount) if amount >= threshold => true,\n        _ => false,\n    }}\n}}"
+            ))
+        };
+        let test = test_with_call("score_boundary", "score(Some(100), Some(101), 100);");
+        for prefix in [
+            "",
+            "    let _ = match first { Some(_) => true, None => false };\n",
+        ] {
+            let owner = make_owner(prefix);
+            let mut index = crate::analysis::rust_index::RustIndex::default();
+            index.insert_file_only(
+                owner.file.clone(),
+                crate::analysis::facts::FileFacts {
+                    path: owner.file.clone(),
+                    source: owner.body.to_string().into(),
+                    ..Default::default()
+                },
+            );
+            let mut probe = probe(ProbeFamily::Predicate, "amount >= threshold");
+            probe.location =
+                SourceLocation::new("src/lib.rs", if prefix.is_empty() { 3 } else { 4 }, 9);
+            let activation =
+                activation_evidence(&probe, Some(&owner), &[&test], &[], None, &index, false);
+            assert!(
+                !has_observed_boundary_equality(&activation),
+                "{prefix:?}: {activation:?}"
+            );
+            assert_eq!(
+                activation.missing_discriminators.len(),
+                1,
+                "{prefix:?}: {activation:?}"
+            );
+            assert!(
+                activation.missing_discriminators[0]
+                    .reason
+                    .contains("observed amount values: 101"),
+                "{prefix:?}: {activation:?}"
+            );
+        }
+        let owner = make_owner("    if let Some(amount) = first { let _ = amount; }\n");
+        let params = function_parameters(&owner);
+        assert_eq!(
+            boundary_local_operand_parameter(&owner, Some(&owner.body), &params, "amount", 4),
+            None
+        );
+    }
+
+    #[test]
+    fn wrapped_match_alias_rejects_transforms_and_other_bindings() {
+        let direct = function(
+            "fn score(points: Option<i32>) -> bool {\n    match points {\n        Some(p) if p >= 100 => true,\n        _ => false,\n    }\n}",
+        );
+        assert!(match_wrapped_alias_at(&direct, "p", "points", 3));
+        let transformed = function(
+            "fn score(points: Option<i32>) -> bool {\n    match points.map(|n| n + 50) {\n        Some(p) if p >= 100 => true,\n        _ => false,\n    }\n}",
+        );
+        assert!(!match_wrapped_alias_at(&transformed, "p", "points", 3));
+        let shadowed = function(
+            "fn score(points: Option<i32>) -> bool {\n    match points { Some(p) => (), _ => () };\n    let p = 100;\n    p >= 100\n}",
+        );
+        assert!(!match_wrapped_alias_at(&shadowed, "p", "points", 4));
+        let params = function_parameters(&direct);
+        assert_eq!(
+            boundary_local_operand_parameter(
+                &direct,
+                Some("const p: i32 = 100;\nfn score(points: Option<i32>) {}"),
+                &params,
+                "p",
+                3
+            ),
+            None
+        );
+        assert_eq!(
+            boundary_local_operand_parameter(&direct, None, &params, "p", 3),
+            None
+        );
+        let shadow = function(
+            "fn score(p: i32, raw: Option<i32>) -> bool {\n    match raw {\n        Some(p) if p >= 100 => true,\n        _ => false,\n    }\n}",
+        );
+        let params = function_parameters(&shadow);
+        assert_eq!(
+            boundary_operand_parameter(&shadow, Some(&shadow.body), &params, "p", 3),
+            Some("raw".to_string())
+        );
+        let ambiguous = function(
+            "fn score(p: i32, raw: Option<i32>) -> bool {\n    let _ = p >= 100; match raw { Some(p) if p >= 100 => true, _ => false }\n}",
+        );
+        let params = function_parameters(&ambiguous);
+        assert_eq!(
+            boundary_operand_parameter(&ambiguous, Some(&ambiguous.body), &params, "p", 2),
+            None
+        );
+        let outside = function(
+            "fn score(p: i32, raw: Option<i32>) -> bool {\n    let _ = p >= 100; match raw { Some(p) if valid(p) => true, _ => false }\n}",
+        );
+        let params = function_parameters(&outside);
+        assert_eq!(
+            boundary_operand_parameter(&outside, Some(&outside.body), &params, "p", 2),
+            None
+        );
+        let qualified = function(
+            "fn score(first: Option<i32>, second: Option<i32>) -> bool {\n    let _ = match first { _ => () };\n    match second { std::option::Option::Some(p) if p >= 100 => true, _ => false }\n}",
+        );
+        let params = function_parameters(&qualified);
+        assert_eq!(
+            boundary_operand_parameter(&qualified, Some(&qualified.body), &params, "p", 3),
+            None
+        );
+        for pattern in ["Some((p))", "Some(/* comment */ p)", "Err(p)", "p"] {
+            let second_type = if pattern == "Err(p)" {
+                "Result<i32, i32>"
+            } else if pattern == "p" {
+                "i32"
+            } else {
+                "Option<i32>"
+            };
+            let owner = function(&format!(
+                "fn score(first: Option<i32>, second: {second_type}) -> bool {{\n    let _ = match first {{ Some(p) => (), _ => () }};\n    match second {{ {pattern} if p >= 100 => true, _ => false }}\n}}"
+            ));
+            let params = function_parameters(&owner);
+            assert_eq!(
+                boundary_operand_parameter(&owner, Some(&owner.body), &params, "p", 3),
+                None
+            );
+        }
+        let local = function(
+            "fn score(x: i32, threshold: i32) -> bool {\n    let limit = threshold;\n    match x {\n        p if p >= limit => true,\n        _ => false,\n    }\n}",
+        );
+        let params = function_parameters(&local);
+        assert_eq!(
+            boundary_operand_parameter(&local, Some(&local.body), &params, "limit", 4),
+            Some("threshold".to_string())
+        );
     }
 
     #[test]
