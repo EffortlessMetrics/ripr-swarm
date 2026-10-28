@@ -139,10 +139,10 @@ impl PythonAssertionFocus {
         match &self.changed_field {
             None => false,
             Some(PythonChangedField::Attribute(attr)) => {
-                !oracle_text_observes_token(&assertion.text, attr)
+                !oracle_text_observes_token(&assertion.gate_text, attr)
             }
             Some(PythonChangedField::DictElements { keys, values }) => {
-                !oracle_observes_changed_dict_element(&assertion.text, keys, values)
+                !oracle_observes_changed_dict_element(&assertion.gate_text, keys, values)
             }
         }
     }
@@ -300,7 +300,7 @@ fn selection_order(
     let sink_relevance =
         |assertion: &PythonAssertion| focus.map_or(1, |focus| focus.sink_relevance(assertion));
     let observes_whole_value =
-        |assertion: &PythonAssertion| !oracle_is_pure_len_aggregate(&assertion.text, "");
+        |assertion: &PythonAssertion| !oracle_is_pure_len_aggregate(&assertion.gate_text, "");
     sink_relevance(right)
         .cmp(&sink_relevance(left))
         .then_with(|| {

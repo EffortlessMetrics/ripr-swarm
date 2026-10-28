@@ -209,7 +209,7 @@ as strong for one credit branch only; its table row is unchanged.
 1. **Duplicative or mixed equality is not exact.** An `==` comparison,
    or an `assertEqual`, `assertDictEqual` or (rule 12)
    `self.assertAlmostEqual` call, whose two compared
-   operands are the same token sequence, ignoring whitespace outside
+   operands are the same token sequence, ignoring comments and whitespace outside
    string literals, assigns `relational_check` / weak. It cannot
    discriminate a change to the code both sides run. This mirrors
    RIPR-SPEC-0231 step 3. In an all-`==` chain only a chain whose every
@@ -284,7 +284,10 @@ as strong for one credit branch only; its table row is unchanged.
    call (and, for a `with` item, its body) less any `msg`: the callable
    of rule 13 and its arguments count, and a rule 14 promotion uses the
    joined text that rule defines. An owner call that appears only in a
-   failure message observes nothing.
+   failure message observes nothing. Comments inside an expression, call or
+   exception body also observe nothing: semantic evidence excludes them,
+   while reported source text and locations retain them. Quoted `#`
+   characters remain part of their string value.
 
 ### Error-path gate
 

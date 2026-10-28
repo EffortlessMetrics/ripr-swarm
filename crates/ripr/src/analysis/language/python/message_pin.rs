@@ -23,6 +23,7 @@ use super::PythonAssertion;
 use super::assertion_selection::PythonAssertionFocus;
 use super::related_tests::PythonRelatedCandidate;
 use super::source_facts::parse_module_result;
+use super::source_utils::SourceText;
 use crate::domain::{OracleKind, OracleStrength};
 use rustpython_parser::ast::{self, Expr, Mod, Stmt};
 use std::path::Path;
@@ -64,9 +65,10 @@ pub(super) fn python_message_pin_gap(
             // A comparison joined after the `with` (rule 14, `assert
             // str(exc.value) == "..."`) is a second discriminator this gate
             // does not evaluate, so it fails open.
+            let assertion_source = SourceText::new(&assertion.text);
             if assertion
                 .gate_text
-                .strip_prefix(assertion.text.as_str())
+                .strip_prefix(assertion_source.semantic_text())
                 .is_some_and(|rest| {
                     rest.lines()
                         .any(|line| line.trim_start().starts_with("assert "))

@@ -1,0 +1,15 @@
+[[extend]]
+id = "RIPR-SPEC-0238"
+tests = [
+  "crates/ripr/src/analysis/language/python/comment_evidence_tests.rs",
+  "crates/ripr/tests/cli_smoke/python_comment_evidence.rs",
+]
+code = [
+  "crates/ripr/src/analysis/language/python/source_utils.rs",
+  "crates/ripr/src/analysis/language/python/oracles.rs",
+  "crates/ripr/src/analysis/language/python/assertion_selection.rs",
+]
+fixtures = [
+  "fixtures/python_comment_owner_credit",
+  "fixtures/python_comment_tautology",
+]

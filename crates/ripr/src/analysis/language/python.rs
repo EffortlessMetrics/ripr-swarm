@@ -1595,3 +1595,6 @@ mod verdict_corpus_tests;
 
 #[cfg(test)]
 mod doctest_gate_tests;
+
+#[cfg(test)]
+mod comment_evidence_tests;

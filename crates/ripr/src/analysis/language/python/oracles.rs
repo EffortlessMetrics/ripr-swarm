@@ -200,7 +200,7 @@ fn collect_with_item_assertions(
                 assertion.gate_text = format!(
                     "{}\n{}",
                     assertion.gate_text,
-                    text_for_range(source, body_range).trim()
+                    text_for_range(source.semantic_text(), body_range).trim()
                 );
                 // Rule 14: the raised error compared by value after the `with`
                 // pins it; the comparison joins the item's gate text.
@@ -245,12 +245,14 @@ fn bound_exception_comparison(
             let pinned = |read: &Expr, other: &Expr| {
                 reads_raised_error(read, bound, field) && !mentions_name(source, other, bound)
             };
-            if !same_tokens(source, left, right) && (pinned(left, right) || pinned(right, left)) {
+            if !same_tokens(source.semantic_text(), left, right)
+                && (pinned(left, right) || pinned(right, left))
+            {
                 // The failure message observes nothing (rule 4).
                 return Some(format!(
                     "assert {} == {}",
-                    text_for_range(source, left.range()).trim(),
-                    text_for_range(source, right.range()).trim()
+                    text_for_range(source.semantic_text(), left.range()).trim(),
+                    text_for_range(source.semantic_text(), right.range()).trim()
                 ));
             }
         }
@@ -323,7 +325,7 @@ fn reads_raised_error(expr: &Expr, bound: &str, field: &str) -> bool {
 /// walrus), or calls a method on it or on such an attribute, or passes it to
 /// a call (`setattr(exc.value, ...)`).
 fn statement_touches_name(stmt: &Stmt, name: &str, source: &SourceText<'_>) -> bool {
-    if text_for_range(source, stmt.range()).contains(":=") {
+    if text_for_range(source.semantic_text(), stmt.range()).contains(":=") {
         return true;
     }
     let rooted = |expr: &Expr| target_rooted_at(expr, name);
@@ -394,8 +396,8 @@ fn calls_into(expr: &Expr, name: &str) -> bool {
 }
 
 /// Whether `expr`'s text names `name` as a whole identifier.
-fn mentions_name(source: &str, expr: &Expr, name: &str) -> bool {
-    super::mentions_python_name(&text_for_range(source, expr.range()), name)
+fn mentions_name(source: &SourceText<'_>, expr: &Expr, name: &str) -> bool {
+    super::mentions_python_name(&text_for_range(source.semantic_text(), expr.range()), name)
 }
 
 fn expr_root_name(expr: &Expr) -> Option<&str> {
@@ -425,12 +427,12 @@ fn assertion_from_assert(
     loops: &[String],
 ) -> PythonAssertion {
     let (mut oracle_kind, mut oracle_strength, oracle_shape) =
-        oracle_for_assert_expr(assert_stmt.test.as_ref(), source);
+        oracle_for_assert_expr(assert_stmt.test.as_ref(), source.semantic_text());
     // RIPR-SPEC-0238 rule 25: a property check relates the owner to itself
     // or to the value it was given, so it pins no value (#9594).
     if oracle_strength == OracleStrength::Strong
         && let Expr::Compare(compare) = assert_stmt.test.as_ref()
-        && is_property_compare(compare, loops, source)
+        && is_property_compare(compare, loops, source.semantic_text())
     {
         oracle_kind = OracleKind::RelationalCheck;
         oracle_strength = OracleStrength::Weak;
@@ -455,7 +457,9 @@ fn assertion_from_assert(
             })
             .map(|value| {
                 (
-                    text_for_range(source, value.range()).trim().to_string(),
+                    text_for_range(source.semantic_text(), value.range())
+                        .trim()
+                        .to_string(),
                     value.range(),
                 )
             })
@@ -487,7 +491,9 @@ fn bare_bool_call(expr: &Expr, source: &SourceText<'_>) -> Option<super::PythonB
     }
     Some(super::PythonBareBoolCall {
         callee: callee.id.to_string(),
-        call_text: text_for_range(source, call.range).trim().to_string(),
+        call_text: text_for_range(source.semantic_text(), call.range)
+            .trim()
+            .to_string(),
         bool_arguments: call
             .args
             .iter()
@@ -535,7 +541,11 @@ fn is_literal_argument(expr: &Expr) -> bool {
 fn assert_gate_expr(expr: &Expr, source: &SourceText<'_>) -> String {
     assert_gate_values(expr, source)
         .into_iter()
-        .map(|value| text_for_range(source, value.range()).trim().to_string())
+        .map(|value| {
+            text_for_range(source.semantic_text(), value.range())
+                .trim()
+                .to_string()
+        })
         .collect::<Vec<_>>()
         .join(" and ")
 }
@@ -547,7 +557,11 @@ fn assert_gate_values<'a>(expr: &'a Expr, source: &SourceText<'_>) -> Vec<&'a Ex
     if bool_op.op != ast::BoolOp::And {
         return vec![expr];
     }
-    let strength = |value: &Expr| oracle_for_assert_expr(value, source).1.rank();
+    let strength = |value: &Expr| {
+        oracle_for_assert_expr(value, source.semantic_text())
+            .1
+            .rank()
+    };
     let strongest = bool_op
         .values
         .iter()
@@ -566,7 +580,8 @@ fn assertion_from_expr(expr: &Expr, source: &SourceText<'_>) -> Option<PythonAss
     let Expr::Call(call) = expr else {
         return None;
     };
-    let (oracle_kind, oracle_strength, oracle_shape) = oracle_for_call(call, source)?;
+    let (oracle_kind, oracle_strength, oracle_shape) =
+        oracle_for_call(call, source.semantic_text())?;
     let text = text_for_range(source, call.range).trim().to_string();
     // Rule 13: the callable form calls its callable, so the gates read that
     // call as they read the body of the `with` form.
@@ -575,20 +590,27 @@ fn assertion_from_expr(expr: &Expr, source: &SourceText<'_>) -> Option<PythonAss
         // (`match=` included in pytest's callable form).
         let arguments = arguments
             .iter()
-            .map(|argument| text_for_range(source, argument.range()).trim().to_string())
-            .chain(
-                call.keywords
-                    .iter()
-                    .map(|keyword| text_for_range(source, keyword.range()).trim().to_string()),
-            )
+            .map(|argument| {
+                text_for_range(source.semantic_text(), argument.range())
+                    .trim()
+                    .to_string()
+            })
+            .chain(call.keywords.iter().map(|keyword| {
+                text_for_range(source.semantic_text(), keyword.range())
+                    .trim()
+                    .to_string()
+            }))
             .collect::<Vec<_>>()
             .join(", ");
         let callable_call = format!(
             "{}({arguments})",
-            text_for_range(source, callable.range()).trim()
+            text_for_range(source.semantic_text(), callable.range()).trim()
         );
         return Some(PythonAssertion {
-            gate_text: format!("{text}\n{callable_call}"),
+            gate_text: format!(
+                "{}\n{callable_call}",
+                text_for_range(source.semantic_text(), call.range).trim()
+            ),
             callable_call: Some(callable_call),
             helper_derived: false,
             text,
@@ -605,12 +627,16 @@ fn assertion_from_expr(expr: &Expr, source: &SourceText<'_>) -> Option<PythonAss
         .map(|(first, second)| {
             format!(
                 "{}({}, {})",
-                text_for_range(source, call.func.range()).trim(),
-                text_for_range(source, first.range()).trim(),
-                text_for_range(source, second.range()).trim()
+                text_for_range(source.semantic_text(), call.func.range()).trim(),
+                text_for_range(source.semantic_text(), first.range()).trim(),
+                text_for_range(source.semantic_text(), second.range()).trim()
             )
         })
-        .unwrap_or_else(|| text.clone());
+        .unwrap_or_else(|| {
+            text_for_range(source.semantic_text(), call.range)
+                .trim()
+                .to_string()
+        });
     Some(PythonAssertion {
         text,
         gate_text,
@@ -623,7 +649,9 @@ fn assertion_from_expr(expr: &Expr, source: &SourceText<'_>) -> Option<PythonAss
                     .into_iter()
                     .map(|value| {
                         (
-                            text_for_range(source, value.range()).trim().to_string(),
+                            text_for_range(source.semantic_text(), value.range())
+                                .trim()
+                                .to_string(),
                             value.range(),
                         )
                     })

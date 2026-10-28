@@ -1,0 +1,7 @@
+diff --git a/src/fees.py b/src/fees.py
+--- a/src/fees.py
++++ b/src/fees.py
+@@ -1,2 +1,2 @@
+ def fee(value):
+-    return value + 1
++    return value - 1

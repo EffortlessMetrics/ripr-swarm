@@ -15,6 +15,7 @@ pub(super) struct SourceText<'a> {
     /// `typer.Typer()` receiver names, scanned once on first use; every
     /// owner in the file asks for them.
     cli_receiver_names: std::cell::OnceCell<Vec<String>>,
+    semantic_text: std::cell::OnceCell<Option<String>>,
 }
 
 impl<'a> SourceText<'a> {
@@ -28,7 +29,37 @@ impl<'a> SourceText<'a> {
             text,
             newline_offsets,
             cli_receiver_names: std::cell::OnceCell::new(),
+            semantic_text: std::cell::OnceCell::new(),
         }
+    }
+
+    /// Assertion evidence excludes comments, while source spans and displayed
+    /// text retain the original bytes. Native token spans protect strings and
+    /// explicit continuations; only comments in the gaps are blanked.
+    pub(super) fn semantic_text(&self) -> &str {
+        self.semantic_text
+            .get_or_init(|| {
+                if !self.text.contains('#') {
+                    return None;
+                }
+                let mut bytes = self.text.as_bytes().to_vec();
+                let mut previous = 0;
+                for token in
+                    rustpython_parser::lexer::lex(self.text, rustpython_parser::Mode::Module)
+                {
+                    let Ok((_, range)) = token else {
+                        // A failed lexical projection supplies no textual credit.
+                        return Some(String::new());
+                    };
+                    let start = usize::from(range.start());
+                    blank_comment_gap(&mut bytes, previous, start);
+                    previous = usize::from(range.end());
+                }
+                blank_comment_gap(&mut bytes, previous, self.text.len());
+                Some(String::from_utf8(bytes).unwrap_or_default())
+            })
+            .as_deref()
+            .unwrap_or(self.text)
     }
 
     /// 1-indexed line for a 0-indexed byte offset.
@@ -138,4 +169,20 @@ pub(super) fn is_test_file(path: &Path) -> bool {
         let text = component.as_os_str().to_string_lossy();
         text == "tests" || text == "test"
     })
+}
+
+/// Token gaps contain whitespace, continuations and comments, never strings.
+fn blank_comment_gap(bytes: &mut [u8], start: usize, end: usize) {
+    let Some(gap) = bytes.get_mut(start..end) else {
+        return;
+    };
+    let mut comment = false;
+    for byte in gap {
+        if matches!(*byte, b'\n' | b'\r') {
+            comment = false;
+        } else if comment || *byte == b'#' {
+            comment = true;
+            *byte = b' ';
+        }
+    }
 }

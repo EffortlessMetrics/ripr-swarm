@@ -98,6 +98,9 @@ mod pilot_timeout_retry;
 #[path = "cli_smoke/portable_diff_paths.rs"]
 mod portable_diff_paths;
 #[cfg(feature = "lang-python")]
+#[path = "cli_smoke/python_comment_evidence.rs"]
+mod python_comment_evidence;
+#[cfg(feature = "lang-python")]
 #[path = "cli_smoke/python_source_admission.rs"]
 mod python_source_admission;
 #[cfg(feature = "lang-python")]

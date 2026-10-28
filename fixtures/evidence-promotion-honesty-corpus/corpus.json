@@ -14594,6 +14594,54 @@
         { "type": "must_not_promote" },
         { "type": "expected_class", "class": "static_unknown" }
       ]
+    },
+    {
+      "id": "python_comment_owner_credit",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_comment_owner_credit",
+      "vector": "inert_comment_inside_assertion_expression",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "python_comment_tautology",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_comment_tautology",
+      "vector": "inert_comment_inside_assertion_expression",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
     }
   ]
 }
