@@ -19841,6 +19841,35 @@ fn drop_type_gate_masks_the_corpus_once_across_many_seams() -> Result<(), String
     Ok(())
 }
 
+#[test]
+fn drop_type_facts_are_keyed_by_type_within_one_index() -> Result<(), String> {
+    let source = format!(
+        "pub struct Row(pub u32);\npub struct Loud(pub u32);\n{EXIT_DROP}pub type Al = u32;\n\
+         pub fn mk_row(x: u32) -> Row {{\n    Row(x)\n}}\n\
+         pub fn mk_loud(x: u32) -> Loud {{\n    Loud(x)\n}}\n\
+         pub fn mk_al(x: u32) -> Al {{\n    x\n}}\n"
+    );
+    for order in [
+        [("mk_row", false), ("mk_loud", true), ("mk_al", true)],
+        [("mk_al", true), ("mk_loud", true), ("mk_row", false)],
+        [("mk_loud", true), ("mk_row", false), ("mk_al", true)],
+    ] {
+        let index = index_from_files(&[(PathBuf::from("src/lib.rs"), source.as_str())])?;
+        for (name, expected) in order {
+            let function = index
+                .functions()
+                .iter()
+                .find(|function| function.name == name)
+                .ok_or_else(|| format!("no function `{name}` indexed"))?;
+            let got = names_non_plain_drop_type(function, "", &index);
+            if got != expected {
+                return Err(format!("{name}: expected withhold={expected}, got {got}"));
+            }
+        }
+    }
+    Ok(())
+}
+
 const EXIT_DROP: &str =
     "impl Drop for Loud {\n    fn drop(&mut self) {\n        std::process::exit(0);\n    }\n}\n";
 const PLAIN_DROP: &str = "impl Drop for Loud {\n    fn drop(&mut self) {}\n}\n";

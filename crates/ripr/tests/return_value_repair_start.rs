@@ -851,6 +851,56 @@ fn discarded_owner_result_with_unrelated_assertion_is_not_a_repair_start() -> Re
     Ok(())
 }
 
+/// Identifier collisions are not calls of the owner: `undbl(`, `xdbl(` and
+/// `dbl_x(` in an assertion, or a local bound from them, beside a discarded
+/// real `dbl(2)` do not observe it.
+#[test]
+fn identifier_collisions_with_the_owner_name_are_not_a_repair_start() -> Result<(), String> {
+    for (case, call) in [("undbl", "undbl"), ("xdbl", "xdbl"), ("dbl-x", "dbl_x")] {
+        let helper = format!("fn {call}(x: i32) -> i32 {{ x }}\n");
+        assert_no_start(
+            &format!("collide-assert-{case}"),
+            DBL_OLD,
+            DBL_NEW,
+            &format!(
+                "use ar::dbl;\n{helper}\n#[test]\nfn t() {{\n    let _ = dbl(2);\n    assert!({call}(2) > 0);\n}}\n"
+            ),
+        )?;
+        assert_no_start(
+            &format!("collide-local-{case}"),
+            DBL_OLD,
+            DBL_NEW,
+            &format!(
+                "use ar::dbl;\n{helper}\n#[test]\nfn t() {{\n    let _ = dbl(2);\n    let r = {call}(2);\n    assert!(r > 0);\n}}\n"
+            ),
+        )?;
+    }
+    Ok(())
+}
+
+#[test]
+fn one_letter_owner_is_not_observed_through_a_longer_name() -> Result<(), String> {
+    let old = "pub fn f(x: i32) -> i32 {\n    x * 2\n}\n";
+    let new = "pub fn f(x: i32) -> i32 {\n    x * 3\n}\n";
+    assert_no_start(
+        "one-letter",
+        old,
+        new,
+        "use ar::f;\nfn of(x: i32) -> i32 { x }\n\n#[test]\nfn t() {\n    let _ = f(2);\n    assert!(of(2) > 0);\n}\n",
+    )?;
+    Ok(())
+}
+
+#[test]
+fn qualified_owner_call_in_an_assertion_still_reaches_repair() -> Result<(), String> {
+    assert_repair_ready(
+        "qualified",
+        DBL_OLD,
+        DBL_NEW,
+        "#[test]\nfn q() {\n    assert!(ar::dbl(2) > 0);\n}\n",
+    )
+}
+
 #[test]
 fn bound_owner_result_with_relational_assertion_still_reaches_repair() -> Result<(), String> {
     assert_repair_ready(

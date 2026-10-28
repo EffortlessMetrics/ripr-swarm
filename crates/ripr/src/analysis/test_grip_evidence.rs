@@ -1057,10 +1057,9 @@ fn test_pins_owner_call_by_equality(
 /// bound from one. Syntactic and over-approximate: it only decides whether a
 /// start may be offered.
 fn test_assertion_observes_owner(test: &TestSummary, owner_name: &str) -> bool {
-    let call = format!("{owner_name}(");
     let locals = owner_result_locals(&test.body, owner_name);
     test.assertions.iter().any(|oracle| {
-        oracle.text.contains(&call)
+        mentions_owner_call(&oracle.text, owner_name)
             || locals
                 .iter()
                 .any(|local| mentions_identifier(&oracle.text, local))
@@ -1076,7 +1075,6 @@ fn test_assertion_observes_owner(test: &TestSummary, owner_name: &str) -> bool {
 /// a mutation (`v += 1`), a closure, a loop variable or a function parameter.
 fn owner_result_locals(body: &str, owner_name: &str) -> Vec<String> {
     let masked = crate::analysis::extract::mask_comments_and_strings(body);
-    let call = format!("{owner_name}(");
     let mut lets: Vec<(Vec<String>, &str)> = Vec::new();
     for statement in masked.split(';') {
         let Some(at) = statement.find("let ") else {
@@ -1120,7 +1118,9 @@ fn owner_result_locals(body: &str, owner_name: &str) -> Vec<String> {
     loop {
         let before = locals.len();
         for (names, init) in &lets {
-            if init.contains(&call) || locals.iter().any(|local| mentions_identifier(init, local)) {
+            if mentions_owner_call(init, owner_name)
+                || locals.iter().any(|local| mentions_identifier(init, local))
+            {
                 for name in names {
                     if !locals.contains(name) {
                         locals.push(name.clone());
@@ -1142,6 +1142,19 @@ fn mentions_path(text: &str, path: &str) -> bool {
     !path.is_empty()
         && text.match_indices(path).any(|(at, _)| {
             !part(text[..at].chars().next_back()) && !part(text[at + path.len()..].chars().next())
+        })
+}
+
+/// Whether `text` calls `name` as a whole identifier: no identifier character
+/// before it (a path or method receiver is fine) and `(` or a turbofish after
+/// it, so `undbl(` and `dbl_x(` are not calls of `dbl`.
+fn mentions_owner_call(text: &str, name: &str) -> bool {
+    let part = |ch: Option<char>| ch.is_some_and(|ch| ch.is_alphanumeric() || ch == '_');
+    !name.is_empty()
+        && text.match_indices(name).any(|(at, _)| {
+            let after = text[at + name.len()..].trim_start();
+            !part(text[..at].chars().next_back())
+                && (after.starts_with('(') || after.starts_with("::<"))
         })
 }
 
