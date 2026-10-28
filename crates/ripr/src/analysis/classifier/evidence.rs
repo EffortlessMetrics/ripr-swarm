@@ -3,8 +3,8 @@ use crate::analysis::classify::{
     HELPER_RESULT_NOT_FORWARDED, OwnerInputs, OwnerPinSyntax, OwnerReturnPin, ProbeContext,
     PropagationWitnessV1, ReturnOracleAdmission, TransitiveReachIndex, WrapperEntryPairing,
     activation_and_boundary_input, assertion_compares_hand_built_field,
-    assertion_observes_collection_argument, assertion_out_parameter, body_contains_owner_call,
-    call_parameter_names, callee_is_unique, chain_entry_pin_admits,
+    assertion_observes_collection_argument, assertion_observes_scope_end, assertion_out_parameter,
+    body_contains_owner_call, call_parameter_names, callee_is_unique, chain_entry_pin_admits,
     chain_forwards_to_observed_hops, chain_passes_effect_target_to_observed_hops, classify,
     confidence_score, constructor_starts_empty, contains_as_whole_word, current_path_witness_with,
     direct_call_name, direct_collection_mutation_receiver, expected_operand_value,
@@ -927,9 +927,20 @@ impl ClassifiedProbeEvidence {
                     }
                     let owner = context.owner_fn?;
                     // A destructor runs at scope end, which the shared-sink
-                    // authority below has no reading for; never confirm it.
+                    // authority below has no reading for. Only the scope-end
+                    // carrier confirms one (#10814); any other test stays
+                    // unconfirmed.
                     if is_drop_destructor(owner, context.index) {
-                        return Some(false);
+                        return Some(context.index.files().get(&test.file).is_some_and(|facts| {
+                            assertion_observes_scope_end(
+                                owner,
+                                &context.probe.expression,
+                                test,
+                                assertion,
+                                &facts.source,
+                                &expansion,
+                            )
+                        }));
                     }
                     let reach =
                         owner_reach.get_or_init(|| proximity_reach.owner_reach(&owner.name));

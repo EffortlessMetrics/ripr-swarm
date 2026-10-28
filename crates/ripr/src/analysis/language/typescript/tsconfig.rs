@@ -763,7 +763,8 @@ fn normalize_config_dir(raw: &str) -> Option<String> {
 ///
 /// A leading UTF-8 byte-order mark is dropped (`tsc` accepts one, and editors
 /// on Windows write it; #4638 review): the strict parser rejects it.
-fn strip_jsonc(text: &str) -> Result<String, &'static str> {
+/// Shared JSONC normalization for alias loading and conservative gap scoping.
+pub(super) fn strip_jsonc(text: &str) -> Result<String, &'static str> {
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     let mut out = String::with_capacity(text.len());
     // Byte offset in `out` of a comma seen since the last significant

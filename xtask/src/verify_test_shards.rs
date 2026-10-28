@@ -218,7 +218,17 @@ fn verify(options: &Options) -> Outcome {
         "full workspace list",
         &mut problems,
     ) {
-        Some(text) => lines_of(&text).collect(),
+        Some(text) => {
+            let mut lines = BTreeSet::new();
+            for line in lines_of(&text) {
+                if !lines.insert(line.clone()) {
+                    problems.push(format!(
+                        "full workspace list repeats test identity `{line}`"
+                    ));
+                }
+            }
+            lines
+        }
         None => BTreeSet::new(),
     };
     if all_lines.is_empty() {
@@ -1128,6 +1138,20 @@ mod tests {
                 "{label}: expected `{expect}` in {problems:?}"
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn duplicate_full_workspace_identity_is_rejected() -> Result<(), String> {
+        let problems = problems_for("duplicate-full", false, |r| {
+            rewrite(r, 1, "list-all.txt", "b one\nb three\nb two\nb three\n");
+        })?;
+        assert!(
+            problems
+                .iter()
+                .any(|p| p == "full workspace list repeats test identity `b three`"),
+            "{problems:?}"
+        );
         Ok(())
     }
 

@@ -2,17 +2,22 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/rust_preseeded_first_element/input
 
-Summary: 2 probe(s), 0 exposed, 2 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+Summary: 2 changed behavior(s) checked: 0 exposed, 2 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
 
 Analysis outcome: findings below (analysis complete; complete_with_findings)
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
 
 Shared evidence and guidance
   E1 [findings 1, 2]: reach yes: Related tests appear to reach record: first_element_is_the_preseeded_one
   E2 [findings 1, 2]: infection yes: Reachable tests can plausibly activate this changed behavior
   E3 [findings 1, 2]: propagation yes: Changed behavior appears to influence state write: self.log.push(x * 1)
   E4 [findings 1, 2]: observation yes: A related test observes a value or effect near the changed behavior
-  E5 [findings 1, 2]: discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression
+  E5 [findings 1, 2]: discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression
   E6 [findings 1, 2]: local flow reaches state write: self.log.push(x * 1) (line 11)
   E7 [findings 1, 2]: related test src/lib.rs:20 first_element_is_the_preseeded_one uses strong exact value oracle: assert_eq!(ledger.log.first(), Some(&9)); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   E8 [findings 1, 2]: source function argument value x = 7 at line 22
@@ -23,11 +28,12 @@ Finding 1: WARNING ./src/lib.rs:11
 Changed
   before: self.log.push(x)
   after:  self.log.push(x * 1)
-Probe
+Change type
+  a call was removed
   family: call_deletion
-  delta:  effect
+  delta:  effect (changes a side effect)
   owner:  src/lib.rs::impl Ledger::record
-  canonical gap: gap:rust:src/lib.rs:impl Ledger::record:call_deletion:call_deletion:self.log.push_x*1
+  gap id (for scripts): gap:rust:src/lib.rs:impl Ledger::record:call_deletion:call_deletion:self.log.push_x*1
 Static exposure
   weakly_exposed (warning, confidence 0.92)
 Evidence
@@ -45,11 +51,12 @@ Finding 2: WARNING ./src/lib.rs:11
 Changed
   before: self.log.push(x)
   after:  self.log.push(x * 1)
-Probe
+Change type
+  a side effect changed
   family: side_effect
-  delta:  effect
+  delta:  effect (changes a side effect)
   owner:  src/lib.rs::impl Ledger::record
-  canonical gap: gap:rust:src/lib.rs:impl Ledger::record:side_effect:side_effect:self.log.push_x*1
+  gap id (for scripts): gap:rust:src/lib.rs:impl Ledger::record:side_effect:side_effect:self.log.push_x*1
 Static exposure
   weakly_exposed (warning, confidence 0.92)
 Evidence

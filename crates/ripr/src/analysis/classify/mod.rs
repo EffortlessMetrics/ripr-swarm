@@ -19,7 +19,10 @@ mod framework_oracle;
 mod gap_admission;
 mod helper_transfer;
 mod implicit_effect;
-pub(in crate::analysis) use implicit_effect::{ImplicitExpansionContext, ImplicitExpansionMemo};
+pub(in crate::analysis) use implicit_effect::{
+    ImplicitExpansionContext, ImplicitExpansionMemo, assertion_observes_scope_end,
+    destructor_credit_established,
+};
 mod facade_reach;
 mod implicit_call;
 mod indirect_owner;
@@ -63,7 +66,8 @@ pub(in crate::analysis) use builder_override::{
     setter_plainly_writes,
 };
 pub(in crate::analysis) use call_identity::{
-    CallIdentityMemos, CallTarget, OwnerCallIdentity, shared_owner_call_identity,
+    CallIdentityMemos, CallTarget, OwnerCallIdentity, bound_free_owner_calls,
+    shared_owner_call_identity,
 };
 pub(in crate::analysis) use caller_loop_selector::withhold_caller_loop_selector_gap;
 pub(in crate::analysis) use const_flow::{

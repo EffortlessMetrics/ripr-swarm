@@ -2,10 +2,15 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/rust_macro_table_arrow_scope_decoy/input
 
-Summary: 2 probe(s), 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 2 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+Summary: 2 changed behavior(s) checked: 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 2 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
 
 Analysis outcome: findings below (analysis complete; complete_with_findings)
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
 
 Shared evidence and guidance
   E1 [findings 1, 2]: reach no: No static test path found for the changed owner
@@ -19,11 +24,12 @@ Finding 1: WARNING ./src/lib.rs:2
 Changed
   before: n > 9
   after:  n >= 10
-Probe
+Change type
+  a condition or comparison changed
   family: predicate
-  delta:  control
+  delta:  control (changes which code path runs)
   owner:  src/lib.rs::gate
-  canonical gap: gap:rust:src/lib.rs:gate:predicate_boundary:predicate:n==10
+  gap id (for scripts): gap:rust:src/lib.rs:gate:predicate_boundary:predicate:n==10
 Static exposure
   no_static_path (warning, confidence 0.48)
 Evidence
@@ -44,11 +50,12 @@ Finding 2: WARNING ./src/lib.rs:2
 Changed
   before: n > 9
   after:  n >= 10
-Probe
+Change type
+  a returned value changed
   family: return_value
-  delta:  value
+  delta:  value (changes a computed value)
   owner:  src/lib.rs::gate
-  canonical gap: gap:rust:src/lib.rs:gate:return_value:return_value:n>=10
+  gap id (for scripts): gap:rust:src/lib.rs:gate:return_value:return_value:n>=10
 Static exposure
   no_static_path (warning, confidence 0.48)
 Evidence

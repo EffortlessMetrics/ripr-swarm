@@ -374,6 +374,8 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     /// run. A doctest is its own crate, so the file holding the comment
     /// declares no function its assertions could be read under.
     doctest_pins: SyncMemo<BTreeMap<(PathBuf, usize), OwnerPinAssertions>>,
+    /// Only generation-owned provider receipts can populate this source view.
+    proptest_pins: SyncMemo<BTreeMap<(PathBuf, usize), OwnerPinAssertions>>,
     /// Per file: the exact pattern pins of its tests through a verified
     /// local `assert_matches!` (#6616), parsed once per run.
     pattern_pins: SyncMemo<BTreeMap<PathBuf, PatternPins>>,
@@ -1351,6 +1353,11 @@ impl OwnerPinSyntax {
         if let Some(refusal) = self.source_provenance_refusal(test, index) {
             return Err(Box::new(refusal));
         }
+        if index.proptest_source(test).is_some() {
+            // These ordinary assertion spellings are a checked interpretation
+            // of $crate-bound property assertions, not caller macro imports.
+            return Ok(BTreeSet::new());
+        }
         let resolved_modules = self.resolved_module_declarations(index);
         let module_resolved = |file: &Path, line: usize, declaration: &str| {
             resolved_modules.contains(&(file.to_path_buf(), line, declaration.to_string()))
@@ -1554,6 +1561,32 @@ impl OwnerPinSyntax {
         assertion: &OracleFact,
         index: &RustIndex,
     ) -> Option<AssertionRefusal> {
+        if let Some((source, offset)) = index.proptest_source(test) {
+            if let Some(refusal) = self.source_provenance_refusal(test, index) {
+                return Some(refusal);
+            }
+            let (Some(start), Some(end), Some(line)) = (
+                test.start_line.checked_sub(offset),
+                test.end_line.checked_sub(offset),
+                assertion.line.checked_sub(offset),
+            ) else {
+                return Some(AssertionRefusal::Syntax(
+                    AssertionContextRefusal::UnidentifiedTest,
+                ));
+            };
+            return self
+                .proptest_pins
+                .borrow_mut()
+                .entry((test.file.clone(), test.start_line))
+                .or_insert_with(|| owner_pin_assertions(source, &assertion_context_macros()))
+                .refusal(
+                    (start, end, &test.name),
+                    &test.body,
+                    (line, &assertion.text),
+                    &BTreeSet::new(),
+                )
+                .map(AssertionRefusal::Syntax);
+        }
         let ambiguous = match self.context_ambiguities(test, assertion.line, index) {
             Ok(ambiguous) => ambiguous,
             Err(refusal) => return Some(*refusal),
@@ -4682,9 +4715,7 @@ impl OwnerReturnPin {
                 }
                 let shadowed_by_std = match &receiver_type {
                     ReceiverType::ByteSlice => BYTE_SLICE_METHODS.contains(&self.name.as_str()),
-                    ReceiverType::Named(_) => {
-                        BY_VALUE_PRELUDE_METHODS.contains(&self.name.as_str())
-                    }
+                    ReceiverType::Named(_) => method_may_dispatch_through_prelude(&self.name),
                 };
                 !shadowed_by_std
                     && trait_scope.as_ref().is_none_or(|scope| {
@@ -5554,6 +5585,16 @@ pub(in crate::analysis) fn function_declaration_is_async(
         .source_syntax
         .get(index, &owner.file)?
         .declaration_is_async(owner)
+}
+
+/// A whole free call, not an unrelated method or associated call with the
+/// same name and a free call nested inside its arguments. Definition identity
+/// remains the caller's authority.
+pub(super) fn is_whole_free_owner_call(operand: &str, name: &str) -> bool {
+    matches!(
+        owner_call_shape(operand, name),
+        Some(CallShape::Bare | CallShape::Path(_))
+    )
 }
 
 /// The operand as a complete call of `name`: `name(..)` or `recv.name(..)`
@@ -14569,6 +14610,10 @@ const BYTE_SLICE_METHODS: &[&str] = &[
 /// cannot see which std traits a workspace type implements (derives,
 /// blanket impls), so a named receiver never credits a pin through these
 /// names.
+pub(super) fn method_may_dispatch_through_prelude(name: &str) -> bool {
+    BY_VALUE_PRELUDE_METHODS.contains(&name)
+}
+
 const BY_VALUE_PRELUDE_METHODS: &[&str] = &[
     "all",
     "any",

@@ -12,6 +12,7 @@
   "findings": [
     {
       "id": "probe:src_pricing.ts:typescript_preview:fff3ea84",
+      "canonical_gap_id": "gap:typescript:typescript_preview:fff3ea84",
       "classification": "no_static_path",
       "severity": "warning",
       "confidence": 0.40,
@@ -124,6 +125,7 @@
     },
     {
       "id": "probe:src_pricing.ts:typescript_preview:bd772dc8",
+      "canonical_gap_id": "gap:typescript:typescript_preview:bd772dc8",
       "classification": "no_static_path",
       "severity": "warning",
       "confidence": 0.40,
@@ -227,8 +229,8 @@
       "stop_reasons": [],
       "oracle_kind": "unknown",
       "oracle_strength": "none",
-      "recommended_next_step": "TypeScript preview advisory: no test references the changed owner; add a test that calls the owner and asserts the changed behavior with `toBe` / `toEqual` before any repair packet is emitted.",
-      "suggested_next_action": "TypeScript preview advisory: no test references the changed owner; add a test that calls the owner and asserts the changed behavior with `toBe` / `toEqual` before any repair packet is emitted.",
+      "recommended_next_step": "TypeScript preview advisory: no statically linked test calls `applyDiscount(`; add a test that calls the changed owner and asserts the changed behavior with `toBe` / `toEqual`, run the project's native test command, then rerun `ripr check` to refresh the finding.",
+      "suggested_next_action": "TypeScript preview advisory: no statically linked test calls `applyDiscount(`; add a test that calls the changed owner and asserts the changed behavior with `toBe` / `toEqual`, run the project's native test command, then rerun `ripr check` to refresh the finding.",
       "language": "typescript",
       "language_status": "preview",
       "owner_kind": "function",

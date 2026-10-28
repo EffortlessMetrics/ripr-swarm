@@ -125,7 +125,7 @@ map is:
 | `ripr cache status --json` | `schema_version` | `0.2` |
 | `ripr cache export` success stdout | `schema_version` | `0.1` |
 | `ripr mcp` status tool and resource | `schema_version` | `ripr-mcp-workspace-status-v1` (see [MCP workspace status server](interop/mcp.md)) |
-| `ripr_list_gaps` success and refusal | `schema_version` | `ripr-mcp-gap-list-v3`; strict v1 readers migrate via `tools/list` (see [MCP gap filters](interop/mcp.md)) |
+| `ripr_list_gaps` success and refusal | `schema_version` | `ripr-mcp-gap-list-v4`; strict v1 readers migrate via `tools/list` (see [MCP gap filters](interop/mcp.md)) |
 | `ripr swarm queue --json` | `schema_version` | `0.2` |
 | `ripr help --json` | `schema_version` | `3` |
 | `ripr agent card --json` and the `RepairCardV1` DTO (RIPR-SPEC-0192, RIPR-SPEC-0194; `ripr agent card` is the default CLI handoff, #4667) | `schema_version` | `repair_card.v1` |
@@ -2373,7 +2373,14 @@ JSON fields:
   itself, so a comparison seam names the same equality boundary the
   classifier's missing-discriminator statement renders. Static-limit
   findings and probes with no owner identity may omit this field until a
-  non-actionable gap-state projection exists.
+  non-actionable gap-state projection exists. TypeScript preview findings
+  that carry a preview card state the content-addressed
+  `gap:typescript:typescript_preview:<fp8>` id (the one `ripr agent repair
+  --gap-id` accepts) without the `canonical_gap` object or a
+  `canonical_gap_group_size` (TypeScript ids carry no group semantics).
+  JavaScript preview findings state no id. The id is independent of
+  `preview_actionability.missing_actionability_fields`, which lists
+  `canonical_gap_id` only to say the repair packet is not yet ready (#10709).
 - `canonical_gap_group_size` is the number of raw findings in the current
   report that share the same `canonical_gap_id`, or omitted when no canonical
   gap identity is assigned.
@@ -16857,6 +16864,13 @@ target/ripr/pilot/pilot-summary.json
 target/ripr/pilot/pilot-summary.md
 ```
 
+`ripr pilot -v` also writes `target/ripr/pilot/pilot-timings.json` after the
+files above (RIPR-SPEC-0185, #10727): `{"schema_version": 1, "kind":
+"pilot_timings", "stages": [{"stage", "elapsed_ms", "items"?}], "total_ms"}`,
+the machine-readable twin of the stderr stage table. It is the only pilot file
+that holds wall-clock values, so it is not byte-stable; it is absent without
+`-v`, and a run without `-v` or a timeout run removes a prior one.
+
 `ripr pilot --format json` writes that same `pilot-summary.json` document to
 stdout and suppresses the human terminal. Packet files are still written under
 `--out`. There is no `--json` alias.
@@ -18731,7 +18745,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.116",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.118",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. This is the existing
@@ -19499,7 +19513,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.116",
+      "schema_version": "1.118",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",
