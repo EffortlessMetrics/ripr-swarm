@@ -4,6 +4,7 @@ use super::{FunctionSummary, OracleFact, RustIndex, TestSummary};
 use crate::analysis::classify::{
     OwnerPinSyntax, reveal::assertion_comparison_operands, targeted_free_call_reaches_owner,
 };
+use crate::analysis::extract::equality_assertion_arguments;
 use crate::analysis::facts::cfg_predicates::attribute_is_plain_test_gate;
 use crate::analysis::syntax::parse_clean_source_file;
 use crate::domain::{OracleKind, Probe, ProbeFamily};
@@ -644,6 +645,10 @@ impl RecordingDouble {
                 .fields()
                 .all(|f| f.expr().is_some_and(|e| text(&e) == "vec![]"))
         {
+            return None;
+        }
+        // Failure-only diagnostics may exit before the comparison reports failure.
+        if equality_assertion_arguments(&assertion.text)?.len() != 2 {
             return None;
         }
         let [left, right] = assertion_comparison_operands(&assertion.text)?;

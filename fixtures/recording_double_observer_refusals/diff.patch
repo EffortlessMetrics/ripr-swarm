@@ -34,3 +34,9 @@ diff --git a/src/push_dispatch.rs b/src/push_dispatch.rs
 @@ -13 +13 @@
 -    sink.send(format!("n={}", n));
 +    sink.send(format!("n={n}"));
+diff --git a/src/assertion_message.rs b/src/assertion_message.rs
+--- a/src/assertion_message.rs
++++ b/src/assertion_message.rs
+@@ -13 +13 @@
+-    sink.send(format!("n={}", n));
++    sink.send(format!("n={n}"));

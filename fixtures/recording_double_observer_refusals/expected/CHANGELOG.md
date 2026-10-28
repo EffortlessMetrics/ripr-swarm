@@ -76,3 +76,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — recording_double_observer_refusals (7)
+
+Reason:
+RIPR-SPEC-0240: refuse failure-only assertion diagnostics; native early-exit and frozen 833bc135 false-exposed witnesses justify the new pair, with fourteen-finding honesty invariants and the original twelve finding objects unchanged
+
+Command:
+`cargo xtask goldens bless recording_double_observer_refusals --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

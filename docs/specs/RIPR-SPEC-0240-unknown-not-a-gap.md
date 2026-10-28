@@ -429,6 +429,9 @@ non-ignored related test matches one of these shapes:
   The test begins with its empty struct-literal double, an unqualified owner
   call, and an immediately following exact comparison of that field (or its
   standard `clone()`) to a nonempty vector of independent string literals.
+  The equality has exactly two arguments, with an optional trailing comma.
+  Diagnostic arguments refuse this bounded credit: they execute on comparison
+  failure and may prevent the test harness from reporting that failure.
   The existing free-call binding authority must resolve the actual call to
   this owner; a module constant, static or constructor twin cannot borrow it.
   This supplies assertion-local observation, without changing reach or strength.
@@ -985,6 +988,7 @@ a credited weak oracle) and semver `op()` (reach with no retained test, #5344).
 
 Recording credit is exercised by `crates/ripr/tests/recording_double_credit.rs`:
 `exact_recorded_argument_is_credited`,
+`assertion_diagnostic_arguments_cannot_supply_recording_credit`,
 `a_double_declared_in_the_test_module_is_credited`,
 `primitive_slice_setup_and_later_append_keep_the_exact_pin`,
 `missing_argument_transfer_is_never_credited`,

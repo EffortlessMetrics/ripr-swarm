@@ -153,6 +153,9 @@ fn exact_recorded_argument_is_credited() -> Result<(), String> {
         "assert_eq!(recorder.lines, vec![\"n=3\".to_string()]);",
         "assert_eq!(vec![\"n=3\".to_string()], recorder.lines);",
         "assert_eq!(recorder.lines.clone(), vec![\"n=3\".to_string()]);",
+        "assert_eq!(recorder.lines, vec![\"n=3\".to_string()],);",
+        "assert_eq!(vec![\"n=3\".to_string()], recorder.lines,);",
+        "assert_eq!(recorder.lines.clone(), vec![\"n=3\".to_string()],);",
     ] {
         assert_reading(
             assertion,
@@ -162,6 +165,28 @@ fn exact_recorded_argument_is_credited() -> Result<(), String> {
                 &format!("{SETUP}\n        {assertion}"),
             ),
             true,
+        )?;
+    }
+    Ok(())
+}
+#[test]
+fn assertion_diagnostic_arguments_cannot_supply_recording_credit() -> Result<(), String> {
+    for diagnostic in [
+        r#""{}", { std::process::exit(0); "" }"#,
+        r#""{message}", message = { std::process::exit(0); "" }"#,
+        r#""""#,
+        r#""recorded value", "#,
+    ] {
+        assert_reading(
+            diagnostic,
+            &source(
+                "self.lines.push(line);",
+                "&mut dyn Sink",
+                &format!(
+                    "{SETUP}\n        assert_eq!(recorder.lines, vec![\"n=3\".to_string()], {diagnostic});"
+                ),
+            ),
+            false,
         )?;
     }
     Ok(())
