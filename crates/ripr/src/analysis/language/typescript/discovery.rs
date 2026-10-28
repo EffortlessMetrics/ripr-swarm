@@ -305,11 +305,18 @@ const ALIAS_IMPORT_SCAN_MAX_BYTES: u64 = 4 * 1024 * 1024;
 /// text it could not read: an unreadable or oversized indexed file counts
 /// as naming one. Decoded literal values are checked as well (see
 /// [`decoded_literal_names_alias`]).
+///
+/// When the link and its target share a final component, a spelling that
+/// reaches it through the target's own parent (`real/skills` for
+/// `link/skills -> ../real/skills`) names the real directory, not the
+/// link, and does not count (zod's triage script mentions its own path).
 fn any_file_imports_through(root: &Path, files: &[PathBuf], alias: &Path) -> bool {
     let Some(name) = alias.file_name().and_then(|name| name.to_str()) else {
         return true;
     };
     let needle = format!("/{name}");
+    let real_parent = real_spelling_parent(root, alias, name);
+    let real_parent = real_parent.as_deref();
     files.iter().any(|file| {
         let full = root.join(file);
         let Ok(metadata) = std::fs::metadata(&full) else {
@@ -321,14 +328,32 @@ fn any_file_imports_through(root: &Path, files: &[PathBuf], alias: &Path) -> boo
         let Ok(text) = std::fs::read_to_string(&full) else {
             return true;
         };
-        names_alias_component(&text, &needle) || decoded_literal_names_alias(&text, file, &needle)
+        names_alias_component(&text, &needle, real_parent)
+            || decoded_literal_names_alias(&text, file, &needle, real_parent)
     })
 }
 
+/// The target's parent component when `<it>/<name>` spells the real
+/// directory and cannot also spell the link, so a match preceded by it is
+/// not an import through the link. `None` keeps every match counting.
+fn real_spelling_parent(root: &Path, alias: &Path, name: &str) -> Option<String> {
+    let target = std::fs::canonicalize(root.join(alias)).ok()?;
+    if target.file_name()?.to_str()? != name {
+        return None;
+    }
+    let parent = target.parent()?.file_name()?.to_str()?;
+    let alias_parent = alias.parent().and_then(Path::file_name);
+    (alias_parent != Some(std::ffi::OsStr::new(parent))).then(|| parent.to_string())
+}
+
 /// `true` when `haystack` has `needle` (`/<name>`) not continued by another
-/// name character.
-fn names_alias_component(haystack: &str, needle: &str) -> bool {
+/// name character and not preceded by `real_parent` (see
+/// [`real_spelling_parent`]).
+fn names_alias_component(haystack: &str, needle: &str, real_parent: Option<&str>) -> bool {
     haystack.match_indices(needle).any(|(start, _)| {
+        if real_parent.is_some_and(|parent| haystack[..start].ends_with(parent)) {
+            return false;
+        }
         haystack[start + needle.len()..]
             .chars()
             .next()
@@ -340,18 +365,25 @@ fn names_alias_component(haystack: &str, needle: &str) -> bool {
 /// `'../al\u0069as/lib'` and `'..\u002falias/lib'` match although their raw
 /// text does not. A file that does not parse cleanly cannot be ruled out and
 /// falls back to counting any character escape.
-fn decoded_literal_names_alias(text: &str, file: &Path, needle: &str) -> bool {
+fn decoded_literal_names_alias(
+    text: &str,
+    file: &Path,
+    needle: &str,
+    real_parent: Option<&str>,
+) -> bool {
     struct Finder<'n> {
         needle: &'n str,
+        real_parent: Option<&'n str>,
         found: bool,
     }
     impl<'a> oxc_ast_visit::Visit<'a> for Finder<'_> {
         fn visit_string_literal(&mut self, literal: &oxc_ast::ast::StringLiteral<'a>) {
-            self.found |= names_alias_component(literal.value.as_str(), self.needle);
+            self.found |=
+                names_alias_component(literal.value.as_str(), self.needle, self.real_parent);
         }
         fn visit_template_element(&mut self, element: &oxc_ast::ast::TemplateElement<'a>) {
             self.found |= match element.value.cooked.as_deref() {
-                Some(cooked) => names_alias_component(cooked, self.needle),
+                Some(cooked) => names_alias_component(cooked, self.needle, self.real_parent),
                 None => true,
             };
         }
@@ -363,6 +395,7 @@ fn decoded_literal_names_alias(text: &str, file: &Path, needle: &str) -> bool {
     }
     let mut finder = Finder {
         needle,
+        real_parent,
         found: false,
     };
     oxc_ast_visit::Visit::visit_program(&mut finder, &parsed.program);
@@ -997,6 +1030,45 @@ mod tests {
         workspace.write(
             "tests/sum.test.ts",
             "/* \" */ import { sum } from \"../alias/sum\";\ntest('s', () => {});\n",
+        );
+        let scan =
+            visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        assert_eq!(scan.skipped_links, 1, "{:?}", scan.files);
+        Ok(())
+    }
+
+    /// A file that spells the alias's real path (`real/skills`) is not an
+    /// import through `link/skills`; an import through the link still counts
+    /// (a real repository's triage script mentions its own tooling path, #10899).
+    #[cfg(unix)]
+    #[test]
+    fn discovery_ignores_the_real_spelling_of_an_alias_target() -> std::io::Result<()> {
+        use std::os::unix::fs::symlink;
+        let workspace = TempWorkspace::new("link-alias-real-spelling");
+        workspace.write(
+            "real/skills/run.ts",
+            "// usage: run real/skills/run.ts\nexport const real = 'real/skills/run';\n",
+        );
+        std::fs::create_dir_all(workspace.0.join("link"))?;
+        symlink("../real/skills", workspace.0.join("link/skills"))?;
+        assert_eq!(
+            std::fs::canonicalize(workspace.0.join("link/skills"))?,
+            std::fs::canonicalize(workspace.0.join("real/skills"))?,
+            "the alias must resolve to the real indexed directory, not dangle"
+        );
+        let scan =
+            visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        assert!(
+            scan.files
+                .iter()
+                .any(|file| file.ends_with("real/skills/run.ts"))
+        );
+        assert_eq!(scan.skipped_links, 0, "{:?}", scan.files);
+
+        // The same file also importing through the link is still counted.
+        workspace.write(
+            "real/skills/run.ts",
+            "// real/skills/run.ts\nimport { x } from '../../link/skills/x';\n",
         );
         let scan =
             visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);

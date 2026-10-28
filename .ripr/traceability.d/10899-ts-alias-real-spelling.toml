@@ -1,0 +1,6 @@
+# Registers the real-spelling exemption of the alias import scan (#10899) under RIPR-SPEC-0027.
+[[extend]]
+id = "RIPR-SPEC-0027"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/discovery.rs::tests::discovery_ignores_the_real_spelling_of_an_alias_target",
+]

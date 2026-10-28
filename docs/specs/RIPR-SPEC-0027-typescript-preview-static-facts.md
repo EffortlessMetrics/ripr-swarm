@@ -218,7 +218,7 @@ Test discovery:
   quoting and comments ignored:
   `../alias/sum` with `alias -> src`, `'../my lib/sum'`): that import names a
   path the walk never indexes, so the alias is counted (an unreadable or
-  oversized indexed file counts as naming one; so does a file that does not parse cleanly and contains a `\u`, `\x` or octal escape. Decoded string and template literal values are compared too, so `'..\u002falias/sum'` matches). A directory link that leaves the root, points into an excluded directory or at a
+  oversized indexed file counts as naming one; so does a file that does not parse cleanly and contains a `\u`, `\x` or octal escape. Decoded string and template literal values are compared too, so `'..\u002falias/sum'` matches). When the link and its target share a final component, a spelling that reaches it through the target's own parent (`real/skills` for `link/skills -> ../real/skills`, #10899) names the real directory and is not an import through the link. A directory link that leaves the root, points into an excluded directory or at a
   directory the walk cannot list, a source-named link, a dangling link and a
   link whose target cannot be read stay counted.
 - a file named `*.d.ts`, `*.d.mts` or `*.d.cts` is parsed as a TypeScript
