@@ -642,12 +642,15 @@ fn imported_names(source: &str, keep_root: impl Fn(&str) -> bool) -> Vec<String>
 /// Parser-backed owner ids carry their impl segment
 /// (`src/lib.rs::impl Display for Money::fmt`).
 pub(in crate::analysis) fn is_trait_impl_method(owner: &FunctionSummary) -> bool {
-    owner
-        .id
-        .0
-        .split("::impl ")
-        .skip(1)
-        .any(|segment| segment.contains(" for "))
+    // Local functions can inherit an enclosing impl in their symbol ID, but
+    // are not themselves dispatched through that impl's trait.
+    !matches!(owner.item.container, FunctionContainer::Local)
+        && owner
+            .id
+            .0
+            .split("::impl ")
+            .skip(1)
+            .any(|segment| segment.contains(" for "))
 }
 
 /// Whether `source` contains `name` as a whole identifier anywhere other than
@@ -1669,6 +1672,34 @@ mod tests {
         let malformed = "const T: &str = include_str!(\"t.txt\");\n#[doc = \"x\"]";
         assert!(crate::analysis::syntax::parse_clean_source_file(malformed).is_none());
         assert!(includes_external_docs(malformed));
+    }
+
+    #[test]
+    fn nested_helper_does_not_inherit_trait_dispatch_reach() -> Result<(), String> {
+        let path = PathBuf::from("src/lib.rs");
+        let source = "struct Thing;\nimpl std::fmt::Display for Thing {\n fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n fn hidden() {}\n Ok(())\n }\n}\nfn outer() { fn free_hidden() {} }\n";
+        let facts = crate::analysis::rust_index::summarize_file(path.clone(), source.to_string());
+        let functions = facts.functions.clone();
+        let index = RustIndex::from_owned(OwnedRustIndex {
+            files: BTreeMap::from([(path, facts)]),
+            functions: functions.clone(),
+            ..Default::default()
+        });
+        let cached = UnseenReachNames::build(&index);
+        for (name, expected) in [("fmt", true), ("hidden", false), ("free_hidden", false)] {
+            let owner = functions
+                .iter()
+                .find(|f| f.name == name)
+                .ok_or_else(|| format!("missing parsed function: {name}"))?;
+            assert_eq!(is_trait_impl_method(owner), expected, "{name} dispatch");
+            assert_eq!(
+                owner_may_be_reached_unseen(owner, &index),
+                expected,
+                "{name}"
+            );
+            assert_eq!(cached.may_reach_unseen(owner), expected, "{name}");
+        }
+        Ok(())
     }
 
     #[test]
