@@ -1872,8 +1872,11 @@ pub(crate) fn chain_entry_pin_admits(
         crate::domain::RelationReason,
     )],
     index: &RustIndex,
-    test: &crate::analysis::facts::TestSummary,
-    assertion: &crate::analysis::facts::OracleFact,
+    (test, assertion): (
+        &crate::analysis::facts::TestSummary,
+        &crate::analysis::facts::OracleFact,
+    ),
+    identity: &std::cell::OnceCell<bool>,
 ) -> bool {
     use crate::domain::OracleKind;
     if !matches!(assertion.kind, OracleKind::ExactValue) || !helper_only_reach(related_tests) {
@@ -1912,26 +1915,6 @@ pub(crate) fn chain_entry_pin_admits(
             }
             _ => {}
         }
-    }
-    // The entry pin is the method-hop claim (#5352): a free-function
-    // wrapper chain keeps its documented no-return-credit reading
-    // (RIPR-SPEC-0159), so every hop must be an identity-bound method
-    // call site.
-    let every_hop_is_a_method_site = chain.hops.iter().enumerate().all(|(step, hop)| {
-        let callee = match step.checked_sub(1) {
-            None => owner_name,
-            Some(below) => match chain.hops.get(below) {
-                Some(lower) => lower.caller.name.as_str(),
-                None => return false,
-            },
-        };
-        method_call_site(&hop.call_text, callee).is_some()
-    });
-    if !every_hop_is_a_method_site {
-        return false;
-    }
-    if !chain_forwards_to_observed_hops(owner_name, chain, related_tests, index) {
-        return false;
     }
     let Some(entry) = chain.hops.last() else {
         return false;
@@ -1977,7 +1960,25 @@ pub(crate) fn chain_entry_pin_admits(
         (false, true) => &operands[0],
         _ => return false,
     };
-    !super::owner_pin::expected_reaches_owner(test, &assertion.text, expected, entry_name)
+    if super::owner_pin::expected_reaches_owner(test, &assertion.text, expected, entry_name) {
+        return false;
+    }
+    // The entry pin is the method-hop claim (#5352), or a chain of free
+    // direct calls whose bare-name identity is established (#9638). The
+    // chain checks run last: they read whole source files, and the identity
+    // answer is the same for every assertion of a probe (`identity` memoizes it).
+    let every_hop_is_a_method_site = chain.hops.iter().enumerate().all(|(step, hop)| {
+        hop_callee(chain, owner_name, step)
+            .is_some_and(|callee| method_call_site(&hop.call_text, callee).is_some())
+    });
+    if !every_hop_is_a_method_site
+        && !*identity.get_or_init(|| {
+            free_call_chain_is_identity_bound(owner_name, chain, related_tests, index)
+        })
+    {
+        return false;
+    }
+    chain_forwards_return_to_observed_hops(owner_name, chain, related_tests, index, identity)
 }
 
 /// Whether `operand` is exactly one direct call of `name` (`entry(1)`),
@@ -2427,6 +2428,270 @@ pub(crate) fn chain_forwards_to_observed_hops(
         || asserting_method_entry(owner_name, hops, index).is_some()
 }
 
+/// The function the hop at `step` calls: the owner for the first hop, the
+/// previous hop's caller above it.
+fn hop_callee<'a>(chain: &'a HelperChain, owner_name: &'a str, step: usize) -> Option<&'a str> {
+    match step.checked_sub(1) {
+        None => Some(owner_name),
+        Some(below) => chain
+            .hops
+            .get(below)
+            .map(|lower| lower.caller.name.as_str()),
+    }
+}
+
+/// Whether every observed hop of `chain` is a plain free call whose bare name
+/// can only mean the chain's function (#9638): the callee is the one
+/// workspace function of its name, declared in the caller's own file and
+/// module scope outside any `impl`, is not imported, macro-defined, rebound
+/// by any pattern (parameters included), `const`, `static` or `use` in the
+/// caller, and no hop is a method call or a macro argument.
+fn free_call_chain_is_identity_bound(
+    owner_name: &str,
+    chain: &HelperChain,
+    related_tests: &[(
+        &crate::analysis::facts::TestSummary,
+        crate::domain::RelationReason,
+    )],
+    index: &RustIndex,
+) -> bool {
+    let observed = observed_hops(chain, related_tests);
+    !observed.is_empty()
+        && observed.iter().enumerate().all(|(step, hop)| {
+            // A method or macro-argument hop never forwards (the forwarding
+            // check refuses it), so only the call form is read here.
+            hop_callee(chain, owner_name, step).is_some_and(|callee| {
+                is_direct_call_site(&hop.call_text, callee)
+                    && caller_names_callee_only_as_a_call(&hop.caller.body, callee)
+                    && callee_declared_beside_caller(callee, &hop.caller, index)
+            })
+        })
+        && hops_call_the_indexed_callees(owner_name, observed, index)
+}
+
+/// Callee and caller sit in the same enclosing scopes, none of them an `impl`
+/// (a bare call never names an associated fn) or a function body or other
+/// opaque block (which may hold a shadowing `use` or item).
+fn scopes_allow_a_bare_call(callee: &[BlockScope], caller: &[BlockScope]) -> bool {
+    callee == caller
+        && !callee
+            .iter()
+            .any(|scope| matches!(scope, BlockScope::Impl(_) | BlockScope::Opaque(_)))
+}
+
+/// Whether every whole-word occurrence of `callee` in the caller's masked
+/// text (signature included) is a direct call `callee(` that no `fn` or
+/// raw-identifier prefix turns into a declaration, and the text holds no `use`
+/// item or macro definition. A
+/// pattern (`(inner, _)`, `&inner`, `Some(inner)`, `S { inner }`), a closure
+/// parameter, a `const`/`static` of the name and a block-level glob import all
+/// leave an occurrence that is not a call, or a `use`, and answer `false`.
+fn caller_names_callee_only_as_a_call(caller_text: &str, callee: &str) -> bool {
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(caller_text);
+    if masked.len() != caller_text.len() || callee.is_empty() {
+        return false;
+    }
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    if contains_word(&masked, "use") || contains_word(&masked, "macro_rules") {
+        return false;
+    }
+    masked.match_indices(callee).all(|(at, _)| {
+        let before = &masked[..at];
+        let after = &masked[at + callee.len()..];
+        if before.chars().next_back().is_some_and(is_word)
+            || after.chars().next().is_some_and(is_word)
+        {
+            return true;
+        }
+        let previous_word = before
+            .trim_end()
+            .rsplit(|ch: char| !is_word(ch))
+            .next()
+            .unwrap_or("");
+        // `fn inner(..)` and `struct inner(..)` declare the name with a `(`
+        // after it; every other binding form (`let`, `const`, `static`,
+        // patterns, parameters) leaves an occurrence that no `(` follows.
+        after.trim_start().starts_with('(')
+            && ![
+                "fn", "struct", "enum", "union", "type", "trait", "mod", "macro",
+            ]
+            .contains(&previous_word)
+            && !before.trim_end().ends_with(['#', '.', '|', '&', ':'])
+    })
+}
+
+/// Whether the one workspace function `callee_name` is declared in the same
+/// file and the same module scope as `caller`, neither inside an `impl`, so a
+/// bare call of its name from `caller` can only mean that item (a `use`, glob
+/// import or other module's function of the name cannot take its place).
+fn callee_declared_beside_caller(
+    callee_name: &str,
+    caller: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
+    let Some(callee) = index
+        .functions()
+        .iter()
+        .find(|function| function.name == callee_name)
+    else {
+        return false;
+    };
+    // A callee in another file has no `fn <name>` on that line of the caller's
+    // file (two such functions would make the name non-unique), so its scopes
+    // read `None` below and the answer is `false`.
+    let Some(file) = index.files().get(&caller.file) else {
+        return false;
+    };
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(&file.source);
+    let scopes = |function: &FunctionSummary| {
+        scopes_enclosing_fn(&masked, function.start_line, &function.name)
+    };
+    match (scopes(callee), scopes(caller)) {
+        (Some(callee_scopes), Some(caller_scopes)) => {
+            scopes_allow_a_bare_call(&callee_scopes, &caller_scopes)
+        }
+        _ => false,
+    }
+}
+
+/// [`chain_forwards_to_observed_hops`] for a return-value owner, where a hop
+/// may also hand the call's result on shifted by a decimal integer literal
+/// (`inner(x) + 1`, `1 + inner(x)`, `inner(x) - 1`) when the owner and every
+/// observed hop caller declare a builtin integer return type (#9638). Adding
+/// or subtracting a constant is injective on an integer type, wrapping or
+/// panicking on overflow, so an exact value at the entry still moves with the
+/// owner's. A custom type (`impl Add<i32>`), a float, a string, any other
+/// operator and any other operand keep the strict reading.
+pub(crate) fn chain_forwards_return_to_observed_hops(
+    owner_name: &str,
+    chain: &HelperChain,
+    related_tests: &[(
+        &crate::analysis::facts::TestSummary,
+        crate::domain::RelationReason,
+    )],
+    index: &RustIndex,
+    identity: &std::cell::OnceCell<bool>,
+) -> bool {
+    if chain_forwards_to_observed_hops(owner_name, chain, related_tests, index) {
+        return true;
+    }
+    let hops = observed_hops(chain, related_tests);
+    hops_forward_owner_result_with(owner_name, hops, true)
+        && owner_and_hops_return_builtin_integers(owner_name, hops, index)
+        && *identity.get_or_init(|| {
+            free_call_chain_is_identity_bound(owner_name, chain, related_tests, index)
+        })
+}
+
+/// The owner and every hop caller declare a builtin integer return type that
+/// no workspace type of that name shadows.
+fn owner_and_hops_return_builtin_integers(
+    owner_name: &str,
+    hops: &[HelperHop],
+    index: &RustIndex,
+) -> bool {
+    const INTEGERS: &[&str] = &[
+        "u8", "u16", "u32", "u64", "u128", "usize", "i8", "i16", "i32", "i64", "i128", "isize",
+    ];
+    let integer_return = |function: &FunctionSummary| {
+        super::owner_pin::declared_return_type(&function.body).is_some_and(|returned| {
+            let returned = returned.trim();
+            INTEGERS.contains(&returned)
+                && super::owner_pin::workspace_type_name_count(returned, index) == 0
+                && !index.files().get(&function.file).is_some_and(|file| {
+                    let masked =
+                        crate::analysis::language::mask_rust_comments_and_strings(&file.source);
+                    let scopes = scopes_enclosing_fn(&masked, function.start_line, &function.name);
+                    file_use_binds_name(&file.source, returned, scopes.as_deref())
+                })
+        })
+    };
+    // Uniqueness of each name is the identity check's, which callers AND in.
+    index
+        .functions()
+        .iter()
+        .find(|function| function.name == owner_name)
+        .is_some_and(integer_return)
+        && hops.iter().all(|hop| integer_return(&hop.caller))
+}
+
+/// Whether some `use` item of `source` binds `name`, by path or rename
+/// (`use ext::Wide as i64;`, `use ext::i64;`), or is a glob import that could
+/// bring such a name in (`use ext::*;`). A `super::*` / `self::*` glob stands
+/// for the parent module's imports, which this file cannot show, so it is
+/// exempt only where it sits in a scope that does not enclose the function
+/// (an inline `mod tests { use super::*; }` beside it); a glob at file top
+/// level or in the function's own module, or one whose scope cannot be read
+/// (`function_scopes` is `None`), answers `true`.
+fn file_use_binds_name(source: &str, name: &str, function_scopes: Option<&[BlockScope]>) -> bool {
+    let is_parent_glob = |path: &str| matches!(path, "super::*" | "self::*");
+    let imports = super::reveal::flattened_use_paths(source);
+    let binds = imports.iter().any(|import| {
+        if import.path.ends_with('*') {
+            return !is_parent_glob(import.path.as_str());
+        }
+        import
+            .alias
+            .as_deref()
+            .unwrap_or_else(|| import.path.rsplit("::").next().unwrap_or(""))
+            == name
+    });
+    if binds {
+        return true;
+    }
+    if !imports.iter().any(|import| is_parent_glob(&import.path)) {
+        return false;
+    }
+    let Some(function_scopes) = function_scopes else {
+        return true;
+    };
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(source);
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    masked.match_indices("use").any(|(at, _)| {
+        if masked[..at].chars().next_back().is_some_and(is_word)
+            || masked[at + 3..].chars().next().is_some_and(is_word)
+        {
+            return false;
+        }
+        let end = masked[at..]
+            .find(';')
+            .map_or(masked.len(), |found| at + found + 1);
+        let statement = &masked[at..end];
+        if !super::reveal::flattened_use_paths(statement)
+            .iter()
+            .any(|import| is_parent_glob(&import.path))
+        {
+            return false;
+        }
+        scopes_before(&masked, at)
+            .is_none_or(|glob_scopes| function_scopes.starts_with(&glob_scopes))
+    })
+}
+
+/// `text` (masked) is one exact direct call of `callee` with a decimal
+/// integer literal added or subtracted: `call + 1`, `1 + call`, `call - 1`.
+fn is_integer_offset_of_call(text: &str, callee: &str) -> bool {
+    let is_literal = |operand: &str| {
+        let operand = operand.trim();
+        !operand.is_empty()
+            && operand.starts_with(|ch: char| ch.is_ascii_digit())
+            && operand.chars().all(|ch| ch.is_ascii_digit() || ch == '_')
+    };
+    let text = text.trim();
+    if direct_call_paren(text, callee) == Some(0) {
+        let Some(close) = matching_close(text, callee.len()) else {
+            return false;
+        };
+        let rest = text[close + 1..].trim_start();
+        return ["+", "-"].iter().any(|op| {
+            rest.strip_prefix(op)
+                .is_some_and(|operand| !operand.starts_with(['=', '>']) && is_literal(operand))
+        });
+    }
+    text.split_once('+')
+        .is_some_and(|(literal, call)| is_literal(literal) && is_exact_call(call.trim(), callee))
+}
+
 /// The returned-ledger proof covers only the first caller. It may replace that
 /// hop's ordinary dropped-result explanation only when no higher hop is observed.
 /// Keep higher forwarding failures visible until their identity is established.
@@ -2677,6 +2942,14 @@ fn hops_call_the_indexed_callees(owner_name: &str, hops: &[HelperHop], index: &R
 }
 
 fn hops_forward_owner_result(owner_name: &str, hops: &[HelperHop]) -> bool {
+    hops_forward_owner_result_with(owner_name, hops, false)
+}
+
+fn hops_forward_owner_result_with(
+    owner_name: &str,
+    hops: &[HelperHop],
+    integer_offset: bool,
+) -> bool {
     !hops.is_empty()
         && hops.iter().enumerate().all(|(step, hop)| {
             // #6614: a macro-argument hop is not expanded; whether the
@@ -2699,6 +2972,7 @@ fn hops_forward_owner_result(owner_name: &str, hops: &[HelperHop]) -> bool {
                 callee,
                 &hop.call_text,
                 &hop.diverging_handlers,
+                integer_offset,
             )
                 // #10284: a caller that binds its callee's name
                 // (`let is_bulk = |_| true;`) calls the binding, and a
@@ -3065,8 +3339,14 @@ fn scopes_enclosing_fn(masked: &str, line: usize, name: &str) -> Option<Vec<Bloc
                     .strip_prefix(name)
                     .is_some_and(|rest| !rest.chars().next().is_some_and(is_word))
         })?;
+    scopes_before(masked, fn_at)
+}
+
+/// The block scopes open at byte `offset` of the masked `source`, outermost
+/// first; `None` when the braces do not balance.
+fn scopes_before(masked: &str, offset: usize) -> Option<Vec<BlockScope>> {
     let mut stack: Vec<BlockScope> = Vec::new();
-    for (at, character) in masked[..fn_at].char_indices() {
+    for (at, character) in masked[..offset].char_indices() {
         match character {
             '{' => {
                 let statement_start = masked[..at]
@@ -3398,6 +3678,7 @@ fn caller_tail_forwards_call(
     callee: &str,
     call_text: &str,
     diverging_handlers: &[String],
+    integer_offset: bool,
 ) -> bool {
     let body: &str = &caller.body;
     let masked = crate::analysis::language::mask_rust_comments_and_strings(body);
@@ -3454,6 +3735,9 @@ fn caller_tail_forwards_call(
         None => tail,
     };
     if is_exact_call(tail, callee) {
+        return true;
+    }
+    if integer_offset && is_integer_offset_of_call(tail, callee) {
         return true;
     }
     // #5352: the identity-bound method hop forwards when the tail is
@@ -5276,6 +5560,102 @@ mod tests {
     fn scopes(source: &str, line: usize, name: &str) -> Option<Vec<BlockScope>> {
         let masked = crate::analysis::language::mask_rust_comments_and_strings(source);
         scopes_enclosing_fn(&masked, line, name)
+    }
+
+    #[test]
+    fn a_bare_call_binds_only_within_one_plain_module_scope() {
+        let module = || BlockScope::Module("m".to_string());
+        assert!(scopes_allow_a_bare_call(&[], &[]));
+        assert!(scopes_allow_a_bare_call(&[module()], &[module()]));
+        assert!(!scopes_allow_a_bare_call(&[module()], &[]));
+        let imp = || BlockScope::Impl("impl Unit".to_string());
+        assert!(!scopes_allow_a_bare_call(&[imp()], &[imp()]));
+        assert!(!scopes_allow_a_bare_call(
+            &[BlockScope::Opaque(3)],
+            &[BlockScope::Opaque(3)]
+        ));
+    }
+
+    #[test]
+    fn a_use_binding_a_builtin_integer_name_or_a_glob_is_found() {
+        for source in [
+            "use ext::Wide as i64;\n",
+            "use ext::i64;\n",
+            "use ext::{a, i64};\n",
+            "use ext::*;\n",
+            "pub use ext::prelude::*;\n",
+            "use std::io::*;\n",
+        ] {
+            assert!(file_use_binds_name(source, "i64", Some(&[])), "{source}");
+        }
+        for source in [
+            "use ext::Wide as Other;\n",
+            "use ext::{a, b};\n",
+            "use ext::i32;\n",
+            "fn f() {}\n",
+        ] {
+            assert!(!file_use_binds_name(source, "i64", Some(&[])), "{source}");
+        }
+        // A parent glob is exempt only beside, never around, the function.
+        let tests_glob = "fn f() {}\n#[cfg(test)]\nmod tests {\n    use super::*;\n}\n";
+        assert!(!file_use_binds_name(tests_glob, "i64", Some(&[])));
+        assert!(file_use_binds_name(tests_glob, "i64", None));
+        for source in [
+            "use super::*;\nfn f() {}\n",
+            "use self::*;\nfn f() {}\n",
+            "mod m {\n    use super::*;\n    fn f() {}\n}\n",
+        ] {
+            let masked = crate::analysis::language::mask_rust_comments_and_strings(source);
+            let line = source.lines().position(|l| l.contains("fn f")).unwrap_or(0) + 1;
+            let scopes = scopes_enclosing_fn(&masked, line, "f");
+            assert!(
+                file_use_binds_name(source, "i64", scopes.as_deref()),
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_callee_named_only_as_a_call_survives_the_binding_scan() {
+        let named = |text: &str| caller_names_callee_only_as_a_call(text, "inner");
+        assert!(named("fn outer(x: i64) -> i64 {\n    inner(x) + 1\n}"));
+        assert!(named(
+            "fn outer(x: i64) -> i64 {\n    inner(x) + inner(1)\n}"
+        ));
+        // A longer name that contains the callee is a different identifier.
+        assert!(named(
+            "fn outer(x: i64) -> i64 {\n    inner_two(x) + inner(1)\n}"
+        ));
+        for refused in [
+            "fn outer(x: i64, inner: fn(i64) -> i64) -> i64 {\n    inner(x)\n}",
+            "fn outer(x: i64, (inner, _y): (fn(i64) -> i64, i64)) -> i64 {\n    inner(x)\n}",
+            "fn outer(x: i64, mut inner: fn(i64) -> i64) -> i64 {\n    inner(x)\n}",
+            "fn outer(x: i64, &inner: &fn(i64) -> i64) -> i64 {\n    inner(x)\n}",
+            "fn outer(x: i64, ref inner: fn(i64) -> i64) -> i64 {\n    inner(x)\n}",
+            "fn outer(x: i64, [inner, _]: [fn(i64) -> i64; 2]) -> i64 {\n    inner(x)\n}",
+            "fn outer(x: i64) -> i64 {\n    const inner: fn(i64) -> i64 = |v| v;\n    inner(x)\n}",
+            "fn outer(x: i64) -> i64 {\n    static inner: fn(i64) -> i64 = |v| v;\n    inner(x)\n}",
+            "fn outer(x: i64) -> i64 {\n    let (inner, _) = (|v: i64| v, 0);\n    inner(x)\n}",
+            "fn outer(x: i64) -> i64 {\n    let inner = |v: i64| v;\n    inner(x)\n}",
+            "fn outer(x: i64) -> i64 {\n    fn inner(v: i64) -> i64 {\n        v\n    }\n    inner(x)\n}",
+            "fn outer(x: i64) -> i64 {\n    use other::*;\n    inner(x)\n}",
+            "fn outer(x: i64) -> i64 {\n    use other::inner as inner;\n    inner(x)\n}",
+            "fn outer(x: i64) -> i64 {\n    macro_rules! helper { () => {}; }\n    inner(x)\n}",
+            "fn outer(x: i64) -> i64 {\n    r#inner(x)\n}",
+            "fn outer(x: i64) -> i64 {\n    struct inner(i64);\n    inner(x).0\n}",
+            "fn outer(x: i64) -> i64 {\n    enum inner { A(i64) }\n    inner(x)\n}",
+            "fn outer(x: i64) -> i64 {\n    union inner(i64);\n    inner(x)\n}",
+            "fn outer(x: i64) -> i64 {\n    type inner(i64);\n    inner(x)\n}",
+            "fn outer(x: i64) -> i64 {\n    trait inner(i64);\n    inner(x)\n}",
+            "fn outer(x: i64) -> i64 {\n    mod inner(i64);\n    inner(x)\n}",
+            "fn outer(x: i64) -> i64 {\n    macro inner(i64);\n    inner(x)\n}",
+            "fn outer(x: i64) -> i64 {\n    other::inner(x)\n}",
+            "fn outer(x: i64) -> i64 {\n    x.inner(x)\n}",
+            "fn outer(x: i64) -> i64 {\n    match Some(x) { Some(inner) => inner(x), None => 0 }\n}",
+            "fn outer(x: i64) -> i64 {\n    (|inner: fn(i64) -> i64| inner(x))(|v| v)\n}",
+        ] {
+            assert!(!named(refused), "{refused}");
+        }
     }
 
     #[test]
