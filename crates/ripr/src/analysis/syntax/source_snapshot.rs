@@ -281,10 +281,10 @@ impl SourceSnapshot {
                 .flat_map(|list| list.generic_params())
                 .any(|param| match param {
                     ast::GenericParam::TypeParam(param) => {
-                        param.name().is_some_and(|name| unraw(&name.text()) == ty)
+                        param.name().is_some_and(|name| unraw(name.text()) == ty)
                     }
                     ast::GenericParam::ConstParam(param) => {
-                        param.name().is_some_and(|name| unraw(&name.text()) == ty)
+                        param.name().is_some_and(|name| unraw(name.text()) == ty)
                     }
                     ast::GenericParam::LifetimeParam(_) => false,
                 })
