@@ -168,3 +168,29 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_empty_each (14)
+
+Reason:
+RIPR-SPEC-0122: plain-language wording for the default and human-full check views (#10691); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless typescript_empty_each --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — typescript_empty_each (15)
+
+Reason:
+RIPR-SPEC-0113: honest no-static-path next step names the owner and the ordered add-test, native verifier, refresh route (#10708)
+
+Command:
+`cargo xtask goldens bless typescript_empty_each --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

@@ -5799,6 +5799,79 @@ mod tests {
         Ok(())
     }
 
+    /// #10546: one compat row per selected label is intentional. Both ids
+    /// share one partial adapter result, so each publishes the same Partial
+    /// row (typescript, then javascript) in either id order, and a
+    /// label-matching consumer (the preview advisory's `analyzed` check)
+    /// reports a degraded run for either label.
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn repo_pipeline_both_typescript_ids_publish_a_compat_row_per_label() -> Result<(), String> {
+        let files = [
+            (
+                "src/price.ts",
+                "export function price(amount: number): number {\n  return amount > 10 ? 1 : 2;\n}\n",
+            ),
+            (
+                "src/price.test.ts",
+                "import { price } from './price';\ntest('p', () => { expect(price(20)).toBe(1); });\n",
+            ),
+            (
+                "src/tax.js",
+                "export function tax(amount) {\n  return amount > 5 ? 1 : 2;\n}\n",
+            ),
+            (
+                "src/tax.test.js",
+                "import { tax } from './tax';\ntest('t', () => { expect(tax(9)).toBe(1); });\n",
+            ),
+            ("src/broken.ts", "export function (((( {\n"),
+        ];
+        let (single, _) =
+            run_repo_aggregate("repo-label-single", &files, &[LanguageId::TypeScript])?;
+        // Fixture construction: the single-id run is one Partial row.
+        assert_eq!(single.language_runs.len(), 1, "{:?}", single.language_runs);
+        let typescript = single.language_runs[0].clone();
+        assert_eq!(typescript.language, "typescript");
+        assert_eq!(typescript.status, super::LanguageRunStatus::Partial);
+        assert!(
+            typescript
+                .reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("parser error(s)")),
+            "{typescript:?}"
+        );
+        let javascript = LanguageRun {
+            language: "javascript".to_string(),
+            ..typescript.clone()
+        };
+        for (label, order) in [
+            ("both", [LanguageId::TypeScript, LanguageId::JavaScript]),
+            ("reversed", [LanguageId::JavaScript, LanguageId::TypeScript]),
+        ] {
+            let (run, _) = run_repo_aggregate(&format!("repo-label-{label}"), &files, &order)?;
+            // Rows follow the selected id order; the vector is exact.
+            let expected = if label == "both" {
+                vec![typescript.clone(), javascript.clone()]
+            } else {
+                vec![javascript.clone(), typescript.clone()]
+            };
+            assert_eq!(run.language_runs, expected, "{label}");
+            // The advisory check matches rows by label, so the degraded run
+            // is never read as analyzed for either label.
+            let advisory = run
+                .preview_language_advisories
+                .iter()
+                .find(|advisory| advisory.language == "typescript")
+                .ok_or_else(|| format!("{label}: expected a typescript advisory"))?;
+            assert!(advisory.enabled, "{label}");
+            assert!(!advisory.analyzed(&run.language_runs), "{label}");
+            let mut js_advisory = advisory.clone();
+            js_advisory.language = "javascript".to_string();
+            assert!(!js_advisory.analyzed(&run.language_runs), "{label}: js");
+        }
+        Ok(())
+    }
+
     /// #10013: both TypeScript-family ids run the shared repo adapter, but its
     /// findings and file counts are retained once, as in a single-id run, and
     /// do not depend on which id is listed first.
@@ -7783,6 +7856,7 @@ index 0000000..1111111 100644
             uninspected_changed_lines_lower_bound: uninspected_lines,
             stop_reason,
             next_file_changed_lines: (uninspected_lines > 0).then_some(uninspected_lines),
+            whole_diff_budgets: None,
             partition_identity: "sha256:partition".to_string(),
         }
     }

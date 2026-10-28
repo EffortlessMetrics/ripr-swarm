@@ -1,0 +1,44 @@
+{
+  "case_id": "spec0048-flow-branch-only-use",
+  "subject_id": "authored-spec0048-const-flow",
+  "diff": "cases/spec0048-flow-branch-only-use.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 45
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "behavior_selector_const",
+  "test_shape": "selector_const_read_only_in_untested_branch",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "pub const BURST: u32 = 101;",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "the edit itself: burst is compared only on the premium branch and the test calls the free branch, so the edit is never executed by the test"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "BURST is compared only on the premium branch and the test calls the free branch, so the edit is never executed by the test. A constant read in a branch the test does not take belongs to the predicate boundary rules.",
+  "labeling_observation": {
+    "ripr_commit": "01097634",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

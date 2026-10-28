@@ -1045,8 +1045,29 @@ fn find_related_tests_with_candidates<'a>(
                 .collect()
         })
         .unwrap_or_default();
+    #[cfg(test)]
+    let full_scan_pin_syntax;
+    let pin_syntax = match candidates {
+        RelatedTestCandidates::Indexed(candidate_index) => candidate_index.owner_pin_syntax(),
+        #[cfg(test)]
+        RelatedTestCandidates::FullScan => {
+            full_scan_pin_syntax = super::OwnerPinSyntax::default();
+            &full_scan_pin_syntax
+        }
+    };
     for test_index in candidate_indices {
-        let test = index.tests().at(test_index);
+        let test = index.test_at(test_index);
+        // Registration proves the callback, not its owner. Match the repo
+        // path before any relation can lend evidence, and keep a later
+        // policy-modified fact from falling through as an ordinary test.
+        if index.is_registered_proptest(test)
+            && (index.proptest_source(test).is_none()
+                || owner_fn.is_none_or(|owner| {
+                    !super::bound_free_owner_calls(index, owner, test, &test.body, pin_syntax)
+                }))
+        {
+            continue;
+        }
         // Compute calls_owner BEFORE the package-prefix guard so a cross-crate
         // test that genuinely calls a uniquely-named owner is not filtered out
         // before the strong signal can save it.
@@ -4533,6 +4554,30 @@ pub(in crate::analysis) fn resolves_method_in_prefix(
 /// method a test can call.
 pub(in crate::analysis) fn is_drop_destructor(owner: &FunctionSummary, index: &RustIndex) -> bool {
     drop_dispatch::drop_owner(owner, index).is_some()
+}
+
+/// Whether `test` ends a scope over, or drops, an owned value of the type whose
+/// standard `Drop::drop` is `owner` before an assertion. The relation the
+/// scope-end carrier builds on (#10814).
+pub(in crate::analysis) fn test_drops_destructor_value(
+    test: &TestSummary,
+    owner: &FunctionSummary,
+    test_source: Option<&str>,
+    index: &RustIndex,
+) -> bool {
+    drop_dispatch::drop_owner(owner, index).is_some_and(|drop| {
+        drop_dispatch::test_drops_owner_value(test, owner, &drop, test_source, index)
+    })
+}
+
+/// Whether a `drop(..)` spelled in `source` is the standard function: no local
+/// `fn drop`, `mod mem`, renamed or foreign import or binding named `drop`.
+pub(in crate::analysis) fn standard_drop_call_unshadowed(
+    source: &str,
+    file: &std::path::Path,
+    index: &RustIndex,
+) -> bool {
+    !drop_dispatch::standard_drop_may_be_shadowed(source, file, index)
 }
 
 /// A bounded, test-local dispatch witness for an indexed trait impl. Naming

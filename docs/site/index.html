@@ -85,7 +85,7 @@ assert_eq!(discounted_total(10_000, 100), 9_990);</code></pre>
             <p class="finding-label"><span aria-hidden="true">◉</span> A boundary to inspect</p>
             <p class="code-caption">Selected lines · 0.11 development fixture output</p>
             <pre><code id="fixture-output">Changed behavior: amount &gt;= discount_threshold
-Missing discriminator: amount == discount_threshold
+Missing check: amount == discount_threshold
 Next step: Add boundary tests for below, equal, and above the changed threshold with exact assertions</code></pre>
             <a href="https://github.com/EffortlessMetrics/ripr-swarm/blob/67f48e6ef567302ab7e104a2dfa83db5f8cd422c/fixtures/boundary_gap/expected/human.txt">Read the checked fixture <span class="arrow" aria-hidden="true"></span></a>
           </div>

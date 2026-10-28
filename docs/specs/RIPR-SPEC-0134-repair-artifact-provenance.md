@@ -123,7 +123,7 @@ live check share one probe. A worktree is dirty when Git reports a tracked
 change or when an untracked, non-ignored `*.rs` file exists, because the static
 analysis reads those sources and a clean claim would otherwise hide analyzed
 input. Untracked non-Rust files and gitignored Rust files do not count.
-`untracked_rust_sources_make_the_worktree_dirty` covers both sides with those
+`untracked_rust_sources_make_the_worktree_dirty` covers both sides, including a nested source under a spaced path, with those
 controls.
 
 Reachability (#3229): a fully current pair (both artifacts current at the

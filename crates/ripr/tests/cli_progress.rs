@@ -876,3 +876,123 @@ fn pilot_projects_repo_stages_on_stderr_and_keeps_packet_bytes_unchanged() -> Re
     ignore_remove_dir_all(&root);
     Ok(())
 }
+
+// --- #10727: verbose pilot prints a per-stage timing table on stderr only ---
+
+#[test]
+fn verbose_pilot_prints_a_stage_table_and_leaves_stdout_and_packet_bytes_unchanged()
+-> Result<(), String> {
+    let root = repo_fixture_root("pilot-progress")?;
+    let out = root.join("pilot-out");
+    let plain = run_pilot(&root, &out, &[])?;
+    assert!(plain.status.success(), "{}", stderr_text(&plain));
+    let summary_path = out.join("pilot-summary.json");
+    let plain_summary = std::fs::read(&summary_path)
+        .map_err(|error| format!("read plain pilot-summary.json: {error}"))?;
+    assert!(
+        !stderr_text(&plain).contains("stage timings"),
+        "the table is verbose-only: {}",
+        stderr_text(&plain)
+    );
+
+    let verbose = run_pilot(&root, &out, &["-v"])?;
+    assert!(verbose.status.success(), "{}", stderr_text(&verbose));
+    let verbose_err = stderr_text(&verbose);
+    assert!(
+        verbose_err.contains("ripr pilot: stage timings ("),
+        "missing stage table: {verbose_err}"
+    );
+    let table: Vec<&str> = verbose_err
+        .lines()
+        .skip_while(|line| !line.starts_with("ripr pilot: stage timings"))
+        .skip(1)
+        .take_while(|line| line.starts_with("  "))
+        .collect();
+    let stages: Vec<&str> = table
+        .iter()
+        .filter_map(|line| line.split_whitespace().next())
+        .collect();
+    assert_eq!(
+        stages,
+        [
+            "load_change",
+            "inventory",
+            "change_classification",
+            "diff_only_files",
+            "seam_budget",
+            "language_scan",
+            "write_artifacts",
+            "total",
+        ],
+        "{verbose_err}"
+    );
+    assert!(
+        table.iter().all(|line| line.trim_end().contains(" ms")),
+        "every row carries a millisecond count: {verbose_err}"
+    );
+    assert!(
+        table
+            .iter()
+            .any(|line| line.contains("inventory") && line.contains("items=")),
+        "the inventory row names its seam count: {verbose_err}"
+    );
+
+    assert_eq!(
+        plain.stdout, verbose.stdout,
+        "-v must not change pilot terminal stdout"
+    );
+    let verbose_summary = std::fs::read(&summary_path)
+        .map_err(|error| format!("read verbose pilot-summary.json: {error}"))?;
+    assert_eq!(
+        plain_summary, verbose_summary,
+        "timings must not enter pilot-summary.json"
+    );
+    assert!(
+        !String::from_utf8_lossy(&verbose_summary).contains("elapsed"),
+        "no wall-clock value in the packet"
+    );
+
+    // The sidecar carries the same stages as the table; a later run without
+    // `-v` must not leave it standing as that run's timings.
+    let sidecar_path = out.join("pilot-timings.json");
+    let sidecar: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(&sidecar_path)
+            .map_err(|error| format!("read pilot-timings.json: {error}"))?,
+    )
+    .map_err(|error| format!("pilot-timings.json is not JSON: {error}"))?;
+    let sidecar_stages: Vec<&str> = sidecar["stages"]
+        .as_array()
+        .ok_or("stages is not an array")?
+        .iter()
+        .filter_map(|row| row["stage"].as_str())
+        .collect();
+    let table_stages: Vec<&str> = stages.iter().copied().filter(|s| *s != "total").collect();
+    assert_eq!(sidecar_stages, table_stages, "{sidecar}");
+    assert!(sidecar["total_ms"].is_u64(), "{sidecar}");
+    let again = run_pilot(&root, &out, &[])?;
+    assert!(again.status.success(), "{}", stderr_text(&again));
+    assert!(
+        !sidecar_path.exists(),
+        "a run without -v removes the prior sidecar"
+    );
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+#[test]
+fn verbose_pilot_fails_rather_than_leave_an_unwritable_sidecar_as_current() -> Result<(), String> {
+    let root = repo_fixture_root("pilot-progress")?;
+    let out = root.join("pilot-out");
+    // A directory at the sidecar path cannot be replaced or removed as a
+    // file, so the prior-sidecar guard must refuse instead of passing.
+    std::fs::create_dir_all(out.join("pilot-timings.json"))
+        .map_err(|error| format!("create blocking directory: {error}"))?;
+    let verbose = run_pilot(&root, &out, &["-v"])?;
+    assert!(
+        !verbose.status.success(),
+        "an unreplaceable sidecar must not read as current: {}",
+        stderr_text(&verbose)
+    );
+    ignore_remove_dir_all(&root);
+    Ok(())
+}

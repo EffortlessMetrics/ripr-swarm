@@ -1,0 +1,6 @@
+# Existing JSON receipt semantics move without changing their authority (#10868).
+[[extend]]
+id = "RIPR-SPEC-0197"
+code = [
+  "crates/ripr/src/analysis/workspace/assertion_dependency/registry.rs",
+]

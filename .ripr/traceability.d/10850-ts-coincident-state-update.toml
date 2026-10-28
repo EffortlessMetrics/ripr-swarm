@@ -1,0 +1,7 @@
+# Registers the coincident-input controls for a returned state update (#10850) under RIPR-SPEC-0243.
+[[extend]]
+id = "RIPR-SPEC-0243"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/tests.rs::returned_state_operands_pair_an_edited_operand_of_the_same_operator",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::instance_call_receivers_name_plain_receivers_only",
+]

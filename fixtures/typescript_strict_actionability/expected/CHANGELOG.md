@@ -686,3 +686,27 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_strict_actionability (30)
+
+Reason:
+RIPR-SPEC-0122: plain-language wording for the default and human-full check views (#10691); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless typescript_strict_actionability --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — typescript_strict_actionability (31)
+
+Reason:
+RIPR-SPEC-0113: honest no-static-path next step names the owner and the ordered add-test, native verifier, refresh route (#10708)
+
+Command:
+`cargo xtask goldens bless typescript_strict_actionability --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
