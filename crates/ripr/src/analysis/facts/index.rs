@@ -400,28 +400,33 @@ impl<'a> IndexFiles<'a> {
     pub fn at(&self, path: &Path) -> FileFactsView<'a> {
         self.index.file_view(&self.index.files[path])
     }
+    #[track_caller]
     pub fn get_key_value(&self, path: &Path) -> Option<(&'a PathBuf, FileFactsView<'a>)> {
-        self.index
-            .files
-            .get_key_value(path)
-            .map(|(key, file)| (key, self.index.file_view(file)))
+        let found = self.index.files.get_key_value(path);
+        crate::analysis::probe_read_trace::file(path, found.is_some());
+        found.map(|(key, file)| (key, self.index.file_view(file)))
     }
+    #[track_caller]
     pub fn get(&self, path: &Path) -> Option<FileFactsView<'a>> {
-        self.index
-            .files
-            .get(path)
-            .map(|file| self.index.file_view(file))
+        let found = self.index.files.get(path);
+        crate::analysis::probe_read_trace::file(path, found.is_some());
+        found.map(|file| self.index.file_view(file))
     }
+    #[track_caller]
     pub fn iter(
         &self,
     ) -> impl DoubleEndedIterator<Item = (&'a PathBuf, FileFactsView<'a>)> + ExactSizeIterator + use<'a>
     {
+        crate::analysis::probe_read_trace::universe(
+            crate::analysis::probe_read_trace::Universe::Files,
+        );
         let index = self.index;
         index
             .files
             .iter()
             .map(move |(path, file)| (path, index.file_view(file)))
     }
+    #[track_caller]
     pub fn values(
         &self,
     ) -> impl DoubleEndedIterator<Item = FileFactsView<'a>> + ExactSizeIterator + use<'a> {
@@ -433,7 +438,11 @@ impl<'a> IndexFiles<'a> {
     ) -> impl DoubleEndedIterator<Item = &'a PathBuf> + ExactSizeIterator + use<'a> {
         self.index.files.keys()
     }
+    #[track_caller]
     pub fn len(&self) -> usize {
+        crate::analysis::probe_read_trace::universe(
+            crate::analysis::probe_read_trace::Universe::Files,
+        );
         self.index.files.len()
     }
     #[cfg(test)]
@@ -528,7 +537,11 @@ impl RustIndex {
 }
 
 impl RustIndex {
+    #[track_caller]
     pub fn functions(&self) -> FactSlice<'_, FunctionFact> {
+        crate::analysis::probe_read_trace::universe(
+            crate::analysis::probe_read_trace::Universe::Functions,
+        );
         FactSlice {
             arena: &self.function_facts,
             order: Some(&self.function_order),
@@ -549,7 +562,11 @@ impl RustIndex {
             .map(|(_, source)| &**source)
     }
 
+    #[track_caller]
     pub fn tests(&self) -> FactSlice<'_, TestFact> {
+        crate::analysis::probe_read_trace::universe(
+            crate::analysis::probe_read_trace::Universe::Tests,
+        );
         FactSlice {
             arena: &self.test_facts,
             order: Some(&self.test_order),
