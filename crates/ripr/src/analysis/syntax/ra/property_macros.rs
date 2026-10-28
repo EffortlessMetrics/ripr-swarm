@@ -123,6 +123,17 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_helper_is_not_an_assertion() -> Result<(), String> {
+        let source = "fn owner(x: i32) -> i32 { x }\nmacro_rules! snapshot_helper { ($($t:tt)*) => {} }\nmacro_rules! assert_snapshot { ($value:expr) => { assert_eq!($value, 2) } }\n#[test] fn boundary() { snapshot_helper!(owner(1)); assert_snapshot!(owner(2)); }\n";
+        let facts = summarize_file_with_parser(Path::new("src/lib.rs"), source)?;
+        assert_eq!(facts.tests.len(), 1);
+        let assertions = &facts.tests[0].assertions;
+        assert_eq!(assertions.len(), 1, "{assertions:?}");
+        assert!(assertions[0].text.contains("assert_snapshot!"));
+        Ok(())
+    }
+
+    #[test]
     fn property_macro_names_do_not_grant_assertion_authority() {
         for name in ["prop_assert", "prop_assert_eq", "prop_assert_ne"] {
             assert!(!is_assertion_macro(name));

@@ -2666,10 +2666,9 @@ fn is_result_expect_err_ufcs(call: &ast::CallExpr) -> bool {
 
 /// Token-local leaf form of [`is_assertion_macro`] for scanners that see
 /// one path segment at a time: the exact built-in assertion names plus the
-/// supported snapshot-macro naming boundary (`*_snapshot`). The
-/// source-side `contains("snapshot")` rule is deliberately NOT carried
-/// over — a leaf ident like `snapshot_helper` must not classify, while
-/// `assert_snapshot` / `assert_json_snapshot` do.
+/// supported snapshot-macro naming boundary (`*_snapshot`). A leaf ident
+/// like `snapshot_helper` must not classify, while `assert_snapshot` and
+/// `assert_json_snapshot` do.
 pub(crate) fn is_assertion_macro_leaf(name: &str) -> bool {
     // `matches!` computes a bool. Only an asserting wrapper observes it;
     // admitting the computation itself credits discarded values (#5713).
@@ -2685,7 +2684,7 @@ pub(crate) fn is_assertion_macro(macro_name: &str) -> bool {
         macro_name,
         "assert" | "assert_eq" | "assert_ne" | "assert_matches"
     ) || macro_name.starts_with("insta::assert")
-        || macro_name.contains("snapshot")
+        || macro_name.ends_with("snapshot")
 }
 
 /// Crates whose path-qualified assertion macros keep the std semantics:
