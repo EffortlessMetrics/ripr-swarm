@@ -615,6 +615,66 @@ fn allowed_builder_method_names_includes_required_discriminator_tokens() {
 }
 
 #[test]
+fn builder_facts_skips_bodies_that_name_no_allowed_token_and_matches_the_full_scan() {
+    let seam = predicate_seam();
+    let facts = ValueEnvFacts::default();
+    let env = ValueEnv::new(&seam, &facts);
+    let allowed = env.allowed_builder_method_names();
+    // The reference keeps every step the prefilter skips.
+    let full_scan = |body: &str| -> Vec<(usize, String, String)> {
+        scan_builder_calls(&strip_comments_and_strings(body))
+            .into_iter()
+            .filter(|cap| builder_method_matches_allowed(&cap.method, &allowed))
+            .flat_map(|cap| {
+                extract_inner_literals(&cap.arg)
+                    .into_iter()
+                    .map(move |value| (cap.line, cap.method.clone(), value))
+            })
+            .collect()
+    };
+    let bodies = [
+        "let q = Quote::new().amount(100).threshold(200).build();\n",
+        "let q = Quote::new().with_amount(7).set_discount_threshold(9);\n",
+        "let q = Quote::new().seed(3).build();\n",
+        "let q = Quote::new(); // .amount(100) in a comment\n",
+        "let q = Quote::new().label(\".amount(100)\");\n",
+        "let q = Quote::new()\n    .amount(1)\n    .other(2);\n",
+        "",
+    ];
+    for body in bodies {
+        let got: Vec<(usize, String, String)> = env
+            .builder_facts(body)
+            .into_iter()
+            .map(|fact| {
+                let method = fact
+                    .text
+                    .trim_start_matches('.')
+                    .split('(')
+                    .next()
+                    .unwrap_or_default()
+                    .to_string();
+                (fact.line, method, fact.value)
+            })
+            .collect();
+        assert_eq!(
+            got,
+            full_scan(body),
+            "prefilter changed the result for {body:?}"
+        );
+    }
+    assert!(
+        !env.builder_facts("let q = Quote::new().amount(100);\n")
+            .is_empty(),
+        "a body that names an allowed token still yields its builder fact"
+    );
+    assert!(
+        env.builder_facts("let q = Quote::new().seed(3);\n")
+            .is_empty(),
+        "a body that names no allowed token yields nothing"
+    );
+}
+
+#[test]
 fn field_assignment_named_constant_values_are_exact_and_bounded() -> Result<(), String> {
     let constants = BTreeMap::from([("SUPPORTED_VERSION".to_string(), "1".to_string())]);
     for (expression, expected) in [
