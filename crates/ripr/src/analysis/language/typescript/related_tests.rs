@@ -4836,7 +4836,12 @@ fn split_top_level_declarators(after: &str) -> Vec<&str> {
 }
 
 pub(crate) fn has_member_call_boundary(body_text: &str, idx: usize) -> bool {
-    body_text[..idx]
+    let prefix = &body_text[..idx];
+    let trimmed = prefix.trim_end();
+    if trimmed.ends_with('.') && !trimmed.ends_with("...") {
+        return false;
+    }
+    prefix
         .chars()
         .next_back()
         .is_none_or(|ch| !is_javascript_identifier_char(ch) && ch != '.')

@@ -18656,6 +18656,28 @@ fn undercredit_4103_optional_chain_unrelated_receiver_is_not_credited() {
 }
 
 #[test]
+fn optional_chain_namespace_receiver_must_be_the_imported_binding() {
+    let owner = test_owner("loyaltyPrice", "src/pricing.ts");
+    let tests = extract_tests(
+        Path::new("tests/pricing.test.ts"),
+        r#"import * as pricing from "../src/pricing";
+test("direct", () => { expect(pricing?.loyaltyPrice(2)).toBe(1); });
+test("nested", () => { expect(other. pricing?.loyaltyPrice(2)).toBe(1); });
+"#,
+    );
+    let candidates = related_test_candidates(
+        &owner,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
+    assert_eq!(candidates.len(), 1, "{candidates:?}");
+    assert_eq!(candidates[0].test.name, "direct");
+}
+
+#[test]
 fn undercredit_4103_dynamic_import_member_call_is_credited() {
     let owner = test_owner("loyaltyPrice", "src/pricing.ts");
     let tests = extract_tests(
