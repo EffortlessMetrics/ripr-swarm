@@ -2,17 +2,22 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/recording_double_observer_refusals/input
 
-Summary: 12 probe(s), 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 12 static_unknown; 12 of 12 finding(s) unsuppressed
+Summary: 12 changed behavior(s) checked: 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 12 static_unknown; 12 of 12 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
 
 Analysis outcome: findings below (analysis complete; complete_with_findings)
-  Counts: 6 changed file(s), 12 changed line(s), 6 candidate line(s), 12 probe(s), 12 finding(s)
+  Counts: 6 changed file(s), 12 changed line(s), 6 candidate line(s), 12 changed behavior(s) checked, 12 finding(s)
 
 Shared evidence and guidance
   E1 [findings 1, 2]: reach yes: Related tests appear to reach report_let_else: exact_line
   E2 [findings 1, 2]: infection yes: Reachable tests can plausibly activate this changed behavior
   E3 [findings 1, 2]: propagation yes: Changed behavior appears to influence event or outbound call: sink.send(format!("n={n}"))
   E4 [findings 1, 2]: observation yes: A related test observes a value or effect near the changed behavior
-  E5 [findings 1, 2]: discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression
+  E5 [findings 1, 2]: discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression
   E6 [findings 1, 2]: local flow reaches event or outbound call: sink.send(format!("n={n}")) (line 13)
   E7 [findings 1, 2]: related test src/let_else.rs:19 exact_line uses strong exact value oracle: assert_eq!(recorder.lines, vec!["n=3".to_string()]); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   E8 [findings 1, 2]: source function argument value n = 3 at line 21
@@ -22,7 +27,7 @@ Shared evidence and guidance
   E11 [findings 3, 4]: infection yes: Reachable tests can plausibly activate this changed behavior
   E12 [findings 3, 4]: propagation yes: Changed behavior appears to influence event or outbound call: sink.send(format!("n={n}"))
   E13 [findings 3, 4]: observation yes: A related test observes a value or effect near the changed behavior
-  E14 [findings 3, 4]: discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression
+  E14 [findings 3, 4]: discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression
   E15 [findings 3, 4]: local flow reaches event or outbound call: sink.send(format!("n={n}")) (line 13)
   E16 [findings 3, 4]: related test src/owned_clone.rs:19 exact_line uses strong exact value oracle: assert_eq!(recorder.lines.clone(), vec!["n=3".to_string()]); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   E17 [findings 3, 4]: source function argument value n = 3 at line 21
@@ -32,7 +37,7 @@ Shared evidence and guidance
   E20 [findings 5, 6]: infection yes: Reachable tests can plausibly activate this changed behavior
   E21 [findings 5, 6]: propagation yes: Changed behavior appears to influence event or outbound call: sink.send(format!("n={n}"))
   E22 [findings 5, 6]: observation yes: A related test observes a value or effect near the changed behavior
-  E23 [findings 5, 6]: discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression
+  E23 [findings 5, 6]: discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression
   E24 [findings 5, 6]: local flow reaches event or outbound call: sink.send(format!("n={n}")) (line 13)
   E25 [findings 5, 6]: related test src/push_dispatch.rs:19 exact_line uses strong exact value oracle: assert_eq!(recorder.lines, vec!["n=3".to_string()]); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   E26 [findings 5, 6]: source function argument value n = 3 at line 21
@@ -42,7 +47,7 @@ Shared evidence and guidance
   E29 [findings 7, 8]: infection yes: Reachable tests can plausibly activate this changed behavior
   E30 [findings 7, 8]: propagation yes: Changed behavior appears to influence event or outbound call: sink.send(format!("n={n}"))
   E31 [findings 7, 8]: observation yes: A related test observes a value or effect near the changed behavior
-  E32 [findings 7, 8]: discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression
+  E32 [findings 7, 8]: discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression
   E33 [findings 7, 8]: local flow reaches event or outbound call: sink.send(format!("n={n}")) (line 13)
   E34 [findings 7, 8]: related test src/raw_binding.rs:19 exact_line uses strong exact value oracle: assert_eq!(recorder.lines, vec!["n=3".to_string()]); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   E35 [findings 7, 8]: source function argument value items = 1 at line 21
@@ -53,7 +58,7 @@ Shared evidence and guidance
   E39 [findings 9, 10]: infection yes: Reachable tests can plausibly activate this changed behavior
   E40 [findings 9, 10]: propagation yes: Changed behavior appears to influence event or outbound call: sink.send(format!("n={n}"))
   E41 [findings 9, 10]: observation yes: A related test observes a value or effect near the changed behavior
-  E42 [findings 9, 10]: discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression
+  E42 [findings 9, 10]: discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression
   E43 [findings 9, 10]: local flow reaches event or outbound call: sink.send(format!("n={n}")) (line 13)
   E44 [findings 9, 10]: related test src/raw_receiver.rs:23 exact_line uses strong exact value oracle: assert_eq!(recorder.lines, vec!["n=3".to_string()]); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   E45 [findings 9, 10]: source function argument value n = 3 at line 25
@@ -63,7 +68,7 @@ Shared evidence and guidance
   E48 [findings 11, 12]: infection yes: Reachable tests can plausibly activate this changed behavior
   E49 [findings 11, 12]: propagation yes: Changed behavior appears to influence event or outbound call: sink.send(format!("n={n}"))
   E50 [findings 11, 12]: observation yes: A related test observes a value or effect near the changed behavior
-  E51 [findings 11, 12]: discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression
+  E51 [findings 11, 12]: discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression
   E52 [findings 11, 12]: local flow reaches event or outbound call: sink.send(format!("n={n}")) (line 13)
   E53 [findings 11, 12]: related test src/unicode_binding.rs:19 exact_line uses strong exact value oracle: assert_eq!(recorder.lines, vec!["n=3".to_string()]); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   E54 [findings 11, 12]: source function argument value café = 1 at line 21
@@ -76,9 +81,10 @@ Finding 1: NOTE ./src/let_else.rs:13
 Changed
   before: sink.send(format!("n={}", n))
   after:  sink.send(format!("n={n}"))
-Probe
+Change type
+  a call was removed
   family: call_deletion
-  delta:  effect
+  delta:  effect (changes a side effect)
   owner:  src/let_else.rs::report_let_else
 Static exposure
   static_unknown (note, confidence 0.92)
@@ -87,9 +93,9 @@ Evidence
 Weakness
   - A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim
 Stop reasons:
-  - proc_macro_opaque — the changed expression contains a macro call whose expansion ripr does not see
+  - the changed expression contains a macro call whose expansion ripr does not see (proc_macro_opaque)
     Next: Call the changed owner directly from a test, outside the macro, and assert on its result.
-  - gap_evidence_unresolved — ripr could not establish the evidence a gap needs for this change, so it does not claim one
+  - ripr could not establish the evidence a gap needs for this change, so it does not claim one (gap_evidence_unresolved)
 Static limitation
   rust_framework_oracle_unresolved — A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim.
   Next: Add a direct `assert_eq!` on the changed value beside the environment, mock, expect-test or snapshot check.
@@ -109,9 +115,10 @@ Finding 2: NOTE ./src/let_else.rs:13
 Changed
   before: sink.send(format!("n={}", n))
   after:  sink.send(format!("n={n}"))
-Probe
+Change type
+  a side effect changed
   family: side_effect
-  delta:  effect
+  delta:  effect (changes a side effect)
   owner:  src/let_else.rs::report_let_else
 Static exposure
   static_unknown (note, confidence 0.92)
@@ -120,9 +127,9 @@ Evidence
 Weakness
   - A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim
 Stop reasons:
-  - proc_macro_opaque — the changed expression contains a macro call whose expansion ripr does not see
+  - the changed expression contains a macro call whose expansion ripr does not see (proc_macro_opaque)
     Next: Call the changed owner directly from a test, outside the macro, and assert on its result.
-  - gap_evidence_unresolved — ripr could not establish the evidence a gap needs for this change, so it does not claim one
+  - ripr could not establish the evidence a gap needs for this change, so it does not claim one (gap_evidence_unresolved)
 Static limitation
   rust_framework_oracle_unresolved — A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim.
   Next: Add a direct `assert_eq!` on the changed value beside the environment, mock, expect-test or snapshot check.
@@ -142,9 +149,10 @@ Finding 3: NOTE ./src/owned_clone.rs:13
 Changed
   before: sink.send(format!("n={}", n))
   after:  sink.send(format!("n={n}"))
-Probe
+Change type
+  a call was removed
   family: call_deletion
-  delta:  effect
+  delta:  effect (changes a side effect)
   owner:  src/owned_clone.rs::report_owned_clone
 Static exposure
   static_unknown (note, confidence 0.92)
@@ -153,9 +161,9 @@ Evidence
 Weakness
   - A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim
 Stop reasons:
-  - proc_macro_opaque — the changed expression contains a macro call whose expansion ripr does not see
+  - the changed expression contains a macro call whose expansion ripr does not see (proc_macro_opaque)
     Next: Call the changed owner directly from a test, outside the macro, and assert on its result.
-  - gap_evidence_unresolved — ripr could not establish the evidence a gap needs for this change, so it does not claim one
+  - ripr could not establish the evidence a gap needs for this change, so it does not claim one (gap_evidence_unresolved)
 Static limitation
   rust_framework_oracle_unresolved — A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim.
   Next: Add a direct `assert_eq!` on the changed value beside the environment, mock, expect-test or snapshot check.
@@ -175,9 +183,10 @@ Finding 4: NOTE ./src/owned_clone.rs:13
 Changed
   before: sink.send(format!("n={}", n))
   after:  sink.send(format!("n={n}"))
-Probe
+Change type
+  a side effect changed
   family: side_effect
-  delta:  effect
+  delta:  effect (changes a side effect)
   owner:  src/owned_clone.rs::report_owned_clone
 Static exposure
   static_unknown (note, confidence 0.92)
@@ -186,9 +195,9 @@ Evidence
 Weakness
   - A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim
 Stop reasons:
-  - proc_macro_opaque — the changed expression contains a macro call whose expansion ripr does not see
+  - the changed expression contains a macro call whose expansion ripr does not see (proc_macro_opaque)
     Next: Call the changed owner directly from a test, outside the macro, and assert on its result.
-  - gap_evidence_unresolved — ripr could not establish the evidence a gap needs for this change, so it does not claim one
+  - ripr could not establish the evidence a gap needs for this change, so it does not claim one (gap_evidence_unresolved)
 Static limitation
   rust_framework_oracle_unresolved — A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim.
   Next: Add a direct `assert_eq!` on the changed value beside the environment, mock, expect-test or snapshot check.
@@ -208,9 +217,10 @@ Finding 5: NOTE ./src/push_dispatch.rs:13
 Changed
   before: sink.send(format!("n={}", n))
   after:  sink.send(format!("n={n}"))
-Probe
+Change type
+  a call was removed
   family: call_deletion
-  delta:  effect
+  delta:  effect (changes a side effect)
   owner:  src/push_dispatch.rs::report_push_dispatch
 Static exposure
   static_unknown (note, confidence 0.92)
@@ -219,9 +229,9 @@ Evidence
 Weakness
   - A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim
 Stop reasons:
-  - proc_macro_opaque — the changed expression contains a macro call whose expansion ripr does not see
+  - the changed expression contains a macro call whose expansion ripr does not see (proc_macro_opaque)
     Next: Call the changed owner directly from a test, outside the macro, and assert on its result.
-  - gap_evidence_unresolved — ripr could not establish the evidence a gap needs for this change, so it does not claim one
+  - ripr could not establish the evidence a gap needs for this change, so it does not claim one (gap_evidence_unresolved)
 Static limitation
   rust_framework_oracle_unresolved — A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim.
   Next: Add a direct `assert_eq!` on the changed value beside the environment, mock, expect-test or snapshot check.
@@ -241,9 +251,10 @@ Finding 6: NOTE ./src/push_dispatch.rs:13
 Changed
   before: sink.send(format!("n={}", n))
   after:  sink.send(format!("n={n}"))
-Probe
+Change type
+  a side effect changed
   family: side_effect
-  delta:  effect
+  delta:  effect (changes a side effect)
   owner:  src/push_dispatch.rs::report_push_dispatch
 Static exposure
   static_unknown (note, confidence 0.92)
@@ -252,9 +263,9 @@ Evidence
 Weakness
   - A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim
 Stop reasons:
-  - proc_macro_opaque — the changed expression contains a macro call whose expansion ripr does not see
+  - the changed expression contains a macro call whose expansion ripr does not see (proc_macro_opaque)
     Next: Call the changed owner directly from a test, outside the macro, and assert on its result.
-  - gap_evidence_unresolved — ripr could not establish the evidence a gap needs for this change, so it does not claim one
+  - ripr could not establish the evidence a gap needs for this change, so it does not claim one (gap_evidence_unresolved)
 Static limitation
   rust_framework_oracle_unresolved — A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim.
   Next: Add a direct `assert_eq!` on the changed value beside the environment, mock, expect-test or snapshot check.
@@ -274,9 +285,10 @@ Finding 7: NOTE ./src/raw_binding.rs:13
 Changed
   before: sink.send(format!("n={}", n))
   after:  sink.send(format!("n={n}"))
-Probe
+Change type
+  a call was removed
   family: call_deletion
-  delta:  effect
+  delta:  effect (changes a side effect)
   owner:  src/raw_binding.rs::report_raw_binding
 Static exposure
   static_unknown (note, confidence 0.92)
@@ -285,9 +297,9 @@ Evidence
 Weakness
   - A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim
 Stop reasons:
-  - proc_macro_opaque — the changed expression contains a macro call whose expansion ripr does not see
+  - the changed expression contains a macro call whose expansion ripr does not see (proc_macro_opaque)
     Next: Call the changed owner directly from a test, outside the macro, and assert on its result.
-  - gap_evidence_unresolved — ripr could not establish the evidence a gap needs for this change, so it does not claim one
+  - ripr could not establish the evidence a gap needs for this change, so it does not claim one (gap_evidence_unresolved)
 Static limitation
   rust_framework_oracle_unresolved — A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim.
   Next: Add a direct `assert_eq!` on the changed value beside the environment, mock, expect-test or snapshot check.
@@ -307,9 +319,10 @@ Finding 8: NOTE ./src/raw_binding.rs:13
 Changed
   before: sink.send(format!("n={}", n))
   after:  sink.send(format!("n={n}"))
-Probe
+Change type
+  a side effect changed
   family: side_effect
-  delta:  effect
+  delta:  effect (changes a side effect)
   owner:  src/raw_binding.rs::report_raw_binding
 Static exposure
   static_unknown (note, confidence 0.92)
@@ -318,9 +331,9 @@ Evidence
 Weakness
   - A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim
 Stop reasons:
-  - proc_macro_opaque — the changed expression contains a macro call whose expansion ripr does not see
+  - the changed expression contains a macro call whose expansion ripr does not see (proc_macro_opaque)
     Next: Call the changed owner directly from a test, outside the macro, and assert on its result.
-  - gap_evidence_unresolved — ripr could not establish the evidence a gap needs for this change, so it does not claim one
+  - ripr could not establish the evidence a gap needs for this change, so it does not claim one (gap_evidence_unresolved)
 Static limitation
   rust_framework_oracle_unresolved — A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim.
   Next: Add a direct `assert_eq!` on the changed value beside the environment, mock, expect-test or snapshot check.
@@ -340,9 +353,10 @@ Finding 9: NOTE ./src/raw_receiver.rs:13
 Changed
   before: sink.send(format!("n={}", n))
   after:  sink.send(format!("n={n}"))
-Probe
+Change type
+  a call was removed
   family: call_deletion
-  delta:  effect
+  delta:  effect (changes a side effect)
   owner:  src/raw_receiver.rs::report_raw_receiver
 Static exposure
   static_unknown (note, confidence 0.92)
@@ -351,9 +365,9 @@ Evidence
 Weakness
   - A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim
 Stop reasons:
-  - proc_macro_opaque — the changed expression contains a macro call whose expansion ripr does not see
+  - the changed expression contains a macro call whose expansion ripr does not see (proc_macro_opaque)
     Next: Call the changed owner directly from a test, outside the macro, and assert on its result.
-  - gap_evidence_unresolved — ripr could not establish the evidence a gap needs for this change, so it does not claim one
+  - ripr could not establish the evidence a gap needs for this change, so it does not claim one (gap_evidence_unresolved)
 Static limitation
   rust_framework_oracle_unresolved — A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim.
   Next: Add a direct `assert_eq!` on the changed value beside the environment, mock, expect-test or snapshot check.
@@ -373,9 +387,10 @@ Finding 10: NOTE ./src/raw_receiver.rs:13
 Changed
   before: sink.send(format!("n={}", n))
   after:  sink.send(format!("n={n}"))
-Probe
+Change type
+  a side effect changed
   family: side_effect
-  delta:  effect
+  delta:  effect (changes a side effect)
   owner:  src/raw_receiver.rs::report_raw_receiver
 Static exposure
   static_unknown (note, confidence 0.92)
@@ -384,9 +399,9 @@ Evidence
 Weakness
   - A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim
 Stop reasons:
-  - proc_macro_opaque — the changed expression contains a macro call whose expansion ripr does not see
+  - the changed expression contains a macro call whose expansion ripr does not see (proc_macro_opaque)
     Next: Call the changed owner directly from a test, outside the macro, and assert on its result.
-  - gap_evidence_unresolved — ripr could not establish the evidence a gap needs for this change, so it does not claim one
+  - ripr could not establish the evidence a gap needs for this change, so it does not claim one (gap_evidence_unresolved)
 Static limitation
   rust_framework_oracle_unresolved — A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim.
   Next: Add a direct `assert_eq!` on the changed value beside the environment, mock, expect-test or snapshot check.
@@ -406,9 +421,10 @@ Finding 11: NOTE ./src/unicode_binding.rs:13
 Changed
   before: sink.send(format!("n={}", n))
   after:  sink.send(format!("n={n}"))
-Probe
+Change type
+  a call was removed
   family: call_deletion
-  delta:  effect
+  delta:  effect (changes a side effect)
   owner:  src/unicode_binding.rs::report_unicode_binding
 Static exposure
   static_unknown (note, confidence 0.92)
@@ -417,9 +433,9 @@ Evidence
 Weakness
   - A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim
 Stop reasons:
-  - proc_macro_opaque — the changed expression contains a macro call whose expansion ripr does not see
+  - the changed expression contains a macro call whose expansion ripr does not see (proc_macro_opaque)
     Next: Call the changed owner directly from a test, outside the macro, and assert on its result.
-  - gap_evidence_unresolved — ripr could not establish the evidence a gap needs for this change, so it does not claim one
+  - ripr could not establish the evidence a gap needs for this change, so it does not claim one (gap_evidence_unresolved)
 Static limitation
   rust_framework_oracle_unresolved — A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim.
   Next: Add a direct `assert_eq!` on the changed value beside the environment, mock, expect-test or snapshot check.
@@ -439,9 +455,10 @@ Finding 12: NOTE ./src/unicode_binding.rs:13
 Changed
   before: sink.send(format!("n={}", n))
   after:  sink.send(format!("n={n}"))
-Probe
+Change type
+  a side effect changed
   family: side_effect
-  delta:  effect
+  delta:  effect (changes a side effect)
   owner:  src/unicode_binding.rs::report_unicode_binding
 Static exposure
   static_unknown (note, confidence 0.92)
@@ -450,9 +467,9 @@ Evidence
 Weakness
   - A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim
 Stop reasons:
-  - proc_macro_opaque — the changed expression contains a macro call whose expansion ripr does not see
+  - the changed expression contains a macro call whose expansion ripr does not see (proc_macro_opaque)
     Next: Call the changed owner directly from a test, outside the macro, and assert on its result.
-  - gap_evidence_unresolved — ripr could not establish the evidence a gap needs for this change, so it does not claim one
+  - ripr could not establish the evidence a gap needs for this change, so it does not claim one (gap_evidence_unresolved)
 Static limitation
   rust_framework_oracle_unresolved — A related Rust test checks this code through a test-framework idiom that ripr does not evaluate (an environment variable the test sets or removes, a mockall closure that reads the call's arguments, an expect-test debug literal, an insta snapshot kept outside the source, a helper-built receiver under a changed closure, a hand-written recording double, or an async owner driven by an executor helper in the test's file), so ripr cannot say whether the check notices the change. ripr does not claim a gap; this is a named limitation, not a coverage claim.
   Next: Add a direct `assert_eq!` on the changed value beside the environment, mock, expect-test or snapshot check.
