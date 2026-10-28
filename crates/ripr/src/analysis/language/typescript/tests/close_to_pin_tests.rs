@@ -78,6 +78,34 @@ fn a_change_outside_the_tolerance_is_pinned() -> Result<(), String> {
 }
 
 #[test]
+fn shadowed_math_does_not_pin_a_change() -> Result<(), String> {
+    let old_line = "  return Math.abs(cm);";
+    let new_line = "  return Math.abs(cm + 1);";
+    let test = test_source("  expect(cmToIn(1)).toBeCloseTo(1);");
+    let shadowed = "const Math = { abs: (_n: number) => 1 };\nexport function cmToIn(cm: number): number {\n  return Math.abs(cm + 1);\n}\n";
+    let builtin = "export function cmToIn(cm: number): number {\n  return Math.abs(cm + 1);\n}\n";
+    assert_eq!(
+        close_to_credits("shadowed-math", shadowed, old_line, new_line, &test)?,
+        0
+    );
+    assert_eq!(
+        close_to_credits("builtin-math", builtin, old_line, new_line, &test)?,
+        1
+    );
+    let overwritten = "Math.abs = (_n: number) => 1;\nexport function cmToIn(cm: number): number {\n  return Math.abs(cm + 1);\n}\n";
+    assert_eq!(
+        close_to_credits("overwritten-math", overwritten, old_line, new_line, &test)?,
+        0
+    );
+    let escaped = "const \\u004dath = { abs: (_n: number) => 1 };\nexport function cmToIn(cm: number): number {\n  return Math.abs(cm + 1);\n}\n";
+    assert_eq!(
+        close_to_credits("escaped-math", escaped, old_line, new_line, &test)?,
+        0
+    );
+    Ok(())
+}
+
+#[test]
 fn a_change_inside_the_tolerance_is_not_pinned() -> Result<(), String> {
     // 100 / 2.54 = 39.370 and 100 / 2.5 = 40; asserting 39.37 passes the old
     // value, and the new one is 0.63 away: pinned. Asserting 39.99 fails the

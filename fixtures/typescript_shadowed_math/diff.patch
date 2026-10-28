@@ -1,0 +1,9 @@
+diff --git a/src/units.ts b/src/units.ts
+--- a/src/units.ts
++++ b/src/units.ts
+@@ -1,4 +1,4 @@
+ const Math = { abs: (_n: number) => 1 };
+ export function cmToIn(cm: number): number {
+-  return Math.abs(cm);
++  return Math.abs(cm + 1);
+ }

@@ -1001,6 +1001,14 @@ method head, since a nested parameter can shadow the owner's), the observed
 value may call nothing but the owner directly, and `0` versus `-0` counts
 as different values.
 
+For an expression containing `Math` or a backslash, the evaluator also
+requires the analyzed module to be readable and the changed line to match it.
+Any other `Math` text in the
+module or a backslash in the module or old expression makes the global
+binding ambiguous and leaves the verdict unchanged. This conservative scan
+also refuses harmless comments, strings and unrelated references; it does not
+establish that other modules or runtime setup cannot replace the global.
+
 The two versions must also differ on some probe input, so an equivalent
 rewrite is never reported as unexercised. Each numeric argument is probed at
 its asserted value, its neighbours, `0`, `1` and `-1`; when that does not

@@ -455,7 +455,9 @@ stays `unknown`; the classifier reads it strong) when all of these hold:
 - the evaluator (`literal_eval`, RIPR-SPEC-0243 rule 18) computes both the
   old and the new `return` expression to numbers for those arguments, the
   old value is within the tolerance of `n`, and the new value is outside it,
-  each by a margin of `1e-9` that floating-point rounding cannot close.
+  each by a margin of `1e-9` that floating-point rounding cannot close. Its
+  `Math` evaluation also requires the module authority check specified in
+  rule 18; a shadow or ambiguous module text earns no tolerance pin.
 
 The assertion then fails for that edit on that input, which is the fact a
 mutant run would observe, computed instead of executed. Nothing else changes:

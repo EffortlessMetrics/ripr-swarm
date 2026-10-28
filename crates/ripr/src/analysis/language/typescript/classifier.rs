@@ -1252,6 +1252,16 @@ pub(crate) fn plain_changed_return<'t>(
     ) else {
         return None;
     };
+    if !literal_math_is_unambiguous(
+        line,
+        line_text,
+        old_expression,
+        new_expression,
+        owner,
+        workspace_root,
+    ) {
+        return None;
+    }
     // An earlier statement may rebind a parameter, so the call arguments
     // would not be the values the returned expression reads.
     let lines = owner_source_lines(owner, workspace_root)?;
@@ -1290,6 +1300,57 @@ pub(crate) fn plain_changed_return<'t>(
         return None;
     }
     Some((old_expression, new_expression))
+}
+
+/// The literal evaluator models `Math` as the global object. It cannot resolve
+/// a module binding or a write to that object, so any other code reference in
+/// the analyzed module makes that assumption ambiguous. This deliberately
+/// refuses even harmless references; expressions without `Math` or escapes
+/// need no module read.
+fn literal_math_is_unambiguous(
+    line: usize,
+    line_text: &str,
+    old_expression: &str,
+    new_expression: &str,
+    owner: &TypeScriptOwner,
+    workspace_root: Option<&Path>,
+) -> bool {
+    if ![old_expression, new_expression]
+        .iter()
+        .any(|text| text.contains("Math") || text.contains('\\'))
+    {
+        return true;
+    }
+    let Some(root) = workspace_root else {
+        return false;
+    };
+    let Ok(Some(bytes)) = crate::analysis::committed_source::read_source_bytes(root, &owner.file)
+    else {
+        return false;
+    };
+    let Ok(source) = String::from_utf8(bytes) else {
+        return false;
+    };
+    let Some(index) = line.checked_sub(1) else {
+        return false;
+    };
+    let lines: Vec<&str> = source.lines().collect();
+    if lines
+        .get(index)
+        .is_none_or(|actual| actual.trim() != line_text.trim())
+    {
+        return false;
+    }
+    let rest = lines
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| *i != index)
+        .map(|(_, text)| *text)
+        .collect::<Vec<_>>()
+        .join("\n");
+    // An escaped identifier may spell `Math` without those literal bytes.
+    // Scan raw text to avoid hiding code behind an ambiguous lexical mask.
+    !source.contains('\\') && !old_expression.contains('\\') && !rest.contains("Math")
 }
 
 /// Whether the test file names `name` anywhere outside its test bodies (a
