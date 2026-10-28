@@ -89,14 +89,26 @@ second stage vocabulary.
     `seam_budget`, `language_scan` and `write_artifacts`, then `total`, each with elapsed
     milliseconds, and an `items=` count where the stage has one (changed
     files, seams). `inventory` and `diff_only_files` are omitted when Rust is
-    disabled, because neither runs. `total` runs from the start of the analysis and
+    disabled, because neither runs. `total` runs from the start of the analysis through the last recorded stage and
     also covers bookkeeping between stages, so rows need not sum to it. The
     table is wall-clock and observational: it appears only on stderr under
-    the explicit `-v`, never in stdout or any pilot artifact, so those stay
-    byte-identical with and without `-v`. It prints nothing on a timeout or
+    the explicit `-v`, never in stdout or any pilot artifact other than the
+    item 11 sidecar, so those stay byte-identical with and without `-v`. It prints nothing on a timeout or
     an error, and it is written through the terminal-safe stderr path so it
     does not join a held-open TTY progress row. It adds no analyzer stage
     and no speed claim.
+11. Under `-v` a complete run also writes `pilot-timings.json` beside
+    `pilot-summary.json`, after every other artifact (#10727):
+    `{"schema_version": 1, "kind": "pilot_timings", "stages": [{"stage",
+    "elapsed_ms", "items"?}], "total_ms"}`, with the stage names, order and
+    omissions of the table. It is the only place a wall-clock value is
+    written to disk, so it is not byte-stable and is not listed in the
+    summary. A run without `-v`, and a timeout run, remove a prior run's
+    sidecar instead of leaving it as their own. A failed sidecar write drops
+    any prior sidecar, warns on stderr and does not fail the run; if the
+    prior sidecar cannot be dropped the run fails rather than leave it as
+    current. The table and the sidecar report one `total`, fixed after the
+    last stage is recorded.
 
 ## Required Evidence
 
@@ -198,7 +210,10 @@ second stage vocabulary.
 - `crates/ripr/tests/cli_progress.rs::pilot_projects_repo_stages_on_stderr_and_keeps_packet_bytes_unchanged`
 - `crates/ripr/src/cli/commands/pilot_timings.rs::tests::the_table_lists_each_stage_in_order_with_its_item_count_and_a_total`
 - `crates/ripr/src/cli/commands/pilot_timings.rs::tests::a_recorded_span_measures_the_time_since_its_start`
+- `crates/ripr/src/cli/commands/pilot_timings.rs::tests::the_json_sidecar_mirrors_the_table_stages_and_omits_absent_counts`
+- `crates/ripr/src/cli/commands/pilot_timings.rs::tests::a_finished_run_reports_one_total_in_the_table_and_the_sidecar`
 - `crates/ripr/tests/cli_progress.rs::verbose_pilot_prints_a_stage_table_and_leaves_stdout_and_packet_bytes_unchanged`
+- `crates/ripr/tests/cli_progress.rs::verbose_pilot_fails_rather_than_leave_an_unwritable_sidecar_as_current`
 
 ## Implementation Mapping
 
