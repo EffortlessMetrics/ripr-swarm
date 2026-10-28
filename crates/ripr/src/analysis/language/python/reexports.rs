@@ -402,11 +402,16 @@ impl<'s, F: Fn(&Path) -> Option<&'s str>> StarExports<'s, F> {
                     })
             }
         };
-        match declaration {
-            AllDeclaration::Absent => true,
-            AllDeclaration::Names(names) => names.iter().any(|listed| listed == name),
-            AllDeclaration::Unresolved => false,
-        }
+        declares(declaration, name)
+    }
+}
+
+/// Whether a star import of a module with `declaration` binds `name`.
+fn declares(declaration: &AllDeclaration, name: &str) -> bool {
+    match declaration {
+        AllDeclaration::Absent => true,
+        AllDeclaration::Names(names) => names.iter().any(|listed| listed == name),
+        AllDeclaration::Unresolved => false,
     }
 }
 
@@ -431,19 +436,23 @@ fn primed_star_facts(file: &Path, source: &str, names: &HashSet<&str>) -> Primed
     let declaration = body
         .as_deref()
         .map_or(AllDeclaration::Unresolved, all_declaration_of);
-    let dynamic = writes_namespace_dynamically(source);
+    // Neither condition depends on the name, so each is checked once.
+    let static_body = body
+        .as_deref()
+        .filter(|body| !writes_namespace_dynamically(source) && !body.iter().any(is_star_import));
+    // The caller asks `binds_once` only for a name `exports` admits, so a
+    // name `__all__` excludes is not scanned here; one asked anyway still
+    // gets the lazy answer.
     let binds_once = names
         .iter()
+        .filter(|name| declares(&declaration, name))
         .map(|name| {
-            let once = !dynamic
-                && body.as_ref().is_some_and(|body| {
-                    !body.iter().any(is_star_import)
-                        && body
-                            .iter()
-                            .filter(|stmt| stmt_binds(stmt, name, true))
-                            .count()
-                            == 1
-                });
+            let once = static_body.is_some_and(|body| {
+                body.iter()
+                    .filter(|stmt| stmt_binds(stmt, name, true))
+                    .count()
+                    == 1
+            });
             ((*name).to_string(), once)
         })
         .collect();
@@ -693,6 +702,7 @@ mod primed_tests {
             ("star.py", "from other import *\n\n\ndef f():\n    pass\n"),
             ("dynamic.py", "def f():\n    pass\n\n\nglobals()['g'] = f\n"),
             ("broken.py", "def (:\n"),
+            ("two.py", "def f():\n    pass\n\n\ndef h():\n    pass\n"),
             (
                 "branches.py",
                 "if FLAG:\n    def f():\n        pass\nelse:\n    def f():\n        pass\n",
@@ -723,8 +733,14 @@ mod primed_tests {
         );
         let mut answers = Vec::new();
         for (file, name) in &asked {
-            let expected = (lazy.exports(file, name), lazy.binds_once(file, name));
-            let actual = (primed.exports(file, name), primed.binds_once(file, name));
+            // Same order as the caller: `binds_once` only after `exports`.
+            let lazy_exports = lazy.exports(file, name);
+            let expected = (lazy_exports, lazy_exports && lazy.binds_once(file, name));
+            let primed_exports = primed.exports(file, name);
+            let actual = (
+                primed_exports,
+                primed_exports && primed.binds_once(file, name),
+            );
             assert_eq!(actual, expected, "{} {name}", file.display());
             answers.push((file.display().to_string(), *name, actual));
         }
@@ -735,5 +751,26 @@ mod primed_tests {
         assert!(distinct.contains(&(true, true)), "{answers:?}");
         assert!(distinct.contains(&(true, false)), "{answers:?}");
         assert!(distinct.contains(&(false, false)), "{answers:?}");
+        // Every primed answer came from the primed map: the lazy reader only
+        // read the unreadable file's declaration, and parsed nothing.
+        let missing_file = PathBuf::from("missing.py");
+        let missing = vec![&missing_file];
+        assert!(primed.bodies.is_empty(), "{:?}", primed.bodies.keys());
+        assert_eq!(primed.declared.keys().collect::<Vec<_>>(), missing);
+        // A name `__all__` excludes is not scanned while priming.
+        let listed = primed.primed.get(Path::new("listed.py"));
+        assert_eq!(
+            listed.map(|facts| facts.binds_once.contains_key("g")),
+            Some(false)
+        );
+        assert_eq!(
+            listed.map(|facts| facts.binds_once.contains_key("f")),
+            Some(true)
+        );
+        // A primed file asked about a name it was not primed for falls back
+        // to the lazy reader instead of answering `false`.
+        let two = Path::new("two.py");
+        assert_eq!(primed.binds_once(two, "h"), lazy.binds_once(two, "h"));
+        assert!(primed.binds_once(two, "h"), "`h` binds once in two.py");
     }
 }
