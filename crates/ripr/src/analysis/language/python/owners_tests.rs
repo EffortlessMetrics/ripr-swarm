@@ -514,6 +514,8 @@ pub(super) fn collect_tests_from_statements(
         statements,
         import_context.definition,
         base_parametrize_scope,
+        class_context.is_none(),
+        source,
     );
     let setup_receivers = if class_context.is_some() {
         super::setup_receivers::setup_receivers(
@@ -1060,6 +1062,30 @@ fn is_unittest_class(class: &ast::StmtClassDef) -> bool {
     })
 }
 
+// Only trust the async standard-library base when its import cannot be
+// rebound. Unlike the older TestCase spelling heuristic, an unrelated class
+// with the same name must not acquire a unittest selector here.
+fn is_isolated_asyncio_base(
+    base: &str,
+    imports: &[PythonImport],
+    module_values: &PythonModuleNames<'_>,
+) -> bool {
+    let (root, tail) = base.split_once('.').unwrap_or((base, ""));
+    module_values.holds(root)
+        && imports
+            .iter()
+            .rev()
+            .find(|import| import.alias == root)
+            .is_some_and(|import| {
+                (import.source_module.is_empty()
+                    && import.imported == "unittest"
+                    && tail == "IsolatedAsyncioTestCase")
+                    || (import.source_module == "unittest"
+                        && import.imported == "IsolatedAsyncioTestCase"
+                        && tail.is_empty())
+            })
+}
+
 /// Which same-scope classes pytest or unittest collects (#4562).
 ///
 /// A class is collected on its own when it reaches `unittest.TestCase`
@@ -1099,8 +1125,10 @@ impl<'a> LocalTestClasses<'a> {
         statements: &'a [Stmt],
         initial_imports: &[PythonImport],
         parametrize_scope: ParametrizeScope<'_>,
+        module_scope: bool,
+        source: &SourceText<'_>,
     ) -> Self {
-        let scope = ScopeClasses::of(statements);
+        let mut scope = ScopeClasses::of(statements);
         let mut found = Self {
             last_definitions: scope
                 .defs
@@ -1120,6 +1148,29 @@ impl<'a> LocalTestClasses<'a> {
                     .insert(class.name.as_str(), prefix.clone());
             }
         }
+        if module_scope
+            && !super::module_constants::ModuleBindingFacts::of(source, statements)
+                .may_assign_attribute("IsolatedAsyncioTestCase")
+        {
+            for (name, (_, class)) in &scope.defs {
+                let imports = found
+                    .definition_imports
+                    .get(name)
+                    .map(Vec::as_slice)
+                    .unwrap_or_default();
+                let bases = class
+                    .bases
+                    .iter()
+                    .filter_map(expr_full_name)
+                    .filter(|base| {
+                        is_isolated_asyncio_base(base, imports, parametrize_scope.module_values)
+                    })
+                    .collect::<BTreeSet<_>>();
+                if !bases.is_empty() {
+                    scope.known_async_bases.insert(name, bases);
+                }
+            }
+        }
         let mut own_unittest: BTreeSet<&'a str> = BTreeSet::new();
         let mut changed = true;
         while changed {
@@ -1127,6 +1178,7 @@ impl<'a> LocalTestClasses<'a> {
             for (name, (_, class)) in &scope.defs {
                 if !own_unittest.contains(name)
                     && (is_unittest_class(class)
+                        || scope.known_async_bases.contains_key(name)
                         || scope
                             .local_bases(name)
                             .iter()
@@ -1252,6 +1304,7 @@ struct ScopeClasses<'a> {
     defs: BTreeMap<&'a str, (usize, &'a ast::StmtClassDef)>,
     /// Names defined more than once.
     redefined: BTreeSet<&'a str>,
+    known_async_bases: BTreeMap<&'a str, BTreeSet<String>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1273,7 +1326,11 @@ impl<'a> ScopeClasses<'a> {
                 redefined.insert(class.name.as_str());
             }
         }
-        Self { defs, redefined }
+        Self {
+            defs,
+            redefined,
+            known_async_bases: BTreeMap::new(),
+        }
     }
 
     /// The bases of `name` in order, local when the scope defines the base
@@ -1288,6 +1345,12 @@ impl<'a> ScopeClasses<'a> {
             .iter()
             .filter_map(expr_full_name)
             .filter(|base| !matches!(base.as_str(), "object" | "TestCase" | "unittest.TestCase"))
+            .filter(|base| {
+                !self
+                    .known_async_bases
+                    .get(name)
+                    .is_some_and(|bases| bases.contains(base))
+            })
             .map(|base| match self.defs.get_key_value(base.as_str()) {
                 Some((&key, (base_index, _)))
                     if base_index < index && !self.redefined.contains(key) =>

@@ -204,6 +204,52 @@ fn async_python_tests_use_default_name_prefix() -> Result<(), String> {
 }
 
 #[test]
+fn isolated_asyncio_testcase_uses_unittest_collection_and_selector() -> Result<(), String> {
+    let tests = collect(
+        "import unittest\n\nclass AsyncChecks(unittest.IsolatedAsyncioTestCase):\n    async def test_value(self):\n        self.assertEqual(2 + 2, 4)\n\nclass SyncChecks(unittest.TestCase):\n    def test_value(self):\n        self.assertEqual(2 + 2, 4)\n",
+        &[
+            ("AsyncChecks.test_value", "unittest"),
+            ("SyncChecks.test_value", "unittest"),
+        ],
+    )?;
+    let async_test = tests
+        .iter()
+        .find(|test| test.qualified_name == "AsyncChecks.test_value")
+        .ok_or_else(|| "missing async unittest".to_string())?;
+    assert_eq!(
+        verify_command_for_test(async_test).as_deref(),
+        Some("python -m unittest tests.test_collection.AsyncChecks.test_value")
+    );
+    Ok(())
+}
+
+#[test]
+fn isolated_asyncio_base_requires_a_stable_stdlib_import() -> Result<(), String> {
+    collect(
+        "from unittest import IsolatedAsyncioTestCase as AsyncCase\n\nclass TestAsync(AsyncCase):\n    async def test_value(self):\n        self.assertEqual(2 + 2, 4)\n",
+        &[("TestAsync.test_value", "unittest")],
+    )?;
+    collect(
+        "import unittest\nclass Mixin:\n    async def test_shared(self):\n        self.assertEqual(2 + 2, 4)\nclass AsyncChecks(unittest.IsolatedAsyncioTestCase, Mixin):\n    pass\n",
+        &[("AsyncChecks.test_shared", "unittest")],
+    )?;
+    for source in [
+        "import fake as unittest\nclass AsyncChecks(unittest.IsolatedAsyncioTestCase):\n    async def test_value(self):\n        assert True\n",
+        "import unittest\nunittest = fake\nclass AsyncChecks(unittest.IsolatedAsyncioTestCase):\n    async def test_value(self):\n        assert True\n",
+        "import unittest\nunittest.IsolatedAsyncioTestCase = fake\nclass AsyncChecks(unittest.IsolatedAsyncioTestCase):\n    async def test_value(self):\n        assert True\n",
+        "class IsolatedAsyncioTestCase: pass\nclass AsyncChecks(IsolatedAsyncioTestCase):\n    async def test_value(self):\n        assert True\n",
+    ] {
+        let facts = extract_source_facts(Path::new("tests/test_collection.py"), source);
+        assert!(
+            facts.tests.is_empty(),
+            "unexpected collection: {:?}",
+            facts.tests
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn non_underscore_names_preserve_selectors_and_owner_relations() -> Result<(), String> {
     let tests = collect(
         RELATION_SOURCE,
