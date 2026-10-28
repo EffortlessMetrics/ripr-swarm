@@ -646,7 +646,7 @@ fn activate_evidence(
     if let (Some(selection), Some(owner_fn)) = (&observed_argument_selection, owner_fn) {
         for indexed in activation_credited.iter() {
             observed.extend(observed_value_facts_for_test(
-                seam, indexed, index, owner_fn, selection,
+                seam, indexed, context, owner_fn, selection,
             ));
         }
     }
@@ -684,7 +684,7 @@ fn activate_evidence(
         || owner_fn.is_some_and(|owner_fn| {
             seam.kind() == SeamKind::PredicateBoundary
                 && activation_credited.iter().any(|indexed| {
-                    boundary_equality_overlap_score(seam, indexed, index, owner_fn) > 0
+                    boundary_equality_overlap_score(seam, indexed, context, owner_fn) > 0
                 })
         });
     // A constant whose value ripr cannot see and whose declaration it
@@ -916,10 +916,11 @@ struct ObservedArgumentOperand {
 fn observed_value_facts_for_test(
     seam: &RepoSeam,
     indexed: &CompactTest<'_>,
-    index: &RustIndex,
+    context: &CompactGripContext<'_>,
     owner_fn: &FunctionSummary,
     observed_argument_selection: &ObservedArgumentSelection,
 ) -> Vec<ValueFact> {
+    let index = context.index;
     let owner_name = owner_fn.name.as_str();
     let mut observed: Vec<ValueFact> = Vec::new();
     if matches!(
@@ -958,6 +959,17 @@ fn observed_value_facts_for_test(
                 continue;
             };
             let arg = projected_argument_expression(&arg, argument_operand.projection.as_deref());
+            if suffixed_decimal_integer_value(&arg).is_some()
+                && !super::classify::bound_free_owner_calls(
+                    index,
+                    owner_fn,
+                    indexed.test,
+                    &call.text,
+                    context.pin_syntax(),
+                )
+            {
+                continue;
+            }
             let mut emitted = false;
             // Direct literal first (matches pre-v2 behavior).
             for value in scalar_values(&arg) {
@@ -1441,15 +1453,12 @@ fn activation_overlap_score(
     };
     let owner_fn = owner.owner_fn;
 
-    let mut score = boundary_equality_overlap_score(seam, indexed, context.index, owner_fn);
+    let mut score = boundary_equality_overlap_score(seam, indexed, context, owner_fn);
     let required_text = required_discriminator_text(seam);
-    score +=
-        observed_value_facts_for_test(seam, indexed, context.index, owner_fn, &owner.selection)
-            .iter()
-            .filter(|fact| {
-                observed_value_matches_required_discriminator(&fact.value, required_text)
-            })
-            .count();
+    score += observed_value_facts_for_test(seam, indexed, context, owner_fn, &owner.selection)
+        .iter()
+        .filter(|fact| observed_value_matches_required_discriminator(&fact.value, required_text))
+        .count();
     score
 }
 
@@ -1466,7 +1475,7 @@ fn observed_value_matches_required_discriminator(value: &str, required_text: &st
 fn boundary_equality_overlap_score(
     seam: &RepoSeam,
     indexed: &CompactTest<'_>,
-    index: &RustIndex,
+    context: &CompactGripContext<'_>,
     owner_fn: &FunctionSummary,
 ) -> usize {
     if seam.kind() != SeamKind::PredicateBoundary {
@@ -1502,7 +1511,29 @@ fn boundary_equality_overlap_score(
         let left_arg = projected_argument_expression(left_arg, left_operand.projection.as_deref());
         let right_arg =
             projected_argument_expression(right_arg, right_operand.projection.as_deref());
-        if arguments_overlap_at_boundary(seam, indexed, index, left_arg, right_arg, call) {
+        // Preserve the pre-existing identical-text equality route for
+        // ordinary nonfree owners after owner_call_text. This does not grant
+        // them the new suffixed-value reader: different text still needs the
+        // free-owner authority below, as does every free-owner shortcut.
+        let existing_nonfree_equality = owner_fn.impl_context != FunctionImplContext::Free
+            && left_arg.trim() == right_arg.trim();
+        // Guard the free-owner identical-text shortcut too: two equal typed
+        // arguments to a shadowed function are not the owner's boundary.
+        if [&left_arg, &right_arg]
+            .into_iter()
+            .any(|argument| suffixed_decimal_integer_value(argument).is_some())
+            && !existing_nonfree_equality
+            && !super::classify::bound_free_owner_calls(
+                context.index,
+                owner_fn,
+                indexed.test,
+                &call.text,
+                context.pin_syntax(),
+            )
+        {
+            continue;
+        }
+        if arguments_overlap_at_boundary(seam, indexed, context.index, left_arg, right_arg, call) {
             score += 1;
         }
     }
@@ -3167,6 +3198,9 @@ fn scalar_values(arg: &str) -> Vec<String> {
     if trimmed.starts_with('"') || trimmed.starts_with('\'') {
         return vec![trimmed.to_string()];
     }
+    if let Some(value) = suffixed_decimal_integer_value(trimmed) {
+        return vec![value];
+    }
     // Numeric literal (optionally negative, decimal, with `_` separators).
     let numeric_body = trimmed.strip_prefix('-').unwrap_or(trimmed);
     if !numeric_body.is_empty()
@@ -3191,6 +3225,32 @@ fn scalar_values(arg: &str) -> Vec<String> {
         return vec![trimmed.to_string()];
     }
     Vec::new()
+}
+
+/// Preserve the explicit type in source while comparing its numeric value
+/// through the same reader as a diff boundary. That reader scans expressions,
+/// so first establish one whole decimal integer token, optionally negated.
+/// Casts, methods, ranges, exponents and computed expressions do not qualify.
+fn suffixed_decimal_integer_value(text: &str) -> Option<String> {
+    let suffixes: &[&str] = if text.starts_with('-') {
+        &["i8", "i16", "i32", "i64", "i128", "isize"]
+    } else {
+        &[
+            "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize",
+        ]
+    };
+    let unsigned = text.strip_prefix('-').unwrap_or(text);
+    let digits = suffixes
+        .iter()
+        .find_map(|suffix| unsigned.strip_suffix(*suffix))?;
+    if !digits.starts_with(|ch: char| ch.is_ascii_digit())
+        || !digits
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || byte == b'_')
+    {
+        return None;
+    }
+    numeric_boundary_literal(text)
 }
 
 fn sort_value_facts(values: &mut Vec<ValueFact>) {

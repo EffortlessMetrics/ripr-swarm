@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 0000000..0000000 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -42,7 +42,7 @@
+     format!("[{BANNER}]")
+ }
+ 
+-pub const BURST: u32 = 100;
++pub const BURST: u32 = 101;
+ 
+ pub fn allowed(n: u32, premium: bool) -> bool {
+     if premium { n < BURST } else { n < 10 }

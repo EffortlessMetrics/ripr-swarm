@@ -50,8 +50,7 @@ use super::super::rust_index::{FunctionSummary, RustIndex, TestSummary};
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::facts::FunctionContainer;
 use crate::analysis::syntax::{
-    NameScope, NameScopes, RustModuleTreeEdge, UseBinding, name_scopes_for_fn,
-    rust_module_tree_scan,
+    NameScope, NameScopes, RustModuleTreeEdge, UseBinding, rust_module_tree_scan,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -68,12 +67,15 @@ pub(in crate::analysis) enum CallTarget {
     Unsettled,
 }
 
-type TestKey = (PathBuf, usize);
+// A line can contain several differently named caller functions.
+type TestKey = (PathBuf, usize, String);
 
 /// One identity per owner definition per run, built on first ask. Keyed by
 /// the owner's parser symbol id, which is unique per definition even when
 /// two same-named owners share one source line (inline sibling modules).
 type SharedIdentities = BTreeMap<String, Option<std::sync::Arc<OwnerCallIdentity>>>;
+
+type SharedOwnerScopes = BTreeMap<PathBuf, (Arc<str>, Option<Arc<super::owner_pin::FileScopes>>)>;
 
 /// Per-index memos for the call-identity family (#7716 residual).
 ///
@@ -94,6 +96,8 @@ pub(crate) struct CallIdentityMemos {
     /// scope parses then serve every probe and every pin of the run instead
     /// of dying with each construction.
     identities: Mutex<SharedIdentities>,
+    /// Lexical source facts shared by all short-lived owner-pin syntax contexts.
+    pub(super) owner_file_scopes: Mutex<SharedOwnerScopes>,
     /// #9218: the same per owner, built even when the owner has no
     /// same-named rival, for resolving a qualified call's spelled path.
     solo_identities: Mutex<SharedIdentities>,
@@ -104,6 +108,20 @@ pub(crate) struct CallIdentityMemos {
     /// #9209: the workspace's non-plain `Drop` impls, read once per index so
     /// `drop_is_plain` is a lookup instead of a per-probe corpus parse.
     drop_impls: std::sync::OnceLock<super::element_field_pin::DropImplIndex>,
+    /// #9638: how many `struct`/`enum`/`union`/`type` items of each name the
+    /// workspace declares, read once per index so a receiver-type check is a
+    /// lookup instead of a masked scan of every indexed file.
+    type_name_counts: std::sync::OnceLock<BTreeMap<String, usize>>,
+}
+
+impl CallIdentityMemos {
+    /// The memoized type-name declaration counts, built by `build` on first use.
+    pub(super) fn type_name_counts(
+        &self,
+        build: impl FnOnce() -> BTreeMap<String, usize>,
+    ) -> &BTreeMap<String, usize> {
+        self.type_name_counts.get_or_init(build)
+    }
 }
 
 impl Clone for CallIdentityMemos {
@@ -318,7 +336,6 @@ pub(in crate::analysis) struct OwnerCallIdentity {
     /// definition could not be placed, so it matches every spelled path.
     definitions: Vec<Option<Vec<String>>>,
     memo: Mutex<BTreeMap<TestKey, CallTarget>>,
-    scopes: Mutex<BTreeMap<TestKey, Option<Arc<NameScopes>>>>,
 }
 
 /// Which definitions a spelled path can name.
@@ -449,7 +466,6 @@ impl OwnerCallIdentity {
             owner_package,
             definitions,
             memo: Mutex::new(BTreeMap::new()),
-            scopes: Mutex::new(BTreeMap::new()),
         })
     }
 
@@ -476,7 +492,7 @@ impl OwnerCallIdentity {
         test: &TestSummary,
         index: &RustIndex,
     ) -> CallTarget {
-        let key = (test.file.clone(), test.start_line);
+        let key = (test.file.clone(), test.start_line, test.name.clone());
         if let Some(known) = self
             .memo
             .lock()
@@ -580,26 +596,18 @@ impl OwnerCallIdentity {
         false
     }
 
+    fn name_scopes(&self, test: &TestSummary, index: &RustIndex) -> Option<Arc<NameScopes>> {
+        if let Some(scopes) = index.proptest_name_scopes(test) {
+            return Some(scopes);
+        }
+        index
+            .source_syntax
+            .get(index, &test.file)?
+            .name_scopes(test)
+    }
+
     fn test_scope(&self, test: &TestSummary, index: &RustIndex) -> TestScope {
-        let key = (test.file.clone(), test.start_line);
-        let cached = self
-            .scopes
-            .lock()
-            .ok()
-            .and_then(|scopes| scopes.get(&key).cloned());
-        let scopes = match cached {
-            Some(scopes) => scopes,
-            None => {
-                let scopes = index.files().get(&test.file).and_then(|facts| {
-                    name_scopes_for_fn(&facts.data().source, test.start_line, &test.name)
-                        .map(Arc::new)
-                });
-                if let Ok(mut memo) = self.scopes.lock() {
-                    memo.insert(key, scopes.clone());
-                }
-                scopes
-            }
-        };
+        let scopes = self.name_scopes(test, index);
         // `crate::`, `self::`, `super::` and local modules name the owner's
         // modules only from the owner's own crate: same package, same crate
         // within it.
@@ -1784,6 +1792,32 @@ pub(super) fn qualified_owner_calls_resolve(
             Some(segments) if segments.is_empty() => true,
             Some(segments) if names_a_type(&segments) => true,
             Some(segments) => qualified_call_names_owner(index, owner, test, &segments),
+        })
+}
+
+/// Binding for new typed and receipt-backed property repository inputs. Reuse
+/// the existing free-owner authority, including raw twins and crate-root shadows;
+/// the general qualified-call resolver and its old consumers stay unchanged.
+pub(in crate::analysis) fn bound_free_owner_calls(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+    test: &TestSummary,
+    call_text: &str,
+    syntax: &super::owner_pin::OwnerPinSyntax,
+) -> bool {
+    let qualifiers = call_qualifiers(call_text, &owner.name);
+    !qualifiers.is_empty()
+        && qualifiers.into_iter().all(|qualifier| {
+            qualifier.is_some_and(|segments| {
+                let prefix = (!segments.is_empty()).then(|| segments.join("::"));
+                super::owner_pin::targeted_free_call_reaches_owner(
+                    test,
+                    owner,
+                    prefix.as_deref(),
+                    index,
+                    syntax,
+                )
+            })
         })
 }
 
@@ -3124,7 +3158,6 @@ mod tests {
             owner_package: None,
             definitions: vec![Some(strings(&["a"])), Some(strings(&["b"])), None],
             memo: Mutex::new(BTreeMap::new()),
-            scopes: Mutex::new(BTreeMap::new()),
         };
         let target =
             |module: &[&str]| identity.target_of(&identity.matches_module(Some(strings(module))));

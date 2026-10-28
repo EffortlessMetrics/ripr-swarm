@@ -31,6 +31,8 @@ pub(super) struct PythonSourceFacts {
     pub(super) tests: Vec<PythonTest>,
     /// Module-level `@pytest.fixture` functions (#4563).
     pub(super) fixtures: Vec<super::PythonFixtureDef>,
+    /// Fixture-reaching code `fixtures` does not record (#9619).
+    pub(super) fixture_side_effects: super::fixtures::FixtureSideEffects,
     /// Single-assert helper defs of the module (#9419).
     pub(super) helper_module: super::helper_assertions::PythonHelperModule,
     /// The file is a `conftest.py` that installs implicit setup around the
@@ -626,6 +628,7 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
         owners: Vec::new(),
         tests: Vec::new(),
         fixtures: Vec::new(),
+        fixture_side_effects: super::fixtures::FixtureSideEffects::default(),
         helper_module: super::helper_assertions::PythonHelperModule::default(),
         conftest_implicit_setup: false,
         conftest_declares_fixture_or_hook: false,
@@ -703,6 +706,7 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
     snapshot
         .owners
         .push(module_owner(file, source, module_range, &imports));
+    let module_values = super::module_constants::module_stable_names(source, &module.body);
     collect_tests_from_statements(
         file,
         source,
@@ -712,6 +716,7 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
         TestImportContext {
             body: &imports,
             definition: &[],
+            module_values: &module_values,
             standard_unittest_list: false,
             subclassed: false,
             admission: &PythonAdmissionContext::of_module(
@@ -723,6 +728,8 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
         &mut snapshot.tests,
     );
     snapshot.fixtures = super::fixtures::collect_fixture_defs(file, source, &module.body, &imports);
+    snapshot.fixture_side_effects =
+        super::fixtures::collect_fixture_side_effects(source, &module.body, &imports);
     snapshot.helper_module =
         super::helper_assertions::collect_helper_module(file, source, &module.body);
     snapshot.conftest_implicit_setup = file.file_name().and_then(|name| name.to_str())

@@ -1,5 +1,17 @@
 # Golden Output Changes
 
+## Pending — suffixed integer activation cache generation (#10839)
+
+The portable unchanged-attempt snapshots follow corpus cache generation 1.116
+to 1.117 for whole suffixed decimal arguments in repository activation. The
+native CLI-smoke failure on merge `f36d916b3579e8bfcddd7bee5305787fb8b749ac`
+records the normalized production snapshot: it differs from the prior fixture
+only at the corpus generation and artifact content commitment. Refresh those
+two fields and their dependent verify commitments and receipt byte hashes.
+Weak grip, unchanged movement, historical currentness, incomplete receipt
+status and fail-closed first-action routing remain unchanged. No other fixture
+output is regenerated.
+
 ## Pending — typed function-pointer composition (#9478, #9705)
 
 The bounded typed function-pointer owner proof composes with accepted shared-target
@@ -38,6 +50,41 @@ Updated:
 - `first-useful-action/unchanged-after-attempt/{before,after}.repo-exposure.json`
 - `first-useful-action/unchanged-after-attempt/agent-verify.json`
 - `first-useful-action/unchanged-after-attempt/agent-receipt.json`
+
+### test_case arrow row classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.112 to 1.113 for a clean
+`#[test_case(.. => literal)]` row read as the harness-compared return
+(RIPR-SPEC-0231 rule 9, #9619), with the same scope: generation, content
+commitment, dependent verify commitments and receipt byte hashes only.
+
+### call-in-term accumulator classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.113 to 1.114 for an
+accumulator update that adds a same-file function's value, read as a
+`return_value` change (RIPR-SPEC-0360, #9478), with the same scope: generation,
+content commitment, dependent verify commitments and receipt byte hashes only.
+
+### test_case arrow row input substitution cache generation parity
+
+The same snapshots follow corpus cache generation 1.114 to 1.115 for the arrow row
+read with its inputs substituted into the returned expression (RIPR-SPEC-0231
+rule 9, #10797), with the same scope: generation, content commitment, dependent
+verify commitments and receipt byte hashes only.
+
+### rebound let literal classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.115 to 1.116 for a `let`
+literal that a tuple, struct or `for` pattern rebinds no longer pairing with the
+owner call (RIPR-SPEC-0158, #10819), with the same scope: generation, content
+commitment, dependent verify commitments and receipt byte hashes only.
+
+### Drop scope-end carrier cache generation parity
+
+The same snapshots follow corpus cache generation 1.117 to 1.118 for a standard
+`Drop::drop` credited through a scope-end carrier (RIPR-SPEC-0240, #10814), with
+the same scope: generation, content commitment, dependent verify commitments and
+receipt byte hashes only.
 
 ## Pending — boundary_gap (9)
 
@@ -1272,10 +1319,44 @@ reached without a placeable call and the `cfg_attr` test reading
 (RIPR-SPEC-0240, #9442, #9443), with the same scope: generation, content
 commitment, dependent verify commitments and receipt byte hashes only.
 
+### Exported macro_rules! grouped-import classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.109 to 1.110 for
+grouped `use crate::{a, b};` imports of `#[macro_export]` test generators
+(RIPR-SPEC-0117, #10298), with the same scope: generation, content
+commitment, dependent verify commitments and receipt byte hashes only.
+
+### polling helper owner pin classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.110 to 1.111 for an
+`async` owner called through a test-local polling helper (RIPR-SPEC-0197,
+#9478), with the same scope: generation, content commitment, dependent verify
+commitments and receipt byte hashes only.
+
+### Arrow-separated macro_rules! table rows classified-cache generation parity
+
+The same snapshots follow corpus cache generation 1.111 to 1.112 for
+`name => (..)` rows of a local `macro_rules!` test table (RIPR-SPEC-0117,
+#10298), with the same scope: generation, content commitment, dependent
+verify commitments and receipt byte hashes only.
+
 ## Pending — boundary_gap (29)
 
 Reason:
 RIPR-SPEC-0122: define finding, unsuppressed, unknown, base-side and candidate line in the evidence legend (#9244)
+
+Command:
+`cargo xtask goldens bless boundary_gap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — boundary_gap (30)
+
+Reason:
+RIPR-SPEC-0122: plain-language wording for the default and human-full check views (#10691); human text only, check.json unchanged
 
 Command:
 `cargo xtask goldens bless boundary_gap --reason "..."`

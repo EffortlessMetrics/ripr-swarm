@@ -1,0 +1,41 @@
+{
+  "subject_id": "authored-spec0158-fold-expected",
+  "origin": "authored",
+  "version_label": "authored 2026-10-26 for owner-call arguments that compute over the test's own literal bindings (RIPR-SPEC-0158, #9637)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "5e17f72180a7c71b59e3e28fa4c138cd1ea7de2b7655b50ec42b7850945b06d1"
+    },
+    {
+      "path": "src/f_call.rs",
+      "sha256": "c7f0c2268fb61142b681c65d4d68d5b3e8d1252408967d67821b0ab80a69fd84"
+    },
+    {
+      "path": "src/f_hit.rs",
+      "sha256": "97d5e7ea4fc29f03240d33efc07fda82413cde1072340c541f2ba96de7edffbc"
+    },
+    {
+      "path": "src/f_loop.rs",
+      "sha256": "80094a770d09f5ceeaa58a41f18e4d68adb27ee1e1ba296f19b52bf7922ddd47"
+    },
+    {
+      "path": "src/f_mut.rs",
+      "sha256": "acfb0ea1b160746fb96f9498a36b9f1e34346f7cf9a0de90aa3b641058cc3216"
+    },
+    {
+      "path": "src/f_shadow.rs",
+      "sha256": "ecaaea4856c07cd8d00e6d700affc2e7f63621790634847d31c0a5cfcf742514"
+    },
+    {
+      "path": "src/f_two.rs",
+      "sha256": "64216b9b5c59794e1f629b86039c2784769dab3ce2eff095e29026b856ea8be9"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "def733c0c1654f10d4f46040002584c4acc5dbd4d125ea76f55db3b217f6485d"
+    }
+  ]
+}

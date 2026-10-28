@@ -87,8 +87,10 @@ mod rust_judged_panel;
 mod rust_region_scan;
 mod schema_producer_sweep;
 mod verification_contracts;
+mod verify_test_shards;
 mod version;
 mod windows_advisory;
+mod windows_advisory_acl_evidence;
 mod windows_advisory_run;
 
 use command::{
@@ -294,10 +296,10 @@ use policy::{
 };
 use public_api_surface::public_api_surface;
 #[cfg(test)]
-use repo_readiness::{PrReadyStep, pr_ready_next_action, pr_ready_status_from_report_status};
+use repo_readiness::{PrReadyStep, pr_ready_next_action};
 use repo_readiness::{
-    cockpit_json, cockpit_markdown, pr_ready_json, pr_ready_markdown, pr_ready_status,
-    run_readiness_step,
+    ReadinessOutcome, cockpit_json, cockpit_markdown, pr_ready_json, pr_ready_markdown,
+    pr_ready_status, run_readiness_step,
 };
 #[cfg(test)]
 pub(crate) use reports::release_server::{
@@ -1059,10 +1061,11 @@ fn git_changed_files(root: &Path, rev: &str) -> Result<Vec<String>, String> {
     // Raw NUL-delimited inventory (#4006): `-z` output is never C-quoted,
     // so exotic names survive byte-exact; parsing rules come from the
     // shared authority in `decode_changed_files`, not from line splitting
-    // here. The spawn site is unchanged (gate-runner policy entry).
+    // here. Keep both sides of renames: the removed path can select checks
+    // that the destination does not. The spawn site is unchanged.
     let output = std::process::Command::new("git")
         .current_dir(root)
-        .args(["diff", "--name-only", "-z", rev])
+        .args(["diff", "--no-renames", "--name-only", "-z", rev])
         .output()
         .map_err(|err| format!("git diff --name-only failed: {err}"))?;
     if !output.status.success() {
@@ -1116,6 +1119,10 @@ fn check_fast_selector_failure_report(error: &str) -> String {
         "# check-fast report\n\nStatus: instrument_failure\n\nSelector: failed\nBase: origin/main\n\nError: {error}\n\nRemediation: run `git fetch origin main` and retry `cargo xtask check-fast`.\n"
     )
 }
+
+#[cfg(test)]
+#[path = "tests/check_fast_renames.rs"]
+mod check_fast_rename_tests;
 
 #[cfg(test)]
 mod check_fast_selector_tests {
@@ -1785,8 +1792,106 @@ fn vscode_package() -> Result<(), String> {
 fn vscode_verify_vsix(args: &[String]) -> Result<(), String> {
     let vsix_path = vscode_verify_vsix_path(args)?;
     let notices = load_repository_license_notices(&repo_root()?)?;
-    println!("{}", verify_packaged_vsix(&vsix_path, &notices)?);
+    let summary = verify_packaged_vsix(&vsix_path, &notices)?;
+    verify_packaged_vsix_version(&vsix_path)?;
+    println!("{summary}");
     Ok(())
+}
+
+/// The VSIX file name carries the release version (`ripr-<version>.vsix`);
+/// its own `extension/package.json` and `extension.vsixmanifest` must agree
+/// (#10731: `ripr-0.10.0.vsix` shipped extension 0.8.0).
+fn verify_packaged_vsix_version(vsix_path: &Path) -> Result<(), String> {
+    let name = vsix_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+    let expected = name
+        .strip_prefix("ripr-")
+        .and_then(|rest| rest.strip_suffix(".vsix"))
+        .filter(|version| !version.is_empty())
+        .ok_or_else(|| {
+            format!("VSIX file name {name:?} must be ripr-<version>.vsix to bind its version")
+        })?;
+    let file = fs::File::open(vsix_path)
+        .map_err(|err| format!("packaged VSIX {} is missing: {err}", vsix_path.display()))?;
+    let mut archive = zip::ZipArchive::new(file)
+        .map_err(|err| format!("packaged VSIX {} is not a zip: {err}", vsix_path.display()))?;
+    let package_json = read_vsix_text_member(&mut archive, "extension/package.json", vsix_path)?;
+    let package: Value = serde_json::from_str(&package_json).map_err(|err| {
+        format!(
+            "packaged VSIX {} extension/package.json is not JSON: {err}",
+            vsix_path.display()
+        )
+    })?;
+    let manifest_version = package.get("version").and_then(Value::as_str).unwrap_or("");
+    let vsixmanifest = read_vsix_text_member(&mut archive, "extension.vsixmanifest", vsix_path)?;
+    let identity_version = vsixmanifest_identity_version(&vsixmanifest);
+    if manifest_version != expected || identity_version != expected {
+        return Err(format!(
+            "packaged VSIX {} is named for version {expected} but carries extension/package.json version {manifest_version:?} and extension.vsixmanifest Identity Version {identity_version:?}",
+            vsix_path.display()
+        ));
+    }
+    Ok(())
+}
+
+/// Version of the `<Identity>` element inside `<Metadata>`, read after removing
+/// XML comments and CDATA so Identity-like text there cannot be mistaken for
+/// the real element (no XML dependency exists in the workspace).
+fn vsixmanifest_identity_version(text: &str) -> String {
+    let mut cleaned = text.to_string();
+    for (open, close) in [("<!--", "-->"), ("<![CDATA[", "]]>")] {
+        while let Some(start) = cleaned.find(open) {
+            let end = cleaned[start..]
+                .find(close)
+                .map_or(cleaned.len(), |offset| start + offset + close.len());
+            cleaned.replace_range(start..end, "");
+        }
+    }
+    let Some(metadata) = cleaned.find("<Metadata") else {
+        return String::new();
+    };
+    let rest = &cleaned[metadata..];
+    let mut search = 0;
+    while let Some(found) = rest[search..].find("<Identity") {
+        let tag_start = search + found + "<Identity".len();
+        search = tag_start;
+        if !rest[tag_start..].starts_with(|c: char| c.is_whitespace() || c == '/' || c == '>') {
+            continue;
+        }
+        let tag = rest[tag_start..].split('>').next().unwrap_or("");
+        for quote in ['"', '\''] {
+            let needle = format!("Version={quote}");
+            let mut from = 0;
+            while let Some(at) = tag[from..].find(&needle) {
+                let abs = from + at;
+                from = abs + needle.len();
+                if tag[..abs].ends_with(|c: char| c.is_whitespace()) {
+                    return tag[from..].split(quote).next().unwrap_or("").to_string();
+                }
+            }
+        }
+        return String::new();
+    }
+    String::new()
+}
+
+fn read_vsix_text_member(
+    archive: &mut zip::ZipArchive<fs::File>,
+    member: &str,
+    vsix_path: &Path,
+) -> Result<String, String> {
+    let mut entry = archive.by_name(member).map_err(|err| {
+        format!(
+            "packaged VSIX {} is missing {member}: {err}",
+            vsix_path.display()
+        )
+    })?;
+    let mut text = String::new();
+    std::io::Read::read_to_string(&mut entry, &mut text)
+        .map_err(|err| format!("failed to read {member} in {}: {err}", vsix_path.display()))?;
+    Ok(text)
 }
 
 fn vscode_verify_vsix_path(args: &[String]) -> Result<PathBuf, String> {
@@ -2525,56 +2630,57 @@ fn pr_ready() -> Result<(), String> {
             "cargo xtask worktree doctor",
             "target/ripr/reports/worktree-doctor.md",
             true,
-            worktree_doctor,
+            worktree_doctor_readiness,
         ),
         run_readiness_step(
             "command_mutability_catalog",
             "cargo xtask commands",
             "target/ripr/reports/commands.md",
             false,
-            commands_report,
+            || commands_report().map(|()| ReadinessOutcome::Completed),
         ),
         run_readiness_step(
             "pr_summary",
             "cargo xtask pr-summary",
             "target/ripr/reports/pr-summary.md",
             false,
-            pr_summary,
+            // A summary is completion evidence, not a report-status assertion.
+            || pr_summary().map(|()| ReadinessOutcome::Completed),
         ),
         run_readiness_step(
             "critic",
             "cargo xtask critic",
             "target/ripr/reports/critic.md",
             false,
-            critic_impl,
+            critic_readiness,
         ),
         run_readiness_step(
             "receipts_check",
             "cargo xtask receipts check",
             "target/ripr/reports/receipts.md",
             false,
-            receipts_check,
+            || receipts_check().map(|()| ReadinessOutcome::Completed),
         ),
         run_readiness_step(
             "suggested_fixes",
             "cargo xtask suggested-fixes",
             "target/ripr/reports/suggested-fixes.md",
             false,
-            suggested_fixes,
+            || suggested_fixes().map(|()| ReadinessOutcome::Completed),
         ),
         run_readiness_step(
             "generated_clean",
             "cargo xtask check-generated-clean",
             "target/ripr/reports/generated-clean.md",
             true,
-            check_generated_clean,
+            || check_generated_clean().map(|()| ReadinessOutcome::Completed),
         ),
         run_readiness_step(
             "badge_diff_policy",
             "cargo xtask check-badge-diff-policy",
             "target/ripr/reports/badge-diff-policy.md",
             true,
-            check_badge_diff_policy,
+            || check_badge_diff_policy().map(|()| ReadinessOutcome::Completed),
         ),
     ];
     let status = pr_ready_status(&steps);
@@ -2600,49 +2706,49 @@ fn cockpit() -> Result<(), String> {
             "cargo xtask worktree doctor",
             "target/ripr/reports/worktree-doctor.md",
             true,
-            worktree_doctor,
+            worktree_doctor_readiness,
         ),
         run_readiness_step(
             "command_mutability_catalog",
             "cargo xtask commands",
             "target/ripr/reports/commands.md",
             false,
-            commands_report,
+            || commands_report().map(|()| ReadinessOutcome::Completed),
         ),
         run_readiness_step(
             "command_catalog_check",
             "cargo xtask check-command-catalog",
             "target/ripr/reports/command-catalog.md",
             true,
-            check_command_catalog,
+            || check_command_catalog().map(|()| ReadinessOutcome::Completed),
         ),
         run_readiness_step(
             "spec_numbering",
             "cargo xtask check-spec-numbering",
             "target/ripr/reports/spec-numbering.md",
             true,
-            check_spec_numbering,
+            || check_spec_numbering().map(|()| ReadinessOutcome::Completed),
         ),
         run_readiness_step(
             "pr_triage",
             "cargo xtask pr-triage-report",
             "target/ripr/reports/pr-triage.md",
             false,
-            reports::pr_triage_report,
+            pr_triage_readiness,
         ),
         run_readiness_step(
             "generated_clean",
             "cargo xtask check-generated-clean",
             "target/ripr/reports/generated-clean.md",
             true,
-            check_generated_clean,
+            || check_generated_clean().map(|()| ReadinessOutcome::Completed),
         ),
         run_readiness_step(
             "badge_diff_policy",
             "cargo xtask check-badge-diff-policy",
             "target/ripr/reports/badge-diff-policy.md",
             true,
-            check_badge_diff_policy,
+            || check_badge_diff_policy().map(|()| ReadinessOutcome::Completed),
         ),
     ];
 
@@ -3788,15 +3894,33 @@ fn pr_body_from_input_text(text: &str) -> Result<String, String> {
 }
 
 pub(crate) fn pr_triage_report_impl() -> Result<(), String> {
+    pr_triage_readiness().map(|_| ())
+}
+
+fn pr_triage_readiness() -> Result<ReadinessOutcome, String> {
     let prs = collect_open_prs_for_triage()?;
     let today = current_epoch_day()?;
     let generated_at = generated_at_unix_ms()?;
     let findings = pr_triage_findings(&prs, today);
-    write_report("pr-triage.md", &pr_triage_markdown(&prs, &findings, today))?;
+    finish_pr_triage_report(&prs, &findings, today, &generated_at)
+}
+
+fn finish_pr_triage_report(
+    prs: &[PrTriagePullRequest],
+    findings: &[PrTriageFinding],
+    today: i64,
+    generated_at: &str,
+) -> Result<ReadinessOutcome, String> {
+    write_report("pr-triage.md", &pr_triage_markdown(prs, findings, today))?;
     write_report(
         "pr-triage.json",
-        &pr_triage_json(&prs, &findings, today, &generated_at),
-    )
+        &pr_triage_json(prs, findings, today, generated_at),
+    )?;
+    Ok(if findings.is_empty() {
+        ReadinessOutcome::Completed
+    } else {
+        ReadinessOutcome::NeedsAttention
+    })
 }
 
 pub(crate) fn gh_pr_status_impl(args: &[String]) -> Result<(), String> {
@@ -5216,16 +5340,30 @@ fn markdown_escape_table(value: &str) -> String {
 }
 
 pub(crate) fn critic_impl() -> Result<(), String> {
+    critic_readiness().map(|_| ())
+}
+
+fn critic_readiness() -> Result<ReadinessOutcome, String> {
     ensure_reports_dir()?;
     let changes = collect_pr_changes()?;
     let reports = report_index_entries()?;
     let receipts = receipt_index_entries()?;
     let findings = critic_findings(&changes, &reports, &receipts);
-    write_report(
-        "critic.md",
-        &critic_markdown(&findings, &reports, &receipts),
-    )?;
-    write_report("critic.json", &critic_json(&findings, &reports, &receipts))
+    finish_critic_report(&findings, &reports, &receipts)
+}
+
+fn finish_critic_report(
+    findings: &[CriticFinding],
+    reports: &[ReportIndexEntry],
+    receipts: &[ReportIndexEntry],
+) -> Result<ReadinessOutcome, String> {
+    write_report("critic.md", &critic_markdown(findings, reports, receipts))?;
+    write_report("critic.json", &critic_json(findings, reports, receipts))?;
+    Ok(if findings.is_empty() {
+        ReadinessOutcome::Completed
+    } else {
+        ReadinessOutcome::NeedsAttention
+    })
 }
 
 pub(crate) fn reports_impl(args: &[String]) -> Result<(), String> {
@@ -6336,7 +6474,7 @@ fn finish_spec_numbering_report(violations: &[String]) -> Result<(), String> {
             fix_kind: FixKind::AuthorDecisionRequired,
             recommended_fixes: &[
                 "Run `cargo xtask specs next` before creating a new docs/specs/RIPR-SPEC-NNNN file.",
-                "Add every spec file to docs/specs/README.md.",
+                "Add every spec file to the index: one row in docs/spec-index.d/RIPR-SPEC-NNNN.md (or docs/specs/README.md).",
                 "Use only existing RIPR-SPEC-NNNN IDs in traceability and capability surfaces.",
             ],
             rerun_command: "cargo xtask check-spec-numbering",
@@ -6380,6 +6518,7 @@ fn spec_numbering_violations(root: &Path) -> Result<Vec<String>, String> {
     }
 
     validate_specs_readme_index(root, &specs, &ids, &mut violations)?;
+    validate_spec_index_fragments(root, &mut violations)?;
     validate_spec_references(root, &ids, &mut violations)?;
 
     violations.sort();
@@ -6427,6 +6566,106 @@ fn collect_spec_files_for_root(root: &Path) -> Result<Vec<SpecFile>, String> {
     Ok(specs)
 }
 
+/// Directory of one-row spec index fragments (`docs/spec-index.d/*.md`). A new
+/// spec adds its row here instead of appending to the README table, so two PRs
+/// that each add a spec no longer conflict on the README tail (#10455).
+const SPEC_INDEX_FRAGMENT_DIR: &str = "docs/spec-index.d";
+
+/// The README index plus every row fragment, in file-name order. A fragment
+/// lives one directory away from the specs, so its links read
+/// `../specs/<file>`; they are normalised to the README's bare file names so one
+/// index-link match serves both places.
+fn specs_index_text(root: &Path, readme: &Path) -> Result<String, String> {
+    let mut text = read_text_lossy(readme)?;
+    for (name, fragment) in spec_index_fragments(root)? {
+        let Some(stem) = name.strip_suffix(".md") else {
+            continue;
+        };
+        if let Some(row) = spec_index_fragment_row(stem, &fragment) {
+            text.push('\n');
+            text.push_str(&row.replace("](../specs/", "]("));
+        }
+    }
+    Ok(text)
+}
+
+/// The one index row of a fragment, or `None` when the fragment is not exactly
+/// that: a single non-blank line, a table row whose only link is the canonical
+/// `[stem](../specs/<file>)`. Anything else (fenced examples, comments, a second
+/// row, an equivalent-but-different link spelling) earns no credit.
+fn spec_index_fragment_row<'a>(stem: &str, text: &'a str) -> Option<&'a str> {
+    let mut lines = text.lines().map(str::trim).filter(|line| !line.is_empty());
+    let row = lines.next()?;
+    if lines.next().is_some() {
+        return None;
+    }
+    let prefix = format!("| [{stem}](../specs/");
+    (row.starts_with(&prefix) && row.ends_with('|') && row.matches("](").count() == 1)
+        .then_some(row)
+}
+
+/// Every `docs/spec-index.d/*.md` as (file name, text), in file-name order.
+fn spec_index_fragments(root: &Path) -> Result<Vec<(String, String)>, String> {
+    let directory = root.join(SPEC_INDEX_FRAGMENT_DIR);
+    let mut fragments = Vec::new();
+    if !directory.is_dir() {
+        return Ok(fragments);
+    }
+    for path in collect_files(&directory)? {
+        if path.extension().and_then(|value| value.to_str()) != Some("md") {
+            continue;
+        }
+        let name = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default()
+            .to_string();
+        if name == "README.md" {
+            continue;
+        }
+        fragments.push((name, read_text_lossy(&path)?));
+    }
+    Ok(fragments)
+}
+
+/// A fragment registers exactly the spec its file name states: `RIPR-SPEC-NNNN.md`
+/// holds spec rows for `RIPR-SPEC-NNNN` only, so a misnamed fragment cannot
+/// satisfy another spec's index entry.
+fn validate_spec_index_fragments(root: &Path, violations: &mut Vec<String>) -> Result<(), String> {
+    let readme = root.join("docs/specs/README.md");
+    let readme_text = if readme.exists() {
+        read_text_lossy(&readme)?
+    } else {
+        String::new()
+    };
+    for (name, text) in spec_index_fragments(root)? {
+        let Some(stem) = name.strip_suffix(".md").filter(|stem| is_spec_id(stem)) else {
+            violations.push(format!(
+                "{SPEC_INDEX_FRAGMENT_DIR}/{name} must be named RIPR-SPEC-NNNN.md"
+            ));
+            continue;
+        };
+        for id in spec_ids_in_text(&text) {
+            if id != stem {
+                violations.push(format!(
+                    "{SPEC_INDEX_FRAGMENT_DIR}/{name} names `{id}` but only `{stem}` may appear in it"
+                ));
+            }
+        }
+        if spec_index_fragment_row(stem, &text).is_none() {
+            violations.push(format!(
+                "{SPEC_INDEX_FRAGMENT_DIR}/{name} must hold exactly one table row `| [{stem}](../specs/<file>) | status | topic |` and nothing else"
+            ));
+        }
+        if readme_text.contains(&format!("[{stem}](")) {
+            violations.push(format!(
+                "{SPEC_INDEX_FRAGMENT_DIR}/{name} duplicates the README row for `{stem}`; keep one"
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn validate_specs_readme_index(
     root: &Path,
     specs: &[SpecFile],
@@ -6438,7 +6677,7 @@ fn validate_specs_readme_index(
         violations.push("docs/specs/README.md is missing".to_string());
         return Ok(());
     }
-    let text = read_text_lossy(&readme)?;
+    let text = specs_index_text(root, &readme)?;
     for spec in specs {
         let link = format!("[{}]({})", spec.id, spec.file_name);
         if !text.contains(&link) {
@@ -6654,7 +6893,7 @@ fn traceability_recommended_fixes() -> &'static [&'static str] {
     &[
         "Add or update the matching [[behavior]] entry in .ripr/traceability.toml.",
         "Run `cargo xtask specs next` to get the next free RIPR-SPEC-NNNN number.",
-        "Known spec IDs are listed in docs/specs/README.md.",
+        "Known spec IDs are listed in docs/specs/README.md and docs/spec-index.d/.",
         "Keep every docs/specs/RIPR-SPEC-*.md file represented in the manifest.",
         "Use valid RIPR-SPEC-NNNN IDs (exactly 4 digits) in specs, fixtures, and manifest entries.",
         "List only paths that exist, or leave planned fields empty until the artifact exists.",
@@ -14985,8 +15224,9 @@ fn check_doc_index() -> Result<(), String> {
         &["README.md"],
         &mut violations,
     )?;
-    require_index_mentions_files(
-        Path::new("docs/specs/README.md"),
+    require_index_mentions_files_in(
+        "docs/specs/README.md",
+        &specs_index_text(Path::new("."), Path::new("docs/specs/README.md"))?,
         Path::new("docs/specs"),
         &["README.md"],
         &mut violations,
@@ -15057,7 +15297,7 @@ fn check_doc_index() -> Result<(), String> {
             fix_kind: FixKind::AuthorDecisionRequired,
             recommended_fixes: &[
                 "Update docs/adr/README.md when adding or removing ADRs.",
-                "Update docs/specs/README.md when adding or removing specs.",
+                "Update docs/spec-index.d/ (or docs/specs/README.md) when adding or removing specs.",
                 "Keep README.md and docs/DOCUMENTATION.md linked to the active planning, automation, metrics, ADR, and spec docs.",
                 "Keep docs/README.md indexing the user-facing top-level reference pages (exit codes, static limits, repair recovery, blocking readiness, install channels, server provisioning).",
             ],
@@ -16896,6 +17136,10 @@ fn worktree(args: &[String]) -> Result<(), String> {
 }
 
 fn worktree_doctor() -> Result<(), String> {
+    worktree_doctor_readiness().map(|_| ())
+}
+
+fn worktree_doctor_readiness() -> Result<ReadinessOutcome, String> {
     let branch = git_value(&["rev-parse", "--abbrev-ref", "HEAD"]);
     let status_changes = collect_worktree_status_changes()?;
     let behind_origin_main = branch_behind_origin_main()?;
@@ -16910,7 +17154,12 @@ fn worktree_doctor() -> Result<(), String> {
         sample_target_exists,
         badge_refresh_context,
     );
-    finish_worktree_doctor_report(&findings)
+    finish_worktree_doctor_report(&findings)?;
+    Ok(if findings.is_empty() {
+        ReadinessOutcome::Completed
+    } else {
+        ReadinessOutcome::NeedsAttention
+    })
 }
 
 fn branch_behind_origin_main() -> Result<usize, String> {
@@ -17225,6 +17474,22 @@ fn require_index_mentions_files(
     violations: &mut Vec<String>,
 ) -> Result<(), String> {
     let index = read_text_lossy(index_path)?;
+    require_index_mentions_files_in(
+        &normalize_path(index_path),
+        &index,
+        directory,
+        excluded_names,
+        violations,
+    )
+}
+
+fn require_index_mentions_files_in(
+    index_label: &str,
+    index: &str,
+    directory: &Path,
+    excluded_names: &[&str],
+    violations: &mut Vec<String>,
+) -> Result<(), String> {
     for path in collect_files(directory)? {
         if path.extension().and_then(|value| value.to_str()) != Some("md") {
             continue;
@@ -17237,8 +17502,7 @@ fn require_index_mentions_files(
         }
         if !index.contains(name) {
             violations.push(format!(
-                "{} does not index {}",
-                normalize_path(index_path),
+                "{index_label} does not index {}",
                 normalize_path(&path)
             ));
         }
@@ -23827,6 +24091,9 @@ synonym (e.g. {hint}). To intentionally allow this line, append \
     reason = "xtask test code uses unwrap/expect for fail-fast assertion. Production paths are receipted via policy/no-panic-allowlist.toml; the test scope is governed by this single module-level expect."
 )]
 mod tests;
+
+#[cfg(test)]
+mod release_website_tests;
 
 #[cfg(test)]
 #[path = "tests/sorted_allowlist_content.rs"]

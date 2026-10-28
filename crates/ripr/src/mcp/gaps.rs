@@ -240,7 +240,8 @@ impl RepairReadiness {
                 | crate::mcp::repair_admission::SEAM_GATE_REFUSED
                 | crate::mcp::repair_admission::SEAM_AMBIGUOUS
                 | crate::mcp::repair_admission::SEAM_NOT_FOUND
-                | crate::mcp::repair_admission::SEAM_INVENTORY_TRUNCATED,
+                | crate::mcp::repair_admission::SEAM_INVENTORY_TRUNCATED
+                | crate::mcp::repair_admission::SEAM_WORKTREE_SOURCE,
             ) => {
                 "the shared seam-level repair validator behind `ripr repair` does not admit this item"
             }

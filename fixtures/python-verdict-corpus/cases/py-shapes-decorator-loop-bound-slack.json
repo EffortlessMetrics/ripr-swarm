@@ -1,0 +1,44 @@
+{
+  "case_id": "py-shapes-decorator-loop-bound-slack",
+  "subject_id": "authored-py-pytest-shapes",
+  "diff": "cases/py-shapes-decorator-loop-bound-slack.diff",
+  "anchor": {
+    "file": "shapes/decorators.py",
+    "line": 14
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "pytest_decorator_factory_loop_slack_unpinned",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "for _ in range(times + 1):",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: retry(3) tries four times, but flaky() succeeds on the third"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "Twin of py-shapes-decorator-loop-bound. The wrapper loops one time more than asked, but the third call already succeeds, so the single pinned call cannot tell. Crediting the retry loop edit needs separating this from its discriminating twin.",
+  "labeling_observation": {
+    "ripr_commit": "13d8470b",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

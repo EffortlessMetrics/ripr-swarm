@@ -2,7 +2,9 @@
 //! names a pytest fixture whose body calls the owner is related with
 //! reach-only evidence and never earns an oracle or `exposed`.
 
-use super::fixtures::attach_fixture_defs;
+use super::fixtures::{
+    FixtureSideEffects, attach_fixture_defs, mark_isolated_fixture_defs, side_effects_of,
+};
 use super::source_facts::extract_source_facts;
 use super::source_utils::is_test_file;
 use super::*;
@@ -17,11 +19,13 @@ pub(super) fn workspace(files: &[(&str, &str)]) -> (Vec<PythonOwner>, Vec<Python
     let mut owners = Vec::new();
     let mut tests = Vec::new();
     let mut defs: BTreeMap<PathBuf, Vec<PythonFixtureDef>> = BTreeMap::new();
+    let mut side: BTreeMap<PathBuf, FixtureSideEffects> = BTreeMap::new();
     for (path, source) in files {
         let facts = extract_source_facts(Path::new(path), source);
         if !facts.fixtures.is_empty() {
             defs.insert(PathBuf::from(path), facts.fixtures.clone());
         }
+        side.insert(PathBuf::from(path), side_effects_of(&facts));
         if is_test_file(Path::new(path)) {
             tests.extend(facts.tests);
         } else {
@@ -29,6 +33,9 @@ pub(super) fn workspace(files: &[(&str, &str)]) -> (Vec<PythonOwner>, Vec<Python
         }
     }
     attach_fixture_defs(&mut tests, &defs);
+    // Every conftest the workspace holds is in `files`; none is unreadable.
+    mark_isolated_fixture_defs(&mut tests, &defs, &side, |_| false);
+    super::param_fixtures::apply_literal_param_fixtures(&mut tests);
     (owners, tests)
 }
 
@@ -283,6 +290,15 @@ fn given_a_parametrize_the_literal_parser_gives_up_on_then_the_argname_is_still_
         "@pytest.mark.parametrize('out', [pytest.param('abc', marks=pytest.mark.skip)])",
         "@pytest.mark.parametrize('out', ['abc'], indirect=False)",
         "@pytest.mark.parametrize('out', ['abc'], indirect=['other'])",
+        // An `indirect=` value the read cannot settle makes no edge either
+        // way (RIPR-SPEC-0028); the fixture limit still counts it (#10685).
+        // A never-rebound module `IND = False` settles it as direct.
+        "IND = False\n\n\n@pytest.mark.parametrize('out', ['abc'], indirect=IND)",
+        "NAME = 'out'\n\n\n@pytest.mark.parametrize('out', ['abc'], indirect=[NAME])",
+        "IND = True\nIND = False\n\n\n@pytest.mark.parametrize('out', ['abc'], indirect=IND)",
+        // A canonical spelling whose root another library binds may be
+        // pytest's mark or not: no edge, and the limit still counts it.
+        "from mylib import mark\n\n\n@mark.parametrize('out', ['abc'])",
         "@pytest.mark.parametrize('out, other', [('a', 'b')])",
         "@pytest.mark.parametrize(('out', 'other'), [('a', 'b')])",
         "@pytest.mark.parametrize(['other', 'out'], [('a', 'b')])",
@@ -305,6 +321,8 @@ fn given_indirect_routing_the_argname_to_its_fixture_then_the_fixture_is_resolve
         "@pytest.mark.parametrize('out', ['abc'], indirect=True)",
         "@pytest.mark.parametrize('out', VALUES, indirect=['out'])",
         "@pytest.mark.parametrize('out', VALUES, indirect=('other', 'out'))",
+        // A never-rebound module value routes like its literal (#10685).
+        "IND = True\n\n\n@pytest.mark.parametrize('out', ['abc'], indirect=IND)",
     ] {
         let test = with_decorator(decorator);
         assert_eq!(

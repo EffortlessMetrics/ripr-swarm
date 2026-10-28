@@ -1,0 +1,14 @@
+# Registers the directory-link alias exemption (#10829) under RIPR-SPEC-0027.
+[[extend]]
+id = "RIPR-SPEC-0027"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/discovery.rs::tests::discovery_does_not_count_a_relative_alias_of_a_walked_directory",
+  "crates/ripr/src/analysis/language/typescript/discovery.rs::tests::discovery_does_not_count_non_source_file_links_but_counts_every_other_link",
+  "crates/ripr/src/analysis/language/typescript/discovery.rs::tests::discovery_counts_skipped_links_without_following",
+  "crates/ripr/src/analysis/language/typescript/discovery.rs::tests::discovery_counts_an_alias_of_a_directory_it_cannot_list",
+  "crates/ripr/src/analysis/language/typescript/discovery.rs::tests::discovery_counts_an_alias_that_an_indexed_file_imports_through",
+  "crates/ripr/src/analysis/language/typescript/discovery.rs::tests::discovery_counts_an_alias_whose_name_has_shell_characters",
+  "crates/ripr/src/analysis/language/typescript/discovery.rs::tests::discovery_counts_an_alias_whose_name_has_a_space_only_when_imported",
+  "crates/ripr/src/analysis/language/typescript/discovery.rs::tests::discovery_counts_an_alias_named_through_a_character_escape",
+  "crates/ripr/src/analysis/language/typescript/repo_tests.rs::an_alias_imported_through_keeps_repo_mode_partial_but_a_direct_import_does_not",
+]

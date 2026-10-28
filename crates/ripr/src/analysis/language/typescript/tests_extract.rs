@@ -217,6 +217,14 @@ fn extract_tests_expanding_suite_factories(
             admission: TypeScriptAdmissionContext::of_program(&ret.program, &imports, file),
             ..TestScope::default()
         };
+        scope.fixtures = super::fixture_receivers::PlaywrightFixtures::of_program(
+            &ret.program.body,
+            source,
+            &imports,
+        );
+        if let Some(fixtures) = &scope.fixtures {
+            scope.sites.extend(fixtures.sites.iter().copied());
+        }
         // One line index per source; every test and assertion line is a
         // binary search against it rather than a rescan from byte 0.
         collect_tests_from_statements(
@@ -975,7 +983,8 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
             && (call_callee_is_active_declaration(call, TestDeclarationRoot::Test)
                 || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Test)
                 || call_callee_is_active_declaration(call, TestDeclarationRoot::Describe)
-                || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Describe))
+                || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Describe)
+                || conditional_describe_factory(call).is_some())
             && !{
                 // The context and the visible bindings are the same for every
                 // registration in this statement list, so they are built once
@@ -1003,7 +1012,8 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
                         || call_callee_is_active_each_declaration(
                             call,
                             TestDeclarationRoot::Describe,
-                        ),
+                        )
+                        || conditional_describe_factory(call).is_some(),
                     names,
                 )
             }
@@ -1018,12 +1028,25 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
             && (call_callee_is_active_declaration(call, TestDeclarationRoot::Test)
                 || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Test)
                 || call_callee_is_active_declaration(call, TestDeclarationRoot::Describe)
-                || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Describe))
+                || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Describe)
+                || conditional_describe_factory(call).is_some())
             && !declaration_options_are_active_with_undefined(call, false)
         {
             continue;
         }
-        if let Some((describe_name, body)) = describe_body_from_statement(stmt, source) {
+        if let Some((describe_name, body, guard)) = describe_body_from_statement(stmt, source)
+            .map(|(name, body)| (name, body, None))
+            .or_else(|| {
+                conditional_describe_body(stmt, source)
+                    .map(|(name, body, guard)| (name, body, Some(guard)))
+            })
+        {
+            // #10629: a `describe.skipIf(cond)` / `describe.runIf(cond)` suite
+            // is indexed under its factory call as the guard, like an `if`.
+            let guarded = guard.is_some();
+            if let Some(guard) = guard {
+                scope.guards.push(guard);
+            }
             // `describe.each(...)('x', (cart) => ...)` binds its parameters
             // for every test inside.
             scope.levels.push(
@@ -1041,6 +1064,9 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
             scope.describe_names.pop();
             scope.iterables.pop();
             scope.levels.pop();
+            if guarded {
+                scope.guards.pop();
+            }
             continue;
         }
         if let Statement::IfStatement(if_stmt) = stmt
@@ -1082,6 +1108,32 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
                 }
                 scope.guards.pop();
             }
+            continue;
+        }
+        // #10501: a loop over data static analysis cannot enumerate may run
+        // zero or many times, so its registrations are indexed for reach under
+        // the loop head as their guard and earn no assertion credit.
+        let unprovable_loop = if loop_body_from_statement(stmt, scope).is_none() {
+            unprovable_loop_body(stmt, source)
+        } else {
+            None
+        };
+        if let Some((guard, loop_bindings, body)) = unprovable_loop {
+            scope.guards.push(guard);
+            scope.levels.push(
+                loop_bindings
+                    .into_iter()
+                    .map(|name| (name, ScopeValue::Other, Phase::Declaration))
+                    .collect(),
+            );
+            scope.iterables.push(Vec::new());
+            let inherited_strict = scope.admission.block_functions_are_lexical;
+            scope.admission.block_functions_are_lexical |= statement_callback_is_strict(stmt);
+            collect_tests_from_statements(body, file, source, imports, scope, tests);
+            scope.admission.block_functions_are_lexical = inherited_strict;
+            scope.iterables.pop();
+            scope.levels.pop();
+            scope.guards.pop();
             continue;
         }
         if let Some((loop_bindings, body)) = loop_body_from_statement(stmt, scope) {
@@ -1128,10 +1180,26 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
             }
             // Test callback parameters (`it.each` rows, Vitest fixtures)
             // shadow every enclosing binding of the same name.
-            let parameters: Vec<ScopeEntry> = statement_callback_parameter_names(stmt)
+            let mut parameters: Vec<ScopeEntry> = statement_callback_parameter_names(stmt)
                 .into_iter()
                 .map(|name| (name, ScopeValue::Other, Phase::Declaration))
                 .collect();
+            // A destructured Playwright fixture that constructs a class binds
+            // its local name to that class (SPEC-0243 rule 23).
+            let mut provided_names: Vec<String> = Vec::new();
+            let mut parameter_end = None;
+            if let (Some(fixtures), Some(call)) = (&scope.fixtures, statement_call(stmt))
+                && let Some(provided) = fixtures.parameters_of(call)
+            {
+                for (name, class) in provided.bindings {
+                    if let Some(entry) = parameters.iter_mut().find(|entry| entry.0 == name) {
+                        entry.1 = ScopeValue::Constructed(class);
+                        provided_names.push(name);
+                    }
+                }
+                parameter_end = Some(provided.parameter_end - call.span.start as usize);
+                scope.sites.extend(provided.sites);
+            }
             // Tests with no parameters of their own see the same scope, so
             // they share one resolved list (#10017).
             test.scope_bindings = if parameters.is_empty() {
@@ -1139,7 +1207,13 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
                     .get_or_insert_with(|| scope.resolve_with(Vec::new()).into())
                     .clone()
             } else {
-                scope.resolve_with(parameters).into()
+                let mut resolved = scope.resolve_with(parameters);
+                for binding in &mut resolved {
+                    if provided_names.contains(&binding.name) {
+                        binding.parameter_end = parameter_end;
+                    }
+                }
+                resolved.into()
             };
             test.setup_hook_bodies = scope.hook_levels.iter().flatten().cloned().collect();
             if !scope.guards.is_empty() {
@@ -1315,6 +1389,8 @@ pub(crate) struct TestScope {
     /// The unevaluated `if` conditions the statements being walked sit
     /// under, outermost first (#10438).
     guards: Vec<String>,
+    /// The fixtures a Playwright `base.extend` constructs (SPEC-0243 rule 23).
+    fixtures: Option<super::fixture_receivers::PlaywrightFixtures>,
 }
 
 /// One binding a scope-level statement makes, and when it runs.
@@ -1418,6 +1494,7 @@ impl TestScope {
                     // `levels` is the test's own parameters, then the
                     // enclosing levels innermost first; the last is the file.
                     file_level: depth > 0 && depth == levels.len() - 1,
+                    parameter_end: None,
                 });
             }
         }
@@ -1622,11 +1699,9 @@ fn collect_hook_assignment(
                 .iter()
                 .filter_map(|declarator| declarator.init.as_ref())
             {
-                let span = init.span();
-                let text = source
-                    .get(span.start as usize..span.end as usize)
-                    .unwrap_or_default();
-                for name in assigned_identifier_names(text) {
+                let mut strings = StringLiteralSpans::default();
+                oxc_ast_visit::Visit::visit_expression(&mut strings, init);
+                for name in assigned_names_outside_strings(source, init.span(), &strings) {
                     out.push((name, ScopeValue::Other));
                 }
             }
@@ -1649,13 +1724,53 @@ fn collect_hook_assignment(
         }
         _ => {}
     }
-    let span = stmt.span();
-    let text = source
-        .get(span.start as usize..span.end as usize)
-        .unwrap_or_default();
-    for name in assigned_identifier_names(text) {
+    let mut strings = StringLiteralSpans::default();
+    oxc_ast_visit::Visit::visit_statement(&mut strings, stmt);
+    for name in assigned_names_outside_strings(source, stmt.span(), &strings) {
         out.push((name, ScopeValue::Other));
     }
+}
+
+/// Spans of plain string literals. Their text is data, never code, so a
+/// write-shaped substring inside one (`"?test=1"`) is not a write. Template
+/// literals are left out: a `${...}` expression inside one can write.
+#[derive(Default)]
+struct StringLiteralSpans(Vec<std::ops::Range<usize>>);
+
+impl<'a> oxc_ast_visit::Visit<'a> for StringLiteralSpans {
+    fn visit_string_literal(&mut self, literal: &oxc_ast::ast::StringLiteral<'a>) {
+        self.0
+            .push(literal.span.start as usize..literal.span.end as usize);
+    }
+}
+
+/// [`assigned_identifier_names`] over the source slice `span`, with the
+/// contents of `strings` blanked (#10820): a quoted `"test=1"` argument made
+/// the hook-write scan read the runner `test` as reassigned and withheld
+/// every registration in the file.
+fn assigned_names_outside_strings(
+    source: &str,
+    span: oxc_span::Span,
+    strings: &StringLiteralSpans,
+) -> Vec<String> {
+    let (start, end) = (span.start as usize, span.end as usize);
+    let Some(text) = source.get(start..end) else {
+        return Vec::new();
+    };
+    // A string handed to `eval` or `Function` is code, so a write inside it
+    // must stay visible (fail closed).
+    if identifier_occurrences(text, "eval").next().is_some()
+        || identifier_occurrences(text, "Function").next().is_some()
+    {
+        return assigned_identifier_names(text);
+    }
+    let relative: Vec<std::ops::Range<usize>> = strings
+        .0
+        .iter()
+        .filter(|range| range.start >= start && range.end <= end)
+        .map(|range| range.start - start..range.end - start)
+        .collect();
+    assigned_identifier_names(&blank_ranges(text, &relative))
 }
 
 /// `true` when `stmt` may leave the enclosing callback early: a `return`
@@ -2995,6 +3110,47 @@ pub(crate) fn describe_body_from_statement<'a>(
     Some((name, body))
 }
 
+/// The `describe.skipIf(cond)` / `describe.runIf(cond)` factory call a
+/// registration call is made through, when its root is an active `describe`.
+fn conditional_describe_factory<'s, 'a>(
+    call: &'s oxc_ast::ast::CallExpression<'a>,
+) -> Option<&'s oxc_ast::ast::CallExpression<'a>> {
+    let Expression::CallExpression(factory) = &call.callee else {
+        return None;
+    };
+    let Expression::StaticMemberExpression(member) = &factory.callee else {
+        return None;
+    };
+    (matches!(member.property.name.as_str(), "skipIf" | "runIf")
+        && expression_is_active_declaration(&member.object, TestDeclarationRoot::Describe))
+    .then_some(&**factory)
+}
+
+/// `describe.skipIf(cond)('name', () => { ... })` and the `runIf` twin: the
+/// suite name, its body and the factory call's source as the guard. The
+/// condition is a runtime value static analysis does not evaluate, so the
+/// suite's tests are indexed for reach but earn no assertion credit.
+fn conditional_describe_body<'a>(
+    stmt: &'a Statement<'a>,
+    source: &SourceText<'_>,
+) -> Option<(String, &'a oxc_allocator::Vec<'a, Statement<'a>>, String)> {
+    let call = statement_call(stmt)?;
+    let factory = conditional_describe_factory(call)?;
+    if !declaration_options_are_active(call) {
+        return None;
+    }
+    let name = title_argument(call.arguments.first()?, source, call.span.start as usize)?;
+    let body = function_body_statements_from_argument(
+        call.arguments.get(declaration_callback_index(call))?,
+    )?;
+    let guard = snippet_for_span(
+        source.text(),
+        factory.span.start as usize,
+        factory.span.end as usize,
+    );
+    Some((name, body, guard))
+}
+
 /// A top-level `function name() { ... }` a registration can name as its
 /// callback: `(name, declaration)`.
 pub(crate) type DeclaredFunction<'s, 'a> = (&'s str, &'s oxc_ast::ast::Function<'a>);
@@ -3557,7 +3713,7 @@ fn body_calls_context_skip(text: &str, context: &str) -> bool {
 
 /// Replace comments and string / template literal contents with spaces,
 /// keeping byte offsets and newlines.
-fn mask_comments_and_strings_text(text: &str) -> String {
+pub(super) fn mask_comments_and_strings_text(text: &str) -> String {
     let bytes = text.as_bytes();
     let mut out = bytes.to_vec();
     let mut i = 0;
@@ -4035,6 +4191,79 @@ fn loop_body_from_statement<'a>(
     Some((bindings, body))
 }
 
+/// `[]` or `{}` written directly as the iterable: the loop never runs, so no
+/// registration exists to index.
+fn is_empty_literal(expression: &Expression<'_>) -> bool {
+    match runtime_expression(expression) {
+        Expression::ArrayExpression(array) => array.elements.is_empty(),
+        Expression::ObjectExpression(object) => object.properties.is_empty(),
+        _ => false,
+    }
+}
+
+/// A `for...of`, `for...in` or `.forEach` over data that
+/// [`loop_body_from_statement`] cannot prove non-empty (a call result, a
+/// parameter, a file listing). Returns the loop head as the registration guard,
+/// the loop bindings and the body. `None` for any other statement, and for a
+/// loop whose bindings would shadow a registration API.
+fn unprovable_loop_body<'a>(
+    stmt: &'a Statement<'a>,
+    source: &SourceText<'_>,
+) -> Option<(String, Vec<String>, &'a [Statement<'a>])> {
+    let head = |start: u32, end: u32| snippet_for_span(source.text(), start as usize, end as usize);
+    let (guard, bindings, body) = match stmt {
+        Statement::ForOfStatement(for_of) if is_empty_literal(&for_of.right) => return None,
+        Statement::ForInStatement(for_in) if is_empty_literal(&for_in.right) => return None,
+        Statement::ForOfStatement(for_of) => (
+            format!(
+                "for (... of {})",
+                head(for_of.right.span().start, for_of.right.span().end)
+            ),
+            for_left_bindings(&for_of.left)?,
+            &for_of.body,
+        ),
+        Statement::ForInStatement(for_in) => (
+            format!(
+                "for (... in {})",
+                head(for_in.right.span().start, for_in.right.span().end)
+            ),
+            for_left_bindings(&for_in.left)?,
+            &for_in.body,
+        ),
+        Statement::ExpressionStatement(expr_stmt) => {
+            let Expression::CallExpression(call) = &expr_stmt.expression else {
+                return None;
+            };
+            let Expression::StaticMemberExpression(member) = &call.callee else {
+                return None;
+            };
+            if member.property.name.as_str() != "forEach" || is_empty_literal(&member.object) {
+                return None;
+            }
+            let callback = call.arguments.first()?;
+            let body = function_body_statements_from_argument(callback)?;
+            let bindings = argument_parameter_names(callback);
+            if binds_registration_api(&bindings) {
+                return None;
+            }
+            let guard = format!(
+                "{}.forEach(...)",
+                head(member.object.span().start, member.object.span().end)
+            );
+            return Some((guard, bindings, body.as_slice()));
+        }
+        _ => return None,
+    };
+    if binds_registration_api(&bindings) {
+        return None;
+    }
+    let body = match body {
+        Statement::BlockStatement(block) => block.body.as_slice(),
+        single => std::slice::from_ref(single),
+    };
+    Some((guard, bindings, body))
+}
+
 /// A loop variable or callback parameter named `test`, `it` or `describe`
 /// shadows the runner API inside the body, so a `test(...)` there is not a
 /// registration; such a loop is not walked.
@@ -4242,6 +4471,7 @@ fn statement_callback_is_strict(statement: &Statement<'_>) -> bool {
     };
     let index = if call_callee_is_active_declaration(call, TestDeclarationRoot::Describe)
         || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Describe)
+        || conditional_describe_factory(call).is_some()
     {
         declaration_callback_index(call)
     } else {

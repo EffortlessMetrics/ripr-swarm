@@ -1,0 +1,55 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/rust_call_chain_literal_input/input
+
+Summary: 2 changed behaviors checked: 1 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 0 no test path, 1 unclear. 2 found, 0 suppressed by your settings
+
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
+
+Start here:
+  State: ripr cannot tell from reading the code whether tests would notice this
+  Safe next action: look at the reason below before adding a test
+  File: ./src/lib.rs:2
+  Static exposure: unknown (severity: warning, confidence 0.66)
+  Why unknown: the change reaches something a test can check, but ripr could not tell which inputs would trigger it
+  Gap ID (for scripts): gap:rust:src/lib.rs:is_adult:predicate_boundary:predicate:age==18
+  Changed behavior: age >= 18
+  Missing check (1 of 2): Changed boundary input is unresolved: a related test passes `age` the
+    result of a call (`age_from_env(18)`), whose value ripr does not evaluate statically, so it
+    cannot tell which side of the boundary that call reaches; activation/infection is unknown
+  Related test (1 of 2 matched rows): tests/api.rs:11 adults_are_adults
+  Next step: Open the related test and trace its input through the local or computed operand
+    (including default and empty cases) to see which side of the changed condition it exercises,
+    then name an input that would exercise the other side. ripr.toml does not support
+    fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap.
+    Compare the original and changed implementations with a focused run using the project's
+    configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain
+    unknown
+  Evidence: reach yes · infection unknown · propagation yes · observation yes · discriminator not established
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      no test path = no test path found; unclear = analysis limited, not a verdict;
+      found = listed for review; suppressed by your settings = hidden by your suppression policy;
+      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
+    - reach yes: Related tests appear to reach is_adult: adults_are_adults
+    - infection unknown: Changed boundary input is unresolved: a related test passes `age` the result of a call (`age_from_env(18)`), whose value ripr does not evaluate statically, so…
+    - 8 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root <cwd>/fixtures/rust_call_chain_literal_input/input --diff <cwd>/fixtures/rust_call_chain_literal_input/diff.patch --mode fast probe:src_lib.rs:predicate:596620ae
+  ripr context --root <cwd>/fixtures/rust_call_chain_literal_input/input --diff <cwd>/fixtures/rust_call_chain_literal_input/diff.patch --mode fast --at probe:src_lib.rs:predicate:596620ae
+  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: incomplete evidence stage: activation; follow the Next step above, then rerun `ripr check`
+Write a test for it:
+  ripr agent stub --root <cwd>/fixtures/rust_call_chain_literal_input/input --at src/lib.rs:2 --kind predicate
+
+Hidden:
+  1 lower-priority finding(s) omitted from default human output.
+    - ./src/lib.rs:2 (exposed)
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json
