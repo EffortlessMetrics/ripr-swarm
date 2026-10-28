@@ -205,6 +205,15 @@ fn actual_classification_preserves_findings_and_value_origins_with_shared_memos(
             .any(|finding| traced_origins.files(finding).is_some()),
         "fixture must exercise the real origin side output"
     );
+    // The related-test selector reads candidates by position; reverting it to the
+    // whole-set view would leave no keyed test read in any row.
+    assert!(
+        rows.iter().any(
+            |row| row.reads.iter().any(|entry| entry.read.kind == Kind::Test
+                && Path::new(entry.read.site.file).ends_with("classify/related_tests.rs"))
+        ),
+        "classification must record a keyed test read at the related-test site"
+    );
     assert!(rows.iter().all(|row| row.observed_read_events > 0
         && row.classification_returned
         && row.coverage == "unknown"

@@ -243,6 +243,10 @@ pub(in crate::analysis) fn file(path: &Path, present: bool) {
 /// (`file:start_line:name`), so a keyed read is not a whole-set dependency.
 #[track_caller]
 pub(in crate::analysis) fn test(file: &Path, start_line: usize, name: &str) {
+    // Callers read thousands of candidates per probe; skip the formatting when off.
+    if !enabled() {
+        return;
+    }
     let subject = file
         .to_str()
         .map(|file| format!("{file}:{start_line}:{name}"));
