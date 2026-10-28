@@ -12,6 +12,7 @@
   "findings": [
     {
       "id": "probe:src_context.ts:typescript_preview:74e6172a",
+      "canonical_gap_id": "gap:typescript:typescript_preview:74e6172a",
       "classification": "no_static_path",
       "severity": "warning",
       "confidence": 0.40,
@@ -124,6 +125,7 @@
     },
     {
       "id": "probe:src_observed.ts:typescript_preview:d09a8abb",
+      "canonical_gap_id": "gap:typescript:typescript_preview:d09a8abb",
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.40,
@@ -261,6 +263,7 @@
     },
     {
       "id": "probe:src_pricing.ts:typescript_preview:eaef2ad8",
+      "canonical_gap_id": "gap:typescript:typescript_preview:eaef2ad8",
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.40,

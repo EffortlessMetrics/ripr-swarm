@@ -12,6 +12,7 @@
   "findings": [
     {
       "id": "probe:src_audit.ts:typescript_preview:cef0d72c",
+      "canonical_gap_id": "gap:typescript:typescript_preview:cef0d72c",
       "classification": "no_static_path",
       "severity": "warning",
       "confidence": 0.40,
