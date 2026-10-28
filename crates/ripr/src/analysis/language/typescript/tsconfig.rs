@@ -83,7 +83,14 @@ pub(crate) struct TsAliasMap {
     /// unresolved advice stays the flag-off / load-gap advice.
     tsconfig_loaded: bool,
     /// In-workspace package names (#4554), consulted after `paths`.
-    packages: super::workspace_packages::WorkspacePackages,
+    ///
+    /// Shared, not owned: every cache miss hands the map to the parse worker,
+    /// and the package table lists every indexed source path.
+    packages: std::sync::Arc<super::workspace_packages::WorkspacePackages>,
+    /// [`Self::cache_digest`], computed once. The digest renders the whole
+    /// package table, so recomputing it for each of the workspace's files
+    /// made a run quadratic in the file count. Every mutator resets it.
+    digest: std::sync::OnceLock<(u64, u64)>,
 }
 
 #[derive(Debug, Clone)]
@@ -238,6 +245,10 @@ impl TsAliasMap {
     /// `HashMap` iteration order is not stable; the remaining fields are
     /// order-stable (`Vec`, `BTreeMap`, `BTreeSet`) and hash directly.
     pub(crate) fn cache_digest(&self) -> (u64, u64) {
+        *self.digest.get_or_init(|| self.compute_cache_digest())
+    }
+
+    fn compute_cache_digest(&self) -> (u64, u64) {
         use std::hash::{Hash, Hasher};
         let mut first = std::collections::hash_map::DefaultHasher::new();
         let mut second = std::collections::hash_map::DefaultHasher::new();
@@ -283,7 +294,7 @@ impl TsAliasMap {
         Self {
             root: root.to_path_buf(),
             base_url: ".".to_string(),
-            packages,
+            packages: std::sync::Arc::new(packages),
             ..Self::default()
         }
     }
@@ -293,7 +304,8 @@ impl TsAliasMap {
         mut self,
         packages: super::workspace_packages::WorkspacePackages,
     ) -> Self {
-        self.packages = packages;
+        self.packages = std::sync::Arc::new(packages);
+        self.digest = std::sync::OnceLock::new();
         self
     }
 
@@ -615,6 +627,7 @@ fn parse_alias_map(root: &Path, text: &str) -> Result<TsAliasMap, TsAliasMapBloc
         glob_entries,
         tsconfig_loaded: true,
         packages: Default::default(),
+        digest: Default::default(),
     })
 }
 
@@ -900,6 +913,43 @@ mod tests {
             let _ = fs::create_dir_all(dir.join(parent));
         }
         let _ = fs::write(dir.join(name), content);
+    }
+
+    // ── cache_digest (#10943) ─────────────────────────────────────────────
+
+    #[test]
+    fn cache_digest_is_stable_across_clones_and_follows_the_package_table() {
+        let root = temp_dir("digest-once");
+        write(
+            &root,
+            "pkg/package.json",
+            r#"{"name":"pkg-a","main":"src/a.ts"}"#,
+        );
+        write(&root, "pkg/src/a.ts", "export const a = 1;\n");
+        let files = [PathBuf::from("pkg/src/a.ts")];
+        let packages = super::super::workspace_packages::WorkspacePackages::discover(&root, &files);
+        assert!(!packages.is_empty(), "fixture must discover its package");
+        let empty = TsAliasMap::workspace_packages_only(&root, Default::default());
+        let before = empty.cache_digest();
+        assert_eq!(empty.cache_digest(), before, "repeat call is memoized");
+        assert_eq!(
+            empty.clone().cache_digest(),
+            before,
+            "a clone keeps the digest"
+        );
+        let with_packages = empty.with_workspace_packages(packages.clone());
+        assert_ne!(
+            with_packages.cache_digest(),
+            before,
+            "replacing the package table must reset the memoized digest"
+        );
+        let fresh = TsAliasMap::workspace_packages_only(&root, packages);
+        assert_eq!(
+            fresh.cache_digest(),
+            with_packages.cache_digest(),
+            "the memo must equal a digest computed from scratch"
+        );
+        let _ = fs::remove_dir_all(&root);
     }
 
     // ── load_alias_map ────────────────────────────────────────────────────
