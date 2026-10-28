@@ -2113,6 +2113,31 @@ pub(super) fn qualified_owner_calls_resolve(
         })
 }
 
+/// RIPR-SPEC-0186: a boundary oracle must observe the changed definition,
+/// not merely another call with its name in a test that also reaches it.
+/// Qualified calls use activation's existing identity authority. When the
+/// index holds same-named rivals, bare calls must also resolve individually
+/// (a test can import a rival while calling the owner by its qualified path).
+/// Inherent calls retain their separate receiver admission.
+pub(super) fn boundary_owner_calls_resolve(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+    test: &TestSummary,
+    text: &str,
+) -> bool {
+    qualified_owner_calls_resolve(index, owner, test, text)
+        && shared_owner_call_identity(index, owner).is_none_or(|identity| {
+            call_qualifiers(text, &owner.name)
+                .into_iter()
+                .all(|qualifier| {
+                    qualifier.is_some_and(|segments| {
+                        names_a_type(&segments)
+                            || identity.resolve_call(test, index, &segments) == CallTarget::Owner
+                    })
+                })
+        })
+}
+
 /// Binding for new typed and receipt-backed property repository inputs. Reuse
 /// the existing free-owner authority, including raw twins and crate-root shadows;
 /// the general qualified-call resolver and its old consumers stay unchanged.

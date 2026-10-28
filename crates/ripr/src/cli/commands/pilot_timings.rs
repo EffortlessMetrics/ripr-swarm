@@ -4,6 +4,7 @@
 //! artifacts and stdout stay free of wall-clock values, so they remain
 //! byte-identical across runs (RIPR-SPEC-0185).
 
+use crate::analysis::resource_cost::RecordedLatencyPhase;
 use std::time::Instant;
 
 struct StageTiming {
@@ -48,6 +49,27 @@ impl PilotTimings {
         self.push(stage, elapsed_ms, items);
     }
 
+    /// Add the inventory's own phases as rows beneath `inventory`. Only the
+    /// phases named in `inventory_phase_row` that actually completed appear,
+    /// so a cache hit shows its load and a cold run shows the compute steps.
+    pub(super) fn record_inventory_phases(&mut self, phases: &[RecordedLatencyPhase]) {
+        for phase in phases {
+            if phase.status.starts_with("start") {
+                continue;
+            }
+            let Some(row) = inventory_phase_row(&phase.phase) else {
+                continue;
+            };
+            let elapsed_ms = u64::try_from(phase.duration.as_millis()).unwrap_or(u64::MAX);
+            match self.stages.iter_mut().find(|stage| stage.stage == row) {
+                Some(existing) => {
+                    existing.elapsed_ms = existing.elapsed_ms.saturating_add(elapsed_ms);
+                }
+                None => self.push(row, elapsed_ms, None),
+            }
+        }
+    }
+
     fn push(&mut self, stage: &'static str, elapsed_ms: u64, items: Option<usize>) {
         self.stages.push(StageTiming {
             stage,
@@ -63,15 +85,32 @@ impl PilotTimings {
             "ripr pilot: stage timings (total is wall clock; rows need not sum to it)\n",
         );
         for stage in &self.stages {
-            out.push_str(&format!("  {:<22} {:>9} ms", stage.stage, stage.elapsed_ms));
+            out.push_str(&format!("  {:<30} {:>9} ms", stage.stage, stage.elapsed_ms));
             if let Some(items) = stage.items {
                 out.push_str(&format!("  items={items}"));
             }
             out.push('\n');
         }
-        out.push_str(&format!("  {:<22} {:>9} ms\n", "total", self.total_ms()));
+        out.push_str(&format!("  {:<30} {:>9} ms\n", "total", self.total_ms()));
         out
     }
+}
+
+/// The inventory phases worth a row, under stable names. Anything else the
+/// phase trace reports (per-file counters, serialization passes) stays on
+/// the opt-in latency trace.
+fn inventory_phase_row(phase: &str) -> Option<&'static str> {
+    Some(match phase {
+        "collect_workspace_state" => "inventory.collect_workspace",
+        "cache_load" => "inventory.cache_load",
+        "file_fact_cache" => "inventory.parse_index",
+        "apply_oracle_policy" => "inventory.apply_oracle_policy",
+        "inventory_seams" => "inventory.seams",
+        "evidence_for_seams" => "inventory.evidence",
+        "classify_seams" => "inventory.classify",
+        "cache_store" => "inventory.cache_store",
+        _ => return None,
+    })
 }
 
 const TIMINGS_SCHEMA_VERSION: u32 = 1;
@@ -124,12 +163,15 @@ mod tests {
         let lines: Vec<&str> = text.lines().collect();
         assert_eq!(lines.len(), 5, "{text}");
         assert!(lines[0].starts_with("ripr pilot: stage timings"), "{text}");
-        assert_eq!(lines[1], "  load_change                   12 ms  items=3");
+        assert_eq!(
+            lines[1],
+            "  load_change                           12 ms  items=3"
+        );
         assert_eq!(
             lines[2],
-            "  inventory                  34567 ms  items=4521"
+            "  inventory                          34567 ms  items=4521"
         );
-        assert_eq!(lines[3], "  write_artifacts                8 ms");
+        assert_eq!(lines[3], "  write_artifacts                        8 ms");
         assert!(lines[4].starts_with("  total "), "{text}");
         assert!(lines[4].ends_with(" ms"), "{text}");
     }
@@ -175,6 +217,41 @@ mod tests {
             "total was sampled after the sleep: {table}"
         );
         Ok(())
+    }
+
+    #[test]
+    fn inventory_phases_become_named_rows_and_ignore_everything_else() {
+        let phase = |phase: &str, status: &str, ms: u64| RecordedLatencyPhase {
+            phase: phase.to_string(),
+            status: status.to_string(),
+            duration: std::time::Duration::from_millis(ms),
+        };
+        let mut timings = PilotTimings::start();
+        timings.record_inventory_phases(&[
+            phase("collect_workspace_state", "ok", 5),
+            phase("cold_compute", "start", 0),
+            phase("inventory_seams", "ok peak_retained_seams=4", 7),
+            phase("evidence_for_seams", "start_seams_4", 0),
+            phase("evidence_for_seams", "ok", 30),
+            phase("classify_seams", "ok", 2),
+            phase("classify_seams", "ok", 3),
+            phase("evidence_context_tests", "ok", 99),
+            phase("total", "computed", 50),
+        ]);
+        let rows: Vec<(&str, u64)> = timings
+            .stages
+            .iter()
+            .map(|stage| (stage.stage, stage.elapsed_ms))
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                ("inventory.collect_workspace", 5),
+                ("inventory.seams", 7),
+                ("inventory.evidence", 30),
+                ("inventory.classify", 5),
+            ]
+        );
     }
 
     #[test]
