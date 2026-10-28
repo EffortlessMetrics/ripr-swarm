@@ -204,7 +204,9 @@ UTF-8 and at most 512 bytes; it is never truncated into another path. At most
 cap are not lost from the row: `sites` carries, for each kind and calling
 site, the event count and the number of distinct subjects (a hash count, kept
 for at most 8192 subjects per site, after which `distinct_is_lower_bound` is
-true; a site count past 64 is reported in `dropped_site_events`). These
+true; a hash collision can undercount by one and is not specified further; a
+site first seen after 64 sites are held is not recorded, only its events are
+added to `dropped_site_events`). These
 totals say how many different facts a site read; they do not name them or seal
 what they were derived from. The JSON body is capped
 at 32 KiB; if its escaped encoding exceeds that bound, all read detail is

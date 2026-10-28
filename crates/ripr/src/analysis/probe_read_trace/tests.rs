@@ -183,6 +183,102 @@ fn site_tallies_keep_distinct_reads_visible_past_the_detail_cap() -> Result<(), 
     Ok(())
 }
 
+/// One call per line: each line is its own `Location`, so this reads from
+/// 65 distinct calling sites.
+fn read_from_sixty_five_sites() {
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+}
+
+fn read_from_known_site() {
+    file(Path::new("known.rs"), true);
+}
+
+#[test]
+fn site_cap_drops_new_sites_but_keeps_counting_known_ones() -> Result<(), String> {
+    let (_, rows) = capture(true, || {
+        let scope = Scope::begin(&probe("sites"));
+        read_from_known_site();
+        read_from_known_site();
+        read_from_sixty_five_sites();
+        read_from_known_site();
+        scope.finish();
+    })?;
+    let row = rows.first().ok_or("missing row")?;
+    assert_eq!(MAX_READS, 64);
+    // The known site plus 63 of the 65 helper sites fill the map; the last two
+    // helper sites are new after it is full, so their events are dropped.
+    assert_eq!(row.sites.len(), MAX_READS);
+    assert_eq!(row.dropped_site_events, 2);
+    assert_eq!(row.observed_read_events, 2 + 65 + 1);
+    // The known site keeps counting after the cap is reached.
+    assert!(row.sites.iter().any(|site| site.events == 3));
+    Ok(())
+}
+
 #[test]
 fn distinct_count_is_a_lower_bound_once_its_memory_bound_is_reached() -> Result<(), String> {
     let (_, rows) = capture(true, || {
