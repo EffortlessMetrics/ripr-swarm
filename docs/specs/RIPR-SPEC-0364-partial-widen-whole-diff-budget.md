@@ -1,4 +1,4 @@
-# RIPR-SPEC-0364: The partial-scope widen hint names the budget that completes the whole diff
+# RIPR-SPEC-0364: The partial-scope widen hint names the budget that selects the whole diff
 
 Status: proposed
 
@@ -104,13 +104,15 @@ needed 1041, so following the hint produced another partial run.
 ## Acceptance Examples
 
 1. Three Rust files of 35, 30 and 30 changed lines under budgets (7, 40):
-   "raise RIPR_PARTIAL_DIFF_LINE_BUDGET to at least 65 (95 for the whole
-   diff), then re-run"; budgets (3, 95) complete the run.
+   "raise RIPR_PARTIAL_DIFF_LINE_BUDGET to at least 65 (95 to select the
+   whole diff), then re-run"; budgets (3, 95) select no partition.
 2. The same files with the Rust line limit at 94: "raise
    RIPR_PARTIAL_DIFF_LINE_BUDGET to at least 65, then re-run".
-3. Django 5c13b5a HEAD~20 at the default budgets: the hint reads "at least
-   1015 (1041 to select the whole diff)" and a re-run at 1041 is
-   `complete_with_findings`.
+3. Django 5c13b5a HEAD~20 at the default budgets, measured by hand with a
+   release build of PR head 5176826c7 (the earlier "for the whole diff"
+   wording): the hint named 1015 and 1041, and a re-run at 1041 was
+   `complete_with_findings`. No repository test replays this measurement;
+   examples 1 and 2 are the tested oracle.
 
 ## Test Mapping
 
