@@ -2398,6 +2398,16 @@ fn rebound_factor_table_does_not_hide_independent_strong_test() -> Result<(), St
         classify(owner, 2, "    return (a * b, 1)", tests)?,
         ExposureClass::Exposed
     );
+    let same_test = "import pytest\nfrom src.shop import area\n\n@pytest.mark.parametrize(\"a,b,want\", [(1.5, 2.0, (18.0, 1))])\ndef test_table(a, b, want):\n    a = 9\n    assert area(a, b) == want\n    assert area(1.5, 2.0) == (3.0, 1)\n";
+    assert_eq!(
+        classify(owner, 2, "    return (a * b, 1)", same_test)?,
+        ExposureClass::Exposed
+    );
+    let mixed = "import pytest\nfrom src.shop import area\n\n@pytest.mark.parametrize(\"a,want\", [(1.5, (3.0, 1))])\ndef test_table(a, want):\n    a = 9\n    assert area(a, 2.0) == want\n";
+    assert_ne!(
+        classify(owner, 2, "    return (a * b, 1)", mixed)?,
+        ExposureClass::Exposed
+    );
     Ok(())
 }
 

@@ -184,8 +184,10 @@ fn unvaried_arithmetic_operand(
         {
             return None;
         }
+        let only_strong_assertion = strong_assertions.len() == 1;
         for assertion in strong_assertions {
             if factor_swap
+                && only_strong_assertion
                 && factor_input_rebound(candidate.test, owner, &old_arith, &table, assertion)
             {
                 saw_rebound_factor = true;
@@ -607,7 +609,7 @@ fn factor_input_rebound(
     let Some(call) = owner_call_from_equality(&stmts, &owner_names(owner, test)) else {
         return false;
     };
-    let Some(bindings) = row_argument_env(call, owner, expr_plain_name) else {
+    let Some(bindings) = row_argument_env(call, owner, |argument| Some(argument.clone())) else {
         return false;
     };
     let columns = table.argnames();
@@ -615,11 +617,14 @@ fn factor_input_rebound(
         .into_iter()
         .filter_map(expr_plain_name)
         .any(|name| {
-            bindings.get(&name).is_some_and(|column| {
-                test.takes_parametrize_value(column)
-                    && test.parametrize_argnames.contains(column)
-                    && !columns.contains(column)
-            })
+            bindings
+                .get(&name)
+                .and_then(expr_plain_name)
+                .is_some_and(|column| {
+                    test.takes_parametrize_value(&column)
+                        && test.parametrize_argnames.contains(&column)
+                        && !columns.contains(&column)
+                })
         })
 }
 
