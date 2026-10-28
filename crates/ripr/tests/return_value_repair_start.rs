@@ -855,14 +855,24 @@ const W_OLD: &str =
     "pub struct W;\nimpl W {\n    pub fn dbl(x: i32) -> i32 {\n        x * 2\n    }\n}\n";
 const W_NEW: &str =
     "pub struct W;\nimpl W {\n    pub fn dbl(x: i32) -> i32 {\n        x * 3\n    }\n}\n";
-/// Same-named functions that are not the owner: a lowercase and an uppercase
-/// module, an inherent type, a primitive via a trait impl, and name collisions.
+/// Same-named functions that are not the owner, and name collisions.
 const RIVALS: &str = "mod other { pub fn dbl(x: i32) -> i32 { x } }\nmod Other { pub fn dbl(x: i32) -> i32 { x } }\nstruct X;\nimpl X { fn dbl(x: i32) -> i32 { x } }\ntrait T { fn dbl(self) -> u32; }\nimpl T for u32 { fn dbl(self) -> u32 { self } }\nfn undbl(x: i32) -> i32 { x }\nfn xdbl(x: i32) -> i32 { x }\nfn dbl_x(x: i32) -> i32 { x }\nfn of(x: i32) -> i32 { x }\n";
 
-/// A call that is not the owner's (an identifier collision, a comment or
-/// string, or a same-named function reached through another module, type or
-/// primitive) beside a discarded real call is no observation of the owner,
-/// directly or through a local. Free functions and methods are both owners.
+/// `bad` must not start; the same fixture with `good` made genuine must.
+fn refuses_unless_genuine(
+    case: &str,
+    old: &str,
+    new: &str,
+    test: &str,
+    bad: &str,
+    good: &str,
+) -> Result<(), String> {
+    assert_no_start(case, old, new, &test.replace("@", bad))?;
+    assert_repair_ready(case, old, new, &test.replace("@", good))
+}
+
+/// A non-owner call (collision, comment or string, shadowed local, other
+/// module, type or primitive) beside a discarded real call is no observation.
 #[test]
 fn calls_that_are_not_the_owner_do_not_observe_it() -> Result<(), String> {
     let calls = [
@@ -875,57 +885,64 @@ fn calls_that_are_not_the_owner_do_not_observe_it() -> Result<(), String> {
         "u32::dbl(2)",
     ];
     for call in calls {
-        for body in [
-            format!("assert!({call} > 0);"),
-            format!("let r = {call};\n    assert!(r > 0);"),
-        ] {
+        for shape in ["assert!(@ > 0);", "let r = @;\n    assert!(r > 0);"] {
             for (old, new, real) in [
-                (DBL_OLD, DBL_NEW, "dbl(2)"),
+                (DBL_OLD, DBL_NEW, "ar::dbl(2)"),
                 (W_OLD, W_NEW, "ar::W::dbl(2)"),
             ] {
-                assert_no_start(
-                    &format!("{call}: {body}"),
-                    old,
-                    new,
-                    &format!("{RIVALS}\n#[test]\nfn t() {{\n    let _ = {real};\n    {body}\n}}\n"),
-                )?;
+                let test =
+                    format!("{RIVALS}\n#[test]\nfn t() {{\n    let _ = {real};\n    {shape}\n}}\n");
+                refuses_unless_genuine(&format!("{call}: {shape}"), old, new, &test, call, real)?;
             }
         }
     }
-    for assertion in [
-        "assert!(1 > 0 /* dbl(2) */);",
-        "assert!(1 > 0 // dbl(2)\n    );",
-        "assert!(1 > 0, \"dbl(2) wrong\");",
-        "assert_eq!(\"dbl(\", \"dbl(\");",
-        "assert!(1 > 0);",
+    let frame = "#[test]\nfn t() {\n    let _ = ar::dbl(2);\n    @\n}\n";
+    for (bad, good) in [
+        (
+            "let v = ar::dbl(2);\n    let v = 1;\n    assert!(v > 0);",
+            "let v = ar::dbl(2);\n    assert!(v > 0);",
+        ),
+        (
+            "let v = ar::dbl(2);\n    let v;\n    v = 1;\n    assert!(v > 0);",
+            "let v = ar::dbl(2);\n    assert!(v > 0);",
+        ),
+        (
+            "assert!(1 > 0 /* dbl(2) */);",
+            "assert!(ar::dbl(2) > 0 /* dbl(2) */);",
+        ),
+        (
+            "assert!(1 > 0 // dbl(2)\n    );",
+            "assert!(ar::dbl(2) > 0 // dbl(2)\n    );",
+        ),
+        (
+            "assert!(1 > 0, \"dbl(2) wrong\");",
+            "assert!(ar::dbl(2) > 0, \"dbl(2) wrong\");",
+        ),
+        (
+            "assert_eq!(\"dbl(\", \"dbl(\");",
+            "assert!(ar::dbl(2) > 0);",
+        ),
+        ("assert!(1 > 0);", "assert!(ar::dbl(2) > 0);"),
     ] {
-        assert_no_start(
-            assertion,
-            DBL_OLD,
-            DBL_NEW,
-            &format!("#[test]\nfn t() {{\n    let _ = ar::dbl(2);\n    {assertion}\n}}\n"),
-        )?;
+        refuses_unless_genuine(bad, DBL_OLD, DBL_NEW, frame, bad, good)?;
     }
-    assert_no_start(
-        "one-letter",
+    let (old, new) = (
         "pub fn f(x: i32) -> i32 {\n    x * 2\n}\n",
         "pub fn f(x: i32) -> i32 {\n    x * 3\n}\n",
-        &format!(
-            "{RIVALS}\n#[test]\nfn t() {{\n    let _ = ar::f(2);\n    assert!(of(2) > 0);\n}}\n"
-        ),
-    )?;
-    Ok(())
+    );
+    let test =
+        format!("{RIVALS}\n#[test]\nfn t() {{\n    let _ = ar::f(2);\n    assert!(@ > 0);\n}}\n");
+    refuses_unless_genuine("one-letter", old, new, &test, "of(2)", "ar::f(2)")
 }
 
-/// The owner's own spellings still start: crate-qualified, bound local,
-/// a message argument beside the call, and `W::dbl` for the owner's self type,
-/// all with the rivals present.
+/// The owner's own spellings still start, with the rivals present.
 #[test]
 fn the_owners_own_calls_still_reach_repair() -> Result<(), String> {
     for body in [
         "assert!(ar::dbl(2) > 0);",
         "let r = ar::dbl(2);\n    assert!(r > 0);",
         "assert!(ar::dbl(2) > 0, \"dbl(2) wrong\");",
+        "let v = ar::dbl(2);\n    let w = v;\n    assert!(w > 0);",
     ] {
         assert_repair_ready(
             body,

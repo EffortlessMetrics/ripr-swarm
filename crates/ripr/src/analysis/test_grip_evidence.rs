@@ -1063,7 +1063,7 @@ fn test_assertion_observes_owner(
 ) -> bool {
     let calls_owner =
         |text: &str| crate::analysis::classify::text_calls_owner(index, owner, test, text);
-    let locals = owner_result_locals_with(&test.body, &calls_owner);
+    let locals = owner_result_locals_with(&test.body, &calls_owner, true);
     test.assertions.iter().any(|oracle| {
         // Comments and string literals (including `assert!` messages) are not
         // observations.
@@ -1083,12 +1083,21 @@ fn test_assertion_observes_owner(
 /// which only withholds. Not followed: a value moved through a field write,
 /// a mutation (`v += 1`), a closure, a loop variable or a function parameter.
 fn owner_result_locals(body: &str, owner_name: &str) -> Vec<String> {
-    owner_result_locals_with(body, &|text| mentions_owner_call(text, owner_name))
+    owner_result_locals_with(body, &|text| mentions_owner_call(text, owner_name), false)
 }
 
 /// [`owner_result_locals`] with the caller's reading of "this initializer
 /// calls the owner".
-fn owner_result_locals_with(body: &str, calls_owner: &dyn Fn(&str) -> bool) -> Vec<String> {
+///
+/// With `rebinding_drops`, the `let`s are read in order and a later `let` (or
+/// bare `let v;`) that rebinds a name to a non-owner expression drops it, so a
+/// shadowed name no longer grants observation. The pin reader keeps the
+/// additive reading, whose over-approximation only withholds.
+fn owner_result_locals_with(
+    body: &str,
+    calls_owner: &dyn Fn(&str) -> bool,
+    rebinding_drops: bool,
+) -> Vec<String> {
     let masked = crate::analysis::extract::mask_comments_and_strings(body);
     let mut lets: Vec<(Vec<String>, &str)> = Vec::new();
     for statement in masked.split(';') {
@@ -1104,8 +1113,10 @@ fn owner_result_locals_with(body: &str, calls_owner: &dyn Fn(&str) -> bool) -> V
             continue;
         }
         let rest = &statement[at + 4..];
-        let Some((pattern, init)) = rest.split_once('=') else {
-            continue;
+        let (pattern, init) = match rest.split_once('=') {
+            Some(split) => split,
+            None if rebinding_drops => (rest, ""),
+            None => continue,
         };
         // The pattern ends at a type annotation's single `:` (not `::`).
         let bytes = pattern.as_bytes();
@@ -1130,6 +1141,20 @@ fn owner_result_locals_with(body: &str, calls_owner: &dyn Fn(&str) -> bool) -> V
         }
     }
     let mut locals: Vec<String> = Vec::new();
+    if rebinding_drops {
+        for (names, init) in &lets {
+            if calls_owner(init) || locals.iter().any(|local| mentions_identifier(init, local)) {
+                for name in names {
+                    if !locals.contains(name) {
+                        locals.push(name.clone());
+                    }
+                }
+            } else {
+                locals.retain(|local| !names.contains(local));
+            }
+        }
+        return locals;
+    }
     loop {
         let before = locals.len();
         for (names, init) in &lets {
