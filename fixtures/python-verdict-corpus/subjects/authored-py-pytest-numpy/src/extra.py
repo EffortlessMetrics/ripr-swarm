@@ -24,3 +24,15 @@ def patched(text):
 
 def mirror(text):
     return [int(text) + 1]
+
+
+def signed(text):
+    return -int(text) - 1
+
+
+def wide(text):
+    return int(text) + 0x100000000000000000000000000000000
+
+
+def spaced(text):
+    return [int(text) + 1]

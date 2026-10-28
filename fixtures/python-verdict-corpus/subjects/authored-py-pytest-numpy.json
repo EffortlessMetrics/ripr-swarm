@@ -19,7 +19,7 @@
     },
     {
       "path": "src/extra.py",
-      "sha256": "3d9d2dd5e888014bdd049c4b28b021f0d2e1d960c7df9f1a813806522534d3a4"
+      "sha256": "c58bb28382cf0e2413c3104b3666bf8c03f141769e3409ebc1b5a9993f2da4d7"
     },
     {
       "path": "tests/__init__.py",
@@ -50,12 +50,24 @@
       "sha256": "ace26cd04cf85b7e2fc744a5e228c6ab1d815106bba0d913441b5e6e434bf6bf"
     },
     {
+      "path": "tests/test_signed.py",
+      "sha256": "672805bb6c7f0a92a4e31b2f22c595a40aac185663811120a8bdffe73633f87f"
+    },
+    {
       "path": "tests/test_total.py",
       "sha256": "456ac77a8ce2acda7228ff2912ddb03131d17456596ae9c91d33ae050651f630"
     },
     {
+      "path": "tests/test_wide.py",
+      "sha256": "3d5ce261213e49f601d2ded04b8aa1e96c0a142a10f5c69f160f20905946ad29"
+    },
+    {
       "path": "tests/test_widen.py",
       "sha256": "0c1d5c5d02204e0ac3402d5b628a9295d0b96b2a0c85e755f8c82e2b9023d2e0"
+    },
+    {
+      "path": "tests/test_zspaced.py",
+      "sha256": "b964b6c6e4736ecb9bbb1493d916e9fb0e0be40ac7a131c0cc89ba5d75180985"
     }
   ]
 }
