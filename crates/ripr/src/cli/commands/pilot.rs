@@ -184,26 +184,20 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
                     // #10727: the inventory already reports its phases through
                     // the latency-phase owner; `-v` reads them instead of
                     // adding a second timer beside each one.
-                    let (report, phases) = if crate::is_verbose() {
-                        let (report, phases) =
-                            analysis::resource_cost::record_latency_phases(|| {
-                                run_pilot_inventory(
-                                    &input.root,
-                                    &cfg,
-                                    &change.changed_files(),
-                                    sink.as_ref(),
-                                )
-                            });
-                        (report?, phases)
-                    } else {
-                        let report = run_pilot_inventory(
+                    let run = || {
+                        run_pilot_inventory(
                             &input.root,
                             &cfg,
                             &change.changed_files(),
                             sink.as_ref(),
-                        )?;
-                        (report, Vec::new())
+                        )
                     };
+                    let (report, phases) = if crate::is_verbose() {
+                        analysis::resource_cost::record_latency_phases(run)
+                    } else {
+                        (run(), Vec::new())
+                    };
+                    let report = report?;
                     let inventory_ms = elapsed_ms(inventory_started);
                     Ok((
                         report,

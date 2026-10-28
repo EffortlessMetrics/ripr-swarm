@@ -224,6 +224,7 @@ second stage vocabulary.
 - `crates/ripr/src/analysis/resource_cost.rs::tests::recorded_phases_capture_this_threads_reports_and_nothing_else`
 - `crates/ripr/tests/cli_progress.rs::verbose_pilot_prints_a_stage_table_and_leaves_stdout_and_packet_bytes_unchanged`
 - `crates/ripr/tests/cli_progress.rs::verbose_pilot_fails_rather_than_leave_an_unwritable_sidecar_as_current`
+- `crates/ripr/tests/cli_progress.rs::verbose_pilot_names_the_cold_inventory_phases_and_then_the_cache_load`
 
 ## Implementation Mapping
 

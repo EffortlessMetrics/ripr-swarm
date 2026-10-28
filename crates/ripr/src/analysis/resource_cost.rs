@@ -150,10 +150,21 @@ fn record_latency_phase(phase: &str, status: &str, duration: Duration) {
 /// restored afterwards, so work on other threads is not seen and a nested
 /// call keeps the outer recording intact.
 pub(crate) fn record_latency_phases<T>(work: impl FnOnce() -> T) -> (T, Vec<RecordedLatencyPhase>) {
+    /// Puts the outer recording back even if `work` unwinds.
+    struct Restore(Option<Vec<RecordedLatencyPhase>>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            PHASE_RECORDER.with(|recorder| {
+                recorder.replace(self.0.take());
+            });
+        }
+    }
+
     let outer = PHASE_RECORDER.with(|recorder| recorder.replace(Some(Vec::new())));
+    let _restore = Restore(outer);
     let result = work();
     let recorded = PHASE_RECORDER
-        .with(|recorder| recorder.replace(outer))
+        .with(|recorder| recorder.replace(None))
         .unwrap_or_default();
     (result, recorded)
 }
