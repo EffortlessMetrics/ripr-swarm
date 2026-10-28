@@ -193,9 +193,10 @@ machine-readable `check` formats carry their own refusal documents:
   agent brief and agent packet; agent brief echoes the caller-supplied
   `--base` when its working set selected one. Exit stays `2`, prose stays on
   stderr, and argv usage errors stay prose-only with empty stdout.
-- The closed identity vocabulary includes five members. The first four make no
-  claim that analysis ran; `analysis_timeout` (#5369) means the wall-clock
-  budget expired before the budgeted check analysis returned:
+- The closed identity vocabulary includes seven members. All but
+  `analysis_timeout` make no claim that analysis ran; `analysis_timeout`
+  (#5369) means the wall-clock budget expired before the budgeted check
+  analysis returned:
 
 | Identity | Repair route | Meaning |
 |---|---|---|
