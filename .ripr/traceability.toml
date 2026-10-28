@@ -3508,6 +3508,7 @@ tests = [
   "crates/ripr/src/output/outcome/mod.rs::tests::typescript_gap_closed_without_a_packet_reads_as_moved_not_removed",
   "crates/ripr/src/output/outcome/mod.rs::tests::targeted_test_outcome_typescript_preview_fixture_matches_expected_receipts",
   "crates/ripr/src/output/json/mod.rs::tests::finding_json_projects_typescript_preview_actionability",
+  "crates/ripr/src/output/json/mod.rs::tests::finding_json_states_typescript_preview_canonical_gap_id",
   "crates/ripr/src/output/human.rs::tests::render_finding_includes_preview_actionability_without_raw_string_spam",
   "crates/ripr/src/output/sarif.rs::tests::sarif_preserves_preview_actionability_properties",
   "crates/ripr/src/output/github.rs::tests::render_includes_preview_actionability_boundary",
@@ -11884,6 +11885,11 @@ id = "RIPR-SPEC-0159"
 name = "Bounded helper-call transfer"
 spec = "docs/specs/RIPR-SPEC-0159-bounded-helper-transfer.md"
 tests = [
+  "crates/ripr/tests/pub_api_method_entry_reach.rs",
+  "crates/ripr/tests/helper_wrapper_reach.rs::qualified_helper_effect_keeps_reach_without_propagation",
+  "crates/ripr/tests/helper_wrapper_reach.rs::qualified_hop_above_a_tested_method_keeps_the_lower_forwarder",
+  "crates/ripr/src/analysis/classify/helper_transfer.rs::tests::method_entry_checks_only_the_prefix_the_test_enters",
+  "crates/ripr/src/analysis/classify/helper_transfer/qualified_hop.rs::tests",
   "crates/ripr/tests/one_hop_field_projection.rs",
   "crates/ripr/src/analysis/classify/helper_transfer/field_projection.rs::tests",
   "crates/ripr/src/analysis/classify/helper_transfer/returned_ledger.rs::tests",
@@ -12027,6 +12033,7 @@ tests = [
   "crates/ripr/src/analysis/facts/build.rs::tests::root_library_name_reads_lib_name_then_package_and_refuses_moved_roots",
 ]
 fixtures = [
+  "fixtures/rust_qualified_helper_effect_reach",
   "fixtures/module_reach_control_qualified",
   "fixtures/module_reach_bare_import_control",
   "fixtures/module_reach_cfg_comment_hidden",
@@ -12063,6 +12070,7 @@ fixtures = [
 ]
 code = [
   "crates/ripr/src/analysis/classify/helper_transfer/field_projection.rs",
+  "crates/ripr/src/analysis/classify/helper_transfer/qualified_hop.rs",
   "crates/ripr/src/analysis/classify/helper_transfer/returned_ledger.rs",
   "crates/ripr/src/analysis/classify/helper_transfer/selected_inherent_call.rs",
   "crates/ripr/src/analysis/classify/propagation_witness.rs",
@@ -13125,8 +13133,11 @@ tests = [
   "crates/ripr/src/cli/commands/pilot_timings.rs::tests::a_recorded_span_measures_the_time_since_its_start",
   "crates/ripr/src/cli/commands/pilot_timings.rs::tests::the_json_sidecar_mirrors_the_table_stages_and_omits_absent_counts",
   "crates/ripr/src/cli/commands/pilot_timings.rs::tests::a_finished_run_reports_one_total_in_the_table_and_the_sidecar",
+  "crates/ripr/src/cli/commands/pilot_timings.rs::tests::inventory_phases_become_named_rows_and_ignore_everything_else",
+  "crates/ripr/src/analysis/resource_cost.rs::tests::recorded_phases_capture_this_threads_reports_and_nothing_else",
   "crates/ripr/tests/cli_progress.rs::verbose_pilot_prints_a_stage_table_and_leaves_stdout_and_packet_bytes_unchanged",
   "crates/ripr/tests/cli_progress.rs::verbose_pilot_fails_rather_than_leave_an_unwritable_sidecar_as_current",
+  "crates/ripr/tests/cli_progress.rs::verbose_pilot_names_the_cold_inventory_phases_and_then_the_cache_load",
 ]
 fixtures = [
 ]
@@ -13136,6 +13147,7 @@ code = [
   "crates/ripr/src/cli/progress.rs",
   "crates/ripr/src/cli/commands/check.rs",
   "crates/ripr/src/cli/commands/pilot.rs",
+  "crates/ripr/src/analysis/resource_cost.rs",
   "crates/ripr/src/cli/commands/pilot_timings.rs",
   "crates/ripr/src/cli/help/core.rs",
 ]
@@ -17686,6 +17698,20 @@ id = "RIPR-SPEC-0243"
 name = "TypeScript oracle and reach rules"
 spec = "docs/specs/RIPR-SPEC-0243-typescript-oracle-and-reach-rules.md"
 tests = [
+  "crates/ripr/src/analysis/language/typescript/call_removal_tests.rs::counted_removal_refuses_concurrent_receiver_edits",
+  "crates/ripr/src/analysis/language/typescript/call_removal_tests.rs::counted_removal_refuses_multiple_old_calls",
+  "crates/ripr/src/analysis/language/typescript/call_removal_tests.rs::counted_removal_refuses_unusable_target_methods",
+  "crates/ripr/src/analysis/language/typescript/call_removal_tests.rs::counted_removal_pins_removed_arguments_before_the_statement",
+  "crates/ripr/src/analysis/language/typescript/call_removal_tests.rs::counted_removal_refuses_arguments_that_can_throw",
+  "crates/ripr/src/analysis/language/typescript/call_removal_tests.rs::counted_removal_refuses_owner_export_alias_and_global_discard",
+  "crates/ripr/src/analysis/language/typescript/call_removal_tests.rs::counted_removal_refuses_mutated_mock_api",
+  "crates/ripr/src/analysis/language/typescript/call_removal_tests.rs::counted_removal_refuses_registration_argument_effects",
+  "crates/ripr/src/analysis/language/typescript/call_removal_tests.rs::counted_removal_refuses_enclosing_mock_shadow",
+  "crates/ripr/src/analysis/language/typescript/call_removal_tests.rs::counted_removal_refuses_early_return_and_default_parameters",
+  "crates/ripr/src/analysis/language/typescript/call_removal_tests.rs::counted_removal_retained_corpus_shape_is_exposed",
+  "crates/ripr/src/analysis/language/typescript/call_removal_tests.rs::counted_removal_refuses_export_aliases_and_opaque_reads",
+  "crates/ripr/src/analysis/language/typescript/call_removal_tests.rs::counted_removal_receiver_identity_controls",
+  "crates/ripr/src/analysis/language/typescript/call_removal_tests.rs::counted_removal_refuses_unresolved_execution",
   "crates/ripr/src/analysis/language/typescript/tests.rs::if_guarded_registration_is_indexed_with_guard_and_no_assertion_credit",
   "crates/ripr/src/analysis/language/typescript/tests.rs::else_branch_registration_names_the_negated_guard",
   "crates/ripr/src/analysis/language/typescript/tests.rs::describe_nested_under_an_if_guards_its_tests",
@@ -17975,6 +18001,10 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/assertion_library_tests.rs::exported_bindings_preserve_genuine_imported_runner_expect",
 ]
 fixtures = [
+  "fixtures/typescript_call_removal_throwing_method",
+  "fixtures/typescript_call_removal_absent_method",
+  "fixtures/typescript_call_removal_unbound_argument",
+  "fixtures/typescript_call_removal_multiple_calls",
   "fixtures/typescript_exported_expect_lookalike",
   "fixtures/typescript_enum_wrong_export",
   "fixtures/typescript_enum_canonical_alias",
@@ -17990,6 +18020,8 @@ fixtures = [
   "fixtures/ts_dead_assertion_after_try_empty_catch",
 ]
 code = [
+  "crates/ripr/src/analysis/language/typescript/call_removal_guard.rs",
+  "crates/ripr/src/analysis/language/typescript/mod.rs",
   "crates/ripr/src/analysis/language/typescript/enum_member_guard.rs",
   "crates/ripr/src/analysis/language/typescript/admission.rs",
   "crates/ripr/src/analysis/language/typescript/actionability.rs",

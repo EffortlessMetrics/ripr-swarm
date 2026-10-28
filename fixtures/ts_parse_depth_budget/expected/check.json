@@ -117,6 +117,7 @@
     },
     {
       "id": "probe:src_deep_under_budget.ts:typescript_preview:85293064",
+      "canonical_gap_id": "gap:typescript:typescript_preview:85293064",
       "classification": "no_static_path",
       "severity": "warning",
       "confidence": 0.40,
@@ -229,6 +230,7 @@
     },
     {
       "id": "probe:src_ok.ts:typescript_preview:e8481afd",
+      "canonical_gap_id": "gap:typescript:typescript_preview:e8481afd",
       "classification": "no_static_path",
       "severity": "warning",
       "confidence": 0.40,

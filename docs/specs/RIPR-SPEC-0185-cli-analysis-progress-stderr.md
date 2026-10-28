@@ -88,7 +88,15 @@ second stage vocabulary.
     change's own classification past the seam limit), `diff_only_files`,
     `seam_budget`, `language_scan` and `write_artifacts`, then `total`, each with elapsed
     milliseconds, and an `items=` count where the stage has one (changed
-    files, seams). `inventory` and `diff_only_files` are omitted when Rust is
+    files, seams). Beneath `inventory` the table lists the inventory's own
+    phases that ran, as `inventory.collect_workspace`, `inventory.cache_load`,
+    `inventory.parse_index`, `inventory.apply_oracle_policy`,
+    `inventory.seams`, `inventory.evidence`, `inventory.classify` and
+    `inventory.cache_store`. They are read from the existing latency-phase
+    reports on the analysis thread, not timed again, so a warm-cache run
+    shows its cache load and a cold run shows the compute phases; the
+    sidecar carries the same rows. A phase reported more than once adds into
+    one row. `inventory` and `diff_only_files` are omitted when Rust is
     disabled, because neither runs. `total` runs from the start of the analysis through the last recorded stage and
     also covers bookkeeping between stages, so rows need not sum to it. The
     table is wall-clock and observational: it appears only on stderr under
@@ -212,8 +220,11 @@ second stage vocabulary.
 - `crates/ripr/src/cli/commands/pilot_timings.rs::tests::a_recorded_span_measures_the_time_since_its_start`
 - `crates/ripr/src/cli/commands/pilot_timings.rs::tests::the_json_sidecar_mirrors_the_table_stages_and_omits_absent_counts`
 - `crates/ripr/src/cli/commands/pilot_timings.rs::tests::a_finished_run_reports_one_total_in_the_table_and_the_sidecar`
+- `crates/ripr/src/cli/commands/pilot_timings.rs::tests::inventory_phases_become_named_rows_and_ignore_everything_else`
+- `crates/ripr/src/analysis/resource_cost.rs::tests::recorded_phases_capture_this_threads_reports_and_nothing_else`
 - `crates/ripr/tests/cli_progress.rs::verbose_pilot_prints_a_stage_table_and_leaves_stdout_and_packet_bytes_unchanged`
 - `crates/ripr/tests/cli_progress.rs::verbose_pilot_fails_rather_than_leave_an_unwritable_sidecar_as_current`
+- `crates/ripr/tests/cli_progress.rs::verbose_pilot_names_the_cold_inventory_phases_and_then_the_cache_load`
 
 ## Implementation Mapping
 
@@ -223,6 +234,8 @@ second stage vocabulary.
 - `crates/ripr/src/cli/commands/check.rs` — `--quiet` and sink wiring
 - `crates/ripr/src/cli/commands/pilot.rs` — `--quiet` and sink wiring on the
   pilot repo inventory, including the cold-cache deadline extension (#5019)
+- `crates/ripr/src/analysis/resource_cost.rs` — thread-local latency-phase
+  recorder (#10727)
 - `crates/ripr/src/cli/commands/pilot_timings.rs` — `pilot -v` stage timing
   table (#10727)
 - `crates/ripr/src/cli/help/core.rs` — user-facing contract

@@ -12,6 +12,7 @@
   "findings": [
     {
       "id": "probe:src_inventory.ts:typescript_preview:72e603c8",
+      "canonical_gap_id": "gap:typescript:typescript_preview:72e603c8",
       "classification": "no_static_path",
       "severity": "warning",
       "confidence": 0.40,

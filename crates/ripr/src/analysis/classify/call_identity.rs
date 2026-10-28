@@ -1020,6 +1020,13 @@ fn attribute_sets_path(attribute: &str) -> bool {
 /// inline modules its parser id records. `None` when either is unknown or
 /// the id is not a parser id of a module-level item.
 pub(super) fn definition_module_path(function: &FunctionSummary) -> Option<Vec<String>> {
+    module_path_of(function, false)
+}
+
+/// Shared reader: with `through_impl`, the module path of a method is the
+/// path of the module that holds its `impl` block (the segments before the
+/// first `impl ` segment); otherwise an impl member has no module-level path.
+fn module_path_of(function: &FunctionSummary, through_impl: bool) -> Option<Vec<String>> {
     let mut path = file_module_segments(&function.file)?;
     let prefix = format!("{}::", crate::analysis::stable_path_text(&function.file));
     let rest = function.id.0.strip_prefix(&prefix)?;
@@ -1027,11 +1034,322 @@ pub(super) fn definition_module_path(function: &FunctionSummary) -> Option<Vec<S
     if segments.pop()? != function.name {
         return None;
     }
-    if segments.iter().any(|segment| segment.starts_with("impl ")) {
-        return None;
+    if let Some(at) = segments
+        .iter()
+        .position(|segment| segment.starts_with("impl "))
+    {
+        if !through_impl {
+            return None;
+        }
+        segments.truncate(at);
     }
     path.extend(segments.into_iter().map(str::to_string));
     Some(path)
+}
+
+/// [`root_library_item_module_path`] for a function that may be an impl
+/// member: the module that holds its `impl` block (#8999). The same
+/// declared-exactly-once and no-`#[path]`-remap refusals apply.
+pub(super) fn root_library_member_module_path(
+    index: &RustIndex,
+    function: &FunctionSummary,
+) -> Option<Vec<String>> {
+    let module = module_path_of(function, true)?;
+    if module.is_empty() {
+        return Some(module);
+    }
+    if package_remaps_module_paths(index, None)
+        || module
+            .iter()
+            .any(|segment| module_declaration_is_ambiguous(index, segment, false))
+    {
+        return None;
+    }
+    Some(module)
+}
+
+/// Bind a method-entry receiver's plain type name using the same lexical
+/// import/module authority as free-call identity. This grants reach only;
+/// the caller must separately establish the receiver expression's type.
+pub(super) fn inherent_entry_type_identity(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+) -> Option<OwnerCallIdentity> {
+    use ra_ap_syntax::{AstNode, ast, ast::HasName};
+    let FunctionContainer::Inherent { self_ty } = &owner.item.container else {
+        return None;
+    };
+    let source = &index.files().get(&owner.file)?.source;
+    let owner_snapshot = index.source_syntax.get(index, &owner.file)?;
+    if source_may_splice_items(source, true)
+        || !entry_attributes_preserve_items(owner_snapshot.tree()?.syntax())
+    {
+        return None;
+    }
+    let signature =
+        crate::analysis::syntax::fn_signature::owner_signature_at_line(source, owner.start_line)?;
+    if signature.name != owner.name
+        || signature.receiver != Some(crate::analysis::syntax::fn_signature::OwnerReceiver::Ref)
+        || !matches!(&signature.container,
+            crate::analysis::syntax::fn_signature::OwnerContainer::Inherent { self_type }
+                if self_type == self_ty)
+        || super::owner_pin::method_may_dispatch_through_prelude(&owner.name)
+    {
+        return None;
+    }
+    if !super::helper_transfer::is_identifier(self_ty)
+        || package_key(&owner.file).is_some()
+        || package_remaps_module_paths(index, None)
+        || super::owner_pin::target_root(&owner.file, index, &BTreeSet::new())?
+            != Path::new("src/lib.rs")
+    {
+        return None;
+    }
+    let module = root_library_member_module_path(index, owner)?;
+    if !library_module_path_is_bound(index, owner, &module) {
+        return None;
+    }
+    // A unique spelling alone is insufficient: find the declared type in the
+    // impl's own module. Aliases, generics and namesakes remain unestablished.
+    let mut declarations = 0;
+    for (file, facts) in index.files().iter() {
+        if !facts.source.contains(self_ty) {
+            continue;
+        }
+        let snapshot = index.source_syntax.get(index, file)?;
+        let tree = snapshot.tree()?;
+        for node in tree.syntax().descendants() {
+            let Some(name) = ast::AnyHasName::cast(node.clone()).and_then(|item| item.name())
+            else {
+                continue;
+            };
+            if name.text().trim_start_matches("r#") != self_ty {
+                continue;
+            }
+            if file != &owner.file
+                || !(ast::Struct::can_cast(node.kind())
+                    || ast::Enum::can_cast(node.kind())
+                    || ast::Union::can_cast(node.kind()))
+                || node
+                    .children()
+                    .any(|child| ast::GenericParamList::can_cast(child.kind()))
+                || !entry_data_declaration_is_unambiguous(&node)
+                || node
+                    .ancestors()
+                    .any(|ancestor| ast::BlockExpr::can_cast(ancestor.kind()))
+            {
+                return None;
+            }
+            let mut inline: Vec<String> = node
+                .ancestors()
+                .filter_map(ast::Module::cast)
+                .filter_map(|item| item.name().map(|name| name.text().to_string()))
+                .collect();
+            inline.reverse();
+            if join(&file_module_segments(file)?, &inline) != module {
+                return None;
+            }
+            declarations += 1;
+        }
+    }
+    if declarations != 1 {
+        return None;
+    }
+    Some(OwnerCallIdentity {
+        name: self_ty.clone(),
+        owner_crate: Some("lib".to_string()),
+        layout: CrateLayout::new(index, None),
+        owner_file: owner.file.clone(),
+        owner_package: None,
+        definitions: vec![Some(module)],
+        memo: Mutex::new(BTreeMap::new()),
+    })
+}
+
+fn entry_attributes_preserve_items(source: &ra_ap_syntax::SyntaxNode) -> bool {
+    use ra_ap_syntax::{AstNode, ast};
+    source
+        .descendants()
+        .filter_map(ast::Attr::cast)
+        .all(|attr| {
+            let text = attr.syntax().text().to_string();
+            text.chars()
+                .filter(|ch| !ch.is_whitespace())
+                .collect::<String>()
+                == "#[test]"
+                || crate::analysis::facts::cfg_predicates::attribute_preserves_source_items(&text)
+        })
+}
+
+/// A syntactic data declaration cannot establish an import's kind if a cfg,
+/// rewriting attribute or another declaration/import can select a trait there.
+fn entry_data_declaration_is_unambiguous(node: &ra_ap_syntax::SyntaxNode) -> bool {
+    use ra_ap_syntax::{AstNode, ast, ast::HasName};
+    if !crate::analysis::syntax::supported_targeted_item_context(node)
+        || node.ancestors().any(|ancestor| {
+            ancestor
+                .children()
+                .filter_map(ast::Attr::cast)
+                .any(|attr| matches!(attr.simple_name().as_deref(), Some("cfg" | "cfg_attr")))
+        })
+    {
+        return false;
+    }
+    let Some(name) = ast::AnyHasName::cast(node.clone()).and_then(|item| item.name()) else {
+        return false;
+    };
+    let Some(scope) = node.parent() else {
+        return false;
+    };
+    let spelling = name.text();
+    let spelling = spelling.trim_start_matches("r#");
+    if scope
+        .children()
+        .filter_map(ast::AnyHasName::cast)
+        .filter_map(|item| item.name())
+        .filter(|name| name.text().trim_start_matches("r#") == spelling)
+        .count()
+        != 1
+    {
+        return false;
+    }
+    scope.children().all(|item| {
+        if ast::ExternCrate::can_cast(item.kind()) {
+            return false;
+        }
+        let Some(item) = ast::Use::cast(item) else {
+            return true;
+        };
+        let Some(tree) = item.use_tree() else {
+            return false;
+        };
+        let tree = tree.syntax().text().to_string();
+        if !tree.is_ascii() {
+            return false;
+        }
+        let imports = super::reveal::flattened_use_paths(&format!("use {tree};"));
+        !imports.is_empty()
+            && imports.iter().all(|import| {
+                let last = import.path.rsplit("::").next().unwrap_or("");
+                !matches!(last, "*" | "self")
+                    && import
+                        .alias
+                        .as_deref()
+                        .unwrap_or(last)
+                        .trim_start_matches("r#")
+                        != spelling
+            })
+    })
+}
+
+impl OwnerCallIdentity {
+    pub(super) fn binds_inherent_entry_type(&self, test: &TestSummary, index: &RustIndex) -> bool {
+        use ra_ap_syntax::{AstNode, ast, ast::HasName};
+        let Some(facts) = index.files().get(&test.file) else {
+            return false;
+        };
+        if source_may_splice_items(&facts.source, true) {
+            return false;
+        }
+        let context = self.test_scope(test, index);
+        let Some(scopes) = context.scopes.as_deref() else {
+            return false;
+        };
+        let Some(snapshot) = index.source_syntax.get(index, &test.file) else {
+            return false;
+        };
+        let Some(tree) = snapshot.tree() else {
+            return false;
+        };
+        // Imported traits can beat the inherent method during receiver
+        // candidate lookup. In particular, `as _` imports are not recorded
+        // in NameScopes but still put a trait in scope. Keep this new route
+        // to explicit, unrenamed imports of directly declared data types in
+        // the owner's module; unresolved trait/import dispatch grants no reach.
+        if !entry_attributes_preserve_items(tree.syntax())
+            || tree.syntax().descendants().any(|node| {
+                ast::Trait::can_cast(node.kind())
+                    || ast::UseTree::cast(node).is_some_and(|item| item.rename().is_some())
+            })
+        {
+            return false;
+        }
+        let Some(owner_snapshot) = index.source_syntax.get(index, &self.owner_file) else {
+            return false;
+        };
+        let Some(owner_tree) = owner_snapshot.tree() else {
+            return false;
+        };
+        let Some(owner_module) = self.definitions.first().and_then(Option::as_ref) else {
+            return false;
+        };
+        let Some(file_module) = file_module_segments(&self.owner_file) else {
+            return false;
+        };
+        let data_types: BTreeSet<Vec<String>> = owner_tree
+            .syntax()
+            .descendants()
+            .filter(|node| {
+                ast::Struct::can_cast(node.kind())
+                    || ast::Enum::can_cast(node.kind())
+                    || ast::Union::can_cast(node.kind())
+            })
+            .filter_map(|node| {
+                if !entry_data_declaration_is_unambiguous(&node)
+                    || node
+                        .ancestors()
+                        .any(|ancestor| ast::BlockExpr::can_cast(ancestor.kind()))
+                {
+                    return None;
+                }
+                let name = ast::AnyHasName::cast(node.clone())?.name()?;
+                let mut inline: Vec<String> = node
+                    .ancestors()
+                    .filter_map(ast::Module::cast)
+                    .filter_map(|item| item.name().map(|name| name.text().to_string()))
+                    .collect();
+                inline.reverse();
+                let mut path = join(&file_module, &inline);
+                if &path != owner_module {
+                    return None;
+                }
+                path.push(name.text().trim_start_matches("r#").to_string());
+                Some(path)
+            })
+            .collect();
+        for scope in &scopes.scopes {
+            if !scope.globs.is_empty() || scope.block_globs || !scope.block_bindings.is_empty() {
+                return false;
+            }
+            let base = context
+                .file_segments
+                .as_deref()
+                .map(|file| join(file, &scope.modules));
+            for import in &scope.imports {
+                let UseBinding::Path(path) = &import.binding else {
+                    return false;
+                };
+                if use_target(path, base.as_deref(), scope, &context.crate_names)
+                    .is_none_or(|resolved| !data_types.contains(&resolved))
+                {
+                    return false;
+                }
+            }
+        }
+        if context.crate_names.iter().any(|name| {
+            scopes
+                .scopes
+                .iter()
+                .any(|scope| crate_name_rebound(scope, name))
+        }) {
+            return false;
+        }
+        self.target_of(&self.resolve_bare(
+            context.file_segments.as_deref(),
+            scopes,
+            &context.crate_names,
+        )) == CallTarget::Owner
+    }
 }
 
 /// The module path of a root-package library item that an integration test
@@ -1792,6 +2110,31 @@ pub(super) fn qualified_owner_calls_resolve(
             Some(segments) if segments.is_empty() => true,
             Some(segments) if names_a_type(&segments) => true,
             Some(segments) => qualified_call_names_owner(index, owner, test, &segments),
+        })
+}
+
+/// RIPR-SPEC-0186: a boundary oracle must observe the changed definition,
+/// not merely another call with its name in a test that also reaches it.
+/// Qualified calls use activation's existing identity authority. When the
+/// index holds same-named rivals, bare calls must also resolve individually
+/// (a test can import a rival while calling the owner by its qualified path).
+/// Inherent calls retain their separate receiver admission.
+pub(super) fn boundary_owner_calls_resolve(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+    test: &TestSummary,
+    text: &str,
+) -> bool {
+    qualified_owner_calls_resolve(index, owner, test, text)
+        && shared_owner_call_identity(index, owner).is_none_or(|identity| {
+            call_qualifiers(text, &owner.name)
+                .into_iter()
+                .all(|qualifier| {
+                    qualifier.is_some_and(|segments| {
+                        names_a_type(&segments)
+                            || identity.resolve_call(test, index, &segments) == CallTarget::Owner
+                    })
+                })
         })
 }
 
