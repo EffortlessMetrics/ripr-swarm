@@ -299,6 +299,45 @@ fn distinct_count_is_a_lower_bound_once_its_memory_bound_is_reached() -> Result<
 }
 
 #[test]
+fn memo_reads_are_recorded_on_hit_and_miss_and_attributed_to_the_caller() -> Result<(), String> {
+    use crate::analysis::syntax::run_memo::{self, Product};
+    let (_, rows) = capture(true, || {
+        let scope = Scope::begin(&probe("memo"));
+        // Outside a memo scope nothing is consulted, so nothing is read.
+        run_memo::memoize(Product::ExternalDocs, 0, "src", || 1usize);
+        let _memo = run_memo::enter();
+        for _ in 0..2 {
+            // First call computes, second is a warm hit; both consult the entry.
+            run_memo::memoize(Product::ExternalDocs, 0, "src", || 1usize);
+        }
+        run_memo::memoize_many(Product::LocalTestMacros, &["a", "b"], |source| source.len());
+        scope.finish();
+    })?;
+    let row = rows.first().ok_or("missing row")?;
+    let memo: Vec<_> = row
+        .reads
+        .iter()
+        .filter(|entry| entry.read.kind == Kind::Memo)
+        .collect();
+    // One entry read twice, plus two distinct batch entries.
+    assert_eq!(memo.len(), 3);
+    assert_eq!(memo.iter().map(|entry| entry.count).sum::<u64>(), 4);
+    let first = &memo
+        .iter()
+        .find(|entry| entry.count == 2)
+        .ok_or("no repeat")?;
+    assert!(first.read.subject.starts_with("external_docs:"));
+    assert_eq!(first.read.subject.len(), "external_docs:".len() + 64);
+    // The site is the consumer's call, not run_memo's own body.
+    assert!(
+        memo.iter()
+            .all(|entry| Path::new(entry.read.site.file).ends_with("probe_read_trace/tests.rs"))
+    );
+    assert!(!row.universe_observed);
+    Ok(())
+}
+
+#[test]
 fn wire_bound_omits_whole_details_instead_of_truncating_and_writer_failure_is_fallible()
 -> Result<(), String> {
     let (_, rows) = capture(true, || {

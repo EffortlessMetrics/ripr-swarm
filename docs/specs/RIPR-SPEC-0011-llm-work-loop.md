@@ -762,7 +762,7 @@ it does not execute the command or grant edit authority.
 - `crates/ripr/tests/cli_smoke.rs::agent_receipt_writes_one_seam_handoff_json`
 - `crates/ripr/tests/cli_smoke.rs::agent_start_writes_source_edit_free_workflow_packet`
 - `crates/ripr/tests/cli_smoke.rs::agent_start_unknown_seam_id_exits_3_while_other_failures_exit_2`
-- `crates/ripr/tests/cli_smoke.rs::agent_start_config_hidden_known_seam_stays_exit_2`
+- `crates/ripr/tests/cli_smoke.rs::agent_start_config_hidden_known_seam_is_a_policy_refusal`
 - `crates/ripr/tests/cli_smoke.rs::agent_packet_rejects_configured_off_seam`
 - `crates/ripr/src/lsp/tests.rs::agent_loop_command_payloads_stay_workspace_relative_for_platform_roots`
 - `xtask/src/reports/operator.rs::tests::operator_cockpit_matches_editor_agent_loop_fixture`

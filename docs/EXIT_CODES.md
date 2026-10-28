@@ -34,8 +34,9 @@ verify-execute` declining a packet (the refusal JSON document is on stdout)
   `ripr agent card` and `ripr agent stub` print their refusal document
   (`agent_card_refusal` / `rust_test_stub` `state: refused`) on stdout only
   with `--json`, with the prose on stderr; without it stdout stays empty and
-  stderr names the cause. An unknown `--seam-id` is one typed refusal with
-  one exit, `3`, on `agent start`, `agent card`, `agent stub` and `agent packet`
+  stderr names the cause. An unknown `--seam-id`, or a known one that agent
+  policy withholds (#10712), is one typed refusal with one exit, `3`, on
+  `agent start`, `agent card`, `agent stub` and `agent packet`
   (`agent repair --phase before` still exits `2` for it): with `--json` the
   document is on stdout and the prose on stderr, except `agent start`, whose
   refusal is prose on stderr with empty stdout).
@@ -94,7 +95,7 @@ reached the caller.
   JSON only), `agent brief --json`, and `agent packet --json` each write the
   shared refusal shape keyed with their own `schema_version` (rerun
   `ripr-targeted-rerun-v1`, context `1.1`, diff and agent brief `0.1`, agent
-  packet `0.5`; an unknown `agent packet --seam-id` is the one typed
+  packet `0.5`; an unknown or policy-withheld `agent packet --seam-id` is the one typed
   refusal among these and exits `3`, see above), and `mode` appears only on commands that accept `--mode`.
   A fresh `context` run preserves the check producer's typed failure and
   recovery route for both committed and working-tree analysis; an invalid
