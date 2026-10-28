@@ -55,7 +55,7 @@ Evidence
   - local flow reaches returned value: return value + 2; (line 2)
 
 Weakness
-  - No test references `price(` — add a test that calls the changed owner
+  - No statically linked test call to `price(` was established; inspect existing test calls and their import/export paths
 
 TypeScript preview card (advisory)
   card version: typescript_preview_card.v1
@@ -79,7 +79,7 @@ TypeScript repair packet (advisory)
   next capability needed: trusted related test or observer, target shape, verify command, receipt command, and edit boundaries
 
 Next step
-  TypeScript preview advisory: no statically linked test calls `price(`; add a test that calls the changed owner and asserts the changed behavior with `toBe` / `toEqual`, run the project's native test command, then rerun `ripr check` to refresh the finding
+  TypeScript preview advisory: no statically linked test calls `price(`; inspect existing test calls and their import/export paths; if no suitable test exists, add a test that calls the changed owner and asserts the changed behavior with `toBe` / `toEqual`. Then run the project's native test command and rerun `ripr check` to refresh the finding
 Drill in:
   ripr explain --root <cwd>/fixtures/typescript_reexport_unparsed_star/input --diff <cwd>/fixtures/typescript_reexport_unparsed_star/diff.patch --mode fast probe:src_price.ts:typescript_preview:368e4177
   ripr context --root <cwd>/fixtures/typescript_reexport_unparsed_star/input --diff <cwd>/fixtures/typescript_reexport_unparsed_star/diff.patch --mode fast --at probe:src_price.ts:typescript_preview:368e4177

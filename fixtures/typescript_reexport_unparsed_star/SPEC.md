@@ -19,6 +19,9 @@ exported names are unavailable.
 The finding stays `no_static_path` with zero related tests. A missing fact
 cannot establish that the other star source exports no competing `price`.
 The honesty corpus independently rejects an `exposed` golden.
+The missing-link guidance does not claim that the existing barrel call is
+absent. It asks users to inspect calls and import/export paths before adding
+a test, without inventing a specific resolution failure cause.
 
 ## Controls
 

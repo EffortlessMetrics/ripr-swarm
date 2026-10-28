@@ -11437,7 +11437,9 @@ fn unresolved_alias_import_names_the_import_in_no_reach_text() -> Result<(), Str
     );
     assert_eq!(
         finding.missing.first().map(String::as_str),
-        Some("No test references `applyDiscount(` — add a test that calls the changed owner.")
+        Some(
+            "No statically linked test call to `applyDiscount(` was established; inspect existing test calls and their import/export paths."
+        )
     );
     // #10708: the ordinary owner with no static link carries the honest
     // ordered next step — owner name, add-test route, native verifier,
@@ -11450,6 +11452,8 @@ fn unresolved_alias_import_names_the_import_in_no_reach_text() -> Result<(), Str
         .ok_or_else(|| "owner with no static link must carry guidance".to_string())?;
     for expected in [
         "no statically linked test calls `applyDiscount(`",
+        "inspect existing test calls and their import/export paths",
+        "if no suitable test exists, add a test",
         "add a test that calls the changed owner",
         "asserts the changed behavior with `toBe` / `toEqual`",
         "run the project's native test command",
@@ -11512,6 +11516,8 @@ fn untested_function_owner_guidance_names_owner_and_ordered_route() -> Result<()
         .ok_or_else(|| "owner with no static link must carry guidance".to_string())?;
     for expected in [
         "no statically linked test calls `shippingFee(`",
+        "inspect existing test calls and their import/export paths",
+        "if no suitable test exists, add a test",
         "add a test that calls the changed owner",
         "asserts the changed behavior with `toBe` / `toEqual`",
         "run the project's native test command",
@@ -14007,7 +14013,7 @@ fn spec_0027_unrelated_test_does_not_reach_the_boundary_witness() -> Result<(), 
     assert_eq!(finding.ripr.reach.state, StageState::No);
     assert!(
         finding.missing.iter().any(|line| line
-            == "No test references `shippingFee(` — add a test that calls the changed owner."),
+            == "No statically linked test call to `shippingFee(` was established; inspect existing test calls and their import/export paths."),
         "no_static_path must name the missing owner reference: {:?}",
         finding.missing
     );
@@ -16831,7 +16837,7 @@ fn same_stem_tests_that_only_call_a_sibling_owner_are_not_related() -> Result<()
     );
     assert!(
         finding.missing.iter().any(|line| line
-            == "No test references `loyaltyPrice(` — add a test that calls the changed owner."),
+            == "No statically linked test call to `loyaltyPrice(` was established; inspect existing test calls and their import/export paths."),
         "no_static_path must name the missing owner reference: {:?}",
         finding.missing
     );

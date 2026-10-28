@@ -61,6 +61,31 @@ impl Subject {
         assert_eq!(finding["probe"]["family"], "return_value");
         assert_eq!(finding["classification"], class, "{finding}");
         assert_eq!(finding["related_tests_total"], related, "{finding}");
+        if class == "no_static_path" {
+            let missing = finding["missing"][0].as_str().ok_or("missing guidance")?;
+            assert!(
+                missing.contains("No statically linked test call to `price(` was established"),
+                "an existing barrel call must not become a universal test-absence claim: {missing}"
+            );
+            let next = finding["recommended_next_step"]
+                .as_str()
+                .ok_or("missing next step")?;
+            assert!(
+                next.contains("inspect existing test calls and their import/export paths")
+                    && next.contains("if no suitable test exists, add a test")
+                    && next.contains("run the project's native test command")
+                    && next.contains("rerun `ripr check`"),
+                "unresolved calls need inspection before another test is prescribed: {next}"
+            );
+            assert_eq!(
+                finding["typescript_preview_card"]["repair_packet_ready"],
+                false
+            );
+            assert_eq!(
+                finding["preview_actionability"]["repair_packet_ready"],
+                false
+            );
+        }
         if partial {
             assert_eq!(report["analysis_outcome"]["analysis_complete"], false);
             let limitations = report["analysis_outcome"]["outcome"]["limitations"]
@@ -73,6 +98,37 @@ impl Subject {
                 "{report}"
             );
         }
+        Ok(())
+    }
+
+    fn check_human_guidance(&self) -> TestResult {
+        let output = run_command_with_env(
+            env!("CARGO_BIN_EXE_ripr"),
+            &self.0,
+            &[
+                "check",
+                "--root",
+                ".",
+                "--diff",
+                "change.diff",
+                "--mode",
+                "fast",
+                "--format",
+                "human",
+            ],
+            &[("RIPR_TS_MAX_FILE_READ_BYTES", "4096")],
+        )?;
+        assert!(output.status.success());
+        let rendered = String::from_utf8(output.stdout)?;
+        let safe_action = rendered
+            .lines()
+            .find(|line| line.trim_start().starts_with("Safe next action:"))
+            .ok_or("missing human safe action")?;
+        assert!(
+            safe_action.contains("check by hand whether a test observes this change"),
+            "an unresolved barrel call requires inspection, not an unconditional new test: {safe_action}"
+        );
+        assert!(!rendered.contains("No test references `price(`"));
         Ok(())
     }
 }
@@ -107,6 +163,7 @@ fn typescript_partial_star_index_never_retains_positive_credit() -> TestResult {
     // empty module recovers the supported positive case.
     fs::write(subject.0.join("src/other.ts"), "export function broken(")?;
     subject.check("4096", "no_static_path", 0, false)?;
+    subject.check_human_guidance()?;
     fs::write(subject.0.join("src/other.ts"), "export const other = 1;\n")?;
     subject.check("4096", "exposed", 1, false)
 }
