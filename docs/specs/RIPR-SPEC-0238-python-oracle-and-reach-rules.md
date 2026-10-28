@@ -1097,11 +1097,13 @@ mutant calibrates the rule; ripr reports only the static shape.
     only as `head.` (a module alias) or `head(` (an imported callable), so
     it is never stored or passed along, and `np.testing` is only dotted
     into. No line that patches, mocks or `setattr`s mentions the library or
-    the helper, and `globals(`, `vars(`, `exec(`, `eval(`, `__dict__`, `__code__`,
-    `sys.modules`, `importlib`, `__import__` or `import *` anywhere refuses
-    the file. The call is not under a `with`, `try` or `match`, where it may
+    the helper, and `globals`, `locals`, `vars`, `exec`, `eval` or `__import__` as a
+    word (so `exec (...)` with a space is refused like `exec(...)`), or
+    `__dict__`, `__code__`, `sys.modules`, `importlib` or `import *` with any
+    spacing, anywhere refuses the file. The call is not under a `with`, `try` or `match`, where it may
     be expected to fail (`with pytest.raises(AssertionError)`). A numpy
-    helper with a scalar literal operand (`assert_array_equal(f(), 3)`; numbers,
+    helper with a scalar literal operand (`assert_array_equal(f(), 3)`; numbers, including signed,
+    parenthesized and arbitrary-width `0x`/`0b`/`0o` integers,
     `True`/`False`/`None`, and string literals of any prefix, triple-quoted or
     implicitly concatenated) is
     not read either: numpy broadcasts the scalar, so the call passes for

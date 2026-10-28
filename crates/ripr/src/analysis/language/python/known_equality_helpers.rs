@@ -89,8 +89,9 @@ fn broadcasts_a_scalar(helper: &PythonKnownEqualityHelper) -> bool {
 }
 
 fn scalar_literal(operand: &str) -> bool {
-    let text = operand.trim().trim_start_matches(['-', '+']).trim();
-    let text = text.trim_start_matches('(').trim_end_matches(')').trim();
+    // Unary signs and parentheses nest in any order (`-(0x2)`, `(-0x2)`), so strip them together.
+    let text = operand
+        .trim_matches(|c: char| c.is_whitespace() || matches!(c, '-' | '+' | '~' | '(' | ')'));
     matches!(text, "True" | "False" | "None")
         || prefixed_integer(text)
         || text.replace('_', "").parse::<f64>().is_ok()
@@ -144,16 +145,15 @@ fn string_literals_only(text: &str) -> bool {
     seen
 }
 
-/// `0x2`, `0b1` and `0o7`, which `f64` parsing does not read.
+/// `0x2`, `0b1` and `0o7` of any width, which `f64` parsing does not read.
 fn prefixed_integer(text: &str) -> bool {
-    let digits = text.replace('_', "");
-    let lower = digits.to_ascii_lowercase();
+    let digits = text.replace('_', "").to_ascii_lowercase();
     [("0x", 16), ("0b", 2), ("0o", 8)]
         .iter()
         .any(|(prefix, radix)| {
-            lower
+            digits
                 .strip_prefix(prefix)
-                .is_some_and(|rest| !rest.is_empty() && i128::from_str_radix(rest, *radix).is_ok())
+                .is_some_and(|rest| !rest.is_empty() && rest.chars().all(|ch| ch.is_digit(*radix)))
         })
 }
 
@@ -283,20 +283,25 @@ impl<'a> FileImports<'a> {
 /// Markers of rebinding the AST does not show. A hit anywhere in the file
 /// refuses it (the common `monkeypatch.setenv` is not among them).
 fn writes_names_dynamically(source: &str) -> bool {
+    // Whitespace before the call parenthesis (`exec ("...")`) is still a call, so these
+    // names refuse the file wherever they appear as a word.
+    const DYNAMIC_NAMES: [&str; 6] = ["globals", "locals", "vars", "exec", "eval", "__import__"];
+    if source
+        .lines()
+        .any(|line| DYNAMIC_NAMES.iter().any(|name| mentions_word(line, name)))
+    {
+        return true;
+    }
+    let compact: String = source.chars().filter(|ch| !ch.is_whitespace()).collect();
     [
-        "globals(",
-        "vars(",
-        "exec(",
-        "eval(",
         "__dict__",
         "__code__",
         "sys.modules",
         "importlib",
-        "__import__",
-        "import *",
+        "import*",
     ]
     .iter()
-    .any(|needle| source.contains(needle))
+    .any(|needle| compact.contains(needle))
 }
 
 fn is_word(ch: Option<char>) -> bool {
