@@ -167,6 +167,15 @@ cannot supply the binary's binding. Existing unique proc-macro and cfg
 checks still apply; this does not trace a macro expansion or resolve an
 unchanged dependency outside the index.
 
+For a binary-root alias, manifest dependency authority must bind the imported
+crate name to the indexed proc-macro library; a registry, wrong-path, missing,
+or ambiguous dependency does not gain credit from a workspace namesake. In a
+committed-history analysis, Cargo manifest authority comes from the committed
+snapshot. A changed Cargo configuration that cannot be resolved against that
+snapshot, including a symlinked manifest or Cargo configuration, refuses the
+new binary route. The alias must directly name the macro in the dependency;
+intermediate paths remain unresolved rather than assuming a reexport.
+
 Diff lines without a function owner consume the composer's existing
 `SourceRoleProvenance` (#3695). They are evidence-only when the provenance
 has no unresolved edge and contains a test-required edge, and the child

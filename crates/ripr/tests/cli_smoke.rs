@@ -19,6 +19,9 @@ mod agent_policy_guidance;
 mod artifact_mode_precedence;
 #[path = "cli_smoke/baseline_path_values.rs"]
 mod baseline_path_values;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/binary_alias_authority.rs"]
+mod binary_alias_authority;
 #[path = "../src/build_commit_record.rs"]
 mod build_commit_record;
 #[cfg(feature = "lang-rust")]

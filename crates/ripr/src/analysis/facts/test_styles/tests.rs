@@ -1415,7 +1415,12 @@ const WRAPPER_MACRO: &str = "#[proc_macro_attribute]\npub fn wrapped_test(attr: 
 const USER: &str = "#[crate::test]\nasync fn aliased() { assert_eq!(crate::value(), 3); }\n#[crate::tests]\nfn lookalike() {}\n#[other::test]\nfn arbitrary() {}\n";
 
 fn alias_test_names(files: &[(&str, &str)]) -> Result<Vec<String>, String> {
-    alias_test_names_with_manifest(files, Some("[package]\nname='app'\nversion='0.1.0'\n"))
+    alias_test_names_with_manifest(
+        files,
+        Some(
+            "[package]\nname='app'\nversion='0.1.0'\n[dependencies]\nmy_macros={path='../macros'}\n",
+        ),
+    )
 }
 
 fn alias_test_names_with_manifest(
@@ -1426,7 +1431,13 @@ fn alias_test_names_with_manifest(
         .map(|manifest| {
             super::super::drop_in::temp_workspace(
                 "binary-test-alias",
-                &[("app/Cargo.toml", manifest)],
+                &[
+                    ("app/Cargo.toml", manifest),
+                    (
+                        "macros/Cargo.toml",
+                        "[package]\nname='my_macros'\nversion='0.1.0'\n[lib]\nproc-macro=true\n",
+                    ),
+                ],
             )
         })
         .transpose()?;
@@ -1632,6 +1643,57 @@ fn binary_root_alias_uses_its_own_import() -> Result<(), String> {
 }
 
 #[test]
+fn binary_root_alias_refuses_a_namesake_registry_dependency() -> Result<(), String> {
+    let binary = format!("{ALIAS_ROOT}{USER}");
+    for dependency in ["my_macros='1'", "my_macros={path='../foreign'}", ""] {
+        let manifest = format!(
+            "[package]\nname='app'\nversion='0.1.0'\nedition='2021'\n[dependencies]\n{dependency}\n"
+        );
+        let names = alias_test_names_with_manifest(
+            &[
+                ("app/src/bin/worker.rs", &binary),
+                ("macros/src/lib.rs", WRAPPER_MACRO),
+            ],
+            Some(&manifest),
+        )?;
+        assert!(
+            names.is_empty(),
+            "foreign dependency {dependency} credited: {names:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn binary_root_alias_refuses_unresolved_intermediate_paths() -> Result<(), String> {
+    for import in [
+        "use my_macros::missing::wrapped_test as test;\n",
+        "use my_macros::{missing::wrapped_test as test};\n",
+    ] {
+        let binary = format!("{import}{USER}");
+        let names = alias_test_names(&[
+            ("app/src/bin/worker.rs", &binary),
+            ("macros/src/lib.rs", WRAPPER_MACRO),
+        ])?;
+        assert!(
+            names.is_empty(),
+            "unresolved path {import} credited: {names:?}"
+        );
+    }
+    let binary = format!("use my_macros::{{wrapped_test as test}};\n{USER}");
+    let names = alias_test_names(&[
+        ("app/src/bin/worker.rs", &binary),
+        ("macros/src/lib.rs", WRAPPER_MACRO),
+    ])?;
+    assert_eq!(
+        names,
+        ["aliased"],
+        "direct grouped import remains supported"
+    );
+    Ok(())
+}
+
+#[test]
 fn binary_root_alias_never_borrows_a_library_or_sibling_binding() -> Result<(), String> {
     for import in ["", "use external_macros::wrapped_test as test;\n"] {
         let binary = format!("{import}{USER}");
@@ -1717,8 +1779,8 @@ fn binary_root_alias_requires_manifest_authority_and_automatic_targets() -> Resu
         );
     }
     for manifest in [
-        "[package]\nname='app'\nversion='0.1.0'\nedition='2018'\n[[bin]]\nname='app'\n",
-        "[package]\nname='app'\nversion='0.1.0'\nedition='2015'\nautobins=true\n[[bin]]\nname='app'\n",
+        "[package]\nname='app'\nversion='0.1.0'\nedition='2018'\n[[bin]]\nname='app'\n[dependencies]\nmy_macros={path='../macros'}\n",
+        "[package]\nname='app'\nversion='0.1.0'\nedition='2015'\nautobins=true\n[[bin]]\nname='app'\n[dependencies]\nmy_macros={path='../macros'}\n",
     ] {
         let names = alias_test_names_with_manifest(
             &[
