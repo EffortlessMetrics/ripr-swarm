@@ -978,6 +978,8 @@ impl PythonAdapter {
             BTreeMap::new();
         let mut docstring_ranges_by_file: BTreeMap<PathBuf, Vec<RangeInclusive<usize>>> =
             BTreeMap::new();
+        let mut assigned_attributes_by_file: BTreeMap<PathBuf, Option<Vec<String>>> =
+            BTreeMap::new();
         let mut import_ranges_by_file: BTreeMap<PathBuf, Vec<RangeInclusive<usize>>> =
             BTreeMap::new();
         let mut limitations = Vec::new();
@@ -1024,6 +1026,8 @@ impl PythonAdapter {
                 {
                     limitations.push(limitation);
                 }
+                assigned_attributes_by_file
+                    .insert(relative.clone(), facts.assigned_attributes.clone());
                 docstring_ranges_by_file
                     .insert(relative.clone(), facts.docstring_line_ranges.clone());
                 import_ranges_by_file.insert(relative.clone(), facts.import_line_ranges.clone());
@@ -1227,12 +1231,13 @@ impl PythonAdapter {
         let workspace_incomplete = refused_files > 0
             || !workspace_read.limits.is_empty()
             || !workspace_read.io_failures.is_empty();
-        let foreign_index = module_value::ForeignIndex::build(
+        let foreign_index = module_value::ForeignIndex::build_with_assigned(
             workspace_read
                 .sources
                 .iter()
                 .map(|(file, source)| (file.as_path(), source.as_str())),
             workspace_incomplete,
+            &assigned_attributes_by_file,
         );
         for changed in &python_changed_files {
             let foreign = foreign_index.excluding(&changed.path);
