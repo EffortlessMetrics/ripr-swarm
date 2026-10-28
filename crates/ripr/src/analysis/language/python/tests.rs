@@ -10730,3 +10730,35 @@ fn literal_unicode_index_must_observe_changed_character() -> Result<(), String> 
     }
     Ok(())
 }
+
+#[test]
+fn literal_index_gate_respects_docstrings_and_argument_execution() -> Result<(), String> {
+    for (body, assertion, expected_exposed) in [
+        ("    \"\"\"description\"\"\"\n", "f(0)[1] == '😀'", false),
+        ("    pass\n", "f(0)[1] == '😀'", true),
+        ("", "f(1 / (ord(f(0)[0]) - ord('a')))[1] == '😀'", true),
+    ] {
+        let source = format!("def f(x):\n{body}    return \"b😀\"\n");
+        let tests = extract_tests(
+            Path::new("tests/test_app.py"),
+            &format!("from src.app import f\n\ndef test_f():\n    assert {assertion}\n"),
+        );
+        let owners = extract_owners(Path::new("src/app.py"), &source);
+        let line = 2 + usize::from(!body.is_empty());
+        let finding = classify_change_with_old(
+            Path::new("src/app.py"),
+            line,
+            "    return \"b😀\"",
+            Some("    return \"a😀\""),
+            &owners,
+            &tests,
+        )
+        .ok_or("expected finding")?;
+        assert_eq!(
+            finding.class == ExposureClass::Exposed,
+            expected_exposed,
+            "{body:?} {assertion}"
+        );
+    }
+    Ok(())
+}

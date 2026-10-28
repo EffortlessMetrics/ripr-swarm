@@ -593,7 +593,9 @@ same-named call neither supplies nor cancels the refusal. Pinned by the
     A changed element on its own line of a multi-line literal bound by
     `return` or an assignment is judged as the joined enclosing literal, so
     the same rules apply as for a one-line literal.
-    A direct literal-index equality on a one-return literal-string function
+    A direct literal-index equality on an undecorated synchronous function
+    whose body is an optional docstring followed by a literal-string return,
+    called by its owner name with only positional literal arguments,
     cannot credit when the indexed Unicode character is present and equal in
     both versions; negative indices use each string’s character length. Other
     string assertions and unsupported forms retain their existing treatment.

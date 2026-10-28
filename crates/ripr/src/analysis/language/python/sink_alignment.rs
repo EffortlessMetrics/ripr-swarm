@@ -668,10 +668,7 @@ fn unchanged_literal_string_index(
     new_line: &str,
     assertion: &str,
 ) -> bool {
-    if owner.owner_kind != Some(OwnerKind::Function)
-        || !owner.decorators.is_empty()
-        || owner.end_line != owner.start_line + 1
-    {
+    if owner.owner_kind != Some(OwnerKind::Function) || !owner.term_facts.literal_string_return() {
         return false;
     }
     let literal = |line: &str| -> Option<String> {
@@ -713,7 +710,10 @@ fn unchanged_literal_string_index(
     let Expr::Call(call) = subscript.value.as_ref() else {
         return false;
     };
-    if !matches!(call.func.as_ref(), Expr::Name(name) if name.id.as_str() == owner.name) {
+    if !call.keywords.is_empty()
+        || !call.args.iter().all(|arg| matches!(arg, Expr::Constant(_)))
+        || !matches!(call.func.as_ref(), Expr::Name(name) if name.id.as_str() == owner.name)
+    {
         return false;
     }
     let integer = |expression: &Expr| -> Option<i128> {

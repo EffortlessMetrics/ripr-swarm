@@ -85,9 +85,15 @@ pub(super) struct PythonTermFacts {
     /// function may recurse. Textual and over-approximate (#5491 `missing_input`
     /// withholds on it).
     calls_own_name: bool,
+    /// An undecorated synchronous body consisting of an optional docstring and a literal-string return.
+    literal_string_return: bool,
 }
 
 impl PythonTermFacts {
+    pub(super) fn literal_string_return(&self) -> bool {
+        self.literal_string_return
+    }
+
     pub(super) fn calls_own_name(&self) -> bool {
         self.calls_own_name
     }
@@ -159,6 +165,17 @@ pub(super) fn term_facts(
         bound_names,
         returned_parameter,
         calls_own_name: false,
+        literal_string_return: !wrapped
+            && match body {
+                [Stmt::Return(ret)] => {
+                    matches!(ret.value.as_deref(), Some(Expr::Constant(c)) if matches!(c.value, ast::Constant::Str(_)))
+                }
+                [Stmt::Expr(doc), Stmt::Return(ret)] => {
+                    matches!(doc.value.as_ref(), Expr::Constant(c) if matches!(c.value, ast::Constant::Str(_)))
+                        && matches!(ret.value.as_deref(), Some(Expr::Constant(c)) if matches!(c.value, ast::Constant::Str(_)))
+                }
+                _ => false,
+            },
     }
 }
 

@@ -3835,7 +3835,6 @@ tests = [
   "crates/ripr/src/analysis/language/python/helper_owner_call_tests.rs::given_a_non_ascii_identifier_prefix_then_the_classifier_credits_no_call",
   "crates/ripr/src/analysis/language/python/helper_owner_call_tests.rs::given_non_identifier_non_ascii_neighbours_then_the_call_is_an_intentional_miss",
   "crates/ripr/src/analysis/language/python/helper_owner_call_tests.rs::given_an_ordinary_literal_after_an_identifier_suffix_then_it_is_never_scanned_as_an_f_string",
-  "crates/ripr/src/analysis/language/python/tests.rs::literal_unicode_index_must_observe_changed_character",
   "crates/ripr/src/analysis/language/python/tests.rs::protocol_entry_receiver_rebound_by_a_spelling_the_scan_missed_is_not_credited",
   "crates/ripr/src/analysis/language/python/tests.rs::protocol_entry_receiver_reads_that_resemble_a_rebind_stay_credited",
   "crates/ripr/src/analysis/language/python/tests.rs::match_case_capture_of_the_receiver_counts_as_a_binding_target",
@@ -3848,8 +3847,6 @@ fixtures = [
   "fixtures/python_module_formatted_generator_test",
   "fixtures/python_module_same_line_prior_assert",
   "fixtures/python_module_generator_test",
-  "fixtures/python_literal_string_unchanged_astral",
-  "fixtures/python_literal_string_unchanged_combining",
   "fixtures/python_multiline_literal_sibling_read",
   "fixtures/python_literal_value_inside_longer_number",
   "fixtures/python_module_prior_failing_assert",
@@ -17053,6 +17050,8 @@ id = "RIPR-SPEC-0238"
 name = "Python oracle and reach rules"
 spec = "docs/specs/RIPR-SPEC-0238-python-oracle-and-reach-rules.md"
 tests = [
+  "crates/ripr/src/analysis/language/python/tests.rs::literal_index_gate_respects_docstrings_and_argument_execution",
+  "crates/ripr/src/analysis/language/python/tests.rs::literal_unicode_index_must_observe_changed_character",
   "crates/ripr/src/analysis/language/python/tests.rs::a_straight_line_alias_of_a_captured_log_read_is_evaluated",
   "crates/ripr/src/analysis/language/python/tests.rs::an_alias_that_is_not_a_plain_snapshot_keeps_abstaining",
   "crates/ripr/src/analysis/language/python/tests.rs::alias_replacement_skips_string_literals_and_longer_names",
@@ -17096,6 +17095,8 @@ tests = [
   "crates/ripr/src/analysis/language/python/python_tests.rs::classify_change_does_not_relate_typed_route_to_a_value_the_router_rejects",
 ]
 fixtures = [
+  "fixtures/python_literal_string_unchanged_astral",
+  "fixtures/python_literal_string_unchanged_combining",
   "fixtures/python_caplog_alias_in_literal",
   "fixtures/python_caplog_custom_fixture",
   "fixtures/python_caplog_renamed_fixture",
