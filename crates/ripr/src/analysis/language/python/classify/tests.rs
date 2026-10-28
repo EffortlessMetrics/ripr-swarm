@@ -1331,6 +1331,25 @@ fn an_integer_equivalent_rewrite_needs_the_row_its_shifted_bound_moves_to() -> R
         let control = finding(new, old, row)?;
         assert_eq!(control.class, ExposureClass::Exposed, "{new}: {control:?}");
     }
+    // A conditional return: the same rewrite needs the shifted row, but one
+    // that also changes a branch value is a behavior change.
+    let conditional = |old_else: &str| {
+        classify_case(
+            "def fee(amount):\n    return 0 if amount > 99 else 5\n",
+            "import pytest\nfrom src.subject import fee\n\n@pytest.mark.parametrize(\"amount, expected\", [(99, 5)])\ndef test_fee(amount, expected):\n    assert fee(amount) == expected\n",
+            2,
+            &format!("    return 0 if amount >= 100 else {old_else}"),
+            "    return 0 if amount > 99 else 5",
+        )
+    };
+    let rewrite = conditional("5")?;
+    assert_eq!(rewrite.class, ExposureClass::WeaklyExposed, "{rewrite:?}");
+    assert!(
+        missing_boundary(&rewrite, "amount == 100").is_some(),
+        "{rewrite:?}"
+    );
+    let changed = conditional("6")?;
+    assert_eq!(changed.class, ExposureClass::Exposed, "{changed:?}");
     Ok(())
 }
 

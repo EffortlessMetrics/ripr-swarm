@@ -364,7 +364,7 @@ pub(super) fn python_boundary_evidence(
         .flatten()
         .filter(|step| {
             static_operand(&step.variable, &constants).is_none()
-                && old_line_text.is_some_and(|old| integer_equivalent_rewrite(&condition, old))
+                && old_line_text.is_some_and(|old| integer_equivalent_rewrite(line_text, old))
         })
         .filter(|step| {
             !rows.iter().any(|row| {
@@ -679,10 +679,22 @@ fn provably_unequal(left: &str, right: &str) -> bool {
 /// Whether the old and new predicates are each one relational comparison of
 /// the same name against an integer literal, true on exactly the same
 /// integers (`v >= 100` and `v > 99`, `v < 10` and `9 >= v`), with the rest
-/// of the condition unchanged (`and flag` -> `or flag` is a behavior change).
-fn integer_equivalent_rewrite(new_condition: &str, old_line_text: &str) -> bool {
+/// of the condition unchanged (`and flag` -> `or flag` is a behavior change)
+/// and the line around the condition unchanged (`return 0 if v >= 100 else 6`
+/// -> `return 0 if v > 99 else 5` changes a branch value).
+fn integer_equivalent_rewrite(new_line_text: &str, old_line_text: &str) -> bool {
+    let new_condition = predicate_condition(new_line_text);
     let old_condition = predicate_condition(old_line_text);
-    match (integer_bound(new_condition), integer_bound(&old_condition)) {
+    let outside = |line: &str, condition: &str| {
+        line.replacen(condition, "\u{0}", 1)
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    if outside(new_line_text, &new_condition) != outside(old_line_text, &old_condition) {
+        return false;
+    }
+    match (integer_bound(&new_condition), integer_bound(&old_condition)) {
         (Some(new), Some(old)) => new == old,
         _ => false,
     }
