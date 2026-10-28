@@ -784,18 +784,41 @@ value that lives to the end of the test (it is dropped after every assertion);
 and the sites an iterator relation refuses (closures, branches, `#[cfg]`-disabled
 statements), including a guard bound inside a branch or closure of the block.
 
-Unlike `next`, a destructor is never credited by the sibling-effect read. A
+Unlike `next`, a destructor is not credited by the ordinary sibling-effect read. A
 guard's counter shares no token with the changed line, and relating a scope end
 lifts reach, so without a gate the ordinary oracle credited an assertion on a
 different cell, a fresh guard cell, a cell the test re-created or wrote itself,
-or an assertion that ran before the scope (#9567). No assertion-local authority
-ties an assertion to the end of a scope, so a related destructor with an exact
-assertion stays `static_unknown` (`rust_implicit_call_unresolved`), and an
-assertion-free test stays a real `weakly_exposed` gap. The same holds for every probe family: an `exposed` verdict on a standard
-`Drop::drop` (a predicate on the changed line, a name match on the free `drop`)
-is rewritten to `static_unknown`. A local trait named `Drop` is an ordinary
-trait and is not gated. A positive credit needs such a carrier check and is not
-claimed.
+or an assertion that ran before the scope (#9567). Only an assertion-local
+scope-end carrier ties an assertion to the end of a scope (#10814): the related
+test creates one local shared handle (`Rc::new(Cell::new(n))`, or an empty
+`Rc<RefCell<Vec<_>>>`), builds one record-literal guard of the impl's type
+whose field is `handle.clone()` (every other field a literal), ends the guard's
+scope with a top-level `{ let g = Guard { .. }; }` block or a top-level
+`drop(g);` of the standard function, and then asserts, at the top level and
+after the scope, on a wrapper of that same handle whose expected value is
+exactly what the destructor's changed write stores. The handle's initial state
+must differ from the stored one, and no other top-level statement may mention
+the handle or the guard. The impl is the type's only `Drop` impl in the
+workspace, no alias, `use` or item macro names the type or could add an impl,
+the test carries no attribute but `#[test]`, and no earlier top-level statement
+can end the test (`return`, `?`, `break`, `continue`, `yield`, or an `exit` or `abort` call). The initial and stored states are compared as numbers, a raw identifier counts as a mention, and an attribute on the scope block refuses it. Reading the
+destructor's write requires the changed line to be a `side_effect` or
+`call_deletion` write of one self field. Such a finding is credited like an
+iterator's, and a destructor finding stays `exposed` only when every strong
+contributing test is carrier-confirmed.
+
+Every other shape stays `static_unknown` (`rust_implicit_call_unresolved`): an
+assertion on another cell, a guard that writes a fresh cell, a handle the test
+re-creates, aliases or writes after the scope, an assertion before the scope, a
+guard that lives to the end of the test, is moved, leaked, held in a closure or
+scoped in a branch, a shadowed `drop`, a second `Drop` impl for the type name,
+an alias or `macro_rules!` in the file, a `#[should_panic]` test, and an early
+`return` before the scope (#10805 tracks the relation itself). An assertion-free
+test stays a real `weakly_exposed` gap. The same gate covers every probe family:
+an `exposed` verdict on a standard `Drop::drop` the carrier does not confirm (a
+predicate on the changed line, a name match on the free `drop`) is rewritten to
+`static_unknown`. A local trait named `Drop` is an ordinary trait and is not
+gated.
 
 Corpus effect: `shape-op-add-impl` moves from `limited` to `credited`, its
 ideal verdict.
@@ -928,6 +951,11 @@ Tests in `crates/ripr/src/analysis/classify/implicit_call.rs` and
 
 - `method_calls_need_a_dot_receiver_and_a_whole_name`
 - `operator_syntax_is_read_per_trait`
+- `a_scope_end_carrier_credits_the_destructor`,
+  `a_destructor_without_a_scope_end_carrier_is_never_credited`,
+  `a_vec_handle_carrier_credits_only_the_pushed_value` and
+  `a_predicate_in_a_destructor_is_never_credited`
+  (`crates/ripr/tests/sibling_effect_oracle.rs`, #10814)
 - `a_drop_impl_reached_at_scope_exit_is_withheld`,
   `an_iterator_impl_reached_through_collect_is_withheld`,
   `a_dyn_trait_method_called_on_an_untyped_receiver_is_withheld`

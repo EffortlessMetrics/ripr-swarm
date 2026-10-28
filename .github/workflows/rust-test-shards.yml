@@ -61,6 +61,7 @@ jobs:
         run: |
           cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml
           cargo fetch --locked --manifest-path fixtures/owner_return_pin_json_real_literal/input/Cargo.toml
+          cargo fetch --locked --manifest-path crates/ripr/tests/fixtures/proptest_singleton/input/Cargo.toml
 
       # The policy tests spawn `cargo test --no-run -p xtask` themselves; warming it
       # keeps that build off the clock, as the gates job's policy preflight does.

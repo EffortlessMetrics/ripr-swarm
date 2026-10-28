@@ -1422,7 +1422,7 @@ fn explain_names_truncation_when_seam_reverse_cannot_check() -> Result<(), Strin
 }
 
 /// #7882: display narration must never feed stable text back into identity.
-/// #8166: the `Canonical gap:` line `ripr check` prints for a Rust finding is
+/// #8166: the `Gap ID (for scripts):` line `ripr check` prints for a Rust finding is
 /// the producer gap ID, not the seam-derived `gap:<hash>`. It must start the
 /// same attempt as the seam ID, and only for the seam it names.
 #[test]
@@ -1983,7 +1983,7 @@ fn check_drill_down_omits_repair_for_a_static_limited_finding() -> Result<(), St
     let check = run_ripr(root, &["check", "--root", &root_arg, "--base", "HEAD~1"])?;
     let stdout = stdout_text(&check);
     assert!(
-        stdout.contains("limited by static analysis"),
+        stdout.contains("ripr cannot tell from reading the code whether tests would notice this"),
         "the finding must be static-limited:\n{stdout}"
     );
     assert!(

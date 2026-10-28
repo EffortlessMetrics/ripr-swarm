@@ -973,6 +973,61 @@ fn the_target_assertion_is_identified_before_crediting_its_line() -> Check {
 }
 
 #[test]
+fn a_write_shared_with_another_file_survives_excluding_one_of_them() {
+    // #10857: the index counts the sources behind each write and subtracts
+    // the excluded file, so a write that file shares with another stays.
+    let sources = [
+        (Path::new("a.py"), "import c\nc.LIMIT = 1\n"),
+        (Path::new("b.py"), "import c\nc.LIMIT = 2\nc.RATE = 3\n"),
+        (Path::new("c.py"), "LIMIT = 10\nRATE = 5\n"),
+    ];
+    let index = super::module_value::ForeignIndex::build(sources.iter().copied(), false);
+    let module = Path::new("c.py");
+    let without_b = index.excluding(Path::new("b.py"));
+    assert!(without_b.may_rebind("LIMIT", module));
+    assert!(!without_b.may_rebind("RATE", module));
+    let without_a = index.excluding(Path::new("a.py"));
+    assert!(without_a.may_rebind("LIMIT", module));
+    assert!(without_a.may_rebind("RATE", module));
+    let without_c = index.excluding(module);
+    assert!(without_c.may_rebind("LIMIT", module) && without_c.may_rebind("RATE", module));
+}
+
+#[test]
+fn subtracting_the_excluded_file_matches_rebuilding_every_write_set() {
+    // #10857: an independent oracle for all five write sets, not just
+    // attributes. Each file shares some writes with another and holds some
+    // alone, and excluding each file (or none) must match the per-file
+    // rebuild the subtraction replaced.
+    let sources = [
+        (Path::new("c.py"), "RATES = {\"a\": 1}\nLIMIT = 10\n"),
+        (
+            Path::new("a.py"),
+            "import c\nc.LIMIT = 1\nc.RATES[\"b\"] = 2\nsetattr(c, \"LIMIT\", 3)\n",
+        ),
+        (
+            Path::new("b.py"),
+            "import c\nc.LIMIT = 2\nc.RATE = 3\nvalue = getattr(c, \"RATES\")\nc.RATES.clear()\n",
+        ),
+        (
+            Path::new("d.py"),
+            "import c\nimport b\nnames = dir(c)\nsetattr(c, \"RATE\", 4)\n",
+        ),
+    ];
+    let index = super::module_value::ForeignIndex::build(sources.iter().copied(), false);
+    let all = index.excluding(Path::new("absent.py"));
+    assert_eq!(all.written_sets(), [true; 5], "{all:?}");
+    for own in ["absent.py", "a.py", "b.py", "c.py", "d.py"] {
+        let own = Path::new(own);
+        assert_eq!(
+            index.excluding(own),
+            index.rebuilt_excluding(own),
+            "{own:?}"
+        );
+    }
+}
+
+#[test]
 fn one_workspace_index_gives_each_changed_file_its_own_foreign_view() {
     // #10125: the index is built once; each changed file sees every other
     // file's writes and none of its own.

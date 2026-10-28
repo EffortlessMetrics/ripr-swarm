@@ -147,6 +147,14 @@ schema shape (the typed limitation below reuses the existing
 3. A workspace whose manifest inventory cannot be parsed fully: the graph is
    `limited`, connected edges still participate, and the disclosure names the
    partial inventory.
+   An unparsable `Cargo.toml` stays a limitation unless it provably cannot be
+   part of the graph: no path-dependency, `[patch]` or `[replace]` target
+   spells its directory (as written, with `\\` read as `/`, or resolved
+   through a symlink), no parsed manifest sits beneath it, and at least one
+   ancestor `[workspace]` exists, every ancestor enumerates `members` with
+   syntax the matcher models (literal segments and `*`), and none selects it.
+   A deliberately invalid test fixture outside every member therefore does not
+   limit the graph; unsupported member syntax keeps the limitation.
 4. A directory with no `Cargo.toml` at all: the graph is `unavailable`, the
    expansion did not run, and the disclosure says the scope stays the changed
    packages.
@@ -173,6 +181,12 @@ schema shape (the typed limitation below reuses the existing
 - `crates/ripr/src/analysis/workspace/path_dependencies.rs::tests::package_root_and_manifest_identities_round_trip`
 - `crates/ripr/src/analysis/workspace/path_dependencies.rs::tests::scope_limitation_is_typed_for_limited_and_unavailable_only`
 - `crates/ripr/tests/broken_manifest_limitation.rs::broken_manifest_is_a_limitation_not_a_complete_analysis`
+- `crates/ripr/src/analysis/seam_cache.rs::tests::unparsed_manifest_outside_every_member_pattern_is_not_a_limitation`
+- `crates/ripr/src/analysis/seam_cache.rs::tests::unparsed_manifest_that_may_be_in_the_graph_stays_a_limitation`
+- `crates/ripr/src/analysis/seam_cache.rs::tests::unparsed_manifest_stays_a_limitation_when_any_boundary_is_unproven`
+- `crates/ripr/src/analysis/seam_cache.rs::tests::unparsed_manifest_reached_through_a_symlink_or_backslash_spelling_stays_a_limitation`
+- `crates/ripr/src/analysis/seam_cache.rs::tests::unparsed_manifest_without_any_ancestor_workspace_stays_a_limitation`
+- `crates/ripr/src/analysis/seam_cache.rs::tests::unparsed_manifest_is_kept_when_member_syntax_is_not_modeled`
 - `crates/ripr/tests/broken_manifest_limitation.rs::missing_manifest_is_a_limitation_with_unavailable_reason`
 - `crates/ripr/tests/broken_manifest_limitation.rs::parsed_single_package_manifest_adds_no_limitation`
 - `crates/ripr/tests/broken_manifest_limitation.rs::hostile_manifest_bytes_still_yield_a_bounded_limitation`

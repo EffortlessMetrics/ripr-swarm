@@ -343,6 +343,11 @@ fn a_loop_over_the_iterator_reaches_next_and_the_shared_sink_assertion_credits_i
 /// A `Drop` guard whose `drop` writes a shared cell, with the test body under
 /// study.
 fn drop_guard(test_body: &str) -> String {
+    drop_guard_with("", test_body)
+}
+
+/// [`drop_guard`] with extra items beside the guard.
+fn drop_guard_with(items: &str, test_body: &str) -> String {
     format!(
         r#"use std::{{cell::Cell, rc::Rc}};
 struct Guard {{ sink: Rc<Cell<usize>> }}
@@ -351,64 +356,305 @@ impl Drop for Guard {{
         self.sink.set(1);
     }}
 }}
+{items}
 #[derive(Debug, PartialEq)] struct Observation {{ cell: Rc<Cell<usize>> }}
 #[test]
-fn drop_observer() {{
+fn scope_observer() {{
 {test_body}
 }}
 "#
     )
 }
 
-/// #10553: relating scope end to `Drop::drop` lifts reach, so the ordinary
-/// sibling-effect read would credit any assertion on a cell. Nothing ties the
-/// assertion to the guard's cell or to the end of the scope, so a destructor is
-/// withheld, never `exposed`, however the cells are wired.
+fn destructor_finding(source: &str) -> Result<Value, String> {
+    finding(
+        source,
+        &changed_effect(source, "self.sink.set(1)"),
+        "self.sink.set(1)",
+        "call_deletion",
+    )
+}
+
+const SCOPE_ASSERTION: &str =
+    "assert_eq!(Observation { cell: state }, Observation { cell: Rc::new(Cell::new(1)) });";
+
+/// A guard scope over the shared cell, then the assertion, in the named shape.
+fn shared_cell_body(shape: &str) -> Result<String, String> {
+    let scope = match shape {
+        "block" => "    {\n        let _g = Guard { sink: state.clone() };\n    }".to_string(),
+        "mut_block" => {
+            "    {\n        let mut g = Guard { sink: state.clone() };\n    }".to_string()
+        }
+        "drop_call" => "    let g = Guard { sink: state.clone() };\n    drop(g);".to_string(),
+        "mem_drop_call" => {
+            "    let g = Guard { sink: state.clone() };\n    std::mem::drop(g);".to_string()
+        }
+        other => return Err(format!("unknown shape {other}")),
+    };
+    Ok(format!(
+        "    let state = Rc::new(Cell::new(0));\n{scope}\n    {SCOPE_ASSERTION}"
+    ))
+}
+
+/// #10814: the scope-end carrier. One local shared handle, one record-literal
+/// guard whose field is `handle.clone()`, a top-level block or `drop(g);`
+/// before an ordered top-level assertion on that handle: the assertion reads
+/// what the destructor wrote, so the finding is credited.
 #[test]
-fn a_shared_cell_assertion_never_credits_a_destructor() -> Result<(), String> {
-    let assertion =
-        "assert_eq!(Observation { cell: state }, Observation { cell: Rc::new(Cell::new(1)) });";
+fn a_scope_end_carrier_credits_the_destructor() -> Result<(), String> {
+    for shape in ["block", "mut_block", "drop_call", "mem_drop_call"] {
+        let source = drop_guard(&shared_cell_body(shape)?);
+        let finding = destructor_finding(&source)?;
+        assert_eq!(finding["classification"], "exposed", "{shape}: {finding}");
+        assert_eq!(
+            finding["ripr"]["discriminate"]["state"], "yes",
+            "{shape}: {finding}"
+        );
+    }
+    Ok(())
+}
+
+/// #10553 / #10814: every shape the carrier does not prove stays
+/// `static_unknown`, however the cells are wired. Relating a scope end lifts
+/// reach, so the ordinary sibling-effect read would otherwise credit an
+/// assertion on any cell.
+#[test]
+fn a_destructor_without_a_scope_end_carrier_is_never_credited() -> Result<(), String> {
+    let block = "    {\n        let _g = Guard { sink: state.clone() };\n    }\n";
     let cases = [
         (
-            "shared_cell",
-            format!("    let state = Rc::new(Cell::new(0));\n    {{\n        let _g = Guard {{ sink: state.clone() }};\n    }}\n    {assertion}"),
-        ),
-        (
             "assertion_reads_another_cell",
-            "    let state = Rc::new(Cell::new(0));\n    let other = Rc::new(Cell::new(0));\n    {\n        let _g = Guard { sink: state.clone() };\n    }\n    assert_eq!(Observation { cell: other }, Observation { cell: Rc::new(Cell::new(1)) });".to_string(),
+            drop_guard(
+                "    let state = Rc::new(Cell::new(0));\n    let other = Rc::new(Cell::new(0));\n    {\n        let _g = Guard { sink: state.clone() };\n    }\n    assert_eq!(Observation { cell: other }, Observation { cell: Rc::new(Cell::new(1)) });",
+            ),
         ),
         (
             "guard_writes_a_fresh_cell",
-            format!("    let state = Rc::new(Cell::new(0));\n    {{\n        let _g = Guard {{ sink: Rc::new(Cell::new(0)) }};\n    }}\n    {assertion}"),
+            drop_guard(&format!(
+                "    let state = Rc::new(Cell::new(0));\n    {{\n        let _g = Guard {{ sink: Rc::new(Cell::new(0)) }};\n    }}\n    {SCOPE_ASSERTION}"
+            )),
         ),
         (
             "state_recreated_after_the_scope",
-            format!("    let state = Rc::new(Cell::new(0));\n    {{\n        let _g = Guard {{ sink: state.clone() }};\n    }}\n    let state = Rc::new(Cell::new(0));\n    {assertion}"),
+            drop_guard(&format!(
+                "    let state = Rc::new(Cell::new(0));\n{block}    let state = Rc::new(Cell::new(0));\n    {SCOPE_ASSERTION}"
+            )),
         ),
         (
             "test_writes_the_cell_after_the_scope",
-            format!("    let state = Rc::new(Cell::new(0));\n    {{\n        let _g = Guard {{ sink: state.clone() }};\n    }}\n    state.set(1);\n    {assertion}"),
+            drop_guard(&format!(
+                "    let state = Rc::new(Cell::new(0));\n{block}    state.set(1);\n    {SCOPE_ASSERTION}"
+            )),
+        ),
+        (
+            "test_aliases_the_cell_after_the_scope",
+            drop_guard(&format!(
+                "    let state = Rc::new(Cell::new(0));\n{block}    let alias = state.clone();\n    {SCOPE_ASSERTION}"
+            )),
+        ),
+        (
+            "cell_already_holds_the_asserted_state",
+            drop_guard(&format!(
+                "    let state = Rc::new(Cell::new(1));\n{block}    {SCOPE_ASSERTION}"
+            )),
+        ),
+        (
+            "initial_state_is_numerically_the_asserted_one",
+            drop_guard(&format!(
+                "    let state = Rc::new(Cell::new(01));\n{block}    {SCOPE_ASSERTION}"
+            )),
+        ),
+        (
+            "raw_identifier_write_after_the_scope",
+            drop_guard(&format!(
+                "    let state = Rc::new(Cell::new(0));\n{block}    r#state.set(1);\n    {SCOPE_ASSERTION}"
+            )),
+        ),
+        (
+            "cfg_disabled_scope_block",
+            drop_guard(&format!(
+                "    let state = Rc::new(Cell::new(0));\n    #[cfg(any())]\n    {{\n        let _g = Guard {{ sink: state.clone() }};\n    }}\n    {SCOPE_ASSERTION}"
+            )),
         ),
         (
             "assertion_before_the_scope",
-            "    let state = Rc::new(Cell::new(0));\n    assert_eq!(Observation { cell: state.clone() }, Observation { cell: Rc::new(Cell::new(0)) });\n    {\n        let _g = Guard { sink: state.clone() };\n    }".to_string(),
+            drop_guard(
+                "    let state = Rc::new(Cell::new(0));\n    assert_eq!(Observation { cell: state.clone() }, Observation { cell: Rc::new(Cell::new(0)) });\n    {\n        let _g = Guard { sink: state.clone() };\n    }",
+            ),
+        ),
+        (
+            "guard_lives_to_the_end_of_the_test",
+            drop_guard(&format!(
+                "    let state = Rc::new(Cell::new(0));\n    let _g = Guard {{ sink: state.clone() }};\n    {SCOPE_ASSERTION}"
+            )),
+        ),
+        (
+            "guard_moved_before_the_drop",
+            drop_guard(&format!(
+                "    let state = Rc::new(Cell::new(0));\n    let g = Guard {{ sink: state.clone() }};\n    let h = g;\n    drop(h);\n    {SCOPE_ASSERTION}"
+            )),
+        ),
+        (
+            "guard_leaked",
+            drop_guard(&format!(
+                "    let state = Rc::new(Cell::new(0));\n    let g = Guard {{ sink: state.clone() }};\n    std::mem::forget(g);\n    {SCOPE_ASSERTION}"
+            )),
+        ),
+        (
+            "guard_held_in_a_closure",
+            drop_guard(&format!(
+                "    let state = Rc::new(Cell::new(0));\n    let g = Guard {{ sink: state.clone() }};\n    let release = move || drop(g);\n    release();\n    {SCOPE_ASSERTION}"
+            )),
+        ),
+        (
+            "guard_scope_is_conditional",
+            drop_guard(&format!(
+                "    let state = Rc::new(Cell::new(0));\n    if state.get() == 0 {{\n        let _g = Guard {{ sink: state.clone() }};\n    }}\n    {SCOPE_ASSERTION}"
+            )),
+        ),
+        (
+            "early_return_before_the_scope",
+            drop_guard(&format!(
+                "    let state = Rc::new(Cell::new(0));\n    if state.get() == 0 {{\n        return;\n    }}\n{block}    {SCOPE_ASSERTION}"
+            )),
+        ),
+        (
+            "early_return_inside_a_macro_before_the_scope",
+            drop_guard(&format!(
+                "    let state = Rc::new(Cell::new(0));\n    assert!(Some(1).filter(|_| false).is_none() || {{ return; }});\n{block}    {SCOPE_ASSERTION}"
+            )),
+        ),
+        (
+            "shadowed_drop",
+            drop_guard_with(
+                "fn drop<T>(_value: T) {}",
+                &format!(
+                    "    let state = Rc::new(Cell::new(0));\n    let g = Guard {{ sink: state.clone() }};\n    drop(g);\n    {SCOPE_ASSERTION}"
+                ),
+            ),
+        ),
+        (
+            "second_drop_impl_for_the_type_name",
+            drop_guard_with(
+                "mod elsewhere { pub struct Guard; impl Drop for Guard { fn drop(&mut self) {} } }",
+                &shared_cell_body("block")?,
+            ),
+        ),
+        (
+            "type_alias_of_the_guard",
+            drop_guard_with("type Held = Guard;", &shared_cell_body("block")?),
+        ),
+        (
+            "renamed_import_of_the_guard",
+            drop_guard_with(
+                "mod inner { pub use super::Guard as Held; }",
+                &shared_cell_body("block")?,
+            ),
+        ),
+        (
+            "item_macro_in_the_file",
+            drop_guard_with(
+                "macro_rules! extra { () => { impl Drop for Other { fn drop(&mut self) {} } }; }",
+                &shared_cell_body("block")?,
+            ),
+        ),
+        (
+            "should_panic_test",
+            drop_guard(&shared_cell_body("block")?).replace_checked(
+                "#[test]\nfn scope_observer",
+                "#[test]\n#[should_panic]\nfn scope_observer",
+            ),
         ),
     ];
-    for (label, body) in cases {
-        let source = drop_guard(&body);
-        let finding = finding(
-            &source,
-            &changed_effect(&source, "self.sink.set(1)"),
-            "self.sink.set(1)",
-            "call_deletion",
-        )?;
-        assert_ne!(finding["classification"], "exposed", "{label}: {finding}");
+    for (label, source) in cases {
+        let finding = destructor_finding(&source)?;
         assert_eq!(
             finding["classification"], "static_unknown",
             "{label}: {finding}"
         );
     }
     Ok(())
+}
+
+/// A predicate on the changed line of a destructor has no carrier: the
+/// carrier reads a write the guard makes, not a condition it evaluates.
+#[test]
+fn a_predicate_in_a_destructor_is_never_credited() -> Result<(), String> {
+    let source = drop_guard(&shared_cell_body("block")?).replace_checked(
+        "self.sink.set(1);",
+        "if self.sink.get() >= 0 {\n            self.sink.set(1);\n        }",
+    );
+    let line = source
+        .lines()
+        .position(|line| line.contains("self.sink.get() >= 0"))
+        .unwrap_or(0)
+        + 1;
+    let diff = format!(
+        "--- a/src/sensors/ripr_limits.rs\n+++ b/src/sensors/ripr_limits.rs\n@@ -{line},1 +{line},1 @@\n-        if self.sink.get() > 0 {{\n+        if self.sink.get() >= 0 {{\n"
+    );
+    let finding = finding(&source, &diff, "self.sink.get() >= 0", "predicate")?;
+    assert_ne!(finding["classification"], "exposed", "{finding}");
+    Ok(())
+}
+
+/// The `RefCell<Vec<_>>` handle of the carrier: the destructor pushes a literal
+/// and the assertion expects exactly that one-element vector.
+fn drop_vec_guard(initial: &str, expected: &str, test_body_scope: &str) -> String {
+    format!(
+        r#"use std::{{cell::RefCell, rc::Rc}};
+struct Guard {{ sink: Rc<RefCell<Vec<usize>>> }}
+impl Drop for Guard {{
+    fn drop(&mut self) {{
+        self.sink.borrow_mut().push(1);
+    }}
+}}
+#[derive(Debug, PartialEq)] struct Observation {{ cell: Rc<RefCell<Vec<usize>>> }}
+#[test]
+fn scope_observer() {{
+    let state = Rc::new(RefCell::new({initial}));
+{test_body_scope}
+    assert_eq!(Observation {{ cell: state }}, Observation {{ cell: Rc::new(RefCell::new({expected})) }});
+}}
+"#
+    )
+}
+
+#[test]
+fn a_vec_handle_carrier_credits_only_the_pushed_value() -> Result<(), String> {
+    let scope = "    {\n        let _g = Guard { sink: state.clone() };\n    }";
+    let cases = [
+        ("pushed_value_expected", "Vec::new()", "vec![1]", "exposed"),
+        ("empty_literal_start", "vec![]", "vec![1]", "exposed"),
+        (
+            "other_value_expected",
+            "Vec::new()",
+            "vec![2]",
+            "static_unknown",
+        ),
+        ("start_is_not_empty", "vec![1]", "vec![1]", "static_unknown"),
+    ];
+    for (label, initial, expected, want) in cases {
+        let source = drop_vec_guard(initial, expected, scope);
+        let finding = finding(
+            &source,
+            &changed_effect_push(&source),
+            "self.sink.borrow_mut().push(1)",
+            "call_deletion",
+        )?;
+        assert_eq!(finding["classification"], want, "{label}: {finding}");
+    }
+    Ok(())
+}
+
+fn changed_effect_push(source: &str) -> String {
+    let line = source
+        .lines()
+        .position(|line| line.contains("self.sink.borrow_mut().push(1)"))
+        .unwrap_or(0)
+        + 1;
+    format!(
+        "--- a/src/sensors/ripr_limits.rs\n+++ b/src/sensors/ripr_limits.rs\n@@ -{line},1 +{line},1 @@\n-        self.sink.borrow_mut().push(0);\n+        self.sink.borrow_mut().push(1);\n"
+    )
 }
 
 const UNUSED_TRAIT: &str =

@@ -1993,11 +1993,11 @@ fn check_start_here_names_production_finding_for_boundary_flip_with_test() -> Re
         .next()
         .unwrap_or(start_here);
     assert!(
-        stdout.contains("1 unknown"),
+        stdout.contains("1 unclear"),
         "the signature-line edit must seed the fn-level unknown probe:\n{stdout}"
     );
     assert!(
-        !block.contains("limited by static analysis"),
+        !block.contains("ripr cannot tell from reading the code"),
         "Start here must not lead with the limitation state when the production edit is decisive:\n{block}"
     );
     assert!(

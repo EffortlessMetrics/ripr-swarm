@@ -253,3 +253,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_repair_packet_boundary_parameter_constant_shaped (22)
+
+Reason:
+RIPR-SPEC-0122: plain-language wording for the default and human-full check views (#10691); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_parameter_constant_shaped --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -45,6 +45,7 @@ use super::{
 };
 use crate::analysis::diff::lines_look_alike;
 use crate::analysis::probes::{collision_ordinals, collision_rank_key};
+use crate::domain::StaticLimitKind;
 use crate::domain::{
     Confidence, ExposureClass, Finding, LanguageId as DomainLanguageId, LanguageStatus,
     MissingDiscriminatorFact, OracleKind, OracleStrength, Probe, ProbeFamily, RevealEvidence,
@@ -1354,6 +1355,7 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
 
     let recommended = python_recommended_next_step(
         &class,
+        owner,
         &family,
         has_oracle_eligible_relation,
         &missing_discriminators,
@@ -1615,6 +1617,17 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
         source_currentness,
     };
     apply_python_no_static_path_limit(&mut finding, owner, owners, all_tests);
+    // #10708: the with-no-static-link guidance is pre-limit advice. The
+    // post-classification step can only attach the Python transitive-reach
+    // limitation to a NoStaticPath finding with no related tests (`apply_
+    // python_no_static_path_limit`); a static limit already classifies
+    // conservatively elsewhere. When that witness lands, the direct-call
+    // target is no longer established, so silence the stale advice.
+    if finding.class == ExposureClass::NoStaticPath
+        && finding.static_limit_kind == Some(StaticLimitKind::PythonTransitiveReachUnresolved)
+    {
+        finding.recommended_next_step = None;
+    }
     if let Some(origins) = value_origins {
         origins.record(&finding, files);
     }

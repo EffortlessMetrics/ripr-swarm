@@ -505,3 +505,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_cross_package_test (26)
+
+Reason:
+RIPR-SPEC-0122: plain-language wording for the default and human-full check views (#10691); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless ts_cross_package_test --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
