@@ -56,6 +56,7 @@ impl Universe {
 enum Kind {
     File,
     Absent,
+    Test,
     Universe,
 }
 
@@ -236,6 +237,16 @@ pub(in crate::analysis) fn file(path: &Path, present: bool) {
         path.to_str(),
         Location::caller(),
     );
+}
+
+/// One test fact read by its position. The subject names the fact
+/// (`file:start_line:name`), so a keyed read is not a whole-set dependency.
+#[track_caller]
+pub(in crate::analysis) fn test(file: &Path, start_line: usize, name: &str) {
+    let subject = file
+        .to_str()
+        .map(|file| format!("{file}:{start_line}:{name}"));
+    record(Kind::Test, subject.as_deref(), Location::caller());
 }
 
 #[track_caller]

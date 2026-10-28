@@ -190,7 +190,10 @@ Each `classify_probe_with_candidate_index_and_origins` invocation owns its
 recording scope, including when one Rayon worker handles several probes.
 `IndexFiles::get/get_key_value` record `file` or `absent`; `iter/values` and
 file-set length record `universe(files)`; `functions/tests` record their
-conservative whole-set views. A view is a whole-set dependency even when the
+conservative whole-set views, while `RustIndex::test_at` reads one test fact by
+position and records a `test` read named `file:start_line:name` instead. That
+keyed read names the fact only: what the fact was derived from (for a
+macro-generated test, definitions in other files) is still unsealed. A view is a whole-set dependency even when the
 caller later narrows it. The site names the calling Rust source location.
 
 Rows contain a probe id when representable, reads grouped by kind/subject/site
