@@ -1559,6 +1559,25 @@ mod tests {
         );
     }
 
+    #[test]
+    fn equality_shape_memo_answers_a_repeat_from_the_memo() {
+        // A planted entry no fresh computation could produce proves the
+        // second ask reads the memo instead of recomputing the shape.
+        let text = "assert_eq!(memo_probe(1)\n, 2\n)";
+        let planted: EqualityShape = Some((true, vec!["planted".to_string()]));
+        assert_ne!(equality_assertion_shape_uncached(text), planted);
+        EQUALITY_SHAPE_MEMO
+            .with(|memo| memo.borrow_mut().insert(text.to_string(), planted.clone()));
+        assert_eq!(equality_assertion_shape(text), planted);
+        let entries = EQUALITY_SHAPE_MEMO.with(|memo| memo.borrow().len());
+        assert_eq!(equality_assertion_shape(text), planted);
+        assert_eq!(
+            EQUALITY_SHAPE_MEMO.with(|memo| memo.borrow().len()),
+            entries,
+            "a hit must not add an entry"
+        );
+    }
+
     fn verdict_for_owner(owner: &str, assertion: &str) -> Result<ExactValueVerdict, String> {
         let adapter = RaRustSyntaxAdapter;
         let facts = adapter
