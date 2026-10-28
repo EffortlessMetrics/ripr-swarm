@@ -6194,6 +6194,9 @@ pub(crate) struct OwnerLineContext<'a> {
     pub(crate) mock_paths: Vec<String>,
     pub(crate) named_limitations_from_ownership: Vec<TypeScriptNamedLimitation>,
     pub(crate) named_limitations_from_spy: Vec<TypeScriptNamedLimitation>,
+    /// Whole-file one-for-one replacement established by the diff-owning driver.
+    /// A per-line old counterpart alone cannot rule out other removed calls.
+    pub(crate) single_line_replacement: bool,
 }
 
 pub(crate) fn owner_line_context<'a>(
@@ -6239,6 +6242,7 @@ pub(crate) fn owner_line_context<'a>(
         mock_paths,
         named_limitations_from_ownership,
         named_limitations_from_spy,
+        single_line_replacement: false,
     }
 }
 
@@ -6606,6 +6610,33 @@ pub(crate) fn classify_resolved_owner(
         || field_update_witnessed
     {
         TypeScriptProbeShape::new(ProbeFamily::ReturnValue, DeltaKind::Value)
+    } else {
+        probe_shape
+    };
+    // #10157: additional credit only after receiver identity and spy order
+    // have been established together. Generic oracle projection is unchanged.
+    let counted_removal = !probe_shape.specific
+        && context.single_line_replacement
+        && super::call_removal_guard::removed_method_call(line_text, old_line_text).is_some_and(
+            |removed| {
+                super::call_removal_guard::call_count_pins_removed_call(
+                    &removed,
+                    line_text,
+                    owner,
+                    related_candidates,
+                    alias_map,
+                    workspace_root,
+                ) && owner.source_text.as_deref().is_some_and(|source| {
+                    super::mock_payload_guard::runs_changed_line_once(
+                        source,
+                        &owner.name,
+                        line_text,
+                    )
+                })
+            },
+        );
+    let probe_shape = if counted_removal {
+        TypeScriptProbeShape::new(ProbeFamily::CallDeletion, DeltaKind::Effect)
     } else {
         probe_shape
     };
