@@ -296,20 +296,25 @@ const ALIAS_IMPORT_SCAN_MAX_BYTES: u64 = 4 * 1024 * 1024;
 
 /// `true` when an indexed file may name a path through the alias link.
 ///
-/// The check is a raw-text search for the link's own name as a path
-/// component (`/<name>` not continued by another name character), so no
-/// quoting, comment, escape or filename-character rule decides it:
-/// `'../my lib/lib'`, `"../a$b/sum"` and `/* " */ import ... "../alias/sum"`
-/// all match. It over-counts (a string mentioning `/name`, or a different
-/// directory with the same name) and never claims an unused alias from
-/// text it could not read: an unreadable or oversized indexed file counts
-/// as naming one. Decoded literal values are checked as well (see
-/// [`decoded_literal_names_alias`]).
+/// A parsed file counts when one of its string or template literals is a
+/// relative specifier (`./x`, `../x`) that resolves, lexically from the
+/// importing file's directory, to the link or a path beneath it. Resolving
+/// the specifier decides which directory it names, so no character of the
+/// link's or its target's name can be mistaken for a component boundary, and
+/// prose, comments and bare specifiers (resolved through disclosed
+/// resolution config) do not count. An absolute-looking literal (`/...`)
+/// cannot be resolved lexically and counts when it spells `/<name>` as a path
+/// component. A file that does not parse cleanly, an unreadable file and an
+/// oversized file cannot be ruled out: the first counts on a raw-text
+/// `/<name>` match or any character escape, the others always count. Decoded
+/// literal values are used, so `'../al\u0069as/lib'` and `'..\u002falias/lib'`
+/// match.
 fn any_file_imports_through(root: &Path, files: &[PathBuf], alias: &Path) -> bool {
     let Some(name) = alias.file_name().and_then(|name| name.to_str()) else {
         return true;
     };
     let needle = format!("/{name}");
+    let alias_parts = path_parts(alias);
     files.iter().any(|file| {
         let full = root.join(file);
         let Ok(metadata) = std::fs::metadata(&full) else {
@@ -321,12 +326,52 @@ fn any_file_imports_through(root: &Path, files: &[PathBuf], alias: &Path) -> boo
         let Ok(text) = std::fs::read_to_string(&full) else {
             return true;
         };
-        names_alias_component(&text, &needle) || decoded_literal_names_alias(&text, file, &needle)
+        literal_reaches_alias(&text, file, &needle, &alias_parts)
     })
 }
 
-/// `true` when `haystack` has `needle` (`/<name>`) not continued by another
-/// name character.
+/// Normal components of a root-relative path as strings.
+fn path_parts(path: &Path) -> Vec<String> {
+    path.components()
+        .filter_map(|component| match component {
+            std::path::Component::Normal(part) => Some(part.to_string_lossy().into_owned()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Resolve the relative specifier `value` lexically from the directory of the
+/// root-relative `file`, returning its root-relative components, or `None`
+/// when it is not relative or leaves the root.
+fn resolve_relative_specifier(file: &Path, value: &str) -> Option<Vec<String>> {
+    if !(value == "." || value == ".." || value.starts_with("./") || value.starts_with("../")) {
+        return None;
+    }
+    let mut parts = path_parts(file.parent().unwrap_or(Path::new("")));
+    for part in value.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                parts.pop()?;
+            }
+            other => parts.push(other.to_string()),
+        }
+    }
+    Some(parts)
+}
+
+/// Whether one decoded literal value reaches the alias (see
+/// [`any_file_imports_through`]).
+fn value_reaches_alias(value: &str, file: &Path, needle: &str, alias_parts: &[String]) -> bool {
+    if value.starts_with('/') {
+        return names_alias_component(value, needle);
+    }
+    resolve_relative_specifier(file, value)
+        .is_some_and(|resolved| resolved.starts_with(alias_parts))
+}
+
+/// `true` when `needle` (`/<name>`) is a path component of `haystack`, not
+/// continued by another name character.
 fn names_alias_component(haystack: &str, needle: &str) -> bool {
     haystack.match_indices(needle).any(|(start, _)| {
         haystack[start + needle.len()..]
@@ -336,22 +381,30 @@ fn names_alias_component(haystack: &str, needle: &str) -> bool {
     })
 }
 
-/// Whether a string or template literal's decoded value names the alias, so
-/// `'../al\u0069as/lib'` and `'..\u002falias/lib'` match although their raw
-/// text does not. A file that does not parse cleanly cannot be ruled out and
-/// falls back to counting any character escape.
-fn decoded_literal_names_alias(text: &str, file: &Path, needle: &str) -> bool {
+/// Whether a literal of the parsed file reaches the alias. A file that does
+/// not parse cleanly cannot be ruled out: it counts on a raw-text
+/// `/<name>` match or any character escape.
+fn literal_reaches_alias(text: &str, file: &Path, needle: &str, alias_parts: &[String]) -> bool {
     struct Finder<'n> {
+        file: &'n Path,
         needle: &'n str,
+        alias_parts: &'n [String],
         found: bool,
     }
     impl<'a> oxc_ast_visit::Visit<'a> for Finder<'_> {
         fn visit_string_literal(&mut self, literal: &oxc_ast::ast::StringLiteral<'a>) {
-            self.found |= names_alias_component(literal.value.as_str(), self.needle);
+            self.found |= value_reaches_alias(
+                literal.value.as_str(),
+                self.file,
+                self.needle,
+                self.alias_parts,
+            );
         }
         fn visit_template_element(&mut self, element: &oxc_ast::ast::TemplateElement<'a>) {
             self.found |= match element.value.cooked.as_deref() {
-                Some(cooked) => names_alias_component(cooked, self.needle),
+                Some(cooked) => {
+                    value_reaches_alias(cooked, self.file, self.needle, self.alias_parts)
+                }
                 None => true,
             };
         }
@@ -359,10 +412,12 @@ fn decoded_literal_names_alias(text: &str, file: &Path, needle: &str) -> bool {
     let allocator = oxc_allocator::Allocator::default();
     let parsed = oxc_parser::Parser::new(&allocator, text, source_type_for(file)).parse();
     if parsed.panicked || !parsed.errors.is_empty() {
-        return has_character_escape(text);
+        return names_alias_component(text, needle) || has_character_escape(text);
     }
     let mut finder = Finder {
+        file,
         needle,
+        alias_parts,
         found: false,
     };
     oxc_ast_visit::Visit::visit_program(&mut finder, &parsed.program);
@@ -1001,6 +1056,139 @@ mod tests {
         let scan =
             visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
         assert_eq!(scan.skipped_links, 1, "{:?}", scan.files);
+        Ok(())
+    }
+
+    /// A file that spells the alias's real path (`real/skills`) is not an
+    /// import through `link/skills`; an import through the link still counts
+    /// (a real repository's triage script mentions its own tooling path, #10899).
+    #[cfg(unix)]
+    #[test]
+    fn discovery_ignores_the_real_spelling_of_an_alias_target() -> std::io::Result<()> {
+        use std::os::unix::fs::symlink;
+        let workspace = TempWorkspace::new("link-alias-real-spelling");
+        workspace.write(
+            "real/skills/run.ts",
+            "// usage: run real/skills/run.ts\nexport const real = 'real/skills/run';\n",
+        );
+        std::fs::create_dir_all(workspace.0.join("link"))?;
+        symlink("../real/skills", workspace.0.join("link/skills"))?;
+        assert_eq!(
+            std::fs::canonicalize(workspace.0.join("link/skills"))?,
+            std::fs::canonicalize(workspace.0.join("real/skills"))?,
+            "the alias must resolve to the real indexed directory, not dangle"
+        );
+        let scan =
+            visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        assert!(
+            scan.files
+                .iter()
+                .any(|file| file.ends_with("real/skills/run.ts"))
+        );
+        assert_eq!(scan.skipped_links, 0, "{:?}", scan.files);
+
+        // The same file also importing through the link is still counted.
+        workspace.write(
+            "real/skills/run.ts",
+            "// real/skills/run.ts\nimport { x } from '../../link/skills/x';\n",
+        );
+        let scan =
+            visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        assert_eq!(scan.skipped_links, 1, "{:?}", scan.files);
+        Ok(())
+    }
+
+    /// The real-spelling exemption matches whole path components: a link
+    /// under `unreal/` is not mistaken for a spelling under `real/`, in raw
+    /// text or in a decoded literal (#10901 review).
+    #[cfg(unix)]
+    #[test]
+    fn discovery_does_not_exempt_a_parent_that_only_ends_with_the_target_parent()
+    -> std::io::Result<()> {
+        use std::os::unix::fs::symlink;
+        let workspace = TempWorkspace::new("link-alias-suffix-parent");
+        workspace.write("real/skills/x.ts", "export const x = 1;\n");
+        std::fs::create_dir_all(workspace.0.join("unreal"))?;
+        symlink("../real/skills", workspace.0.join("unreal/skills"))?;
+        assert_eq!(
+            std::fs::canonicalize(workspace.0.join("unreal/skills"))?,
+            std::fs::canonicalize(workspace.0.join("real/skills"))?,
+            "the alias must resolve to the real indexed directory, not dangle"
+        );
+        for import in [
+            "import { x } from '../unreal/skills/x';\n",
+            "import { x } from '../unreal\\u002fskills/x';\n",
+        ] {
+            workspace.write("tests/x.test.ts", import);
+            let scan =
+                visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+            assert_eq!(scan.skipped_links, 1, "{import}: {:?}", scan.files);
+        }
+
+        // Control: a spelling through the real parent is still the real path.
+        workspace.write("tests/x.test.ts", "import { x } from '../real/skills/x';\n");
+        let scan =
+            visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        assert_eq!(scan.skipped_links, 0, "{:?}", scan.files);
+        Ok(())
+    }
+
+    /// Which directory a relative specifier names is decided by resolving it,
+    /// not by characters around the target's name: a link under `my.real`,
+    /// `my:real`, `my real`, `my[real` or `a+real` is reached by its own
+    /// spelling in raw text and in a decoded literal, while the real spelling
+    /// and a bare or prose mention are not imports through the link
+    /// (#10901 review).
+    #[cfg(unix)]
+    #[test]
+    fn discovery_resolves_specifiers_instead_of_guessing_component_boundaries()
+    -> std::io::Result<()> {
+        use std::os::unix::fs::symlink;
+        for (index, parent) in ["my.real", "my:real", "my real", "my[real", "a+real"]
+            .into_iter()
+            .enumerate()
+        {
+            let workspace = TempWorkspace::new(&format!("link-alias-resolve-{index}"));
+            workspace.write("real/skills/x.ts", "export const x = 1;\n");
+            std::fs::create_dir_all(workspace.0.join(parent))?;
+            symlink("../real/skills", workspace.0.join(parent).join("skills"))?;
+            assert_eq!(
+                std::fs::canonicalize(workspace.0.join(parent).join("skills"))?,
+                std::fs::canonicalize(workspace.0.join("real/skills"))?,
+                "the alias must resolve to the real indexed directory, not dangle"
+            );
+            let escaped = parent.replace('/', "");
+            for (import, expected) in [
+                (format!("import {{ x }} from '../{parent}/skills/x';\n"), 1),
+                (
+                    format!("import {{ x }} from '../{escaped}\\u002fskills/x';\n"),
+                    1,
+                ),
+                ("import { x } from '../real/skills/x';\n".to_string(), 0),
+                (
+                    "import { x } from '..\\u002freal/skills/x';\n".to_string(),
+                    0,
+                ),
+                (
+                    format!(
+                        "// {parent}/skills is a tooling path\nexport const note = 'see {parent}/skills';\n"
+                    ),
+                    0,
+                ),
+            ] {
+                workspace.write("tests/x.test.ts", &import);
+                let scan = visit_workspace_with_handwritten(
+                    &workspace.0,
+                    DEFAULT_TS_MAX_WORKSPACE_FILES,
+                    &[],
+                );
+                assert_eq!(
+                    scan.skipped_links, expected,
+                    "{parent}: {import}: {:?}",
+                    scan.files
+                );
+            }
+        }
         Ok(())
     }
 

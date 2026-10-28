@@ -1130,6 +1130,32 @@ fn a_module_name_holding_a_parametrize_mark_parametrizes_the_test() {
     }
 }
 
+/// #10867: the literal cases come from the same pytest mark the routing read
+/// accepts. A spelled mark whose root may be another library's records no
+/// rows; pytest's mark reached through an alias does.
+#[test]
+fn parametrize_cases_follow_the_routing_read_of_the_mark() {
+    let cases = |import: &str| -> Vec<Option<usize>> {
+        let source = format!(
+            "{import}\n\n@{root}.mark.parametrize(\"account\", [1, 2])\ndef test_a(account):\n    pass\n",
+            root = if import.contains(" as pt") {
+                "pt"
+            } else {
+                "pytest"
+            }
+        );
+        extract_tests(Path::new("tests/test_account.py"), &source)
+            .into_iter()
+            .map(|test| test.parametrize.map(|found| found.cases.len()))
+            .collect()
+    };
+    assert_eq!(cases("import pytest"), vec![Some(2)]);
+    assert_eq!(cases("import pytest as pt"), vec![Some(2)]);
+    for import in ["import mylib as pytest", "import pytest\nimport pytest"] {
+        assert_eq!(cases(import), vec![None], "{import}");
+    }
+}
+
 #[test]
 fn extract_tests_recognizes_pytest_parametrize_and_unittest() {
     let tests = extract_tests(

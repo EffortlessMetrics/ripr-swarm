@@ -17697,6 +17697,20 @@ id = "RIPR-SPEC-0243"
 name = "TypeScript oracle and reach rules"
 spec = "docs/specs/RIPR-SPEC-0243-typescript-oracle-and-reach-rules.md"
 tests = [
+  "crates/ripr/src/analysis/language/typescript/call_removal_tests.rs::counted_removal_refuses_concurrent_receiver_edits",
+  "crates/ripr/src/analysis/language/typescript/call_removal_tests.rs::counted_removal_refuses_multiple_old_calls",
+  "crates/ripr/src/analysis/language/typescript/call_removal_tests.rs::counted_removal_refuses_unusable_target_methods",
+  "crates/ripr/src/analysis/language/typescript/call_removal_tests.rs::counted_removal_pins_removed_arguments_before_the_statement",
+  "crates/ripr/src/analysis/language/typescript/call_removal_tests.rs::counted_removal_refuses_arguments_that_can_throw",
+  "crates/ripr/src/analysis/language/typescript/call_removal_tests.rs::counted_removal_refuses_owner_export_alias_and_global_discard",
+  "crates/ripr/src/analysis/language/typescript/call_removal_tests.rs::counted_removal_refuses_mutated_mock_api",
+  "crates/ripr/src/analysis/language/typescript/call_removal_tests.rs::counted_removal_refuses_registration_argument_effects",
+  "crates/ripr/src/analysis/language/typescript/call_removal_tests.rs::counted_removal_refuses_enclosing_mock_shadow",
+  "crates/ripr/src/analysis/language/typescript/call_removal_tests.rs::counted_removal_refuses_early_return_and_default_parameters",
+  "crates/ripr/src/analysis/language/typescript/call_removal_tests.rs::counted_removal_retained_corpus_shape_is_exposed",
+  "crates/ripr/src/analysis/language/typescript/call_removal_tests.rs::counted_removal_refuses_export_aliases_and_opaque_reads",
+  "crates/ripr/src/analysis/language/typescript/call_removal_tests.rs::counted_removal_receiver_identity_controls",
+  "crates/ripr/src/analysis/language/typescript/call_removal_tests.rs::counted_removal_refuses_unresolved_execution",
   "crates/ripr/src/analysis/language/typescript/tests.rs::if_guarded_registration_is_indexed_with_guard_and_no_assertion_credit",
   "crates/ripr/src/analysis/language/typescript/tests.rs::else_branch_registration_names_the_negated_guard",
   "crates/ripr/src/analysis/language/typescript/tests.rs::describe_nested_under_an_if_guards_its_tests",
@@ -17986,6 +18000,10 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/assertion_library_tests.rs::exported_bindings_preserve_genuine_imported_runner_expect",
 ]
 fixtures = [
+  "fixtures/typescript_call_removal_throwing_method",
+  "fixtures/typescript_call_removal_absent_method",
+  "fixtures/typescript_call_removal_unbound_argument",
+  "fixtures/typescript_call_removal_multiple_calls",
   "fixtures/typescript_exported_expect_lookalike",
   "fixtures/typescript_enum_wrong_export",
   "fixtures/typescript_enum_canonical_alias",
@@ -18001,6 +18019,8 @@ fixtures = [
   "fixtures/ts_dead_assertion_after_try_empty_catch",
 ]
 code = [
+  "crates/ripr/src/analysis/language/typescript/call_removal_guard.rs",
+  "crates/ripr/src/analysis/language/typescript/mod.rs",
   "crates/ripr/src/analysis/language/typescript/enum_member_guard.rs",
   "crates/ripr/src/analysis/language/typescript/admission.rs",
   "crates/ripr/src/analysis/language/typescript/actionability.rs",
