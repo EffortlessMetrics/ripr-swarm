@@ -18,7 +18,7 @@
 
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::rust_index::RustIndex;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// How many levels of embedded field types are followed.
 const MAX_EMBEDDING_DEPTH: usize = 4;
@@ -34,15 +34,19 @@ pub(super) fn pushed_element_may_compare_leniently(literal: &str, index: &RustIn
     let lenient = handwritten_partial_eq_types(index);
     let mut defined = false;
     let mut visited = BTreeSet::new();
+    let mut shadowed = BTreeMap::new();
     let mut frontier = vec![element.type_name.clone()];
     frontier.extend(element.variant);
     for depth in 0..=MAX_EMBEDDING_DEPTH {
         let mut next = Vec::new();
-        for name in frontier {
+        for path in frontier {
+            // A workspace definition is found by its last segment; whether a
+            // type with no definition is std depends on the whole path.
+            let name = path.rsplit("::").next().unwrap_or("").to_string();
             if lenient.contains(&name) {
                 return true;
             }
-            if !visited.insert(name.clone()) {
+            if !visited.insert(path.clone()) {
                 continue;
             }
             let mut found = false;
@@ -62,26 +66,16 @@ pub(super) fn pushed_element_may_compare_leniently(literal: &str, index: &RustIn
                     // local `struct Shipped`).
                     defined |= depth == 0 && name == element.type_name;
                     // The item's own generic parameters are not field types.
-                    // Each variant name accounts for one occurrence, its own
-                    // declaration; a further occurrence is a field type to
-                    // follow (`enum Shape { Circle(Circle) }`).
                     let generics: BTreeSet<String> =
                         generic_parameters(item.generics).into_iter().collect();
-                    let mut pending_variants: BTreeSet<String> = if item.is_enum {
-                        variant_names(item.body).into_iter().collect()
-                    } else {
-                        BTreeSet::new()
-                    };
-                    next.extend(identifiers(item.body).filter(|ident| {
-                        is_type_like(ident)
-                            && !generics.contains(ident)
-                            && !pending_variants.remove(ident)
+                    next.extend(field_type_paths(&item).into_iter().filter(|field| {
+                        field.contains("::") || !generics.contains(field.as_str())
                     }));
                 }
             }
             // An embedded type that no workspace file defines and std does
             // not own may carry a hand-written `eq` the index cannot read.
-            if depth > 0 && !found && !is_known_std_type(&name) {
+            if depth > 0 && !found && !is_std_type_path(&path, index, &mut shadowed) {
                 return true;
             }
         }
@@ -261,39 +255,221 @@ fn generic_parameters(generics: &str) -> Vec<String> {
     names
 }
 
-/// The variant names of an enum body: the first identifier of each top-level
-/// comma-separated entry, past any `#[..]` attribute.
-fn variant_names(body: &str) -> Vec<String> {
-    let mut names = Vec::new();
+/// The type paths an item's fields name, with attributes, array lengths,
+/// enum variant names and discriminants left out: only a field's type can
+/// carry a `PartialEq` that is not derived.
+fn field_type_paths(item: &ItemParts<'_>) -> Vec<String> {
+    let body = strip_array_lengths(&strip_attributes(item.body));
+    if !item.is_enum {
+        return type_paths(&body);
+    }
+    entries(&body)
+        .iter()
+        .flat_map(|entry| {
+            let entry = entry.trim_start();
+            // The variant name is the entry's first identifier.
+            let payload = entry
+                .find(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+                .map_or("", |end| &entry[end..]);
+            // `= DISCRIMINANT` follows any payload, outside its delimiters.
+            let mut depth = 0usize;
+            let end = payload
+                .char_indices()
+                .find(|&(_, ch)| {
+                    match ch {
+                        '{' | '(' | '[' | '<' => depth += 1,
+                        '}' | ')' | ']' | '>' => depth = depth.saturating_sub(1),
+                        _ => {}
+                    }
+                    ch == '=' && depth == 0
+                })
+                .map_or(payload.len(), |(at, _)| at);
+            type_paths(&payload[..end])
+        })
+        .collect()
+}
+
+/// The top-level comma-separated entries of an enum body.
+fn entries(body: &str) -> Vec<String> {
+    let mut entries = Vec::new();
     let mut depth = 0usize;
     let mut entry = String::new();
-    let mut flush = |entry: &mut String| {
-        let text = entry.trim();
-        let text = if text.starts_with("#[") {
-            text.split_once(']')
-                .map_or("", |(_, rest)| rest.trim_start())
-        } else {
-            text
-        };
-        if let Some(name) = identifiers(text).next() {
-            names.push(name);
-        }
-        entry.clear();
-    };
     for ch in body.chars() {
         match ch {
             '{' | '(' | '[' | '<' => depth += 1,
             '}' | ')' | ']' | '>' => depth = depth.saturating_sub(1),
             ',' if depth == 0 => {
-                flush(&mut entry);
+                entries.push(std::mem::take(&mut entry));
                 continue;
             }
             _ => {}
         }
         entry.push(ch);
     }
-    flush(&mut entry);
-    names
+    entries.push(entry);
+    entries
+}
+
+/// `text` without its `#[..]` and `#![..]` attributes, whose arguments are
+/// not field types.
+fn strip_attributes(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch != '#' {
+            out.push(ch);
+            continue;
+        }
+        if chars.peek() == Some(&'!') {
+            chars.next();
+        }
+        if chars.peek() != Some(&'[') {
+            out.push(ch);
+            continue;
+        }
+        let mut depth = 0usize;
+        for inner in chars.by_ref() {
+            match inner {
+                '[' => depth += 1,
+                ']' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        out.push(' ');
+    }
+    out
+}
+
+/// `text` without the length expression of each array type (`[u8; SIZE]`
+/// keeps `u8`): a constant is not a field type.
+fn strip_array_lengths(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    // For each open `[`, whether its `;` has been seen.
+    let mut brackets: Vec<bool> = Vec::new();
+    for ch in text.chars() {
+        match ch {
+            '[' => brackets.push(false),
+            ';' if brackets.last() == Some(&false) => {
+                if let Some(last) = brackets.last_mut() {
+                    *last = true;
+                }
+                continue;
+            }
+            ']' => {
+                brackets.pop();
+            }
+            _ => {}
+        }
+        if brackets.last() != Some(&true) || ch == ']' {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+/// The type-like paths in `text`: a chain of identifiers joined by `::`
+/// whose last segment starts uppercase (`Sku`, `outside::Sku`).
+fn type_paths(text: &str) -> Vec<String> {
+    let mut paths = Vec::new();
+    let mut path = String::new();
+    let mut word = String::new();
+    let flush = |path: &mut String, paths: &mut Vec<String>| {
+        if path.rsplit("::").next().is_some_and(is_type_like) {
+            paths.push(std::mem::take(path));
+        }
+        path.clear();
+    };
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch.is_alphanumeric() || ch == '_' {
+            word.push(ch);
+            continue;
+        }
+        if !word.is_empty() {
+            if !path.is_empty() && !path.ends_with("::") {
+                // A new identifier without a joining `::` starts a new path.
+                flush(&mut path, &mut paths);
+            }
+            path.push_str(&word);
+            word.clear();
+        }
+        if ch == ':' && chars.peek() == Some(&':') && !path.is_empty() {
+            chars.next();
+            path.push_str("::");
+        } else {
+            if path.ends_with("::") {
+                path.truncate(path.len() - 2);
+            }
+            flush(&mut path, &mut paths);
+        }
+    }
+    if !word.is_empty() {
+        if !path.is_empty() && !path.ends_with("::") {
+            flush(&mut path, &mut paths);
+        }
+        path.push_str(&word);
+    }
+    if path.ends_with("::") {
+        path.truncate(path.len() - 2);
+    }
+    flush(&mut path, &mut paths);
+    paths
+}
+
+/// Whether `path` names a std/core/alloc type: a qualified path must start at
+/// one of those crates, and a bare name must not be imported from elsewhere
+/// (`use outside::String;` makes `String` a foreign type).
+fn is_std_type_path(path: &str, index: &RustIndex, shadowed: &mut BTreeMap<String, bool>) -> bool {
+    let mut segments = path.split("::");
+    let root = segments.next().unwrap_or("");
+    let name = path.rsplit("::").next().unwrap_or("");
+    if !is_known_std_type(name) {
+        return false;
+    }
+    if path.contains("::") {
+        return matches!(root, "std" | "core" | "alloc");
+    }
+    !*shadowed
+        .entry(name.to_string())
+        .or_insert_with(|| import_shadows(index, name))
+}
+
+/// Whether some workspace `use` brings a non-std `name` into scope, by name,
+/// alias or a glob from a crate outside the workspace's own paths.
+fn import_shadows(index: &RustIndex, name: &str) -> bool {
+    index.files().values().any(|facts| {
+        let raw = facts.data().source.as_ref();
+        if !raw.contains("use ") {
+            return false;
+        }
+        let masked = mask_comments_and_strings(raw);
+        masked.match_indices("use ").any(|(at, _)| {
+            let starts_word = masked[..at]
+                .chars()
+                .next_back()
+                .is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_'));
+            if !starts_word {
+                return false;
+            }
+            let statement = masked[at + 4..].split(';').next().unwrap_or("");
+            let root = statement
+                .trim_start_matches(['{', ' ', ':'])
+                .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+                .next()
+                .unwrap_or("");
+            if matches!(root, "std" | "core" | "alloc") {
+                return false;
+            }
+            let glob =
+                statement.trim_end().ends_with('*') && !matches!(root, "crate" | "self" | "super");
+            glob || identifiers(statement).any(|word| word == name)
+        })
+    })
 }
 
 /// A std/core/alloc type whose `PartialEq` compares what it holds, so only
@@ -486,16 +662,90 @@ mod tests {
     }
 
     #[test]
-    fn generic_parameters_and_variant_names_are_read_from_the_declaration() {
+    fn generic_parameters_are_read_from_the_declaration() {
         assert_eq!(generic_parameters("<T, F: Fn() -> u8>"), ["T", "F"]);
         assert_eq!(
             generic_parameters("<'a, T: Clone + PartialEq, const N: usize>"),
             ["a", "T", "N"]
         );
         assert!(generic_parameters("").is_empty());
+    }
+
+    fn field_paths(source: &str, name: &str) -> Vec<String> {
+        item_parts(source, name)
+            .map(|item| field_type_paths(&item))
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn field_type_paths_keep_qualified_paths_and_drop_non_types() {
         assert_eq!(
-            variant_names(" A { s: Sku }, B, #[serde(skip)] C(Sku, u8) "),
-            ["A", "B", "C"]
+            field_paths(
+                "struct L { a: outside::Sku, b: Vec<std::string::String>, c: u8 }",
+                "L"
+            ),
+            ["outside::Sku", "Vec", "std::string::String"]
         );
+        // Variant names, stacked attributes and discriminants are not types.
+        assert_eq!(
+            field_paths(
+                "enum K { #[a] #[b(X)] A { s: Sku }, B = FIRST, C(Sku, u8) = 4, D }",
+                "K"
+            ),
+            ["Sku", "Sku"]
+        );
+        // A variant that shares its payload's name still names the payload.
+        assert_eq!(field_paths("enum S { Circle(Circle) }", "S"), ["Circle"]);
+        // An array length is a constant, not a type.
+        assert_eq!(
+            field_paths("struct B { a: [u8; SIZE], b: [Sku; N] }", "B"),
+            ["Sku"]
+        );
+    }
+
+    /// #10684: the std allowlist applies to std paths, not to a familiar
+    /// basename a foreign type happens to share.
+    #[test]
+    fn a_foreign_type_named_like_a_std_type_may_compare_leniently() {
+        let lenient =
+            |source: &str| pushed_element_may_compare_leniently("Line", &index_with(source));
+        assert!(!lenient("pub struct Line { sku: String }\n"));
+        assert!(!lenient("pub struct Line { sku: std::string::String }\n"));
+        assert!(lenient("pub struct Line { sku: outside::String }\n"));
+        assert!(lenient("pub struct Line { sku: Vec<outside::String> }\n"));
+        assert!(lenient("pub struct Line { sku: crate_x::Option<u8> }\n"));
+        assert!(lenient(
+            "use outside::String;\npub struct Line { sku: String }\n"
+        ));
+        assert!(lenient(
+            "use outside::{Sku as String, Other};\npub struct Line { sku: String }\n"
+        ));
+        assert!(lenient(
+            "use outside::*;\npub struct Line { sku: String }\n"
+        ));
+        // Workspace-relative globs and std imports keep the std reading.
+        assert!(!lenient(
+            "use super::*;\nuse std::collections::BTreeMap;\npub struct Line { sku: String, m: BTreeMap<u8, u8> }\n"
+        ));
+    }
+
+    /// #10684: constants and attributes inside an enum do not read as
+    /// unknown field types.
+    #[test]
+    fn enum_discriminants_and_attributes_are_not_field_types() {
+        let lenient =
+            |source: &str| pushed_element_may_compare_leniently("Line", &index_with(source));
+        assert!(!lenient(
+            "pub enum Kind { A = FIRST, B = 2 }\npub struct Line { kind: Kind }\n"
+        ));
+        assert!(!lenient(
+            "pub enum Kind { #[serde(skip)] #[doc(alias = ALIAS)] A, B }\npub struct Line { kind: Kind }\n"
+        ));
+        assert!(!lenient(
+            "pub struct Line { buf: [u8; SIZE], name: String }\n"
+        ));
+        assert!(lenient(
+            "pub enum Kind { #[a] #[b] A { s: outside::Sku } }\npub struct Line { kind: Kind }\n"
+        ));
     }
 }
