@@ -2962,10 +2962,8 @@ fn absorb_macro_sites(
 
 /// Whether the manifests in the own scope make a directory name an unreliable
 /// stand-in for the crate an import names (RIPR-SPEC-0352). Fails closed: a
-/// manifest in scope (or the workspace root's) that renames a dependency
-/// (`package = ".."`), a manifest that cannot be read, or an imported name
-/// whose one matching directory holds a crate of another name, all send the
-/// import to every package.
+/// renamed dependency, an unreadable manifest, or a matching directory that
+/// holds a crate of another name sends the import to every package.
 fn own_scope_manifests_defeat_names(
     index: &RustIndex,
     packages: &BTreeSet<String>,
@@ -13796,11 +13794,11 @@ pub(super) fn imported_enum_variant_value(
     })
 }
 
-/// The `use` items whose enclosing module, file or block also contains line
-/// `line` (1-based) of `source`, joined one per line. An import in a sibling
-/// module or another function is not in scope for a test elsewhere in the
-/// file, so it can neither supply nor shadow a name there. `None` when the
-/// file does not parse or the line is not in it.
+/// The `use` items in scope for the one `fn` whose header spans `line`
+/// (1-based) of `source`, joined one per line: its own block and the modules,
+/// file and blocks enclosing it. A sibling module's or another function's import
+/// can neither supply nor shadow a name there. `None` when the file does not
+/// parse or the function is not unique.
 fn imports_visible_at_line(source: &str, line: usize) -> Option<String> {
     let parse = parse_clean_source_file(source)?;
     let line_of = |offset: ra_ap_syntax::TextSize| {

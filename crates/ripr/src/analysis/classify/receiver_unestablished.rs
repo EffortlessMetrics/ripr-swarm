@@ -1,34 +1,15 @@
 //! RIPR-SPEC-0352: a receiver blocked only by an unverifiable macro is not a
 //! gap.
 //!
-//! An inherent method owner relates to a test as `direct_owner_call` only when
-//! the receiver's type is established (#9611). A call written inside a standard
-//! assertion (`std::assert_eq!(Widget::new().read(), 4)`) counts only when the
-//! assertion macro binding is verified, and that check needs target-root
-//! placement: which Cargo target compiles the test file, and so which macros
-//! that target can see. An unresolved `include!` or `#[path]` anywhere in the
-//! workspace (a build-script output, `include!(concat!(env!("OUT_DIR"), ..))`)
-//! may compile any file into another crate, so placement is unavailable and the
-//! binding cannot be verified.
-//!
-//! The refusal then used to read as a receiver mismatch: the relation dropped to
-//! `weak_token_substring` and the finding became a gap. That is a claim ripr
-//! cannot make. The call resolves if the macro can be trusted, and whether it
-//! can is exactly what ripr cannot read. This rule withholds the gap under
-//! `rust_inherent_receiver_unestablished` and credits nothing:
-//!
-//! - the relation stays `weak_token_substring`, and no test gains
-//!   `direct_owner_call` or grip from this rule;
-//! - a receiver that would not resolve even with the macro trusted (a wrong
-//!   type, a message-only operand, a shadowed or rebound local, a shadowed
-//!   type) keeps its gap;
-//! - a refusal while placement IS available (a real source-level rebinding of
-//!   `std` or the macro) keeps its gap;
-//! - only the placement input of the macro check is lifted: bare-name
-//!   ambiguity, scoped and crate-local bindings and source-level rebinding stay
-//!   in force;
-//! - an oracle that is not `strong` over the owner keeps its gap, because the
-//!   gap holds whether or not the macro is trusted.
+//! A call inside a standard assertion (`std::assert_eq!(Widget::new().read(), 4)`)
+//! counts as a `direct_owner_call` only when the assertion macro binding is
+//! verified, which needs target-root placement. Where an unresolved `include!`
+//! or `#[path]` makes placement unavailable, the refusal used to read as a
+//! receiver mismatch and the finding became a gap ripr cannot claim. This rule
+//! withholds that gap under `rust_inherent_receiver_unestablished` and credits
+//! nothing. Only the placement input is lifted: a receiver that would not
+//! resolve with the macro trusted, a real source-level rebinding, and a
+//! non-`strong` oracle over the owner all keep their gap.
 //!
 //! The classifier decides per related test while the run-shared syntax memo is
 //! in scope and leaves a marker; the post-pass here consumes it. Like every

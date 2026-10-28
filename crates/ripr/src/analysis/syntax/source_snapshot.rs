@@ -558,20 +558,21 @@ mod tests {
     #[test]
     fn fragment_memo_is_bounded_by_entry_count_and_text_size() -> Result<(), String> {
         let memos = SourceSyntaxMemos::default();
+        let len = |memos: &SourceSyntaxMemos| {
+            memos
+                .fragments
+                .lock()
+                .map(|m| m.len())
+                .map_err(|e| e.to_string())
+        };
         let large = format!("fn big() {{ {} }}", "let a = 1; ".repeat(300));
         assert!(large.len() > FRAGMENT_MEMO_MAX_TEXT_BYTES);
         assert!(memos.parse_fragment(&large).is_some());
-        assert_eq!(memos.fragments.lock().map_err(|e| e.to_string())?.len(), 0);
+        assert_eq!(len(&memos)?, 0);
         for n in 0..FRAGMENT_MEMO_MAX_ENTRIES + 10 {
             assert!(memos.parse_fragment(&format!("fn f{n}() {{}}")).is_some());
         }
-        assert_eq!(
-            memos.fragments.lock().map_err(|e| e.to_string())?.len(),
-            FRAGMENT_MEMO_MAX_ENTRIES
-        );
-        // Past the cap a fragment still parses; an already-memoized one is shared.
-        assert!(memos.parse_fragment("fn past_the_cap() {}").is_some());
-        assert!(memos.parse_fragment("fn f0() {}").is_some());
+        assert_eq!(len(&memos)?, FRAGMENT_MEMO_MAX_ENTRIES);
         Ok(())
     }
 

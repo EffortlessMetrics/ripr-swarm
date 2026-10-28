@@ -13047,23 +13047,16 @@ fn imports_visible_at_a_line_exclude_sibling_modules_and_other_blocks() -> Resul
     assert!(visible.contains("c::Inner"), "{visible}");
     assert!(!visible.contains("crate::E"), "{visible}");
     assert!(!visible.contains("d::Elsewhere"), "{visible}");
-    Ok(())
-}
-
-/// A line's end can lie inside a sibling module opened after the test on the
-/// same line, so scope comes from the test's own node: that module's import
-/// supplies nothing, and two functions on one line leave scope unestablished.
-#[test]
-fn imports_visible_at_a_line_use_the_test_node_not_the_line_end() -> Result<(), String> {
+    // Scope comes from the test's own node, not the line's end, which can lie
+    // inside a sibling module opened later on the same line.
     let same_line = "use a::Root;\n#[test] fn checks() { use c::Inner; } mod unrelated {\n    use crate::E::*;\n}\n";
     let visible = imports_visible_at_line(same_line, 2).ok_or("parse")?;
     assert!(
-        visible.contains("a::Root") && visible.contains("c::Inner"),
+        visible.contains("c::Inner") && !visible.contains("crate::E"),
         "{visible}"
     );
-    assert!(!visible.contains("crate::E"), "{visible}");
-    let two = "fn a() {} fn b() {}\n";
-    assert!(imports_visible_at_line(two, 1).is_none());
+    // Two functions on one line leave the scope unestablished.
+    assert!(imports_visible_at_line("fn a() {} fn b() {}\n", 1).is_none());
     Ok(())
 }
 

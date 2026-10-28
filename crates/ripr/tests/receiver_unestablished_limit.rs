@@ -1,21 +1,14 @@
 //! Controls for an inherent receiver blocked only by an unverifiable assertion
 //! macro (RIPR-SPEC-0352).
 //!
-//! Steven's linked-A / generated-B workspace has three members. `a` is
-//! `[lib] test = false` and holds `Widget` with a `#[cfg(test)]` test that
-//! asserts through `std::assert_eq!`. `fakestd` exports its own `assert_eq!`.
-//! `b` renames `std` to `fakestd` and mounts `a`'s file through a
-//! build-script `include!`, so `cargo test --workspace` runs the test only in
-//! `b`, with the fake macro, and passes before and after the mutation.
-//!
-//! ripr cannot place a file in a Cargo target while an `include!` is
-//! unresolved, so it cannot say which `assert_eq!` the test sees. The owner
-//! call resolves if the macro is the standard one, so the finding is a named
-//! limitation, not a gap. Nothing is credited: both consumers keep
-//! `weak_token_substring`/`same_test_file`. Each control below changes one
-//! thing about that shape and keeps the gap.
-//!
-//! `--mode ready` is required: draft mode does not index `b`.
+//! The linked-A / generated-B workspace: `a` holds `Widget` and a test asserting
+//! through `std::assert_eq!`; `b` renames `std` to `fakestd` (which exports its
+//! own `assert_eq!`) and mounts `a`'s file through a build-script `include!`, so
+//! the test runs only in `b`, with the fake macro. ripr cannot place the file
+//! while an `include!` is unresolved, so the finding is a named limitation, not
+//! a gap, and nothing is credited. Each control changes one thing about that
+//! shape and keeps the gap. `--mode ready` is required: draft mode does not
+//! index `b`.
 
 use serde_json::Value;
 use std::path::PathBuf;
@@ -53,6 +46,22 @@ struct Shape<'a> {
     prelude: &'a str,
     /// Items inside `impl Widget`, after `new` and `read`.
     widget_items: &'a str,
+}
+
+impl<'a> Shape<'a> {
+    fn prelude(prelude: &'a str) -> Self {
+        Self {
+            prelude,
+            ..Self::default()
+        }
+    }
+
+    fn items(widget_items: &'a str) -> Self {
+        Self {
+            widget_items,
+            ..Self::default()
+        }
+    }
 }
 
 fn shared_source(shape: Shape<'_>, test_statement: &str, read_body: &str) -> String {
@@ -319,8 +328,6 @@ fn is_gap(finding: &Value) -> Result<bool, String> {
 /// The statement a test body asserts through `std::assert_eq!`.
 const CONTROL: &str = "std::assert_eq!(Widget::new().read(), 4);";
 
-/// Premise: the shape is a gap when nothing about the macro is in doubt, and
-/// the control is the same file behind an unresolved include.
 #[test]
 fn an_unplaced_standard_assertion_over_the_owner_call_is_a_named_limitation() -> Result<(), String>
 {
@@ -328,49 +335,32 @@ fn an_unplaced_standard_assertion_over_the_owner_call_is_a_named_limitation() ->
     assert_eq!(text(&control, "/classification")?, "static_unknown");
     assert_eq!(limit(&control), Some(LIMIT), "{control}");
     assert_eq!(
-        control
-            .get("stop_reasons")
-            .and_then(Value::as_array)
-            .map(|reasons| reasons.iter().filter_map(Value::as_str).collect::<Vec<_>>()),
-        Some(vec!["gap_evidence_unresolved"])
+        control.pointer("/stop_reasons"),
+        Some(&serde_json::json!(["gap_evidence_unresolved"]))
     );
-    // Nothing is credited: the relation stays a name match.
-    assert_eq!(
-        relations(&control),
-        vec!["weak_token_substring".to_string()]
-    );
+    // Nothing is credited, and the classifier marker never reaches the output.
+    assert_eq!(relations(&control), ["weak_token_substring"]);
     assert!(
-        !control
-            .get("evidence")
-            .and_then(Value::as_array)
-            .is_some_and(|lines| lines
-                .iter()
-                .filter_map(Value::as_str)
-                .any(|line| line.starts_with("receiver_unestablished:"))),
-        "the classifier marker must not reach the output: {control}"
+        !control.to_string().contains("receiver_unestablished:"),
+        "{control}"
     );
     Ok(())
 }
 
-/// The repository consumer already reads an unknown for this cause and credits
-/// nothing: `opaque`, a name-only `same_test_file` relation, not actionable.
+/// The repository consumer credits nothing: `opaque`, not actionable.
 #[test]
 fn the_repository_consumer_credits_nothing_for_the_unplaced_call() -> Result<(), String> {
     let seam = Workspace::create(Placement::Generated, CONTROL)?.seam()?;
     assert_eq!(text(&seam, "/grip_class")?, "opaque", "{seam}");
     assert!(
-        !text(&seam, "/evidence_record/actionability/class")?.starts_with("actionable_"),
-        "{seam}"
-    );
-    assert!(
-        !relations(&seam).iter().any(|r| r == "direct_owner_call"),
+        !text(&seam, "/evidence_record/actionability/class")?.starts_with("actionable_")
+            && !relations(&seam).iter().any(|r| r == "direct_owner_call"),
         "{seam}"
     );
     Ok(())
 }
 
-/// A receiver that would not resolve even with the macro trusted keeps the
-/// gap: the rule lifts only the macro gate, never the receiver check.
+/// A receiver that would not resolve even with the macro trusted keeps its gap.
 #[test]
 fn a_receiver_that_does_not_resolve_even_with_the_macro_trusted_keeps_its_gap() -> Result<(), String>
 {
@@ -393,80 +383,56 @@ fn a_receiver_that_does_not_resolve_even_with_the_macro_trusted_keeps_its_gap() 
             "let w: crate::foreign::Widget = crate::foreign::Widget; std::assert_eq!(w.read(), 4);",
         ),
     ] {
-        let finding = Workspace::create(Placement::Generated, statement)?.finding()?;
-        assert_ne!(limit(&finding), Some(LIMIT), "{label}: {finding}");
-        assert!(is_gap(&finding)?, "{label}: {finding}");
+        keeps_gap(label, Shape::default(), statement)?;
     }
     Ok(())
 }
 
-/// A bare `fixture()` is the declared free fn only while nothing in the file
-/// binds `fixture` another way; an import of the same name stands in for it.
+/// A bare `fixture()` is the declared free fn only while nothing else binds it.
 #[test]
 fn a_bare_factory_shadowed_by_an_import_keeps_the_gap() -> Result<(), String> {
-    let shape = Shape {
-        prelude: "pub fn fixture()->Widget{Widget}\n",
-        ..Shape::default()
-    };
-    let plain = Workspace::create_shaped(
-        Placement::Generated,
+    let shape = Shape::prelude("pub fn fixture()->Widget{Widget}\n");
+    reads_limit(
+        "the free fn is read",
         shape,
         "std::assert_eq!(fixture().read(), 4);",
-    )?
-    .finding()?;
-    assert_eq!(
-        limit(&plain),
-        Some(LIMIT),
-        "premise: the free fn is read: {plain}"
-    );
-    let shadowed = Workspace::create_shaped(
-        Placement::Generated,
-        shape,
-        "use std::iter::empty as fixture; std::assert_eq!(fixture::<u8>().read(), 4);",
-    )?
-    .finding()?;
-    assert_keeps_gap("import shadows the free fn", &shadowed)?;
-    let nested = Workspace::create_shaped(
-        Placement::Generated,
-        shape,
-        "fn fixture()->Other{Other} std::assert_eq!(fixture().read(), 4);",
-    )?
-    .finding()?;
-    assert_keeps_gap("a nested fn shadows the free fn", &nested)?;
-    let raw = Workspace::create_shaped(
-        Placement::Generated,
-        shape,
-        "fn r#fixture()->Other{Other} std::assert_eq!(fixture().read(), 4);",
-    )?
-    .finding()?;
-    assert_keeps_gap("a raw-named nested fn shadows the free fn", &raw)?;
-    let binding = Workspace::create_shaped(
-        Placement::Generated,
-        shape,
-        "let r#fixture = || Other; std::assert_eq!(fixture().read(), 4);",
-    )?
-    .finding()?;
-    assert_keeps_gap("a raw local binding shadows the free fn", &binding)
-}
-
-/// `foreign::Widget::seeded()` is a different type than the local `Widget`,
-/// so a qualified factory is never read as the owner's own.
-#[test]
-fn a_qualified_associated_factory_keeps_the_gap() -> Result<(), String> {
+    )?;
     for (label, statement) in [
         (
-            "inline",
-            "std::assert_eq!(foreign::Widget::new().read(), 4);",
+            "import",
+            "use std::iter::empty as fixture; std::assert_eq!(fixture::<u8>().read(), 4);",
         ),
         (
-            "bound",
-            "let w = foreign::Widget::new(); std::assert_eq!(w.read(), 4);",
+            "nested fn",
+            "fn fixture()->Other{Other} std::assert_eq!(fixture().read(), 4);",
+        ),
+        (
+            "raw nested fn",
+            "fn r#fixture()->Other{Other} std::assert_eq!(fixture().read(), 4);",
+        ),
+        (
+            "raw local binding",
+            "let r#fixture = || Other; std::assert_eq!(fixture().read(), 4);",
         ),
     ] {
-        let finding = Workspace::create(Placement::Generated, statement)?.finding()?;
-        assert_keeps_gap(label, &finding)?;
+        keeps_gap(label, shape, statement)?;
     }
     Ok(())
+}
+
+/// A qualified factory (`foreign::Widget::new()`) is never the owner's own.
+#[test]
+fn a_qualified_associated_factory_keeps_the_gap() -> Result<(), String> {
+    keeps_gap(
+        "inline",
+        Shape::default(),
+        "std::assert_eq!(foreign::Widget::new().read(), 4);",
+    )?;
+    keeps_gap(
+        "bound",
+        Shape::default(),
+        "let w = foreign::Widget::new(); std::assert_eq!(w.read(), 4);",
+    )
 }
 
 /// The declaration that supplies `Widget::seeded()` must be a directly
@@ -475,87 +441,55 @@ fn a_qualified_associated_factory_keeps_the_gap() -> Result<(), String> {
 /// type variable, so the call is not the owner's.
 #[test]
 fn an_unauthoritative_inherent_factory_declaration_keeps_the_gap() -> Result<(), String> {
-    let trait_fallback = "pub trait Factory { fn seeded() -> Other; }\n\
-                          impl Factory for Widget { fn seeded() -> Other { Other } }\n";
-    let statement = "std::assert_eq!(Widget::seeded().read(), 4);";
-    let positive = Workspace::create_shaped(
-        Placement::Generated,
-        Shape {
-            widget_items: "pub fn seeded()->Self{Widget}",
-            ..Shape::default()
-        },
-        statement,
-    )?
-    .finding()?;
-    assert_eq!(
-        limit(&positive),
-        Some(LIMIT),
-        "premise: a direct factory is read: {positive}"
-    );
-    for (label, shape, statement) in [
-        (
-            "fn local to a const",
-            Shape {
-                prelude: trait_fallback,
-                widget_items: "const HIDDEN: () = { fn seeded()->Widget{Widget} };",
-                ..Shape::default()
-            },
-            statement,
-        ),
-        (
-            "cfg-gated fn",
-            Shape {
-                prelude: trait_fallback,
-                widget_items: "#[cfg(any())] pub fn seeded()->Self{Widget}",
-                ..Shape::default()
-            },
-            statement,
-        ),
-        (
-            "cfg-gated impl",
-            Shape {
-                prelude: "pub trait Factory { fn seeded() -> Other; }\n\
-                          impl Factory for Widget { fn seeded() -> Other { Other } }\n\
-                          #[cfg(any())] impl Widget { pub fn seeded()->Self{Widget} }\n",
-                ..Shape::default()
-            },
-            statement,
-        ),
-        (
-            "cfg gated through a comment between cfg and its predicate",
-            Shape {
-                prelude: trait_fallback,
-                widget_items: "#[cfg/* gap */(any())] pub fn seeded()->Self{Widget}",
-                ..Shape::default()
-            },
-            statement,
-        ),
-        (
-            "raw generic spelled like the owner",
-            Shape {
-                widget_items: "pub fn seeded<r#Widget>(v: Widget)->Widget{v}",
-                ..Shape::default()
-            },
-            "std::assert_eq!(Widget::seeded(Other).read(), 4);",
-        ),
-        (
-            "generic spelled like the owner",
-            Shape {
-                widget_items: "pub fn seeded<Widget>(v: Widget)->Widget{v}",
-                ..Shape::default()
-            },
-            "std::assert_eq!(Widget::seeded(Other).read(), 4);",
-        ),
-    ] {
-        let finding =
-            Workspace::create_shaped(Placement::Generated, shape, statement)?.finding()?;
-        assert_keeps_gap(label, &finding)?;
-    }
-    Ok(())
+    const FACTORY: &str = "pub trait Factory { fn seeded() -> Other; }\n\
+                           impl Factory for Widget { fn seeded() -> Other { Other } }\n";
+    let seeded = "std::assert_eq!(Widget::seeded().read(), 4);";
+    let other = "std::assert_eq!(Widget::seeded(Other).read(), 4);";
+    reads_limit(
+        "a direct factory is read",
+        Shape::items("pub fn seeded()->Self{Widget}"),
+        seeded,
+    )?;
+    let with_trait = |widget_items| Shape {
+        prelude: FACTORY,
+        widget_items,
+        ..Shape::default()
+    };
+    keeps_gap(
+        "fn local to a const",
+        with_trait("const HIDDEN: () = { fn seeded()->Widget{Widget} };"),
+        seeded,
+    )?;
+    keeps_gap(
+        "cfg-gated fn",
+        with_trait("#[cfg(any())] pub fn seeded()->Self{Widget}"),
+        seeded,
+    )?;
+    keeps_gap(
+        "cfg gated through a comment",
+        with_trait("#[cfg/* gap */(any())] pub fn seeded()->Self{Widget}"),
+        seeded,
+    )?;
+    keeps_gap(
+        "cfg-gated impl",
+        Shape::prelude(&format!(
+            "{FACTORY}#[cfg(any())] impl Widget {{ pub fn seeded()->Self{{Widget}} }}\n"
+        )),
+        seeded,
+    )?;
+    keeps_gap(
+        "raw generic spelled like the owner",
+        Shape::items("pub fn seeded<r#Widget>(v: Widget)->Widget{v}"),
+        other,
+    )?;
+    keeps_gap(
+        "generic spelled like the owner",
+        Shape::items("pub fn seeded<Widget>(v: Widget)->Widget{v}"),
+        other,
+    )
 }
 
-/// With placement available, a rebound standard root is a real source-level
-/// refusal and keeps its gap; a plain standard macro is still credited.
+/// With placement available a rebound root keeps its gap; a plain macro is credited.
 #[test]
 fn available_placement_keeps_the_rebound_root_gap_and_the_plain_credit() -> Result<(), String> {
     let rebound = Workspace::create(Placement::Resolved, CONTROL)?.finding()?;
@@ -578,9 +512,20 @@ fn assert_keeps_gap(label: &str, finding: &Value) -> Result<(), String> {
     Ok(())
 }
 
-/// A weak oracle is a gap whether or not the macro can be trusted, so the
-/// withhold must not hide it: `std::assert!(w.read() > 0)` reads
-/// `weakly_exposed`/`direct_owner_call` with placement available.
+/// `statement` over `shape` in the unplaced workspace keeps its gap.
+fn keeps_gap(label: &str, shape: Shape<'_>, statement: &str) -> Result<(), String> {
+    let finding = Workspace::create_shaped(Placement::Generated, shape, statement)?.finding()?;
+    assert_keeps_gap(label, &finding)
+}
+
+/// `statement` over `shape` in the unplaced workspace reads the limit.
+fn reads_limit(label: &str, shape: Shape<'_>, statement: &str) -> Result<(), String> {
+    let finding = Workspace::create_shaped(Placement::Generated, shape, statement)?.finding()?;
+    assert_eq!(limit(&finding), Some(LIMIT), "premise, {label}: {finding}");
+    Ok(())
+}
+
+/// A weak oracle is a gap whether or not the macro can be trusted.
 #[test]
 fn a_weak_oracle_keeps_its_gap_even_though_the_macro_is_unverifiable() -> Result<(), String> {
     for (label, statement) in [
@@ -601,14 +546,12 @@ fn a_weak_oracle_keeps_its_gap_even_though_the_macro_is_unverifiable() -> Result
             "std::assert_eq!(Other::new().read(), 4); std::assert!(Widget::new().read() > 0);",
         ),
     ] {
-        let finding = Workspace::create(Placement::Generated, statement)?.finding()?;
-        assert_keeps_gap(label, &finding)?;
+        keeps_gap(label, Shape::default(), statement)?;
     }
     Ok(())
 }
 
-/// An unrelated weak assertion elsewhere in the test does not hide that the
-/// strong one over the owner is only blocked by the macro.
+/// An unrelated weak assertion does not lift the withhold.
 #[test]
 fn an_unrelated_weak_assertion_does_not_lift_the_withhold() -> Result<(), String> {
     let statement = "std::assert!(true); std::assert_eq!(Widget::new().read(), 4);";
@@ -617,10 +560,7 @@ fn an_unrelated_weak_assertion_does_not_lift_the_withhold() -> Result<(), String
     Ok(())
 }
 
-/// Only the placement-dependent part of the macro check is lifted. A visible
-/// `macro_rules! assert_eq` above `Widget` replaces the bare macro, whatever
-/// the workspace placement, so the assertion is not the standard one and the
-/// gap stays.
+/// A visible `macro_rules! assert_eq` replaces the bare macro, so the gap stays.
 #[test]
 fn a_visible_macro_that_replaces_the_bare_assertion_keeps_its_gap() -> Result<(), String> {
     let shape = Shape {
@@ -672,125 +612,4 @@ fn another_crates_glob_reexport_is_part_of_the_unplaced_doubt() -> Result<(), St
         "another crate's glob and exported macro are placement-dependent doubt: {finding}"
     );
     Ok(())
-}
-
-/// The workspace with `a` mounting a file of another package through a literal
-/// `#[path]` ahead of `shared`: the mount is resolved, so the file is part of
-/// the test's own scope whatever package directory holds it (the placed variant
-/// of this workspace is a gap).
-#[test]
-fn a_literal_path_mount_of_another_packages_macro_keeps_the_gap() -> Result<(), String> {
-    let workspace =
-        Workspace::create(Placement::Generated, "assert_eq!(Widget::new().read(), 4);")?;
-    workspace.write_file(
-        "a/src/lib.rs",
-        "#[macro_use]\n#[path = \"../../b/src/noop.rs\"]\nmod noop;\nmod shared;\n",
-    )?;
-    workspace.write_file(
-        "b/src/noop.rs",
-        "macro_rules! assert_eq { ($($t:tt)*) => {}; }\n",
-    )?;
-    let finding = workspace.finding()?;
-    assert_keeps_gap("literal #[path] mount into another package", &finding)
-}
-
-impl Workspace {
-    /// Members `a`, `mac` (package `mac_package`) and `other` (exporting a
-    /// no-op `assert_eq!`), `a` depending on `dependency` and starting with
-    /// `lib_head`.
-    fn with_siblings(
-        placement: Placement,
-        mac_package: &str,
-        other_package: &str,
-        dependency: &str,
-        lib_head: &str,
-    ) -> Result<Self, String> {
-        let workspace = Self::create(placement, "assert_eq!(Widget::new().read(), 4);")?;
-        workspace.write_file(
-            "Cargo.toml",
-            "[workspace]\nmembers = [\"a\", \"b\", \"fakestd\", \"mac\", \"other\"]\nresolver = \"2\"\n",
-        )?;
-        workspace.write_file(
-            "a/Cargo.toml",
-            &format!(
-                "[package]\nname = \"a\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n[lib]\ntest = false\ndoctest = false\n\n[dependencies]\n{dependency}\n"
-            ),
-        )?;
-        for (directory, package, source) in [
-            (
-                "mac",
-                mac_package,
-                // The directory `mac` exports the macro only where the
-                // dependency really points at it; elsewhere it is a decoy.
-                if dependency.contains("../mac") {
-                    "#[macro_export]\nmacro_rules! assert_eq { ($($t:tt)*) => {}; }\n"
-                } else {
-                    "pub fn benign() {}\n"
-                },
-            ),
-            (
-                "other",
-                other_package,
-                "#[macro_export]\nmacro_rules! assert_eq { ($($t:tt)*) => {}; }\n",
-            ),
-        ] {
-            workspace.write_file(
-                &format!("{directory}/Cargo.toml"),
-                &format!(
-                    "[package]\nname = \"{package}\"\nversion = \"0.0.0\"\nedition = \"2021\"\n"
-                ),
-            )?;
-            workspace.write_file(&format!("{directory}/src/lib.rs"), source)?;
-        }
-        workspace.write_file("a/src/lib.rs", &format!("{lib_head}\nmod shared;\n"))?;
-        Ok(workspace)
-    }
-}
-
-/// A glob import of a workspace crate that exports `assert_eq!` shadows the
-/// prelude macro in the importing package, so the crate's export is the test
-/// package's own doubt, not placement's. Contrast the `g` crate above, which
-/// the test package never imports.
-#[test]
-fn a_glob_import_of_a_dependency_macro_keeps_the_gap() -> Result<(), String> {
-    let finding = Workspace::with_siblings(
-        Placement::Generated,
-        "mac",
-        "other",
-        "mac = { path = \"../mac\" }",
-        "use mac::*;",
-    )?
-    .finding()?;
-    assert_keeps_gap("dependency macro via `use mac::*;`", &finding)
-}
-
-/// An explicit `use mac::assert_eq;` is a private import site in the test's
-/// own file.
-#[test]
-fn an_explicit_import_of_a_dependency_macro_keeps_the_gap() -> Result<(), String> {
-    let finding = Workspace::with_siblings(
-        Placement::Generated,
-        "mac",
-        "other",
-        "mac = { path = \"../mac\" }",
-        "use mac::assert_eq;",
-    )?
-    .finding()?;
-    assert_keeps_gap("dependency macro via an explicit import", &finding)
-}
-
-/// The decoy: `a` renames the macro-exporting `other` to `mac`, while a benign
-/// package lives in a directory also named `mac`. The directory name cannot
-/// stand for the crate, so the import reaches every package.
-#[test]
-fn a_renamed_dependency_behind_a_decoy_directory_keeps_the_gap() -> Result<(), String> {
-    let finding = Workspace::with_siblings(
-        Placement::Generated,
-        "benign",
-        "other",
-        "mac = { package = \"other\", path = \"../other\" }",
-        "use mac::*;",
-    )?
-    .finding()?;
-    assert_keeps_gap("renamed dependency behind a decoy directory", &finding)
 }

@@ -4077,12 +4077,11 @@ fn free_fn_name_is_imported_or_parameter(index: &RustIndex, test_file: &Path, na
     })
 }
 
-/// A bare `name()` call in `test_file` is a synchronous free helper that
-/// returns exactly `ty`: the only indexed free `fn name` in the workspace is
-/// declared in the same file, is not `async`, and its whole return type is
-/// `ty`. A second declaration, a local binding of the name in the file, a
-/// wrapper return type (`Result<ty>`) or an unreadable declaration fail
-/// closed, so an imported or shadowed `name` is never read as this helper.
+/// A bare `name()` call in `test_file` is a synchronous free helper returning
+/// exactly `ty`: the only indexed free `fn name` is declared in the same file,
+/// is not `async`, and returns `ty`. A second declaration, a local binding,
+/// import or parameter of the name, a wrapper return type or an unreadable
+/// declaration fail closed.
 fn free_fn_returns_type(
     index: &RustIndex,
     test_file: &Path,
@@ -4727,11 +4726,9 @@ pub(in crate::analysis) fn requires_inherent_receiver_identity(owner: &FunctionS
 }
 
 /// How a receiver check reads the standard assertion macros. `enforced` is the
-/// only production reading: an assertion operand counts only when the macro
-/// binding is verified. `trusted` lifts exactly one input, the target-root
+/// only production reading. `trusted` lifts exactly one input, the target-root
 /// placement a `std`/`core`-rooted macro path needs, to name a refusal that
-/// rests on it (RIPR-SPEC-0352); every other macro-binding refusal stays in
-/// force, and it never credits anything.
+/// rests on it (RIPR-SPEC-0352); it never credits anything.
 #[derive(Clone, Copy)]
 pub(in crate::analysis) struct PinGate<'a> {
     syntax: &'a super::OwnerPinSyntax,
@@ -5280,11 +5277,10 @@ pub(in crate::analysis) fn inherent_owner_call_resolves(
 }
 
 /// Whether `test` fails the inherent receiver check for `owner` only because
-/// the standard assertion macro binding cannot be verified, and cannot be
-/// verified because target-root placement is unavailable (RIPR-SPEC-0352).
-/// The check is the complete owner-call relation, so module/type shadows and a
-/// wrong or message-only receiver still refuse; only the macro gate is lifted.
-/// The answer names a limit. It never grants the relation.
+/// the standard assertion macro binding cannot be verified for lack of
+/// target-root placement (RIPR-SPEC-0352). The complete owner-call relation is
+/// checked, so shadows and a wrong receiver still refuse. It never grants the
+/// relation.
 pub(in crate::analysis) fn inherent_owner_call_resolves_if_macros_trusted(
     test: &TestSummary,
     owner: &FunctionSummary,
