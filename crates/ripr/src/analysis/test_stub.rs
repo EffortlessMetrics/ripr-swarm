@@ -538,7 +538,7 @@ fn check_signature(signature: &OwnerSignature) -> Result<(), TestStubRefusal> {
     if signature
         .params
         .iter()
-        .any(|param| param.ty.contains("impl ") || param.ty.trim().is_empty())
+        .any(|param| param.ty.trim().is_empty() || is_unsupported_impl(&param.ty))
     {
         return Err(TestStubRefusal::ParameterUnsupported);
     }
@@ -827,8 +827,9 @@ fn stub_body(
             .name
             .clone()
             .unwrap_or_else(|| format!("arg{}", index + 1));
+        let declared = impl_stand_in(&param.ty).unwrap_or_else(|| param.ty.clone());
         let ty = rebase_paths(
-            &concrete_type(&param.ty, owner_self, owner_trait),
+            &concrete_type(&declared, owner_self, owner_trait),
             path_scope,
         )
         .ok_or(TestStubRefusal::ParameterUnsupported)?;
@@ -1345,6 +1346,39 @@ fn is_integer_type(ty: &str) -> bool {
 /// type can annotate a `let` inside a test. In a trait impl an associated
 /// type `Self::Name` becomes `<Type as Trait>::Name`, since `Type::Name`
 /// is ambiguous outside the impl.
+/// A parameter typed `impl Into<T>` or `impl AsRef<T>` accepts `T` itself
+/// (`T: Into<T>`) or `&T` (`&T: AsRef<T>` for the std string/path/slice
+/// owners), so the stub declares the local with that concrete type and the
+/// call site compiles unchanged. Any other `impl Trait` stays refused.
+fn impl_stand_in(ty: &str) -> Option<String> {
+    let ty = ty.trim();
+    let (head, rest) = if let Some(rest) = ty.strip_prefix("impl Into<") {
+        ("", rest)
+    } else if let Some(rest) = ty.strip_prefix("impl AsRef<") {
+        ("&", rest)
+    } else {
+        return None;
+    };
+    let inner = rest.strip_suffix('>')?.trim();
+    let plain = !inner.is_empty()
+        && !inner.contains("impl ")
+        && !inner.contains('>')
+        && !inner.contains('<')
+        && !inner.contains('\'')
+        && !inner.contains('&');
+    if !plain {
+        return None;
+    }
+    if head == "&" && !matches!(inner, "str" | "Path" | "OsStr" | "[u8]") {
+        return None;
+    }
+    Some(format!("{head}{inner}"))
+}
+
+fn is_unsupported_impl(ty: &str) -> bool {
+    ty.contains("impl ") && impl_stand_in(ty).is_none()
+}
+
 fn concrete_type(ty: &str, self_type: Option<&str>, trait_path: Option<&str>) -> String {
     let mut out = String::new();
     let mut chars = ty.trim().chars().peekable();
