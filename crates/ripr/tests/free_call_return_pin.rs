@@ -381,3 +381,116 @@ fn free_call_from_a_method_entry_never_binds_an_associated_fn_of_the_same_impl()
     assert_ne!(class_of(&finding), "exposed", "{finding}");
     Ok(())
 }
+
+#[test]
+fn free_call_entry_whose_callee_is_bound_by_a_parameter_pattern_is_not_credited()
+-> Result<(), String> {
+    for parameters in [
+        "x: i64, (inner, _y): (fn(i64) -> i64, i64)",
+        "x: i64, mut inner: fn(i64) -> i64",
+        "x: i64, &inner: &fn(i64) -> i64",
+        "x: i64, ref inner: fn(i64) -> i64",
+        "x: i64, [inner, _]: [fn(i64) -> i64; 2]",
+    ] {
+        let lib = |owner: &str| {
+            format!("pub fn outer({parameters}) -> i64 {{\n    inner(x) + 1\n}}\n\n{owner}")
+        };
+        let finding = return_finding(
+            &lib(OWNER),
+            &lib(OWNER_CHANGED),
+            "use free_pin::outer;\n\n#[test]\nfn outer_is_pinned() {\n    assert_eq!(outer(5, Default::default()), 11);\n}\n",
+        )?;
+        assert_ne!(class_of(&finding), "exposed", "{parameters}: {finding}");
+    }
+    Ok(())
+}
+
+#[test]
+fn free_call_entry_whose_callee_is_rebound_in_a_body_is_not_credited() -> Result<(), String> {
+    for body in [
+        "const inner: fn(i64) -> i64 = |v| v;\n    inner(x) + 1",
+        "static inner: fn(i64) -> i64 = |v| v;\n    inner(x) + 1",
+        "let (inner, _) = (|v: i64| v, 0);\n    inner(x) + 1",
+        "use other::*;\n    inner(x) + 1",
+    ] {
+        let finding = changed(body, "")?;
+        assert_ne!(class_of(&finding), "exposed", "{body}: {finding}");
+    }
+    // The same rebinding in a middle hop.
+    for rebind in [
+        "const inner: fn(i64) -> i64 = |v| v;\n    inner(x)",
+        "use other::*;\n    inner(x)",
+    ] {
+        let lib = |owner: &str| {
+            format!(
+                "pub fn outer(x: i64) -> i64 {{\n    middle(x) + 1\n}}\n\nfn middle(x: i64) -> i64 {{\n    {rebind}\n}}\n\n{owner}"
+            )
+        };
+        let finding = return_finding(&lib(OWNER), &lib(OWNER_CHANGED), PIN)?;
+        assert_ne!(class_of(&finding), "exposed", "{rebind}: {finding}");
+    }
+    Ok(())
+}
+
+#[test]
+fn free_call_entry_over_an_integer_name_bound_by_a_use_is_not_credited() -> Result<(), String> {
+    for import in [
+        "use external::Wide as i64;\n",
+        "use external::i64;\n",
+        "use external::*;\n",
+    ] {
+        let finding = return_finding(
+            &format!("{import}{}", library("inner(x) + 1", OWNER, "")),
+            &format!("{import}{}", library("inner(x) + 1", OWNER_CHANGED, "")),
+            PIN,
+        )?;
+        assert_ne!(class_of(&finding), "exposed", "{import}: {finding}");
+    }
+    // The counterexample that motivated the import refusal: `Wide` implements
+    // `Add<u8>` and always answers `Wide(11)`, so the entry's `i64` is not an
+    // integer and the pin on `Wide(11)` says nothing about the owner. The
+    // same source with `type i64 = Wide;` is the declared-type control.
+    let wide = "#[derive(Debug, PartialEq)]\npub struct Wide(pub i64);\nimpl std::ops::Add<u8> for Wide {\n    type Output = Wide;\n    fn add(self, _other: u8) -> Wide {\n        Wide(11)\n    }\n}\n";
+    for alias in ["use Wide as i64;\n", "type i64 = Wide;\n"] {
+        let lib = |owner: &str| {
+            format!("{wide}{alias}pub fn outer(x: i64) -> i64 {{\n    inner(x) + 1\n}}\n\n{owner}")
+        };
+        let finding = return_finding(
+            &lib("fn inner(x: i64) -> i64 {\n    Wide(x + x)\n}\n"),
+            &lib("fn inner(x: i64) -> i64 {\n    Wide(x * 3)\n}\n"),
+            "use free_pin::{Wide, outer};\n\n#[test]\nfn outer_is_pinned() {\n    assert_eq!(outer(5), Wide(11));\n}\n",
+        )?;
+        assert_ne!(class_of(&finding), "exposed", "{alias}: {finding}");
+    }
+    Ok(())
+}
+
+#[test]
+fn free_call_entry_offset_literal_follows_rust_integer_lexing() -> Result<(), String> {
+    // `1_0` and `1_` are decimal literals; the pinned value moves with the
+    // owner by the literal, so only the expected value changes.
+    for (literal, pinned, class) in [
+        ("1_0", 20, "exposed"),
+        ("1_", 11, "exposed"),
+        ("_1", 11, "propagation_unknown"),
+        ("0x1", 11, "propagation_unknown"),
+        ("0b1", 11, "propagation_unknown"),
+        ("1u8", 11, "propagation_unknown"),
+        ("1_u8", 11, "propagation_unknown"),
+        ("1.0", 11, "propagation_unknown"),
+        ("1e0", 11, "propagation_unknown"),
+    ] {
+        let body = format!("inner(x) + {literal}");
+        let tests = format!(
+            "use free_pin::outer;\n\n#[test]\nfn outer_is_pinned() {{\n    assert_eq!(outer(5), {pinned});\n}}\n"
+        );
+        let extra = "const _1: i64 = 1;\n";
+        let finding = return_finding(
+            &library(&body, OWNER, extra),
+            &library(&body, OWNER_CHANGED, extra),
+            &tests,
+        )?;
+        assert_eq!(class_of(&finding), class, "{literal}: {finding}");
+    }
+    Ok(())
+}

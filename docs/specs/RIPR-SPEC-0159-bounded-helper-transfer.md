@@ -126,15 +126,17 @@ can only hint that a caller "may lead here" without changing anything.
   resolves to exactly one item: the callee is the one workspace function of
   its name, declared in the caller's own file and enclosing block scopes; it
   is not imported (a `use` of the name, a glob import or a
-  `macro_rules!` of it refuses), rebound by the caller, shadowed by a nested
-  `fn`, or a parameter of the caller; and no hop is a method call, a macro
+  `macro_rules!` of it refuses), rebound by the caller through any pattern,
+  `let`, `const`, `static`, block-level `use` or nested `fn`, or a parameter
+  (plain or pattern) of the caller; and no hop is a method call, a macro
   argument or a path-qualified call (`a::inner(x)`, `crate::inner(x)`). The
   entry is called by the test as a bare name, with the same one-call,
   whole-operand, exact-value assertion form the method pin requires. A hop
   tail forwards the call unchanged, or shifts it by a decimal integer
   literal (`inner(x) + 1`, `1 + inner(x)`, `inner(x) - 1`) when the owner and
   every observed hop caller declare a builtin integer return type that no
-  workspace type shadows: adding or subtracting a constant is injective on an
+  workspace type or `use` item (an import or rename of the name, or a glob import other
+  than `super::*` / `self::*`) shadows: adding or subtracting a constant is injective on an
   integer type, so the exact value at the entry moves with the owner's.
   Multiplication, division, remainder, bit operations, negation, `1 - call`,
   a second operand that is not a literal, `as` casts, literal suffixes,

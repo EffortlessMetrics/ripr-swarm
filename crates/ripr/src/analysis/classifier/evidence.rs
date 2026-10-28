@@ -521,6 +521,8 @@ impl ClassifiedProbeEvidence {
             context.probe.family,
             ProbeFamily::SideEffect | ProbeFamily::CallDeletion
         );
+        // The free-call chain's identity is one answer per probe.
+        let free_chain_identity = std::cell::OnceCell::new();
         let propagate = match (context.owner_fn, context.helper_chain.as_ref()) {
             // An already-unknown stage keeps its own reason.
             (Some(owner), Some(chain))
@@ -545,11 +547,22 @@ impl ClassifiedProbeEvidence {
                         )
                     } else {
                         let forwards = if matches!(context.probe.family, ProbeFamily::ReturnValue) {
-                            crate::analysis::classify::chain_forwards_return_to_observed_hops
+                            crate::analysis::classify::chain_forwards_return_to_observed_hops(
+                                &owner.name,
+                                chain,
+                                &context.related_tests,
+                                context.index,
+                                &free_chain_identity,
+                            )
                         } else {
-                            chain_forwards_to_observed_hops
+                            chain_forwards_to_observed_hops(
+                                &owner.name,
+                                chain,
+                                &context.related_tests,
+                                context.index,
+                            )
                         };
-                        !forwards(&owner.name, chain, &context.related_tests, context.index)
+                        !forwards
                             && field_projection.is_none()
                     } =>
             {
@@ -819,8 +832,8 @@ impl ClassifiedProbeEvidence {
                             chain,
                             &context.related_tests,
                             context.index,
-                            test,
-                            assertion,
+                            (test, assertion),
+                            &free_chain_identity,
                         )
                     })
                 });
