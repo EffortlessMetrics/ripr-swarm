@@ -1445,11 +1445,20 @@ fn implicit_observer() {
             "let alias = state.clone();\n    for _ in counter {}",
             "for _ in counter {}\n    state.set(9);",
             "touch(&counter);\n    for _ in counter {}",
+            "while let Some(_) = counter.next() {}",
             "",
         ] {
             let source = edit(CELL_OBSERVER, "for _ in counter {}", replacement)?;
             assert!(!observes(&source, "next", "next", DIRECT)?, "{replacement}");
         }
+        // The proof needs a prior dispatch: one placed after the assertion is not credited.
+        let removed = edit(CELL_OBSERVER, "for _ in counter {}", "")?;
+        let after = edit(
+            &removed,
+            CELL_ASSERTION,
+            &format!("{CELL_ASSERTION}\n    for _ in counter {{}}"),
+        )?;
+        assert!(!observes(&after, "next", "next", DIRECT)?);
         Ok(())
     }
 
@@ -1665,6 +1674,8 @@ fn implicit_observer() {
             "#[derive(Debug, Serialize)]",
             "#[derive(Debug, other::Clone)]",
             "#[derive]",
+            "#[cfg_attr(unix, derive(Serialize))]",
+            "#[cfg_attr(unix, inline)]",
         ] {
             assert_eq!(attr(refused), Some(false), "{refused}");
         }
