@@ -547,7 +547,7 @@ pub(super) fn assigned_attributes(source: &str) -> Option<Vec<String>> {
     }
 }
 
-fn assigned_attribute_names(statements: &[Stmt]) -> Vec<String> {
+pub(super) fn assigned_attribute_names(statements: &[Stmt]) -> Vec<String> {
     let mut attributes = Vec::new();
     visit_statements(statements, &mut |stmt| match stmt {
         Stmt::Assign(assign) => {

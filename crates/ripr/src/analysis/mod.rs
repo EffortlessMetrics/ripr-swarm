@@ -14,7 +14,7 @@ pub(crate) use generated_rust_corpus::{
     absent_changed_rust_file_limitations, generated_rust_recovery,
 };
 pub(crate) mod harness_projection;
-mod language;
+pub(crate) mod language;
 pub(crate) mod language_outcome;
 pub(crate) mod new_test_target;
 pub(crate) mod path_glob;
@@ -1037,6 +1037,12 @@ pub struct AnalysisResult {
     /// aggregate (#6475). A sidecar for in-process consumers (the editor);
     /// never serialized and not part of the public output contract.
     pub(crate) language_view: Option<language_outcome::LanguageCompletenessView>,
+    /// Per-language persistent fact-cache admissions for this run (#10725),
+    /// collected from each adapter's `LanguageDiffResult`. Rendered into the
+    /// verbose disclosure line by `app::check`; empty when no adapter did
+    /// cache work.
+    pub(crate) preview_fact_caches:
+        Vec<(crate::domain::LanguageId, language::PreviewFactCacheStats)>,
 }
 
 /// Default language list when callers do not pass `[languages]` config.

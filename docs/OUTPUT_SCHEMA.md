@@ -296,7 +296,8 @@ Field contract:
 On a refusal under `--json` stdout carries this envelope (the same stream
 `check`, `agent packet` and `agent verify-execute` use for refusal documents)
 and stderr the prose; on success the envelope never appears. An unknown
-`--seam-id` exits `3` on `agent card`, `agent stub` and `agent packet`. Operational could-not-complete failures of
+`--seam-id`, or a known one that agent policy withholds, exits `3` on `agent card`,
+`agent stub` and `agent packet`. Operational could-not-complete failures of
 `agent card` (an unreadable config, a failed git probe, a detail-source
 serialization failure) still exit `2` with human prose only, as does a refusal
 whose envelope cannot be rendered or written to stdout (no typed answer was
@@ -1019,6 +1020,8 @@ zeroed `summary`, same empty `findings`, same
 | `check_artifact_unusable` | `analysis/check-artifact` | A named `ripr context --from` check artifact is unreadable, malformed, foreign, or identity-mismatched (#7331). |
 | `gap_ledger_unusable` | `analysis/gap-ledger` | A named `ripr rerun --gap-ledger` file cannot be read or parsed (#7331). |
 | `seam_id_unknown` | `analysis/seam-inventory` | A named `ripr agent packet --seam-id` matches no current seam (#7331). |
+| `seam_not_actionable` | `analysis/seam-limitation` | A named `ripr agent start --seam-id` matches a seam that policy permits but the shared repair-admission gate refuses to start: a static-limitation seam (opaque or `*_unknown`) with no repairable gap, or a seam `ripr repair` and `agent card` report as not repair-eligible (route not ready, no editable test target); `agent packet` still renders its inspection packet (#10712). |
+| `seam_policy_omitted` | `analysis/seam-policy` | A named `ripr agent packet` or `ripr agent start` `--seam-id` matches a seam that agent policy withholds (configured off, already gripped, or not agent-visible) (#10712). |
 | `diff_input_unsupported` | `analysis/diff-input` | The shared diff parser refused a region, admission, or truncated textual section of an `agent brief --diff` or `--base` input; no brief selection ran. |
 | `git_invocation_timeout` | `analysis/git-timeout` | A git invocation exceeded its cooperative deadline and was terminated. |
 | `analysis_timeout` | `analysis/timeout` | The `ripr check` wall-clock budget (`--timeout SECS`, `RIPR_CHECK_TIMEOUT`) ran out before analysis finished; no findings were produced (#5369). |
@@ -1037,7 +1040,8 @@ for rerun, `"1.1"` for context, `"0.5"` for agent packet). `mode` appears only
 on commands that accept `--mode` (check, diff, context); `scope` is `"diff"`
 for diff-scoped commands and `"repo"` for agent brief and agent packet; agent
 brief echoes the caller-supplied `--base` when its working set selected one.
-The exit stays `2` and the human prose stays on stderr; argv usage errors stay
+The exit stays `2` and the human prose stays on stderr, except an unknown or
+policy-withheld `agent packet --seam-id`, which exits `3` (#10712); argv usage errors stay
 prose-only with empty stdout on every command.
 
 For `ripr check`, the machine-readable formats also carry their own refusal
@@ -17374,7 +17378,7 @@ Diagnostic shape:
   "severity": 2, // 1=Error, 2=Warning, 3=Information, 4=Hint
   "code": "ripr-seam-weakly-gripped",
   "source": "ripr",
-  "message": "Weakly gripped behavioral seam (predicate_boundary): amount >= discount_threshold",
+  "message": "Tests only loosely check this: amount >= discount_threshold",
   "data": {
     "schema_version": "0.1",
     "seam_id": "f3c9e4d21a0b7c88",
@@ -17401,6 +17405,11 @@ contains a local file and line. These diagnostics are sourced from the explicit
 GapRecord; they do not infer projectability from raw findings and do not make
 gate or badge decisions.
 
+The diagnostic `message` is plain English for the editor Problems panel: the
+gap kind is spoken as a phrase ("Missing boundary assertion"), and the
+CamelCase kind and repair route stay machine-side in `code` and `data`
+(#10695).
+
 GapRecord diagnostic shape:
 
 ```jsonc
@@ -17409,7 +17418,7 @@ GapRecord diagnostic shape:
   "severity": 2,
   "code": "ripr-gap-MissingBoundaryAssertion",
   "source": "ripr",
-  "message": "ripr gap: MissingBoundaryAssertion; repair route: AddBoundaryAssertion; changed behavior: amount >= threshold; suggested check: assert_eq!(...)",
+  "message": "Missing boundary assertion: amount >= threshold. Suggested check: assert_eq!(...).",
   "data": {
     "schema_version": "0.1",
     "source": "gap_decision_ledger",
