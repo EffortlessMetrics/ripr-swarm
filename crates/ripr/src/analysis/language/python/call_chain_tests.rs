@@ -317,3 +317,92 @@ fn chains_the_model_cannot_show_observe_the_edit_are_not_credited() -> Check {
     }
     Ok(())
 }
+
+/// Negatives for the review guards: what runs before the assertion, the
+/// test's own shape, how the test spells the entry, and code that can
+/// replace a hop without naming it.
+#[test]
+fn guards_around_the_evaluator_refuse_unproven_chains() -> Check {
+    let new = new_side(LEDGER);
+    // An earlier assertion fails on the old body, so the pinned one never
+    // ran against it; a helper call before the assertion may change state.
+    for test in [
+        "from reach.ledger import Ledger\n\n\ndef test_render_ledger():\n    assert Ledger().render_ledger() == \"|   |\"\n    assert Ledger().render_ledger() == \"|  |\"\n",
+        "from reach.ledger import Ledger\nfrom helpers import prepare\n\n\ndef test_render_ledger():\n    prepare()\n    assert Ledger().render_ledger() == \"|  |\"\n",
+        // A decorated test, and a module that defines the test twice.
+        "from reach.ledger import Ledger\nfrom helpers import retry\n\n\n@retry\ndef test_render_ledger():\n    assert Ledger().render_ledger() == \"|  |\"\n",
+        "from reach.ledger import Ledger\n\n\ndef test_render_ledger():\n    assert Ledger().render_ledger() == \"|  |\"\n\n\ndef test_render_ledger():\n    assert True\n",
+        // The package is imported but the owner module is not.
+        "import reach\n\n\ndef test_render_ledger():\n    assert reach.Ledger().render_ledger() == \"|  |\"\n",
+    ] {
+        withheld(&ledger_finding(&new, test)?, test);
+    }
+    // An earlier assertion that holds on both sides keeps the credit.
+    let test = "from reach.ledger import Ledger\n\n\ndef test_render_ledger():\n    assert Ledger().render_ledger() != \"-\"\n    assert Ledger().render_ledger() == \"|  |\"\n";
+    let finding = ledger_finding(&new, test)?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+
+    // An autouse conftest fixture may skip the test.
+    let finding = ledger_finding_with(
+        &new,
+        LEDGER_TEST,
+        &[(
+            "tests/conftest.py",
+            "import pytest\n\n\n@pytest.fixture(autouse=True)\ndef gate():\n    pytest.skip(\"off\")\n",
+        )],
+    )?;
+    withheld(&finding, "autouse skip");
+
+    // A foreign module (a conftest with effects is implicit reach already)
+    // writes a dunder hook that can intercept attribute lookup or
+    // construction without naming the hop.
+    for patches in [
+        "from reach.ledger import Ledger\n\nLedger.__getattribute__ = lambda self, name: (lambda: 2)\n",
+        "from reach.ledger import Ledger\n\nLedger.__new__ = lambda cls: object()\n",
+        "from reach.ledger import Ledger\n\ntype.__setattr__(Ledger, \"_ledger_pad\", lambda self: 2)\n",
+        "from reach.ledger import Ledger\n\nAlias = Ledger\nAlias.__getattribute__ = lambda self, name: (lambda: 2)\n",
+    ] {
+        let finding = ledger_finding_with(&new, LEDGER_TEST, &[("reach/patches.py", patches)])?;
+        withheld(&finding, patches);
+    }
+
+    // A generator hop, and a name-mangled hop, are outside the model.
+    for source in [
+        new.replacen(
+            "    def render_ledger(self):\n        return",
+            "    def render_ledger(self):\n        return (yield) if False else",
+            1,
+        ),
+        new.replace("_ledger_pad", "__ledger_pad"),
+    ] {
+        withheld(&ledger_finding(&source, LEDGER_TEST)?, &source);
+    }
+
+    // A fan-out the step budget cannot finish decides nothing.
+    let mut fan = String::from("class Fan:\n    def _leaf(self):\n        return 3\n");
+    let mut previous = String::from("_leaf");
+    for level in 0..14 {
+        let name = format!("_l{level}");
+        fan.push_str(&format!(
+            "\n    def {name}(self):\n        return self.{previous}() + self.{previous}()\n"
+        ));
+        previous = name;
+    }
+    fan.push_str(&format!(
+        "\n    def run(self):\n        return self.{previous}()\n"
+    ));
+    let test = "from reach.fan import Fan\n\n\ndef test_fan():\n    assert Fan().run() == 32768\n";
+    let finding = classify(
+        &[
+            ("reach/__init__.py", ""),
+            ("reach/fan.py", fan.as_str()),
+            ("tests/test_fan.py", test),
+        ],
+        "reach/fan.py",
+        3,
+        "        return 2",
+        "        return 3",
+    )?;
+    withheld(&finding, "fan-out budget");
+    Ok(())
+}

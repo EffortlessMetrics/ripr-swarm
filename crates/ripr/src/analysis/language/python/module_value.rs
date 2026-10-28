@@ -42,8 +42,10 @@ use std::path::Path;
 
 /// Words that mark a file able to rewrite another module's attribute at
 /// runtime without an assignment statement.
-const DYNAMIC_WRITERS: [&str; 10] = [
+const DYNAMIC_WRITERS: [&str; 12] = [
     "setattr",
+    "__setattr__",
+    "delattr",
     "patch",
     "monkeypatch",
     "reload",
@@ -464,6 +466,15 @@ impl ForeignWrites {
 }
 
 impl ForeignWrites {
+    /// Whether some workspace file assigns a dunder attribute (`__new__`,
+    /// `__getattribute__`, `__class__`, ...), which can change what any
+    /// class builds or looks up without naming the method (#9226).
+    pub(super) fn writes_dunder(&self) -> bool {
+        self.attributes.iter().any(|attribute| {
+            attribute.len() > 4 && attribute.starts_with("__") && attribute.ends_with("__")
+        })
+    }
+
     /// Whether some workspace file assigns a function's code slots, which can
     /// replace any reader without rebinding its name (#10626). Checked where a
     /// reader is evaluated, not for plain names such as `version_info`.

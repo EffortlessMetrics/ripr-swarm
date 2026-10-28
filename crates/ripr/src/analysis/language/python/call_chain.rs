@@ -14,32 +14,42 @@
 //! - every callable the evaluation enters is a model callable: a top-level
 //!   undecorated synchronous `def` with plain positional parameters (no
 //!   defaults, `*args`, keywords, or annotations other than a bare name) whose
-//!   body is one `return` (a leading docstring allowed), bound once and written
-//!   by no workspace file; or such a method of a model class;
+//!   body is one `return` (a leading docstring allowed) with no `yield`,
+//!   `await` or `:=`, bound once and written by no workspace file; or such a
+//!   method of a model class;
 //! - a model class is a top-level `class` with no bases, keywords or
 //!   decorators, bound once, whose body holds only a docstring, `pass` and
-//!   `def`s, with no dunder method (no `__init__`, attribute hook or operator)
-//!   and no method defined twice; it is built as `Class()` with no arguments;
+//!   `def`s, with no method named `__...` (no `__init__`, attribute hook,
+//!   operator or name-mangled method) and no method defined twice; it is built
+//!   as `Class()` with no arguments, and no workspace file writes a dunder
+//!   attribute;
 //! - inside a callable, a name is a parameter, a call is a bare call of a model
-//!   function of the module, `self.method(...)` on the method's own receiver,
-//!   or `Class().method(...)`, all with positional arguments only; besides the
+//!   function or class of the module, or a method call on an instance of a
+//!   model class (the method's receiver, a parameter holding one, or
+//!   `Class()`), all with positional arguments only; besides the
 //!   module-value operators, `str * int` repeats a string and an ASCII string's
 //!   `.upper()`/`.lower()` change its case;
 //! - a straight-line `assert <entry> == <literal>` of a test reaches the chain
 //!   through a function or class it imports from the owner's module and does
 //!   not rebind, or through a local bound once to `Class()` before the
-//!   assertion; the test requests no fixture and may not skip;
+//!   assertion and used only as a method receiver; the test requests no
+//!   fixture, carries no decorator, is the only definition of its name, may not
+//!   be skipped by a conftest, and runs only assertions and such bindings
+//!   before the credited one, every earlier assertion holding on both sides;
 //! - the assertion holds under the old body and fails under the new one.
 //!
 //! Anything the evaluator cannot decide is not a credit, and the finding keeps
-//! its verdict. Evaluation depth is bounded, so a recursive chain decides
-//! nothing.
+//! its verdict. Evaluation depth (16) and calls (4096) are bounded, so a
+//! recursive or fanned-out chain decides nothing.
 
 use super::bool_oracle::count_bindings;
 use super::module_constants::ModuleBindingFacts;
 use super::module_value::{
     ModuleEdit, ModuleValueCredit, Value, arithmetic, assertion_expression, comparison,
-    constant_spellings, straight_line_assertion, with_line_replaced,
+    keep_unshadowed, straight_line_assertion, with_line_replaced,
+};
+use super::related_tests::{
+    import_module_may_be_owners, import_source_module_matches_owner, owner_module_paths,
 };
 use super::source_facts::parse_module_result;
 use super::{PythonOwner, PythonTest};
@@ -51,8 +61,12 @@ use std::collections::BTreeMap;
 /// The deepest call nesting the evaluator follows.
 const MAX_DEPTH: usize = 16;
 
-/// The longest string a repetition may build.
+/// The longest string an evaluation may build.
 const MAX_STRING: usize = 4096;
+
+/// The most callable runs one test's evaluation may make, so a fan-out
+/// within the depth bound stays cheap.
+const MAX_STEPS: usize = 4096;
 
 /// Words that let the owner's module replace a function or method's code, or
 /// an instance's class, without a binding the module facts see (those already
@@ -95,6 +109,15 @@ enum Item {
 #[derive(Default)]
 struct Visited {
     names: Vec<String>,
+    steps: usize,
+}
+
+impl Visited {
+    fn enter(&mut self, name: &str) {
+        if !self.names.iter().any(|seen| seen == name) {
+            self.names.push(name.to_string());
+        }
+    }
 }
 
 pub(super) fn call_chain_credits<'a>(
@@ -140,7 +163,9 @@ fn credits<'a>(
     let module_owner = owners
         .iter()
         .find(|candidate| candidate.is_module_owner() && candidate.file == file)?;
-    if module_owner.foreign_writes.may_replace_reader_code() {
+    if module_owner.foreign_writes.may_replace_reader_code()
+        || module_owner.foreign_writes.writes_dunder()
+    {
         return None;
     }
     let old_source = with_line_replaced(new_source, line, old_line_text)?;
@@ -173,14 +198,21 @@ fn credits<'a>(
         if super::test_activation::activation_control(test).is_some()
             || test.constant_rebinding.edited_in_diff
             || test.constant_rebinding.module_opaque
+            || test.constant_rebinding.implicit_reach
             || !test.fixtures.is_empty()
+            || !test.decorators.is_empty()
+            || all_tests.iter().any(|other| {
+                !std::ptr::eq(other, test)
+                    && other.file == test.file
+                    && other.qualified_name == test.qualified_name
+            })
         {
             continue;
         }
         let spellings: BTreeMap<String, String> = entries
             .iter()
             .flat_map(|entry| {
-                constant_spellings(test, module_owner, entry)
+                entry_spellings(test, module_owner, entry)
                     .into_iter()
                     .map(|spelling| (spelling, (*entry).clone()))
             })
@@ -191,36 +223,49 @@ fn credits<'a>(
         let Some(body) = test_body(test) else {
             continue;
         };
-        for assertion in &test.assertions {
+        // Assertions run in order: a later one is reached only when every
+        // earlier one passes, so each earlier assertion must evaluate true
+        // on both sides before a later flip counts.
+        let mut assertions: Vec<_> = test.assertions.iter().collect();
+        assertions.sort_by_key(|assertion| assertion.line);
+        let mut old_visited = Visited::default();
+        let mut new_visited = Visited::default();
+        for assertion in assertions {
             if !straight_line_assertion(test, assertion) {
-                continue;
+                break;
             }
             let Some(expression) = assertion_expression(assertion) else {
-                continue;
-            };
-            let Some(entry) = pinned_entry(&expression) else {
-                continue;
+                break;
             };
             let Some(index) = assertion.line.checked_sub(test.line) else {
-                continue;
+                break;
             };
             let locals = local_instances(test, &body, index, &spellings);
             let scope = TestScope {
                 spellings: &spellings,
                 locals: &locals,
             };
-            let mut old_visited = Visited::default();
-            let mut new_visited = Visited::default();
-            let (Some(Item::Value(Value::Bool(true))), Some(Item::Value(Value::Bool(false)))) = (
+            let outcome = (
                 evaluate_test(&expression, old, &scope, &mut old_visited),
                 evaluate_test(&expression, new, &scope, &mut new_visited),
-            ) else {
-                continue;
+            );
+            match outcome {
+                (Some(Item::Value(Value::Bool(true))), Some(Item::Value(Value::Bool(true)))) => {
+                    continue;
+                }
+                (Some(Item::Value(Value::Bool(true))), Some(Item::Value(Value::Bool(false)))) => {}
+                _ => break,
+            }
+            let Some(entry) = pinned_entry(&expression) else {
+                break;
             };
+            if !inert_prelude(&test.body_text, &body, index, &locals) {
+                break;
+            }
             // The sides differ only in the owner's body, so a flip shows the
-            // chain ran it. Nothing the chain ran may be rewritten by another
-            // workspace file.
-            if old_visited
+            // chain ran it. Nothing the test's assertions ran may be
+            // rewritten by another workspace file.
+            if !old_visited
                 .names
                 .iter()
                 .chain(&new_visited.names)
@@ -230,16 +275,15 @@ fn credits<'a>(
                         .any(|part| module_owner.foreign_writes.may_rebind(part, file))
                 })
             {
-                continue;
+                out.push(ModuleValueCredit {
+                    test,
+                    assertion,
+                    constant: owner.qualified_name.clone(),
+                    old: return_text(old_line_text),
+                    new: return_text(line_text),
+                    reader: Some(entry),
+                });
             }
-            out.push(ModuleValueCredit {
-                test,
-                assertion,
-                constant: owner.qualified_name.clone(),
-                old: return_text(old_line_text),
-                new: return_text(line_text),
-                reader: Some(entry),
-            });
             break;
         }
     }
@@ -272,14 +316,14 @@ impl Program {
         for statement in body {
             match statement {
                 Stmt::FunctionDef(function) if facts.bound_once(function.name.as_str()) => {
-                    if let Some(callable) = callable_of(function, false) {
+                    if let Some(callable) = callable_of(source, function, false) {
                         program
                             .functions
                             .insert(function.name.to_string(), callable);
                     }
                 }
                 Stmt::ClassDef(class) if facts.bound_once(class.name.as_str()) => {
-                    if let Some(methods) = model_class(class, &facts) {
+                    if let Some(methods) = model_class(source, class, &facts) {
                         program.classes.insert(class.name.to_string(), methods);
                     }
                 }
@@ -299,6 +343,7 @@ impl Program {
 
 /// The methods of a model class, or `None` when the class is not one.
 fn model_class(
+    source: &str,
     class: &ast::StmtClassDef,
     facts: &ModuleBindingFacts,
 ) -> Option<BTreeMap<String, Callable>> {
@@ -313,14 +358,16 @@ fn model_class(
             Stmt::Expr(docstring) if index == 0 && is_string(&docstring.value) => {}
             Stmt::FunctionDef(function) => {
                 let name = function.name.as_str();
-                if (name.starts_with("__") && name.ends_with("__"))
+                // A dunder changes construction or lookup; a `__private`
+                // name is mangled outside the class body.
+                if name.starts_with("__")
                     || seen.contains(&name)
                     || facts.may_assign_attribute(name)
                 {
                     return None;
                 }
                 seen.push(name);
-                if let Some(callable) = callable_of(function, true) {
+                if let Some(callable) = callable_of(source, function, true) {
                     methods.insert(name.to_string(), callable);
                 }
             }
@@ -335,9 +382,10 @@ fn is_string(expr: &Expr) -> bool {
 }
 
 /// The callable a `def` is, or `None` when it is not a model callable.
-fn callable_of(function: &ast::StmtFunctionDef, method: bool) -> Option<Callable> {
+fn callable_of(source: &str, function: &ast::StmtFunctionDef, method: bool) -> Option<Callable> {
     let arguments = &function.args;
     if !function.decorator_list.is_empty()
+        || suspends_or_binds(source, function)
         || function
             .returns
             .as_deref()
@@ -390,6 +438,21 @@ fn callable_of(function: &ast::StmtFunctionDef, method: bool) -> Option<Callable
     })
 }
 
+/// Whether the `def`'s text holds `yield` (a generator returns a generator,
+/// whichever branch holds it), `await`, or a walrus binding.
+fn suspends_or_binds(source: &str, function: &ast::StmtFunctionDef) -> bool {
+    let range = function.range();
+    let Some(text) = source.get(usize::from(range.start())..usize::from(range.end())) else {
+        return true;
+    };
+    lex(text, Mode::Module).any(|token| {
+        matches!(
+            token,
+            Err(_) | Ok((Tok::Yield | Tok::Await | Tok::ColonEqual, _))
+        )
+    })
+}
+
 /// The entry text of `<entry> == <literal>`, either way round.
 fn pinned_entry(expression: &Expr) -> Option<String> {
     let Expr::Compare(compare) = expression else {
@@ -411,11 +474,13 @@ fn test_body(test: &PythonTest) -> Option<Vec<Stmt>> {
     let Mod::Module(module) = parse_module_result(&test.file, &test.body_text).ok()? else {
         return None;
     };
+    // The test's own `def`, by name: the body text is its source span.
+    let name = test.name.rsplit('.').next()?;
     module
         .body
         .into_iter()
         .find_map(|statement| match statement {
-            Stmt::FunctionDef(function) => Some(function.body),
+            Stmt::FunctionDef(function) if function.name.as_str() == name => Some(function.body),
             _ => None,
         })
 }
@@ -462,6 +527,65 @@ fn local_instances(
         }
     }
     locals
+}
+
+/// Whether every statement before the assertion at body line `index` is an
+/// assertion, a docstring, `pass`, or the binding of a model instance local.
+/// Any other call may skip or end the test, or change what the chain runs.
+fn inert_prelude(
+    body_text: &str,
+    body: &[Stmt],
+    index: usize,
+    locals: &BTreeMap<String, String>,
+) -> bool {
+    for (position, statement) in body.iter().enumerate() {
+        let Some(offset) = usize::try_from(u32::from(statement.range().start())).ok() else {
+            return false;
+        };
+        let row = body_text
+            .get(..offset)
+            .map_or(usize::MAX, |prefix| prefix.matches('\n').count());
+        if row >= index {
+            return true;
+        }
+        let inert = match statement {
+            Stmt::Assert(_) | Stmt::Pass(_) => true,
+            Stmt::Expr(docstring) => position == 0 && is_string(&docstring.value),
+            Stmt::Assign(assign) => matches!(
+                assign.targets.as_slice(),
+                [Expr::Name(target)] if locals.contains_key(target.id.as_str())
+            ),
+            _ => false,
+        };
+        if !inert {
+            return false;
+        }
+    }
+    false
+}
+
+/// The spellings a test calls the owner module's `name` by: a `from M
+/// import name` of the owner module, or `alias.name` for an `import` that
+/// binds the owner module itself (a package import alone may not load it).
+fn entry_spellings(test: &PythonTest, module_owner: &PythonOwner, name: &str) -> Vec<String> {
+    let paths = owner_module_paths(&module_owner.file);
+    let mut spellings = Vec::new();
+    for import in &test.imports {
+        if import.imported == name
+            && import_source_module_matches_owner(import, module_owner, &test.file)
+        {
+            spellings.push(import.alias.clone());
+        }
+        let bound = if import.source_module.is_empty() {
+            import.imported.clone()
+        } else {
+            format!("{}.{}", import.source_module, import.imported)
+        };
+        if import_module_may_be_owners(import, module_owner, &test.file) && paths.contains(&bound) {
+            spellings.push(format!("{}.{name}", import.alias));
+        }
+    }
+    keep_unshadowed(test, spellings)
 }
 
 /// Whether every mention of `local` in the test is its one binding or the
@@ -591,6 +715,7 @@ fn evaluate(
             let right = value(&binary.right, visited)?;
             repetition(&binary.op, &left, &right)
                 .or_else(|| arithmetic(&binary.op, &left, &right, false))
+                .filter(|value| !matches!(value, Value::Str(text) if text.len() > MAX_STRING))
                 .map(Item::Value)
         }
         Expr::Compare(compare) => {
@@ -663,7 +788,7 @@ fn call_item(
                     .then(|| Item::Instance(target.to_string()));
             }
             let callable = program.functions.get(target)?;
-            visited.names.push(target.to_string());
+            visited.enter(target);
             run(callable, None, &call.args, program, frame, visited, depth)
         }
         Expr::Attribute(attribute) => {
@@ -677,17 +802,16 @@ fn call_item(
                     return call.args.is_empty().then(|| Item::Instance(target.clone()));
                 }
                 let callable = program.functions.get(target)?;
-                visited.names.push(target.clone());
+                visited.enter(target);
                 return run(callable, None, &call.args, program, frame, visited, depth);
             }
             let receiver = evaluate(&attribute.value, program, frame, visited, depth);
             match receiver? {
                 Item::Instance(class) => {
-                    // Inside a method, only its own receiver or a fresh
-                    // instance is a model object.
+                    // An instance only comes from a model `Class()`, so its
+                    // methods are the model's.
                     let callable = program.classes.get(&class)?.get(method)?;
-                    let qualified = format!("{class}.{method}");
-                    visited.names.push(qualified);
+                    visited.enter(&format!("{class}.{method}"));
                     run(
                         callable,
                         Some(class.as_str()),
@@ -721,7 +845,8 @@ fn run(
     visited: &mut Visited,
     depth: usize,
 ) -> Option<Item> {
-    if arguments.len() != callable.parameters.len() {
+    visited.steps += 1;
+    if arguments.len() != callable.parameters.len() || visited.steps > MAX_STEPS {
         return None;
     }
     let mut parameters = Vec::new();
