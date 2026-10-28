@@ -251,7 +251,10 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         load_ms,
         Some(current_change.changed_files().len()),
     );
-    timings.record_ms("inventory", inventory_ms, Some(report.classified.len()));
+    // Rust disabled bypasses the inventory, so there is no stage to report.
+    if rust_enabled {
+        timings.record_ms("inventory", inventory_ms, Some(report.classified.len()));
+    }
     let rust_files = analysis::workspace_rust_files(&input.root);
     let rust_excluded = (!rust_enabled && !rust_files.is_empty()).then_some(rust_files.len());
 
