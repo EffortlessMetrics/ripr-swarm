@@ -3059,6 +3059,7 @@ fn has_only_non_text_changes(diff_text: &str) -> bool {
     let mut sections = 0usize;
     let mut binary = false;
     let (mut old_mode, mut new_mode) = (false, false);
+    let mut text_header = false;
     let mut all_ok = true;
     let mut in_section = false;
     for line in diff_text.lines() {
@@ -3067,13 +3068,14 @@ fn has_only_non_text_changes(diff_text: &str) -> bool {
         }
         if line.starts_with("diff --git ") {
             if in_section {
-                all_ok &= binary || (old_mode && new_mode);
+                all_ok &= binary || (old_mode && new_mode && !text_header);
             }
             in_section = true;
             sections += 1;
             binary = false;
             old_mode = false;
             new_mode = false;
+            text_header = false;
             continue;
         }
         if !in_section {
@@ -3082,9 +3084,10 @@ fn has_only_non_text_changes(diff_text: &str) -> bool {
         binary |= is_binary_sentinel(line) || line == "GIT binary patch";
         old_mode |= line.starts_with("old mode ");
         new_mode |= line.starts_with("new mode ");
+        text_header |= line.starts_with("--- ") || line.starts_with("+++ ");
     }
     if in_section {
-        all_ok &= binary || (old_mode && new_mode);
+        all_ok &= binary || (old_mode && new_mode && !text_header);
     }
     sections > 0 && all_ok
 }
@@ -4440,6 +4443,52 @@ mod tests {
         assert!(has_only_non_text_changes(
             "diff --git a/x.bin b/x.bin\nBinary files a/x.bin and b/x.bin differ\ndiff --git a/y b/y\nold mode 100644\nnew mode 100755\n"
         ));
+    }
+
+    #[test]
+    fn truncated_mode_and_text_diff_is_not_mode_only() -> Result<(), String> {
+        // A real `git diff` for an executable-bit and content change, cut
+        // off after the text headers. The mode-only form is a valid control.
+        let mode_only = "diff --git a/file.rs b/file.rs\nold mode 100644\nnew mode 100755\n";
+        let truncated = "diff --git a/file.rs b/file.rs\nold mode 100644\nnew mode 100755\nindex 3367afd..3e75765\n--- a/file.rs\n+++ b/file.rs\n";
+        assert!(has_only_non_text_changes(mode_only));
+        assert!(!has_only_non_text_changes(truncated));
+        for header in ["--- a/file.rs\n", "+++ b/file.rs\n"] {
+            assert!(!has_only_non_text_changes(&format!("{mode_only}{header}")));
+        }
+        assert!(!has_only_non_text_changes(&format!(
+            "{mode_only}{truncated}"
+        )));
+        assert!(!has_only_non_text_changes(&format!(
+            "{truncated}{mode_only}"
+        )));
+        assert!(has_only_non_text_changes(&format!(
+            "{mode_only}Binary files a/file.rs and b/file.rs differ\n"
+        )));
+
+        let root = temp_root("analysis-outcome-truncated-mode-text")?;
+        let result = run_pipeline_for_diff_text(
+            &draft_diff_options(root.clone()),
+            &OraclePolicy::default(),
+            &[LanguageId::Rust],
+            &crate::config::RustLanguageConfig::default(),
+            truncated,
+        )?;
+        let outcome = result.analysis_outcome.ok_or("missing analysis outcome")?;
+        assert_eq!(outcome.kind, AnalysisOutcomeKind::UnsupportedInput);
+        assert!(outcome.limitations.iter().any(|l| {
+            l.bounded_detail
+                .as_deref()
+                .is_some_and(|d| d.contains("truncated"))
+        }));
+        assert!(
+            !outcome
+                .limitations
+                .iter()
+                .any(|l| l.bounded_detail.as_deref() == Some(NON_TEXT_ONLY_DETAIL))
+        );
+        let _ = fs::remove_dir_all(root);
+        Ok(())
     }
 
     #[test]
