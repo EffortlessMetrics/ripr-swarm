@@ -14418,6 +14418,7 @@ fn capability_helpers_validate_ids_and_escape_json() {
         spec: Some("RIPR-SPEC-0003".to_string()),
         evidence: vec!["agent context spec".to_string()],
         fixtures: Vec::new(),
+        cells: None,
         next: Some("agent-context-v2".to_string()),
         metric: Some("context packets with suggested assertions".to_string()),
         line: 1,
@@ -58005,10 +58006,12 @@ fn routed_rust_docs_gate_runs_capability_registry_checks() -> Result<(), String>
     for needle in [
         "cargo xtask capability-docs --check",
         "cargo xtask check-capability-producers",
-        "docs/status/SUPPORT_TIERS\\.md",
-        "docs/LANGUAGE_ADAPTER_PREVIEW\\.md",
+        "docs/status/SUPPORT_TIERS.md",
+        "docs/LANGUAGE_ADAPTER_PREVIEW.md",
         "core.quotePath=false",
         "docs/specs/",
+        "--name-only -z",
+        "read -r -d '' path",
     ] {
         if !docs_gate.contains(needle) {
             return Err(format!("docs-gate must contain `{needle}`"));

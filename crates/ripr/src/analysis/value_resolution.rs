@@ -414,6 +414,17 @@ impl<'a> ValueEnv<'a> {
         if allowed.is_empty() {
             return Vec::new();
         }
+        // Every accepted method name contains an allowed token, and the strip
+        // only drops comment tails and string contents (it keeps the quotes,
+        // so it never joins separated text), so an identifier in the stripped
+        // body is contiguous in the raw body. A body that names no allowed
+        // token holds no matching call: skip the strip and the scan (#10932).
+        if !allowed
+            .iter()
+            .any(|token| test_body.contains(token.as_str()))
+        {
+            return Vec::new();
+        }
         let mut out = Vec::new();
         for cap in scan_builder_calls(&strip_comments_and_strings(test_body)) {
             if !builder_method_matches_allowed(&cap.method, &allowed) {
@@ -843,7 +854,7 @@ fn is_integer_literal(value: &str) -> bool {
 
 /// Position of the first top-level `;` in `text`, or `None` if no
 /// such terminator exists. Top-level = depth 0 of `()`/`[]`/`{}`.
-fn top_level_semicolon(text: &str) -> Option<usize> {
+pub(super) fn top_level_semicolon(text: &str) -> Option<usize> {
     let mut depth: i32 = 0;
     for (i, b) in text.bytes().enumerate() {
         match b {

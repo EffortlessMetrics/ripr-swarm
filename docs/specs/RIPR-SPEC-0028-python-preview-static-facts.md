@@ -437,7 +437,10 @@ comments, strings, and docstrings:
   before the name, its closing bracket or the `=` / `in` / `as` after it, and
   a run of blanks after `for`, `as`, `def` or `class`, do not hide the rebind.
   A `for` or `as` inside a string or after a `#` comment is text, so
-  `assert "for" and ((r)) in [r]` stays a credited read. Known limits, none of
+  `assert "for" and ((r)) in [r]` stays a credited read. Loop-keyword masking
+  retains earlier lines for multiline literals while searching only the current
+  line; an unterminated literal supplies no parsed test or protocol-entry credit.
+  Known limits, none of
   them closed by this: a multi-line tuple target whose earlier elements sit on
   other lines (`(x,\n r) = ...`) is not seen, so the receiver stays credited
   (the credit-keeping direction); and a dict key at the start of a continuation
@@ -713,7 +716,18 @@ parameter bound to a literal argument or literal default (positional, keyword,
 import-alias, and method calls after `self`). Literal owner arguments, and the
 boundary equality when observed, are recorded in `observed_values`. Otherwise
 the finding fails closed to `weakly_exposed` and the infection stage reads
-`weak`. When every non-literal operand is bound by some call, the boundary is
+`weak`. A rewrite that keeps the predicate true on exactly the same integers
+(`amount >= 100` -> `amount > 99`, one comparison of a name against an
+integer literal, the rest of the condition unchanged) changes no behavior,
+so a test must notice a wrong version of the new line. Python's mutation
+tool shifts a number literal up by one (mutmut `n` -> `n + 1`), and for
+`v > C` and `v <= C` (and their mirrors) that shifted bound first differs
+at `v == C + 1`. There `exposed` also needs a strong call that places the
+name at `C + 1`; otherwise the finding is `weakly_exposed` and names
+`v == C + 1` as the missing discriminator (#10842). `v >= C` and `v < C`
+shift onto the equality point and need no further row. A behavior change
+keeps the equality rule, because the equality row notices the edit itself
+(RIPR-SPEC-0238 example 39). When every non-literal operand is bound by some call, the boundary is
 named as the missing discriminator (`amount == threshold`, with the observed
 operand values in its reason). An operand ripr cannot bind (an attribute such
 as `item.on_hand`, a computed `len(name)`, a comprehension local, or a line
@@ -744,7 +758,9 @@ list/tuple argvalues literal with rows of the right arity (`pytest.param(...)`
 unwrapped), stacked decorators as a product of at most 256 cases. A
 single-name list/tuple argnames takes tuple rows, as pytest unpacks them.
 Another decorator named `parametrize` (a plugin or project helper) records
-no cases. Argvalues named by a variable, `indirect=`, starred rows, a `pytest.param`
+no cases; the mark is read through imports and module names as
+RIPR-SPEC-0238 L8 describes, and a mark whose root that read cannot pin to
+pytest records none for the whole test (#10867). Argvalues named by a variable, `indirect=`, starred rows, a `pytest.param`
 with any keyword but `id=` (a `marks=` skip or xfail case may never run), a
 unittest method (pytest does not parametrize it), and an argname the test
 body may rebind leave the call unresolved. A test whose first statement after

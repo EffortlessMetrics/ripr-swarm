@@ -12,6 +12,7 @@
   "findings": [
     {
       "id": "probe:src_signals.ts:typescript_preview:7878a956",
+      "canonical_gap_id": "gap:typescript:typescript_preview:7878a956",
       "classification": "exposed",
       "severity": "info",
       "confidence": 0.60,
@@ -140,6 +141,7 @@
     },
     {
       "id": "probe:src_signals.ts:typescript_preview:8ca5702a",
+      "canonical_gap_id": "gap:typescript:typescript_preview:8ca5702a",
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.40,
@@ -279,6 +281,7 @@
     },
     {
       "id": "probe:src_signals.ts:typescript_preview:54d687f5",
+      "canonical_gap_id": "gap:typescript:typescript_preview:54d687f5",
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.40,
@@ -419,6 +422,7 @@
     },
     {
       "id": "probe:src_signals.ts:typescript_preview:5f264af5",
+      "canonical_gap_id": "gap:typescript:typescript_preview:5f264af5",
       "classification": "exposed",
       "severity": "info",
       "confidence": 0.60,
@@ -538,6 +542,7 @@
     },
     {
       "id": "probe:src_signals.ts:typescript_preview:7d6e77de",
+      "canonical_gap_id": "gap:typescript:typescript_preview:7d6e77de",
       "classification": "exposed",
       "severity": "info",
       "confidence": 0.60,
@@ -657,6 +662,7 @@
     },
     {
       "id": "probe:src_signals.ts:typescript_preview:a68ad559",
+      "canonical_gap_id": "gap:typescript:typescript_preview:a68ad559",
       "classification": "exposed",
       "severity": "info",
       "confidence": 0.60,
@@ -776,6 +782,7 @@
     },
     {
       "id": "probe:src_signals.ts:typescript_preview:b16c08c1",
+      "canonical_gap_id": "gap:typescript:typescript_preview:b16c08c1",
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.40,

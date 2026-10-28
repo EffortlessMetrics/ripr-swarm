@@ -7,7 +7,8 @@
 use crate::domain::Probe;
 use serde::Serialize;
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::{self, Write};
 use std::marker::PhantomData;
 use std::panic::Location;
@@ -20,6 +21,8 @@ const PREFIX: &[u8] = b"ripr_probe_read_trace ";
 const MAX_READS: usize = 64;
 const MAX_TEXT_BYTES: usize = 512;
 const MAX_ROW_BYTES: usize = 32 * 1024;
+// Distinct subjects remembered per (kind, site); past it the count is a lower bound.
+const MAX_DISTINCT: usize = 8192;
 const UNKNOWN_INPUTS: &[&str] = &[
     "memo_inputs_not_sealed",
     "scalar_inputs_not_sealed",
@@ -56,6 +59,8 @@ impl Universe {
 enum Kind {
     File,
     Absent,
+    Test,
+    Memo,
     Universe,
 }
 
@@ -73,11 +78,29 @@ struct Read {
     site: Site,
 }
 
+#[derive(Default)]
+struct SiteTally {
+    events: u64,
+    distinct: BTreeSet<u64>,
+    lower_bound: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct SiteSummary {
+    kind: Kind,
+    site: Site,
+    events: u64,
+    distinct_subjects: u64,
+    distinct_is_lower_bound: bool,
+}
+
 struct Pending {
     probe_id: Option<String>,
     reads: BTreeMap<Read, u64>,
+    sites: BTreeMap<(Kind, Site), SiteTally>,
     observed_read_events: u64,
     dropped_read_events: u64,
+    dropped_site_events: u64,
     universe_observed: bool,
 }
 
@@ -104,12 +127,17 @@ struct Observation {
     dropped_read_events: u64,
     read_detail_omitted: bool,
     reads: Vec<ReadCount>,
+    /// Per (kind, site) totals that survive the 64-entry detail cap, so distinct
+    /// reads past the cap stay visible. Subject hashes are a diagnostic count only.
+    sites: Vec<SiteSummary>,
+    dropped_site_events: u64,
 }
 
 impl Pending {
     fn observe(&mut self, kind: Kind, subject: Option<&str>, site: &'static Location<'static>) {
         self.observed_read_events = self.observed_read_events.saturating_add(1);
         self.universe_observed |= kind == Kind::Universe;
+        self.tally(kind.clone(), subject, site);
         let Some(subject) = subject.filter(|value| value.len() <= MAX_TEXT_BYTES) else {
             self.dropped_read_events = self.dropped_read_events.saturating_add(1);
             return;
@@ -129,6 +157,35 @@ impl Pending {
             self.reads.insert(read, 1);
         } else {
             self.dropped_read_events = self.dropped_read_events.saturating_add(1);
+        }
+    }
+
+    fn tally(&mut self, kind: Kind, subject: Option<&str>, site: &'static Location<'static>) {
+        let key = (
+            kind,
+            Site {
+                file: site.file(),
+                line: site.line(),
+                column: site.column(),
+            },
+        );
+        if !self.sites.contains_key(&key) && self.sites.len() >= MAX_READS {
+            self.dropped_site_events = self.dropped_site_events.saturating_add(1);
+            return;
+        }
+        let tally = self.sites.entry(key).or_default();
+        tally.events = tally.events.saturating_add(1);
+        let Some(subject) = subject else {
+            tally.lower_bound = true;
+            return;
+        };
+        let mut hasher = DefaultHasher::new();
+        subject.hash(&mut hasher);
+        let digest = hasher.finish();
+        if tally.distinct.len() < MAX_DISTINCT || tally.distinct.contains(&digest) {
+            tally.distinct.insert(digest);
+        } else {
+            tally.lower_bound = true;
         }
     }
 
@@ -153,6 +210,18 @@ impl Pending {
                 .into_iter()
                 .map(|(read, count)| ReadCount { read, count })
                 .collect(),
+            sites: self
+                .sites
+                .into_iter()
+                .map(|((kind, site), tally)| SiteSummary {
+                    kind,
+                    site,
+                    events: tally.events,
+                    distinct_subjects: tally.distinct.len() as u64,
+                    distinct_is_lower_bound: tally.lower_bound,
+                })
+                .collect(),
+            dropped_site_events: self.dropped_site_events,
         }
     }
 }
@@ -171,6 +240,8 @@ impl Scope {
         let pending = enabled().then(|| Pending {
             probe_id: (probe.id.0.len() <= MAX_TEXT_BYTES).then(|| probe.id.0.clone()),
             reads: BTreeMap::new(),
+            sites: BTreeMap::new(),
+            dropped_site_events: 0,
             observed_read_events: 0,
             dropped_read_events: 0,
             universe_observed: false,
@@ -236,6 +307,35 @@ pub(in crate::analysis) fn file(path: &Path, present: bool) {
         path.to_str(),
         Location::caller(),
     );
+}
+
+/// One test fact read by its position. The subject names the fact
+/// (`file:start_line:name`), so a keyed read is not a whole-set dependency.
+#[track_caller]
+pub(in crate::analysis) fn test(file: &Path, start_line: usize, name: &str) {
+    // Callers read thousands of candidates per probe; skip the formatting when off.
+    if !enabled() {
+        return;
+    }
+    let subject = file
+        .to_str()
+        .map(|file| format!("{file}:{start_line}:{name}"));
+    record(Kind::Test, subject.as_deref(), Location::caller());
+}
+
+/// One run-memo entry read, hit or miss. The subject names the product and the
+/// digest of its key (source text, discriminator and query), so two reads of the
+/// same entry coincide; it does not name the produced value.
+#[track_caller]
+pub(in crate::analysis) fn memo(product: &str, key_digest: &[u8; 32]) {
+    if !enabled() {
+        return;
+    }
+    let mut subject = format!("{product}:");
+    for byte in key_digest {
+        subject.push_str(&format!("{byte:02x}"));
+    }
+    record(Kind::Memo, Some(&subject), Location::caller());
 }
 
 #[track_caller]

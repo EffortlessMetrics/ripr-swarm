@@ -49,6 +49,8 @@
 //! v0.5 entry is impossible.
 
 use super::facts::FileFacts;
+#[cfg(feature = "lang-typescript")]
+use super::language::TypeScriptFileFactStore;
 use super::seam_classification::ClassifiedSeam;
 #[cfg(test)]
 use super::seam_classification::SeamGripClassCounts;
@@ -71,7 +73,7 @@ use std::sync::{Arc, OnceLock};
 macro_rules! cache_layers {
     ($($variant:ident => $name:literal),+ $(,)?) => {
         #[derive(Clone, Copy)]
-        enum CacheLayer { $($variant),+ }
+        pub(crate) enum CacheLayer { $($variant),+ }
 
         impl CacheLayer {
             const fn name(self) -> &'static str {
@@ -91,6 +93,9 @@ cache_layers! {
     CompactClassifiedSeamsSharded => "repo-compact-classified-seams-sharded",
     CorpusFingerprint => "repo-corpus-fingerprint",
     FileFacts => "repo-file-facts",
+    // TypeScript preview per-file facts (#10725): content-keyed envelopes the
+    // diff-mode adapter reuses across runs, same conventions as FileFacts.
+    TypeScriptFileFacts => "typescript-file-facts",
     ModuleTreeScans => "repo-module-tree-scans",
     ScopedClassifiedSeams => "repo-scoped-classified-seams",
     // Test-only producer: `RepoSeamCountCache` is constructed only under
@@ -122,8 +127,14 @@ pub fn cache_layer_names() -> &'static [&'static str] {
     CACHE_LAYER_NAMES
 }
 
-fn cache_layer_dir(workspace_root: &Path, layer: CacheLayer) -> PathBuf {
+pub(crate) fn cache_layer_dir(workspace_root: &Path, layer: CacheLayer) -> PathBuf {
     cache_base_dir(workspace_root).join(layer.name())
+}
+
+/// A versioned entry directory under an already-resolved cache `base`,
+/// for producers that shard their entries by a schema-version component.
+pub(crate) fn cache_layer_versioned_dir(base: &Path, layer: CacheLayer, version: &str) -> PathBuf {
+    base.join(layer.name()).join(version)
 }
 
 /// The directories production caches write entries into, under an already
@@ -150,6 +161,8 @@ pub(crate) fn production_entry_dirs(base: &Path) -> Vec<(PathBuf, bool)> {
     );
     dirs.push(RepoCorpusFingerprintCache::at_base(base).entry_dir());
     dirs.push(RepoFileFactCache::at_base(base).entry_dir());
+    #[cfg(feature = "lang-typescript")]
+    dirs.push(TypeScriptFileFactStore::at_base(base).entry_dir());
     dirs.push(RepoModuleTreeScanCache::at_base(base).entry_dir());
     dirs.push(RepoScopedInventoryCache::at_base(base).entry_dir());
     dirs
@@ -2740,7 +2753,7 @@ pub(crate) struct RepoFileFactCache {
 /// also stays `None`; the per-read corrupt path still reports the error
 /// kinds it can discriminate. Metadata follows symlinks so a base that
 /// resolves to a usable directory keeps its silent warm/cold behavior.
-fn cache_dir_not_a_directory_reason(base: &Path) -> Option<String> {
+pub(crate) fn cache_dir_not_a_directory_reason(base: &Path) -> Option<String> {
     match std::fs::metadata(base) {
         Ok(metadata) if !metadata.is_dir() => {
             Some(format!("cache dir is not a directory: {}", base.display()))
@@ -2759,7 +2772,7 @@ fn cache_dir_not_a_directory_reason(base: &Path) -> Option<String> {
 /// deadline) refuses rather than admits, and the build recomputes cold.
 /// Limits: an extracted archive carries no Git evidence, and this does not
 /// authenticate entries an untracked process wrote into the root.
-fn cache_base_untrusted_reason(base: &Path) -> Option<String> {
+pub(crate) fn cache_base_untrusted_reason(base: &Path) -> Option<String> {
     if !base.is_dir() {
         return None;
     }
@@ -3527,7 +3540,10 @@ fn encode_checksummed_pretty_to_writer<T: serde::Serialize, W: std::io::Write>(
 }
 
 /// Unkeyed checksum integrity does not authenticate a writer who can recompute the digest.
-fn semantic_body_digest<T: serde::Serialize>(domain: &str, body: &T) -> Result<String, String> {
+pub(crate) fn semantic_body_digest<T: serde::Serialize>(
+    domain: &str,
+    body: &T,
+) -> Result<String, String> {
     use sha2::{Digest, Sha256};
     // The serializer streams into SHA-256: warm admission never retains a second body.
     struct ChecksumWriter(Sha256);
@@ -3565,7 +3581,7 @@ fn semantic_body_digest<T: serde::Serialize>(domain: &str, body: &T) -> Result<S
     });
     Ok(format!("sha256:{:x}", writer.0.finalize()))
 }
-fn encode_integrity_body<T: serde::Serialize>(
+pub(crate) fn encode_integrity_body<T: serde::Serialize>(
     body: &T,
     payload_digest: String,
 ) -> Result<Vec<u8>, String> {
@@ -3731,7 +3747,7 @@ mod codec {
     }
 }
 
-fn hash_str(s: &str) -> String {
+pub(crate) fn hash_str(s: &str) -> String {
     hash_bytes(s.as_bytes())
 }
 
@@ -4577,7 +4593,7 @@ fn canonical_toml_value(value: &toml::Value) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| "<unserializable>".to_string())
 }
 
-fn hash_bytes(bytes: &[u8]) -> String {
+pub(crate) fn hash_bytes(bytes: &[u8]) -> String {
     format!("{:016x}", fnv1a_64(bytes))
 }
 
@@ -4875,7 +4891,7 @@ fn collect_manifest_dir_prefixes(root: &Path, directory: &Path, prefixes: &mut V
 
 /// FNV-1a 64-bit. Same algorithm `seams::compute_seam_id` uses; chosen
 /// for its dependency-free determinism across Rust releases.
-fn fnv1a_64(bytes: &[u8]) -> u64 {
+pub(crate) fn fnv1a_64(bytes: &[u8]) -> u64 {
     const FNV_OFFSET: u64 = 0xcbf29ce484222325;
     const FNV_PRIME: u64 = 0x100000001b3;
     let mut hash: u64 = FNV_OFFSET;
@@ -4949,20 +4965,22 @@ mod tests {
         let compact = RepoSeamFactCache::at_compact_classified(root);
         let corpus = RepoCorpusFingerprintCache::at(root);
         let files = RepoFileFactCache::at(root);
+        #[cfg(feature = "lang-typescript")]
+        let ts_facts = TypeScriptFileFactStore::at(root);
         let scans = RepoModuleTreeScanCache::at(root);
         let counts = RepoSeamCountCache::at(root);
         let scoped = RepoScopedInventoryCache::at(root);
-        let produced = [
+        let mut produced: Vec<&std::path::Path> = vec![
             &full.dir,
             &full.sharded_dir,
             &compact.dir,
             &compact.sharded_dir,
             &corpus.dir,
             &files.dir,
-            &scans.dir,
-            &counts.dir,
-            &scoped.dir,
         ];
+        #[cfg(feature = "lang-typescript")]
+        produced.push(ts_facts.dir_path());
+        produced.extend([&scans.dir, &counts.dir, &scoped.dir].map(PathBuf::as_path));
         let actual: BTreeSet<_> = produced
             .into_iter()
             .map(|path| {
@@ -4976,13 +4994,22 @@ mod tests {
                     .ok_or_else(|| "layer is not UTF-8".to_string())
             })
             .collect::<Result<_, _>>()?;
-        let expected: BTreeSet<_> = cache_layer_names().iter().copied().collect();
+        // The TypeScript layer stays registered without the feature (the
+        // `cache clear` leftover convention, same as `SeamCounts`), but no
+        // producer runs to produce it, so the rust-only build cannot claim
+        // it was produced.
+        let expected: BTreeSet<_> = cache_layer_names()
+            .iter()
+            .copied()
+            .filter(|name| cfg!(feature = "lang-typescript") || *name != "typescript-file-facts")
+            .collect();
         assert_eq!(
             actual, expected,
             "every produced layer must be maintainable"
         );
+        let registered: BTreeSet<_> = cache_layer_names().iter().copied().collect();
         assert_eq!(
-            expected.len(),
+            registered.len(),
             cache_layer_names().len(),
             "duplicate layer name"
         );
@@ -10607,16 +10634,23 @@ mod generation_transition_tests {
         // each constructor's `entry_dirs`/`entry_dir` (#6707), so this
         // table must not: flipping a constructor flag changes the
         // production side only and fails this test.
-        let expected = vec![
+        let mut expected = vec![
             (full.dir.clone(), false),
             (full.sharded_dir.clone(), true),
             (compact.dir.clone(), false),
             (compact.sharded_dir.clone(), true),
             (RepoCorpusFingerprintCache::at(root).dir, false),
             (RepoFileFactCache::at(root).dir, false),
+        ];
+        #[cfg(feature = "lang-typescript")]
+        expected.push((
+            TypeScriptFileFactStore::at(root).dir_path().to_path_buf(),
+            false,
+        ));
+        expected.extend([
             (RepoModuleTreeScanCache::at(root).dir, false),
             (RepoScopedInventoryCache::at(root).dir, false),
-        ];
+        ]);
         assert_eq!(production_entry_dirs(&cache_base_dir(root)), expected);
         // The constructors doctor's list is derived from must carry the
         // same flags, so a flag flipped in `entry_dirs`/`entry_dir`
@@ -10626,6 +10660,8 @@ mod generation_transition_tests {
         constructed.extend(compact.entry_dirs());
         constructed.push(RepoCorpusFingerprintCache::at(root).entry_dir());
         constructed.push(RepoFileFactCache::at(root).entry_dir());
+        #[cfg(feature = "lang-typescript")]
+        constructed.push(TypeScriptFileFactStore::at(root).entry_dir());
         constructed.push(RepoModuleTreeScanCache::at(root).entry_dir());
         constructed.push(RepoScopedInventoryCache::at(root).entry_dir());
         assert_eq!(constructed, expected);

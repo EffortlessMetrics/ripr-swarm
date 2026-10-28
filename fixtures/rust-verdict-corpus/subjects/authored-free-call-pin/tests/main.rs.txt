@@ -1,0 +1,26 @@
+use free_call_pin::{clamped, minus_one, passed_in, plus_one, swallowed};
+
+#[test]
+fn plus_one_pins_the_doubled_value() {
+    assert_eq!(plus_one(5), 11);
+}
+
+#[test]
+fn minus_one_pins_the_tripled_value() {
+    assert_eq!(minus_one(4), 11);
+}
+
+#[test]
+fn clamped_caps_the_value() {
+    assert_eq!(clamped(7), 10);
+}
+
+#[test]
+fn swallowed_ignores_the_owner() {
+    assert_eq!(swallowed(1), 10);
+}
+
+#[test]
+fn passed_in_uses_its_own_function() {
+    assert_eq!(passed_in(5, |value| value + 5), 11);
+}

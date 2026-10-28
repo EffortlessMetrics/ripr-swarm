@@ -179,11 +179,13 @@ fn policy_omitted_packet_preserves_refusal_channels() -> Result<(), Box<dyn std:
         &seam_id,
         "--json",
     ]);
-    assert_eq!(typed.status.code(), Some(2), "{typed:?}");
+    // #10712: a policy-withheld seam is the same typed refusal (exit 3) as
+    // `agent card` gives, with its own cause rather than `analysis_failed`.
+    assert_eq!(typed.status.code(), Some(3), "{typed:?}");
     let envelope: serde_json::Value = serde_json::from_slice(&typed.stdout)?;
     assert_eq!(envelope["schema_version"], "0.5", "{envelope}");
     assert_eq!(
-        envelope["run_limitations"][0]["basis"], "analysis_failed",
+        envelope["run_limitations"][0]["basis"], "seam_policy_omitted",
         "{envelope}"
     );
     let message = envelope["run_limitations"][0]["message"]
@@ -281,6 +283,24 @@ fn genuinely_unknown_seam_keeps_pilot_guidance_under_omitting_policy()
             assert!(output.stdout.is_empty(), "{output:?}");
         }
     }
+    std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+/// #10712: `agent start` gives a policy-withheld seam the same typed refusal
+/// (exit 3) and cause as `agent card` and `agent packet`, never "not found".
+#[test]
+fn policy_omitted_start_is_a_typed_refusal_naming_the_policy()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (root, seam_id) = omitted_seam("policy omitted start")?;
+    let root_arg = root.display().to_string();
+    let route = policy_omitted_route(&root_arg, &seam_id)?;
+    let start = run_ripr(&["agent", "start", "--root", &root_arg, "--seam-id", &seam_id]);
+    assert_eq!(start.status.code(), Some(3), "{start:?}");
+    let stderr = String::from_utf8_lossy(&start.stderr);
+    assert!(!stderr.contains("not found"), "{stderr}");
+    assert!(!stderr.contains("hidden by config"), "{stderr}");
+    assert_policy_guidance(&stderr, &route);
     std::fs::remove_dir_all(root)?;
     Ok(())
 }

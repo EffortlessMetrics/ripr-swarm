@@ -28,6 +28,7 @@ mod blind_journey_execute;
 mod branch_inventory;
 mod cache;
 mod check_fast_cli;
+mod check_fast_selector;
 mod command;
 pub mod convergence;
 mod dispatch;
@@ -813,32 +814,38 @@ pub(crate) fn check_fast() -> Result<(), String> {
 /// (#3549 review).
 fn check_fast_in(repository_root: &Path) -> Result<(), String> {
     ensure_reports_dir()?;
-    let changed = match changed_files_vs_base(repository_root) {
+    let selection = match check_fast_selector::discover(repository_root) {
         Ok(changed) => changed,
         Err(error) => {
             write_report("check-fast.md", &check_fast_selector_failure_report(&error))?;
             return Err(check_fast_selector_failure(&error));
         }
     };
-    let categories = categorize_changed_files(&changed);
+    eprintln!("{}", selection.diagnostic());
+    let changed = &selection.files;
+    let categories = categorize_changed_files(changed);
     let mut ran = Vec::new();
     let mut skipped = Vec::new();
 
     let mut child_diagnostics = Vec::new();
     if let Err(error) = check_fast_gates(
-        &changed,
+        changed,
         &categories,
         &mut ran,
         &mut skipped,
         &mut child_diagnostics,
     ) {
         return check_fast_failure_report(&error, &child_diagnostics, |body| {
-            write_report("check-fast.md", body)
+            write_report(
+                "check-fast.md",
+                &format!("{body}\n{}", selection.diagnostic()),
+            )
         });
     }
 
     let body = format!(
-        "# check-fast report\n\nStatus: pass\n\nSelector: passed\nBase: origin/main\n\nRan:\n{}\n\nSkipped:\n{}\n",
+        "# check-fast report\n\nStatus: pass\n\nSelector: passed\nBase: origin/main\n{}\nRan:\n{}\n\nSkipped:\n{}\n",
+        selection.diagnostic(),
         ran.iter()
             .map(|g| format!("- {g}"))
             .collect::<Vec<_>>()
@@ -1101,13 +1108,6 @@ fn decode_changed_files(output: &[u8]) -> Result<Vec<String>, String> {
                 })
                 .collect()
         })
-}
-
-/// Origin-main rooted selector for callers that run from the repository
-/// root — including the strict check-fast module, which binds this
-/// function as its discovery authority.
-fn changed_files_vs_origin_main() -> Result<Vec<String>, String> {
-    changed_files_vs_base(Path::new("."))
 }
 
 fn check_fast_selector_failure(error: &str) -> String {
@@ -13624,6 +13624,9 @@ fn check_capabilities() -> Result<(), String> {
     violations.extend(parse_violations);
     validate_capabilities(&capabilities, &mut violations)?;
     validate_capability_matrix(&capabilities, &mut violations)?;
+    if violations.is_empty() {
+        policy::check_capability_cells(&capabilities, &mut violations)?;
+    }
     finish_capabilities_report(&violations)
 }
 
@@ -13962,6 +13965,10 @@ fn assign_capability_array(
     match key {
         "evidence" => capability.evidence = values,
         "fixtures" => capability.fixtures = values,
+        "cells" if capability.cells.is_none() => capability.cells = Some(values),
+        "cells" => violations.push(format!(
+            "capability line {line_number} repeats `cells` field"
+        )),
         _ => violations.push(format!(
             "capability line {line_number} uses unsupported array field `{key}`"
         )),
