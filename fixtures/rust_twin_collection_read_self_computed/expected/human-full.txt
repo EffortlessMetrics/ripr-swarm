@@ -1,0 +1,70 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/rust_twin_collection_read_self_computed/input
+
+Summary: 2 changed behavior(s) checked: 0 exposed, 2 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
+
+Shared evidence and guidance
+  E1 [findings 1, 2]: reach yes: Related tests appear to reach add: twin_bags_match
+  E2 [findings 1, 2]: infection yes: Reachable tests can plausibly activate this changed behavior
+  E3 [findings 1, 2]: propagation yes: Changed behavior appears to influence state write: self.items.push(x)
+  E4 [findings 1, 2]: observation yes: A related test observes a value or effect near the changed behavior
+  E5 [findings 1, 2]: discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression
+  E6 [findings 1, 2]: local flow reaches state write: self.items.push(x) (line 10)
+  E7 [findings 1, 2]: related test tests/api.rs:4 twin_bags_match uses strong exact value oracle: assert_eq!(c.items, d.items); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  E8 [findings 1, 2]: source function argument value x = 20 at line 6
+  E9 [findings 1, 2]: source function argument value x = 20 at line 8
+
+Finding 1: WARNING ./src/lib.rs:10
+  id: probe:src_lib.rs:call_deletion:3c28bb05
+Changed
+  before: self.items.push(x + 1);
+  after:  self.items.push(x);
+Change type
+  a call was removed
+  family: call_deletion
+  delta:  effect (changes a side effect)
+  owner:  src/lib.rs::impl Bag::add
+  gap id (for scripts): gap:rust:src/lib.rs:impl Bag::add:call_deletion:call_deletion:self.items.push_x
+Static exposure
+  weakly_exposed (warning, confidence 0.92)
+Evidence
+  shared evidence: E1, E2, E3, E4, E5, E6, E7, E8, E9
+Weakness
+  - No strong discriminator was detected
+Next step
+  - Strengthen the related assertion so it discriminates the changed behavior
+Drill in:
+  ripr explain --root <cwd>/fixtures/rust_twin_collection_read_self_computed/input --diff <cwd>/fixtures/rust_twin_collection_read_self_computed/diff.patch --mode fast probe:src_lib.rs:call_deletion:3c28bb05
+  ripr context --root <cwd>/fixtures/rust_twin_collection_read_self_computed/input --diff <cwd>/fixtures/rust_twin_collection_read_self_computed/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:3c28bb05
+
+Finding 2: WARNING ./src/lib.rs:10
+  id: probe:src_lib.rs:side_effect:fe1fff37
+Changed
+  before: self.items.push(x + 1);
+  after:  self.items.push(x);
+Change type
+  a side effect changed
+  family: side_effect
+  delta:  effect (changes a side effect)
+  owner:  src/lib.rs::impl Bag::add
+  gap id (for scripts): gap:rust:src/lib.rs:impl Bag::add:side_effect:side_effect:self.items.push_x
+Static exposure
+  weakly_exposed (warning, confidence 0.92)
+Evidence
+  shared evidence: E1, E2, E3, E4, E5, E6, E7, E8, E9
+Weakness
+  - No strong discriminator was detected
+Next step
+  - Add a mock expectation, event receiver assertion, persisted-state check, or metric assertion for the changed effect
+Drill in:
+  ripr explain --root <cwd>/fixtures/rust_twin_collection_read_self_computed/input --diff <cwd>/fixtures/rust_twin_collection_read_self_computed/diff.patch --mode fast probe:src_lib.rs:side_effect:fe1fff37
+  ripr context --root <cwd>/fixtures/rust_twin_collection_read_self_computed/input --diff <cwd>/fixtures/rust_twin_collection_read_self_computed/diff.patch --mode fast --at probe:src_lib.rs:side_effect:fe1fff37

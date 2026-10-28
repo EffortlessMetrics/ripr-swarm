@@ -171,6 +171,13 @@ The package `@effortlessmetrics/ripr`:
     file or directory fails the check rather than being skipped.
 11. `cargo xtask bump-version` to a prerelease adds `"tag": "next"` and to a
     stable version removes it, and the resulting manifest validates.
+12. `check-release-targets` fails when `editors/vscode/package.json`, its
+    `package-lock.json` or the launcher version differs from the workspace
+    version (`xtask/src/version.rs::check_release_version_sync`, #10731).
+13. `cargo xtask vscode-verify-vsix` fails when `ripr-<version>.vsix` carries a
+    different `extension/package.json` or `extension.vsixmanifest` Identity
+    version, including when an Identity-like comment or CDATA precedes a stale
+    real Identity (`xtask/src/main.rs::verify_packaged_vsix_version`).
 
 ## Test Mapping
 
@@ -195,6 +202,8 @@ The package `@effortlessmetrics/ripr`:
 - `packaging/npm/launcher/test/launcher.test.cjs::public bin library recovery never guesses a version from invalid or unavailable metadata`
 - `packaging/npm/launcher/test/launcher.test.cjs::npm package contents are explicit and exclude tests and build residue`
 - `xtask/src/policy/distribution/tests.rs`
+- `xtask/src/version.rs::release_version_sync_flags_stale_extension_and_accepts_aligned`
+- `xtask/src/tests.rs::vscode_verify_vsix_reuses_sealed_archive_license_check`
 
 ## Implementation Mapping
 
@@ -208,6 +217,9 @@ The package `@effortlessmetrics/ripr`:
   admission for the Node proof.
 - `xtask/src/policy/distribution/npm_launcher.rs` owns repository-level package,
   source, notice, and guarded-runner conformance.
+- `xtask/src/version.rs` owns release-version drift detection across the
+  workspace, extension and launcher; `xtask/src/main.rs` owns the VSIX
+  name-to-content version check.
 - `.github/workflows/npm-launcher.yml` runs the no-publish package proof.
 - `policy/distribution.toml` remains the target and identity authority.
 

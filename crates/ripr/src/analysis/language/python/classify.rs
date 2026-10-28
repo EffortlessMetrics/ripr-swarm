@@ -6,8 +6,10 @@ use super::assertion_selection::{
 };
 use super::boundary::{BoundaryActivation, python_boundary_evidence};
 use super::caplog_text::{PythonLogVerdict, python_log_evidence};
+use super::dataclass_default::dataclass_default_credits;
 use super::discriminators::python_missing_discriminators;
 use super::guard_activation;
+use super::imported_call_operator::{IMPORTED_CALL_LIMIT_EVIDENCE, imported_call_credits};
 use super::message_pin;
 use super::module_value::{ModuleEdit, module_constant_credits};
 use super::no_behavior::{
@@ -20,7 +22,7 @@ use super::probe_shape::{
     python_infection_evidence, python_propagation_evidence,
 };
 use super::related_tests::{
-    PythonRelatedCandidate, PythonRelationKind, helper_owner_call_candidates,
+    PythonRelatedCandidate, PythonRelationKind, RelatedCandidateMemo, helper_owner_call_candidates,
     python_repair_placement, related_test_candidates, related_tests_for_candidates,
     sort_related_candidates, verify_command_for_test,
 };
@@ -43,6 +45,7 @@ use super::{
 };
 use crate::analysis::diff::lines_look_alike;
 use crate::analysis::probes::{collision_ordinals, collision_rank_key};
+use crate::domain::StaticLimitKind;
 use crate::domain::{
     Confidence, ExposureClass, Finding, LanguageId as DomainLanguageId, LanguageStatus,
     MissingDiscriminatorFact, OracleKind, OracleStrength, Probe, ProbeFamily, RevealEvidence,
@@ -107,6 +110,7 @@ pub(super) fn classify_change_with_source(
         all_tests,
         PythonNoBehaviorContext::default(),
         owner_source,
+        None,
         None,
     )
 }
@@ -183,6 +187,7 @@ pub(super) fn classify_change_with_context(
         no_behavior,
         owner_source,
         None,
+        None,
     )
 }
 
@@ -190,16 +195,17 @@ pub(super) fn classify_change_with_context(
     clippy::too_many_arguments,
     reason = "same classification inputs plus run-local producer provenance"
 )]
-pub(super) fn classify_change_with_value_origins(
+pub(super) fn classify_change_with_value_origins<'a>(
     file: &Path,
     line: usize,
     line_text: &str,
     old_line_text: Option<&str>,
     owners: &[PythonOwner],
-    all_tests: &[PythonTest],
+    all_tests: &'a [PythonTest],
     no_behavior: PythonNoBehaviorContext,
     owner_source: Option<&str>,
     origins: &mut crate::value_origins::ValueOrigins,
+    related: Option<&mut RelatedCandidateMemo<'a>>,
 ) -> Option<Finding> {
     classify_change_full(
         file,
@@ -211,6 +217,7 @@ pub(super) fn classify_change_with_value_origins(
         no_behavior,
         owner_source,
         Some(origins),
+        related,
     )
 }
 
@@ -222,16 +229,17 @@ pub(super) fn classify_change_with_value_origins(
     clippy::too_many_arguments,
     reason = "the no-behavior context and source are independent optional inputs threaded from distinct callers"
 )]
-fn classify_change_full(
+fn classify_change_full<'a>(
     file: &Path,
     line: usize,
     line_text: &str,
     old_line_text: Option<&str>,
     owners: &[PythonOwner],
-    all_tests: &[PythonTest],
+    all_tests: &'a [PythonTest],
     no_behavior: PythonNoBehaviorContext,
     owner_source: Option<&str>,
     value_origins: Option<&mut crate::value_origins::ValueOrigins>,
+    related: Option<&mut RelatedCandidateMemo<'a>>,
 ) -> Option<Finding> {
     // No-op / no-behavior-delta guard (#1279): a docstring-only, comment-only, or
     // blank-line change has no runtime behavior, so there is nothing for a test to
@@ -293,6 +301,7 @@ fn classify_change_full(
         no_behavior,
         owner_source,
         value_origins,
+        related,
     )
 }
 
@@ -310,15 +319,16 @@ pub(super) struct ChangeSite<'a> {
     clippy::too_many_arguments,
     reason = "resolved owner inputs plus explicit run-local origin context"
 )]
-pub(super) fn classify_change_for_owner_with_value_origins(
+pub(super) fn classify_change_for_owner_with_value_origins<'a>(
     site: ChangeSite<'_>,
     line_text: &str,
     old_line_text: Option<&str>,
     owners: &[PythonOwner],
-    all_tests: &[PythonTest],
+    all_tests: &'a [PythonTest],
     no_behavior: PythonNoBehaviorContext,
     owner_source: Option<&str>,
     value_origins: Option<&mut crate::value_origins::ValueOrigins>,
+    mut related: Option<&mut RelatedCandidateMemo<'a>>,
 ) -> Option<Finding> {
     let ChangeSite { file, line, owner } = site;
     // Bare-variable annotation-only suppression at MODULE SCOPE only (#1289):
@@ -345,20 +355,26 @@ pub(super) fn classify_change_for_owner_with_value_origins(
     // error-path / boundary / changed-default gates and the `test_oracle`
     // evidence — reads that one selection.
     let focus = PythonAssertionFocus::for_change(family.clone(), line_text, old_line_text);
-    let mut related_candidates = related_test_candidates(owner, all_tests);
+    let mut related_candidates = match related.as_deref_mut() {
+        Some(memo) => memo.candidates(owner, all_tests),
+        None => related_test_candidates(owner, all_tests),
+    };
     // Only when no test relates to the owner itself: a test that calls a
     // same-module caller of the owner earns a weak `helper_owner_call` row
     // (#4568), never an oracle.
-    let helper_callers = if related_candidates.is_empty() {
-        helper_owner_call_candidates(owner, owners, all_tests)
-    } else {
+    let helper_callers = if !related_candidates.is_empty() {
         Vec::new()
+    } else if let Some(memo) = related {
+        memo.helper_candidates(owner, owners, all_tests)
+    } else {
+        helper_owner_call_candidates(owner, owners, all_tests)
     };
     related_candidates.extend(helper_callers.iter().map(|helper| helper.candidate));
     // A module-level constant edit has no callable owner. A test whose
     // assertion provably holds under the old value and fails under the new one
     // (`module_value.rs`, #9423) is related through that value, and its
     // assertion is the credited oracle.
+    let mut imported_call = false;
     let module_value = if owner.is_module_owner() && no_behavior.sole_line_replacement {
         owner_source
             .map(|source| {
@@ -374,6 +390,34 @@ pub(super) fn classify_change_for_owner_with_value_origins(
                     owners,
                     all_tests,
                 )
+            })
+            .unwrap_or_default()
+    } else if no_behavior.sole_line_replacement {
+        // A default edit inside a plain `@dataclass` class body, or an
+        // operator swap around an imported call (#9619).
+        owner_source
+            .map(|source| {
+                let edit = ModuleEdit {
+                    file,
+                    line,
+                    line_text,
+                    old_line_text,
+                    new_source: source,
+                };
+                let default = dataclass_default_credits(
+                    &edit,
+                    owner,
+                    owners
+                        .iter()
+                        .find(|candidate| candidate.is_module_owner() && candidate.file == file),
+                    all_tests,
+                );
+                if default.is_empty() {
+                    imported_call = true;
+                    imported_call_credits(&edit, owner, owners, all_tests)
+                } else {
+                    default
+                }
             })
             .unwrap_or_default()
     } else {
@@ -478,8 +522,16 @@ pub(super) fn classify_change_for_owner_with_value_origins(
         owner_source.unwrap_or(""),
         &related_candidates,
     )
-    // A pinned lambda body edit is read by the module-value credit.
-    .filter(|limit| module_value.is_empty() || limit.evidence != LAMBDA_LIMIT_EVIDENCE)
+    // A pinned lambda body edit or dataclass default edit is read by the
+    // module-value credit, which lifts only the limit its own reading answers.
+    .filter(|limit| {
+        module_value.is_empty()
+            || (limit.evidence != LAMBDA_LIMIT_EVIDENCE
+                && !(imported_call && limit.evidence == IMPORTED_CALL_LIMIT_EVIDENCE)
+                && !owner.decorators.iter().any(|decorator| {
+                    limit.evidence == format!("static_limit decorator_indirection: `{decorator}`")
+                }))
+    })
     .or_else(|| {
         module_object_rebind_limit(
             line_text,
@@ -1303,6 +1355,7 @@ pub(super) fn classify_change_for_owner_with_value_origins(
 
     let recommended = python_recommended_next_step(
         &class,
+        owner,
         &family,
         has_oracle_eligible_relation,
         &missing_discriminators,
@@ -1564,6 +1617,17 @@ pub(super) fn classify_change_for_owner_with_value_origins(
         source_currentness,
     };
     apply_python_no_static_path_limit(&mut finding, owner, owners, all_tests);
+    // #10708: the with-no-static-link guidance is pre-limit advice. The
+    // post-classification step can only attach the Python transitive-reach
+    // limitation to a NoStaticPath finding with no related tests (`apply_
+    // python_no_static_path_limit`); a static limit already classifies
+    // conservatively elsewhere. When that witness lands, the direct-call
+    // target is no longer established, so silence the stale advice.
+    if finding.class == ExposureClass::NoStaticPath
+        && finding.static_limit_kind == Some(StaticLimitKind::PythonTransitiveReachUnresolved)
+    {
+        finding.recommended_next_step = None;
+    }
     if let Some(origins) = value_origins {
         origins.record(&finding, files);
     }

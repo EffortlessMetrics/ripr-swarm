@@ -1,0 +1,10 @@
+# Registers the exactly-expandable local assertion macro tests (#10650) under RIPR-SPEC-0120.
+[[extend]]
+id = "RIPR-SPEC-0120"
+tests = [
+  "crates/ripr/tests/local_macro_assertion_expansion.rs::an_exactly_expandable_wrapper_reads_as_its_assertion",
+  "crates/ripr/tests/local_macro_assertion_expansion.rs::a_wrapped_assertion_classifies_exactly_like_the_written_out_one",
+  "crates/ripr/tests/local_macro_assertion_expansion.rs::shapes_that_do_not_expand_exactly_keep_the_macro_limitation",
+  "crates/ripr/src/analysis/facts/test_helpers/tests/assertion_macros.rs::exactly_expandable_local_assertion_macro_earns_the_expanded_assertions_grade",
+  "crates/ripr/src/analysis/facts/test_helpers/tests/assertion_macros.rs::local_assertion_macro_that_does_not_expand_exactly_stays_capped_at_unknown",
+]

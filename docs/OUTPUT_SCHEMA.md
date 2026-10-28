@@ -131,7 +131,7 @@ map is:
 | `ripr agent card --json` and the `RepairCardV1` DTO (RIPR-SPEC-0192, RIPR-SPEC-0194; `ripr agent card` is the default CLI handoff, #4667) | `schema_version` | `repair_card.v1` |
 | `RepairCardV1` detail references and overflow disclosure (RIPR-SPEC-0193, #4666) | `budget_version` | `repair-card-budget-v1` |
 | `ripr agent card --json` refusal stdout envelope (`agent_card_refusal`; RIPR-SPEC-0202, #5007) | `schema_version` | `0.1` |
-| `ripr agent stub --json` document and its refusal stdout envelope (`kind: rust_test_stub`, `state: ready` or `refused`; #7762; ready-document `next_repair` is additive on `0.3`, #8727) | `schema_version` | `0.3` |
+| `ripr agent stub --json` document and its refusal stdout envelope (`kind: rust_test_stub`, `state: ready` or `refused`; `next_repair` added in `0.3`, #8727; `unsupported_language` refusal added in `0.4`, #10716) | `schema_version` | `0.4` |
 
 The MCP tool envelopes carry the schema-versioned document as
 `structuredContent` in every successful response; a result whose complete
@@ -307,7 +307,7 @@ no witness-producing finding still renders its card with the `unavailable`
 instruction (RIPR-SPEC-0194 acceptance) — that in-band card state is typed
 already and is not a refusal.
 
-## Agent stub (`rust_test_stub`, schema `0.3`)
+## Agent stub (`rust_test_stub`, schema `0.4`)
 
 `ripr agent stub --json` emits one `rust_test_stub` document on stdout when
 the producer yields a stub (`state: ready`, exit 0). A producer refusal
@@ -324,6 +324,35 @@ paths or seam IDs to choose; the unresolved identity and disclosure fields
 stay `null` and `warnings` stays `[]`. Both selector refusals keep exit 3,
 the JSON on stdout, and the human decision prose on stderr. If the stdout
 write itself fails, no document was delivered and the command exits `2`.
+
+Schema `0.4` keeps the existing field set and adds the selector refusal
+`unsupported_language` (#10716). An `--at` path that does not route to Rust
+is refused before Rust seam analysis, including under `--write`. Its reason
+names the source language when recognized and the manual test route: use the
+check finding's test file/node and verify command when available, edit the
+test, run the native test command, then refresh with `ripr check`. It does not
+claim that a finding is absent or that the file failed to parse as Rust.
+The unresolved identity and disclosure fields remain `null`, `warnings` stays
+`[]`, and exit 3 / stdout JSON / stderr prose behavior is unchanged. Consumers
+must recognize `0.4` and distinguish this capability limit from a selector
+that can be corrected or re-listed. No new stub language is supported.
+
+A weak-oracle boundary seam instead uses `refusal.kind:
+existing_test_weak_oracle` (#10683): a single related test already supplies the
+changed predicate's boundary input and only its assertion is weak, so a second
+skeleton test would not close the gap. `refusal.reason` is `check`'s
+boundary-observed Next step followed by `Related test: <file>:<line> <name>`;
+strengthen that test's assertion instead. It exits `3`, writes the envelope to
+stdout under `--json` and the decision prose to stderr, like the other refusal
+kinds; `grip_class`, `classification` and `warnings` are populated. This
+refusal is evaluated before the stub producer's own refusals for the same seam
+(a seam with an existing reaching test needs the assertion fix first, whatever
+placement the producer would have refused). `ripr check` shows the same reason
+as `No test stub here:` instead of a `ripr agent stub` command. It is part of schema
+`0.4` (no further bump): the refusal object shape and every ready-document
+field are unchanged, and consumers dispatch on `state: refused` plus an open
+`refusal.kind` string; consumers must treat an unrecognized kind as a generic
+refusal (exit `3`, reason as prose).
 
 Schema `0.3` is additive on `0.2` (#8727): the ready document may carry a
 `next_repair` block naming the repair journey the stub feeds — the
@@ -957,7 +986,11 @@ preserves the normal check envelope (`schema_version`, `tool`, `mode`, `root`,
 `summary`, and `findings`) and adds:
 
 - `analysis_scope.run_status: "diff_scope_oversized"`
-- `analysis_scope.basis: "rust_diff_scope_budget"`
+- `analysis_scope.basis: "rust_diff_scope_budget"` — or, since #10730,
+  `"python_diff_scope_budget"` / `"typescript_diff_scope_budget"` when the
+  refusal names the Python or TypeScript/JavaScript changed-line budget; the
+  basis always names the budget that actually fired, never a Rust budget for
+  a preview-language refusal
 - `analysis_scope.downstream_consumable: false`
 - `analysis_scope.limitation: "diff_scope_oversized"`
 - `analysis_scope.repair_route: "analysis/diff-scope-budget"`
@@ -2977,7 +3010,7 @@ fixtures/ts_static_limit and fixtures/typescript_mocked_module_limit).
 - `rust_framework_oracle_unresolved` -- (RIPR-SPEC-0240, additive) A related test checks the owner through an environment variable it sets or removes, a mockall `returning` closure that reads its arguments, an expect-test `assert_debug_eq` literal, an insta snapshot whose redactions do not name the changed field, a literal pin on a receiver a test helper builds under a changed closure tail, or a field of a hand-written recording double the test passes as `&mut`. ripr does not evaluate that oracle, so a `weakly_exposed` or `reachable_unrevealed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`. Nothing is credited; this is a named limitation, not a coverage claim.
 - `rust_pinned_shape_unresolved` -- (RIPR-SPEC-0240, additive, #9440) A related, non-ignored test calls the owner directly and pins its whole result with an exact `assert_eq!`, but the changed code sits in a closure the call runs, a statement acting on the value the owner returns, the `else` exit of a `let ... else`, or the update of a zero-initialized loop accumulator the owner returns whose pin ripr cannot read as a non-empty literal input with a nonzero total (RIPR-SPEC-0360), none of which the owner-return pin reads. ripr does not resolve whether the pinned input runs the changed code, so the `weakly_exposed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`; this is a named limitation, not a missing-test, coverage, or repair claim, and never exposure credit.
 - `rust_implicit_call_unresolved` -- (RIPR-SPEC-0240, additive, #9441) A test names the self type of a changed trait-impl method that the language calls from syntax (an operator trait, `Drop`, an iterator trait, `Deref`, `Index`, `PartialOrd`), or calls a same-named method on a receiver ripr does not type (`dyn Trait`, a second impl of the trait). ripr does not follow that call to the changed method, so a `weakly_exposed` or `reachable_unrevealed` gap whose reach rests on a shared file or name token is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`. Nothing is credited; this is a named limitation, not a coverage claim.
-- `rust_indirect_owner_call_unresolved` -- (RIPR-SPEC-0240, additive, #9442, #9443) A test reaches the changed owner without a call ripr can pair with its assertion: it passes the owner as a function value (`.map(owner)`, an untyped `let f = owner;` binding; a typed `fn` pointer binding is left to the typed function-pointer reading), the changed line is an item-position macro invocation that generates the owner, or the owner call is the only argument of `block_on` or a local helper polling a `Future`. A `weakly_exposed` or `reachable_unrevealed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`. Nothing is credited; this is a named limitation, not a coverage claim.
+- `rust_indirect_owner_call_unresolved` -- (RIPR-SPEC-0240, additive, #9442, #9443) A test reaches the changed owner without a call ripr can pair with its assertion: it passes the owner as a function value (`.map(owner)`, an untyped `let f = owner;` binding; a typed `fn` pointer binding is left to the typed function-pointer reading), the changed line is an item-position macro invocation that generates the owner, or the owner call is the only argument of `block_on` or a local helper polling a `Future`. A verified polling helper whose call and standard primitives resolve under RIPR-SPEC-0197 supplies an owner-return pin instead; unsupported or shadowed wrappers receive no polling-helper pin and remain subject to the existing unresolved-executor limitations. A `weakly_exposed` or `reachable_unrevealed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`. Nothing is credited; this is a named limitation, not a coverage claim.
 - `rust_caller_loop_selector_unresolved` -- (RIPR-SPEC-0240, additive, #5503) The changed integer match arm is fed by a bounded `for` loop inside an `Iterator::next` whose selector range includes the arm, and a related test collects the iterator and compares the whole collection. ripr reads the range (with its file and line) but does not prove the loop runs for the test's input or that the arm's value reaches the compared items, so a `weakly_exposed` or `reachable_unrevealed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`. Nothing is credited; this is a named limitation, not a coverage claim.
 
 Reserved `flow_sink` values:
@@ -3571,6 +3604,14 @@ Policy reports are advisory unless `--mode fail-on-new-warning` is used.
 
 ## Context Packet
 
+Fresh `context`/`explain` selector misses remain usage-class failures: exit 2,
+empty stdout, and the selector guidance and retry command on stderr. When the
+fresh check carries detected-but-unanalyzed language advisories or non-success
+language runs, stderr also names those run-scope limitations and their existing
+producer recovery. The notice does not establish the cause of this selector's
+miss. Recorded `--from` lookups do not reconstruct absent advisory facts from
+ambient configuration; no packet field or schema version changes (#10720).
+
 `ripr context --json` emits compact test intent for agents:
 
 ```json
@@ -3623,7 +3664,6 @@ Policy reports are advisory unless `--mode fail-on-new-warning` is used.
       "oracle_strength": "weak",
       "oracle_location": { "file": "tests/pricing.rs", "line": 44 }
     },
-    "suggested_assertion": null,
     "explain_command": "ripr explain --root /work/repo --diff /work/repo/change.diff probe:src_lib.rs:predicate:bbaa2c25",
     "confidence": { "value": 0.75, "basis": "static_only" },
     "limitations": [
@@ -3663,10 +3703,17 @@ the selected bounded window. Identical eight-row windows with totals 12 and
 13 therefore remain distinguishable. `witness` is additive and is omitted
 when an exposed finding has no unresolved discriminator. It contains only
 producer-owned facts: `fix_site` and `oracle_location` are absent when the
-producer cannot identify them, and `suggested_assertion` remains `null` until
-the producer supplies a symbol-resolved assertion template. `limitations[]`
-names unavailable evidence; renderers must not infer it from paths, lines,
-classes, or prose. `probe.owner_signature` (#7796) carries the changed
+producer cannot identify them, and `suggested_assertion` is omitted until
+the producer supplies a symbol-resolved assertion template. The typed witness
+reader accepts absent or `null` optional facts as unavailable and preserves
+present values, including empty strings and zero confidence. `limitations[]`
+names unavailable evidence; an empty list is omitted and the reader restores
+it as an empty list. An explicit `null` or malformed limitations list is
+rejected. Unknown witness properties are accepted and ignored by the typed
+reader, so typed reserialization does not preserve those properties. Consumers
+that need to forward unknown properties must retain the complete JSON value.
+Renderers must not infer evidence from paths, lines, classes, or prose.
+`probe.owner_signature` (#7796) carries the changed
 function's observed call shape — the same producer-owned signature `ripr
 agent stub` reads — so an agent can write the call without opening the
 source. It is optional and absent whenever the shape cannot be honestly
@@ -18684,7 +18731,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.110",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.118",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. This is the existing
@@ -19439,7 +19486,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "1.47",
+    "schema_version": "1.50",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,
@@ -19452,7 +19499,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.110",
+      "schema_version": "1.118",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 886dffc..251565e 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -10,7 +10,7 @@ pub fn word_class(label: &str) -> &'static str {
+ }
+ 
+ pub fn other_row_class(label: &str) -> &'static str {
+-    if label == "alpha" {
++    if label == "beta" {
+         "word"
+     } else {
+         "blank"

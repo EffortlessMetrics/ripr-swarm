@@ -233,9 +233,9 @@ mod tests {
         let text = crate::output::human::render_finding(finding);
         let changed = text
             .split_once("\nChanged\n")
-            .and_then(|(_, tail)| tail.split_once("\nProbe\n"))
+            .and_then(|(_, tail)| tail.split_once("\nChange type\n"))
             .map(|(changed, _)| changed)
-            .ok_or("full human report needs Changed and Probe sections")?;
+            .ok_or("full human report needs Changed and Change type sections")?;
         assert_eq!(
             changed,
             "  expr:   `a``b``` | \\\"\n\t  next\\u{0d}\n\\u{00}\\u{1b}\\u{85}\\u{202e}🦀\n"
@@ -336,6 +336,7 @@ mod tests {
             uninspected_changed_lines_lower_bound: 120,
             stop_reason: crate::analysis::PartialDiffStopReason::LineBudget,
             next_file_changed_lines: Some(50),
+            whole_diff_budgets: None,
             partition_identity: "b".repeat(64),
         }
     }

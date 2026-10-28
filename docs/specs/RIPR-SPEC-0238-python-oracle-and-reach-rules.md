@@ -407,8 +407,73 @@ This order is the existing behavior and is normative:
 - L7: `property_based_test`: an eligible candidate with a `given` or
   `example` decorator and no strong assertion;
 - L8: `unresolved_pytest_fixture`: every eligible candidate is a
-  non-parametrized pytest test that calls the owner and uses a
-  non-auxiliary fixture in its body;
+  pytest test that calls the owner and uses a non-auxiliary fixture in its
+  body. The body starts after the colon that ends the test's signature, so
+  a multi-line signature's parameter lines are not uses and a one-line body
+  on the `def` line is (#10685). A direct `@pytest.mark.parametrize` argname is a value pytest
+  supplies, not a fixture; a parametrize mark does not resolve the test's
+  other fixtures, and an `indirect=` argname is a fixture (#9619). An
+  argname whose `indirect=` value the read cannot settle (`indirect=IND`, a
+  computed list, a non-boolean constant) makes no fixture edge
+  (RIPR-SPEC-0028) but still counts here; only literal `False`, `None` or a
+  literal list or tuple of strings that omits it (an empty one included)
+  leaves the argname a direct value (#10685). `indirect` is read from the
+  keyword or the third positional argument; a `*args` or `**kwargs` splat in
+  the mark leaves every argname unsettled. The mark is pytest's own when its
+  root resolves through the imports in effect at the definition
+  (`import pytest as pt`, `from pytest import mark as m`) or, with no import
+  binding the root, is spelled `pytest.mark.parametrize` or
+  `mark.parametrize`. An import root counts only when the module binds it
+  exactly once (that import) and the enclosing class body does not bind
+  it; a canonical spelling whose root is not pinned that way (another
+  library's `mark`, a rebound or class-local root) leaves every argname
+  unsettled. A bare decorator name (`@cases`), the mark's callee
+  (`parametrize = pytest.mark.parametrize`), argnames and `indirect` may
+  each be one module-scope `NAME = <value>` binding that nothing in the
+  module rebinds, bound before the test and not shadowed by the enclosing
+  class body; argnames and `indirect` read through a name only a constant
+  or a tuple, since a module list may be changed in place before
+  collection. Any other name leaves the mark unread, so its argnames count
+  as fixtures (#10685). A fixture is resolved, and does not
+  count, when it hands a module-level test a fresh literal-built instance
+  of a method owner's class (#9619, `py-fixtures-deposit`). The fixture
+  is a single argument-free fixture decorator (`@pytest.fixture`,
+  `@fixture`, an imported alias or `@pytest_asyncio.fixture`: function
+  scope, no `params=`, no `autouse=`) on a synchronous def with no
+  parameters whose body is an optional docstring and
+  `return C(<literals>)`. `C` is the owner's class imported under its own
+  name from the owner's module, and the fixture's file binds neither the
+  fixture name nor `C` a second time. The test takes the fixture as a
+  parameter without a default, does not rebind it, and carries no
+  decorator other than a pytest mark. In its scope (the test's module and
+  every `conftest.py` up its chain): every chain conftest that exists was
+  read and parsed; no other fixture, renamed `name=` fixture (decorators
+  included) or top-level compound statement spells the fixture name; no
+  file but the fixture's own binds the name by import or assignment;
+  every `from` import comes from the owner's module or pytest; and no file
+  star-imports, declares `pytest_plugins` or `pytestmark`, defines a
+  `pytest_*` hook, has a fixture that walks the request (`getfixturevalue`,
+  `fixturenames`, `funcargs`, `node`) or rebinds a name with `global`.
+  The fixture parameter then counts as a receiver bound to the owner class.
+  A fixture is also resolved when its literal `params=` rows reach the
+  test through `request.param` (#9619, `py-fixtures-fee-boundary`): its
+  only decorator is the fixture decorator with keyword `params=` (a list
+  or tuple whose rows are scalar literals or tuples of scalar literals)
+  and at most a literal `ids=` list of strings, one per row; the def takes exactly
+  `request` and its body is an optional docstring and
+  `return request.param`; the fixture's file binds its name once and the
+  scope rules above hold (without the owner-module import rule: tuple and
+  scalar rows are immutable, so an imported fixture cannot change them).
+  The test is a module-level pytest test with no parametrize mark, no
+  Hypothesis inputs and no decorator other than a pytest mark; it takes
+  the fixture as a parameter without a default, and its first statement
+  after a docstring is `name = fixture` or `a, b = fixture` with distinct
+  names that are not parameters and every row of the target's arity. No
+  later statement names the fixture, rebinds a target name or defines a
+  nested scope. The test then reads as `@pytest.mark.parametrize` over the
+  target names with the rows as cases, and the unpack is not a rebinding.
+  Any other shape keeps the limit; a third-party plugin fixture outside
+  the workspace is not visible to this read;
 - L9: `opaque_custom_assertion_helper`: an eligible candidate has a
   custom helper assertion and no eligible candidate has a strong assertion;
 - L10: `missing_import_graph` for a changed line that uses a name the
@@ -928,6 +993,71 @@ mutant calibrates the rule; ripr reports only the static shape.
     loop identity scored as gaps, and a chain, a literal expected value and
     a name bound outside the loop credited).
 
+26. **A doctest example is a test only when pytest collects it and running it
+    notices the edit.** With `--doctest-modules` in the `addopts` of the
+    pytest configuration (`pyproject.toml`, `pytest.ini`, `tox.ini` or
+    `setup.cfg`, first configuration wins), a `>>>` example in a changed
+    module's function docstring is read as the assertion it states.
+    Collection is refused when the configuration holds any flag that
+    reshapes it (`--ignore*`, `--deselect`, `-k`, `-m`, `-o`, `-c`, `-p`,
+    `--doctest-glob`, `--import-mode`, cache selectors such as `--lf`, and
+    their attached short forms), a positional collection target, any option
+    this reader does not model (`norecursedirs` among them), a
+    `.pytest.ini`, `pytest.toml` or `.pytest.toml` file, a native
+    `[tool.pytest]` table, a `testpaths` that leaves the module out, or a
+    `conftest.py` on the module's path that mentions `doctest`,
+    `collect_ignore`, a `pytest_` hook, `autouse` or `pytest_plugins`, or
+    one directly under a root subdirectory that defines a `pytest_` hook or
+    `pytest_plugins` (its fixtures and ignore lists stay in its own tree). A bare `pytest` invocation is
+    assumed; the command line CI uses is unknown. A docstring is read only
+    when it belongs to an undecorated top-level `def` defined once, every
+    example is one `>>>` call of a bare name with literal arguments, the
+    expected line is one `repr` of a string, integer or boolean (a trailing
+    `#` comment on the `>>>` line is allowed and cannot hide the comparison), and no
+    `# doctest:` directive, backslash (in the decoded docstring or its
+    source), `...` or `<BLANKLINE>` appears; a module-level `__test__`, a
+    star import or a binding of `len` disables the read. The example must exist
+    unchanged in the old source, so a diff does not write its own oracle.
+    An exact-value oracle alone does not say the edit is noticed
+    (`truncate("abc", 5)` is `'abc'` before and after an off-by-one cut),
+    so a closed evaluator runs the example on the old and the new function
+    and keeps it only when the old result equals the expected value and the
+    new one differs; a function it cannot run (anything beyond a single
+    `return` over integer, boolean and printable-ASCII string operations)
+    drops the example; strings are capped at 4 KiB and expressions at 48
+    levels so a reviewed diff cannot exhaust the analyzer. A credited
+    example advertises no verification command, because pytest has no node
+    for the synthetic test (`py-idioms-doctest-separator` credited,
+    `py-idioms-doctest-short-input` stays a gap, #9619).
+27. **An assertion helper called through a re-raising wrapper is the
+    helper's assertion.** A top-level test statement
+    `wrapper(lambda: helper(args))` reads as `helper(args)` when `wrapper`
+    is a def of the test's own module that is the module's only binding of
+    its name, is not imported or rebound in the test, and has one plain
+    parameter `fn` and a body of exactly one `try`. The `try` body is one
+    statement, `fn()` or `return fn()`; there is no `else` or `finally`; and
+    every handler is a bare `raise` alone, because a call before it could
+    skip or exit (`pytest.skip()`, `sys.exit(0)`) and a path that returns or
+    falls off the end swallows. A handler's exception type must be a name,
+    a dotted attribute path or a tuple of those, because the type expression
+    runs when an exception arrives (`except pytest.skip('x'):` skips). The
+    wrapper's name may appear in its module only as its one `def` and as
+    plain calls `name(`; an assignment, `global`, import at any depth, walrus,
+    `case` capture, decorator, attribute or string mention could rebind it
+    where the binding scan cannot see, and `import *`, `globals(`, `vars(`,
+    `exec(`, `eval(` or `__dict__` anywhere refuses the module. Another
+    file that patches the module (a conftest fixture, a plugin) is not seen,
+    as for every helper this module resolves. The lambda takes no
+    parameters, is the only argument, and its body is one call. A wrapper
+    that swallows any exception (including after a partial re-raise, a
+    conditional re-raise or a `finally` that returns), re-raises a different
+    exception, never calls its parameter, takes more parameters, or is
+    decorated, async, imported or bound twice is not read, and the call
+    keeps its reading (`py-trap-wrapped-through` credited;
+    `py-trap-wrapped-swallow`, `py-trap-wrapped-partial`,
+    `py-trap-wrapped-conditional` and `py-trap-wrapped-finally` stay
+    non-credited, #9619).
+
 ### Verdict ladder
 
 No finding is produced for docstring, comment or blank changes, header-only
@@ -1070,6 +1200,45 @@ rejected alternative. Any can be reversed later without touching the rest.
     accepting the miss at the one input where it is the identity.
     Rejected: gate only a single wrapping call, because `max(n, 0)`,
     `n or 0` and nested wrappers return `n` unchanged just as often.
+16. **A decorator argument or decorator-factory loop edit is limited by
+    design.** Adopted (2026-10-26, #9619): an edit to a decorator's
+    argument (`@retry(3)` to `@retry(4)`) or to the loop inside the factory
+    it calls (`range(times)`) is judged by module state that persists across
+    calls (`flaky()` succeeds on the third attempt), and no bounded static
+    evaluator reads that soundly. The rows `py-shapes-decorator-retry-count`
+    and `py-shapes-decorator-loop-bound` keep ideal `credited` and accepted
+    `limited`, and stay in `missed-credit.toml` with this Decision as the
+    reason. The equivalent twins `py-shapes-decorator-retry-count-slack`
+    and `py-shapes-decorator-loop-bound-slack` make the same edits where
+    the pinned call cannot tell (`@retry(4)`, `range(times + 1)`), so
+    crediting by edit shape would read `exposed` on a test that passes on
+    the mutant; they must stay `gap` or `limited`. Rejected: credit any
+    test that calls a function decorated with the edited factory, because
+    the twins show that call does not discriminate. Revisit with a
+    fixture-backed state evaluator under its own spec, as Decision 9 of
+    RIPR-SPEC-0246 does for mocha hooks.
+17. **A test defined under a platform guard, or asserted inside a
+    callback wrapper, is limited by design.** Adopted (2026-10-26, #9619).
+    `py-trap-platform-matched` defines its test under
+    `if sys.platform != "win32"`, which holds where the corpus was labeled
+    and fails on Windows, where ripr also runs; a verdict that depends on
+    the host would differ between machines for the same diff.
+    `py-trap-wrapped-through` asserts inside a lambda handed to a local
+    wrapper that re-raises, while its twin `py-trap-wrapped-swallow` hands
+    the same lambda to a wrapper that swallows the failure. Telling them
+    apart needs a rule that reads the wrapper's handlers, and a misread
+    credits a pin the runner never sees. Both rows kept ideal `credited`
+    and accepted `limited`, and stayed in `missed-credit.toml` with this
+    Decision as the reason. Rule 27 (2026-10-26, #9619) later took the
+    bounded wrapper rule this Decision named as its revisit, so only the
+    platform-guard half stays limited by design. The twins `py-trap-platform-guarded` and
+    `py-trap-wrapped-swallow` already hold the negatives: each is a
+    `not_discriminated` row that must stay `gap` or `limited`. Rejected:
+    credit by guard polarity, because that reads the host platform.
+    Rejected: credit any lambda passed to a local helper, because the
+    swallowing twin is the same shape. Revisit with a bounded wrapper rule
+    (a test-file local whose every handler ends in a bare `raise`) under
+    its own spec, and a platform-independent reading of the guard.
 
 ## Required Evidence
 
@@ -1164,8 +1333,11 @@ and the test is `tests/test_subject.py`, which imports each owner from
 13. `assert other == 3` then `assert parse('1') == 2`: `exposed`,
     `direct` (unchanged).
 14. Error owner, `with pytest.raises(KeyError, match='empty'): perr('')`:
-    `exact_error_variant` / strong, `exposed`, `changed_sink_token`
-    (unchanged).
+    `exact_error_variant` / strong, `exposed`, `direct` through the owner
+    identity token `perr` (the first successful credit branch, before
+    `changed_sink_token`; the exposure classification remains `exposed`).
+    This example exercises owner-identity credit, not changed-sink-token
+    credit; the exception class changes as specified above.
 15. Error owner, `with pytest.raises(KeyError): perr('')`: `broad_error` /
     weak, `weakly_exposed` (unchanged).
 16. Error owner, `assert perr('1') == 1` only: `weakly_exposed`
@@ -1340,8 +1512,94 @@ and the test is `tests/test_subject.py`, which imports each owner from
     `exposed` (unchanged; the input does not resolve). With `ship` changed
     to `return s // 100`: `exposed` (unchanged; not a guarded return).
 
+41. Class `Account` with `def deposit(self, amount): self.balance += amount`,
+    changed to `self.balance = self.balance + amount`; conftest
+    `@pytest.fixture` / `def account(): return Account(100)` with
+    `from shop import Account`; test `def test_d(account):` /
+    `account.deposit(50)` / `assert account.balance == 150`: the same
+    verdict as `account = Account(100)` inlined in the test body (today
+    `static_unknown`, `unresolved_pytest_fixture`; L8,
+    `py-fixtures-deposit`). A `yield`, an extra statement, a fixture
+    parameter, decorator arguments, a second decorator, an `async def`, a
+    non-literal or starred argument, another class, a class from another
+    module, a renamed import, a second binding of the class or the
+    fixture name, a star import, `pytest_plugins`, another fixture or hook
+    (here or up the chain) that names `account`, a nearer conftest that
+    imports or assigns `account` or overrides it with `name="account"`,
+    `pytestmark`, a `pytest_*` hook, a fixture that walks
+    `request.fixturenames`, an imported fixture name, a defaulted
+    parameter, a test decorator, a test that rebinds it, a test module
+    that binds it and a class-level test all keep `static_unknown`,
+    `unresolved_pytest_fixture` (unchanged).
+
+42. Function `def handling_fee(amount): return 0 if amount >= 100 else 5`,
+    changed to `amount > 99`; conftest
+    `@pytest.fixture(params=[(99, 5), (100, 0)], ids=["below", "at"])` /
+    `def fee_case(request): return request.param`; test
+    `def test_fee(fee_case):` / `amount, fee = fee_case` /
+    `assert handling_fee(amount) == fee`: the same verdict as
+    `@pytest.mark.parametrize("amount, fee", [(99, 5), (100, 0)])` over
+    `assert handling_fee(amount) == fee` (`exposed`; today
+    `static_unknown`, `unresolved_pytest_fixture`; L8,
+    `py-fixtures-fee-boundary`). Rows `(50, 5), (200, 0)` read
+    `weakly_exposed`, as the decorated form does. Named, list,
+    `pytest.param`, starred or non-literal rows, empty params, callable
+    or short `ids=`, `scope=`, `autouse=`, a positional decorator argument, a
+    transformed `request.param`, an extra fixture statement or parameter,
+    a second decorator or definition; an unpack of the wrong arity, a
+    starred, nested, attribute, chained or subscripted unpack, an unpack
+    that is not first, a later rebinding or read of the fixture, a nested
+    scope, a duplicate name, a defaulted or shadowing parameter, a foreign
+    test decorator; a dependent fixture, a request walk,
+    `pytest_generate_tests`, a star import, a module import of the name and
+    a nearer conftest binding all keep `static_unknown`,
+    `unresolved_pytest_fixture`. A test that also carries its own
+    parametrize mark keeps only the mark's cases, and the fixture stays
+    unresolved: `static_unknown`, `unresolved_pytest_fixture` (today
+    `exposed`, a false credit for off-boundary rows).
+
 ## Test Mapping
 
+- Existing: `crates/ripr/src/analysis/language/python/doctest_gate_tests.rs`
+  `an_example_the_edit_breaks_is_a_test`,
+  `an_example_both_functions_satisfy_is_not_a_test`,
+  `doctests_not_collected_yield_nothing`,
+  `an_example_added_by_the_diff_is_not_its_own_oracle`,
+  `a_doctest_directive_or_continuation_drops_the_docstring`,
+  `a_function_the_evaluator_cannot_run_is_not_read`,
+  `a_decorated_function_is_not_read`, `a_rebound_name_is_not_read`,
+  `a_test_dictionary_replaces_the_docstring_examples`,
+  `a_conftest_that_ignores_collection_stops_the_read`,
+  `conftest_hooks_and_namespaces_outside_the_file_path_stop_the_read`,
+  `newer_pytest_config_files_leave_collection_unknown`,
+  `attached_short_flags_and_cache_selectors_stop_the_read`,
+  `a_positional_collection_target_in_addopts_stops_the_read`,
+  `a_module_that_binds_len_is_not_read`,
+  `an_escape_in_the_docstring_source_drops_it`,
+  `a_trailing_comment_on_the_example_line_does_not_hide_the_comparison`.
+- Existing: `crates/ripr/src/analysis/language/python/helper_assertions_tests.rs`
+  `given_a_reraising_wrapper_when_it_runs_a_helper_lambda_then_the_helper_call_is_the_assertion`,
+  `given_a_wrapper_that_can_swallow_when_it_runs_a_helper_lambda_then_nothing_resolves`,
+  `given_a_reraising_wrapper_when_the_call_is_not_a_bare_helper_lambda_then_nothing_resolves`,
+  `given_a_wrapper_name_the_test_rebinds_or_imports_when_called_then_nothing_resolves`,
+  `given_a_reraising_wrapper_around_an_unresolvable_helper_when_called_then_nothing_resolves`.
+- Existing: corpus rows `py-trap-wrapped-swallow`, `py-trap-wrapped-partial`,
+  `py-trap-wrapped-conditional` and `py-trap-wrapped-finally` (`cargo xtask
+  verdict-corpus check --language python`): rule 27's runtime-verified
+  swallowing negatives, which must never credit.
+- Existing: corpus rows `py-trap-platform-guarded` and
+  `py-trap-wrapped-swallow` (`cargo xtask verdict-corpus check --language
+  python`): Decision 17's negatives, which must never credit.
+- Existing: corpus rows `py-shapes-decorator-retry-count-slack` and
+  `py-shapes-decorator-loop-bound-slack` (`cargo xtask verdict-corpus
+  check --language python`): Decision 16's negatives, which must never
+  read `exposed`.
+- Existing: `crates/ripr/src/analysis/language/python/doctest_eval.rs`
+  `floor_division_and_modulo_follow_the_divisor_sign`,
+  `slices_normalize_indexes_like_python`,
+  `integer_overflow_and_bool_int_confusion_decide_nothing`,
+  `an_exponential_replace_chain_is_refused_not_built`,
+  `a_deep_sum_is_refused_not_recursed`.
 - Existing: `crates/ripr/src/analysis/language/python/python_tests.rs`
   `oracle_for_call_recognizes_all_unittest_and_mock_variants`,
   `collect_with_item_assertions_treats_pytest_raises_match_as_exact_error`,
@@ -1446,6 +1704,16 @@ and the test is `tests/test_subject.py`, which imports each owner from
   that only ends in `classmethod`, a same-named method of another class
   and a class name the test rebinds (#7634).
 
+- L8's literal owner-instance fixture (#9619):
+  `crates/ripr/src/analysis/language/python/literal_fixture_tests.rs`
+  pins the inlined control, the conftest and same-module fixture, and
+  every negative shape and interference route of example 41.
+- L8's literal-params fixture and the parametrize-mark scope (#9619):
+  `crates/ripr/src/analysis/language/python/param_fixture_tests.rs` pins
+  the decorated control, the conftest, same-module and single-name forms,
+  the off-boundary parity and every negative shape of example 42;
+  `classify/tests.rs` `an_indirect_parametrize_argname_is_an_unresolved_fixture`.
+
 ## Numeric factor reorders
 
 A factor swap involving named operands retains the ordinary table-row reading
@@ -1467,6 +1735,11 @@ associativity; unsupported rows retain the ordinary reading.
 
 ## Implementation Mapping
 
+- `crates/ripr/src/analysis/language/python/doctest_tests.rs` and
+  `doctest_eval.rs`: rule 26, collection detection, example reading and the
+  evaluator gate.
+- `crates/ripr/src/analysis/language/python/helper_assertions.rs`: rule 27,
+  the re-raising wrapper read beside the single-assert helper read.
 - `crates/ripr/src/analysis/language/python/oracles.rs`: assertion table,
   rules 1 to 3, 12, 14 and 15, and each assertion's gate text (rules 4
   and 13).
@@ -1500,6 +1773,9 @@ associativity; unsupported rows retain the ordinary reading.
 - `oracles.rs` (`is_property_compare`: idempotence and loop-variable identity
   checks, rule 25), pinned by `property_assertion_tests.rs` and the
   `py-grid-*-property` corpus cases.
+- `crates/ripr/src/analysis/language/python/param_fixtures.rs` (literal
+  `params=` rows and the unpack rewrite) with `fixtures.rs` (isolation) and
+  `static_limits.rs` (direct parametrize argnames): L8, example 42.
 
 ## Metrics
 
