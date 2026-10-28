@@ -418,11 +418,14 @@ This order is the existing behavior and is normative:
   (RIPR-SPEC-0028) but still counts here; only literal `False` or a
   literal list or tuple of strings that omits it (an empty one included)
   leaves the argname a direct value (#10685). A mark pytest refuses at
-  collection gives no credit, so all of its argnames are unsettled:
-  `indirect=None`, a literal `indirect` list naming a name the mark does
-  not parametrize, and an argname parametrized twice (within one mark,
+  collection (`indirect=None`, a literal `indirect` list naming a name the
+  mark does not parametrize, an argname parametrized twice within one mark,
   across stacked marks, or by the test's class or a local ancestor and the
-  test) (#10867). `indirect` is read from the
+  test) makes the whole test uncollectible: every argname of every mark on
+  it is unsettled, a healthy sibling's routed fixture included, and the test
+  carries the `pytest.mark.parametrize(collection error)` activation control,
+  so it lends no credit through assertions, boundary inputs or fixtures
+  (#10867). `indirect` is read from the
   keyword or the third positional argument; a `*args` or `**kwargs` splat in
   the mark leaves every argname unsettled. The mark is pytest's own when its
   root resolves through the imports in effect at the definition

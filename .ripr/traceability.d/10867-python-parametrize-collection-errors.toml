@@ -10,4 +10,5 @@ tests = [
 code = [
   "crates/ripr/src/analysis/language/python/parametrize.rs",
   "crates/ripr/src/analysis/language/python/owners_tests.rs",
+  "crates/ripr/src/analysis/language/python/test_activation.rs",
 ]

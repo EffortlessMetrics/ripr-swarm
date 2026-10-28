@@ -268,7 +268,22 @@ pub(super) fn applies_parametrize(decorators: &[Expr], scope: ParametrizeScope<'
 /// (which gives up on variable argvalues, `pytest.param(marks=...)`, large
 /// products and any `indirect=`).
 fn argname_routings(decorators: &[Expr], scope: ParametrizeScope<'_>) -> Vec<(String, Routing)> {
+    read_marks(decorators, scope).0
+}
+
+/// Whether the test's own pytest parametrize decorators fail collection
+/// (#10867): pytest then runs none of its cases, so the test lends no
+/// credit at all, through its assertions or any fixture.
+pub(super) fn collection_error(decorators: &[Expr], scope: ParametrizeScope<'_>) -> bool {
+    read_marks(decorators, scope).1
+}
+
+/// The argname routings and whether any mark fails collection. One refused
+/// mark makes every argname of the test unsettled, a healthy sibling mark's
+/// routed fixture included: the test never runs.
+fn read_marks(decorators: &[Expr], scope: ParametrizeScope<'_>) -> (Vec<(String, Routing)>, bool) {
     let mut found = Vec::new();
+    let mut refused_any = false;
     for decorator in decorators {
         let Some((call, kind)) = scope.parametrize_call(decorator) else {
             continue;
@@ -292,7 +307,13 @@ fn argname_routings(decorators: &[Expr], scope: ParametrizeScope<'_>) -> Vec<(St
             continue;
         };
         let indirect = indirect.map(|value| scope.resolve_value(value));
-        let refused = indirect.is_some_and(|value| names_unknown_indirect(value, &names));
+        // pytest refuses `indirect=None` and a literal list naming a name
+        // the mark does not parametrize.
+        let refused = indirect.is_some_and(|value| {
+            matches!(value, Expr::Constant(constant) if constant.value == ast::Constant::None)
+                || names_unknown_indirect(value, &names)
+        });
+        refused_any |= refused;
         for name in &names {
             let routing = if splat || refused || kind == MarkKind::Unsettled {
                 Routing::Unsettled
@@ -302,13 +323,14 @@ fn argname_routings(decorators: &[Expr], scope: ParametrizeScope<'_>) -> Vec<(St
             found.push((name.clone(), routing));
         }
     }
-    if has_duplicate(found.iter().map(|(name, _)| name.as_str())) {
-        // "duplicate parametrization of 'q'": a collection error.
+    // "duplicate parametrization of 'q'" is a collection error too.
+    refused_any |= has_duplicate(found.iter().map(|(name, _)| name.as_str()));
+    if refused_any {
         for (_, routing) in &mut found {
             *routing = Routing::Unsettled;
         }
     }
-    found
+    (found, refused_any)
 }
 
 /// Every argname the test's pytest parametrize decorators name, repeats
@@ -356,8 +378,7 @@ fn names_unknown_indirect(value: &Expr, names: &[String]) -> bool {
         Expr::Tuple(tuple) => &tuple.elts,
         _ => return false,
     };
-    string_elements(elements)
-        .is_some_and(|listed| listed.iter().any(|listed| !names.contains(listed)))
+    string_elements(elements).is_some_and(|listed| listed.iter().any(|item| !names.contains(item)))
 }
 
 /// Argnames not definitely routed to a fixture. They are never resolved as

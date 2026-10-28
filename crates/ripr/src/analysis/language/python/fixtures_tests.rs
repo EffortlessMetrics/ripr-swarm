@@ -403,6 +403,37 @@ fn given_a_name_parametrized_by_both_a_class_and_its_method_then_no_fixture_is_r
             "{test}"
         );
     }
+    // A refused sibling mark (`indirect=None`) makes the whole test
+    // uncollectible, so a healthy routed mark beside it makes no edge either,
+    // on the test or on its class.
+    let sibling = with_decorator(
+        "@pytest.mark.parametrize('q', [1], indirect=None)\n@pytest.mark.parametrize('out', ['abc'], indirect=True)",
+    )
+    .replace("def test_short(out):", "def test_short(q, out):");
+    let class_sibling = SAME_MODULE.replace(
+        "def test_short(out):\n    assert out == 'abc'\n",
+        &format!("@pytest.mark.parametrize('q', [1], indirect=None)\nclass TestShort:\n    @pytest.mark.parametrize('out', {routed}\n    def test_short(self, q, out):\n        assert out == 'abc'\n"),
+    );
+    for test in [&sibling, &class_sibling] {
+        assert!(
+            relations(&[
+                ("src/utils.py", UTILS_PY),
+                ("tests/test_utils.py", test.as_str())
+            ])?
+            .is_empty(),
+            "{test}"
+        );
+        // Control: `indirect=False` collects, and the routed mark keeps its edge.
+        let healthy = test.replace("indirect=None", "indirect=False");
+        assert_eq!(
+            relations(&[
+                ("src/utils.py", UTILS_PY),
+                ("tests/test_utils.py", &healthy)
+            ])?,
+            vec![("test_short".to_string(), "fixture_owner_call")],
+            "{healthy}"
+        );
+    }
     // Control: the method alone routes to the fixture.
     let single = SAME_MODULE.replace(
         "def test_short(out):\n    assert out == 'abc'\n",

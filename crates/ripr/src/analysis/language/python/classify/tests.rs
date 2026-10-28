@@ -1468,7 +1468,18 @@ fn an_indirect_parametrize_argname_is_an_unresolved_fixture() -> Result<(), Stri
         ", IND",
         ", **{\"indirect\": True}",
         ", *REST",
-        // Marks pytest refuses at collection (#10867): the test never runs.
+    ] {
+        for (shape, tests) in [("module", module(mark)), ("class", class(mark))] {
+            assert_eq!(
+                limit(&tests)?,
+                Some(crate::domain::StaticLimitKind::UnresolvedPytestFixture),
+                "{shape}{mark}"
+            );
+        }
+    }
+    // Marks pytest refuses at collection (#10867): the test never runs, so
+    // it carries the collection-error activation control and lends nothing.
+    for mark in [
         ", indirect=None",
         ", indirect=[\"other\"]",
         ", indirect=(\"quantity\", \"other\")",
@@ -1476,7 +1487,7 @@ fn an_indirect_parametrize_argname_is_an_unresolved_fixture() -> Result<(), Stri
         for (shape, tests) in [("module", module(mark)), ("class", class(mark))] {
             assert_eq!(
                 limit(&tests)?,
-                Some(crate::domain::StaticLimitKind::UnresolvedPytestFixture),
+                Some(crate::domain::StaticLimitKind::DecoratorIndirection),
                 "{shape}{mark}"
             );
         }

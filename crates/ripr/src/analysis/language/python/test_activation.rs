@@ -191,6 +191,25 @@ pub(super) fn empty_parametrize_control(decorators: &[Expr]) -> Option<PythonAct
     })
 }
 
+/// A parametrize mark pytest refuses at collection (`indirect=None`, an
+/// unknown `indirect` name, an argname parametrized twice): the test is
+/// reported as a collection error and its body never runs (#10867).
+pub(super) fn parametrize_collection_error_control(
+    site: DeclarationSite,
+) -> PythonActivationControl {
+    PythonActivationControl {
+        name: "pytest.mark.parametrize(collection error)".to_string(),
+        site,
+    }
+}
+
+/// Whether `controls` hold [`parametrize_collection_error_control`].
+pub(super) fn has_collection_error(controls: &[PythonActivationControl]) -> bool {
+    controls
+        .iter()
+        .any(|control| control.name == "pytest.mark.parametrize(collection error)")
+}
+
 /// Module-level controls skip every test in the file: `pytest.importorskip`,
 /// `pytest.skip(..., allow_module_level=True)` and a `pytestmark` that applies
 /// a recognized skip or xfail mark. Only unconditional top-level statements

@@ -628,6 +628,18 @@ pub(super) fn collect_tests_from_statements(
                     .chain(super::test_activation::empty_parametrize_control(
                         &function.decorator_list,
                     ))
+                    .chain(
+                        (framework == PythonFramework::Pytest
+                            && super::parametrize::collection_error(
+                                &function.decorator_list,
+                                parametrize_scope,
+                            ))
+                        .then(|| {
+                            super::test_activation::parametrize_collection_error_control(
+                                super::test_activation::DeclarationSite::Function,
+                            )
+                        }),
+                    )
                     .collect(),
                     fixtures,
                     setup_receivers: setup_receivers.clone(),
@@ -744,6 +756,18 @@ pub(super) fn collect_tests_from_statements(
                     .chain(super::test_activation::empty_parametrize_control(
                         &function.decorator_list,
                     ))
+                    .chain(
+                        (framework == PythonFramework::Pytest
+                            && super::parametrize::collection_error(
+                                &function.decorator_list,
+                                parametrize_scope,
+                            ))
+                        .then(|| {
+                            super::test_activation::parametrize_collection_error_control(
+                                super::test_activation::DeclarationSite::Function,
+                            )
+                        }),
+                    )
                     .collect(),
                     fixtures,
                     setup_receivers: setup_receivers.clone(),
@@ -864,20 +888,30 @@ pub(super) fn collect_tests_from_statements(
                                 .flatten()
                                 .cloned(),
                         );
-                        test.parametrize_argnames.extend(
-                            local_classes
-                                .class_parametrize_argnames
-                                .get(class_name)
-                                .into_iter()
-                                .flatten()
-                                .cloned(),
-                        );
+                        if let Some(names) =
+                            local_classes.class_parametrize_argnames.get(class_name)
+                        {
+                            test.parametrize_argnames.extend(names.iter().cloned());
+                        }
                         // A class and its method (or two classes) that
-                        // parametrize one name fail collection (#10867):
-                        // every argname is then unsettled.
+                        // parametrize one name fail collection, as does any
+                        // refused mark on either (#10867): the test runs no
+                        // case, so every argname is unsettled and the test
+                        // carries the collection-error control.
                         if super::parametrize::has_duplicate(
                             test.parametrize_argnames.iter().map(String::as_str),
+                        ) || super::test_activation::has_collection_error(
+                            &test.activation_controls,
                         ) {
+                            if !super::test_activation::has_collection_error(
+                                &test.activation_controls,
+                            ) {
+                                test.activation_controls.push(
+                                    super::test_activation::parametrize_collection_error_control(
+                                        super::test_activation::DeclarationSite::Class,
+                                    ),
+                                );
+                            }
                             for name in &test.parametrize_argnames {
                                 if !test.direct_parametrized.contains(name) {
                                     test.direct_parametrized.push(name.clone());
@@ -1227,7 +1261,7 @@ impl<'a> LocalTestClasses<'a> {
                     super::parametrize::unsettled_indirect_argnames(&class.decorator_list, within)
                 })
                 .collect();
-            let parametrize_argnames = scope
+            let parametrize_argnames: Vec<String> = scope
                 .ancestors_or_self(name)
                 .iter()
                 .filter_map(|ancestor| Some((scope.defs.get(ancestor)?, class_scope(ancestor))))
@@ -1235,6 +1269,17 @@ impl<'a> LocalTestClasses<'a> {
                     super::parametrize::parametrize_argnames(&class.decorator_list, within)
                 })
                 .collect();
+            let class_collection_error =
+                super::parametrize::has_duplicate(parametrize_argnames.iter().map(String::as_str))
+                    || scope
+                        .ancestors_or_self(name)
+                        .iter()
+                        .filter_map(|ancestor| {
+                            Some((scope.defs.get(ancestor)?, class_scope(ancestor)))
+                        })
+                        .any(|((_, class), within)| {
+                            super::parametrize::collection_error(&class.decorator_list, within)
+                        });
             found
                 .class_parametrize_argnames
                 .insert(name, parametrize_argnames);
@@ -1260,6 +1305,11 @@ impl<'a> LocalTestClasses<'a> {
                         super::test_activation::DeclarationSite::Class,
                     )
                 })
+                .chain(class_collection_error.then(|| {
+                    super::test_activation::parametrize_collection_error_control(
+                        super::test_activation::DeclarationSite::Class,
+                    )
+                }))
                 .collect();
             found.class_activation_controls.insert(name, controls);
             let Some(mro) = scope.mro(name, &mut Vec::new()) else {
