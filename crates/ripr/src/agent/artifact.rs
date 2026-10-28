@@ -4014,6 +4014,25 @@ mod tests {
             if dirty.currentness != ArtifactCurrentness::DirtyWorktree {
                 return Err("untracked Rust source must disclose DirtyWorktree".into());
             }
+            // The probe is not root-only: a nested source under a spaced path
+            // is analyzed input too, so it must also be dirty on its own.
+            std::fs::remove_file(root.join("extra.rs"))
+                .map_err(|error| format!("remove extra: {error}"))?;
+            if current_git_worktree_status(&root)? != "clean" {
+                return Err("removing the untracked source must restore clean".into());
+            }
+            let nested = root.join("crates/nested dir/src");
+            std::fs::create_dir_all(&nested).map_err(|error| format!("create nested: {error}"))?;
+            std::fs::write(nested.join("deep.rs"), "pub fn deep() {}\n")
+                .map_err(|error| format!("write nested: {error}"))?;
+            if current_git_worktree_status(&root)? != "dirty" {
+                return Err("untracked nested Rust source must report dirty".into());
+            }
+            let nested_dirty = validate_repo_exposure_artifact(&root, &raw_after_commit, "t")
+                .map_err(|error| format!("nested validation failed: {error}"))?;
+            if nested_dirty.currentness != ArtifactCurrentness::DirtyWorktree {
+                return Err("untracked nested Rust source must disclose DirtyWorktree".into());
+            }
             Ok(())
         })();
         let cleanup =
