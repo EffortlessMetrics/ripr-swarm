@@ -103,6 +103,12 @@ pub(crate) struct GapListWindow {
 /// the page ceiling; the remainder is reached through `omitted_page`.
 pub(crate) const OMITTED_WINDOW: usize = 200;
 
+/// Serialized-byte budget for one omission window. The entry cap alone does
+/// not bound size (canonical identities embed paths and qualified owners), so
+/// the window also stops once this many bytes are emitted; the first entry
+/// always ships so the walk makes progress.
+pub(crate) const OMITTED_WINDOW_BYTES: usize = 16 * 1024;
+
 /// Caller-narrowed filters over already-projected commit-time facts
 /// (#7464): `file` (exact, prefix, or trailing-segment match after `./`
 /// normalization), `class` (exposure-class wire token), `language` (language
@@ -1016,38 +1022,59 @@ impl WorkspaceSession {
         // past-end offset is an empty disclosed window, never a renumbered
         // one (#9360).
         let omitted_start = page.omitted_offset.min(selection.omitted.len());
-        let omitted_end = omitted_start
-            .saturating_add(OMITTED_WINDOW)
-            .min(selection.omitted.len());
-        let omitted_window = &selection.omitted[omitted_start..omitted_end];
-        let omitted_next = (omitted_end < selection.omitted.len()).then_some(omitted_end);
-        if let Some(next_omitted) = omitted_next {
-            // `limit: 1` keeps the walk cheap: the route exists to read the
-            // next omission window, not to re-fetch item summaries.
-            continuation["next_omitted_page"] = json!({
-                "tool": "ripr_list_gaps",
-                "arguments": {
-                    "snapshot_id": snapshot.snapshot_id,
-                    "omitted_offset": next_omitted,
-                    "limit": 1,
-                },
+        let mut omitted_window = Vec::new();
+        let mut omitted_bytes = 0usize;
+        for item in &selection.omitted[omitted_start..] {
+            let entry = json!({
+                "canonical_id": item.canonical_id,
+                "reason": omitted_reason_as_str(item.reason),
             });
+            // One byte per joining comma keeps the accounting exact.
+            let cost = document_bytes(&entry)?.saturating_add(1);
+            if omitted_window.len() >= OMITTED_WINDOW
+                || (!omitted_window.is_empty()
+                    && omitted_bytes.saturating_add(cost) > OMITTED_WINDOW_BYTES)
+            {
+                break;
+            }
+            omitted_bytes = omitted_bytes.saturating_add(cost);
+            omitted_window.push(entry);
         }
-        if let Some(next_offset) = page.next_offset {
-            // The generated route pins the snapshot identity and the caller
-            // filters: a refresh between pages fails closed with
-            // stale_snapshot instead of silently mixing snapshots, and the
-            // narrowed walk resumes narrowed (#6021 review, #7464).
+        let omitted_end = omitted_start + omitted_window.len();
+        let omitted_next = (omitted_end < selection.omitted.len()).then_some(omitted_end);
+        // Both continuation routes replay the caller's whole request and
+        // advance only their own axis: the snapshot pin, filters, and the
+        // limit carry over so following either route never silently changes
+        // the other window (#9360 review).
+        let replay_arguments = |offset: usize, omitted_offset: usize| {
             let mut arguments = json!({
                 "snapshot_id": snapshot.snapshot_id,
-                "offset": next_offset,
+                "offset": offset,
             });
+            if omitted_offset > 0 {
+                arguments["omitted_offset"] = json!(omitted_offset);
+            }
             for (name, value) in filter.arguments().as_object().cloned().unwrap_or_default() {
                 arguments[name] = value;
             }
             if let Some(limit) = page.limit {
                 arguments["limit"] = json!(limit);
             }
+            arguments
+        };
+        if let Some(next_omitted) = omitted_next {
+            continuation["next_omitted_page"] = json!({
+                "tool": "ripr_list_gaps",
+                "arguments": replay_arguments(page.offset, next_omitted),
+            });
+        }
+        if let Some(next_offset) = page.next_offset {
+            // The generated route pins the snapshot identity and the caller
+            // filters: a refresh between pages fails closed with
+            // stale_snapshot instead of silently mixing snapshots, and the
+            // narrowed walk resumes narrowed (#6021 review, #7464). It also
+            // keeps the requested omission window (#9360 review).
+            let arguments = replay_arguments(next_offset, page.omitted_offset);
             continuation["next_page"] = json!({
                 "tool": "ripr_list_gaps",
                 "arguments": arguments,
@@ -1097,13 +1124,7 @@ impl WorkspaceSession {
                 "has_more": page.has_more,
                 "next_offset": page.next_offset,
             },
-            "omitted_items": omitted_window
-                .iter()
-                .map(|item| json!({
-                    "canonical_id": item.canonical_id,
-                    "reason": omitted_reason_as_str(item.reason),
-                }))
-                .collect::<Vec<_>>(),
+            "omitted_items": omitted_window,
             "omitted_page": {
                 "offset": page.omitted_offset,
                 "returned": omitted_window.len(),
@@ -2384,12 +2405,21 @@ mod tests {
     /// shared gaps test finding with per-index identities. No analysis runs:
     /// the session contract is exercised against typed producer output.
     fn session_with_findings(count: usize) -> Result<WorkspaceSession, String> {
+        session_with_padded_findings(count, 0)
+    }
+
+    /// Like [`session_with_findings`], with `id_pad` filler bytes in every
+    /// canonical gap identity so omission windows can be byte-bound.
+    fn session_with_padded_findings(
+        count: usize,
+        id_pad: usize,
+    ) -> Result<WorkspaceSession, String> {
         let findings = (0..count)
             .map(|index| {
                 let mut finding = gaps::test_finding()?;
                 finding.id = format!("finding:test:{index}");
                 if let Some(gap) = finding.canonical_gap.as_mut() {
-                    gap.id = format!("gap:test:{index}");
+                    gap.id = format!("gap:test:{index}:{}", "x".repeat(id_pad));
                 }
                 finding.probe.id = crate::domain::ProbeId(format!("probe:test:{index}"));
                 // Distinct files: the shared budget caps items per document,
@@ -3155,6 +3185,107 @@ mod tests {
             || past["omitted_page"]["has_more"] != json!(false)
         {
             return Err(format!("past-end window must be empty and closed: {past}"));
+        }
+        Ok(())
+    }
+
+    /// #9360 review: the omission window is byte-bound as well as
+    /// count-bound. Long canonical identities used to make a 200-entry
+    /// window outgrow the document ceiling; now the window stops at its byte
+    /// budget and the walk still covers every omission once.
+    #[test]
+    fn long_omitted_identities_are_byte_fitted_and_fully_walked() -> Result<(), String> {
+        let session = session_with_padded_findings(700, 600)?;
+        let list = |omitted_offset: usize| -> Result<Value, String> {
+            session
+                .list_gaps(
+                    None,
+                    GapListWindow {
+                        limit: Some(1),
+                        omitted_offset,
+                        ..GapListWindow::default()
+                    },
+                    &GapListFilter::default(),
+                    crate::mcp::MAX_RESPONSE_BYTES,
+                )
+                .map_err(|failure| format!("window at {omitted_offset} failed: {}", failure.detail))
+        };
+        let mut document = list(0)?;
+        let total = document["omitted"]
+            .as_u64()
+            .ok_or("missing omitted count")?;
+        let mut seen = std::collections::BTreeSet::new();
+        let mut shortened = false;
+        loop {
+            let ids = document["omitted_items"]
+                .as_array()
+                .ok_or("omitted_items must be an array")?;
+            if ids.is_empty() {
+                return Err(format!("a window must make progress: {document}"));
+            }
+            shortened |=
+                ids.len() < OMITTED_WINDOW && document["omitted_page"]["has_more"] == json!(true);
+            for item in ids {
+                let id = item["canonical_id"].as_str().ok_or("omitted id")?;
+                if !seen.insert(id.to_string()) {
+                    return Err(format!("omitted identity repeated: {id}"));
+                }
+            }
+            match document["omitted_page"]["next_offset"].as_u64() {
+                Some(next) => {
+                    let next = usize::try_from(next).map_err(|error| error.to_string())?;
+                    document = list(next)?;
+                }
+                None => break,
+            }
+        }
+        if !shortened {
+            return Err("fixture must exercise the byte budget, not only the count cap".into());
+        }
+        if seen.len() as u64 != total {
+            return Err(format!("walk saw {} of {total} omissions", seen.len()));
+        }
+        Ok(())
+    }
+
+    /// #9360 review: each continuation route replays the whole request and
+    /// advances only its own axis. Following `next_page` keeps the requested
+    /// omission window; following `next_omitted_page` keeps the filters and
+    /// item window.
+    #[test]
+    fn continuation_routes_preserve_the_other_axis() -> Result<(), String> {
+        let session = session_with_findings(700)?;
+        let filter = GapListFilter {
+            file: Some("src".to_string()),
+            ..GapListFilter::default()
+        };
+        let document = session
+            .list_gaps(
+                None,
+                GapListWindow {
+                    offset: 1,
+                    limit: Some(2),
+                    omitted_offset: 5,
+                },
+                &filter,
+                crate::mcp::MAX_RESPONSE_BYTES,
+            )
+            .map_err(|failure| failure.detail)?;
+        let next_page = &document["continuation"]["next_page"]["arguments"];
+        if next_page["omitted_offset"] != json!(5) || next_page["file"] != json!("src") {
+            return Err(format!(
+                "next_page lost the omission window or filter: {next_page}"
+            ));
+        }
+        let next_omitted = &document["continuation"]["next_omitted_page"]["arguments"];
+        if next_omitted["offset"] != json!(1)
+            || next_omitted["limit"] != json!(2)
+            || next_omitted["file"] != json!("src")
+            || next_omitted["snapshot_id"] != document["snapshot_id"]
+        {
+            return Err(format!(
+                "next_omitted_page lost the item window or filter: {next_omitted}"
+            ));
         }
         Ok(())
     }

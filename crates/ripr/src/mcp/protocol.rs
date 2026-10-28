@@ -506,7 +506,7 @@ fn list_gaps_tool_descriptor() -> Value {
                 "omitted_offset": {
                     "type": "integer",
                     "minimum": 0,
-                    "description": "Start index within the omitted identities, which page on their own axis (200 per response). Follow continuation.next_omitted_page. Default 0."
+                    "description": "Start index within the omitted identities, which page on their own axis (bounded by count and bytes per response). Follow continuation.next_omitted_page. Default 0."
                 },
                 "limit": {
                     "type": "integer",

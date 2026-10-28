@@ -168,7 +168,7 @@ runs no tests or verification and grants no execution or edit authority.
 | --- | --- |
 | Tool (no arguments) | `ripr_workspace_status` |
 | Tool (`base?`, `source?`) | `ripr_refresh` |
-| Tool (`snapshot_id?`, `offset?`, `limit?`, `file?`, `class?`, `language?`, `repair_ready?`) | `ripr_list_gaps` |
+| Tool (`snapshot_id?`, `offset?`, `omitted_offset?`, `limit?`, `file?`, `class?`, `language?`, `repair_ready?`) | `ripr_list_gaps` |
 | Tool (`canonical_id`, `snapshot_id?`) | `ripr_get_gap` |
 | Tool (`canonical_id`, `snapshot_id?`) | `ripr_prepare_repair` |
 | Tool (`attempt_id`) | `ripr_get_repair_attempt` |
@@ -248,8 +248,9 @@ Gap-list responses use `ripr-mcp-gap-list-v4`, including typed refusals.
 The prior v1 success schema forbids unknown top-level properties, so the new
 `filtered` and `filters` fields required the v2 change; v3 adds the snapshot's
 typed `outcome` block (`kind`, a plain label, and the outcome limitation
-kinds), so a `partial_with_limitations` run never reads as clean. Strict v1
-readers must rediscover `tools/list`, accept v3 explicitly and validate
+kinds), so a `partial_with_limitations` run never reads as clean; v4 adds the
+independently windowed omission disclosure (`omitted_page`, `omitted_offset`). Strict v1
+readers must rediscover `tools/list`, accept v4 explicitly and validate
 against the advertised `outputSchema`; callers may still omit all filter
 arguments.
 
@@ -329,12 +330,15 @@ can overflow the structured envelope while the raw document still fits.
 Those pages return the existing typed `result_too_large` refusal with the
 current snapshot identity. The omission disclosure no longer makes a listing
 unservable by itself (#9360): `omitted_items` carries at most 200 identities
-per response, `omitted_page` (`offset`, `returned`, `has_more`,
-`next_offset`) discloses the window, and `continuation.next_omitted_page`
-names the `ripr_list_gaps` call (`omitted_offset`, pinned to the snapshot)
-that reads the next window. Walking `omitted_page.next_offset` covers every
-omitted identity exactly once; a past-end `omitted_offset` is an empty
-disclosed window. Only a listing whose remaining non-pageable disclosure
+and at most 16 KiB per response (identities embed paths, so the byte budget
+is the real bound; the first entry always ships), `omitted_page` (`offset`,
+`returned`, `has_more`, `next_offset`) discloses the window, and
+`continuation.next_omitted_page` names the `ripr_list_gaps` call that reads
+the next window. Each continuation route replays the whole request, advancing
+only its own axis: `next_omitted_page` keeps the snapshot pin, filters, item
+`offset` and `limit`; `next_page` keeps the requested `omitted_offset`.
+Walking `omitted_page.next_offset` covers every omitted identity exactly
+once; a past-end `omitted_offset` is an empty disclosed window. Only a listing whose remaining non-pageable disclosure
 (for example an oversized filter echo) cannot fit even one page fails closed
 with `result_too_large` naming `ripr://snapshot/{snapshot_id}` as the
 identity route. Other tool responses carry the document once at full fidelity:
