@@ -2516,6 +2516,19 @@ impl LexicalUseScan {
     }
 }
 
+// Visibility changes who can access an import, not its binding within the
+// declaring scope. Accept both unrestricted and restricted visibility.
+fn use_statement_body(line: &str) -> Option<&str> {
+    let line = if let Some(rest) = line.strip_prefix("pub ") {
+        rest.trim_start()
+    } else if let Some(rest) = line.strip_prefix("pub(") {
+        rest.split_once(')')?.1.trim_start()
+    } else {
+        line
+    };
+    line.strip_prefix("use ")
+}
+
 /// Collect every `use` statement with its owning lexical scope.
 ///
 /// This is the single lexical owner for import ancestry in this module:
@@ -2567,7 +2580,7 @@ fn scan_lexical_use_statements(source: &str) -> LexicalUseScan {
                 });
                 pending_use = None;
             }
-        } else if let Some(import) = trimmed.strip_prefix("use ") {
+        } else if let Some(import) = use_statement_body(trimmed) {
             is_use_fragment = true;
             if import.contains(';') {
                 let text = import

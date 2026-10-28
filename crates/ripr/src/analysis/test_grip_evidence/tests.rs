@@ -19791,3 +19791,124 @@ fn seam_evidence_keeps_equal_value_facts_from_distinct_test_files() -> Result<()
     );
     Ok(())
 }
+
+#[test]
+fn module_alias_visibility_qualifiers_preserve_local_binding() {
+    for visibility in ["", "pub ", "pub(crate) ", "pub(super) "] {
+        let source =
+            format!("{visibility}use crate::child as pipe;\nfn call() {{ pipe::compute(); }}");
+        let aliases = module_import_aliases(&source);
+        assert_eq!(
+            aliases
+                .get("pipe")
+                .and_then(|alias| alias.module_path_at(2)),
+            Some("child"),
+            "{visibility:?}"
+        );
+    }
+}
+
+#[test]
+fn visible_module_alias_credits_only_its_target() -> Result<(), String> {
+    let pipeline_src = r#"
+pub fn render_pipeline(input: &str) -> String {
+    format_output(input);
+    input.to_string()
+}
+pub fn exercise_pipeline() -> String {
+    render_pipeline("alpha")
+}
+fn format_output(input: &str) -> String {
+    input.to_string()
+}
+"#;
+    let index = index_from_files(&[
+        (PathBuf::from("src/pipeline.rs"), pipeline_src),
+        (
+            PathBuf::from("src/other.rs"),
+            r#"
+pub fn render_report(input: &str) -> String {
+    format_report(input);
+    input.to_string()
+}
+pub fn exercise_pipeline() -> String {
+    render_report("beta")
+}
+fn format_report(input: &str) -> String {
+    input.to_string()
+}
+"#,
+        ),
+        (
+            PathBuf::from("tests/visible_tests.rs"),
+            r#"
+#[path = "../src/pipeline.rs"]
+pub mod pipeline;
+pub use crate::pipeline as pipe;
+#[test]
+fn visible_alias() {
+    let format_output = pipe::exercise_pipeline();
+    assert_eq!(format_output, "alpha");
+}
+"#,
+        ),
+        (
+            PathBuf::from("tests/plain_tests.rs"),
+            r#"
+#[path = "../src/pipeline.rs"]
+pub mod pipeline;
+use crate::pipeline as clear;
+#[test]
+fn plain_alias() {
+    let format_output = clear::exercise_pipeline();
+    assert_eq!(format_output, "alpha");
+}
+"#,
+        ),
+        (
+            PathBuf::from("tests/other_tests.rs"),
+            r#"
+#[path = "../src/other.rs"]
+pub mod other;
+pub(crate) use crate::other as pipe;
+#[test]
+fn other_alias() {
+    let format_report = pipe::exercise_pipeline();
+    assert_eq!(format_report, "beta");
+}
+"#,
+        ),
+    ])?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
+    let seam = seams
+        .iter()
+        .find(|s| {
+            s.kind() == SeamKind::CallPresence
+                && s.owner().ends_with("::render_pipeline")
+                && s.expression().contains("format_output")
+        })
+        .ok_or_else(|| "expected call presence seam".to_string())?;
+    let evidence = evidence_for_seam(seam, &index);
+    let credited = evidence
+        .related_tests
+        .iter()
+        .filter(|t| t.relation_reason == RelationReason::HelperOwnerCall)
+        .map(|t| t.test_name.as_str())
+        .collect::<Vec<_>>();
+    assert!(
+        credited.contains(&"plain_alias"),
+        "plain control missing: {:?}",
+        evidence.related_tests
+    );
+    assert!(
+        credited.contains(&"visible_alias"),
+        "visible alias missing: {:?}",
+        evidence.related_tests
+    );
+    assert!(
+        !credited.contains(&"other_alias"),
+        "other module incorrectly credited: {:?}",
+        evidence.related_tests
+    );
+    Ok(())
+}
