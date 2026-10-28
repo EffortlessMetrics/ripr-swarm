@@ -1704,6 +1704,40 @@ fn decorator_argument_line_belongs_to_the_decorated_function() -> Result<(), Str
 }
 
 #[test]
+fn class_decorator_lines_belong_to_decorated_class() -> Result<(), String> {
+    let source = "VALUE = 1\n@wrap(\n    3,\n)\nclass Outer:\n    @other\n    class Inner:\n        pass\n\nAFTER = 2\n";
+    let file = Path::new("src/svc.py");
+    let owners = extract_owners(file, source);
+    for (line, expected) in [
+        (1, "<module>"),
+        (2, "Outer"),
+        (3, "Outer"),
+        (4, "Outer"),
+        (5, "Outer"),
+        (6, "Outer.Inner"),
+        (7, "Outer.Inner"),
+        (10, "<module>"),
+    ] {
+        let owner = super::workspace::owner_for_changed_line(file, line, &owners)
+            .ok_or_else(|| format!("no owner for line {line}"))?;
+        if owner.qualified_name != expected {
+            return Err(format!(
+                "line {line} owned by `{}`, expected `{expected}`",
+                owner.qualified_name
+            ));
+        }
+        if line == 3 {
+            let limit = static_limit_for_change("    3,", owner, &[])
+                .ok_or_else(|| "class decorator argument has no static limit".to_string())?;
+            if limit.kind != StaticLimitKind::DecoratorIndirection {
+                return Err(format!("unexpected limit: {:?}", limit.kind));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn decorator_argument_edit_raises_decorator_indirection() -> Result<(), String> {
     let owners = extract_owners(
         Path::new("src/svc.py"),

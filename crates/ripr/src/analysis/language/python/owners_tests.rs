@@ -194,15 +194,7 @@ fn owner_from_function(
     let route_receivers = collect_static_route_receivers(context.source, decorators);
     let dynamic_route_decorators = collect_dynamic_route_decorators(context.source, decorators);
     let unplain_decorators = called_decorator_names(decorators);
-    let decorator_lines = decorators
-        .first()
-        .zip(decorators.last())
-        .map(|(first, last)| {
-            (
-                line_for_range_start(context.source, first.range()),
-                line_for_range_end(context.source, last.range()),
-            )
-        });
+    let decorator_lines = decorator_lines(context.source, decorators);
     let mut decorators = decorator_names;
     if is_async {
         decorators.push("async_def".to_string());
@@ -335,6 +327,18 @@ fn function_parameters(source: &str, args: &ast::Arguments) -> Vec<PythonParamet
         .collect()
 }
 
+fn decorator_lines(source: &SourceText<'_>, decorators: &[Expr]) -> Option<(usize, usize)> {
+    decorators
+        .first()
+        .zip(decorators.last())
+        .map(|(first, last)| {
+            (
+                line_for_range_start(source, first.range()),
+                line_for_range_end(source, last.range()),
+            )
+        })
+}
+
 fn owner_from_class(
     context: PythonOwnerContext<'_>,
     name: &str,
@@ -360,7 +364,7 @@ fn owner_from_class(
         route_receivers: collect_static_route_receivers(context.source, decorators),
         dynamic_route_decorators: collect_dynamic_route_decorators(context.source, decorators),
         unplain_decorators: called_decorator_names(decorators),
-        decorator_lines: None,
+        decorator_lines: decorator_lines(context.source, decorators),
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
         star_exported: false,

@@ -273,8 +273,8 @@ struct PythonOwner {
     /// segment is redefined at module level. Transparent-decorator rules must
     /// not trust the import for these.
     unplain_decorators: Vec<String>,
-    /// First and last source line of a function owner's decorator list. The
-    /// `def` line starts the owner, so a changed decorator argument
+    /// First and last source line of a function or class owner's decorator
+    /// list. The definition line starts the owner, so a changed argument
     /// (`@retry(3)`) would otherwise fall to the module owner and never see
     /// the owner's decorator-indirection limit. `None` without decorators and
     /// for class and module owners.
