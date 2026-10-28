@@ -290,19 +290,42 @@ fn free_call_entry_with_a_test_that_does_not_pin_it_exactly_is_not_credited() ->
 {
     let before = library("inner(x) + 1", OWNER, "");
     let after = library("inner(x) + 1", OWNER_CHANGED, "");
-    for tests in [
-        // A weak oracle, an expectation computed through the entry, a
-        // path-qualified call, a rebound entry name and an alias.
-        "use free_pin::outer;\n\n#[test]\nfn outer_is_pinned() {\n    assert!(outer(5) > 0);\n}\n",
-        "use free_pin::outer;\n\n#[test]\nfn outer_is_pinned() {\n    assert_eq!(outer(5), outer(5));\n}\n",
-        "#[test]\nfn outer_is_pinned() {\n    assert_eq!(free_pin::outer(5), 11);\n}\n",
-        "use free_pin::outer;\n\n#[test]\nfn outer_is_pinned() {\n    let outer = |x: i64| x + 6;\n    assert_eq!(outer(5), 11);\n}\n",
-        "use free_pin::outer as o;\n\n#[test]\nfn outer_is_pinned() {\n    assert_eq!(o(5), 11);\n}\n",
-        "use free_pin::*;\nuse external::*;\n\n#[test]\nfn outer_is_pinned() {\n    assert_eq!(outer(5), 11);\n}\n",
-        "use free_pin::outer;\n\n#[test]\n#[ignore]\nfn outer_is_pinned() {\n    assert_eq!(outer(5), 11);\n}\n",
+    for (tests, class) in [
+        // A weak oracle, an expectation computed through the entry and a
+        // path-qualified call keep reach and read `weakly_exposed` (before
+        // the free-call pin they read `propagation_unknown`); a rebound entry
+        // name, an alias, a foreign glob and an ignored test do not relate.
+        (
+            "use free_pin::outer;\n\n#[test]\nfn outer_is_pinned() {\n    assert!(outer(5) > 0);\n}\n",
+            "weakly_exposed",
+        ),
+        (
+            "use free_pin::outer;\n\n#[test]\nfn outer_is_pinned() {\n    assert_eq!(outer(5), outer(5));\n}\n",
+            "weakly_exposed",
+        ),
+        (
+            "#[test]\nfn outer_is_pinned() {\n    assert_eq!(free_pin::outer(5), 11);\n}\n",
+            "weakly_exposed",
+        ),
+        (
+            "use free_pin::outer;\n\n#[test]\nfn outer_is_pinned() {\n    let outer = |x: i64| x + 6;\n    assert_eq!(outer(5), 11);\n}\n",
+            "no_static_path",
+        ),
+        (
+            "use free_pin::outer as o;\n\n#[test]\nfn outer_is_pinned() {\n    assert_eq!(o(5), 11);\n}\n",
+            "no_static_path",
+        ),
+        (
+            "use free_pin::*;\nuse external::*;\n\n#[test]\nfn outer_is_pinned() {\n    assert_eq!(outer(5), 11);\n}\n",
+            "no_static_path",
+        ),
+        (
+            "use free_pin::outer;\n\n#[test]\n#[ignore]\nfn outer_is_pinned() {\n    assert_eq!(outer(5), 11);\n}\n",
+            "reachable_unrevealed",
+        ),
     ] {
         let finding = return_finding(&before, &after, tests)?;
-        assert_ne!(class_of(&finding), "exposed", "{tests}: {finding}");
+        assert_eq!(class_of(&finding), class, "{tests}: {finding}");
     }
     Ok(())
 }

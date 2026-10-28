@@ -2435,13 +2435,13 @@ fn free_call_chain_is_identity_bound(
     let observed = observed_hops(chain, related_tests);
     !observed.is_empty()
         && observed.iter().enumerate().all(|(step, hop)| {
-            hop.receiver.is_none()
-                && !hop.through_macro
-                && hop_callee(chain, owner_name, step).is_some_and(|callee| {
-                    is_direct_call_site(&hop.call_text, callee)
-                        && caller_names_callee_only_as_a_call(&hop.caller.body, callee)
-                        && callee_declared_beside_caller(callee, &hop.caller, index)
-                })
+            // A method or macro-argument hop never forwards (the forwarding
+            // check refuses it), so only the call form is read here.
+            hop_callee(chain, owner_name, step).is_some_and(|callee| {
+                is_direct_call_site(&hop.call_text, callee)
+                    && caller_names_callee_only_as_a_call(&hop.caller.body, callee)
+                    && callee_declared_beside_caller(callee, &hop.caller, index)
+            })
         })
         && hops_call_the_indexed_callees(owner_name, observed, index)
 }
@@ -2485,11 +2485,14 @@ fn caller_names_callee_only_as_a_call(caller_text: &str, callee: &str) -> bool {
             .rsplit(|ch: char| !is_word(ch))
             .next()
             .unwrap_or("");
-        // `fn inner(..)` is a declaration; every other binding form (`let`,
-        // `const`, `static`, patterns, parameters) leaves an occurrence that
-        // no `(` follows.
+        // `fn inner(..)` and `struct inner(..)` declare the name with a `(`
+        // after it; every other binding form (`let`, `const`, `static`,
+        // patterns, parameters) leaves an occurrence that no `(` follows.
         after.trim_start().starts_with('(')
-            && previous_word != "fn"
+            && ![
+                "fn", "struct", "enum", "union", "type", "trait", "mod", "macro",
+            ]
+            .contains(&previous_word)
             && !before.trim_end().ends_with(['#', '.', '|', '&', ':'])
     })
 }
@@ -2510,9 +2513,9 @@ fn callee_declared_beside_caller(
     else {
         return false;
     };
-    if callee.file != caller.file {
-        return false;
-    }
+    // A callee in another file has no `fn <name>` on that line of the caller's
+    // file (two such functions would make the name non-unique), so its scopes
+    // read `None` below and the answer is `false`.
     let Some(file) = index.files().get(&caller.file) else {
         return false;
     };
@@ -5491,6 +5494,13 @@ mod tests {
             "fn outer(x: i64) -> i64 {\n    use other::inner as inner;\n    inner(x)\n}",
             "fn outer(x: i64) -> i64 {\n    macro_rules! helper { () => {}; }\n    inner(x)\n}",
             "fn outer(x: i64) -> i64 {\n    r#inner(x)\n}",
+            "fn outer(x: i64) -> i64 {\n    struct inner(i64);\n    inner(x).0\n}",
+            "fn outer(x: i64) -> i64 {\n    enum inner { A(i64) }\n    inner(x)\n}",
+            "fn outer(x: i64) -> i64 {\n    union inner(i64);\n    inner(x)\n}",
+            "fn outer(x: i64) -> i64 {\n    type inner(i64);\n    inner(x)\n}",
+            "fn outer(x: i64) -> i64 {\n    trait inner(i64);\n    inner(x)\n}",
+            "fn outer(x: i64) -> i64 {\n    mod inner(i64);\n    inner(x)\n}",
+            "fn outer(x: i64) -> i64 {\n    macro inner(i64);\n    inner(x)\n}",
             "fn outer(x: i64) -> i64 {\n    other::inner(x)\n}",
             "fn outer(x: i64) -> i64 {\n    x.inner(x)\n}",
             "fn outer(x: i64) -> i64 {\n    match Some(x) { Some(inner) => inner(x), None => 0 }\n}",
