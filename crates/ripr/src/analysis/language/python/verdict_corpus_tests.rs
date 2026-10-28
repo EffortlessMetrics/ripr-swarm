@@ -28,6 +28,16 @@ fn classify_finding(
     old_line: &str,
     test_source: &str,
 ) -> Result<crate::domain::Finding, String> {
+    classify_finding_with_delta(owner, line, old_line, test_source, false)
+}
+
+fn classify_finding_with_delta(
+    owner: &str,
+    line: usize,
+    old_line: &str,
+    test_source: &str,
+    sole_line_replacement: bool,
+) -> Result<crate::domain::Finding, String> {
     let mut owners = extract_owners(Path::new(OWNER_FILE), owner);
     // The workspace pass fills the star-export fact from the module source.
     reexports::apply_package_reexports(&mut owners, |file| {
@@ -38,13 +48,18 @@ fn classify_finding(
         .lines()
         .nth(line - 1)
         .ok_or_else(|| format!("owner has no line {line}"))?;
-    classify_change_with_old(
+    classify::classify_change_with_context(
         Path::new(OWNER_FILE),
         line,
         new_line,
         Some(old_line),
         &owners,
         &tests,
+        classify::PythonNoBehaviorContext {
+            sole_line_replacement,
+            ..Default::default()
+        },
+        None,
     )
     .ok_or_else(|| "changed line should classify".to_string())
 }
@@ -2313,7 +2328,11 @@ fn an_owner_called_in_a_lambda_over_unresolved_code_abstains() -> Result<(), Str
 fn factor_swap_with_observed_float_sibling_edit_keeps_exact_oracle() -> Result<(), String> {
     let owner = "def area(a, b):\n    return (b * a, 2)\n";
     let table = "import pytest\nfrom src.shop import area\n\n@pytest.mark.parametrize(\"a,b,want\", [(1.5, 2.0, (3.0, 1))])\ndef test_area(a, b, want):\n    assert area(a, b) == want\n";
-    let finding = classify_finding(owner, 2, "    return (a * b, 1)", table)?;
+    let finding = classify_finding_with_delta(owner, 2, "    return (a * b, 1)", table, true)?;
+    assert_ne!(
+        classify(owner, 2, "    return (a * b, 1)", table)?,
+        ExposureClass::Exposed
+    );
     assert_eq!(finding.class, ExposureClass::Exposed);
     assert!(
         !finding
@@ -2328,6 +2347,10 @@ fn factor_swap_with_observed_float_sibling_edit_keeps_exact_oracle() -> Result<(
 fn factor_swap_sibling_proof_refuses_unobserved_or_uncertain_rows() -> Result<(), String> {
     let owner = "def area(a, b):\n    return (b * a, 2)\n";
     let prefix = "import pytest\nfrom src.shop import area\n\n@pytest.mark.parametrize(\"a,b,want\", [(1.5, 2.0, (3.0, 1))])\ndef test_area(a, b, want):\n";
+    let classify_proven = |test: &str| {
+        classify_finding_with_delta(owner, 2, "    return (a * b, 1)", test, true)
+            .map(|finding| finding.class)
+    };
     for body in [
         "    assert area(a, b)[0] == want[0]\n",
         "    a = 9\n    assert area(a, b) == want\n",
@@ -2335,12 +2358,7 @@ fn factor_swap_sibling_proof_refuses_unobserved_or_uncertain_rows() -> Result<()
         "    assert False and area(a, b) == want\n",
     ] {
         assert_ne!(
-            classify(
-                owner,
-                2,
-                "    return (a * b, 1)",
-                &format!("{prefix}{body}")
-            )?,
+            classify_proven(&format!("{prefix}{body}"))?,
             ExposureClass::Exposed,
             "{body}"
         );
@@ -2349,10 +2367,7 @@ fn factor_swap_sibling_proof_refuses_unobserved_or_uncertain_rows() -> Result<()
         "{}    assert area(a, b) == want\n",
         prefix.replace("(3.0, 1)", "(4.0, 1)")
     );
-    assert_ne!(
-        classify(owner, 2, "    return (a * b, 1)", &wrong_expected)?,
-        ExposureClass::Exposed
-    );
+    assert_ne!(classify_proven(&wrong_expected)?, ExposureClass::Exposed);
     for signature in ["a, b", "a, b, want=None", "a, b, want, /"] {
         let test = format!(
             "{}    assert area(a, b) == want\n",
@@ -2362,7 +2377,7 @@ fn factor_swap_sibling_proof_refuses_unobserved_or_uncertain_rows() -> Result<()
             )
         );
         assert_ne!(
-            classify(owner, 2, "    return (a * b, 1)", &test)?,
+            classify_proven(&test)?,
             ExposureClass::Exposed,
             "{signature}"
         );
@@ -2371,10 +2386,7 @@ fn factor_swap_sibling_proof_refuses_unobserved_or_uncertain_rows() -> Result<()
         "{}    assert area(a, b) == want\n",
         prefix.replace("(3.0, 1))])", "(3.0, 1))], scope=\"invalid\")")
     );
-    assert_ne!(
-        classify(owner, 2, "    return (a * b, 1)", &extra_option)?,
-        ExposureClass::Exposed
-    );
+    assert_ne!(classify_proven(&extra_option)?, ExposureClass::Exposed);
     Ok(())
 }
 

@@ -63,10 +63,18 @@ pub(super) fn python_unvaried_table_operand(
     owner: &PythonOwner,
     related_candidates: &[PythonRelatedCandidate<'_>],
     focus: &PythonAssertionFocus,
+    sole_line_replacement: bool,
 ) -> Option<UnvariedTableOperand> {
     unvaried_returned_parameter_operand(line_text, old_line_text, owner, related_candidates, focus)
         .or_else(|| {
-            unvaried_arithmetic_operand(line_text, old_line_text, owner, related_candidates, focus)
+            unvaried_arithmetic_operand(
+                line_text,
+                old_line_text,
+                owner,
+                related_candidates,
+                focus,
+                sole_line_replacement,
+            )
         })
 }
 
@@ -134,6 +142,7 @@ fn unvaried_arithmetic_operand(
     owner: &PythonOwner,
     related_candidates: &[PythonRelatedCandidate<'_>],
     focus: &PythonAssertionFocus,
+    sole_line_replacement: bool,
 ) -> Option<UnvariedTableOperand> {
     let old_line = old_line_text?;
     let (old_arith, new_arith) = changed_simple_arithmetic(old_line, line_text)?;
@@ -169,6 +178,7 @@ fn unvaried_arithmetic_operand(
         }
         let table = table_cases(candidate.test)?;
         if factor_swap
+            && sole_line_replacement
             && observed_literal_sibling_change(old_line, line_text, owner, candidate.test, &table)
         {
             return None;

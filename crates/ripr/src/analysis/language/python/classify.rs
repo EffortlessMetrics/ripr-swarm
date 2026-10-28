@@ -768,7 +768,14 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
         && inactive_term.is_none()
         && guarded_arm_gap.is_none())
     .then(|| {
-        python_unvaried_table_operand(line_text, old_line_text, owner, &related_candidates, &focus)
+        python_unvaried_table_operand(
+            line_text,
+            old_line_text,
+            owner,
+            &related_candidates,
+            &focus,
+            no_behavior.sole_line_replacement,
+        )
     })
     .flatten();
     let mut table_downgraded = false;
