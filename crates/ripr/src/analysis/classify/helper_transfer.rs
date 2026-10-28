@@ -2518,13 +2518,14 @@ pub(crate) fn chain_passes_effect_target_to_observed_hops(
         .map(|(index, _)| index)
         .collect();
     // #6614: a macro-argument hop passes no state the analyzer can follow.
+    // #8999: qualified-hop identity establishes reach, not effect propagation.
     // #9329: a method hop hands its callee the receiver's state as well as
     // its arguments; the effect target is not followed through it.
     if tracked.is_empty()
         || hops.is_empty()
         || hops
             .iter()
-            .any(|hop| hop.through_macro || hop.receiver.is_some())
+            .any(|hop| hop.through_macro || hop.module_qualified || hop.receiver.is_some())
     {
         return false;
     }
@@ -4600,6 +4601,47 @@ mod tests {
             }],
             stop_above: None,
         }
+    }
+
+    #[test]
+    fn method_entry_checks_only_the_prefix_the_test_enters() -> Result<(), String> {
+        let path = PathBuf::from("src/lib.rs");
+        let source = "pub struct Pool {}\nimpl Pool {\n    pub fn grow(&mut self) -> usize { 1 }\n}\npub fn above() {}\n#[test]\nfn enters_lower() {\n    let mut pool = Pool {};\n    assert_eq!(pool.grow(), 1);\n}\n";
+        let facts = crate::analysis::syntax::ra::summarize_file_with_parser(&path, source)?;
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: facts.functions.clone(),
+            tests: facts.tests.clone(),
+            files: [(path, facts)].into_iter().collect(),
+            ..Default::default()
+        });
+        let hop = |name, module_qualified| -> Result<HelperHop, String> {
+            Ok(HelperHop {
+                caller: index
+                    .functions()
+                    .iter()
+                    .find(|item| item.name == name)
+                    .ok_or_else(|| format!("missing caller {name}"))?
+                    .clone(),
+                call_text: String::new(),
+                arguments: Vec::new(),
+                receiver: None,
+                through_macro: false,
+                module_qualified,
+                transparent_macros_rebound: false,
+                diverging_handlers: Vec::new(),
+            })
+        };
+        // Exercise the entry consumer directly: production chain selection may
+        // prune an unused upper caller before this boundary is reached.
+        let mut chain = HelperChain {
+            hops: vec![hop("grow", false)?, hop("above", true)?],
+            stop_above: None,
+        };
+        let test = index.tests().iter().next().ok_or("missing test")?;
+        assert!(test_calls_method_entry(&index, test, &chain));
+        chain.hops[0].module_qualified = true;
+        assert!(!test_calls_method_entry(&index, test, &chain));
+        Ok(())
     }
 
     // #10284 review: keyword-prefixed negation is not a macro, while a

@@ -2856,6 +2856,7 @@ mod tests {
                 arguments: vec!["qty".to_string()],
                 receiver: None,
                 through_macro: false,
+                module_qualified: false,
                 transparent_macros_rebound: false,
                 diverging_handlers: Vec::new(),
             }],

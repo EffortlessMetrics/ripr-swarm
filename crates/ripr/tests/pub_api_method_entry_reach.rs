@@ -7,7 +7,7 @@
 //! `req.matches(&version)` and never names any helper. The test reaches the
 //! helper as `helper_owner_call` only when its receiver is syntactically
 //! bound to `VersionReq`; anything less stays unrelated. The reach never
-//! raises a class: the helper's result is not shown to be forwarded.
+//! establishes `exposed`: the helper's result is not shown to be forwarded.
 
 use ripr::domain::RelationReason;
 use ripr::{CheckInput, ExposureClass, Finding, Mode, OutputFormat, check_workspace};

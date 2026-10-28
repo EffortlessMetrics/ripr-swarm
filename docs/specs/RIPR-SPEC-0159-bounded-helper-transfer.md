@@ -538,7 +538,7 @@ close that gap, both reach-only and both fail-closed:
   struct literal or a `let` annotated with the type). Constructor calls and
   `Type::method(..)` paths remain unbound on this route. The
   method's name must be defined exactly once in the index, every hop from the
-  helper up through that method must be a direct call (a macro-argument hop
+  helper up through that method must be an identity-bound non-macro call (a macro-argument hop
   carries reach only), the test must be in the owner's package, and the test
   must not rebind the type (a same-named type in its module scope or an
   out-of-line parent module, or a `use .. as Type` rename).
@@ -570,7 +570,8 @@ A chain prefix containing a module-qualified hop uses only these stricter
 method-entry rules. Ordinary direct/self-method forwarders retain the separate
 rule in examples 10 and 11; that route cannot restore a refused qualified
 entry. A qualified hop above a tested lower entry does not change that lower
-entry's authority. The qualified-hop provenance also refuses result forwarding.
+entry's authority. The qualified-hop provenance also refuses result forwarding and effect-target
+propagation; the existing bare-call effect rule cannot restore either.
 
 This is reach only. The helper's result is not shown to be forwarded to the
 test's assertion, so findings remain below `exposed`; the version-requirement
@@ -718,6 +719,9 @@ shadowed, path-call, unwrap-tail (including shadowed-name, other-module, other-f
 `#[cfg(test)]`, no-self, macro-hop and other-package controls);
 `crates/ripr/tests/crate_qualified_entry_reach.rs` (own-crate qualified
 entry call, `[lib] name` and hyphen spellings, and each refusal above).
+`crates/ripr/tests/helper_wrapper_reach.rs` (qualified effect refusal and lower
+forwarder preservation), `helper_transfer.rs::tests::method_entry_checks_only_the_prefix_the_test_enters`;
+fixture `rust_qualified_helper_effect_reach` and its honesty-corpus rows;
 `crates/ripr/tests/pub_api_method_entry_reach.rs` (#8999 public inherent
 method entry through a module-qualified hop: typed-receiver positives, and the
 untyped/constructor-factory, `str::matches`, second-method, foreign/renamed

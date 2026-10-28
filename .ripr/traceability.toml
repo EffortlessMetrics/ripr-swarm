@@ -11880,6 +11880,9 @@ name = "Bounded helper-call transfer"
 spec = "docs/specs/RIPR-SPEC-0159-bounded-helper-transfer.md"
 tests = [
   "crates/ripr/tests/pub_api_method_entry_reach.rs",
+  "crates/ripr/tests/helper_wrapper_reach.rs::qualified_helper_effect_keeps_reach_without_propagation",
+  "crates/ripr/tests/helper_wrapper_reach.rs::qualified_hop_above_a_tested_method_keeps_the_lower_forwarder",
+  "crates/ripr/src/analysis/classify/helper_transfer.rs::tests::method_entry_checks_only_the_prefix_the_test_enters",
   "crates/ripr/src/analysis/classify/helper_transfer/qualified_hop.rs::tests",
   "crates/ripr/tests/one_hop_field_projection.rs",
   "crates/ripr/src/analysis/classify/helper_transfer/field_projection.rs::tests",
@@ -12024,6 +12027,7 @@ tests = [
   "crates/ripr/src/analysis/facts/build.rs::tests::root_library_name_reads_lib_name_then_package_and_refuses_moved_roots",
 ]
 fixtures = [
+  "fixtures/rust_qualified_helper_effect_reach",
   "fixtures/module_reach_control_qualified",
   "fixtures/module_reach_bare_import_control",
   "fixtures/module_reach_cfg_comment_hidden",
