@@ -346,12 +346,23 @@ fn real_spelling_parent(root: &Path, alias: &Path, name: &str) -> Option<String>
     (alias_parent != Some(std::ffi::OsStr::new(parent))).then(|| parent.to_string())
 }
 
+/// `true` when `prefix` ends with `component` as a whole path component, not
+/// as the tail of a longer name (`unreal` does not end with the `real`
+/// component).
+fn ends_with_component(prefix: &str, component: &str) -> bool {
+    prefix.strip_suffix(component).is_some_and(|rest| {
+        rest.chars().next_back().is_none_or(|before| {
+            !(before.is_alphanumeric() || matches!(before, '_' | '-' | '$' | '@'))
+        })
+    })
+}
+
 /// `true` when `haystack` has `needle` (`/<name>`) not continued by another
 /// name character and not preceded by `real_parent` (see
 /// [`real_spelling_parent`]).
 fn names_alias_component(haystack: &str, needle: &str, real_parent: Option<&str>) -> bool {
     haystack.match_indices(needle).any(|(start, _)| {
-        if real_parent.is_some_and(|parent| haystack[..start].ends_with(parent)) {
+        if real_parent.is_some_and(|parent| ends_with_component(&haystack[..start], parent)) {
             return false;
         }
         haystack[start + needle.len()..]
@@ -1073,6 +1084,41 @@ mod tests {
         let scan =
             visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
         assert_eq!(scan.skipped_links, 1, "{:?}", scan.files);
+        Ok(())
+    }
+
+    /// The real-spelling exemption matches whole path components: a link
+    /// under `unreal/` is not mistaken for a spelling under `real/`, in raw
+    /// text or in a decoded literal (#10901 review).
+    #[cfg(unix)]
+    #[test]
+    fn discovery_does_not_exempt_a_parent_that_only_ends_with_the_target_parent()
+    -> std::io::Result<()> {
+        use std::os::unix::fs::symlink;
+        let workspace = TempWorkspace::new("link-alias-suffix-parent");
+        workspace.write("real/skills/x.ts", "export const x = 1;\n");
+        std::fs::create_dir_all(workspace.0.join("unreal"))?;
+        symlink("../real/skills", workspace.0.join("unreal/skills"))?;
+        assert_eq!(
+            std::fs::canonicalize(workspace.0.join("unreal/skills"))?,
+            std::fs::canonicalize(workspace.0.join("real/skills"))?,
+            "the alias must resolve to the real indexed directory, not dangle"
+        );
+        for import in [
+            "import { x } from '../unreal/skills/x';\n",
+            "import { x } from '../unreal\\u002fskills/x';\n",
+        ] {
+            workspace.write("tests/x.test.ts", import);
+            let scan =
+                visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+            assert_eq!(scan.skipped_links, 1, "{import}: {:?}", scan.files);
+        }
+
+        // Control: a spelling through the real parent is still the real path.
+        workspace.write("tests/x.test.ts", "import { x } from '../real/skills/x';\n");
+        let scan =
+            visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        assert_eq!(scan.skipped_links, 0, "{:?}", scan.files);
         Ok(())
     }
 
