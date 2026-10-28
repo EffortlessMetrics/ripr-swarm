@@ -97,6 +97,15 @@ second stage vocabulary.
     an error, and it is written through the terminal-safe stderr path so it
     does not join a held-open TTY progress row. It adds no analyzer stage
     and no speed claim.
+11. Under `-v` a complete run also writes `pilot-timings.json` beside
+    `pilot-summary.json`, after every other artifact (#10727):
+    `{"schema_version": 1, "kind": "pilot_timings", "stages": [{"stage",
+    "elapsed_ms", "items"?}], "total_ms"}`, with the stage names, order and
+    omissions of the table. It is the only place a wall-clock value is
+    written to disk, so it is not byte-stable and is not listed in the
+    summary. A run without `-v`, and a timeout run, remove a prior run's
+    sidecar instead of leaving it as their own; a failed sidecar write warns
+    on stderr and does not fail the run.
 
 ## Required Evidence
 
@@ -198,6 +207,7 @@ second stage vocabulary.
 - `crates/ripr/tests/cli_progress.rs::pilot_projects_repo_stages_on_stderr_and_keeps_packet_bytes_unchanged`
 - `crates/ripr/src/cli/commands/pilot_timings.rs::tests::the_table_lists_each_stage_in_order_with_its_item_count_and_a_total`
 - `crates/ripr/src/cli/commands/pilot_timings.rs::tests::a_recorded_span_measures_the_time_since_its_start`
+- `crates/ripr/src/cli/commands/pilot_timings.rs::tests::the_json_sidecar_mirrors_the_table_stages_and_omits_absent_counts`
 - `crates/ripr/tests/cli_progress.rs::verbose_pilot_prints_a_stage_table_and_leaves_stdout_and_packet_bytes_unchanged`
 
 ## Implementation Mapping

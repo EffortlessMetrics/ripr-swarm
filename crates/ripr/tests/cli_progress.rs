@@ -951,6 +951,30 @@ fn verbose_pilot_prints_a_stage_table_and_leaves_stdout_and_packet_bytes_unchang
         !String::from_utf8_lossy(&verbose_summary).contains("elapsed"),
         "no wall-clock value in the packet"
     );
+
+    // The sidecar carries the same stages as the table; a later run without
+    // `-v` must not leave it standing as that run's timings.
+    let sidecar_path = out.join("pilot-timings.json");
+    let sidecar: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(&sidecar_path)
+            .map_err(|error| format!("read pilot-timings.json: {error}"))?,
+    )
+    .map_err(|error| format!("pilot-timings.json is not JSON: {error}"))?;
+    let sidecar_stages: Vec<&str> = sidecar["stages"]
+        .as_array()
+        .ok_or("stages is not an array")?
+        .iter()
+        .filter_map(|row| row["stage"].as_str())
+        .collect();
+    let table_stages: Vec<&str> = stages.iter().copied().filter(|s| *s != "total").collect();
+    assert_eq!(sidecar_stages, table_stages, "{sidecar}");
+    assert!(sidecar["total_ms"].is_u64(), "{sidecar}");
+    let again = run_pilot(&root, &out, &[])?;
+    assert!(again.status.success(), "{}", stderr_text(&again));
+    assert!(
+        !sidecar_path.exists(),
+        "a run without -v removes the prior sidecar"
+    );
     ignore_remove_dir_all(&root);
     Ok(())
 }

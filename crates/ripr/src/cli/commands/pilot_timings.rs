@@ -66,6 +66,38 @@ impl PilotTimings {
     }
 }
 
+const TIMINGS_SCHEMA_VERSION: u32 = 1;
+
+impl PilotTimings {
+    /// The `pilot-timings.json` sidecar: the same stages, order and counts
+    /// as `render`, for tools that should not parse the stderr table.
+    pub(super) fn render_json(&self) -> String {
+        let stages: Vec<serde_json::Value> = self
+            .stages
+            .iter()
+            .map(|stage| {
+                let mut row = serde_json::json!({
+                    "stage": stage.stage,
+                    "elapsed_ms": stage.elapsed_ms,
+                });
+                if let (Some(items), Some(object)) = (stage.items, row.as_object_mut()) {
+                    object.insert("items".to_string(), serde_json::Value::from(items));
+                }
+                row
+            })
+            .collect();
+        let document = serde_json::json!({
+            "schema_version": TIMINGS_SCHEMA_VERSION,
+            "kind": "pilot_timings",
+            "stages": stages,
+            "total_ms": millis(self.started),
+        });
+        let mut rendered = document.to_string();
+        rendered.push('\n');
+        rendered
+    }
+}
+
 fn millis(since: Instant) -> u64 {
     u64::try_from(since.elapsed().as_millis()).unwrap_or(u64::MAX)
 }
@@ -92,6 +124,26 @@ mod tests {
         assert_eq!(lines[3], "  write_artifacts                8 ms");
         assert!(lines[4].starts_with("  total "), "{text}");
         assert!(lines[4].ends_with(" ms"), "{text}");
+    }
+
+    #[test]
+    fn the_json_sidecar_mirrors_the_table_stages_and_omits_absent_counts() -> Result<(), String> {
+        let mut timings = PilotTimings::start();
+        timings.record_ms("inventory", 34, Some(7));
+        timings.record_ms("language_scan", 5, None);
+        let value: serde_json::Value = serde_json::from_str(&timings.render_json())
+            .map_err(|error| format!("sidecar is not JSON: {error}"))?;
+        assert_eq!(value["schema_version"], 1);
+        assert_eq!(value["kind"], "pilot_timings");
+        assert_eq!(
+            value["stages"],
+            serde_json::json!([
+                {"stage": "inventory", "elapsed_ms": 34, "items": 7},
+                {"stage": "language_scan", "elapsed_ms": 5},
+            ])
+        );
+        assert!(value["total_ms"].is_u64(), "{value}");
+        Ok(())
     }
 
     #[test]
