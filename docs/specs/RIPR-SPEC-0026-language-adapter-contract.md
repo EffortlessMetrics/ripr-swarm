@@ -144,7 +144,10 @@ project root. Python project detection is the first such exception;
 TypeScript project detection follows it, selecting the TypeScript adapter
 from a root `tsconfig.json` or `jsconfig.json`, or from detectable
 TypeScript source (`.ts`, `.tsx`, `.mts`, `.cts`; not generated names,
-`.d.ts` declarations or excluded directories) below root `src` or `tests`. `package.json` and
+`.d.ts` declarations or excluded directories) below root `src` or `tests`. The same
+test applies to each non-hidden, non-excluded directory one level below the root and to
+each child of `packages/`, `apps/`, `libs/` and `libraries/`; vendored, hidden and
+deeper trees never select it. `package.json` and
 JavaScript source files without a `tsconfig.json` or `jsconfig.json` do not
 select it (a `jsconfig.json` does mark a JavaScript project). A binary built without
 `lang-typescript` ignores the detector silently. A

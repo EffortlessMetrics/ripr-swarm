@@ -138,12 +138,70 @@ pub(crate) const TYPESCRIPT_SOURCE_DIR_MARKERS: &[&str] = &["src", "tests"];
 /// marker file, or detectable TypeScript source below root `src`/`tests`.
 #[cfg(any(feature = "lang-typescript", test))]
 pub(crate) fn detect_typescript_project(root: &Path) -> bool {
+    detect_typescript_package_root(root) || detect_nested_typescript_package(root)
+}
+
+/// The root-level markers: a project marker file, or detectable TypeScript
+/// below a root source directory.
+#[cfg(any(feature = "lang-typescript", test))]
+fn detect_typescript_package_root(dir: &Path) -> bool {
     TYPESCRIPT_PROJECT_MARKERS
         .iter()
-        .any(|marker| root.join(marker).is_file())
+        .any(|marker| dir.join(marker).is_file())
         || TYPESCRIPT_SOURCE_DIR_MARKERS
             .iter()
-            .any(|marker| source_dir_contains_detectable_typescript(root, marker))
+            .any(|marker| source_dir_contains_detectable_typescript(dir, marker))
+}
+
+/// Workspace containers whose children are packages (npm/pnpm/yarn
+/// workspaces, Nx and Turborepo layouts).
+#[cfg(any(feature = "lang-typescript", test))]
+pub(crate) const TYPESCRIPT_WORKSPACE_CONTAINERS: &[&str] =
+    &["packages", "apps", "libs", "libraries"];
+
+/// A TypeScript package one level below the root, or one level below a
+/// workspace container (`packages/*`, `apps/*`, `libs/*`, `libraries/*`):
+/// valibot keeps its sources in `library/`, remeda in `packages/remeda`.
+/// Each candidate directory is judged by the same presence-only markers as
+/// the root. Excluded, vendored and hidden directories never count, so a
+/// `node_modules` or `dist` tree cannot enable the adapter; `package.json`
+/// stays a non-marker (#10941).
+#[cfg(any(feature = "lang-typescript", test))]
+fn detect_nested_typescript_package(root: &Path) -> bool {
+    child_directories(root).into_iter().any(|child| {
+        let name = child
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
+        if TYPESCRIPT_WORKSPACE_CONTAINERS.contains(&name) {
+            child_directories(&child)
+                .iter()
+                .any(|package| detect_typescript_package_root(package))
+        } else {
+            // `src`/`tests` are the root markers themselves; a plain
+            // top-level `src` was already judged there.
+            !TYPESCRIPT_SOURCE_DIR_MARKERS.contains(&name) && detect_typescript_package_root(&child)
+        }
+    })
+}
+
+/// Immediate subdirectories of `dir` that a TypeScript walk would enter:
+/// not excluded, not hidden, not a symlink.
+#[cfg(any(feature = "lang-typescript", test))]
+fn child_directories(dir: &Path) -> Vec<std::path::PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+        .filter(|entry| {
+            entry.file_name().to_str().is_some_and(|name| {
+                !name.starts_with('.') && !is_typescript_excluded_dir_everywhere(name)
+            })
+        })
+        .map(|entry| entry.path())
+        .collect()
 }
 
 /// Canonical root marker file name for a candidate name. Markers resolve
