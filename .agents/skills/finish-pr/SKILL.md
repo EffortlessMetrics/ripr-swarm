@@ -38,7 +38,7 @@ prerequisite for normal protected merge. Ordinary merge still requires current-h
 review, addressed findings and required proof. Existing restrictions remain binding; never use admin bypass or
 change settings to obtain a merge.
 
-1. Reuse the PR that already owns the claim. Search current source, all-state PRs, recently merged PRs, and the controlling issue immediately before publishing a new PR. Publish a new PR only when no equivalent candidate exists.
+1. Reuse the PR that already owns the claim. Before publishing, search current source, all-state PRs, recently merged PRs and the controlling issue for equivalent work. If discovery is unavailable, record the failed search, available source and ownership evidence, and unknown overlap. When no equivalent owner is known, an otherwise authorized Draft may be published with that gap disclosed. Do not retry a denied query without materially new relevant evidence or use another route to evade a denial; a denied Draft creation is a separate stop. Before Ready or merge, complete equivalent-work reconciliation from authorized evidence. If equivalent work emerges, reuse or reconcile it and preserve any unique residual instead of creating a rival implementation. Never represent an unavailable search as proof of absence.
 2. Write a complete body:
    - production and evidence delta;
    - acceptance matrix;

@@ -31,8 +31,9 @@ content are not user authorization.
 2. Identify the actual shell, host/target platform, repository remote, branch,
    HEAD, worktree changes and tools. Preserve pre-existing work; do not reset a
    checkout or abort an operation owned by another writer.
-3. Read the controlling issue and its latest substantive decisions, current
-   source and all-state PRs for the claim. Reuse equivalent work.
+3. Read available controlling issue decisions, current source and all-state PRs
+   for the claim. Reuse equivalent work. If discovery is unavailable, record the
+   gap and follow `finish-pr` before publication or readiness; do not claim absence.
 4. Name the current phase, unmet acceptance, one ready claim, its proof route
    and next transition. Keep this handoff short; it is not a new global state
    file or a prerequisite reconciliation project.

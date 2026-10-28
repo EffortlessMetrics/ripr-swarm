@@ -31,7 +31,7 @@ Bind background commands to retained task/session handles, candidate identities 
 
 # Procedure
 
-1. Bind the issue, acceptance/rollback boundary, existing candidate, exact base and semantic owner. Re-read current source, all-state/recent PRs and substantive issue decisions for an equivalent implementation before editing.
+1. Bind the issue, acceptance/rollback boundary, existing candidate, exact base and semantic owner. Re-read available current source, all-state/recent PRs and substantive issue decisions for an equivalent implementation before editing. Record unavailable discovery as unknown and follow `finish-pr` for its publication and reconciliation boundary.
 2. Establish the inherited baseline before the first mutation:
    - run `cargo xtask worktree doctor` and read its report;
    - verify `git merge-base origin/main HEAD` equals the recorded base before using `check-fast` for base attribution. If it differs, reconcile the accepted basis or run base-aware gates directly; a mismatch is not a demand to chase unrelated main movement;
