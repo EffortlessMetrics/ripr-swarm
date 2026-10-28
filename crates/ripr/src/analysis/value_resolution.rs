@@ -843,7 +843,7 @@ fn is_integer_literal(value: &str) -> bool {
 
 /// Position of the first top-level `;` in `text`, or `None` if no
 /// such terminator exists. Top-level = depth 0 of `()`/`[]`/`{}`.
-fn top_level_semicolon(text: &str) -> Option<usize> {
+pub(super) fn top_level_semicolon(text: &str) -> Option<usize> {
     let mut depth: i32 = 0;
     for (i, b) in text.bytes().enumerate() {
         match b {

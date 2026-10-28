@@ -181,14 +181,33 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
                     let change = load_pilot_current_change(&input, git_timeout);
                     let load_ms = elapsed_ms(load_started);
                     let inventory_started = Instant::now();
-                    let report = run_pilot_inventory(
-                        &input.root,
-                        &cfg,
-                        &change.changed_files(),
-                        sink.as_ref(),
-                    )?;
+                    // #10727: the inventory already reports its phases through
+                    // the latency-phase owner; `-v` reads them instead of
+                    // adding a second timer beside each one.
+                    let run = || {
+                        run_pilot_inventory(
+                            &input.root,
+                            &cfg,
+                            &change.changed_files(),
+                            sink.as_ref(),
+                        )
+                    };
+                    let (report, phases) = if crate::is_verbose() {
+                        analysis::resource_cost::record_latency_phases(run)
+                    } else {
+                        (run(), Vec::new())
+                    };
+                    let report = report?;
                     let inventory_ms = elapsed_ms(inventory_started);
-                    Ok((report, change, [load_ms, inventory_ms]))
+                    Ok((
+                        report,
+                        change,
+                        PilotStageTimes {
+                            load_ms,
+                            inventory_ms,
+                            inventory_phases: phases,
+                        },
+                    ))
                 }
             },
         )?
@@ -206,7 +225,11 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
                 declined_rust_files: Vec::new(),
             },
             change,
-            [elapsed_ms(load_started), 0],
+            PilotStageTimes {
+                load_ms: elapsed_ms(load_started),
+                inventory_ms: 0,
+                inventory_phases: Vec::new(),
+            },
         ))
     };
     // The timeout hint floors at the budget actually spent, so an
@@ -214,8 +237,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     // (#5443). The printed retry also stays inside an interactive cap
     // instead of multiplying the spent budget by four (#7427).
     let spent_timeout_ms = options.timeout_ms.saturating_add(extension_ms.unwrap_or(0));
-    let PilotAnalysisResult::Complete((report, current_change, [load_ms, inventory_ms])) =
-        analysis_result
+    let PilotAnalysisResult::Complete((report, current_change, stage_times)) = analysis_result
     else {
         // #7425: a timeout overwrites only the two summaries. Remove leftover
         // repo-exposure and seam-packet files from an earlier complete run so
@@ -246,6 +268,11 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     // disabled run always arrives here with an empty report. Disclose only
     // when the exclusion changed the result meaning: Rust files exist but
     // were not analyzed.
+    let PilotStageTimes {
+        load_ms,
+        inventory_ms,
+        inventory_phases,
+    } = stage_times;
     timings.record_ms(
         "load_change",
         load_ms,
@@ -254,6 +281,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     // Rust disabled bypasses the inventory, so there is no stage to report.
     if rust_enabled {
         timings.record_ms("inventory", inventory_ms, Some(report.classified.len()));
+        timings.record_inventory_phases(&inventory_phases);
     }
     let rust_files = analysis::workspace_rust_files(&input.root);
     let rust_excluded = (!rust_enabled && !rust_files.is_empty()).then_some(rust_files.len());
@@ -710,6 +738,14 @@ fn pilot_progress_sink(quiet: bool) -> Option<Arc<CliProgressSink>> {
 /// run shows bounded stage lines and throttled heartbeats instead of
 /// minutes of silence. Stage identity stays producer-owned; pilot adds
 /// no stage vocabulary of its own.
+/// What the analysis worker measured for the `-v` stage table (#10727).
+struct PilotStageTimes {
+    load_ms: u64,
+    inventory_ms: u64,
+    /// The inventory's own phases; empty unless `-v` asked for them.
+    inventory_phases: Vec<analysis::resource_cost::RecordedLatencyPhase>,
+}
+
 fn run_pilot_inventory(
     root: &Path,
     config: &RiprConfig,
