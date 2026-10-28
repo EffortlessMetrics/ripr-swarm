@@ -160,6 +160,49 @@ fn abandonment_and_saturation_never_hide_whole_set_reads_or_claim_closure() -> R
 }
 
 #[test]
+fn site_tallies_keep_distinct_reads_visible_past_the_detail_cap() -> Result<(), String> {
+    let (_, rows) = capture(true, || {
+        let scope = Scope::begin(&probe("many"));
+        for index in 0..MAX_READS + 36 {
+            // Same subject twice: events double, distinct subjects do not.
+            for _ in 0..2 {
+                file(Path::new(&format!("distinct-{index}.rs")), true);
+            }
+        }
+        scope.finish();
+    })?;
+    let row = rows.first().ok_or("missing row")?;
+    assert_eq!(row.reads.len(), MAX_READS);
+    assert_eq!(row.sites.len(), 1);
+    let site = &row.sites[0];
+    assert_eq!(site.kind, Kind::File);
+    assert_eq!(site.events, 2 * (MAX_READS as u64 + 36));
+    assert_eq!(site.distinct_subjects, MAX_READS as u64 + 36);
+    assert!(!site.distinct_is_lower_bound);
+    assert_eq!(row.dropped_site_events, 0);
+    Ok(())
+}
+
+#[test]
+fn distinct_count_is_a_lower_bound_once_its_memory_bound_is_reached() -> Result<(), String> {
+    let (_, rows) = capture(true, || {
+        let scope = Scope::begin(&probe("saturated"));
+        for index in 0..MAX_DISTINCT + 5 {
+            file(Path::new(&format!("s-{index}.rs")), true);
+        }
+        scope.finish();
+    })?;
+    let site = rows
+        .first()
+        .and_then(|row| row.sites.first())
+        .ok_or("missing site")?;
+    assert_eq!(site.events, MAX_DISTINCT as u64 + 5);
+    assert_eq!(site.distinct_subjects, MAX_DISTINCT as u64);
+    assert!(site.distinct_is_lower_bound);
+    Ok(())
+}
+
+#[test]
 fn wire_bound_omits_whole_details_instead_of_truncating_and_writer_failure_is_fallible()
 -> Result<(), String> {
     let (_, rows) = capture(true, || {
@@ -177,6 +220,8 @@ fn wire_bound_omits_whole_details_instead_of_truncating_and_writer_failure_is_fa
         serde_json::from_slice(&wire[PREFIX.len()..]).map_err(|error| error.to_string())?;
     assert_eq!(value["read_detail_omitted"], true);
     assert_eq!(value["reads"], serde_json::json!([]));
+    // Site totals are not read detail and survive the omission.
+    assert_eq!(value["sites"][0]["distinct_subjects"], MAX_READS);
     assert_eq!(value["coverage"], "unknown");
     struct Closed;
     impl Write for Closed {
