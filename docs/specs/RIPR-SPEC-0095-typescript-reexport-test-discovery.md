@@ -45,6 +45,7 @@ on the changed owner's own export:
 ```
 test file imports N from module B
   →  B: `export { N } from './A'`, `export { M as N } from './A'`,
+        `import { M } from './A'; export { M as N }`,
         or `export * from './A'` (A must itself export N)
   →  ... at most MAX_REEXPORT_HOPS (4) hops ...
   →  owner module: declares and exports the changed owner as N
@@ -66,6 +67,10 @@ from the non-test workspace sources. Per module it records named re-exports
 `(module, exported_name) → (original_name, source_module)`, the module's own
 rename exports as self-hops, `export *` edges, the names the module exports
 from its own declarations, and the set of known workspace modules.
+An ES imported binding exported by a local export list follows its source
+module and original imported name, including aliases. Namespace imports and
+unresolvable sources do not establish an ordinary named binding by this path;
+CommonJS value snapshots are not treated as ES live bindings.
 
 ### Namespace re-exports
 

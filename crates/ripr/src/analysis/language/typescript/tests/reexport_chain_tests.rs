@@ -333,3 +333,22 @@ fn mock_of_a_module_off_the_chain_keeps_the_credit() -> Result<(), String> {
     assert_credited(&related, "an unrelated mock");
     Ok(())
 }
+
+#[test]
+fn imported_binding_exported_by_barrel_reaches_its_original_owner() -> Result<(), String> {
+    let test = "import { exposed } from \"../src/index\";\ntest(\"strips\", () => {\n  expect(exposed(\"/a/b\", \"/a\")).toBe(\"/b\");\n});\n";
+    for barrel in [
+        "import { withoutBase as exposed } from './utils';\nexport { exposed };\n",
+        "import { withoutBase } from './utils';\nexport { withoutBase as exposed };\n",
+    ] {
+        let files = [("src/utils.ts", UTILS), ("src/index.ts", barrel)];
+        let related = related_through_barrel(&files, "src/utils.ts", "withoutBase", test)?;
+        assert_credited(&related, barrel);
+        let other = related_through_barrel(&files, "src/utils.ts", "withBase", test)?;
+        assert!(
+            other.is_empty(),
+            "unrelated export must not be credited: {other:?}"
+        );
+    }
+    Ok(())
+}

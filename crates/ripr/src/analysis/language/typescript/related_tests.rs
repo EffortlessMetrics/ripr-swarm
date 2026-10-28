@@ -1088,6 +1088,25 @@ pub(crate) fn module_export_facts(
         enum_imports: extract_imports_for_test_file(body),
         ..ModuleExportFacts::default()
     };
+    // Only ES imports are live bindings suitable for an export-list hop.
+    // The shared import extractor also records CommonJS value snapshots.
+    let es_import_names: HashSet<&str> = body
+        .iter()
+        .filter_map(|statement| match statement {
+            Statement::ImportDeclaration(import) => import.specifiers.as_ref(),
+            _ => None,
+        })
+        .flat_map(|specifiers| specifiers.iter())
+        .map(|specifier| match specifier {
+            ImportDeclarationSpecifier::ImportSpecifier(specifier) => specifier.local.name.as_str(),
+            ImportDeclarationSpecifier::ImportDefaultSpecifier(specifier) => {
+                specifier.local.name.as_str()
+            }
+            ImportDeclarationSpecifier::ImportNamespaceSpecifier(specifier) => {
+                specifier.local.name.as_str()
+            }
+        })
+        .collect();
     for statement in body {
         let declaration = match statement {
             Statement::TSEnumDeclaration(declaration) => Some(declaration.as_ref()),
@@ -1200,6 +1219,29 @@ pub(crate) fn module_export_facts(
                         };
                         let exported_name = module_export_name_text(&specifier.exported)
                             .unwrap_or_else(|| local_name.clone());
+                        if es_import_names.contains(local_name.as_str()) {
+                            // An imported binding exported locally still belongs to
+                            // its source module, including through both aliases.
+                            if let Some(import) = facts
+                                .enum_imports
+                                .iter()
+                                .find(|import| import.local == local_name)
+                                && !import.namespace
+                                && let Some(original) = &import.imported
+                                && let Some(target) = normalized_relative_import_module(
+                                    relative,
+                                    &import.source,
+                                    alias_map,
+                                    Some(workspace_root),
+                                )
+                            {
+                                facts.entries.push((
+                                    (module.clone(), exported_name),
+                                    (original.clone(), target),
+                                ));
+                            }
+                            continue;
+                        }
                         if exported_name == local_name {
                             facts.local_exports.push(local_name);
                             continue;
