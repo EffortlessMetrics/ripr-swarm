@@ -324,12 +324,16 @@ impl<'s, F: Fn(&Path) -> Option<&'s str>> StarExports<'s, F> {
                 _ => None,
             })
         });
-        body.as_ref().is_some_and(|body| {
-            body.iter()
-                .filter(|stmt| stmt_binds(stmt, name, true))
-                .count()
-                == 1
-        })
+        let dynamic = source_of(file).is_none_or(writes_namespace_dynamically);
+        !dynamic
+            && body.as_ref().is_some_and(|body| {
+                !body.iter().any(is_star_import)
+                    && body
+                        .iter()
+                        .filter(|stmt| stmt_binds(stmt, name, true))
+                        .count()
+                        == 1
+            })
     }
 
     fn exports(&mut self, file: &Path, name: &str) -> bool {
@@ -447,6 +451,38 @@ fn stmt_binds(stmt: &Stmt, name: &str, imports: bool) -> bool {
         Stmt::Match(s) => s.cases.iter().any(|case| block(&case.body)),
         _ => false,
     }
+}
+
+/// A module-level `from other import *` may bind any public name, so a
+/// star import cannot vouch for a single binding.
+fn is_star_import(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::ImportFrom(s) => s.names.iter().any(|alias| alias.name.as_str() == "*"),
+        Stmt::If(s) => s.body.iter().chain(&s.orelse).any(is_star_import),
+        Stmt::Try(s) => s
+            .body
+            .iter()
+            .chain(&s.orelse)
+            .chain(&s.finalbody)
+            .any(is_star_import),
+        _ => false,
+    }
+}
+
+/// Whether the module text can write module names the AST does not show
+/// (`globals()[...] = ...`, `globals().update`, `exec`, `vars()`,
+/// `__dict__`, `sys.modules`). Textual on purpose: any mention fails closed.
+fn writes_namespace_dynamically(source: &str) -> bool {
+    [
+        "globals(",
+        "vars(",
+        "exec(",
+        "__dict__",
+        "sys.modules",
+        "setattr(",
+    ]
+    .iter()
+    .any(|needle| source.contains(needle))
 }
 
 fn handlers_bind(handlers: &[ast::ExceptHandler], name: &str) -> bool {
