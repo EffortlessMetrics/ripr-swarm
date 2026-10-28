@@ -1749,7 +1749,9 @@ old result matches an actual row while the new result differs. Unsupported
 numeric comparisons and projected assertions do not establish this proof. A
 test that rebinds a directly parametrized factor and has one admitted strong
 assertion keeps the factor finding weak when the row no longer binds
-that call value; an independent strong assertion is still considered.
+that call value. The rebound-specific fallback applies only when the test has
+one admitted strong assertion; prior handling of tests with multiple admitted
+strong assertions is retained.
 
 ## Implementation Mapping
 
