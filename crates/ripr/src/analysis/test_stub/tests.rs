@@ -1670,6 +1670,7 @@ fn other_impl_trait_parameters_stay_refused() -> Result<(), String> {
         "w: impl std::fmt::Display",
         "w: impl Into<Vec<u8>>",
         "w: impl AsRef<Vec<u8>>",
+        "w: impl AsRef<Path>",
         "w: &impl Into<String>",
         "w: impl Into<impl Clone>",
     ] {

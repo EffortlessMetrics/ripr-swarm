@@ -1346,10 +1346,12 @@ fn is_integer_type(ty: &str) -> bool {
 /// type can annotate a `let` inside a test. In a trait impl an associated
 /// type `Self::Name` becomes `<Type as Trait>::Name`, since `Type::Name`
 /// is ambiguous outside the impl.
-/// A parameter typed `impl Into<T>` or `impl AsRef<T>` accepts `T` itself
-/// (`T: Into<T>`) or `&T` (`&T: AsRef<T>` for the std string/path/slice
-/// owners), so the stub declares the local with that concrete type and the
-/// call site compiles unchanged. Any other `impl Trait` stays refused.
+/// A parameter typed `impl Into<T>` accepts `T` itself (`T: Into<T>`), and
+/// `impl AsRef<str>` / `impl AsRef<[u8]>` accept `&str` / `&[u8]`, so the stub
+/// declares the local with that concrete type and the call site compiles
+/// unchanged. `AsRef` is limited to the primitive targets because a local
+/// `Path` or `OsStr` could shadow the std type and `&Local` need not
+/// implement `AsRef<Local>`. Any other `impl Trait` stays refused.
 fn impl_stand_in(ty: &str) -> Option<String> {
     let ty = ty.trim();
     let (head, rest) = if let Some(rest) = ty.strip_prefix("impl Into<") {
@@ -1369,7 +1371,7 @@ fn impl_stand_in(ty: &str) -> Option<String> {
     if !plain {
         return None;
     }
-    if head == "&" && !matches!(inner, "str" | "Path" | "OsStr" | "[u8]") {
+    if head == "&" && !matches!(inner, "str" | "[u8]") {
         return None;
     }
     Some(format!("{head}{inner}"))
