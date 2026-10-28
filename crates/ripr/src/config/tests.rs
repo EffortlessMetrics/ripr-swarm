@@ -2836,6 +2836,9 @@ fn missing_config_detects_typescript_one_level_below_root_and_under_workspace_co
         ("ts-container-apps", "apps/web/src/main.ts"),
         ("ts-container-libs", "libs/core/src/index.ts"),
         ("ts-container-libraries", "libraries/core/tsconfig.json"),
+        ("ts-marker-in-src", "src/tsconfig.json"),
+        ("ts-marker-in-tests", "tests/jsconfig.json"),
+        ("ts-marker-in-container", "packages/tsconfig.json"),
     ];
     for (label, file) in layouts {
         let root = temp_root(label)?;
@@ -2874,6 +2877,8 @@ fn missing_config_ignores_nested_typescript_that_is_vendored_hidden_too_deep_or_
         ("ts-nested-package-json", "library/package.json"),
         ("ts-nested-declaration", "library/src/types.d.ts"),
         ("ts-nested-non-container", "tools/pkg/tsconfig.json"),
+        ("ts-nested-hidden-source", "library/src/.private/entry.ts"),
+        ("ts-container-hidden-source", "packages/lib/.cache/entry.ts"),
     ];
     for (label, file) in negatives {
         let root = temp_root(label)?;

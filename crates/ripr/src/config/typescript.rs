@@ -138,19 +138,28 @@ pub(crate) const TYPESCRIPT_SOURCE_DIR_MARKERS: &[&str] = &["src", "tests"];
 /// marker file, or detectable TypeScript source below root `src`/`tests`.
 #[cfg(any(feature = "lang-typescript", test))]
 pub(crate) fn detect_typescript_project(root: &Path) -> bool {
-    detect_typescript_package_root(root) || detect_nested_typescript_package(root)
+    detect_typescript_package_root(root, false) || detect_nested_typescript_package(root)
+}
+
+#[cfg(any(feature = "lang-typescript", test))]
+fn has_typescript_project_marker(dir: &Path) -> bool {
+    TYPESCRIPT_PROJECT_MARKERS
+        .iter()
+        .any(|marker| dir.join(marker).is_file())
 }
 
 /// The root-level markers: a project marker file, or detectable TypeScript
 /// below a root source directory.
 #[cfg(any(feature = "lang-typescript", test))]
-fn detect_typescript_package_root(dir: &Path) -> bool {
-    TYPESCRIPT_PROJECT_MARKERS
-        .iter()
-        .any(|marker| dir.join(marker).is_file())
+///
+/// `skip_hidden` keeps nested candidates from enabling the adapter through
+/// source that lives only under a hidden directory; the root keeps its
+/// historical walk.
+fn detect_typescript_package_root(dir: &Path, skip_hidden: bool) -> bool {
+    has_typescript_project_marker(dir)
         || TYPESCRIPT_SOURCE_DIR_MARKERS
             .iter()
-            .any(|marker| source_dir_contains_detectable_typescript(dir, marker))
+            .any(|marker| dir_contains_typescript_source(&dir.join(marker), skip_hidden))
 }
 
 /// Workspace containers whose children are packages (npm/pnpm/yarn
@@ -173,14 +182,18 @@ fn detect_nested_typescript_package(root: &Path) -> bool {
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or_default();
+        if has_typescript_project_marker(&child) {
+            return true;
+        }
         if TYPESCRIPT_WORKSPACE_CONTAINERS.contains(&name) {
             child_directories(&child)
                 .iter()
-                .any(|package| detect_typescript_package_root(package))
+                .any(|package| detect_typescript_package_root(package, true))
         } else {
-            // `src`/`tests` are the root markers themselves; a plain
-            // top-level `src` was already judged there.
-            !TYPESCRIPT_SOURCE_DIR_MARKERS.contains(&name) && detect_typescript_package_root(&child)
+            // `src`/`tests` are the root source markers themselves; the
+            // root already walked them, so only their own marker counts.
+            !TYPESCRIPT_SOURCE_DIR_MARKERS.contains(&name)
+                && detect_typescript_package_root(&child, true)
         }
     })
 }
@@ -259,11 +272,11 @@ fn is_typescript_declaration_name(name: &str) -> bool {
 /// source. Presence-only; the bound value is this boolean.
 #[cfg(any(feature = "lang-typescript", test))]
 pub(crate) fn source_dir_contains_detectable_typescript(root: &Path, marker: &str) -> bool {
-    dir_contains_typescript_source(&root.join(marker))
+    dir_contains_typescript_source(&root.join(marker), false)
 }
 
 #[cfg(any(feature = "lang-typescript", test))]
-fn dir_contains_typescript_source(dir: &Path) -> bool {
+fn dir_contains_typescript_source(dir: &Path, skip_hidden: bool) -> bool {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return false;
     };
@@ -277,7 +290,10 @@ fn dir_contains_typescript_source(dir: &Path) -> bool {
             continue;
         };
         if file_type.is_dir() {
-            if !is_typescript_excluded_dir_everywhere(name) && dir_contains_typescript_source(&path)
+            let hidden = skip_hidden && name.starts_with('.');
+            if !hidden
+                && !is_typescript_excluded_dir_everywhere(name)
+                && dir_contains_typescript_source(&path, skip_hidden)
             {
                 return true;
             }
