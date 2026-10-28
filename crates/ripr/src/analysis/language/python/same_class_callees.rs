@@ -19,7 +19,10 @@ pub(super) fn method_receiver_name<'a>(
     {
         return None;
     }
-    parameters.first().map(|parameter| parameter.name.as_str())
+    parameters
+        .first()
+        .filter(|parameter| !parameter.keyword_only)
+        .map(|parameter| parameter.name.as_str())
 }
 
 pub(super) fn same_class_callees_from_body(body: &[Stmt], receiver: Option<&str>) -> Vec<String> {

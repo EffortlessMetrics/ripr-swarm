@@ -737,6 +737,22 @@ class Table:
     }
 
     #[test]
+    fn keyword_only_parameter_is_not_a_classmethod_receiver() {
+        let owners = extract_owners(
+            Path::new("src/table.py"),
+            "class Table:\n    @classmethod\n    def render(*args, handler):\n        return handler.helper()\n\n    @classmethod\n    def control(cls):\n        return cls.helper()\n",
+        );
+        let callees = |name: &str| {
+            owners
+                .iter()
+                .find(|owner| owner.name == name)
+                .map(|owner| owner.same_class_callees.as_slice())
+        };
+        assert_eq!(callees("render"), Some([].as_slice()));
+        assert_eq!(callees("control"), Some(["helper".to_string()].as_slice()));
+    }
+
+    #[test]
     fn extract_same_class_callees_from_control_flow_and_skips_staticmethod() {
         let owners = extract_owners(
             Path::new("src/table.py"),
