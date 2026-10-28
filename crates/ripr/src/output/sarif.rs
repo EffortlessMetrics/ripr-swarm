@@ -1139,7 +1139,16 @@ fn sarif_uri_reference(path: &str) -> String {
 }
 
 fn normalize_path(path: &Path) -> String {
-    let raw = path.to_string_lossy().replace('\\', "/");
+    normalize_path_for_host(path, cfg!(windows))
+}
+
+fn normalize_path_for_host(path: &Path, windows: bool) -> String {
+    let raw = path.to_string_lossy();
+    let raw = if windows {
+        raw.replace('\\', "/")
+    } else {
+        raw.into_owned()
+    };
     raw.strip_prefix("./").unwrap_or(&raw).to_string()
 }
 
@@ -2647,6 +2656,40 @@ weakly_gripped = "note"
             unicode["physicalLocation"]["artifactLocation"]["uri"],
             "src/d%C3%A9.rs"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sarif_keeps_unicode_backslash_filename_distinct_from_directory() -> Result<(), String> {
+        let mut output = sample_output();
+        let mut first = sample_finding();
+        first.probe.location.file = PathBuf::from("src/é\\file.rs");
+        let mut second = first.clone();
+        second.probe.location.file = PathBuf::from("src/é/file.rs");
+        output.findings = vec![first, second];
+        let sarif = render_findings_sarif(&output, &crate::config::RiprConfig::default(), &[]);
+        let parsed: Value = serde_json::from_str(&sarif).map_err(|error| error.to_string())?;
+        let results = parsed["runs"][0]["results"]
+            .as_array()
+            .ok_or("missing results")?;
+        assert_eq!(results.len(), 2);
+        assert_eq!(
+            results[0]["locations"][0]["physicalLocation"]["artifactLocation"]["uri"],
+            "src/%C3%A9%5Cfile.rs"
+        );
+        assert_eq!(
+            results[1]["locations"][0]["physicalLocation"]["artifactLocation"]["uri"],
+            "src/%C3%A9/file.rs"
+        );
+        assert_ne!(results[0]["fingerprints"], results[1]["fingerprints"]);
+        Ok(())
+    }
+
+    #[test]
+    fn sarif_path_separator_rules_follow_host() {
+        let path = Path::new("./src/é\\file.rs");
+        assert_eq!(normalize_path_for_host(path, false), "src/é\\file.rs");
+        assert_eq!(normalize_path_for_host(path, true), "src/é/file.rs");
     }
 
     #[test]
