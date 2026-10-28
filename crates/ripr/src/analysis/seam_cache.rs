@@ -559,7 +559,9 @@ pub(crate) struct CachedSeamLimitInfo {
 /// rebinds is not the owner call's argument (#10819); `1.115` paired it.
 /// `1.117`: whole suffixed decimal integer arguments supply repository
 /// activation and boundary equality values (#10839); older entries missed them.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.117";
+/// `1.118`: a standard `Drop::drop` can be credited through a scope-end
+/// carrier (RIPR-SPEC-0240, #10814).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.118";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -723,7 +725,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.117";
 /// `0.122`: same row-input oracle as full `1.115` (#10797).
 /// `0.123`: same rebound-let rule as full `1.116` (#10819).
 /// `0.124`: same suffixed decimal argument values as full `1.117` (#10839).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.124";
+/// `0.125`: same scope-end carrier as full `1.118` (#10814).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.125";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -889,7 +892,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.124";
 /// `0.122`: same row-input oracle as full `1.115` (#10797).
 /// `0.123`: same rebound-let rule as full `1.116` (#10819).
 /// `0.124`: same suffixed decimal argument values as full `1.117` (#10839).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.124";
+/// `0.125`: same scope-end carrier as full `1.118` (#10814).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.125";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -5265,7 +5269,8 @@ mod tests {
         // 1.114 -> 1.115: arrow row inputs substituted (RIPR-SPEC-0231 rule 9, #10797).
         // 1.115 -> 1.116: rebound let literal is not the argument (#10819).
         // 1.116 -> 1.117: whole suffixed decimal arguments feed repository activation (#10839).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.117");
+        // 1.117 -> 1.118: scope-end carrier for a standard Drop (#10814).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.118");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5369,8 +5374,9 @@ mod tests {
         // 0.121 -> 0.122: same row-input oracle as full 1.115.
         // 0.122 -> 0.123: same rebound-let rule as full 1.116.
         // 0.123 -> 0.124: same suffixed decimal argument values as full 1.117.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.124");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.124");
+        // 0.124 -> 0.125: same scope-end carrier as full 1.118.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.125");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.125");
     }
 
     #[test]

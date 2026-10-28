@@ -4556,6 +4556,30 @@ pub(in crate::analysis) fn is_drop_destructor(owner: &FunctionSummary, index: &R
     drop_dispatch::drop_owner(owner, index).is_some()
 }
 
+/// Whether `test` ends a scope over, or drops, an owned value of the type whose
+/// standard `Drop::drop` is `owner` before an assertion. The relation the
+/// scope-end carrier builds on (#10814).
+pub(in crate::analysis) fn test_drops_destructor_value(
+    test: &TestSummary,
+    owner: &FunctionSummary,
+    test_source: Option<&str>,
+    index: &RustIndex,
+) -> bool {
+    drop_dispatch::drop_owner(owner, index).is_some_and(|drop| {
+        drop_dispatch::test_drops_owner_value(test, owner, &drop, test_source, index)
+    })
+}
+
+/// Whether a `drop(..)` spelled in `source` is the standard function: no local
+/// `fn drop`, `mod mem`, renamed or foreign import or binding named `drop`.
+pub(in crate::analysis) fn standard_drop_call_unshadowed(
+    source: &str,
+    file: &std::path::Path,
+    index: &RustIndex,
+) -> bool {
+    !drop_dispatch::standard_drop_may_be_shadowed(source, file, index)
+}
+
 /// A bounded, test-local dispatch witness for an indexed trait impl. Naming
 /// its type elsewhere, an unknown method, or a same-name free/inherent function
 /// is not a witness. Reuse the established receiver binding rules (#4760).
