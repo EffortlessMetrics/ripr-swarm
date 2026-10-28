@@ -1741,6 +1741,16 @@ finite. Calls, booleans, strings and nonfinite values are not numeric evidence.
 This reading never flattens multiplication trees or assumes floating-point
 associativity; unsupported rows retain the ordinary reading.
 
+A direct whole-result table assertion can distinguish an independently changed
+integer tuple or list sibling beside a factor swap. Credit this only for a
+single-line replacement and a direct, undecorated simple owner with stable
+parameters, a plain literal parametrization and a direct equality whose whole
+old result matches an actual row while the new result differs. Unsupported
+numeric comparisons and projected assertions do not establish this proof. A
+test that rebinds a directly parametrized factor and has one admitted strong
+assertion keeps the factor finding weak when the row no longer binds
+that call value; an independent strong assertion is still considered.
+
 ## Implementation Mapping
 
 - `crates/ripr/src/analysis/language/python/doctest_tests.rs` and
