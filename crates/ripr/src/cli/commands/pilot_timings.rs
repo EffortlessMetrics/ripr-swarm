@@ -15,6 +15,8 @@ struct StageTiming {
 pub(super) struct PilotTimings {
     started: Instant,
     stages: Vec<StageTiming>,
+    /// Frozen by `finish`, so the table and the sidecar report one total.
+    total_ms: Option<u64>,
 }
 
 impl PilotTimings {
@@ -22,7 +24,17 @@ impl PilotTimings {
         Self {
             started: Instant::now(),
             stages: Vec::new(),
+            total_ms: None,
         }
+    }
+
+    /// Fix the wall-clock total once the last stage is recorded.
+    pub(super) fn finish(&mut self) {
+        self.total_ms = Some(millis(self.started));
+    }
+
+    fn total_ms(&self) -> u64 {
+        self.total_ms.unwrap_or_else(|| millis(self.started))
     }
 
     /// Record `stage` as the time since `since`. `items` is the stage's own
@@ -57,11 +69,7 @@ impl PilotTimings {
             }
             out.push('\n');
         }
-        out.push_str(&format!(
-            "  {:<22} {:>9} ms\n",
-            "total",
-            millis(self.started)
-        ));
+        out.push_str(&format!("  {:<22} {:>9} ms\n", "total", self.total_ms()));
         out
     }
 }
@@ -90,7 +98,7 @@ impl PilotTimings {
             "schema_version": TIMINGS_SCHEMA_VERSION,
             "kind": "pilot_timings",
             "stages": stages,
-            "total_ms": millis(self.started),
+            "total_ms": self.total_ms(),
         });
         let mut rendered = document.to_string();
         rendered.push('\n');
@@ -143,6 +151,29 @@ mod tests {
             ])
         );
         assert!(value["total_ms"].is_u64(), "{value}");
+        Ok(())
+    }
+
+    #[test]
+    fn a_finished_run_reports_one_total_in_the_table_and_the_sidecar() -> Result<(), String> {
+        let mut timings = PilotTimings::start();
+        timings.record_ms("inventory", 1, None);
+        timings.finish();
+        std::thread::sleep(std::time::Duration::from_millis(15));
+        let value: serde_json::Value = serde_json::from_str(&timings.render_json())
+            .map_err(|error| format!("sidecar is not JSON: {error}"))?;
+        let table = timings.render();
+        let total_row = table.lines().last().ok_or("empty table")?;
+        let table_total: u64 = total_row
+            .split_whitespace()
+            .nth(1)
+            .and_then(|ms| ms.parse().ok())
+            .ok_or_else(|| format!("no total in {total_row}"))?;
+        assert_eq!(value["total_ms"].as_u64(), Some(table_total), "{table}");
+        assert!(
+            table_total < 15,
+            "total was sampled after the sleep: {table}"
+        );
         Ok(())
     }
 

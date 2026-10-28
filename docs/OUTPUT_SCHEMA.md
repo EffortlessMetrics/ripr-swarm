@@ -16857,6 +16857,13 @@ target/ripr/pilot/pilot-summary.json
 target/ripr/pilot/pilot-summary.md
 ```
 
+`ripr pilot -v` also writes `target/ripr/pilot/pilot-timings.json` after the
+files above (RIPR-SPEC-0185, #10727): `{"schema_version": 1, "kind":
+"pilot_timings", "stages": [{"stage", "elapsed_ms", "items"?}], "total_ms"}`,
+the machine-readable twin of the stderr stage table. It is the only pilot file
+that holds wall-clock values, so it is not byte-stable; it is absent without
+`-v`, and a run without `-v` or a timeout run removes a prior one.
+
 `ripr pilot --format json` writes that same `pilot-summary.json` document to
 stdout and suppresses the human terminal. Packet files are still written under
 `--out`. There is no `--json` alias.

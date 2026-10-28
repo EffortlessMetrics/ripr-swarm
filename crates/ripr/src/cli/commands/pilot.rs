@@ -476,9 +476,13 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     // #10727: the sidecar is written last, so it cannot change any other
     // artifact. A run without `-v` drops a prior run's sidecar rather than
     // leave it standing as this run's timings.
+    timings.finish();
     let timings_path = pilot_timings_path(&artifacts);
     if crate::is_verbose() {
         if let Err(error) = write_pilot_file(&timings_path, timings.render_json()) {
+            // The atomic writer keeps the old file when a replace fails, so
+            // drop it: a prior run's timings must not read as this run's.
+            remove_timeout_packet_sibling(&timings_path)?;
             eprintln!("ripr pilot: timings sidecar not written: {error}");
         }
     } else {

@@ -13119,7 +13119,9 @@ tests = [
   "crates/ripr/src/cli/commands/pilot_timings.rs::tests::the_table_lists_each_stage_in_order_with_its_item_count_and_a_total",
   "crates/ripr/src/cli/commands/pilot_timings.rs::tests::a_recorded_span_measures_the_time_since_its_start",
   "crates/ripr/src/cli/commands/pilot_timings.rs::tests::the_json_sidecar_mirrors_the_table_stages_and_omits_absent_counts",
+  "crates/ripr/src/cli/commands/pilot_timings.rs::tests::a_finished_run_reports_one_total_in_the_table_and_the_sidecar",
   "crates/ripr/tests/cli_progress.rs::verbose_pilot_prints_a_stage_table_and_leaves_stdout_and_packet_bytes_unchanged",
+  "crates/ripr/tests/cli_progress.rs::verbose_pilot_fails_rather_than_leave_an_unwritable_sidecar_as_current",
 ]
 fixtures = [
 ]

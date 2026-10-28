@@ -978,3 +978,21 @@ fn verbose_pilot_prints_a_stage_table_and_leaves_stdout_and_packet_bytes_unchang
     ignore_remove_dir_all(&root);
     Ok(())
 }
+
+#[test]
+fn verbose_pilot_fails_rather_than_leave_an_unwritable_sidecar_as_current() -> Result<(), String> {
+    let root = repo_fixture_root("pilot-progress")?;
+    let out = root.join("pilot-out");
+    // A directory at the sidecar path cannot be replaced or removed as a
+    // file, so the prior-sidecar guard must refuse instead of passing.
+    std::fs::create_dir_all(out.join("pilot-timings.json"))
+        .map_err(|error| format!("create blocking directory: {error}"))?;
+    let verbose = run_pilot(&root, &out, &["-v"])?;
+    assert!(
+        !verbose.status.success(),
+        "an unreplaceable sidecar must not read as current: {}",
+        stderr_text(&verbose)
+    );
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
