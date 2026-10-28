@@ -129,3 +129,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_enum_canonical_alias (11)
+
+Reason:
+RIPR-SPEC-0088: TypeScript preview check JSON states top-level canonical_gap_id (#10709)
+
+Command:
+`cargo xtask goldens bless typescript_enum_canonical_alias --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

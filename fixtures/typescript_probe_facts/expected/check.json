@@ -12,6 +12,7 @@
   "findings": [
     {
       "id": "probe:src_ambiguous.ts:typescript_preview:ba5968cd",
+      "canonical_gap_id": "gap:typescript:typescript_preview:ba5968cd",
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.40,
@@ -136,6 +137,7 @@
     },
     {
       "id": "probe:src_ambiguous.ts:typescript_preview:62d9564b",
+      "canonical_gap_id": "gap:typescript:typescript_preview:62d9564b",
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.40,
@@ -255,6 +257,7 @@
     },
     {
       "id": "probe:src_errors.ts:typescript_preview:491cf8da",
+      "canonical_gap_id": "gap:typescript:typescript_preview:491cf8da",
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.40,
@@ -392,6 +395,7 @@
     },
     {
       "id": "probe:src_notify.js:typescript_preview:2f0e6fff",
+      "canonical_gap_id": "gap:typescript:typescript_preview:2f0e6fff",
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.40,
@@ -529,6 +533,7 @@
     },
     {
       "id": "probe:src_pricing.ts:typescript_preview:eaef2ad8",
+      "canonical_gap_id": "gap:typescript:typescript_preview:eaef2ad8",
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.40,
@@ -665,6 +670,7 @@
     },
     {
       "id": "probe:src_pricing.ts:typescript_preview:11e59c24",
+      "canonical_gap_id": "gap:typescript:typescript_preview:11e59c24",
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.40,
@@ -802,6 +808,7 @@
     },
     {
       "id": "probe:src_profile.ts:typescript_preview:7c5ce045",
+      "canonical_gap_id": "gap:typescript:typescript_preview:7c5ce045",
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.40,
@@ -939,6 +946,7 @@
     },
     {
       "id": "probe:src_profile.ts:typescript_preview:be31b1f9",
+      "canonical_gap_id": "gap:typescript:typescript_preview:be31b1f9",
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.40,
@@ -1076,6 +1084,7 @@
     },
     {
       "id": "probe:src_view.jsx:typescript_preview:48669bf1",
+      "canonical_gap_id": "gap:typescript:typescript_preview:48669bf1",
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.40,
@@ -1213,6 +1222,7 @@
     },
     {
       "id": "probe:src_widget.tsx:typescript_preview:9044230b",
+      "canonical_gap_id": "gap:typescript:typescript_preview:9044230b",
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.40,

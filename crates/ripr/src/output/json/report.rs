@@ -15,7 +15,9 @@ use crate::output::preview_actionability::{
     projected_preview_actionability_evidence, projected_preview_actionability_missing,
 };
 use crate::output::python_repair_card::{PythonRepairCard, python_repair_card};
-use crate::output::typescript_packet_projection::typescript_gap_record_for;
+use crate::output::typescript_packet_projection::{
+    typescript_canonical_gap_id, typescript_gap_record_for,
+};
 use crate::output::typescript_preview_card::{
     typescript_preview_card, typescript_preview_card_json_value,
 };
@@ -844,6 +846,22 @@ fn finding_json_with_config_and_counts(
             true,
         );
         canonical_gap_json(out, gap, indent + 1, true);
+    } else if finding.id.starts_with("probe:")
+        && finding.id.contains(":typescript_preview:")
+        && typescript_preview_card(finding).is_some()
+    {
+        // TypeScript preview findings carry no `FindingCanonicalGap`, but
+        // `ripr agent repair --gap-id` and the human output already name the
+        // gap; state the same content-addressed id (the shared derivation
+        // `ripr agent` consumers re-derive) so machine consumers need not
+        // scrape text (#10709).
+        field(
+            out,
+            indent + 1,
+            "canonical_gap_id",
+            &typescript_canonical_gap_id(&finding.id),
+            true,
+        );
     }
     field(
         out,

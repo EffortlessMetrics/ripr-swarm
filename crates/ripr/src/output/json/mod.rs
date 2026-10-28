@@ -2073,6 +2073,40 @@ mod tests {
     }
 
     #[test]
+    fn finding_json_states_typescript_preview_canonical_gap_id() -> Result<(), String> {
+        let mut finding = unknown_finding();
+        add_typescript_preview_actionability(&mut finding);
+        finding.id = "probe:src_lib.ts:typescript_preview:1a2b3c4d".to_string();
+        let mut out = String::new();
+        finding_json(&mut out, &finding, 0);
+        let value: serde_json::Value = serde_json::from_str(&out)
+            .map_err(|err| format!("finding JSON parse failed: {err}"))?;
+        assert_eq!(
+            value["canonical_gap_id"],
+            "gap:typescript:typescript_preview:1a2b3c4d"
+        );
+
+        // Negative: a finding without the TypeScript preview card, or whose id
+        // is not a TypeScript preview probe id, states no gap id.
+        let mut other_id = finding.clone();
+        other_id.id = "probe:src_lib.ts:other:1a2b3c4d".to_string();
+        let mut out = String::new();
+        finding_json(&mut out, &other_id, 0);
+        let value: serde_json::Value = serde_json::from_str(&out)
+            .map_err(|err| format!("finding JSON parse failed: {err}"))?;
+        assert!(value.get("canonical_gap_id").is_none());
+
+        let mut not_ts = finding.clone();
+        not_ts.language = None;
+        let mut out = String::new();
+        finding_json(&mut out, &not_ts, 0);
+        let value: serde_json::Value = serde_json::from_str(&out)
+            .map_err(|err| format!("finding JSON parse failed: {err}"))?;
+        assert!(value.get("canonical_gap_id").is_none());
+        Ok(())
+    }
+
+    #[test]
     fn finding_json_projects_perl_preview_card_public_preview_scope() -> Result<(), String> {
         let mut finding = unknown_finding();
         add_perl_preview_card_inputs(&mut finding);
