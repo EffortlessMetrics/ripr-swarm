@@ -186,7 +186,10 @@ pub(in crate::analysis) fn withhold_implicit_call_gap(
 /// at scope end and cannot be named, so a test never calls it; every route to
 /// `exposed` (a reach the scope-end relation set, a name match on the free
 /// `drop`) credits an assertion no authority ties to that scope end, whichever
-/// probe family the changed line is (#10553). Returns `true` when rewritten.
+/// probe family the changed line is (#10553). The one exception is the
+/// scope-end carrier (#10814): when every strong contributing test ends the
+/// guard's scope over a handle its assertion reads, the verdict stands.
+/// Returns `true` when rewritten.
 pub(in crate::analysis) fn withhold_destructor_credit(
     finding: &mut Finding,
     index: &RustIndex,
@@ -206,6 +209,11 @@ pub(in crate::analysis) fn withhold_destructor_credit(
         return false;
     };
     if !super::is_drop_destructor(owner, index) {
+        return false;
+    }
+    // #10814: an assertion the scope-end carrier ties to this destructor's
+    // write stands; every other route to `exposed` is still withheld.
+    if super::destructor_credit_established(finding, owner, index) {
         return false;
     }
     let next_step = format!(

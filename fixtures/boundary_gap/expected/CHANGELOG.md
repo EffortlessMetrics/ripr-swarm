@@ -79,6 +79,13 @@ literal that a tuple, struct or `for` pattern rebinds no longer pairing with the
 owner call (RIPR-SPEC-0158, #10819), with the same scope: generation, content
 commitment, dependent verify commitments and receipt byte hashes only.
 
+### Drop scope-end carrier cache generation parity
+
+The same snapshots follow corpus cache generation 1.117 to 1.118 for a standard
+`Drop::drop` credited through a scope-end carrier (RIPR-SPEC-0240, #10814), with
+the same scope: generation, content commitment, dependent verify commitments and
+receipt byte hashes only.
+
 ## Pending — boundary_gap (9)
 
 Reason:
