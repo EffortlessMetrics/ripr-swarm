@@ -1,2 +1,2 @@
 <!-- section: Fixed -->
-- TypeScript discovery no longer treats a file that spells an aliased directory's real path (`real/skills` for `link/skills -> ../real/skills`) as an import through the link, so a repository whose own scripts mention that path is not reported partial for a harmless directory alias; an import through the link still is (#10899).
+- TypeScript discovery now decides whether an indexed file imports through a directory alias by resolving each relative specifier from the importing file's directory, instead of matching the alias's name in the text. A repository whose scripts only mention the aliased directory's real path in prose or comments is no longer reported partial for a harmless alias; an import that resolves through the link still is (#10899).
