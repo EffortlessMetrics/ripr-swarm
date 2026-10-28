@@ -1073,26 +1073,6 @@ pub(crate) fn check_repair_route(
         // arms above still named any concrete ineligibility; reaching here
         // means the seam was eligible, so the limitation guidance on the
         // same screen is the whole story and no advisory is added.
-        //
-        // #10701: except when the only reason the seam is eligible is the
-        // return-value start fact. That fact is seam-level evidence; this
-        // finding-level evidence says the path is statically limited, so the
-        // two disagree and the earlier refusal (missing exact discriminator,
-        // with the manual stub route) stays.
-        if crate::analysis::test_grip_evidence::eligible_only_by_return_value_start(entry) {
-            let evidence = crate::analysis::repair_route::producer_discriminator_evidence(
-                entry.seam.required_discriminator().as_str(),
-            );
-            let label = ineligibility_label(RepairPacketIneligibility::RouteNotReady);
-            let reason =
-                route_not_ready_reason(entry, label, std::slice::from_ref(&evidence), Some(root));
-            return CheckRepairRoute::Refused(RepairRouteRefusal::Ineligible {
-                reason,
-                kind: RefusalKind::RouteNotReady,
-                missing: vec![evidence],
-                boundary_input_observed: finding.boundary_input_observed_with_weak_oracle(),
-            });
-        }
         return CheckRepairRoute::Silent;
     }
     // `ripr repair` confines a production-file target to its inline test

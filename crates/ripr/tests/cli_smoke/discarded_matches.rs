@@ -144,7 +144,8 @@ fn bounded_legend_capture_projection_is_exact_and_preserves_evidence() -> Result
 ///   contract lives in `return_value_repair_start.rs`. Any other
 ///   missing-evidence list (including that item beside another) stays
 ///   byte-exact, and a printed start is projected only when it carries
-///   `--root`.
+///   `--root`, and only in a capture whose canonical gaps are all
+///   `return_value` or `error_variant` gaps.
 ///
 /// Every other advisory line stays byte-exact. Returns the projected bytes and
 /// how many lines were normalized.
@@ -176,13 +177,28 @@ fn normalize_moved_repair_advisories(bytes: &[u8]) -> (Vec<u8>, usize) {
             "  no repair start offered: <not-ready missing={list}>\n"
         ))
     };
+    // A printed start is the moved return-value or error-variant slot only
+    // when this capture's own canonical gaps are all of those two kinds, so a
+    // wrongly started boundary (or any other) seam is never masked.
+    let text = String::from_utf8_lossy(bytes);
+    let gaps: Vec<&str> = text
+        .lines()
+        .filter_map(|line| line.trim_start().strip_prefix("Canonical gap: "))
+        .collect();
+    let value_gaps_only = !gaps.is_empty()
+        && gaps
+            .iter()
+            .all(|gap| gap.contains(":return_value:") || gap.contains(":error_variant:"));
     let mut normalized = 0;
-    let projected = String::from_utf8_lossy(bytes)
+    let projected = text
         .split_inclusive('\n')
         .map(|line| {
             let replacement = if NO_BINDING.iter().any(|prefix| line.starts_with(prefix)) {
                 Some("  no repair start offered: <no-binding-seam advisory>\n".to_string())
-            } else if line.starts_with("  ripr repair ") && line.contains(" --root ") {
+            } else if value_gaps_only
+                && line.starts_with("  ripr repair ")
+                && line.contains(" --root ")
+            {
                 Some(MOVED_GAP_SLOT.to_string())
             } else {
                 list_between(line, OLD_NOT_READY, OLD_LIST_END)
@@ -199,6 +215,35 @@ fn normalize_moved_repair_advisories(bytes: &[u8]) -> (Vec<u8>, usize) {
         .collect::<String>()
         .into_bytes();
     (projected, normalized)
+}
+
+/// A printed start is projected to the moved return-value slot only beside
+/// return-value or error-variant gaps; a boundary seam's start stays exact.
+#[test]
+fn moved_repair_start_projection_never_masks_another_seam_kind() {
+    let start = "  ripr repair 0123456789abcdef --root /x\n";
+    let capture = |gap: &str| format!("  Canonical gap: {gap}\n{start}");
+    let (value, slots) = normalize_moved_repair_advisories(
+        capture("gap:rust:src/lib.rs:f:return_value:r:x").as_bytes(),
+    );
+    assert_eq!(slots, 1);
+    assert!(!String::from_utf8_lossy(&value).contains("ripr repair"));
+    for other in [
+        "gap:rust:src/lib.rs:f:predicate_boundary:p:x > 1",
+        "gap:rust:src/lib.rs:f:match_arm:m:x",
+    ] {
+        let (kept, slots) = normalize_moved_repair_advisories(capture(other).as_bytes());
+        assert_eq!(slots, 0, "{other}");
+        assert!(String::from_utf8_lossy(&kept).contains(start), "{other}");
+    }
+    let (mixed, slots) = normalize_moved_repair_advisories(
+        format!(
+            "  Canonical gap: gap:rust:a.rs:f:return_value:r:x\n  Canonical gap: gap:rust:a.rs:g:predicate_boundary:p:y\n{start}"
+        )
+        .as_bytes(),
+    );
+    assert_eq!(slots, 0);
+    assert!(String::from_utf8_lossy(&mixed).contains(start));
 }
 
 /// The independent contract is score(1) == 2. Original/wrong sources differ

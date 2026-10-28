@@ -658,7 +658,95 @@ fn unresolved_alias_or_macro_workspace_is_not_a_repair_start() -> Result<(), Str
         &loud_lib("pub type Out = Loud;\n", "Out", 3),
         LOUD_TEST,
     )?;
+    // The same alias spelled across lines (and with a comment) is the same
+    // alias: it must not slip past a substring match.
+    for (spelling, alias) in [
+        ("newline", "pub type\nOut = Loud;\n"),
+        ("comment", "type /* alias */ Out\n    = Loud;\n"),
+    ] {
+        assert_no_start(
+            spelling,
+            &loud_lib(alias, "Out", 2),
+            &loud_lib(alias, "Out", 3),
+            LOUD_TEST,
+        )?;
+    }
     let with_macro = |factor| loud_lib("macro_rules! unused {\n    () => {};\n}\n", "Loud", factor);
     assert_no_start("macro", &with_macro(2), &with_macro(3), LOUD_TEST)?;
+    Ok(())
+}
+
+/// Equality and closed-range pins over a value derived from the owner call
+/// withhold a start; each differs from the weak control only by the shape.
+#[test]
+fn derived_value_equality_and_range_pins_are_not_a_repair_start() -> Result<(), String> {
+    assert_repair_ready(
+        "weak-control",
+        DBL_OLD,
+        DBL_NEW,
+        &dbl_test("    let v = dbl(2);\n    assert!(v >= 1);\n"),
+    )?;
+    for (name, body) in [
+        (
+            "transitive-local",
+            "    let v = dbl(2);\n    let w = v;\n    assert!(w == 6);\n",
+        ),
+        ("eq-method", "    assert!(dbl(2).eq(&6));\n"),
+        (
+            "negated-inequality",
+            "    let v = dbl(2);\n    assert!(!(v != 6));\n",
+        ),
+        (
+            "closed-range",
+            "    let v = dbl(2);\n    assert!(v >= 6 && v <= 6);\n",
+        ),
+    ] {
+        assert_no_start(name, DBL_OLD, DBL_NEW, &dbl_test(body))?;
+    }
+    Ok(())
+}
+
+const PAIR_OLD: &str = "pub fn pair(x: i32) -> (i32, i32) {\n    (x * 2, 1)\n}\n";
+const PAIR_NEW: &str = "pub fn pair(x: i32) -> (i32, i32) {\n    (x * 3, 1)\n}\n";
+
+/// A tuple destructure of the owner call binds names that pin the value too.
+#[test]
+fn tuple_destructure_equality_is_not_a_repair_start() -> Result<(), String> {
+    let test = |assertion: &str| {
+        format!(
+            "use ar::pair;\n\n#[test]\nfn t() {{\n    let (a, _b) = pair(2);\n    {assertion}\n}}\n"
+        )
+    };
+    assert_repair_ready(
+        "tuple-weak-control",
+        PAIR_OLD,
+        PAIR_NEW,
+        &test("assert!(a > 0);"),
+    )?;
+    assert_no_start(
+        "tuple-equality",
+        PAIR_OLD,
+        PAIR_NEW,
+        &test("assert!(a == 6);"),
+    )?;
+    Ok(())
+}
+
+/// An exact-variant assertion for the OLD variant is contradicted by the
+/// change, so a weak `is_err()` beside it is not a start.
+#[test]
+fn contradicted_error_variant_assertion_is_not_a_repair_start() -> Result<(), String> {
+    assert_repair_ready(
+        "is-err-only",
+        PARSE_OLD,
+        PARSE_NEW,
+        "use ar::parse;\n\n#[test]\nfn t() {\n    assert!(parse(-1).is_err());\n}\n",
+    )?;
+    assert_no_start(
+        "old-variant-beside-is-err",
+        PARSE_OLD,
+        PARSE_NEW,
+        "use ar::{parse, E};\n\n#[test]\nfn t() {\n    assert!(parse(-1).is_err());\n    assert!(matches!(parse(-1), Err(E::A)));\n}\n",
+    )?;
     Ok(())
 }

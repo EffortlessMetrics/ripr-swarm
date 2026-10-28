@@ -505,17 +505,6 @@ fn evidence_for_seam_with_context(
 const RETURN_VALUE_START_REASON: &str = "no related test asserts the exact changed return value";
 const ERROR_VARIANT_START_REASON: &str = "no related test asserts the exact changed error variant";
 
-/// Whether the seam's only missing-discriminator fact is the return-value or
-/// error-variant repair-start fact (#10701), so removing it returns the seam
-/// to its earlier not-ready route.
-pub(crate) fn eligible_only_by_return_value_start(entry: &super::ClassifiedSeam) -> bool {
-    let facts = &entry.evidence.missing_discriminators;
-    !facts.is_empty()
-        && facts.iter().all(|fact| {
-            fact.reason == RETURN_VALUE_START_REASON || fact.reason == ERROR_VARIANT_START_REASON
-        })
-}
-
 fn return_value_missing_discriminator(
     seam: &RepoSeam,
     related_tests: &[Arc<RelatedTestGrip>],
@@ -573,6 +562,19 @@ fn return_value_missing_discriminator(
         _ => return None,
     };
     if description.trim().is_empty() {
+        return None;
+    }
+    // A related test that asserts an exact error variant other than the new
+    // one is contradicted by the change (or not about it): adding a variant
+    // assertion beside it is not the repair, so the start is withheld.
+    if reason == ERROR_VARIANT_START_REASON
+        && related_summaries.iter().any(|test| {
+            test.assertions.iter().any(|oracle| {
+                oracle.kind == OracleKind::ExactErrorVariant
+                    && !oracle.text.contains(description.as_str())
+            })
+        })
+    {
         return None;
     }
     // `check` credits a lone equality between an owner call and an owner-free
@@ -649,17 +651,30 @@ fn names_non_plain_drop_type(owner: &FunctionSummary, expression: &str, index: &
         })
 }
 
-/// Whether some indexed source declares `type <name>` (an alias or an
-/// associated type), whose target this check does not resolve.
+/// Whether some indexed source declares `type <name>` (an alias, a generic
+/// alias or an associated type, any visibility, any whitespace or comments
+/// between the tokens), whose target this check does not resolve.
 fn type_alias_declared(index: &RustIndex, name: &str) -> bool {
-    let declaration = format!("type {name}");
-    index.files().iter().any(|(_, facts)| {
-        facts.source.match_indices(&declaration).any(|(at, _)| {
-            !facts.source[at + declaration.len()..]
-                .chars()
-                .next()
-                .is_some_and(|ch| ch.is_alphanumeric() || ch == '_')
-        })
+    index
+        .files()
+        .iter()
+        .any(|(_, facts)| source_declares_type_alias(&facts.source, name))
+}
+
+/// Token-level read of `type <name>`: comments and strings are masked, then a
+/// `type` word followed (after any whitespace) by the identifier `name`.
+fn source_declares_type_alias(source: &str, name: &str) -> bool {
+    let masked = crate::analysis::extract::mask_comments_and_strings(source);
+    let part = |ch: char| ch.is_alphanumeric() || ch == '_';
+    masked.match_indices("type").any(|(at, word)| {
+        let before = masked[..at].chars().next_back();
+        let rest = &masked[at + word.len()..];
+        if before.is_some_and(part) || !rest.starts_with(char::is_whitespace) {
+            return false;
+        }
+        let rest = rest.trim_start();
+        let ident: String = rest.chars().take_while(|ch| part(*ch)).collect();
+        ident == name
     })
 }
 
@@ -684,9 +699,10 @@ fn is_struct_literal_expression(expression: &str) -> bool {
             .is_some_and(|ch| ch.is_ascii_uppercase())
 }
 
-/// Whether one of `test`'s assertions is a lone top-level equality with a call
-/// to `owner_name` on one side, or with a local bound from such a call
-/// (RIPR-SPEC-0197 / RIPR-SPEC-0154 shapes).
+/// Whether one of `test`'s assertions pins the value of a call to `owner_name`
+/// or of a local derived from it: a lone top-level equality (RIPR-SPEC-0197 /
+/// RIPR-SPEC-0154 shapes) or, more broadly, `.eq(`, a negated `!=` or a closed
+/// `>=`/`<=` range over such a value. The breadth only withholds a start.
 fn test_pins_owner_call_by_equality(
     test: &TestSummary,
     owner_name: &str,
@@ -706,13 +722,16 @@ fn test_pins_owner_call_by_equality(
 }
 
 /// Names bound by a `let` whose initializer calls `owner_name`
-/// (`let v = f(2);`, `let mut v: T = f(2).await;`), so an equality on the
-/// local pins the owner's value as an equality on the call does. Reads the
-/// masked body; a rebinding of the name is not tracked, which only withholds.
+/// (`let v = f(2);`, `let mut v: T = f(2).await;`, `let (a, b) = f(2);`) or
+/// mentions a name already bound that way (`let w = v;`), taken to a fixed
+/// point, so a comparison of such a local pins the owner's value as one of the
+/// call does. Reads the masked body; a rebinding of a name is not tracked,
+/// which only withholds. Not followed: a value moved through a field write,
+/// a mutation (`v += 1`), a closure, a loop variable or a function parameter.
 fn owner_result_locals(body: &str, owner_name: &str) -> Vec<String> {
     let masked = crate::analysis::extract::mask_comments_and_strings(body);
     let call = format!("{owner_name}(");
-    let mut locals = Vec::new();
+    let mut lets: Vec<(Vec<String>, &str)> = Vec::new();
     for statement in masked.split(';') {
         let Some(at) = statement.find("let ") else {
             continue;
@@ -725,20 +744,48 @@ fn owner_result_locals(body: &str, owner_name: &str) -> Vec<String> {
         {
             continue;
         }
-        let rest = statement[at + 4..].trim_start();
-        let rest = rest.strip_prefix("mut ").unwrap_or(rest).trim_start();
-        let name: String = rest
-            .chars()
-            .take_while(|ch| ch.is_alphanumeric() || *ch == '_')
-            .collect();
-        let Some(init) = rest[name.len()..].split_once('=').map(|(_, init)| init) else {
+        let rest = &statement[at + 4..];
+        let Some((pattern, init)) = rest.split_once('=') else {
             continue;
         };
-        if !name.is_empty() && init.contains(&call) {
-            locals.push(name);
+        // The pattern ends at a type annotation's single `:` (not `::`).
+        let bytes = pattern.as_bytes();
+        let end = (0..bytes.len())
+            .find(|&i| {
+                bytes[i] == b':'
+                    && bytes.get(i + 1) != Some(&b':')
+                    && (i == 0 || bytes[i - 1] != b':')
+            })
+            .unwrap_or(bytes.len());
+        let names: Vec<String> = pattern[..end]
+            .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+            .filter(|word| {
+                word.starts_with(|ch: char| ch.is_lowercase() || ch == '_')
+                    && *word != "_"
+                    && !matches!(*word, "mut" | "ref")
+            })
+            .map(str::to_string)
+            .collect();
+        if !names.is_empty() {
+            lets.push((names, init));
         }
     }
-    locals
+    let mut locals: Vec<String> = Vec::new();
+    loop {
+        let before = locals.len();
+        for (names, init) in &lets {
+            if init.contains(&call) || locals.iter().any(|local| mentions_identifier(init, local)) {
+                for name in names {
+                    if !locals.contains(name) {
+                        locals.push(name.clone());
+                    }
+                }
+            }
+        }
+        if locals.len() == before {
+            return locals;
+        }
+    }
 }
 
 /// Whether `operand` mentions `name` as a whole identifier.
@@ -771,20 +818,40 @@ fn assertions_pin_owner_by_equality<'a>(
             crate::analysis::syntax::source_declares_value_name(source, "Err")
         })
     };
+    let mentions =
+        |text: &str| text.contains(&call) || locals.iter().any(|l| mentions_identifier(text, l));
     assertions.into_iter().any(|text| {
         let guard = crate::analysis::extract::err_return_guard_twin(text).is_some();
-        (!guard || !err_shadowed())
-            && crate::analysis::classify::equality_condition_operands(text).is_some_and(
-                |operands| {
-                    operands.iter().any(|operand| {
-                        operand.contains(&call)
-                            || locals
-                                .iter()
-                                .any(|local| mentions_identifier(operand, local))
-                    })
-                },
-            )
+        if guard && err_shadowed() {
+            return false;
+        }
+        crate::analysis::classify::equality_condition_operands(text)
+            .is_some_and(|operands| operands.iter().any(|operand| mentions(operand)))
+            || (!guard && comparison_pins_value(text, &mentions))
     })
+}
+
+/// A broader, syntactic read of an assertion that pins a value derived from
+/// the owner call without a lone top-level `==`: `x.eq(&6)`, a negated
+/// inequality `!(x != 6)`, or a closed range `x >= 6 && x <= 6`. A plain
+/// `!=`, `.ne(`, `assert_ne!`, a one-sided bound, a comparison nested in
+/// another expression (`f(x) != 0 == true`) or any `||` is a weak check and
+/// not a pin. Over-reading these shapes only withholds a repair start.
+fn comparison_pins_value(text: &str, mentions: &dyn Fn(&str) -> bool) -> bool {
+    let masked = crate::analysis::extract::mask_comments_and_strings(text);
+    if !mentions(&masked) || masked.contains("||") {
+        return false;
+    }
+    masked.contains(".eq(")
+        || (masked.contains("!=")
+            && masked.match_indices("!(").any(|(at, _)| {
+                // `!(` after an identifier is a macro bang (`assert!(`), not a negation.
+                !masked[..at]
+                    .chars()
+                    .next_back()
+                    .is_some_and(|ch| ch.is_alphanumeric() || ch == '_')
+            }))
+        || (masked.contains(">=") && masked.contains("<=") && masked.contains("&&"))
 }
 
 #[cfg(test)]
@@ -811,6 +878,73 @@ mod equality_pin_tests {
         assert!(!pinned("assert!(v > 0);", &locals), "weak stays unpinned");
         assert!(!pinned("assert!(vv == 12);", &locals), "whole identifiers");
         assert!(!pinned("assert!(v == 12);", &[]), "no local, no pin");
+    }
+
+    #[test]
+    fn derived_locals_and_destructures_are_followed_to_a_fixed_point() {
+        let locals = |body: &str| owner_result_locals(body, "weight");
+        assert_eq!(locals("let v = weight(4); let w = v;"), ["v", "w"]);
+        assert_eq!(locals("let w = v; let v = weight(4);"), ["v", "w"]);
+        assert_eq!(locals("let (a, mut b) = weight(4);"), ["a", "b"]);
+        assert_eq!(locals("let Some(x) = weight(4) else { return };"), ["x"]);
+        assert!(locals("let w = v; let u = other(4);").is_empty());
+    }
+
+    #[test]
+    fn broader_comparison_shapes_pin_but_a_weak_bound_does_not() {
+        let locals = ["v".to_string()];
+        let pins = |assertion: &str| {
+            super::assertions_pin_owner_by_equality([assertion], "weight", &locals, Some(""))
+        };
+        for pinned in [
+            "assert!(v.eq(&6));",
+            "assert!(!(v != 6));",
+            "assert!(v >= 6 && v <= 6);",
+            "assert!(weight(4).eq(&6));",
+        ] {
+            assert!(pins(pinned), "{pinned}");
+        }
+        for weak in [
+            "assert!(v > 0);",
+            "assert!(v >= 1);",
+            "assert!(v < 100);",
+            "assert!(other == 6);",
+            "assert!(w >= 6 && w <= 6);",
+            "assert!(v > 0, \"v == 6\");",
+            "assert!(v != 0);",
+            "assert!(v.ne(&6));",
+            "assert_ne!(v, 0);",
+            "assert_eq!(v != 0, true);",
+            "assert!(v.eq(&6) || lenient);",
+            "assert!(v >= 6 || v <= 6);",
+        ] {
+            assert!(!pins(weak), "{weak}");
+        }
+    }
+
+    #[test]
+    fn type_aliases_are_read_as_tokens_not_substrings() {
+        use super::source_declares_type_alias as declares;
+        for spelling in [
+            "type Out = Loud;",
+            "pub type Out = Loud;",
+            "pub(crate) type Out<T> = Loud<T>;",
+            "type\nOut = Loud;",
+            "type   /* c */\n\tOut\n= Loud;",
+            "impl X for Y {\n    type Out = Loud;\n}",
+        ] {
+            assert!(declares(spelling, "Out"), "{spelling}");
+        }
+        for other in [
+            "type Output = Loud;",
+            "type Outer = Loud;",
+            "// type Out = Loud;",
+            "const S: &str = \"type Out\";",
+            "fn mytype Out() {}",
+            "let t: Out = Loud;",
+        ] {
+            assert!(!declares(other, "Out"), "{other}");
+        }
     }
 
     #[test]

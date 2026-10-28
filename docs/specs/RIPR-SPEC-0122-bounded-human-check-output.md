@@ -736,8 +736,14 @@ not a head-only row and prints no note.
   call and an editable test target, prints one `ripr repair <id>` start; a
   lone equality pin (`assert!(f(x) == lit)`, the terminal Err-return guard), a
   strong exact assertion, a statically contradicted assertion, a function-value
-  or executor-helper reach, a changed struct literal, a test that only discards
-  the result, and a test with no direct owner call stay refused
+  or executor-helper reach, a changed struct literal, a related `#[ignore]` or
+  `#[should_panic]` test, a returned type whose `Drop` is non-plain (including
+  `Self`, an unresolved type alias, or a workspace with a macro, `extern crate`
+  or outside-crate item that may generate one), an equality or closed-range
+  pin over the owner call or a value derived from it through lets, tuple
+  destructures or `.eq`, `!(..!=..)` or closed-range shapes, an exact error-variant assertion for
+  another variant, a test that only discards the result, and a test with no
+  direct owner call stay refused
   with one plain-language reason and the manual `ripr agent stub` route
   (`crates/ripr/tests/return_value_repair_start.rs`).
 - Format parsing tests for `human-full` and `text-full`.
