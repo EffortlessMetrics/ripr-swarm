@@ -17057,7 +17057,7 @@ it("tiers", () => {
 // `no_static_path` and the advice "add a test that calls the changed owner"
 // points at tests that already exist.
 
-fn ts_analysis_options(root: PathBuf) -> AnalysisOptions {
+pub(super) fn ts_analysis_options(root: PathBuf) -> AnalysisOptions {
     AnalysisOptions {
         root,
         base: None,

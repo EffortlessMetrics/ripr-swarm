@@ -1023,7 +1023,7 @@ fn mock_names_module(test: &TypeScriptTest, mocked_modules: &[String], module: &
 }
 
 /// Export facts of one parsed module, collected on the parse worker.
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct ModuleExportFacts {
     pub(crate) entries: Vec<((String, String), (String, String))>,
     pub(crate) star_edges: Vec<(String, String)>,
@@ -1032,6 +1032,12 @@ pub(crate) struct ModuleExportFacts {
     pub(crate) enum_bindings: Vec<(String, Vec<String>)>,
     pub(crate) enum_imports: Vec<TypeScriptImport>,
     pub(crate) unstable_enum_roots: Vec<String>,
+    /// Whether the module has a value-level `export ... from` (#10725
+    /// review). Its target resolves on disk and can resolve back to this
+    /// very module (`export { a as b } from './'`), so the entries alone
+    /// cannot tell a re-export from an own rename.
+    #[serde(default)]
+    pub(crate) re_exports_from_source: bool,
 }
 
 impl ModuleExportFacts {
@@ -1168,6 +1174,7 @@ pub(crate) fn module_export_facts(
                 if export_all.export_kind == ImportOrExportKind::Type {
                     continue;
                 }
+                facts.re_exports_from_source = true;
                 let star_source = export_all.source.value.to_string();
                 let Some(resolved) = normalized_relative_import_module(
                     relative,
@@ -1224,6 +1231,7 @@ pub(crate) fn module_export_facts(
                     }
                     continue;
                 };
+                facts.re_exports_from_source = true;
                 let source_str = re_source.value.to_string();
                 // Resolve the source module relative to the intermediate
                 // file's dir. Pass alias_map so tsconfig-aliased paths can be
