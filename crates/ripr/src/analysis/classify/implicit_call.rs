@@ -333,8 +333,9 @@ fn type_path_scope_is_clear(
     }
     let root = tree.syntax();
     let clear = |item: ast::Item, module, parent| {
-        let owner_path =
-            |value: &str| value == format!("super::{}", path.self_type) && parent == owner_module;
+        let owner_path = |value: &str| {
+            value.strip_prefix("super::") == Some(path.self_type.as_str()) && parent == owner_module
+        };
         if let ast::Item::Use(ref item) = item {
             return super::reveal::flattened_use_paths(&item.syntax().text().to_string())
                 .iter()
@@ -358,8 +359,10 @@ fn type_path_scope_is_clear(
                         return owner_path(target);
                     }
                     if bound == path.trait_name {
-                        return target == format!("std::ops::{}", path.trait_name)
-                            || target == format!("core::ops::{}", path.trait_name);
+                        return target
+                            .strip_prefix("std::ops::")
+                            .or_else(|| target.strip_prefix("core::ops::"))
+                            == Some(path.trait_name.as_str());
                     }
                     true
                 });
