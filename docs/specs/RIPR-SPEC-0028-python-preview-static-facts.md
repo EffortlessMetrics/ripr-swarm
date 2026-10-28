@@ -437,7 +437,10 @@ comments, strings, and docstrings:
   before the name, its closing bracket or the `=` / `in` / `as` after it, and
   a run of blanks after `for`, `as`, `def` or `class`, do not hide the rebind.
   A `for` or `as` inside a string or after a `#` comment is text, so
-  `assert "for" and ((r)) in [r]` stays a credited read. Known limits, none of
+  `assert "for" and ((r)) in [r]` stays a credited read. Loop-keyword masking
+  retains earlier lines for multiline literals while searching only the current
+  line; an unterminated literal supplies no parsed test or protocol-entry credit.
+  Known limits, none of
   them closed by this: a multi-line tuple target whose earlier elements sit on
   other lines (`(x,\n r) = ...`) is not seen, so the receiver stays credited
   (the credit-keeping direction); and a dict key at the start of a continuation
@@ -744,7 +747,9 @@ list/tuple argvalues literal with rows of the right arity (`pytest.param(...)`
 unwrapped), stacked decorators as a product of at most 256 cases. A
 single-name list/tuple argnames takes tuple rows, as pytest unpacks them.
 Another decorator named `parametrize` (a plugin or project helper) records
-no cases. Argvalues named by a variable, `indirect=`, starred rows, a `pytest.param`
+no cases; the mark is read through imports and module names as
+RIPR-SPEC-0238 L8 describes, and a mark whose root that read cannot pin to
+pytest records none for the whole test (#10867). Argvalues named by a variable, `indirect=`, starred rows, a `pytest.param`
 with any keyword but `id=` (a `marks=` skip or xfail case may never run), a
 unittest method (pytest does not parametrize it), and an argname the test
 body may rebind leave the call unresolved. A test whose first statement after

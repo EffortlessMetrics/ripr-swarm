@@ -48,6 +48,8 @@ pub(crate) use local_test_macros::expand_local_test_macros;
 pub(crate) use local_test_macros::{
     GeneratedTestPins, expand_local_test_macros_with, generated_test_pins,
 };
+#[cfg(test)]
+pub(crate) use macro_scope::splice_imported_macros;
 pub(crate) use macro_scope::{
     ImportedMacros, MacroScope, first_macro_call, generator_calls, macro_scope,
 };

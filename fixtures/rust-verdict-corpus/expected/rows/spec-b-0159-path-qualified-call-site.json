@@ -4,7 +4,7 @@
   "origin": "authored",
   "anchor": "src/h_path.rs:5",
   "behavior_family": "predicate_boundary",
-  "test_shape": "helper_chain_path_qualified_call_site",
+  "test_shape": "helper_chain_path_qualified_accept",
   "hard_case": false,
   "truth": "discriminated",
   "ideal_verdict": "credited",

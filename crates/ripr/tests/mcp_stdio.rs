@@ -2895,7 +2895,7 @@ fn check_filtered_gap_page(
         || document["filtered"] != json!(filtered)
         || document["page"]["returned"] != json!(expected_ids.len())
         || document["snapshot_id"] != snapshot_id
-        || document["schema_version"] != "ripr-mcp-gap-list-v3"
+        || document["schema_version"] != "ripr-mcp-gap-list-v4"
     {
         return Err(format!(
             "filtered transport page differs from exact IDs/counts: expected {expected_ids:?}, selected={selected}, filtered={filtered}: {document}"
@@ -3006,7 +3006,7 @@ fn empty_gap_pages_keep_structured_outcomes_at_the_response_bound() -> Result<()
             if refused.get("error").is_some()
                 || refused.pointer("/result/isError") != Some(&json!(true))
                 || refused.pointer("/result/structuredContent/schema_version")
-                    != Some(&json!("ripr-mcp-gap-list-v3"))
+                    != Some(&json!("ripr-mcp-gap-list-v4"))
                 || refused.pointer("/result/structuredContent/failure/code")
                     != Some(&json!("result_too_large"))
                 || refused.pointer("/result/structuredContent/failure/data/current_snapshot_id")
@@ -3160,6 +3160,8 @@ fn refreshed_gap_filters_narrow_real_stdio_and_replay_bound_continuation() -> Re
     legacy_object.remove("filtered");
     legacy_object.remove("filters");
     legacy_object.remove("outcome");
+    // v4 added the independently windowed omission disclosure (#9360).
+    legacy_object.remove("omitted_page");
     legacy_object.insert("schema_version".into(), json!("ripr-mcp-gap-list-v1"));
     if v1["additionalProperties"] != false || !accepts_v1_shape(&legacy) || accepts_v1_shape(&all) {
         return Err(
