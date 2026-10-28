@@ -2838,6 +2838,11 @@ pub(in crate::analysis) fn calls_after_definition<'c>(
 
 /// Whether every call-shaped `name(` in `line` follows `fn`.
 fn only_declares(line: &str, name: &str) -> bool {
+    // Call facts retain the original source line even though extraction masks
+    // comments and literals. Do not let call-shaped text in either turn a
+    // declaration fact into an edge.
+    let masked = crate::analysis::extract::mask_comments_and_strings(line);
+    let line = masked.as_str();
     let is_ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
     let bytes = line.as_bytes();
     let mut declarations = 0usize;
@@ -3062,6 +3067,29 @@ mod tests {
             workspace_authority: None,
             ..Default::default()
         })
+    }
+
+    #[test]
+    fn declaration_text_does_not_invent_a_transitive_call() {
+        for body in [
+            "fn entry() { let _ = \"entry()\"; }",
+            "fn entry() { /* entry() */ }",
+            "fn entry() { } // entry()",
+        ] {
+            let mut test = make_test("entry", vec![]);
+            test.body = body.into();
+            test.calls = crate::analysis::extract::extract_call_facts(body, 1);
+            assert!(test.calls.iter().any(|call| call.name == "entry"));
+            let index = index_with(vec![make_fn("entry", vec!["owner"])], vec![test]);
+            assert_eq!(find_transitive_witness("owner", &index), None, "{body}");
+        }
+
+        let body = "fn entry() { entry(); let _ = \"entry()\"; }";
+        let mut test = make_test("entry", vec![]);
+        test.body = body.into();
+        test.calls = crate::analysis::extract::extract_call_facts(body, 1);
+        let index = index_with(vec![make_fn("entry", vec!["owner"])], vec![test]);
+        assert!(find_transitive_witness("owner", &index).is_some());
     }
 
     // (a) Candidate path found -> witness captured naming the test + entry symbol.
