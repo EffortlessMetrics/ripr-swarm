@@ -826,6 +826,10 @@ pub struct PartialDiffScope {
     /// instruction needs it: a line budget raised only just above its current
     /// value can still reject that file.
     pub next_file_changed_lines: Option<usize>,
+    /// The file and line budgets at which this diff selects no partition and
+    /// the run analyzes the whole diff, or `None` when either exceeds its
+    /// effective analysis-cost limit and so cannot be granted (#10894).
+    pub whole_diff_budgets: Option<(usize, usize)>,
     /// Lowercase hex sha256 of the canonical partition form (decision 7).
     pub partition_identity: String,
 }
@@ -851,8 +855,10 @@ impl PartialDiffScope {
     /// one more file than was selected, and the selected line count plus the
     /// next file's lines. When no enabled file was left out (an oversized
     /// first file analyzed alone), the line minimum is the selected line
-    /// count, which makes the run complete. No run-shape tail: the caller
-    /// names the route (a CLI re-run, or an LSP sidecar restart, #5999).
+    /// count, which makes the run complete. When the whole diff fits the
+    /// analysis-cost limits, each raise also names the budget that analyzes
+    /// all of it (#10894). No run-shape tail: the caller names the route (a
+    /// CLI re-run, or an LSP sidecar restart, #5999).
     pub(crate) fn budget_raise_instruction(&self) -> String {
         let next_lines = self.next_file_changed_lines.unwrap_or(0);
         let file_min = self
@@ -860,10 +866,33 @@ impl PartialDiffScope {
             .len()
             .saturating_add(usize::from(self.next_file_changed_lines.is_some()));
         let line_min = self.selected_changed_lines.saturating_add(next_lines);
-        let file_raise = (file_min > self.file_budget)
-            .then(|| format!("{PARTIAL_DIFF_FILE_BUDGET_ENV} to at least {file_min}"));
-        let line_raise = (line_min > self.line_budget)
-            .then(|| format!("{PARTIAL_DIFF_LINE_BUDGET_ENV} to at least {line_min}"));
+        // The next-file minimum alone can leave the run partial again, so the
+        // budget that analyzes the whole diff rides along when it can be
+        // granted (#10894).
+        let raise = |env: &str, min: usize, whole: Option<usize>, budget: usize| {
+            let whole = whole.filter(|whole| *whole > budget.max(min));
+            if min > budget {
+                Some(match whole {
+                    Some(whole) => format!("{env} to at least {min} ({whole} for the whole diff)"),
+                    None => format!("{env} to at least {min}"),
+                })
+            } else {
+                whole.map(|whole| format!("{env} to {whole} for the whole diff"))
+            }
+        };
+        let (whole_files, whole_lines) = self.whole_diff_budgets.unzip();
+        let file_raise = raise(
+            PARTIAL_DIFF_FILE_BUDGET_ENV,
+            file_min,
+            whole_files,
+            self.file_budget,
+        );
+        let line_raise = raise(
+            PARTIAL_DIFF_LINE_BUDGET_ENV,
+            line_min,
+            whole_lines,
+            self.line_budget,
+        );
         let raises: Vec<String> = match self.stop_reason {
             PartialDiffStopReason::FileBudget => [file_raise, line_raise],
             PartialDiffStopReason::LineBudget
@@ -937,6 +966,11 @@ pub(crate) struct PartialDiffBudgets {
     pub(crate) file_budget: usize,
     pub(crate) line_budget: usize,
     pub(crate) disclosures: Vec<String>,
+    /// The effective analysis-cost limits the budgets are clamped to. A
+    /// whole-diff budget above either one cannot be granted, so the widen
+    /// instruction names one only when it fits (#10894).
+    pub(crate) file_limit: usize,
+    pub(crate) line_limit: usize,
 }
 
 pub(crate) fn partial_diff_budgets() -> Result<PartialDiffBudgets, String> {
@@ -980,6 +1014,8 @@ fn partial_diff_budgets_from_env(
         file_budget,
         line_budget,
         disclosures,
+        file_limit: effective_file_limit,
+        line_limit: effective_line_limit,
     })
 }
 
@@ -1251,6 +1287,9 @@ fn select_partial_diff_partition_with_identity(
         uninspected_changed_lines_lower_bound: total_lines.saturating_sub(selected_lines),
         stop_reason,
         next_file_changed_lines,
+        whole_diff_budgets: (total_files <= budgets.file_limit
+            && total_lines <= budgets.line_limit)
+            .then_some((total_files, total_lines)),
         partition_identity: sha256_hex(canonical.as_bytes()),
     })
 }
@@ -5898,6 +5937,8 @@ fn absent_delimiter_boundary_returns_head() {
             file_budget,
             line_budget,
             disclosures: Vec::new(),
+            file_limit: usize::MAX,
+            line_limit: usize::MAX,
         }
     }
 
@@ -6186,7 +6227,7 @@ fn absent_delimiter_boundary_returns_head() {
         assert_eq!(stopped.selected_files, vec!["src/a.rs"]);
         assert_eq!(
             stopped.widen_instruction(),
-            "raise RIPR_PARTIAL_DIFF_LINE_BUDGET to at least 65, then re-run"
+            "raise RIPR_PARTIAL_DIFF_LINE_BUDGET to at least 65 (95 for the whole diff), then re-run"
         );
         let widened = require_partial(
             select_partial_diff_partition(&files, &budgets(7, 65), ALL_LANGUAGES),
@@ -6205,14 +6246,74 @@ fn absent_delimiter_boundary_returns_head() {
         )?;
         assert_eq!(
             file_stopped.widen_instruction(),
-            "raise RIPR_PARTIAL_DIFF_FILE_BUDGET to at least 2 and \
-             RIPR_PARTIAL_DIFF_LINE_BUDGET to at least 65, then re-run"
+            "raise RIPR_PARTIAL_DIFF_FILE_BUDGET to at least 2 (3 for the whole diff) and \
+             RIPR_PARTIAL_DIFF_LINE_BUDGET to at least 65 (95 for the whole diff), then re-run"
         );
         let file_widened = require_partial(
             select_partial_diff_partition(&files, &budgets(2, 65), ALL_LANGUAGES),
             "rerun at both printed minimums",
         )?;
         assert_eq!(file_widened.selected_files, vec!["src/a.rs", "src/b.rs"]);
+        // #10894: the whole-diff budgets the hint names select no partition,
+        // so one re-run at them analyzes the whole diff; one line less does not.
+        assert!(select_partial_diff_partition(&files, &budgets(3, 95), ALL_LANGUAGES).is_none());
+        assert!(select_partial_diff_partition(&files, &budgets(3, 94), ALL_LANGUAGES).is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn partial_widen_names_the_whole_diff_only_when_its_limits_can_grant_it() -> Result<(), String>
+    {
+        // #10894: a whole-diff budget above the effective analysis-cost limit
+        // would be clamped back and stay partial, so the hint omits it.
+        let files = [
+            changed_file("src/a.rs", 35, 0),
+            changed_file("src/b.rs", 30, 0),
+            changed_file("src/c.rs", 30, 0),
+        ];
+        let capped = |line_limit| PartialDiffBudgets {
+            line_limit,
+            ..budgets(7, 40)
+        };
+        let over = require_partial(
+            select_partial_diff_partition(&files, &capped(94), ALL_LANGUAGES),
+            "whole diff over the line limit",
+        )?;
+        assert_eq!(over.whole_diff_budgets, None);
+        assert_eq!(
+            over.widen_instruction(),
+            "raise RIPR_PARTIAL_DIFF_LINE_BUDGET to at least 65, then re-run"
+        );
+        let fits = require_partial(
+            select_partial_diff_partition(&files, &capped(95), ALL_LANGUAGES),
+            "whole diff at the line limit",
+        )?;
+        assert_eq!(fits.whole_diff_budgets, Some((3, 95)));
+        // A budget the next file fits under but the whole diff does not is
+        // still raised, to its whole-diff value.
+        let file_stop = require_partial(
+            select_partial_diff_partition(&files, &budgets(1, 70), ALL_LANGUAGES),
+            "file stop under a roomy line budget",
+        )?;
+        assert_eq!(
+            file_stop.widen_instruction(),
+            "raise RIPR_PARTIAL_DIFF_FILE_BUDGET to at least 2 (3 for the whole diff) and \
+             RIPR_PARTIAL_DIFF_LINE_BUDGET to 95 for the whole diff, then re-run"
+        );
+        // The next file already completes the run: no separate whole-diff
+        // figure, and a raise the next file does not need is still named.
+        let two = [
+            changed_file("src/a.rs", 35, 0),
+            changed_file("src/b.rs", 30, 0),
+        ];
+        let last = require_partial(
+            select_partial_diff_partition(&two, &budgets(7, 40), ALL_LANGUAGES),
+            "next file is the last file",
+        )?;
+        assert_eq!(
+            last.widen_instruction(),
+            "raise RIPR_PARTIAL_DIFF_LINE_BUDGET to at least 65, then re-run"
+        );
         Ok(())
     }
 
