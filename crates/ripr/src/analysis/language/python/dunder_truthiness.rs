@@ -198,6 +198,11 @@ pub(super) fn credit<'a>(
         let [Stmt::Assert(assertion)] = function.body.as_slice() else {
             continue;
         };
+        // A failing assertion evaluates its message first; it can skip or
+        // otherwise prevent the expected assertion failure.
+        if assertion.msg.is_some() {
+            continue;
+        }
         let (condition, negated) = match assertion.test.as_ref() {
             Expr::UnaryOp(unary) if unary.op == ast::UnaryOp::Not => (unary.operand.as_ref(), true),
             condition => (condition, false),

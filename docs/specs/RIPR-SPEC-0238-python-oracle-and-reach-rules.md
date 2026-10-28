@@ -1081,6 +1081,11 @@ mutant calibrates the rule; ripr reports only the static shape.
     artifact, symlink, non-ASCII path, incomplete read or traversal/type error
     refuses this credit. The audit is a bounded current filesystem observation,
     not a change to the general walker or a hostile-race guarantee.
+    Pytest configuration files in the workspace or its bounded ancestor chain
+    also refuse credit, because collection settings and options are not
+    interpreted by this audit. Environment options, external plugins and
+    explicit pytest command-line selection are not audited. Assertions with
+    message expressions refuse credit because those expressions run on failure.
     The physical observation cannot be reused through `explain/context --from`:
     artifacts carrying this credit refuse with `check_artifact_unusable` and
     direct fresh analysis; other artifact findings retain their existing contract.

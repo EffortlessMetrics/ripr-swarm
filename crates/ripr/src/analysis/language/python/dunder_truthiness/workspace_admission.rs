@@ -8,6 +8,15 @@ use std::path::{Path, PathBuf};
 const MAX_ENTRIES: usize = 512;
 const MAX_DEPTH: usize = 16;
 const IMPORT_ARTIFACTS: [&str; 9] = ["pyc", "pyo", "pyd", "so", "dll", "zip", "egg", "whl", "pth"];
+const PYTEST_CONFIGS: [&str; 7] = [
+    "pytest.ini",
+    ".pytest.ini",
+    "pytest.toml",
+    ".pytest.toml",
+    "tox.ini",
+    "setup.cfg",
+    "pyproject.toml",
+];
 
 /// Exactly two nonempty Python sources in the current bounded physical view.
 /// Generated/excluded paths are inspected too. Empty package initializers are
@@ -24,6 +33,21 @@ pub(super) fn closed_sources(
     let root_metadata = fs::symlink_metadata(root).ok()?;
     if !root_metadata.is_dir() || linked(&root_metadata) {
         return None;
+    }
+    // Pytest can find configuration above the supplied root. Bound that
+    // ancestry and refuse both present files and unresolvable states.
+    let absolute_root = fs::canonicalize(root).ok()?;
+    for (depth, ancestor) in absolute_root.ancestors().skip(1).enumerate() {
+        if depth >= MAX_DEPTH {
+            return None;
+        }
+        for name in PYTEST_CONFIGS {
+            match fs::symlink_metadata(ancestor.join(name)) {
+                Ok(_) => return None,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(_) => return None,
+            }
+        }
     }
     let mut pending = vec![(PathBuf::new(), 0usize)];
     let mut seen = 1usize;
@@ -53,6 +77,12 @@ pub(super) fn closed_sources(
                 continue;
             }
             if !kind.is_file() {
+                return None;
+            }
+            // Collection rules and addopts may prevent the apparent test from
+            // running. This narrow audit does not interpret pytest configuration.
+            let name_lower = name.to_str()?.to_ascii_lowercase();
+            if PYTEST_CONFIGS.contains(&name_lower.as_str()) {
                 return None;
             }
             let extension = path
@@ -196,6 +226,37 @@ mod tests {
         assert!(
             closed_sources(&workspace.0.join("missing"), &workspace.1, false, matches).is_none()
         );
+        Ok(())
+    }
+
+    #[test]
+    fn pytest_collection_configuration_is_refused() -> Check {
+        for name in PYTEST_CONFIGS {
+            let workspace = Workspace::new()?;
+            std::fs::write(
+                workspace.0.join(name),
+                "[pytest]\npython_functions = check_*\n",
+            )?;
+            assert!(!workspace.admitted(), "{name}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn ancestor_pytest_configuration_is_refused() -> Check {
+        let workspace = Workspace::new()?;
+        let nested = workspace.0.join("nested");
+        for (path, source) in &workspace.1 {
+            let absolute = nested.join(path);
+            fs::create_dir_all(absolute.parent().ok_or("source needs parent")?)?;
+            fs::write(absolute, source)?;
+        }
+        assert!(closed_sources(&nested, &workspace.1, false, matches).is_some());
+        fs::write(
+            workspace.0.join("pytest.ini"),
+            "[pytest]\npython_functions = check_*\n",
+        )?;
+        assert!(closed_sources(&nested, &workspace.1, false, matches).is_none());
         Ok(())
     }
 

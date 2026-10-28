@@ -198,6 +198,23 @@ fn integer_truthiness_does_not_infer_nonliteral_or_noninteger_inputs() -> Check 
 }
 
 #[test]
+fn integer_truthiness_refuses_assertion_messages() -> Check {
+    for message in [
+        "'explanation'",
+        "__import__('pytest').skip('irrelevant')",
+        "__builtins__['__im' + 'port__']('pytest').skip('masked')",
+    ] {
+        let source = test(&format!("    assert Money(-1), {message}"));
+        assert_ne!(
+            classify(MONEY, OLD, &source, true)?.class,
+            ExposureClass::Exposed,
+            "{source}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn integer_truthiness_requires_a_plain_constructor_and_field() -> Check {
     for source in [
         MONEY.replace("class Money:", "class Money(Base):"),

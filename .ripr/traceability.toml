@@ -17057,6 +17057,9 @@ spec = "docs/specs/RIPR-SPEC-0238-python-oracle-and-reach-rules.md"
 tests = [
   "crates/ripr/src/app/check_artifact/tests.rs::live_truthiness_admission_cannot_be_reused_from_an_artifact",
   "crates/ripr/src/analysis/language/python/dunder_truthiness_tests.rs::integer_truthiness_credits_only_a_changed_truth_value",
+  "crates/ripr/src/analysis/language/python/dunder_truthiness_tests.rs::integer_truthiness_refuses_assertion_messages",
+  "crates/ripr/src/analysis/language/python/dunder_truthiness/workspace_admission.rs::tests::pytest_collection_configuration_is_refused",
+  "crates/ripr/src/analysis/language/python/dunder_truthiness/workspace_admission.rs::tests::ancestor_pytest_configuration_is_refused",
   "crates/ripr/src/analysis/language/python/dunder_truthiness_tests.rs::integer_truthiness_refuses_test_rebinding_activation_and_wrappers",
   "crates/ripr/src/analysis/language/python/dunder_truthiness_tests.rs::integer_truthiness_refuses_replaced_tests_and_definition_effects",
   "crates/ripr/src/analysis/language/python/dunder_truthiness/workspace_admission.rs::tests::physical_pair_and_empty_package_initializers_are_admitted",
@@ -17113,6 +17116,8 @@ fixtures = [
   "fixtures/python_caplog_builtin_beside_fixtures",
   "fixtures/python_assertion_helper_field",
   "fixtures/python_dunder_truthiness_integer",
+  "fixtures/python_dunder_truthiness_pytest_config",
+  "fixtures/python_dunder_truthiness_assert_message",
   "fixtures/python_dunder_truthiness_foreign_import",
   "fixtures/python_dunder_truthiness_replaced_test",
   "fixtures/python_dunder_truthiness_header_effect",
