@@ -25,3 +25,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_call_removal_unbound_argument (3)
+
+Reason:
+RIPR-SPEC-0088: TypeScript preview check JSON states top-level canonical_gap_id (#10709); fixture landed after #10919 qualified
+
+Command:
+`cargo xtask goldens bless typescript_call_removal_unbound_argument --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

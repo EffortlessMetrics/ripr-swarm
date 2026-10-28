@@ -279,6 +279,33 @@ pub(in crate::cli) fn agent(args: &[String]) -> Result<(), CommandError> {
     }
 }
 
+/// The refusal for a known seam that `agent start` selection excluded: a
+/// policy omission names the policy reason and its inspection hint; a seam
+/// policy permits (a static limitation: opaque or `*_unknown`) has no
+/// repairable gap, so no workflow starts, and the recovery is its inspection
+/// packet (#10712).
+fn known_seam_start_refusal(
+    root: &Path,
+    seam_id: &str,
+    class: crate::analysis::seams::SeamGripClass,
+    policy: AgentBriefPolicy<'_>,
+) -> CoreError {
+    match policy.omission_reason_for_class(class) {
+        Some(reason) => CoreError::seam_policy_omitted(format!(
+            "agent start seam_id {seam_id} {reason}. {}",
+            policy_omitted_seam_hint(root, seam_id)
+        )),
+        None => CoreError::seam_not_actionable(format!(
+            "agent start seam_id {seam_id} is {}, a static limitation with no repairable gap, so no workflow starts. Inspect it with `ripr agent packet --root {} --seam-id {} --json`.",
+            class.as_str(),
+            crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(
+                &root.to_string_lossy()
+            )),
+            crate::agent::loop_commands::shell_arg(seam_id)
+        )),
+    }
+}
+
 /// A seam-selection typed refusal (exit 3): the id is unknown, or the seam is
 /// known but agent policy withholds it (#10712).
 fn is_seam_refusal(error: &CoreError) -> bool {
@@ -287,6 +314,7 @@ fn is_seam_refusal(error: &CoreError) -> bool {
         Some(
             crate::core_error::CheckFailureKind::SeamIdUnknown
                 | crate::core_error::CheckFailureKind::SeamPolicyOmitted
+                | crate::core_error::CheckFailureKind::SeamNotActionable
         )
     )
 }
@@ -409,14 +437,12 @@ fn write_agent_start_with_report(
                 unknown_seam_id_hint(&options.root, &options.seam_id)
             )));
         };
-        let reason = AgentBriefPolicy::from_config(config)
-            .omission_reason_for_class(entry.class)
-            .unwrap_or_else(|| "was not selected for an agent workflow".to_string());
-        return Err(CoreError::seam_policy_omitted(format!(
-            "agent start seam_id {} {reason}. {}",
-            options.seam_id,
-            policy_omitted_seam_hint(&options.root, &options.seam_id)
-        )));
+        return Err(known_seam_start_refusal(
+            &options.root,
+            &options.seam_id,
+            entry.class,
+            AgentBriefPolicy::from_config(config),
+        ));
     }
     add_agent_brief_provenance_warning(&input.root, &mut selection);
 
@@ -3587,6 +3613,46 @@ mod tests {
         unique_repo_relative_test_dir,
     };
     use super::*;
+
+    /// #10712 review: a static-limitation seam that policy permits is not a
+    /// policy omission, so `agent start` must not send the caller to policy
+    /// inspection; a configured-off gap still is one.
+    #[test]
+    fn start_refusal_distinguishes_static_limitations_from_policy_omission() {
+        use crate::analysis::seams::SeamGripClass;
+        let config = RiprConfig::default();
+        let policy = AgentBriefPolicy::from_config(&config);
+        let root = Path::new(".");
+
+        let limit = known_seam_start_refusal(root, "abc", SeamGripClass::Opaque, policy);
+        assert_eq!(
+            limit.check_failure_kind(),
+            Some(crate::core_error::CheckFailureKind::SeamNotActionable)
+        );
+        let message = String::from(limit);
+        assert!(message.contains("static limitation"), "{message}");
+        assert!(message.contains("ripr agent packet"), "{message}");
+        assert!(!message.contains("agent policy"), "{message}");
+        assert!(!message.contains("configured off"), "{message}");
+
+        let mut off = RiprConfig::default();
+        off.severity.seams.weakly_gripped = crate::config::ConfigSeverity::Off;
+        let omitted = known_seam_start_refusal(
+            root,
+            "abc",
+            SeamGripClass::WeaklyGripped,
+            AgentBriefPolicy::from_config(&off),
+        );
+        assert_eq!(
+            omitted.check_failure_kind(),
+            Some(crate::core_error::CheckFailureKind::SeamPolicyOmitted)
+        );
+        let message = String::from(omitted);
+        assert!(
+            message.contains("configured off for weakly_gripped seams"),
+            "{message}"
+        );
+    }
     use crate::app::agent_brief::AgentBriefLine;
     use crate::cli::agent::AgentBriefWorkingSet;
 
