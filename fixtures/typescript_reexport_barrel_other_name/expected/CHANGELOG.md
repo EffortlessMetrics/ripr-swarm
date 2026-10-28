@@ -253,3 +253,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_reexport_barrel_other_name (22)
+
+Reason:
+RIPR-SPEC-0113: honest no-static-path next step names the owner and the ordered add-test, native verifier, refresh route (#10708)
+
+Command:
+`cargo xtask goldens bless typescript_reexport_barrel_other_name --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
