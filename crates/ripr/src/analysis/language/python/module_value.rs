@@ -164,11 +164,7 @@ impl ForeignTotals {
     ) -> Self {
         let mut totals = Self::default();
         for indexed in files {
-            let [attributes, dynamic_words, table_unsafe, reflective_words] = indexed.writes();
-            count_sources(&mut totals.attributes, attributes);
-            count_sources(&mut totals.dynamic_words, dynamic_words);
-            count_sources(&mut totals.table_unsafe, table_unsafe);
-            count_sources(&mut totals.reflective_words, reflective_words);
+            totals.accumulate(indexed);
         }
         for (_, reach) in reflective_reach {
             count_sources(
@@ -177,6 +173,27 @@ impl ForeignTotals {
             );
         }
         totals
+    }
+
+    /// Count the writes one source contributes to each [`ForeignWrites`] set:
+    /// assigned attributes, dynamic words, unsafe tables, reflective words.
+    fn accumulate(&mut self, source: &IndexedSource<'_>) {
+        count_sources(
+            &mut self.attributes,
+            source.assigned.iter().flatten().map(String::as_str),
+        );
+        count_sources(
+            &mut self.dynamic_words,
+            source.dynamic_words.iter().flatten().copied(),
+        );
+        count_sources(
+            &mut self.table_unsafe,
+            source.table_unsafe.iter().map(String::as_str),
+        );
+        count_sources(
+            &mut self.reflective_words,
+            source.reflective_words.iter().flatten().copied(),
+        );
     }
 }
 
@@ -228,19 +245,6 @@ struct IndexedSource<'a> {
     import_words: Vec<&'a str>,
     /// The reflective file also loads modules by name at runtime.
     reflective_opaque: bool,
-}
-
-impl IndexedSource<'_> {
-    /// The words this source contributes to each [`ForeignWrites`] set:
-    /// assigned attributes, dynamic words, unsafe tables, reflective words.
-    fn writes(&self) -> [Box<dyn Iterator<Item = &str> + '_>; 4] {
-        [
-            Box::new(self.assigned.iter().flatten().map(String::as_str)),
-            Box::new(self.dynamic_words.iter().flatten().copied()),
-            Box::new(self.table_unsafe.iter().map(String::as_str)),
-            Box::new(self.reflective_words.iter().flatten().copied()),
-        ]
-    }
 }
 
 impl<'a> ForeignIndex<'a> {
@@ -329,11 +333,7 @@ impl<'a> ForeignIndex<'a> {
         let mut unparsed = Vec::new();
         for indexed in &self.files {
             if indexed.file == own {
-                let [attributes, dynamic_words, table_unsafe, reflective_words] = indexed.writes();
-                count_sources(&mut excluded.attributes, attributes);
-                count_sources(&mut excluded.dynamic_words, dynamic_words);
-                count_sources(&mut excluded.table_unsafe, table_unsafe);
-                count_sources(&mut excluded.reflective_words, reflective_words);
+                excluded.accumulate(indexed);
                 continue;
             }
             reflective_opaque |= indexed.reflective_opaque;
