@@ -613,3 +613,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_unrelated_test_mention (25)
+
+Reason:
+RIPR-SPEC-0028: #10708 untested Python owner gains honest add-test/native-verifier/refresh guidance
+
+Command:
+`cargo xtask goldens bless python_unrelated_test_mention --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -411,3 +411,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_same_stem_sibling_owner_not_related (35)
+
+Reason:
+RIPR-SPEC-0028: #10708 untested Python owner gains honest add-test/native-verifier/refresh guidance
+
+Command:
+`cargo xtask goldens bless python_same_stem_sibling_owner_not_related --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

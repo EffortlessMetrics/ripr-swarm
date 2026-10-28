@@ -21,6 +21,9 @@ Start here:
   Gap ID (for scripts): gap:python:src/pricing.py:calculate_total:return_value:return_value:amount+7
   Changed behavior: return amount + 7
   Missing check: No Python test references `calculate_total(`; add a pytest or unittest test that calls the changed owner
+  Next step — Python preview: no statically linked test calls `calculate_total(`; add a test that
+    calls the changed owner with an exact return-value assertion, run the project's native Python
+    test command, then rerun `ripr check` to refresh the finding
   Evidence: reach no · infection yes · propagation yes · observation no · discriminator no
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
