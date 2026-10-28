@@ -3,5 +3,8 @@
 id = "RIPR-SPEC-0228"
 tests = [
   "crates/ripr/src/analysis/classify/custom_eq.rs::an_embedded_type_from_outside_the_workspace_may_compare_leniently",
-  "crates/ripr/src/analysis/classify/custom_eq.rs::generic_parameters_and_variant_names_are_read_from_the_declaration",
+  "crates/ripr/src/analysis/classify/custom_eq.rs::generic_parameters_are_read_from_the_declaration",
+  "crates/ripr/src/analysis/classify/custom_eq.rs::field_type_paths_keep_qualified_paths_and_drop_non_types",
+  "crates/ripr/src/analysis/classify/custom_eq.rs::a_foreign_type_named_like_a_std_type_may_compare_leniently",
+  "crates/ripr/src/analysis/classify/custom_eq.rs::enum_discriminants_and_attributes_are_not_field_types",
 ]
