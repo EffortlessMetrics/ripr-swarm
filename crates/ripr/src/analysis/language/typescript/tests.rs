@@ -18662,7 +18662,14 @@ fn optional_chain_namespace_receiver_must_be_the_imported_binding() {
         Path::new("tests/pricing.test.ts"),
         r#"import * as pricing from "../src/pricing";
 test("direct", () => { expect(pricing?.loyaltyPrice(2)).toBe(1); });
+test("commented direct", () => {
+  // Check the price.
+  pricing?.loyaltyPrice(2);
+});
 test("nested", () => { expect(other. pricing?.loyaltyPrice(2)).toBe(1); });
+test("commented nested", () => { expect(other. /* member */ pricing?.loyaltyPrice(2)).toBe(1); });
+test("line commented nested", () => { other. // member
+  pricing?.loyaltyPrice(2); });
 "#,
     );
     let candidates = related_test_candidates(
@@ -18673,8 +18680,9 @@ test("nested", () => { expect(other. pricing?.loyaltyPrice(2)).toBe(1); });
         None,
         &RelationIndex::empty(),
     );
-    assert_eq!(candidates.len(), 1, "{candidates:?}");
+    assert_eq!(candidates.len(), 2, "{candidates:?}");
     assert_eq!(candidates[0].test.name, "direct");
+    assert_eq!(candidates[1].test.name, "commented direct");
 }
 
 #[test]

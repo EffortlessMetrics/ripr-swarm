@@ -4837,14 +4837,18 @@ fn split_top_level_declarators(after: &str) -> Vec<&str> {
 
 pub(crate) fn has_member_call_boundary(body_text: &str, idx: usize) -> bool {
     let prefix = &body_text[..idx];
-    let trimmed = prefix.trim_end();
+    let last = prefix.chars().next_back();
+    if let Some(ch) = last.filter(|ch| !ch.is_whitespace() && *ch != '/') {
+        return !is_javascript_identifier_char(ch) && ch != '.';
+    }
+    // Comments are trivia between the receiver and dot, but punctuation in
+    // a comment is not a member access. Mask them before inspecting the token.
+    let masked = super::classifier::ts_mask_literals_and_comments(prefix);
+    let trimmed = masked.trim_end();
     if trimmed.ends_with('.') && !trimmed.ends_with("...") {
         return false;
     }
-    prefix
-        .chars()
-        .next_back()
-        .is_none_or(|ch| !is_javascript_identifier_char(ch) && ch != '.')
+    true
 }
 
 pub(crate) fn line_prefix_looks_like_comment_or_string(body_text: &str, idx: usize) -> bool {
