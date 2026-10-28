@@ -60,6 +60,7 @@ enum Kind {
     File,
     Absent,
     Test,
+    Memo,
     Universe,
 }
 
@@ -320,6 +321,21 @@ pub(in crate::analysis) fn test(file: &Path, start_line: usize, name: &str) {
         .to_str()
         .map(|file| format!("{file}:{start_line}:{name}"));
     record(Kind::Test, subject.as_deref(), Location::caller());
+}
+
+/// One run-memo entry read, hit or miss. The subject names the product and the
+/// digest of its key (source text, discriminator and query), so two reads of the
+/// same entry coincide; it does not name the produced value.
+#[track_caller]
+pub(in crate::analysis) fn memo(product: &str, key_digest: &[u8; 32]) {
+    if !enabled() {
+        return;
+    }
+    let mut subject = format!("{product}:");
+    for byte in key_digest {
+        subject.push_str(&format!("{byte:02x}"));
+    }
+    record(Kind::Memo, Some(&subject), Location::caller());
 }
 
 #[track_caller]
