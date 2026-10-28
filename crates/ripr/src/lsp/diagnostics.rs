@@ -3069,24 +3069,30 @@ fn diagnostic_for_classified_seam_with_causal(
 
 fn lsp_seam_message(entry: &ClassifiedSeam) -> String {
     let seam = &entry.seam;
+    // Plain English for the Problems panel (#10695): no "grip", "seam" or
+    // internal kind. The seam kind and grip class stay machine-side in the
+    // diagnostic code and `data`.
     let head = match entry.class {
-        SeamGripClass::Opaque => "Opaque static evidence",
-        SeamGripClass::Ungripped => "No detected test grip",
-        SeamGripClass::WeaklyGripped => "Weakly gripped behavioral seam",
-        SeamGripClass::ReachableUnrevealed => "Test reaches seam but does not reveal it",
-        SeamGripClass::ActivationUnknown => "Activation evidence is unclear",
-        SeamGripClass::PropagationUnknown => "Propagation to sink is unclear",
-        SeamGripClass::ObservationUnknown => "Sink observation is unclear",
-        SeamGripClass::DiscriminationUnknown => "Oracle specificity is unclear",
+        SeamGripClass::Opaque => "ripr cannot analyze this code statically",
+        SeamGripClass::Ungripped => "No test checks this",
+        SeamGripClass::WeaklyGripped => "Tests only loosely check this",
+        SeamGripClass::ReachableUnrevealed => "Tests run this code but would not notice a change",
+        SeamGripClass::ActivationUnknown => {
+            "ripr cannot tell whether a test runs this with a changed value"
+        }
+        SeamGripClass::PropagationUnknown => {
+            "ripr cannot tell whether a change here reaches anything a test checks"
+        }
+        SeamGripClass::ObservationUnknown | SeamGripClass::DiscriminationUnknown => {
+            "ripr cannot tell what the test's assertion checks"
+        }
         // Filtered earlier; included for exhaustiveness.
-        SeamGripClass::StronglyGripped => "Strongly gripped",
-        SeamGripClass::Intentional => "Intentional low-grip",
+        SeamGripClass::StronglyGripped => "Tests check this well",
+        SeamGripClass::Intentional => "Intentionally lightly tested",
         SeamGripClass::Suppressed => "Suppressed",
     };
     format!(
-        "{} ({}): {}",
-        head,
-        seam.kind().as_str(),
+        "{head}: {}",
         seam.expression()
             .lines()
             .next()
@@ -4719,15 +4725,25 @@ mod seam_diagnostic_tests {
     }
 
     #[test]
-    fn diagnostic_message_names_seam_kind_and_expression() -> Result<(), String> {
+    fn diagnostic_message_is_plain_words_with_the_expression() -> Result<(), String> {
         let entry = classified(SeamGripClass::WeaklyGripped);
         let diag = diagnostic_for_classified_seam(Path::new("/repo"), &entry)
             .ok_or_else(|| "expected diagnostic".to_string())?;
-        if !diag.message.contains("predicate_boundary") {
-            return Err(format!("message missing kind: {}", diag.message));
+        if diag.message != "Tests only loosely check this: amount >= discount_threshold" {
+            return Err(format!("unexpected seam message: {}", diag.message));
         }
-        if !diag.message.contains("amount >= discount_threshold") {
-            return Err(format!("message missing expression: {}", diag.message));
+        // #10695: no internal kind or grip jargon in the message; the kind
+        // stays in the machine-side data payload.
+        let lowered = diag.message.to_lowercase();
+        if lowered.contains("predicate_boundary")
+            || lowered.contains("grip")
+            || lowered.contains("seam")
+        {
+            return Err(format!("jargon in seam message: {}", diag.message));
+        }
+        let data = diag.data.as_ref().ok_or("missing diagnostic data")?;
+        if data["seam_kind"] != "predicate_boundary" {
+            return Err(format!("seam kind left the data payload: {data}"));
         }
         Ok(())
     }
