@@ -454,35 +454,61 @@ fn stmt_binds(stmt: &Stmt, name: &str, imports: bool) -> bool {
 }
 
 /// A module-level `from other import *` may bind any public name, so a
-/// star import cannot vouch for a single binding.
+/// star import cannot vouch for a single binding. Searches every compound
+/// statement, including `except` handlers.
 fn is_star_import(stmt: &Stmt) -> bool {
+    let block = |body: &[Stmt]| body.iter().any(is_star_import);
     match stmt {
         Stmt::ImportFrom(s) => s.names.iter().any(|alias| alias.name.as_str() == "*"),
-        Stmt::If(s) => s.body.iter().chain(&s.orelse).any(is_star_import),
-        Stmt::Try(s) => s
-            .body
-            .iter()
-            .chain(&s.orelse)
-            .chain(&s.finalbody)
-            .any(is_star_import),
+        Stmt::If(s) => block(&s.body) || block(&s.orelse),
+        Stmt::For(s) => block(&s.body) || block(&s.orelse),
+        Stmt::AsyncFor(s) => block(&s.body) || block(&s.orelse),
+        Stmt::While(s) => block(&s.body) || block(&s.orelse),
+        Stmt::With(s) => block(&s.body),
+        Stmt::AsyncWith(s) => block(&s.body),
+        Stmt::Try(s) => {
+            block(&s.body)
+                || handlers_have_star_import(&s.handlers)
+                || block(&s.orelse)
+                || block(&s.finalbody)
+        }
+        Stmt::TryStar(s) => {
+            block(&s.body)
+                || handlers_have_star_import(&s.handlers)
+                || block(&s.orelse)
+                || block(&s.finalbody)
+        }
+        Stmt::Match(s) => s.cases.iter().any(|case| block(&case.body)),
         _ => false,
     }
 }
 
+fn handlers_have_star_import(handlers: &[ast::ExceptHandler]) -> bool {
+    handlers.iter().any(|handler| {
+        let ast::ExceptHandler::ExceptHandler(handler) = handler;
+        handler.body.iter().any(is_star_import)
+    })
+}
+
 /// Whether the module text can write module names the AST does not show
 /// (`globals()[...] = ...`, `globals().update`, `exec`, `vars()`,
-/// `__dict__`, `sys.modules`). Textual on purpose: any mention fails closed.
+/// `__dict__`, `setattr`, `sys.modules`). Scans identifier tokens, so
+/// whitespace between the name and its call (`globals ()`) cannot hide a
+/// mention; any mention, even in a comment, fails closed.
 fn writes_namespace_dynamically(source: &str) -> bool {
-    [
-        "globals(",
-        "vars(",
-        "exec(",
-        "__dict__",
-        "sys.modules",
-        "setattr(",
-    ]
-    .iter()
-    .any(|needle| source.contains(needle))
+    let mut previous = "";
+    for token in source
+        .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .filter(|token| !token.is_empty())
+    {
+        if matches!(token, "globals" | "vars" | "exec" | "setattr" | "__dict__")
+            || (previous == "sys" && token == "modules")
+        {
+            return true;
+        }
+        previous = token;
+    }
+    false
 }
 
 fn handlers_bind(handlers: &[ast::ExceptHandler], name: &str) -> bool {

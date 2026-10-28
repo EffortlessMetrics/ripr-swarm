@@ -2011,6 +2011,18 @@ fn star_import_fails_closed_when_another_binding_may_win_the_name() -> Result<()
             "module execs a rebind",
         ),
         ("from src.other import *", "module-side star import"),
+        (
+            "globals ()[\"fee\"] = lambda amount: amount + 4",
+            "whitespace before the call",
+        ),
+        (
+            "try:\n    import fast\nexcept ImportError:\n    from src.other import *",
+            "star import in an except handler",
+        ),
+        (
+            "for _ in range(1):\n    from src.other import *",
+            "star import in a loop",
+        ),
     ] {
         let module = format!("{FEE}\n\n{extra}\n");
         assert_eq!(
