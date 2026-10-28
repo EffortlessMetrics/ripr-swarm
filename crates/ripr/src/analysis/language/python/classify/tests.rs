@@ -1492,6 +1492,16 @@ fn an_indirect_parametrize_argname_is_an_unresolved_fixture() -> Result<(), Stri
             );
         }
     }
+    // A mark the read cannot pin to pytest (`import mylib as pytest`) is not
+    // a pytest collection error: its argname stays an unsettled fixture.
+    for mark in [", indirect=None", ", indirect=[\"other\"]"] {
+        let tests = module(mark).replace("import pytest\n", "import mylib as pytest\n");
+        assert_eq!(
+            limit(&tests)?,
+            Some(crate::domain::StaticLimitKind::UnresolvedPytestFixture),
+            "mylib{mark}"
+        );
+    }
     // Control: values that leave the name direct keep it a pytest value.
     for mark in [
         ", indirect=False",

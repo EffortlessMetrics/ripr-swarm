@@ -284,6 +284,7 @@ pub(super) fn collection_error(decorators: &[Expr], scope: ParametrizeScope<'_>)
 fn read_marks(decorators: &[Expr], scope: ParametrizeScope<'_>) -> (Vec<(String, Routing)>, bool) {
     let mut found = Vec::new();
     let mut refused_any = false;
+    let mut pytest_names = Vec::new();
     for decorator in decorators {
         let Some((call, kind)) = scope.parametrize_call(decorator) else {
             continue;
@@ -309,10 +310,14 @@ fn read_marks(decorators: &[Expr], scope: ParametrizeScope<'_>) -> (Vec<(String,
         let indirect = indirect.map(|value| scope.resolve_value(value));
         // pytest refuses `indirect=None` and a literal list naming a name
         // the mark does not parametrize.
-        let refused = indirect.is_some_and(|value| {
-            matches!(value, Expr::Constant(constant) if constant.value == ast::Constant::None)
-                || names_unknown_indirect(value, &names)
-        });
+        // Only pytest's own mark can fail pytest collection; a mark that may
+        // be another library's leaves its argnames unsettled, nothing more.
+        let pytest_mark = kind == MarkKind::Pytest;
+        let refused = pytest_mark
+            && indirect.is_some_and(|value| {
+                matches!(value, Expr::Constant(constant) if constant.value == ast::Constant::None)
+                    || names_unknown_indirect(value, &names)
+            });
         refused_any |= refused;
         for name in &names {
             let routing = if splat || refused || kind == MarkKind::Unsettled {
@@ -321,10 +326,13 @@ fn read_marks(decorators: &[Expr], scope: ParametrizeScope<'_>) -> (Vec<(String,
                 indirect.map_or(Routing::Direct, |value| indirect_routing(value, name))
             };
             found.push((name.clone(), routing));
+            if pytest_mark {
+                pytest_names.push(name.clone());
+            }
         }
     }
     // "duplicate parametrization of 'q'" is a collection error too.
-    refused_any |= has_duplicate(found.iter().map(|(name, _)| name.as_str()));
+    refused_any |= has_duplicate(pytest_names.iter().map(String::as_str));
     if refused_any {
         for (_, routing) in &mut found {
             *routing = Routing::Unsettled;
@@ -333,16 +341,17 @@ fn read_marks(decorators: &[Expr], scope: ParametrizeScope<'_>) -> (Vec<(String,
     (found, refused_any)
 }
 
-/// Every argname the test's pytest parametrize decorators name, repeats
+/// Every argname pytest's own parametrize marks on the test name, repeats
 /// kept, so a caller combining class and method marks can see a name
-/// parametrized twice (#10867).
+/// parametrized twice (#10867). A mark that may be another library's is
+/// left out: pytest never sees its names.
 pub(super) fn parametrize_argnames(
     decorators: &[Expr],
     scope: ParametrizeScope<'_>,
 ) -> Vec<String> {
     let mut names = Vec::new();
     for decorator in decorators {
-        let Some((call, _)) = scope.parametrize_call(decorator) else {
+        let Some((call, MarkKind::Pytest)) = scope.parametrize_call(decorator) else {
             continue;
         };
         let argnames = call
