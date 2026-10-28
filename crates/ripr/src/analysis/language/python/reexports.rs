@@ -288,7 +288,10 @@ fn imports_name<'s, F: Fn(&Path) -> Option<&'s str>>(
     if import.imported == name {
         return import.alias == name;
     }
-    import.imported == "*" && !name.starts_with('_') && star_exports.exports(source_file, name)
+    import.imported == "*"
+        && !name.starts_with('_')
+        && star_exports.exports(source_file, name)
+        && star_exports.binds_once(source_file, name)
 }
 
 /// What a module's `__all__` says about its star export.
