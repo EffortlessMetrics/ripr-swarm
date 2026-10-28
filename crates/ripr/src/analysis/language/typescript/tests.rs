@@ -11475,7 +11475,11 @@ fn unresolved_alias_import_names_the_import_in_no_reach_text() -> Result<(), Str
         !step.contains("no test references the changed owner"),
         "must not claim universal test absence; got: {step}"
     );
-    assert_eq!(finding.confidence, 0.4);
+    assert!(
+        (finding.confidence - 0.4).abs() < f32::EPSILON,
+        "no-static-path confidence stays 0.4; got {}",
+        finding.confidence
+    );
     assert!(finding.related_tests.is_empty());
     Ok(())
 }
@@ -11490,7 +11494,11 @@ fn untested_function_owner_guidance_names_owner_and_ordered_route() -> Result<()
     let finding = classify_boundary_line("shippingFee", "  if (total >= 50) {", &tests)?;
     assert_eq!(finding.class, ExposureClass::NoStaticPath);
     assert_eq!(finding.ripr.reach.state, StageState::No);
-    assert_eq!(finding.confidence, 0.4);
+    assert!(
+        (finding.confidence - 0.4).abs() < f32::EPSILON,
+        "no-static-path confidence stays 0.4; got {}",
+        finding.confidence
+    );
     assert!(finding.related_tests.is_empty());
     assert_eq!(finding.static_limit_kind, None);
     // Repair eligibility stays suppressed: the NoStaticPath actionability
