@@ -23,6 +23,8 @@
   with `where Self: Sized` also withholds (an over-withhold).
   `ripr repair <seam>` does not apply the finding-level static-limited verdict
   that `ripr check` uses; it relies on the seam-level evidence and these gates.
- Assertion observation matches the owner by its function name, not its module
-  path: a same-name call in another module (`other::dbl(2)`) counts as
-  observing the owner. This only offers a start, and is tracked in #10948.
+  An assertion observes the owner through a bare or method call of its name,
+  or a path-qualified call whose qualifier resolves to the owner through the
+  shared call identity (`crate`/`self`/`super`, the owner's crate name, a
+  `use`-bound path, its module path). A same-name call through another module
+  (`other::dbl(2)`), or a qualifier that cannot be read, does not observe it.

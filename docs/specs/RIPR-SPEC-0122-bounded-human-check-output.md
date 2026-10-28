@@ -797,9 +797,10 @@ not a head-only row and prints no note.
   not follow a lowercase type name or an implementor behind a trait object;
   the latter withholds only through the `dyn`/`impl` rule. A trait default
   method with `where Self: Sized` also withholds (an over-withhold).
-  Assertion observation matches the owner by its function name, not its module
-  path (a same-name `other::dbl(2)` counts as observing the owner); this only
-  offers a start (#10948).
+  An assertion observes the owner through a bare or method call of its name,
+  or a path-qualified call whose qualifier resolves to the owner through the
+  shared call identity; a same-name call through another module
+  (`other::dbl(2)`) or an unreadable qualifier does not.
 - Format parsing tests for `human-full` and `text-full`.
 - CLI unit tests for repo-scope warnings with `--base` and `--diff`, and no
   warning for diff-scoped JSON.

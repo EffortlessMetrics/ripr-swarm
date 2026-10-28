@@ -612,7 +612,7 @@ fn return_value_missing_discriminator(
     // discriminator is not a repair of that test's gap and `check` agrees.
     if !related_summaries
         .iter()
-        .any(|test| test_assertion_observes_owner(test, &owner_fn.name))
+        .any(|test| test_assertion_observes_owner(test, owner_fn, index))
     {
         return None;
     }
@@ -1056,13 +1056,19 @@ fn test_pins_owner_call_by_equality(
 /// Whether some assertion of `test` mentions a call of `owner_name` or a local
 /// bound from one. Syntactic and over-approximate: it only decides whether a
 /// start may be offered.
-fn test_assertion_observes_owner(test: &TestSummary, owner_name: &str) -> bool {
-    let locals = owner_result_locals(&test.body, owner_name);
+fn test_assertion_observes_owner(
+    test: &TestSummary,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
+    let calls_owner =
+        |text: &str| crate::analysis::classify::text_calls_owner(index, owner, test, text);
+    let locals = owner_result_locals_with(&test.body, &calls_owner);
     test.assertions.iter().any(|oracle| {
         // Comments and string literals (including `assert!` messages) are not
         // observations.
         let masked = crate::analysis::extract::mask_comments_and_strings(&oracle.text);
-        mentions_owner_call(&masked, owner_name)
+        calls_owner(&masked)
             || locals
                 .iter()
                 .any(|local| mentions_identifier(&masked, local))
@@ -1077,6 +1083,12 @@ fn test_assertion_observes_owner(test: &TestSummary, owner_name: &str) -> bool {
 /// which only withholds. Not followed: a value moved through a field write,
 /// a mutation (`v += 1`), a closure, a loop variable or a function parameter.
 fn owner_result_locals(body: &str, owner_name: &str) -> Vec<String> {
+    owner_result_locals_with(body, &|text| mentions_owner_call(text, owner_name))
+}
+
+/// [`owner_result_locals`] with the caller's reading of "this initializer
+/// calls the owner".
+fn owner_result_locals_with(body: &str, calls_owner: &dyn Fn(&str) -> bool) -> Vec<String> {
     let masked = crate::analysis::extract::mask_comments_and_strings(body);
     let mut lets: Vec<(Vec<String>, &str)> = Vec::new();
     for statement in masked.split(';') {
@@ -1121,9 +1133,7 @@ fn owner_result_locals(body: &str, owner_name: &str) -> Vec<String> {
     loop {
         let before = locals.len();
         for (names, init) in &lets {
-            if mentions_owner_call(init, owner_name)
-                || locals.iter().any(|local| mentions_identifier(init, local))
-            {
+            if calls_owner(init) || locals.iter().any(|local| mentions_identifier(init, local)) {
                 for name in names {
                     if !locals.contains(name) {
                         locals.push(name.clone());

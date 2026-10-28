@@ -2064,6 +2064,12 @@ fn file_module_segments(file: &Path) -> Option<Vec<String>> {
 /// qualifier this scan cannot read (`<T as Tr>::name`, a generic segment).
 /// Method calls (`x.name(..)`) and the `fn name` definition are skipped.
 fn call_qualifiers(body: &str, name: &str) -> Vec<Option<Vec<String>>> {
+    call_sites(body, name, false)
+}
+
+/// [`call_qualifiers`], optionally counting method calls (`x.name(..)`) as
+/// bare sites.
+fn call_sites(body: &str, name: &str, with_methods: bool) -> Vec<Option<Vec<String>>> {
     let masked = mask_comments_and_strings(body);
     let mut calls = Vec::new();
     for (start, _) in masked.match_indices(name) {
@@ -2079,12 +2085,40 @@ fn call_qualifiers(body: &str, name: &str) -> Vec<Option<Vec<String>>> {
             continue;
         }
         let head = masked[..start].trim_end();
-        if head.ends_with('.') || head_word(head) == "fn" {
+        if head.ends_with('.') {
+            if with_methods {
+                calls.push(Some(Vec::new()));
+            }
+            continue;
+        }
+        if head_word(head) == "fn" {
             continue;
         }
         calls.push(qualifier_before(head));
     }
     calls
+}
+
+/// Whether `text` holds a call that can be the owner's: a bare or method
+/// call (name-only, as the other readers), or a path-qualified call whose
+/// qualifier settles on the owner through the shared identity. A qualifier
+/// naming another module, or one this scan cannot read, does not count, so
+/// a same-named function elsewhere is not an observation of the owner.
+pub(in crate::analysis) fn text_calls_owner(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+    test: &TestSummary,
+    text: &str,
+) -> bool {
+    call_sites(text, &owner.name, true)
+        .into_iter()
+        .any(|qualifier| match qualifier {
+            None => false,
+            Some(segments) if segments.is_empty() => true,
+            _ if owner.item.container != FunctionContainer::Free => true,
+            Some(segments) if names_a_type(&segments) => true,
+            Some(segments) => qualified_call_names_owner(index, owner, test, &segments),
+        })
 }
 
 /// [`OwnerCallIdentity::own_crate_names`] for an owner given by its file,

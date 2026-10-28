@@ -910,6 +910,53 @@ fn owner_call_beside_a_message_argument_still_reaches_repair() -> Result<(), Str
     )
 }
 
+/// A module of the test crate that also defines `dbl`; `other::dbl(2)` is a
+/// different function from the owner `ar::dbl`.
+const RIVAL_MOD: &str = "mod other {\n    pub fn dbl(x: i32) -> i32 {\n        x\n    }\n}\n";
+
+/// A path-qualified call counts as observing the owner only when its qualifier
+/// settles on the owner: `other::dbl(2)` (a different module that also defines
+/// `dbl`) beside a discarded real `dbl(2)` is not an observation, directly or
+/// through a local; the owner's own qualified and bare calls are.
+#[test]
+fn same_named_function_in_another_module_is_not_a_repair_start() -> Result<(), String> {
+    assert_no_start(
+        "rival-assert",
+        DBL_OLD,
+        DBL_NEW,
+        &format!(
+            "use ar::dbl;\n{RIVAL_MOD}\n#[test]\nfn t() {{\n    let _ = dbl(2);\n    assert!(other::dbl(2) > 0);\n}}\n"
+        ),
+    )?;
+    assert_no_start(
+        "rival-local",
+        DBL_OLD,
+        DBL_NEW,
+        &format!(
+            "use ar::dbl;\n{RIVAL_MOD}\n#[test]\nfn t() {{\n    let _ = dbl(2);\n    let r = other::dbl(2);\n    assert!(r > 0);\n}}\n"
+        ),
+    )?;
+    Ok(())
+}
+
+#[test]
+fn owner_calls_beside_a_same_named_rival_module_still_reach_repair() -> Result<(), String> {
+    assert_repair_ready(
+        "rival-qualified",
+        DBL_OLD,
+        DBL_NEW,
+        &format!("{RIVAL_MOD}\n#[test]\nfn t() {{\n    assert!(ar::dbl(2) > 0);\n}}\n"),
+    )?;
+    assert_repair_ready(
+        "rival-bound",
+        DBL_OLD,
+        DBL_NEW,
+        &format!(
+            "{RIVAL_MOD}\n#[test]\nfn t() {{\n    let r = ar::dbl(2);\n    assert!(r > 0);\n}}\n"
+        ),
+    )
+}
+
 #[test]
 fn one_letter_owner_is_not_observed_through_a_longer_name() -> Result<(), String> {
     let old = "pub fn f(x: i32) -> i32 {\n    x * 2\n}\n";
