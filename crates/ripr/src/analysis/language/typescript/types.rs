@@ -254,6 +254,10 @@ pub(crate) struct TypeScriptScopeBinding {
     /// loop header, a hook write, a test callback parameter) shadows an
     /// import or owner of the same name for the test.
     pub(crate) file_level: bool,
+    /// Where the callback's parameter list ends in the test's `body_text`,
+    /// when `name` is a destructured fixture parameter. The destructuring is
+    /// the binding itself, so a shadow scan of the body starts after it.
+    pub(crate) parameter_end: Option<usize>,
 }
 
 /// A list several tests of one file hold in common. A file with thousands of
@@ -820,6 +824,12 @@ impl TypeScriptErrorPayload {
             | TypeScriptErrorPayloadKind::AssertRejectsObject => {
                 format!("await assert.rejects(..., {})", self.expected)
             }
+            TypeScriptErrorPayloadKind::AvaThrowsObject => {
+                format!("t.throws(..., {})", self.expected)
+            }
+            TypeScriptErrorPayloadKind::AvaThrowsAsyncObject => {
+                format!("await t.throwsAsync(..., {})", self.expected)
+            }
         }
     }
 }
@@ -867,4 +877,8 @@ pub(crate) enum TypeScriptErrorPayloadKind {
     AssertRejectsContainsRegex,
     /// `node:assert` `rejects(p, { message: "..." })` (RIPR-SPEC-0243 rule 10).
     AssertRejectsObject,
+    /// AVA `t.throws(fn, { message: "..." })` (RIPR-SPEC-0243 rule 10, AVA).
+    AvaThrowsObject,
+    /// AVA `t.throwsAsync(fn, { message: "..." })` (RIPR-SPEC-0243 rule 10, AVA).
+    AvaThrowsAsyncObject,
 }

@@ -1,0 +1,4 @@
+[package]
+name = "out_parameter_named_empty_no_promote_fixture"
+version = "0.0.0"
+edition = "2024"

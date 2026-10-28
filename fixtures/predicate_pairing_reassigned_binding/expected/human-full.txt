@@ -2,10 +2,15 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/predicate_pairing_reassigned_binding/input
 
-Summary: 2 probe(s), 0 exposed, 2 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+Summary: 2 changed behavior(s) checked: 0 exposed, 2 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
 
 Analysis outcome: findings below (analysis complete; complete_with_findings)
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
 
 WARNING ./src/lib.rs:2
   id: probe:src_lib.rs:predicate:fa1d51d0
@@ -14,11 +19,12 @@ Changed
   before: input > 10
   after:  input >= 10
 
-Probe
+Change type
+  a condition or comparison changed
   family: predicate
-  delta:  control
+  delta:  control (changes which code path runs)
   owner:  src/lib.rs::gate
-  canonical gap: gap:rust:src/lib.rs:gate:predicate_boundary:predicate:input==10
+  gap id (for scripts): gap:rust:src/lib.rs:gate:predicate_boundary:predicate:input==10
 
 Static exposure
   weakly_exposed (warning, confidence 0.92)
@@ -51,11 +57,12 @@ Changed
   before: input > 10
   after:  input >= 10
 
-Probe
+Change type
+  a returned value changed
   family: return_value
-  delta:  value
+  delta:  value (changes a computed value)
   owner:  src/lib.rs::gate
-  canonical gap: gap:rust:src/lib.rs:gate:return_value:return_value:input>=10
+  gap id (for scripts): gap:rust:src/lib.rs:gate:return_value:return_value:input>=10
 
 Static exposure
   weakly_exposed (warning, confidence 0.92)
@@ -65,7 +72,7 @@ Evidence
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation yes: Complete propagation witness reaches returned value: input >= 10
   - observation yes: A related test observes a value or effect near the changed behavior
-  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression
+  - discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression
   - local flow reaches returned value: input >= 10 (line 2)
   - related test tests/rebound.rs:4 rebound uses strong exact value oracle: assert_eq!(got, true); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   - source function argument value input = 10 at line 5

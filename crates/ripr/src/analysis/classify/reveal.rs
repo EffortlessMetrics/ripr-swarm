@@ -39,6 +39,9 @@ pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
     /// token coincidence cannot establish that the closure ran discriminatingly.
     pub(in crate::analysis) returned_closure_pin_required: bool,
     pub(in crate::analysis) owner_return_pin: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
+    /// #9870: a Result.map callback runs only on Ok. Token coincidence in
+    /// an unrelated assertion cannot establish that callback's observation.
+    pub(in crate::analysis) owner_return_pin_required: bool,
     /// Exact wrapper assertion observing the boundary of a private boolean
     /// whole-return tail (#9849). Separate from direct owner-pin credit.
     pub(in crate::analysis) wrapper_return_pin: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
@@ -89,6 +92,11 @@ pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
     /// Exact projected mutable argument read through the shared collection observer.
     pub(in crate::analysis) collection_argument_observed:
         &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
+    /// #7697: whether the assertion compares, whole, the field collection the
+    /// owner pushes the probe's literal onto
+    /// (`activation::pushed_collection_compared_whole`), the rule activation
+    /// already applies. Only consulted for `field_construction` probes.
+    pub(in crate::analysis) pushed_literal_observed: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
     /// RIPR-SPEC-0351: the owner `&mut` parameter whose call-site local the
     /// assertion reads (`format(&mut s, ..); assert_eq!(s, ..)`), or `None`.
     pub(in crate::analysis) out_parameter_read:
@@ -142,6 +150,7 @@ fn reveal_evidence(
         &|_, _| false,
         &|_, _| false,
         &ReturnOracleAdmission {
+            owner_return_pin_required: false,
             returned_closure_pin_required: false,
             owner_return_pin: &|_, _| false,
             wrapper_return_pin: &|_, _| false,
@@ -155,6 +164,7 @@ fn reveal_evidence(
             effect_state_carried: &|_, _| true,
             setter_writes_field: &|_, _, _| true,
             collection_argument_observed: &|_, _| false,
+            pushed_literal_observed: &|_, _| false,
             out_parameter_read: &|_, _| None,
             getter_reads_field: &|_, _, _| false,
             getter_reads_key: &|_, _, _| None,
@@ -186,6 +196,7 @@ fn reveal_evidence_with_exit(
         &|_, _| false,
         &ReturnOracleAdmission {
             assertion_has_known_implicit_observer: &|_, _| None,
+            owner_return_pin_required: false,
             returned_closure_pin_required: false,
             owner_return_pin: &|_, _| false,
             wrapper_return_pin: &|_, _| false,
@@ -198,6 +209,7 @@ fn reveal_evidence_with_exit(
             effect_state_carried: &|_, _| true,
             setter_writes_field: &|_, _, _| true,
             collection_argument_observed: &|_, _| false,
+            pushed_literal_observed: &|_, _| false,
             out_parameter_read: &|_, _| None,
             getter_reads_field: &|_, _, _| false,
             getter_reads_key: &|_, _, _| None,
@@ -231,6 +243,7 @@ fn reveal_evidence_proximity_reach(
         &|_, _| false,
         &|_, _| false,
         &ReturnOracleAdmission {
+            owner_return_pin_required: false,
             returned_closure_pin_required: false,
             owner_return_pin: &|_, _| false,
             wrapper_return_pin: &|_, _| false,
@@ -244,6 +257,7 @@ fn reveal_evidence_proximity_reach(
             effect_state_carried: &|_, _| true,
             setter_writes_field: &|_, _, _| true,
             collection_argument_observed: &|_, _| false,
+            pushed_literal_observed: &|_, _| false,
             getter_reads_field: &|_, _, _| false,
             getter_reads_key: &|_, _, _| None,
             owner_argument_names: &[],
@@ -578,39 +592,304 @@ fn field_collection_observer_confirms(
         return false;
     }
     let plain_reads = assertion_field_collection_reads(&assertion.text, path, false, append_write);
-    assertion_field_collection_reads(&assertion.text, path, count_reads, append_write)
-        .into_iter()
-        .any(|read| {
-            // #8204: a count-only read of a map the owner inserts into
-            // cannot confirm deleting that insert when the test may
-            // already hold the inserted key: overwriting it leaves the
-            // count unchanged.
-            let count_only = !plain_reads.contains(&read);
-            !(count_only
-                && insert_key_index.is_some_and(|index| {
-                    insert_count_may_overwrite(
-                        test,
-                        owner,
-                        &read.binding,
-                        path,
-                        index,
-                        assertion.line,
-                    )
-                }))
-                && owner_call_reaches_read_unrewritten(
-                    test,
-                    &read.binding,
-                    owner.name(),
-                    assertion.line,
-                    read.getter.as_deref(),
-                    path,
-                )
-                && read.getter.as_deref().is_none_or(|getter| {
-                    owner
-                        .impl_type()
-                        .is_some_and(|impl_type| getter_reads_field(impl_type, getter, path))
-                })
+    let reads = assertion_field_collection_reads(&assertion.text, path, count_reads, append_write);
+    // #7135: `assert_eq!(c.items, d.items)` after both `c.add(..)` and
+    // `d.add(..)` compares two values the owner wrote, so a wrong owner
+    // moves both sides together. Two bindings that each ran the owner
+    // before the read observe nothing independent.
+    // Only equivalent histories are refused (same construction and same
+    // driving statements, arguments included). Differing arguments, call
+    // counts or seeding make the sides diverge when the owner changes, so
+    // the comparison can notice.
+    let mut owner_fed: std::collections::BTreeMap<&str, Option<&str>> =
+        std::collections::BTreeMap::new();
+    for read in &reads {
+        if owner_call_reaches_read_unrewritten(
+            test,
+            &read.binding,
+            owner.name(),
+            assertion.line,
+            read.getter.as_deref(),
+            path,
+        ) && read.getter.as_deref().is_none_or(|getter| {
+            owner
+                .impl_type()
+                .is_some_and(|impl_type| getter_reads_field(impl_type, getter, path))
+        }) {
+            owner_fed
+                .entry(read.binding.as_str())
+                .or_insert(read.getter.as_deref());
+        }
+    }
+    // A compared side built by chaining the owner (`let d = Bag::new().add(20)`)
+    // is owner-fed too, but its history is not comparable statement by
+    // statement: refuse rather than credit a side the owner may have written.
+    let chain_built = reads.iter().any(|read| {
+        !owner_fed.contains_key(read.binding.as_str())
+            && binding_built_through_owner(test, &read.binding, owner.name(), assertion.line)
+    });
+    if !owner_fed.is_empty() && chain_built {
+        return false;
+    }
+    if owner_fed.len() > 1 && equivalent_owner_histories(test, &owner_fed, path, assertion.line) {
+        return false;
+    }
+    reads.into_iter().any(|read| {
+        // #8204: a count-only read of a map the owner inserts into
+        // cannot confirm deleting that insert when the test may
+        // already hold the inserted key: overwriting it leaves the
+        // count unchanged.
+        let count_only = !plain_reads.contains(&read);
+        !(count_only
+            && insert_key_index.is_some_and(|index| {
+                insert_count_may_overwrite(test, owner, &read.binding, path, index, assertion.line)
+            }))
+            && owner_call_reaches_read_unrewritten(
+                test,
+                &read.binding,
+                owner.name(),
+                assertion.line,
+                read.getter.as_deref(),
+                path,
+            )
+            && read.getter.as_deref().is_none_or(|getter| {
+                owner
+                    .impl_type()
+                    .is_some_and(|impl_type| getter_reads_field(impl_type, getter, path))
+            })
+    })
+}
+
+/// `code` without plain reads of a sibling field of `binding` (`c.tag`,
+/// `c.tag.len()`, `c.tag == 1`): they neither seed nor drive the collection
+/// under test, so they are not part of its history. Method calls on the
+/// sibling and anything that could write it stay in the code.
+fn strip_sibling_field_reads(code: &str, binding: &str, path: &str) -> String {
+    let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let mut out = String::new();
+    let mut last = 0;
+    for (at, _) in code.match_indices(binding) {
+        let end = at + binding.len();
+        if at < last
+            || code[..at]
+                .chars()
+                .next_back()
+                .is_some_and(|ch| ident(ch) || ch == '.')
+        {
+            continue;
+        }
+        let Some(after) = code[end..].strip_prefix('.') else {
+            continue;
+        };
+        // `&mut c.tag` / `ref mut c.tag` is a write-capable place.
+        if code[..at].trim_end().ends_with("mut") {
+            continue;
+        }
+        let field_len = after.find(|ch: char| !ident(ch)).unwrap_or(after.len());
+        let field = &after[..field_len];
+        if field.is_empty() || field == path {
+            continue;
+        }
+        let rest = after[field_len..].trim_start();
+        let read = rest.is_empty()
+            || rest.starts_with([')', ',', ']'])
+            || rest.starts_with(".len(")
+            || rest.starts_with(".is_empty(")
+            || rest.starts_with("==")
+            || rest.starts_with("!=");
+        if read {
+            out.push_str(&code[last..at]);
+            last = end + 1 + field_len;
+        }
+    }
+    out.push_str(&code[last..]);
+    out
+}
+
+/// `code` without whitespace around `.`, so spaced and tight spellings of one
+/// field access compare equal.
+fn tighten_dots(code: &str) -> String {
+    let chars: Vec<char> = code.chars().collect();
+    let mut out = String::with_capacity(code.len());
+    for (at, &ch) in chars.iter().enumerate() {
+        if ch.is_whitespace() {
+            let prev = chars[..at].iter().rev().find(|c| !c.is_whitespace());
+            let next = chars[at..].iter().find(|c| !c.is_whitespace());
+            if prev == Some(&'.') || next == Some(&'.') {
+                continue;
+            }
+        }
+        out.push(ch);
+    }
+    out
+}
+
+/// Byte offset where the history window for a read on `read_line` ends: the
+/// `assert` on that line, so a statement earlier on the same line still counts
+/// (`d.items.clear(); assert_eq!(..)`), as the unrewritten-read guard does.
+fn read_window_end(masked: &str, start_line: usize, read_line: usize) -> usize {
+    let skipped = read_line.saturating_sub(start_line);
+    let line_start: usize = masked
+        .split_inclusive('\n')
+        .take(skipped)
+        .map(str::len)
+        .sum();
+    masked
+        .get(line_start..)
+        .and_then(|rest| rest.lines().next())
+        .and_then(|line| line.rfind("assert"))
+        .map_or(line_start, |found| line_start + found)
+}
+
+/// #7135: whether every binding in `bindings` was built and driven the same
+/// way before the read at `read_line`, so a wrong owner moves every compared
+/// side together. The history of a binding is its constructor and, in order,
+/// each statement that uses it other than as a read of the collection under
+/// test (`let _ = c.items.len()` is not setup), with the binding's own name
+/// abstracted. Different arguments, call counts, seeding or constructors make
+/// the histories differ. A constructor that cannot be found, or that names
+/// another compared binding (`let d = c.clone()`), is treated as equivalent:
+/// no independence is established.
+fn equivalent_owner_histories(
+    test: &TestSummary,
+    bindings: &std::collections::BTreeMap<&str, Option<&str>>,
+    path: &str,
+    read_line: usize,
+) -> bool {
+    let masked = mask_comments_and_strings(&test.body);
+    let offset = read_window_end(&masked, test.start_line, read_line);
+    let (Some(before_masked), Some(before)) = (masked.get(..offset), test.body.get(..offset))
+    else {
+        return true;
+    };
+    let mut statements = Vec::new();
+    let mut start = 0;
+    for (at, ch) in before_masked.char_indices() {
+        if matches!(ch, ';' | '{' | '}') {
+            statements.push((start, at));
+            start = at + 1;
+        }
+    }
+    statements.push((start, before_masked.len()));
+    let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let mentions = |text: &str, name: &str| {
+        text.match_indices(name).any(|(at, found)| {
+            !text[..at]
+                .chars()
+                .next_back()
+                .is_some_and(|ch| ident(ch) || ch == '.')
+                && !text[at + found.len()..].starts_with(ident)
         })
+    };
+    let abstracted = |text: &str, name: &str| {
+        let mut out = String::new();
+        let mut last = 0;
+        for (at, found) in text.match_indices(name) {
+            let end = at + found.len();
+            if !text[..at].chars().next_back().is_some_and(ident) && !text[end..].starts_with(ident)
+            {
+                out.push_str(&text[last..at]);
+                out.push('$');
+                last = end;
+            }
+        }
+        out.push_str(&text[last..]);
+        out.split_whitespace().collect::<Vec<_>>().join(" ")
+    };
+    let mut histories: Vec<Vec<String>> = Vec::new();
+    for (binding, getter) in bindings {
+        let mut history = Vec::new();
+        let mut constructed = false;
+        // Block conditions (`if f1 {`) are deliberately not part of the
+        // history: two conditions cannot be shown to diverge from their text
+        // (`if ready` against `if ready == true`), so a pair that matches
+        // except for its guards stays refused.
+        for &(from, to) in &statements {
+            let (Some(code), Some(text)) = (before_masked.get(from..to), before.get(from..to))
+            else {
+                return true;
+            };
+            // `c . items.len()` is the same field access as `c.items.len()`.
+            let (code, text) = (tighten_dots(code), tighten_dots(text));
+            let (code, text) = (code.as_str(), text.as_str());
+            let trimmed = code.trim_start();
+            let declared = trimmed
+                .strip_prefix("let ")
+                .map(|rest| rest.trim_start())
+                .map(|rest| rest.strip_prefix("mut ").map_or(rest, str::trim_start))
+                .is_some_and(|rest| {
+                    rest.strip_prefix(binding)
+                        .is_some_and(|after| !after.starts_with(ident))
+                });
+            let mut entry = None;
+            if declared {
+                let Some((_, rhs)) = text.split_once('=') else {
+                    return true;
+                };
+                if bindings
+                    .keys()
+                    .any(|other| other != binding && mentions(rhs, other))
+                {
+                    return true;
+                }
+                constructed = true;
+                entry = Some(format!("let {}", abstracted(rhs, binding)));
+            } else if mentions(code, binding) && {
+                let stripped = strip_sibling_field_reads(code, binding, path);
+                !only_field_reads_between(&stripped, 0, stripped.len(), binding, *getter, path)
+            } {
+                entry = Some(abstracted(text, binding));
+            }
+            if let Some(entry) = entry {
+                history.push(entry);
+            }
+        }
+        if !constructed {
+            return true;
+        }
+        histories.push(history);
+    }
+    histories.windows(2).all(|pair| pair[0] == pair[1])
+}
+
+/// #7135: whether `binding` is declared with a right-hand side that calls the
+/// owner `method` (`let d = Bag::new().add(20);`), so the owner wrote it
+/// without a bare `binding.method(..)` statement.
+fn binding_built_through_owner(
+    test: &TestSummary,
+    binding: &str,
+    method: &str,
+    read_line: usize,
+) -> bool {
+    let masked = mask_comments_and_strings(&test.body);
+    let end = read_window_end(&masked, test.start_line, read_line);
+    let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let call = format!(".{method}(");
+    // Only the declaration live at the read counts: a later `let` is not
+    // evidence about it, and a shadowing `let` replaces an earlier one.
+    masked
+        .get(..end)
+        .unwrap_or_default()
+        .match_indices("let ")
+        .filter_map(|(at, keyword)| {
+            if masked[..at].chars().next_back().is_some_and(ident) {
+                return None;
+            }
+            let rest = masked[at + keyword.len()..].trim_start();
+            let rest = rest.strip_prefix("mut ").map_or(rest, str::trim_start);
+            let after = rest.strip_prefix(binding)?;
+            if after.starts_with(ident) {
+                return None;
+            }
+            Some(
+                after
+                    .split(';')
+                    .next()
+                    .is_some_and(|stmt| stmt.contains(&call)),
+            )
+        })
+        .last()
+        .unwrap_or(false)
 }
 
 /// #8204: whether the test may already hold, in `binding.path`, the key an
@@ -2259,7 +2538,17 @@ fn analyze_related_assertions(
                         return_admission,
                     )
                 });
-            let field_collection_read = field_collection_read || keyed_read;
+            // #7697: a pushed field literal is confirmed by the same
+            // whole-collection comparison activation accepts, even when the
+            // other operand is a collection the test built by hand.
+            // Fail closed when the owner may leave before the push (#8051,
+            // #8205): a test that expects the collection empty, or restates
+            // what it seeded, then took the exit and never ran the literal.
+            let pushed_literal_read = matches!(probe.family, ProbeFamily::FieldConstruction)
+                && !return_admission.owner_may_exit_before_probe
+                && !test_is_should_panic(test)
+                && (return_admission.pushed_literal_observed)(test, assertion);
+            let field_collection_read = field_collection_read || keyed_read || pushed_literal_read;
             let collection_argument_read =
                 (return_admission.collection_argument_observed)(test, assertion);
             // RIPR-SPEC-0351: an `assert_eq!` on the local a direct owner
@@ -2466,7 +2755,15 @@ fn analyze_related_assertions(
                                             && effect_observer_confirms(assertion)
                                             && (return_admission.effect_state_carried)(
                                                 test, assertion,
-                                            )))))));
+                                            )))))))
+                    && (!return_admission.owner_return_pin_required
+                        || owner_return_pin_holds(
+                            &match_context,
+                            assertion,
+                            owner_pinned,
+                            import_defeats_owner,
+                            cross_package_defeats_owner,
+                        ));
                 proximity_confirmation_withheld |= !confirms_observation;
                 if confirm_required {
                     // Observation is confirmed when the assertion specifically
@@ -2518,9 +2815,10 @@ fn analyze_related_assertions(
                     oracle_strength: relative_strength,
                     relation_reason,
                     relation_confidence,
-                    miss: (!effect_kind_confirms
+                    miss: ((!effect_kind_confirms || return_admission.owner_return_pin_required)
                         && !observation_confirmed
-                        && (effect_observer_confirms(assertion)
+                        && (return_admission.owner_return_pin_required
+                            || effect_observer_confirms(assertion)
                             || implicit_observer == Some(false)))
                     .then_some(RelatedTestMiss::ObservationUnconfirmed),
                     miss_support: None,
@@ -5785,6 +6083,7 @@ mod tests {
         };
         let admission = ReturnOracleAdmission {
             assertion_has_known_implicit_observer: &|_, _| None,
+            owner_return_pin_required: false,
             returned_closure_pin_required: false,
             owner_return_pin: &|_, _| false,
             wrapper_return_pin: &|_, _| false,
@@ -5798,6 +6097,7 @@ mod tests {
             setter_writes_field: &|_, _, _| false,
             getter_reads_field: &|_, _, _| false,
             collection_argument_observed: &|_, _| false,
+            pushed_literal_observed: &|_, _| false,
             out_parameter_read: &|_, _| None,
             getter_reads_key: &|_, getter, field| {
                 (getter == "on_hand" && field == "stock")
@@ -7227,6 +7527,7 @@ mod tests {
             &|_, _| false,
             &ReturnOracleAdmission {
                 assertion_has_known_implicit_observer: &|_, _| None,
+                owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &pin,
                 wrapper_return_pin: &|_, _| false,
@@ -7239,6 +7540,7 @@ mod tests {
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                pushed_literal_observed: &|_, _| false,
                 out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
@@ -7321,6 +7623,7 @@ mod tests {
                 &|_, _| false,
                 &ReturnOracleAdmission {
                     assertion_has_known_implicit_observer: &|_, _| None,
+                    owner_return_pin_required: false,
                     returned_closure_pin_required: false,
                     owner_return_pin: &pin,
                     wrapper_return_pin: &|_, _| false,
@@ -7333,6 +7636,7 @@ mod tests {
                     effect_state_carried: &|_, _| true,
                     setter_writes_field: &|_, _, _| true,
                     collection_argument_observed: &|_, _| false,
+                    pushed_literal_observed: &|_, _| false,
                     out_parameter_read: &|_, _| None,
                     getter_reads_field: &|_, _, _| false,
                     getter_reads_key: &|_, _, _| None,
@@ -7501,6 +7805,7 @@ mod tests {
                 &|_, _| false,
                 &|_, _| false,
                 &ReturnOracleAdmission {
+                    owner_return_pin_required: false,
                     returned_closure_pin_required: false,
                     owner_return_pin: &|_, _| false,
                     wrapper_return_pin: &|_, _| false,
@@ -7514,6 +7819,7 @@ mod tests {
                     effect_state_carried: &|_, _| true,
                     setter_writes_field: &|_, _, _| true,
                     collection_argument_observed: &|_, _| false,
+                    pushed_literal_observed: &|_, _| false,
                     out_parameter_read: &|_, _| None,
                     getter_reads_field: &|_, _, _| false,
                     getter_reads_key: &|_, _, _| None,
@@ -7609,6 +7915,7 @@ mod tests {
                 import,
                 package,
                 &ReturnOracleAdmission {
+                    owner_return_pin_required: false,
                     returned_closure_pin_required: false,
                     owner_return_pin: &pin,
                     wrapper_return_pin: &|_, _| false,
@@ -7622,6 +7929,7 @@ mod tests {
                     effect_state_carried: &|_, _| true,
                     setter_writes_field: &|_, _, _| true,
                     collection_argument_observed: &|_, _| false,
+                    pushed_literal_observed: &|_, _| false,
                     out_parameter_read: &|_, _| None,
                     getter_reads_field: &|_, _, _| false,
                     getter_reads_key: &|_, _, _| None,
@@ -8030,6 +8338,7 @@ mod tests {
             &|_, _| false,
             &|_, _| false,
             &ReturnOracleAdmission {
+                owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
@@ -8043,6 +8352,7 @@ mod tests {
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                pushed_literal_observed: &|_, _| false,
                 out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
@@ -8120,6 +8430,7 @@ mod tests {
             &|_, _| false,
             &|_, _| false,
             &ReturnOracleAdmission {
+                owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
@@ -8133,6 +8444,7 @@ mod tests {
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                pushed_literal_observed: &|_, _| false,
                 out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
@@ -9895,6 +10207,7 @@ return Err(\"typed pin\".into());
             &|_test, callee| file_imports_foreign_callee_name(test_source, callee, &crate_names),
             &|_, _| false,
             &ReturnOracleAdmission {
+                owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
@@ -9908,6 +10221,7 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                pushed_literal_observed: &|_, _| false,
                 out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
@@ -9964,6 +10278,7 @@ return Err(\"typed pin\".into());
             &|_, callee| file_imports_foreign_callee_name(without_import, callee, &own_crate_names),
             &|_, _| false,
             &ReturnOracleAdmission {
+                owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
@@ -9977,6 +10292,7 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                pushed_literal_observed: &|_, _| false,
                 out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
@@ -10004,6 +10320,7 @@ return Err(\"typed pin\".into());
             },
             &|_, _| false,
             &ReturnOracleAdmission {
+                owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
@@ -10017,6 +10334,7 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                pushed_literal_observed: &|_, _| false,
                 out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
@@ -10063,6 +10381,7 @@ return Err(\"typed pin\".into());
             &|_, callee| file_imports_foreign_callee_name(aliased_import, callee, &crate_names),
             &|_, _| false,
             &ReturnOracleAdmission {
+                owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
@@ -10076,6 +10395,7 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                pushed_literal_observed: &|_, _| false,
                 out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
@@ -10124,6 +10444,7 @@ return Err(\"typed pin\".into());
             &|_test, callee| file_imports_foreign_callee_name(test_source, callee, &crate_names),
             &|_, _| false,
             &ReturnOracleAdmission {
+                owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
@@ -10137,6 +10458,7 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                pushed_literal_observed: &|_, _| false,
                 out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
@@ -10329,6 +10651,7 @@ return Err(\"typed pin\".into());
             &|_, _| false,
             &|_, _| true,
             &ReturnOracleAdmission {
+                owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
@@ -10342,6 +10665,7 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                pushed_literal_observed: &|_, _| false,
                 out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
@@ -10372,6 +10696,7 @@ return Err(\"typed pin\".into());
             &|_, _| false,
             &|_, _| false,
             &ReturnOracleAdmission {
+                owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
@@ -10385,6 +10710,7 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                pushed_literal_observed: &|_, _| false,
                 out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
@@ -10793,8 +11119,10 @@ return Err(\"typed pin\".into());
                         owner_argument_names: &[],
                         getter_reads_key: &|_, _, _| None,
                         collection_argument_observed: &|_, _| false,
+                        pushed_literal_observed: &|_, _| false,
                         out_parameter_read: &|_, _| None,
                         assertion_has_known_implicit_observer: &|_, _| Some(false),
+                        owner_return_pin_required: false,
                         returned_closure_pin_required: false,
                         owner_return_pin: &|_, _| false,
                         wrapper_return_pin: &|_, _| false,
@@ -10871,8 +11199,10 @@ return Err(\"typed pin\".into());
                     owner_argument_names: &[],
                     getter_reads_key: &|_, _, _| None,
                     collection_argument_observed: &|_, _| false,
+                    pushed_literal_observed: &|_, _| false,
                     returned_closure_pin_required: false,
                     out_parameter_read: &|_, _| None,
+                    owner_return_pin_required: false,
                     owner_return_pin: &|_, _| false,
                     wrapper_return_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
@@ -10960,6 +11290,7 @@ return Err(\"typed pin\".into());
                 &|_, _| false,
                 &|_, _| false,
                 &ReturnOracleAdmission {
+                    owner_return_pin_required: false,
                     returned_closure_pin_required: false,
                     owner_return_pin: &|_, _| false,
                     wrapper_return_pin: &|_, _| false,
@@ -10973,6 +11304,7 @@ return Err(\"typed pin\".into());
                     effect_state_carried: &carried,
                     setter_writes_field: &|_, _, _| true,
                     collection_argument_observed: &|_, _| false,
+                    pushed_literal_observed: &|_, _| false,
                     out_parameter_read: &|_, _| None,
                     getter_reads_field: &|_, _, _| false,
                     getter_reads_key: &|_, _, _| None,
@@ -11249,6 +11581,7 @@ return Err(\"typed pin\".into());
             &|_, _| false,
             &|_, _| false,
             &ReturnOracleAdmission {
+                owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
@@ -11262,6 +11595,7 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                pushed_literal_observed: &|_, _| false,
                 out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
@@ -11353,6 +11687,7 @@ return Err(\"typed pin\".into());
                 &|_, _| false,
                 &|_, _| false,
                 &ReturnOracleAdmission {
+                    owner_return_pin_required: false,
                     returned_closure_pin_required: false,
                     owner_return_pin: &|_, _| false,
                     wrapper_return_pin: &|_, _| false,
@@ -11366,6 +11701,7 @@ return Err(\"typed pin\".into());
                     effect_state_carried: &|_, _| true,
                     setter_writes_field: &|_, _, _| true,
                     collection_argument_observed: &|_, _| false,
+                    pushed_literal_observed: &|_, _| false,
                     out_parameter_read: &|_, _| None,
                     getter_reads_field: &|_, _, _| false,
                     getter_reads_key: &|_, _, _| None,
@@ -11400,6 +11736,7 @@ return Err(\"typed pin\".into());
             &|_, _| false,
             &|_, _| false,
             &ReturnOracleAdmission {
+                owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
@@ -11413,6 +11750,7 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                pushed_literal_observed: &|_, _| false,
                 out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
@@ -11898,6 +12236,7 @@ return Err(\"typed pin\".into());
             &|_, _| false,
             &|_, _| false,
             &ReturnOracleAdmission {
+                owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
@@ -11911,6 +12250,7 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                pushed_literal_observed: &|_, _| false,
                 out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,
@@ -12444,6 +12784,7 @@ return Err(\"typed pin\".into());
             &|_, _| false,
             &|_, _| false,
             &ReturnOracleAdmission {
+                owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
@@ -12457,6 +12798,7 @@ return Err(\"typed pin\".into());
                 effect_state_carried: &|_, _| true,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
+                pushed_literal_observed: &|_, _| false,
                 out_parameter_read: &|_, _| None,
                 getter_reads_field: &|_, _, _| false,
                 getter_reads_key: &|_, _, _| None,

@@ -2,10 +2,15 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/unwrap_err_variant_positive/input
 
-Summary: 2 probe(s), 2 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+Summary: 2 changed behavior(s) checked: 2 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
 
 Analysis outcome: findings below (analysis complete; complete_with_findings)
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
 
 Shared evidence and guidance
   E1 [findings 1, 2]: reach yes: Related tests appear to reach compute: negative_input_rejects_with_negative_error
@@ -23,11 +28,12 @@ Finding 1: INFO ./src/lib.rs:8
 Changed
   before: return Err(CalcError::TooLarge);
   after:  return Err(CalcError::Negative);
-Probe
+Change type
+  error handling changed
   family: error_path
-  delta:  value
+  delta:  value (changes a computed value)
   owner:  src/lib.rs::compute
-  canonical gap: gap:rust:src/lib.rs:compute:error_variant:error_path:err_calcerror_negative
+  gap id (for scripts): gap:rust:src/lib.rs:compute:error_variant:error_path:err_calcerror_negative
 Static exposure
   exposed (info, confidence 1.00)
 Evidence
@@ -41,11 +47,12 @@ Finding 2: INFO ./src/lib.rs:8
 Changed
   before: return Err(CalcError::TooLarge);
   after:  return Err(CalcError::Negative);
-Probe
+Change type
+  a returned value changed
   family: return_value
-  delta:  value
+  delta:  value (changes a computed value)
   owner:  src/lib.rs::compute
-  canonical gap: gap:rust:src/lib.rs:compute:return_value:return_value:err_calcerror_negative
+  gap id (for scripts): gap:rust:src/lib.rs:compute:return_value:return_value:err_calcerror_negative
 Static exposure
   exposed (info, confidence 1.00)
 Evidence

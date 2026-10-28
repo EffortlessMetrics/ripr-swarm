@@ -1,0 +1,4 @@
+[package]
+name = "rust_macro_table_arrow_scope_decoy"
+version = "0.1.0"
+edition = "2024"
