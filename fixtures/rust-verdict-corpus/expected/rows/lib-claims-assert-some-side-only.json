@@ -13,7 +13,7 @@
   "changed_since_labeling": true,
   "observed_classifications": [
     "infection_unknown",
-    "reachable_unrevealed"
+    "weakly_exposed"
   ],
   "outcome": "abstained",
   "contradictions": [],

@@ -1,0 +1,44 @@
+{
+  "case_id": "spec0048-flow-shadowed-name",
+  "subject_id": "authored-spec0048-const-flow",
+  "diff": "cases/spec0048-flow-shadowed-name.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 16
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "behavior_selector_const",
+  "test_shape": "selector_const_name_shadowed_in_reader",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "pub const CAP: u32 = 4;",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "the edit itself: the reader binds its own local cap and never reads settings::cap, so the edit changes nothing the test can see"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The reader binds its own local CAP and never reads settings::CAP, so the edit changes nothing the test can see. The same-file reader rule must not read a shadowed name as a read.",
+  "labeling_observation": {
+    "ripr_commit": "01097634",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

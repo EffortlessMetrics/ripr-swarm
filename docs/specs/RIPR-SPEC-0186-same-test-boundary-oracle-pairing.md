@@ -294,6 +294,11 @@ relation are out of scope.
 - `crates/ripr/tests/owner_pin_execution.rs::predicate_pairing_cannot_reuse_refused_boundary_equalities`
 - `crates/ripr/tests/helper_wrapper_reach.rs`
 - `fixtures/rust_wrapper_boolean_return_discarded`
+- `fixtures/rust_wrapper_user_macro_guard`
+- `fixtures/rust_wrapper_closure_shadowed_callee`
+- `fixtures/rust_wrapper_crate_alias_logging_macro`
+- `fixtures/rust_wrapper_unicode_macro_suffix`
+- `fixtures/rust_wrapper_macro_bang_bidi_whitespace`
 
 ## Implementation Mapping
 

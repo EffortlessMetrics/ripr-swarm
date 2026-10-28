@@ -199,7 +199,7 @@ pub(crate) fn clean_bound_path(path: &Path) -> PathBuf {
 
 /// Whether `path` is an existing symlink the kernel would follow before a
 /// later `..` (Unix only; see [`clean_bound_path`]).
-fn is_symlink(path: &Path) -> bool {
+pub(crate) fn is_symlink(path: &Path) -> bool {
     cfg!(unix)
         && std::fs::symlink_metadata(path)
             .map(|metadata| metadata.file_type().is_symlink())

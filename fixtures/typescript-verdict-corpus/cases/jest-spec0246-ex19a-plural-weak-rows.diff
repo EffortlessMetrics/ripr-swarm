@@ -1,0 +1,9 @@
+diff --git a/src/plural.ts b/src/plural.ts
+index 0000000..1111111 100644
+--- a/src/plural.ts
++++ b/src/plural.ts
+@@ -1,3 +1,3 @@
+ export function plural(n: number): string {
+-  return `${n} item${n === 1 ? "" : "s"}`;
++  return `${n} item${n <= 1 ? "" : "s"}`;
+ }

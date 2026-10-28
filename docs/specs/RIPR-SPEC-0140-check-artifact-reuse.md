@@ -58,7 +58,7 @@ analysis knew.
 intent. There is no implicit cross-invocation cache and no background
 write.
 
-Python integer-dunder truthiness credit (RIPR-SPEC-0238 rule 26) depends on a
+Python integer-dunder truthiness credit (RIPR-SPEC-0238 rule 28) depends on a
 fresh physical source audit beyond the v1 diff/config identity. Artifacts may
 retain that recorded finding, but `explain/context --from` refuses it with
 `check_artifact_unusable` and directs live analysis without `--from`. This

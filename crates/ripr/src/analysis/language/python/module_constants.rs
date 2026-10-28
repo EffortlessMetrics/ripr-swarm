@@ -80,6 +80,76 @@ pub(super) fn module_object_bindings(source: &SourceText<'_>, statements: &[Stmt
         .collect()
 }
 
+/// A module-scope `NAME = <value>` binding nothing in the module rebinds,
+/// with the byte offset where its statement starts.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct PythonModuleValue<'a> {
+    pub(super) name: &'a str,
+    pub(super) value: &'a Expr,
+    pub(super) offset: usize,
+}
+
+/// The module-scope names a decorator may lean on (#10685).
+#[derive(Clone, Debug, Default)]
+pub(super) struct PythonModuleNames<'a> {
+    /// Plain `NAME = <value>` bindings nothing rebinds.
+    pub(super) values: Vec<PythonModuleValue<'a>>,
+    /// Every name bound exactly once at module scope (an import counts) and
+    /// never rebound, under the same conditions as [`module_literal_constants`].
+    pub(super) stable: std::collections::BTreeSet<String>,
+}
+
+impl PythonModuleNames<'_> {
+    pub(super) fn holds(&self, name: &str) -> bool {
+        self.stable.contains(name)
+    }
+}
+
+/// The module-scope names bound once and never rebound, and the plain
+/// `NAME = <value>` bindings among them. A decorator reads them (`@cases`,
+/// `parametrize(NAMES, ...)`, an `import pytest as pt` root, #10685).
+pub(super) fn module_stable_names<'a>(
+    source: &SourceText<'_>,
+    statements: &'a [Stmt],
+) -> PythonModuleNames<'a> {
+    let Some(stable) = StableNames::of(source, statements) else {
+        return PythonModuleNames::default();
+    };
+    let values = statements
+        .iter()
+        .filter_map(|stmt| match stmt {
+            Stmt::Assign(assign) => match assign.targets.as_slice() {
+                [Expr::Name(name)] => Some(PythonModuleValue {
+                    name: name.id.as_str(),
+                    value: assign.value.as_ref(),
+                    offset: usize::from(assign.range.start()),
+                }),
+                _ => None,
+            },
+            _ => None,
+        })
+        .filter(|value| stable.holds(value.name))
+        .collect();
+    PythonModuleNames {
+        values,
+        stable: stable
+            .counts
+            .keys()
+            .filter(|name| stable.holds(name))
+            .cloned()
+            .collect(),
+    }
+}
+
+/// Every name a class body binds in its own scope, nested `def` and `class`
+/// names included, or None when the walk cannot enumerate them. A decorator
+/// in a class body looks a name up there before the module.
+pub(super) fn class_scope_names(body: &[Stmt]) -> Option<Vec<String>> {
+    let mut bindings = ScopeBindings::default();
+    collect_scope_bindings(body, &mut bindings);
+    (!bindings.opaque).then_some(bindings.names)
+}
+
 /// The facts that decide whether a module-scope name can still be rebound.
 struct StableNames {
     counts: std::collections::HashMap<String, usize>,
@@ -547,6 +617,37 @@ fn literal_assignment(source: &SourceText<'_>, stmt: &Stmt) -> Option<PythonModu
         value: literal_value(&text_for_range(source, value.range()))?,
         line: line_for_range_start(source, stmt.range()),
     })
+}
+
+/// Whether `name` is a module-scope name bound once, by the one `NAME = {...}`
+/// (or annotated) statement that starts on `line`, with the stability the
+/// scalar constants need (#9619). In-place mutation of the table is a separate
+/// question (`table_reads`).
+pub(super) fn module_table_binding_at(
+    source: &SourceText<'_>,
+    statements: &[Stmt],
+    name: &str,
+    line: usize,
+) -> bool {
+    let Some(stable) = StableNames::of(source, statements) else {
+        return false;
+    };
+    stable.holds(name)
+        && statements.iter().any(|stmt| {
+            let (target, value) = match stmt {
+                Stmt::Assign(assign) => match assign.targets.as_slice() {
+                    [target] => (target, Some(assign.value.as_ref())),
+                    _ => return false,
+                },
+                Stmt::AnnAssign(assign) if assign.simple => {
+                    (assign.target.as_ref(), assign.value.as_deref())
+                }
+                _ => return false,
+            };
+            matches!(target, Expr::Name(target) if target.id.as_str() == name)
+                && matches!(value, Some(Expr::Dict(_)))
+                && line_for_range_start(source, stmt.range()) == line
+        })
 }
 
 /// Every binding of a name in one scope, counted per occurrence. `opaque`

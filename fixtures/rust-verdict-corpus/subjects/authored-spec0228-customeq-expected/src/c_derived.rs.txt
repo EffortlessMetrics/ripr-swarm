@@ -1,0 +1,39 @@
+// Another type in the crate has a hand-written eq; DLine does not and embeds nothing that does.
+pub struct Tag(pub String);
+
+impl PartialEq for Tag {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.eq_ignore_ascii_case(&other.0)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DLine {
+    pub sku: String,
+    pub qty: u32,
+}
+
+#[derive(Default)]
+pub struct DOrder {
+    pub lines: Vec<DLine>,
+}
+
+impl DOrder {
+    pub fn add_d(&mut self, sku: &str, qty: u32) {
+        self.lines.push(DLine { sku: sku.to_uppercase(), qty });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn add_records_the_line_c_derived() {
+        let mut order = DOrder::default();
+        let mut expected = DOrder::default();
+        expected.lines.push(DLine { sku: "BOLT".to_string(), qty: 2 });
+        order.add_d("bolt", 2);
+        assert_eq!(order.lines, expected.lines);
+    }
+}
