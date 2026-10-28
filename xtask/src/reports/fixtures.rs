@@ -1581,6 +1581,11 @@ fn transitional_refusal_aliases_apply(
         if old == new {
             return true;
         }
+        // The opening may move, the line's indentation may not.
+        let indent = |line: &str| line.len() - line.trim_start().len();
+        if indent(old) != indent(new) {
+            return false;
+        }
         let (Some(old_body), Some(new_body)) = (
             old.trim_start().strip_prefix(REPAIR_REFUSAL_MARKER),
             new.trim_start().strip_prefix(REPAIR_REFUSAL_MARKER),
@@ -3739,6 +3744,12 @@ mod tests {
                     return Err(format!("`{key}` must reject the other new opening"));
                 }
             }
+        }
+        let reindented = gripped.replace("  no repair start", "    no repair start");
+        if reindented == gripped
+            || transitional_refusal_aliases_apply("match_arm_blind", "human.txt", &old, &reindented)
+        {
+            return Err("an indentation change must not pass the alias".to_string());
         }
         if transitional_refusal_aliases_apply("match_arm_blind", "check.json", &old, &gripped) {
             return Err("an unlisted surface stays strict".to_string());
