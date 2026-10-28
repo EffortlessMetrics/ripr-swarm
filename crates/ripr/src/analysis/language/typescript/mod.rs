@@ -504,6 +504,25 @@ impl TypeScriptAdapter {
         // mapping (#4551) are memoized for this run only (#4638 and #4800
         // reviews); the scope drops the cache when the run returns.
         let _directory_modules = DirectoryModuleCacheScope::open();
+        // A diff that changes nothing this adapter would analyze needs no
+        // workspace index, and the workspace-wide limitations below describe
+        // files the diff never consulted. Return the empty complete result
+        // before the walk instead of parsing every file for no finding.
+        if !diff_needs_typescript_workspace(changed_files, handwritten) {
+            return Ok(LanguageDiffResult {
+                value_origins: Default::default(),
+                findings: Vec::new(),
+                harness_projections: Vec::new(),
+                changed_files: 0,
+                candidate_line_count: 0,
+                changed_files_by_language: Vec::new(),
+                partial_scope: None,
+                skipped_files: 0,
+                limitations: Vec::new(),
+                rust_diagnostic_origins: Default::default(),
+                rust_consumed_sources: Default::default(),
+            });
+        }
         // Phase 1: discover and index every accepted file in the workspace
         // so we can find related tests for any owner regardless of whether
         // the test file itself changed in this diff.
@@ -1546,6 +1565,27 @@ impl TypeScriptAdapter {
             preview_fact_cache: fact_cache_stats,
         })
     }
+}
+
+/// Whether any changed file reaches Phase 2: a TypeScript/JavaScript file the
+/// loop below counts (accepted, not generated, not in an excluded directory
+/// unless declared hand-written), or a Rust file a Bun bridge profile reads
+/// against the TypeScript test index. Mirrors that loop's own skip conditions
+/// so the early return cannot hide a file the loop would have analyzed.
+fn diff_needs_typescript_workspace(changed_files: &[ChangedFile], handwritten: &[String]) -> bool {
+    changed_files.iter().any(|changed| {
+        let normalized = normalized_path(&changed.path);
+        let bridge_file = BUN_RUST_CROSS_LANGUAGE_BRIDGE_PROFILES
+            .iter()
+            .any(|profile| normalized == profile.rust_file);
+        let excluded = is_detectable_generated_typescript_path(&changed.path)
+            || (is_detectable_excluded_typescript_path(&changed.path)
+                && !crate::config::is_declared_handwritten_typescript_path(
+                    handwritten,
+                    &changed.path,
+                ));
+        bridge_file || (TypeScriptAdapter.accepts_path(&changed.path) && !excluded)
+    })
 }
 
 /// Recovery for partial test extraction. Re-running cannot change the

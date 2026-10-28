@@ -9142,6 +9142,8 @@ fn observed_evidence_label(related: &[RelatedTest]) -> &'static str {
     }
 }
 
+/// Describe the missing static relation without inferring that no test exists.
+/// The ordinary-owner fallback has no specific import-resolution failure cause.
 pub(crate) fn no_static_path_missing(owner: &TypeScriptOwner) -> String {
     match owner.owner_kind {
         OwnerKind::Method => format!(
@@ -9157,7 +9159,7 @@ pub(crate) fn no_static_path_missing(owner: &TypeScriptOwner) -> String {
             owner.name
         ),
         _ => format!(
-            "No test references `{}(` — add a test that calls the changed owner.",
+            "No statically linked test call to `{}(` was established; inspect existing test calls and their import/export paths.",
             owner.name
         ),
     }
@@ -9177,13 +9179,13 @@ pub(crate) fn no_static_path_recommendation(owner: &TypeScriptOwner) -> String {
         _ => {
             // #10708: NoStaticPath establishes no statically linked test
             // call, not the universal absence of a test, so the wording
-            // names the honest ordered route: add a relevant test/call and
-            // assertion, run the project's native verifier, then refresh.
+            // first asks for inspection of existing calls and imports. Add
+            // a relevant test only if needed, then verify and refresh.
             // No exact test file or verify command is named: neither is
             // evidenced for an owner with no static link. Repair readiness
             // stays suppressed on the finding itself.
             format!(
-                "TypeScript preview advisory: no statically linked test calls `{}(`; add a test that calls the changed owner and asserts the changed behavior with `toBe` / `toEqual`, run the project's native test command, then rerun `ripr check` to refresh the finding.",
+                "TypeScript preview advisory: no statically linked test calls `{}(`; inspect existing test calls and their import/export paths; if no suitable test exists, add a test that calls the changed owner and asserts the changed behavior with `toBe` / `toEqual`. Then run the project's native test command and rerun `ripr check` to refresh the finding.",
                 owner.name
             )
         }

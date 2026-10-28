@@ -978,11 +978,11 @@ fn packet_closed_preview_safe_action(finding: &Finding, why_not_actionable: &str
         .language
         .map_or("preview-language", LanguageId::display_name);
     let manual_step = match finding.class {
-        ExposureClass::NoStaticPath => "add a test that calls it by hand",
-        // An unknown class is a visibility limit (for example the Bun bridge's
-        // cross-language gap), not a known weak test: ask for the same check
-        // the Python static-limit line names, not a test edit.
-        ExposureClass::StaticUnknown
+        // A missing static path or unknown class is a visibility limit, not
+        // proof that a test is absent or weak. Inspect existing observations
+        // before prescribing a test edit; readiness remains unchanged.
+        ExposureClass::NoStaticPath
+        | ExposureClass::StaticUnknown
         | ExposureClass::InfectionUnknown
         | ExposureClass::PropagationUnknown => "check by hand whether a test observes this change",
         _ => "add or strengthen a test by hand",

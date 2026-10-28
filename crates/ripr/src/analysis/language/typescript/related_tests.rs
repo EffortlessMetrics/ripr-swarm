@@ -53,6 +53,10 @@ pub(crate) struct ReExportIndex {
     local_exports: HashMap<String, HashSet<String>>,
     /// Normalized module paths of every workspace file seen by the index.
     modules: HashSet<String>,
+    /// Modules whose export facts were actually available. Missing, refused,
+    /// or unparsable sources cannot establish the absence of a competing star
+    /// export. Kept separate from discovery, which still owns path precedence.
+    indexed_modules: HashSet<String>,
     /// Extension stripping can collapse distinct real files. General owner
     /// discovery keeps its existing behavior; strict enum identity refuses.
     ambiguous_enum_modules: HashSet<String>,
@@ -121,6 +125,7 @@ impl ReExportIndex {
             index.modules.insert(module.clone());
             index.local_exports.entry(module).or_default().insert(name);
         }
+        index.indexed_modules = index.modules.clone();
         index
     }
 
@@ -158,6 +163,7 @@ impl ReExportIndex {
             .iter()
             .map(|file| normalized_module_path(file))
             .collect();
+        let mut indexed_modules = modules.clone();
         let mut module_files = HashMap::new();
         let mut ambiguous_enum_modules = HashSet::new();
         for file in workspace_files {
@@ -171,10 +177,13 @@ impl ReExportIndex {
             }
         }
         for relative in workspace_files {
+            let module = normalized_module_path(relative);
             if is_test(relative) {
+                indexed_modules.remove(&module);
                 continue;
             }
             let Some(source) = sources.get(relative) else {
+                indexed_modules.remove(&module);
                 continue;
             };
             // Per-file facts come from the content-keyed combined cache
@@ -188,6 +197,7 @@ impl ReExportIndex {
                 workspace_root,
                 alias_map,
             ) else {
+                indexed_modules.remove(&module);
                 continue;
             };
             for (key, value) in file_facts.entries {
@@ -197,7 +207,6 @@ impl ReExportIndex {
             for (key, target) in file_facts.namespace_exports {
                 namespace_exports.entry(key).or_insert(target);
             }
-            let module = normalized_module_path(relative);
             for (name, members) in file_facts.enum_bindings {
                 enum_bindings.insert((module.clone(), name), members);
             }
@@ -221,6 +230,7 @@ impl ReExportIndex {
             namespace_exports,
             local_exports,
             modules,
+            indexed_modules,
             ambiguous_enum_modules,
             enum_bindings,
             enum_imports,
@@ -584,6 +594,11 @@ impl ReExportIndex {
         enum_context: Option<&EnumBindingContext<'_>>,
     ) -> ExportResolution {
         let module = self.canonical_module(module);
+        if !self.indexed_modules.contains(&module) {
+            // Unknown is contagious across star siblings; NotFound would
+            // falsely make a known sibling's binding unique on a partial index.
+            return ExportResolution::Unknown;
+        }
         if mocked(&module)
             || (enum_context.is_some() && self.ambiguous_enum_modules.contains(&module))
             || (enum_context.is_some_and(|context| context.check_stability)

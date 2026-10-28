@@ -1,0 +1,7 @@
+# Registers the no-analyzable-file early return of the TypeScript diff adapter (#10931) under RIPR-SPEC-0085.
+[[extend]]
+id = "RIPR-SPEC-0085"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/tests.rs::diff_without_analyzable_files_skips_the_workspace",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::diff_needs_workspace_for_every_file_the_loop_would_analyze",
+]

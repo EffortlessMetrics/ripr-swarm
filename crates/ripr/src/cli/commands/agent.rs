@@ -444,6 +444,29 @@ fn write_agent_start_with_report(
             AgentBriefPolicy::from_config(config),
         ));
     }
+    // The shared repair-admission gate decides every other start: a seam
+    // `ripr repair` and `agent card` report as not repair-ready must not
+    // write a workflow either (#10712).
+    if let Some(entry) = report
+        .classified
+        .iter()
+        .find(|entry| entry.seam.id().as_str() == options.seam_id)
+        && let Some(refusal) = app::task_first::repair_start_refusal_for_entry(
+            &options.root,
+            entry,
+            AgentBriefPolicy::from_config(config),
+        )
+    {
+        let reason = refusal.reason;
+        return Err(CoreError::seam_not_actionable(format!(
+            "agent start seam_id {} is not repair-eligible: {reason}; no workflow starts. Inspect it with `ripr agent packet --root {} --seam-id {} --json`.",
+            options.seam_id,
+            crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(
+                &options.root.to_string_lossy()
+            )),
+            crate::agent::loop_commands::shell_arg(&options.seam_id)
+        )));
+    }
     add_agent_brief_provenance_warning(&input.root, &mut selection);
 
     let out_dir = resolve_agent_start_out_dir(&input.root, &options.out_dir);

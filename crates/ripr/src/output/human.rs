@@ -4661,12 +4661,14 @@ mod tests {
 
     // #4216 review: an unknown-class closed packet (for example a Bun-bridge
     // cross-language visibility limit: StaticUnknown, no static_limit_kind,
-    // missing fields present) is not a known weak test, so the manual step is
-    // the Python static-limit check, not a test edit. A long validator reason
-    // is bounded; the routing and manual-step parts stay whole.
+    // missing fields present), or a missing static path, is not a known weak
+    // test. The manual step is the Python static-limit check, not a test edit.
+    // A long validator reason is bounded; the routing and manual-step parts
+    // stay whole.
     #[test]
-    fn preview_limited_closed_packet_unknown_class_asks_for_manual_check() {
+    fn preview_limited_closed_packet_missing_path_or_unknown_class_asks_for_manual_check() {
         for class in [
+            ExposureClass::NoStaticPath,
             ExposureClass::StaticUnknown,
             ExposureClass::InfectionUnknown,
             ExposureClass::PropagationUnknown,
