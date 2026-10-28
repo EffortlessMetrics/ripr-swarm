@@ -121,11 +121,20 @@ cause.
   reading would leave no other gap, so a gap that holds in both macro worlds
   can read `static_unknown`.
 
+## Acceptance Examples
+
+- `Widget::read` mutated `4` to `5` with `--mode ready`: `static_unknown` with
+  `rust_inherent_receiver_unestablished`; with `Other::new().read()`, a gap.
+
 ## Static limit row
 
 | `static_limit_kind` | Meaning |
 | --- | --- |
 | `rust_inherent_receiver_unestablished` | A related test calls the changed inherent method inside a standard assertion and the receiver resolves if that macro is the standard one, but the macro binding cannot be verified because target-root placement is unavailable. The gap is withheld. |
+
+## Test Mapping
+
+See `.ripr/traceability.toml`.
 
 ## Fail-closed statement
 
