@@ -61,6 +61,7 @@
 //! printed, so default stdout JSON and default stderr are unchanged.
 
 use serde::{Deserialize, Serialize};
+use std::cell::RefCell;
 use std::time::Duration;
 
 /// The opt-in stderr trace switch this module owns. Presence enables
@@ -109,9 +110,52 @@ pub(crate) fn latency_trace_enabled() -> bool {
 /// Emit one wall-clock phase line. The single owner of that line shape for
 /// every analysis phase, so a new phase cannot invent a parallel spelling.
 pub(crate) fn trace_latency_phase(phase: &str, status: &str, duration: Duration) {
+    record_latency_phase(phase, status, duration);
     if latency_trace_enabled() {
         eprintln!("{}", latency_trace_line(phase, status, duration));
     }
+}
+
+/// One phase reported through [`trace_latency_phase`] while a recorder was
+/// installed on the reporting thread.
+#[derive(Clone, Debug)]
+pub(crate) struct RecordedLatencyPhase {
+    pub(crate) phase: String,
+    pub(crate) status: String,
+    pub(crate) duration: Duration,
+}
+
+thread_local! {
+    static PHASE_RECORDER: RefCell<Option<Vec<RecordedLatencyPhase>>> =
+        const { RefCell::new(None) };
+}
+
+fn record_latency_phase(phase: &str, status: &str, duration: Duration) {
+    PHASE_RECORDER.with(|recorder| {
+        if let Ok(mut slot) = recorder.try_borrow_mut()
+            && let Some(phases) = slot.as_mut()
+        {
+            phases.push(RecordedLatencyPhase {
+                phase: phase.to_string(),
+                status: status.to_string(),
+                duration,
+            });
+        }
+    });
+}
+
+/// Run `work` and return the phases it reported on this thread. A consumer
+/// such as `ripr pilot -v` reads the existing phase reports instead of
+/// adding a parallel timer beside each one. The recorder is thread-local and
+/// restored afterwards, so work on other threads is not seen and a nested
+/// call keeps the outer recording intact.
+pub(crate) fn record_latency_phases<T>(work: impl FnOnce() -> T) -> (T, Vec<RecordedLatencyPhase>) {
+    let outer = PHASE_RECORDER.with(|recorder| recorder.replace(Some(Vec::new())));
+    let result = work();
+    let recorded = PHASE_RECORDER
+        .with(|recorder| recorder.replace(outer))
+        .unwrap_or_default();
+    (result, recorded)
 }
 
 /// The wall-clock phase line, named by callers that only render it. Crate
@@ -554,9 +598,36 @@ mod tests {
         RESOURCE_COST_SCHEMA_VERSION, ResourceCostObservation, ResourceMeasurement,
         ResourceUnavailableReason, latency_trace_line, observe_cpu_cost,
         observe_peak_resident_bytes, parse_cpu_source_ticks, parse_peak_resident_source_bytes,
-        parse_resource_cost_receipt, receipt_serialization_failed_body, source_to_ms,
+        parse_resource_cost_receipt, receipt_serialization_failed_body, record_latency_phases,
+        source_to_ms, trace_latency_phase,
     };
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn recorded_phases_capture_this_threads_reports_and_nothing_else() {
+        let (value, outer) = record_latency_phases(|| {
+            trace_latency_phase("outer", "ok", Duration::from_millis(3));
+            let ((), inner) = record_latency_phases(|| {
+                trace_latency_phase("inner", "ok", Duration::from_millis(4));
+            });
+            assert_eq!(inner.len(), 1);
+            assert_eq!(inner[0].phase, "inner");
+            let other_thread = std::thread::spawn(|| {
+                trace_latency_phase("other_thread", "ok", Duration::ZERO);
+            });
+            let _ignored = other_thread.join();
+            trace_latency_phase("outer_again", "start", Duration::ZERO);
+            7
+        });
+        assert_eq!(value, 7);
+        let names: Vec<&str> = outer.iter().map(|row| row.phase.as_str()).collect();
+        assert_eq!(names, ["outer", "outer_again"]);
+        assert_eq!(outer[0].duration, Duration::from_millis(3));
+        // Outside a recording nothing accumulates.
+        trace_latency_phase("after", "ok", Duration::ZERO);
+        let ((), empty) = record_latency_phases(|| ());
+        assert!(empty.is_empty());
+    }
 
     #[test]
     fn receipt_prefix_carries_only_a_valid_token() {
