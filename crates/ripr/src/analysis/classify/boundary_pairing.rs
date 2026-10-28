@@ -155,6 +155,7 @@ pub(in crate::analysis) fn has_same_test_boundary_oracle_pairing(
                 assertion_admitted,
                 owner_pinned,
                 helper_loan,
+                index,
             )
         });
     }
@@ -187,7 +188,7 @@ pub(in crate::analysis) fn has_same_test_boundary_oracle_pairing(
             assertion_admitted,
             owner_pinned,
             helper_loan,
-            super::argument_fold::FoldScope::of_test(test, index),
+            index,
         )
     })
 }
@@ -206,9 +207,12 @@ fn test_pairs_boundary_input_with_oracle(
     assertion_admitted: &dyn Fn(&TestSummary, &OracleFact) -> bool,
     owner_pinned: &dyn Fn(&TestSummary, &OracleFact) -> bool,
     helper_loan: &dyn Fn(&TestSummary, &OracleFact) -> Option<HelperLoan>,
-    scope: super::argument_fold::FoldScope<'_>,
+    index: &RustIndex,
 ) -> bool {
-    let bound_names = boundary_bound_locals(probe, owner, test, activation, scope);
+    let scope = super::argument_fold::FoldScope::of_test(test, index);
+    let calls_resolve =
+        |text: &str| super::call_identity::boundary_owner_calls_resolve(index, owner, test, text);
+    let bound_names = boundary_bound_locals(probe, owner, test, activation, scope, &calls_resolve);
     // Computed at most once per test, and only when the entry path is live.
     let own_rows: std::cell::OnceCell<ActivationEvidence> = std::cell::OnceCell::new();
     test.assertions.iter().any(|assertion| {
@@ -243,9 +247,10 @@ fn test_pairs_boundary_input_with_oracle(
         }
         let operands = crate::analysis::extract::assertion_oracle_text(&assertion.text)
             .unwrap_or_else(|| assertion.text.clone());
-        assertion_observes_boundary_owner_call(
-            probe, owner, test, assertion, &operands, activation, scope,
-        )
+        (calls_resolve(&operands)
+            && assertion_observes_boundary_owner_call(
+                probe, owner, test, assertion, &operands, activation, scope,
+            ))
             || assertion_observes_bound_name(&operands, &bound_names)
             // The wrapper entry path keeps the strict discriminating-oracle
             // rule: the owner-return pin judges the owner's own call, never
@@ -505,6 +510,7 @@ fn test_pairs_boundary_element(
     assertion_admitted: &dyn Fn(&TestSummary, &OracleFact) -> bool,
     owner_pinned: &dyn Fn(&TestSummary, &OracleFact) -> bool,
     helper_loan: &dyn Fn(&TestSummary, &OracleFact) -> Option<HelperLoan>,
+    index: &RustIndex,
 ) -> bool {
     test.assertions.iter().any(|assertion| {
         if !assertion_admitted(test, assertion)
@@ -516,6 +522,10 @@ fn test_pairs_boundary_element(
             return helper_loan(test, assertion).is_some_and(|loan| {
                 loan_pairs_boundary_element(owner, test, &loan, &assertion.text, element)
             });
+        }
+        if !super::call_identity::boundary_owner_calls_resolve(index, owner, test, &assertion.text)
+        {
+            return false;
         }
         whole_owner_call_operands(test, &assertion.text, owner)
             .iter()
@@ -800,6 +810,7 @@ fn boundary_bound_locals(
     test: &TestSummary,
     activation: &ActivationEvidence,
     scope: super::argument_fold::FoldScope<'_>,
+    calls_resolve: &dyn Fn(&str) -> bool,
 ) -> Vec<String> {
     // Last binding of a name wins so `let got = gate(10); let got = gate(100)`
     // does not keep the shadowed boundary result. A post-let mutation
@@ -827,8 +838,13 @@ fn boundary_bound_locals(
                 name: owner.name.clone(),
                 text: original_line.trim().to_string().into(),
             };
-            let is_boundary =
-                owner_call_activates_boundary(probe, owner, test, &call, activation, scope);
+            // Only this binding's initializer supplies its result. An
+            // unrelated sibling call later on the same physical line must
+            // not defeat an otherwise established owner boundary binding.
+            let statement_end = masked_line.find(';').unwrap_or(original_line.len());
+            let binding = original_line.get(..statement_end).unwrap_or(original_line);
+            let is_boundary = calls_resolve(binding)
+                && owner_call_activates_boundary(probe, owner, test, &call, activation, scope);
             if let Some(existing) = last.iter_mut().find(|(tracked, _)| tracked == name) {
                 existing.1 = is_boundary;
             } else {

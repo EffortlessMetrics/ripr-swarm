@@ -82,6 +82,22 @@ constant or helper hop stays paired. A same-test mix that calls the boundary
 without asserting and asserts a far call (`let _ = gate(10); assert_eq!(gate(100),
 true)`) does not pair.
 
+Pairing also retains the individual call's definition identity. A test that
+discards `a::gate(10)`, asserts `a::gate(11)` and asserts `b::gate(10)` does
+not establish a discriminator for `a::gate`. The same restriction applies
+when the sibling result is let-bound or the test imports the sibling and
+calls it by its bare name. Coarse test reach is not assertion-call identity.
+Qualified calls reuse activation's owner resolver; bare calls with indexed
+same-named rivals must resolve to the changed definition. Unsettled bindings
+remain unconfirmed, including a function-local relative import the bounded
+resolver cannot place (`use a::gate`). A crate-anchored import
+(`use crate::a::gate`) and direct or let-bound owner-qualified calls retain
+their existing credit. These restrictions do not replace helper or wrapper
+pairing with a new owner-return-pin requirement.
+The same identity rule applies to inline adaptor-element oracles. A let-bound
+owner call keeps its identity when an unrelated sibling call follows its
+initializer statement on the same physical line.
+
 An owner-call argument is a boundary input only when it is the literal itself
 (including a type suffix such as `10u32`), a named local bound to that literal,
 or a form infection already recorded as `==` the boundary. An expression that
@@ -282,6 +298,9 @@ relation are out of scope.
 
 ## Test Mapping
 
+- `crates/ripr/tests/owner_pin_execution/boundary_call_identity.rs`
+- `fixtures/boundary_pairing_sibling_owner`
+- `fixtures/boundary_pairing_sibling_element`
 - `crates/ripr/src/analysis/classify/boundary_pairing.rs`
 - `crates/ripr/src/analysis/classify/owner_pin/tests/helper_pins.rs::the_loan_maps_only_plain_parameters_and_lone_eager_calls`
 - `fixtures/split_test_boundary_oracle`
@@ -302,6 +321,8 @@ relation are out of scope.
 
 ## Implementation Mapping
 
+- `crates/ripr/src/analysis/classify/call_identity.rs`: shared definition
+  identity used by direct and let-bound boundary-call pairing.
 - `crates/ripr/src/analysis/classify/boundary_pairing.rs`: pairing authority,
   including `loan_pairs_boundary_call` for borrowed check-helper assertions.
 - `crates/ripr/src/analysis/classify/helper_transfer.rs`: the hop forwarding

@@ -1,0 +1,14 @@
+{
+  "id": "rust_boundary_pairing_sibling_owner",
+  "language": "rust",
+  "tier": "pure",
+  "source_fixture": "fixtures/boundary_pairing_sibling_owner",
+  "vector": "a_sibling_boundary_oracle_cannot_pair_with_the_changed_owners_far_oracle",
+  "probe_family": "predicate",
+  "assertions": [
+    { "type": "expected_finding_count", "count": 1 },
+    { "type": "must_not_report_clean" },
+    { "type": "must_not_promote" },
+    { "type": "expected_class", "class": "weakly_exposed" }
+  ]
+}

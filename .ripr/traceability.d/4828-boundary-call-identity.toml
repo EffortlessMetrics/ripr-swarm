@@ -1,0 +1,10 @@
+# Same-test evidence must retain the boundary call's definition identity.
+[[extend]]
+id = "RIPR-SPEC-0186"
+tests = [
+  "crates/ripr/tests/owner_pin_execution/boundary_call_identity.rs::boundary_pairing_keeps_the_asserted_calls_definition",
+  "crates/ripr/tests/owner_pin_execution/boundary_call_identity.rs::runtime_controls_distinguish_sibling_boundary_oracles",
+  "crates/ripr/tests/owner_pin_execution/boundary_call_identity.rs::element_boundary_pairing_keeps_the_asserted_calls_definition",
+]
+fixtures = ["fixtures/boundary_pairing_sibling_owner", "fixtures/boundary_pairing_sibling_element"]
+code = ["crates/ripr/src/analysis/classify/call_identity.rs"]
