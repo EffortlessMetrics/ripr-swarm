@@ -1041,7 +1041,7 @@ fn the_source_fact_parse_gives_the_foreign_index_the_same_attribute_writes() -> 
         (Path::new("b.py"), "LIMIT = 10\nRATE = {\"x\": 1}\n"),
         (
             Path::new("tests/test_b.py"),
-            "import b\n\n\ndef check(value):\n    assert value == 3\n\n\ndef test_limit():\n    b.RATE = 3\n    check(b.RATE)\n",
+            "import b\n\nb.RATE = 3\n\n\ndef check(value):\n    assert value == 3\n\n\ndef test_limit():\n    check(3)\n",
         ),
         (Path::new("broken.py"), "def (:\n"),
     ];
@@ -1061,6 +1061,25 @@ fn the_source_fact_parse_gives_the_foreign_index_the_same_attribute_writes() -> 
         .ok_or("a.py parses")?;
     if !a_writes.iter().any(|name| name == "LIMIT") {
         return Err(format!("a.py assigns LIMIT: {a_writes:?}"));
+    }
+    // The test file takes the helper-inlining branch, and its writes still
+    // come from the file as written.
+    let test_file = Path::new("tests/test_b.py");
+    let test_source = sources
+        .iter()
+        .find(|(file, _)| *file == test_file)
+        .map(|(_, source)| *source)
+        .ok_or("test file fixture")?;
+    let Ok(rustpython_parser::ast::Mod::Module(test_module)) =
+        super::source_facts::parse_module_result(test_file, test_source)
+    else {
+        return Err("test file parses".to_string());
+    };
+    if super::helper_inline::inline_test_helpers(test_source, &test_module.body).is_none() {
+        return Err("the test file's helper call is inlined".to_string());
+    }
+    if assigned.get(test_file) != Some(&Some(vec!["RATE".to_string()])) {
+        return Err(format!("test file assigns RATE: {assigned:?}"));
     }
     if assigned.get(Path::new("broken.py")) != Some(&None) {
         return Err(format!("broken.py does not parse: {assigned:?}"));

@@ -542,10 +542,9 @@ fn scan_source<'a>(
         || source.contains("sys.modules")
         || (file.file_name().is_some_and(|name| name == "__init__.py")
             && mentions_identifier(source, "__all__"));
-    let assigned = match parsed_assigned {
-        Some(assigned) => assigned.clone(),
-        None => assigned_attributes(source),
-    };
+    let assigned = parsed_assigned
+        .cloned()
+        .unwrap_or_else(|| assigned_attributes(source));
     let dynamic = assigned.is_none()
         || DYNAMIC_WRITERS
             .iter()
