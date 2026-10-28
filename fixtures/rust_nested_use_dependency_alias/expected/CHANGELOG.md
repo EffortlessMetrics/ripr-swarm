@@ -63,3 +63,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_nested_use_dependency_alias (6)
+
+Reason:
+RIPR-SPEC-0197: adopt current-main plain human wording from #10886; JSON, input identity, infection evidence, exact activation rows and static_unknown classifications remain unchanged. Preserve the separately tracked inherited #10604 limitation.
+
+Command:
+`cargo xtask goldens bless rust_nested_use_dependency_alias --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
