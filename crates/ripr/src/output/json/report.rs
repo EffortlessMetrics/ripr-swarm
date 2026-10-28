@@ -1,8 +1,8 @@
 use crate::app::CheckOutput;
 use crate::config::RiprConfig;
 use crate::domain::{
-    Finding, FindingCanonicalGap, FlowSinkFact, MissingDiscriminatorFact, ProbeFamily, RelatedTest,
-    StageEvidence, ValueFact,
+    Finding, FindingCanonicalGap, FlowSinkFact, LanguageId, MissingDiscriminatorFact, ProbeFamily,
+    RelatedTest, StageEvidence, ValueFact,
 };
 use crate::output::agent_seam_packets::{
     AGENT_SEAM_PACKET_SCHEMA_VERSION, allowed_edit_surface_for_gap_route,
@@ -846,7 +846,8 @@ fn finding_json_with_config_and_counts(
             true,
         );
         canonical_gap_json(out, gap, indent + 1, true);
-    } else if finding.id.starts_with("probe:")
+    } else if finding.language == Some(LanguageId::TypeScript)
+        && finding.id.starts_with("probe:")
         && finding.id.contains(":typescript_preview:")
         && typescript_preview_card(finding).is_some()
     {

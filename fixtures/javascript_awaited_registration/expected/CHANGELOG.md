@@ -193,15 +193,3 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
-
-## Pending — javascript_awaited_registration (17)
-
-Reason:
-RIPR-SPEC-0088: TypeScript preview check JSON states top-level canonical_gap_id (#10709)
-
-Command:
-`cargo xtask goldens bless javascript_awaited_registration --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`

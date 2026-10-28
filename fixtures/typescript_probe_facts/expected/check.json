@@ -395,7 +395,6 @@
     },
     {
       "id": "probe:src_notify.js:typescript_preview:2f0e6fff",
-      "canonical_gap_id": "gap:typescript:typescript_preview:2f0e6fff",
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.40,
@@ -1084,7 +1083,6 @@
     },
     {
       "id": "probe:src_view.jsx:typescript_preview:48669bf1",
-      "canonical_gap_id": "gap:typescript:typescript_preview:48669bf1",
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.40,

@@ -2103,6 +2103,16 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(&out)
             .map_err(|err| format!("finding JSON parse failed: {err}"))?;
         assert!(value.get("canonical_gap_id").is_none());
+
+        // JavaScript shares the preview card and probe family but has no
+        // TypeScript gap identity (#10709 review).
+        let mut js = finding.clone();
+        js.language = Some(LanguageId::JavaScript);
+        let mut out = String::new();
+        finding_json(&mut out, &js, 0);
+        let value: serde_json::Value = serde_json::from_str(&out)
+            .map_err(|err| format!("finding JSON parse failed: {err}"))?;
+        assert!(value.get("canonical_gap_id").is_none());
         Ok(())
     }
 
