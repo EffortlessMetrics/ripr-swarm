@@ -50,6 +50,13 @@ fn is_supported_perl_fact_exporter(name: &str) -> bool {
     )
 }
 
+/// Producer capability promising the oracle grading RIPR-SPEC-0235 rule 16
+/// reads: an assertion that carries a matcher for the raised error
+/// (`throws_ok` with a class or regex, `like(dies {...}, ...)`) is
+/// `strong_exact`, a bare `dies_ok` or value `like` stays `weak_broad`, and an
+/// exception block nested in such an assertion is not a separate oracle.
+const PERL_ORACLE_MATCHER_GRADING: &str = "oracle_matcher_grading";
+
 /// Stable reason marker for a *configured* managed Perl facts producer that
 /// was invoked and failed (#6828). The adapter returns this marked reason so
 /// the pipeline's `perl_run_status_for_err` can map it to
@@ -828,6 +835,15 @@ fn packet_to_findings_with_currentness(
             && !partial_without_change_link
             && !coderef_unresolved
             && packet.observable_declared_absent(&change.change_id);
+        let pinned_error_unresolved = class == ExposureClass::StaticUnknown
+            && !class_blocked
+            && packet.grades_oracle_matchers()
+            && related_evidence.iter().any(|ev| {
+                ev.class == ExposureClass::StaticUnknown
+                    && ev.reachability_hint == ReachabilityHint::Reachable
+                    && ev.oracle_strength == Some(OracleStrength::StrongExact)
+                    && ev.oracle_shape.as_deref() == Some("exception_observer")
+            });
         let broad_oracle_unresolved = class == ExposureClass::StaticUnknown
             && !class_blocked
             && related_evidence.iter().any(|ev| {
@@ -1119,6 +1135,11 @@ fn packet_to_findings_with_currentness(
                 // RIPR-SPEC-0235 rule 18: say why this is unknown instead of
                 // asking for an assertion that may already exist.
                 "The fact producer found no observable for this change, so ripr cannot tell whether a related Perl test's assertion pins it. If an existing assertion checks the changed value, no change is needed; otherwise add one."
+                    .to_string()
+            } else if pinned_error_unresolved {
+                // RIPR-SPEC-0235 rule 16: the assertion pins the raised error,
+                // and static facts do not say whether it pins the boundary.
+                "A related Perl test asserts the error this code raises through a class or message matcher, so ripr cannot tell whether it pins the changed boundary. If it fails when the boundary moves, no change is needed; otherwise add a case on each side of it."
                     .to_string()
             } else if is_already_observed {
                 // H2: the change is already discriminated by an existing test.
@@ -1945,6 +1966,13 @@ impl PerlFactPacket {
         })
     }
 
+    fn grades_oracle_matchers(&self) -> bool {
+        self.producer
+            .capabilities
+            .iter()
+            .any(|capability| capability == PERL_ORACLE_MATCHER_GRADING)
+    }
+
     fn observable_declared_absent(&self, change_id: &str) -> bool {
         self.change(change_id).is_some_and(|change| {
             change.changed_observable.declared_absent()
@@ -1972,7 +2000,13 @@ impl PerlFactPacket {
         let bound = oracle.test_id == relation.test_id
             && oracle.target_owner_id.as_deref() == Some(relation.owner_id.as_str());
         if bound && oracle.is_strong_exact() {
-            if self.observable_declared_absent(&relation.change_id) {
+            if self.grades_oracle_matchers() && oracle.kind == OracleKind::ExceptionObserver {
+                // RIPR-SPEC-0235 rule 16: the producer graded this exception
+                // assertion strong because it carries a matcher for the
+                // error. That pins that an error is raised, not which
+                // boundary raises it, so a gap would be as wrong as right.
+                ExposureClass::StaticUnknown
+            } else if self.observable_declared_absent(&relation.change_id) {
                 // RIPR-SPEC-0235 rule 18: the producer found no changed
                 // observable, so there is nothing for the oracle's sink to
                 // align to and ripr cannot tell whether the strong oracle
@@ -1984,11 +2018,13 @@ impl PerlFactPacket {
             }
         } else if bound
             && oracle.is_broad_unresolved()
+            && !self.grades_oracle_matchers()
             && relation.relation_kind.supports_weak_oracle_credit()
         {
-            // RIPR-SPEC-0235 rule 16 (#6582): the producer grades `throws_ok`,
-            // `dies_ok` and `like(dies {...}, ...)` alike as `weak_broad`, so a
-            // gap here is as likely wrong as right. Unknown, not a gap.
+            // RIPR-SPEC-0235 rule 16 (#6582): without matcher grading the
+            // producer grades `throws_ok`, `dies_ok` and `like(dies {...}, ...)`
+            // alike as `weak_broad`, so a gap here is as likely wrong as
+            // right. Unknown, not a gap.
             ExposureClass::StaticUnknown
         } else {
             ExposureClass::ReachableUnrevealed
@@ -3478,6 +3514,12 @@ fn sink_aligned_observation(
         }
         // Strong-exact oracle targeting the changed owner.
         if !oracle.is_strong_exact() {
+            continue;
+        }
+        // RIPR-SPEC-0235 rule 16 matcher grading: a graded exception
+        // assertion pins that an error is raised, not which boundary raises
+        // it, so equal sink text never establishes observation.
+        if packet.grades_oracle_matchers() && oracle.kind == OracleKind::ExceptionObserver {
             continue;
         }
         if oracle.target_owner_id.as_deref() != Some(change.owner_id.as_str()) {
