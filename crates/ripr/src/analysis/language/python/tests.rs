@@ -10696,3 +10696,37 @@ fn match_case_capture_of_the_receiver_counts_as_a_binding_target() {
         assert!(!binds_in_target_list(body, "r"), "{body:?}");
     }
 }
+
+#[test]
+fn literal_unicode_index_must_observe_changed_character() -> Result<(), String> {
+    for (old, new, assertion, expected_exposed) in [
+        ("a😀", "b😀", "f(7)[1] == '😀'", false),
+        ("ae\u{301}", "be\u{301}", "f(7)[2] == '\u{301}'", false),
+        ("a😀", "b😀", "f(7)[-1] == '😀'", false),
+        ("a😀", "b😀", "f(7)[0] == 'b'", true),
+        ("é", "😀", "f(7)[0] == '😀'", true),
+    ] {
+        let source = format!("def f(x):\n    return \"{new}\"\n");
+        let old_line = format!("    return \"{old}\"");
+        let new_line = format!("    return \"{new}\"");
+        let test_source =
+            format!("from src.app import f\n\ndef test_f():\n    assert {assertion}\n");
+        let owners = extract_owners(Path::new("src/app.py"), &source);
+        let tests = extract_tests(Path::new("tests/test_app.py"), &test_source);
+        let finding = classify_change_with_old(
+            Path::new("src/app.py"),
+            2,
+            &new_line,
+            Some(&old_line),
+            &owners,
+            &tests,
+        )
+        .ok_or("expected finding")?;
+        assert_eq!(
+            finding.class == ExposureClass::Exposed,
+            expected_exposed,
+            "{old:?} -> {new:?}: {assertion}"
+        );
+    }
+    Ok(())
+}

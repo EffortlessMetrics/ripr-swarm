@@ -659,6 +659,92 @@ pub(super) fn fstring_change_is_length_invariant(old_line: &str, new_line: &str)
     }
 }
 
+/// Withhold credit for a literal index that reads the same character from
+/// both versions of a one-return literal string function. Other forms keep
+/// their existing classification; this gate does not evaluate arbitrary code.
+fn unchanged_literal_string_index(
+    owner: &PythonOwner,
+    old_line: Option<&str>,
+    new_line: &str,
+    assertion: &str,
+) -> bool {
+    if owner.owner_kind != Some(OwnerKind::Function)
+        || !owner.decorators.is_empty()
+        || owner.end_line != owner.start_line + 1
+    {
+        return false;
+    }
+    let literal = |line: &str| -> Option<String> {
+        let expression =
+            super::approx_band::parse_expression(line.trim().strip_prefix("return ")?)?;
+        let Expr::Constant(value) = expression else {
+            return None;
+        };
+        let ast::Constant::Str(value) = value.value else {
+            return None;
+        };
+        Some(value)
+    };
+    let Some((old, new)) = old_line.and_then(|old| Some((literal(old)?, literal(new_line)?)))
+    else {
+        return false;
+    };
+    let Some(Expr::Compare(compare)) = assertion
+        .trim()
+        .strip_prefix("assert ")
+        .and_then(super::approx_band::parse_expression)
+    else {
+        return false;
+    };
+    if compare.ops.len() != 1 || !matches!(compare.ops[0], ast::CmpOp::Eq) {
+        return false;
+    }
+    let Some(right) = compare.comparators.first() else {
+        return false;
+    };
+    let (subscript, expected) = match (compare.left.as_ref(), right) {
+        (Expr::Subscript(subscript), Expr::Constant(expected))
+        | (Expr::Constant(expected), Expr::Subscript(subscript)) => (subscript, expected),
+        _ => return false,
+    };
+    if !matches!(expected.value, ast::Constant::Str(_)) {
+        return false;
+    }
+    let Expr::Call(call) = subscript.value.as_ref() else {
+        return false;
+    };
+    if !matches!(call.func.as_ref(), Expr::Name(name) if name.id.as_str() == owner.name) {
+        return false;
+    }
+    let integer = |expression: &Expr| -> Option<i128> {
+        let Expr::Constant(value) = expression else {
+            return None;
+        };
+        let ast::Constant::Int(value) = &value.value else {
+            return None;
+        };
+        value.to_string().parse().ok()
+    };
+    let index = match subscript.slice.as_ref() {
+        Expr::UnaryOp(unary) if matches!(unary.op, ast::UnaryOp::USub) => {
+            integer(&unary.operand).and_then(i128::checked_neg)
+        }
+        expression => integer(expression),
+    };
+    let Some(index) = index else { return false };
+    let at = |text: &str| {
+        let chars: Vec<char> = text.chars().collect();
+        let len = i128::try_from(chars.len()).ok()?;
+        let index = if index < 0 {
+            index.checked_add(len)?
+        } else {
+            index
+        };
+        chars.get(usize::try_from(index).ok()?).copied()
+    };
+    matches!((at(&old), at(&new)), (Some(a), Some(b)) if a == b)
+}
+
 /// Whether an oracle observes the owner's output ONLY through a `len(...)` aggregate
 /// — i.e. it calls `len(` and does NOT also observe the output exactly. An oracle
 /// that compares against a string literal, or that contains the changed f-string
@@ -1147,6 +1233,7 @@ pub(super) fn classify_sink_alignment_prepared(
         helper_owner_supported(unit)
             && field_construction_credit_ok(unit)
             && fstring_credit_ok(unit)
+            && !unchanged_literal_string_index(owner, old_line_text, line_text, &unit.text)
             && !expected_computed_through_owner(&unit.text, &owner_reference_tokens)
             && !owner_call_only_inside_opaque_wrapper(&unit.text, &owner_reference_tokens)
             && !assertion_calls_stand_in(unit, owner)

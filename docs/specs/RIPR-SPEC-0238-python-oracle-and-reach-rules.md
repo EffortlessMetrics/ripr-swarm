@@ -593,6 +593,10 @@ same-named call neither supplies nor cancels the refusal. Pinned by the
     A changed element on its own line of a multi-line literal bound by
     `return` or an assignment is judged as the joined enclosing literal, so
     the same rules apply as for a one-line literal.
+    A direct literal-index equality on a one-return literal-string function
+    cannot credit when the indexed Unicode character is present and equal in
+    both versions; negative indices use each string’s character length. Other
+    string assertions and unsupported forms retain their existing treatment.
 11. **The f-string length gate reads the crediting assertion.** For a
     changed f-string whose literal text changed and whose interpolations
     did not, an assertion that is a pure `len(...)` aggregate cannot

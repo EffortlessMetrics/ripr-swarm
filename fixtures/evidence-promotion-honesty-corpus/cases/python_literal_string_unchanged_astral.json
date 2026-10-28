@@ -1,0 +1,23 @@
+{
+  "id": "python_literal_string_unchanged_astral",
+  "language": "python",
+  "tier": "pure",
+  "source_fixture": "fixtures/python_literal_string_unchanged_astral",
+  "vector": "literal_string_index_observes_unchanged_astral_character",
+  "assertions": [
+    {
+      "type": "expected_finding_count",
+      "count": 1
+    },
+    {
+      "type": "expected_class",
+      "class": "weakly_exposed"
+    },
+    {
+      "type": "must_not_promote"
+    },
+    {
+      "type": "must_not_report_clean"
+    }
+  ]
+}
