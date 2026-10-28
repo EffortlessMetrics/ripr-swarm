@@ -505,7 +505,9 @@ justification; do not re-bless a wrong result or merge stale bytes already
 superseded upstream. If CI fails on untouched code, reproduce the exact base and
 route the inherited repair separately.
 
-Read classic protection and active rulesets before diagnosing a blocked merge:
+Use PR checks and review decisions to diagnose a blocked merge first. If the
+cause remains unclear, available classic protection and active ruleset reads can
+provide further evidence:
 
 ```bash
 gh api repos/EffortlessMetrics/ripr-swarm/branches/main/protection/required_pull_request_reviews
