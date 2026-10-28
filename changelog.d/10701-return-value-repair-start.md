@@ -6,10 +6,15 @@
   When no safe start exists, the refusal names the manual `ripr agent stub`
   route (#10701).
   The start is withheld, with the same plain reason, for a related `#[ignore]`
-  or `#[should_panic]` test, a changed struct literal, a returned type with a
-  non-plain `Drop` (including `Self`, an unresolved type alias, or a workspace
-  holding a macro, `extern crate` or outside-crate item), an equality or
-  closed-range comparison of the owner call or a value derived from it through
-  `let` bindings, and an exact error-variant assertion for another variant.
+  or `#[should_panic]` test, a changed struct literal, a returned type that may
+  have a non-plain `Drop` (followed through `Self`, `use .. as` renames and
+  workspace struct, enum or union fields; an unresolved type alias, a generic
+  return type, or a workspace holding a macro, `extern crate` or
+  outside-crate item also withholds), a test that compares the owner call, or
+  a local bound from it through `let` or a tuple destructure, with `==`,
+  `.eq(`, `!(.. != ..)` or a closed `>= .. && .. <=` range, and an exact
+  error-variant assertion naming a different variant. A bool local
+  (`let ok = v == 6; assert!(ok)`), an open range (`v > 5 && v < 7`) and
+  `(6..=6).contains(&v)` are not recognized as pins and still start.
   `ripr repair <seam>` does not apply the finding-level static-limited verdict
   that `ripr check` uses; it relies on the seam-level evidence and these gates.

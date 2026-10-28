@@ -748,5 +748,91 @@ fn contradicted_error_variant_assertion_is_not_a_repair_start() -> Result<(), St
         PARSE_NEW,
         "use ar::{parse, E};\n\n#[test]\nfn t() {\n    assert!(parse(-1).is_err());\n    assert!(matches!(parse(-1), Err(E::A)));\n}\n",
     )?;
+    // A variant whose name only starts with the new one (`AB` for `A`) is
+    // still another variant: one extra letter flips the outcome.
+    let prefixed = |old: &str, new: &str| {
+        let lib = |variant: &str| {
+            format!(
+                "pub enum E {{\n    A,\n    AB,\n}}\n\npub fn parse(_x: i32) -> Result<i32, E> {{\n    Err(E::{variant})\n}}\n"
+            )
+        };
+        (lib(old), lib(new))
+    };
+    let (old, new) = prefixed("AB", "A");
+    assert_no_start(
+        "prefix-collision",
+        &old,
+        &new,
+        "use ar::{parse, E};\n\n#[test]\nfn t() {\n    assert!(parse(-1).is_err());\n    assert!(matches!(parse(-1), Err(E::AB)));\n}\n",
+    )?;
+    assert_repair_ready(
+        "prefix-weak-control",
+        &old,
+        &new,
+        "use ar::parse;\n\n#[test]\nfn t() {\n    assert!(parse(-1).is_err());\n}\n",
+    )?;
+    Ok(())
+}
+
+/// A rename of, a wrapper around, or a generic stand-in for a non-plain `Drop`
+/// type withholds; each differs from a plain-`Drop` (or concrete) twin that
+/// starts by one line.
+#[test]
+fn renamed_wrapped_or_generic_non_plain_drop_is_not_a_repair_start() -> Result<(), String> {
+    let loud = |drop_body: &str, middle: &str, ret: &str, factor: u32| {
+        format!(
+            "pub struct Loud(pub u32);\nimpl Drop for Loud {{\n    fn drop(&mut self) {{{drop_body}}}\n}}\n{middle}fn make(n: u32) -> Loud {{\n    Loud(n)\n}}\npub fn mk(x: u32) -> {ret} {{\n    {body}\n}}\n",
+            body = if ret == "Wrapper" {
+                format!("Wrapper(make(x * {factor}))")
+            } else {
+                format!("make(x * {factor})")
+            }
+        )
+    };
+    let exit = " std::process::exit(0); ";
+    let test = "use ar::mk;\n\n#[test]\nfn t() {\n    assert!(mk(2).0 > 0);\n}\n";
+    let wrapper_test = "use ar::mk;\n\n#[test]\nfn t() {\n    assert!(mk(2).0.0 > 0);\n}\n";
+    let rename = "use crate::Loud as Quiet;\n";
+    let wrapper = "pub struct Wrapper(pub Loud);\n";
+    assert_repair_ready(
+        "rename-plain-twin",
+        &loud("", rename, "Quiet", 2),
+        &loud("", rename, "Quiet", 3),
+        test,
+    )?;
+    assert_no_start(
+        "rename",
+        &loud(exit, rename, "Quiet", 2),
+        &loud(exit, rename, "Quiet", 3),
+        test,
+    )?;
+    assert_repair_ready(
+        "wrapper-plain-twin",
+        &loud("", wrapper, "Wrapper", 2),
+        &loud("", wrapper, "Wrapper", 3),
+        wrapper_test,
+    )?;
+    assert_no_start(
+        "wrapper",
+        &loud(exit, wrapper, "Wrapper", 2),
+        &loud(exit, wrapper, "Wrapper", 3),
+        wrapper_test,
+    )?;
+    let generic = |tail: &str| format!("pub fn mk{tail} {{\n    x + x + x\n}}\n");
+    let old_generic = |tail: &str| format!("pub fn mk{tail} {{\n    x + x\n}}\n");
+    let generic_test = "use ar::mk;\n\n#[test]\nfn t() {\n    assert!(mk(2) > 0);\n}\n";
+    let bound = "<T: std::ops::Add<Output = T> + Copy>(x: T) -> T";
+    assert_repair_ready(
+        "concrete-twin",
+        &old_generic("(x: i32) -> i32"),
+        &generic("(x: i32) -> i32"),
+        generic_test,
+    )?;
+    assert_no_start(
+        "generic-return",
+        &old_generic(bound),
+        &generic(bound),
+        generic_test,
+    )?;
     Ok(())
 }

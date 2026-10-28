@@ -571,7 +571,7 @@ fn return_value_missing_discriminator(
         && related_summaries.iter().any(|test| {
             test.assertions.iter().any(|oracle| {
                 oracle.kind == OracleKind::ExactErrorVariant
-                    && !oracle.text.contains(description.as_str())
+                    && !mentions_path(&oracle.text, description.as_str())
             })
         })
     {
@@ -626,45 +626,220 @@ fn is_should_panic(test: &TestSummary) -> bool {
 }
 
 /// Whether the owner's signature or the changed expression may name a type
-/// with a non-plain `Drop` impl. Fails closed: `Self` is read as the impl's
-/// self type (withheld when the owner's impl is not established), a type alias
-/// is not resolved so it withholds, and a workspace whose sources hold a macro
-/// or an outside-crate item (which may generate a `Drop` impl) calls no type
-/// plain.
+/// with a non-plain `Drop` impl. Fails closed:
+/// - `Self` is read as the impl's self type (withheld when the impl is not
+///   established);
+/// - a type alias is not resolved, so it withholds;
+/// - a `use .. as Name` rename is followed to the original type;
+/// - a workspace struct, enum or union is followed into the types its
+///   definition names, so a wrapper of a non-plain type withholds;
+/// - a return type that is one of the owner's own generic parameters withholds,
+///   since the caller picks the type and the start cannot prove it plain;
+/// - a workspace whose sources hold a macro or an outside-crate item (which
+///   may generate a `Drop` impl) calls no type plain.
+///
+/// A name no workspace source declares is a standard-library type, whose
+/// `Drop` cannot exit the process.
 fn names_non_plain_drop_type(owner: &FunctionSummary, expression: &str, index: &RustIndex) -> bool {
     let body: &str = &owner.body;
     let signature = body.find('{').map_or(body, |open| &body[..open]);
-    format!("{signature}\n{expression}")
-        .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
-        .filter(|word| word.starts_with(|ch: char| ch.is_ascii_uppercase()))
-        .any(|word| {
-            let word = if word == "Self" {
-                match &owner.impl_context {
-                    FunctionImplContext::Impl { self_type } => self_type.as_str(),
-                    _ => return true,
-                }
-            } else {
-                word
-            };
-            type_alias_declared(index, word)
-                || !crate::analysis::classify::drop_is_plain_in_closed_sources(index, word)
-        })
-}
-
-/// Whether some indexed source declares `type <name>` (an alias, a generic
-/// alias or an associated type, any visibility, any whitespace or comments
-/// between the tokens), whose target this check does not resolve.
-fn type_alias_declared(index: &RustIndex, name: &str) -> bool {
-    index
+    if returns_generic_parameter(signature) {
+        return true;
+    }
+    let masked: Vec<String> = index
         .files()
         .iter()
-        .any(|(_, facts)| source_declares_type_alias(&facts.source, name))
+        .map(|(_, facts)| crate::analysis::extract::mask_comments_and_strings(&facts.source))
+        .collect();
+    let uppercase_words = |text: &str| -> Vec<String> {
+        text.split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+            .filter(|word| word.starts_with(|ch: char| ch.is_ascii_uppercase()))
+            .map(str::to_string)
+            .collect()
+    };
+    let mut pending = uppercase_words(&format!("{signature}\n{expression}"));
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    while let Some(word) = pending.pop() {
+        let word = if word == "Self" {
+            match &owner.impl_context {
+                FunctionImplContext::Impl { self_type } => self_type.clone(),
+                _ => return true,
+            }
+        } else {
+            word
+        };
+        if !seen.insert(word.clone()) {
+            continue;
+        }
+        if masked
+            .iter()
+            .any(|source| source_declares_type_alias_masked(source, &word))
+            || !crate::analysis::classify::drop_is_plain_in_closed_sources(index, &word)
+        {
+            return true;
+        }
+        for source in &masked {
+            pending.extend(renamed_from(source, &word));
+            pending.extend(uppercase_words(&type_definition_region(source, &word)));
+        }
+    }
+    false
+}
+
+/// Whether the return type of `signature` (after `->`) names a generic
+/// parameter the function declares (`fn mk<T>(x: T) -> T`).
+fn returns_generic_parameter(signature: &str) -> bool {
+    let word = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let Some(fn_at) = signature.find("fn ") else {
+        return false;
+    };
+    let after = &signature[fn_at + 3..];
+    let Some(rest) = after
+        .find(|ch: char| !word(ch) && !ch.is_whitespace())
+        .map(|at| &after[at..])
+        .filter(|rest| rest.starts_with('<'))
+    else {
+        return false;
+    };
+    // The generics list: split at depth-1 commas, ending at the matching `>`
+    // (a `->` inside a bound does not close it).
+    let mut depth = 0usize;
+    let mut params: Vec<&str> = Vec::new();
+    let mut start = 1;
+    let mut closed = false;
+    let mut previous = ' ';
+    for (offset, ch) in rest.char_indices() {
+        match ch {
+            '<' | '(' | '[' => depth += 1,
+            '>' if previous == '-' => {}
+            '>' | ')' | ']' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    params.push(&rest[start..offset]);
+                    closed = true;
+                    break;
+                }
+            }
+            ',' if depth == 1 => {
+                params.push(&rest[start..offset]);
+                start = offset + 1;
+            }
+            _ => {}
+        }
+        previous = ch;
+    }
+    if !closed {
+        return true;
+    }
+    let names: Vec<&str> = params
+        .iter()
+        .filter_map(|param| {
+            let param = param.trim();
+            let param = param.strip_prefix("const ").unwrap_or(param).trim_start();
+            if param.starts_with('\'') {
+                return None;
+            }
+            param
+                .split(|ch: char| !word(ch))
+                .next()
+                .filter(|name| !name.is_empty())
+        })
+        .collect();
+    let Some(arrow) = signature.rfind("->") else {
+        return false;
+    };
+    let ret = &signature[arrow + 2..];
+    let ret = ret.find(" where").map_or(ret, |at| &ret[..at]);
+    ret.split(|ch: char| !word(ch))
+        .any(|token| names.contains(&token))
+}
+
+/// The names `target` is imported as through `use .. Original as target`.
+fn renamed_from(masked: &str, target: &str) -> Vec<String> {
+    let part = |ch: Option<char>| ch.is_some_and(|ch| ch.is_alphanumeric() || ch == '_');
+    let mut originals = Vec::new();
+    for (at, _) in masked.match_indices(target) {
+        if part(masked[..at].chars().next_back())
+            || part(masked[at + target.len()..].chars().next())
+        {
+            continue;
+        }
+        let before = masked[..at].trim_end();
+        let Some(before) = before.strip_suffix("as") else {
+            continue;
+        };
+        if part(before.chars().next_back()) {
+            continue;
+        }
+        let before = before.trim_end();
+        let start = before
+            .rfind(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+            .map_or(0, |found| found + 1);
+        let original = &before[start..];
+        if !original.is_empty() {
+            originals.push(original.to_string());
+        }
+    }
+    originals
+}
+
+/// The text of the `struct`, `enum` or `union` definition of `name` (from its
+/// name through the closing `}` or the terminating `;`), or empty when the
+/// source defines none.
+fn type_definition_region(masked: &str, name: &str) -> String {
+    let part = |ch: Option<char>| ch.is_some_and(|ch| ch.is_alphanumeric() || ch == '_');
+    for keyword in ["struct", "enum", "union"] {
+        for (at, word) in masked.match_indices(keyword) {
+            let rest = &masked[at + word.len()..];
+            if part(masked[..at].chars().next_back()) || !rest.starts_with(char::is_whitespace) {
+                continue;
+            }
+            let rest = rest.trim_start();
+            let ident: String = rest
+                .chars()
+                .take_while(|ch| ch.is_alphanumeric() || *ch == '_')
+                .collect();
+            if ident != name {
+                continue;
+            }
+            let mut depth = 0usize;
+            let mut region_end = rest.len();
+            for (offset, ch) in rest.char_indices() {
+                match ch {
+                    '(' | '{' | '[' => depth += 1,
+                    ')' | ']' => depth = depth.saturating_sub(1),
+                    '}' => {
+                        depth = depth.saturating_sub(1);
+                        if depth == 0 {
+                            region_end = offset + 1;
+                            break;
+                        }
+                    }
+                    ';' if depth == 0 => {
+                        region_end = offset + 1;
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+            return rest[ident.len()..region_end].to_string();
+        }
+    }
+    String::new()
 }
 
 /// Token-level read of `type <name>`: comments and strings are masked, then a
 /// `type` word followed (after any whitespace) by the identifier `name`.
+#[cfg(test)]
 fn source_declares_type_alias(source: &str, name: &str) -> bool {
-    let masked = crate::analysis::extract::mask_comments_and_strings(source);
+    source_declares_type_alias_masked(
+        &crate::analysis::extract::mask_comments_and_strings(source),
+        name,
+    )
+}
+
+/// [`source_declares_type_alias`] over already-masked source text.
+fn source_declares_type_alias_masked(masked: &str, name: &str) -> bool {
     let part = |ch: char| ch.is_alphanumeric() || ch == '_';
     masked.match_indices("type").any(|(at, word)| {
         let before = masked[..at].chars().next_back();
@@ -786,6 +961,17 @@ fn owner_result_locals(body: &str, owner_name: &str) -> Vec<String> {
             return locals;
         }
     }
+}
+
+/// Whether `text` spells `path` (`E::Bad`, `Bad`) with no identifier
+/// character on either side, so `E::B` is not found in `E::Bad`. A leading
+/// `::` is allowed (`crate::E::B`).
+fn mentions_path(text: &str, path: &str) -> bool {
+    let part = |ch: Option<char>| ch.is_some_and(|ch| ch.is_alphanumeric() || ch == '_');
+    !path.is_empty()
+        && text.match_indices(path).any(|(at, _)| {
+            !part(text[..at].chars().next_back()) && !part(text[at + path.len()..].chars().next())
+        })
 }
 
 /// Whether `operand` mentions `name` as a whole identifier.
@@ -920,6 +1106,18 @@ mod equality_pin_tests {
         ] {
             assert!(!pins(weak), "{weak}");
         }
+    }
+
+    #[test]
+    fn variant_paths_match_whole_identifiers_only() {
+        use super::mentions_path as mentions;
+        assert!(mentions("matches!(r, Err(E::Bad))", "E::Bad"));
+        assert!(mentions("matches!(r, Err(crate::E::Bad))", "E::Bad"));
+        assert!(mentions("matches!(r, Err(Bad))", "Bad"));
+        assert!(!mentions("matches!(r, Err(E::Bad))", "E::B"));
+        assert!(!mentions("matches!(r, Err(E::Bad))", "B"));
+        assert!(!mentions("matches!(r, Err(E::B))", "E::Bad"));
+        assert!(!mentions("matches!(r, Err(XE::B))", "E::B"));
     }
 
     #[test]

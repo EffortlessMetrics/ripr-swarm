@@ -737,15 +737,19 @@ not a head-only row and prints no note.
   lone equality pin (`assert!(f(x) == lit)`, the terminal Err-return guard), a
   strong exact assertion, a statically contradicted assertion, a function-value
   or executor-helper reach, a changed struct literal, a related `#[ignore]` or
-  `#[should_panic]` test, a returned type whose `Drop` is non-plain (including
-  `Self`, an unresolved type alias, or a workspace with a macro, `extern crate`
-  or outside-crate item that may generate one), an equality or closed-range
-  pin over the owner call or a value derived from it through lets, tuple
-  destructures or `.eq`, `!(..!=..)` or closed-range shapes, an exact error-variant assertion for
-  another variant, a test that only discards the result, and a test with no
+  `#[should_panic]` test, a returned type that may have a non-plain `Drop`
+  (read through `Self`, `use .. as` renames and workspace struct, enum or union
+  fields; an unresolved type alias, a generic return type, or a workspace with
+  a macro, `extern crate` or outside-crate item also withholds), a test that
+  pins the owner call, or a local bound from it through `let` or a tuple
+  destructure, with `==`, `.eq(`, `!(.. != ..)` or a closed `>= .. && .. <=`
+  range, an exact error-variant assertion that names a different variant (whole
+  identifier match), a test that only discards the result, and a test with no
   direct owner call stay refused
   with one plain-language reason and the manual `ripr agent stub` route
-  (`crates/ripr/tests/return_value_repair_start.rs`).
+  (`crates/ripr/tests/return_value_repair_start.rs`). Not recognized as pins,
+  so they still start: a bool local (`let ok = v == 6; assert!(ok)`), an open
+  range (`v > 5 && v < 7`) and `(6..=6).contains(&v)`.
 - Format parsing tests for `human-full` and `text-full`.
 - CLI unit tests for repo-scope warnings with `--base` and `--diff`, and no
   warning for diff-scoped JSON.

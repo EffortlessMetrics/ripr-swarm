@@ -19851,3 +19851,89 @@ fn an_open_workspace_calls_no_type_plain() -> Result<(), String> {
     )?);
     Ok(())
 }
+
+#[test]
+fn a_use_rename_is_followed_to_the_original_type() -> Result<(), String> {
+    let lib = |drop: &str, ret: &str| {
+        format!(
+            "pub struct Loud(pub u32);\n{drop}use crate::Loud as Quiet;\npub fn mk(x: u32) -> {ret} {{\n    make(x)\n}}\n"
+        )
+    };
+    assert!(may_name_non_plain_drop(
+        &lib(EXIT_DROP, "Quiet"),
+        "mk",
+        "make(x)"
+    )?);
+    assert!(!may_name_non_plain_drop(
+        &lib(PLAIN_DROP, "Quiet"),
+        "mk",
+        "make(x)"
+    )?);
+    assert!(!may_name_non_plain_drop(
+        &lib(EXIT_DROP, "u32"),
+        "mk",
+        "make(x)"
+    )?);
+    Ok(())
+}
+
+#[test]
+fn a_wrapper_of_a_non_plain_type_withholds() -> Result<(), String> {
+    let lib = |drop: &str, field: &str, shape: &str| {
+        let definition = match shape {
+            "tuple" => format!("pub struct Wrapper(pub {field});\n"),
+            "record" => format!("pub struct Wrapper {{\n    pub inner: {field},\n}}\n"),
+            _ => format!("pub enum Wrapper {{\n    One({field}),\n    Two,\n}}\n"),
+        };
+        format!(
+            "pub struct Loud(pub u32);\n{drop}{definition}pub fn mk(x: u32) -> Wrapper {{\n    make(x)\n}}\n"
+        )
+    };
+    for shape in ["tuple", "record", "enum"] {
+        assert!(may_name_non_plain_drop(
+            &lib(EXIT_DROP, "Loud", shape),
+            "mk",
+            "make(x)"
+        )?);
+        assert!(!may_name_non_plain_drop(
+            &lib(PLAIN_DROP, "Loud", shape),
+            "mk",
+            "make(x)"
+        )?);
+        assert!(!may_name_non_plain_drop(
+            &lib(EXIT_DROP, "u32", shape),
+            "mk",
+            "make(x)"
+        )?);
+    }
+    Ok(())
+}
+
+#[test]
+fn a_generic_return_type_withholds() -> Result<(), String> {
+    let lib = |signature: &str| format!("pub fn mk{signature} {{\n    x\n}}\n");
+    for generic in [
+        "<T>(x: T) -> T",
+        "<'a, T: Clone>(x: &'a T) -> T",
+        "<T: Fn(u32) -> u32>(x: T) -> T",
+        "<const N: usize, T>(x: [T; N]) -> T",
+        "<T>(x: Vec<T>) -> Option<T>",
+    ] {
+        assert!(
+            may_name_non_plain_drop(&lib(generic), "mk", "x")?,
+            "{generic}"
+        );
+    }
+    for concrete in [
+        "(x: u32) -> u32",
+        "<T>(x: T) -> u32",
+        "<T>(x: T) -> String where T: Clone",
+        "(x: Vec<u32>) -> Option<u32>",
+    ] {
+        assert!(
+            !may_name_non_plain_drop(&lib(concrete), "mk", "x")?,
+            "{concrete}"
+        );
+    }
+    Ok(())
+}
