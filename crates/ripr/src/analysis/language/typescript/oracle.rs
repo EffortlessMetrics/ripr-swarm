@@ -938,6 +938,7 @@ fn collect_nested_callback_assertions(
             // mark the subtest todo (a todo failure does not fail the parent).
             if leading.is_empty()
                 || leading.len() > 2
+                || callback_is_generator(callback)
                 || !leading
                     .iter()
                     .enumerate()

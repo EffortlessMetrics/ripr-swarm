@@ -1118,3 +1118,22 @@ fn node_assert_in_an_owner_continuation_is_an_unmodeled_callback_assertion() {
         assert!(!tied(body), "{label}");
     }
 }
+
+#[test]
+fn awaited_subtest_generator_body_is_not_executed() {
+    for (callback, expected) in [
+        ("function (t2)", vec![some("price(150)", "140", 4)]),
+        ("async function (t2)", vec![some("price(150)", "140", 4)]),
+        ("function* (t2)", vec![]),
+        ("async function* (t2)", vec![]),
+    ] {
+        let source = format!(
+            "import test from 'node:test';\ntest('parent', async (t) => {{\n  await t.test('child', {callback} {{\n    expect(price(150)).toBe(140);\n  }});\n}});\n"
+        );
+        assert_eq!(
+            observed("tests/price.test.ts", &source),
+            expected,
+            "{callback}"
+        );
+    }
+}

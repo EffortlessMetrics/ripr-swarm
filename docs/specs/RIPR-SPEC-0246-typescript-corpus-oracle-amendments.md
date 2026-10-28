@@ -132,7 +132,8 @@ assertions are collected as the test's own:
   callback's own receiver, `name` is present and is a string or template
   literal, and
   `options` is an object literal with no `skip` or `todo` key and no
-  spread: node:test runs an awaited subtest inside its parent, and a
+  spread, and the callback is not a generator: node:test runs an awaited
+  subtest inside its parent, and a
   failing subtest fails the parent. The body is collected with `t2` as its
   receiver.
 

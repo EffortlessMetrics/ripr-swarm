@@ -17137,6 +17137,7 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs::returned_or_awaited_then_reads_the_resolved_receiver",
   "crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs::floating_or_unsafe_then_collects_nothing",
   "crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs::awaited_subtest_on_the_receiver_is_collected",
+  "crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs::awaited_subtest_generator_body_is_not_executed",
   "crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs::copy_for_identity_change_needs_an_identity_matcher",
   "crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs::identity_copy_subject_reads_both_directions",
   "crates/ripr/src/analysis/language/typescript/tests/catch_arm_tests.rs::an_unreached_catch_arm_withdraws_exposed",
