@@ -1967,6 +1967,7 @@ fn same_stem_related_handles_missing_stems() {
         setup_receivers: Vec::new(),
         fixture_defs: Vec::new(),
         direct_parametrized: Vec::new(),
+        unsettled_indirect: Vec::new(),
         constant_rebinding: Default::default(),
         name: "test_x".to_string(),
         qualified_name: "test_x".to_string(),
@@ -2189,6 +2190,83 @@ fn analyze_diff_parses_the_workspace_once_however_many_files_changed() -> Result
     assert_eq!(
         three_parses, one_parses,
         "changing more files must not parse the workspace again"
+    );
+    Ok(())
+}
+
+/// #10750: an owner's related tests are found once per run. A scan per
+/// changed line re-read every workspace test for each line of the same owner
+/// (pandas: ~23k tests times every changed line).
+#[test]
+fn analyze_diff_scans_related_tests_once_per_owner() -> Result<(), String> {
+    fn scans_for(changed_lines: usize) -> Result<(usize, usize), String> {
+        let root = unique_tempdir("analyze-diff-related-once")?;
+        let module = PathBuf::from("pricing.py");
+        write_file(
+            &root.join(&module),
+            "def price(x):\n    a = x + 2\n    b = a * 3\n    return b - 4\n",
+        )?;
+        write_file(
+            &root.join("test_pricing.py"),
+            "from pricing import price\n\n\ndef test_price():\n    assert price(1) == 5\n",
+        )?;
+        let pairs = [
+            ("    a = x + 2", "    a = x + 1"),
+            ("    b = a * 3", "    b = a * 2"),
+            ("    return b - 4", "    return b - 3"),
+        ];
+        let mut added_lines = Vec::new();
+        let mut removed_lines = Vec::new();
+        for (index, (new, old)) in pairs.iter().take(changed_lines).enumerate() {
+            added_lines.push(crate::analysis::diff::ChangedLine {
+                line: index + 2,
+                new_side_line: index + 2,
+                text: (*new).to_string(),
+            });
+            removed_lines.push(crate::analysis::diff::ChangedLine {
+                line: index + 2,
+                new_side_line: index + 2,
+                text: (*old).to_string(),
+            });
+        }
+        let changed_files = vec![ChangedFile {
+            path: module,
+            added_lines,
+            removed_lines,
+        }];
+        let options = AnalysisOptions {
+            root: root.clone(),
+            base: None,
+            diff_file: None,
+            mode: crate::analysis::AnalysisMode::Draft,
+            include_unchanged_tests: false,
+            resolve_tsconfig_paths: false,
+            perl_facts_path: None,
+            perl_producer_failure: None,
+            git_timeout: None,
+            git_candidate: None,
+            production_like_targets: Default::default(),
+            test_harnesses: Vec::new(),
+            resolved_subject_identity: None,
+            open_rust_index_paths: Default::default(),
+        };
+        super::related_tests::RELATED_SCANS.with(|scans| scans.set(0));
+        let result = PythonAdapter.analyze_diff(&options, &OraclePolicy::default(), &changed_files);
+        let scans = super::related_tests::RELATED_SCANS.with(std::cell::Cell::get);
+        let cleanup = std::fs::remove_dir_all(&root);
+        let result = result?;
+        cleanup.map_err(|err| format!("remove_dir_all({}): {err}", root.display()))?;
+        Ok((scans, result.findings.len()))
+    }
+
+    let (one_scans, one_findings) = scans_for(1)?;
+    let (three_scans, three_findings) = scans_for(3)?;
+    assert_eq!(one_findings, 1, "one changed line is one finding");
+    assert_eq!(three_findings, 3, "three changed lines are three findings");
+    assert_eq!(one_scans, 1, "one owner is scanned once");
+    assert_eq!(
+        three_scans, one_scans,
+        "more changed lines of the same owner must not rescan the tests"
     );
     Ok(())
 }
@@ -3656,6 +3734,7 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
         setup_receivers: Vec::new(),
         fixture_defs: Vec::new(),
         direct_parametrized: Vec::new(),
+        unsettled_indirect: Vec::new(),
         constant_rebinding: Default::default(),
         name: "test_x".to_string(),
         qualified_name: "test_x".to_string(),
@@ -3681,6 +3760,7 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
         setup_receivers: Vec::new(),
         fixture_defs: Vec::new(),
         direct_parametrized: Vec::new(),
+        unsettled_indirect: Vec::new(),
         constant_rebinding: Default::default(),
         name: "test_y".to_string(),
         qualified_name: "test_y".to_string(),
@@ -3704,6 +3784,7 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
         setup_receivers: Vec::new(),
         fixture_defs: Vec::new(),
         direct_parametrized: Vec::new(),
+        unsettled_indirect: Vec::new(),
         constant_rebinding: Default::default(),
         name: "test_z".to_string(),
         qualified_name: "test_z".to_string(),
@@ -4324,6 +4405,7 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
         setup_receivers: Vec::new(),
         fixture_defs: Vec::new(),
         direct_parametrized: Vec::new(),
+        unsettled_indirect: Vec::new(),
         constant_rebinding: Default::default(),
         name: "test_alias".to_string(),
         qualified_name: "test_alias".to_string(),
@@ -4414,6 +4496,7 @@ fn align_importing_test(imported: &str, module: &str) -> PythonTest {
         setup_receivers: Vec::new(),
         fixture_defs: Vec::new(),
         direct_parametrized: Vec::new(),
+        unsettled_indirect: Vec::new(),
         constant_rebinding: Default::default(),
         name: "t".to_string(),
         qualified_name: "t".to_string(),
@@ -4462,6 +4545,7 @@ fn sink_alignment_is_alias_when_oracle_uses_import_alias() {
         setup_receivers: Vec::new(),
         fixture_defs: Vec::new(),
         direct_parametrized: Vec::new(),
+        unsettled_indirect: Vec::new(),
         constant_rebinding: Default::default(),
         name: "test_alias".to_string(),
         qualified_name: "test_alias".to_string(),

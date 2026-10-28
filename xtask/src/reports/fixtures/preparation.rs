@@ -18,8 +18,12 @@ pub(super) fn environment() -> Result<&'static Vec<(&'static str, String)>, Stri
             let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
             let cargo_home = home::cargo_home_with_cwd(&cwd)
                 .map_err(|e| format!("resolve effective Cargo home: {e}; set CARGO_HOME to a writable absolute directory"))?;
-            let pin = std::fs::read_to_string("rust-toolchain.toml")
-                .map_err(|e| format!("read repository toolchain pin: {e}; run from the repository root"))?;
+            // Read the pin from the repository the binary was built in, not the
+            // working directory: tests and archived runs execute elsewhere.
+            let pin_path = crate::repo_root()?.join("rust-toolchain.toml");
+            let pin = std::fs::read_to_string(&pin_path).map_err(|e| {
+                format!("read repository toolchain pin `{}`: {e}", pin_path.display())
+            })?;
             let toolchain = toolchain(&pin)?;
             let mut envs = vec![
                 ("CARGO_HOME", path_text(&cargo_home)?),

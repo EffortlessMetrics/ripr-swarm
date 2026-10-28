@@ -246,7 +246,14 @@ fn credits<'a>(
 
     let mut out = Vec::new();
     for test in all_tests {
+        // A fixture request can run code that patches the class; a directly
+        // parametrized argument cannot, unless an unsettled `indirect=` may
+        // route it through a fixture (#10685).
         if super::test_activation::activation_control(test).is_some()
+            || test
+                .fixtures
+                .iter()
+                .any(|parameter| !test.takes_parametrize_value(parameter))
             || test.constant_rebinding.edited_in_diff
             || test.constant_rebinding.assigns_attribute(&field)
             || test.constant_rebinding.assigns_attribute(class)
@@ -428,6 +435,7 @@ fn class_model(module: &[Stmt], class: &str, spellings: &[String]) -> Option<Cla
                 if ["ClassVar", "InitVar", "KW_ONLY"]
                     .iter()
                     .any(|marker| annotation.contains(marker))
+                    || !plain_annotation(module, &assign.annotation)
                     || fields.iter().any(|field| field.name == name.id.as_str())
                 {
                     return None;
@@ -450,6 +458,10 @@ fn class_model(module: &[Stmt], class: &str, spellings: &[String]) -> Option<Cla
                         // field required.
                         let is_field = expr_full_name(&call.func)
                             .is_some_and(|name| name == "field" || name == "dataclasses.field");
+                        // Any other call runs at class creation and may raise.
+                        if !is_field || !plain_field_call(module, call) {
+                            return None;
+                        }
                         let defaulted = !is_field
                             || call.keywords.iter().any(|keyword| {
                                 keyword.arg.as_ref().is_some_and(|arg| {
@@ -467,7 +479,14 @@ fn class_model(module: &[Stmt], class: &str, spellings: &[String]) -> Option<Cla
                 });
             }
             Stmt::FunctionDef(function) => {
-                if CONSTRUCTION_HOOKS.contains(&function.name.as_str()) {
+                if CONSTRUCTION_HOOKS.contains(&function.name.as_str())
+                    || !plain_definition(
+                        module,
+                        &function.decorator_list,
+                        &function.args,
+                        function.returns.as_deref(),
+                    )
+                {
                     return None;
                 }
                 let method = method_of(function);
@@ -481,7 +500,16 @@ fn class_model(module: &[Stmt], class: &str, spellings: &[String]) -> Option<Cla
                 }
             }
             Stmt::AsyncFunctionDef(function) => {
-                if CONSTRUCTION_HOOKS.contains(&function.name.as_str()) {
+                // Async definitions are not modelled, but their defaults and
+                // decorators run at class creation.
+                if CONSTRUCTION_HOOKS.contains(&function.name.as_str())
+                    || !plain_definition(
+                        module,
+                        &function.decorator_list,
+                        &function.args,
+                        function.returns.as_deref(),
+                    )
+                {
                     return None;
                 }
                 match methods
@@ -610,4 +638,80 @@ fn method_of(function: &ast::StmtFunctionDef) -> Option<Method> {
             expression: ret.value.as_deref()?.clone(),
         },
     })
+}
+
+const PLAIN_ANNOTATIONS: [&str; 8] = [
+    "int", "float", "str", "bool", "bytes", "list", "dict", "set",
+];
+
+/// A class-body annotation is evaluated at class creation, so only a builtin
+/// scalar or container name (unbound in the module) is known not to raise or
+/// to be a dataclass marker under an alias.
+fn plain_annotation(module: &[Stmt], annotation: &Expr) -> bool {
+    match annotation {
+        Expr::Name(name) => {
+            PLAIN_ANNOTATIONS.contains(&name.id.as_str())
+                && count_bindings(module, name.id.as_str()) == 0
+        }
+        Expr::Constant(_) => true,
+        _ => false,
+    }
+}
+
+/// `field(default=<literal>)` or `field(default_factory=list|dict|set)` with
+/// the factory builtin unshadowed: a factory runs at every construction, so
+/// any other one may raise.
+fn plain_field_call(module: &[Stmt], call: &ast::ExprCall) -> bool {
+    if !call.args.is_empty() || call.keywords.is_empty() {
+        return false;
+    }
+    call.keywords.iter().all(|keyword| {
+        match (keyword.arg.as_ref().map(|arg| arg.as_str()), &keyword.value) {
+            (Some("default"), Expr::Constant(_)) => true,
+            (Some("default_factory"), Expr::Name(name)) => {
+                matches!(name.id.as_str(), "list" | "dict" | "set")
+                    && count_bindings(module, name.id.as_str()) == 0
+            }
+            _ => false,
+        }
+    })
+}
+
+/// A method definition whose class-creation work cannot raise or replace the
+/// method: no decorators but unshadowed builtin descriptors, literal-only
+/// defaults, and builtin-name annotations.
+fn plain_definition(
+    module: &[Stmt],
+    decorators: &[Expr],
+    args: &ast::Arguments,
+    returns: Option<&Expr>,
+) -> bool {
+    let plain_decorators = decorators.iter().all(|decorator| {
+        matches!(decorator, Expr::Name(name)
+            if matches!(name.id.as_str(), "property" | "classmethod" | "staticmethod")
+                && count_bindings(module, name.id.as_str()) == 0)
+    });
+    let every_arg = args
+        .posonlyargs
+        .iter()
+        .chain(args.args.iter())
+        .chain(args.kwonlyargs.iter());
+    let plain_args = every_arg.clone().all(|arg| {
+        arg.def
+            .annotation
+            .as_deref()
+            .is_none_or(|a| plain_annotation(module, a))
+            && arg
+                .default
+                .as_deref()
+                .is_none_or(|d| matches!(d, Expr::Constant(_)))
+    });
+    let plain_variadics = [args.vararg.as_deref(), args.kwarg.as_deref()]
+        .into_iter()
+        .flatten()
+        .all(|arg| arg.annotation.is_none());
+    plain_decorators
+        && plain_args
+        && plain_variadics
+        && returns.is_none_or(|r| plain_annotation(module, r))
 }

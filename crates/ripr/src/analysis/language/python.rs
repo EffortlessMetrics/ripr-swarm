@@ -27,6 +27,7 @@ use super::{LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult,
 mod admission;
 mod assertion_selection;
 mod bounded_read;
+mod workspace_reach;
 use crate::analysis::workspace::{
     changed_source_files_absent_from_worktree, limitations_for_absent_changed_files,
 };
@@ -76,6 +77,7 @@ mod doctest_tests;
 mod guard_activation;
 mod guard_credit;
 mod helper_inline;
+mod imported_call_operator;
 mod message_pin;
 mod module_value;
 mod type_guard;
@@ -95,6 +97,7 @@ mod module_constants;
 mod no_behavior;
 mod oracles;
 mod owners_tests;
+mod param_fixtures;
 mod parametrize;
 mod parse_budget;
 mod probe_shape;
@@ -431,6 +434,10 @@ struct PythonTest {
     /// Argnames a pytest parametrize decorator supplies directly (not routed
     /// to a fixture by `indirect=`); never resolved as fixtures (#4563).
     direct_parametrized: Vec<String>,
+    /// The `direct_parametrized` names whose `indirect=` value the read
+    /// cannot settle: not resolved as fixtures, but still counted toward the
+    /// fixture limit (#10685).
+    unsettled_indirect: Vec<String>,
     /// Literal `@pytest.mark.parametrize` cases, when statically certain (#4559).
     parametrize: Option<parametrize::PythonParametrizeCases>,
     /// Parameters Hypothesis `@given(...)` supplies (#6601); never fixtures.
@@ -451,6 +458,19 @@ struct PythonTest {
     constant_rebinding: module_constants::PythonTestRebinding,
 }
 
+impl PythonTest {
+    /// Whether pytest certainly passes `name`'s parametrize value to the
+    /// test itself: a direct argname whose `indirect=` the read settled.
+    /// Such a parameter runs no fixture code (#10685).
+    fn takes_parametrize_value(&self, name: &str) -> bool {
+        self.direct_parametrized.iter().any(|direct| direct == name)
+            && !self
+                .unsettled_indirect
+                .iter()
+                .any(|unsettled| unsettled == name)
+    }
+}
+
 /// A module-level `@pytest.fixture` function: its body is read with the same
 /// relation rules as a test body when a test names it as a parameter (#4563).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -467,6 +487,9 @@ struct PythonFixtureDef {
     /// The class the fixture returns a fresh literal-built instance of
     /// (`return Account(100)`), when that is its whole shape (#9619).
     literal_construction: Option<String>,
+    /// The literal `params=` rows a fixture returning `request.param` hands
+    /// the test, one run per row (#9619, `param_fixtures.rs`).
+    literal_params: Option<Vec<param_fixtures::FixtureParamRow>>,
     /// Set when attached: no other fixture or hook visible to the test names
     /// this fixture, so the test receives the instance exactly as built.
     isolated: bool,
@@ -617,14 +640,61 @@ fn python_family_assertion_target(probe_family: &ProbeFamily) -> &'static str {
     }
 }
 
+fn python_unlinked_owner_next_step(
+    owner: &PythonOwner,
+    probe_family: &ProbeFamily,
+) -> Option<String> {
+    // #10708: a directly resolvable owner with no static link is a plain
+    // function owner; class-shaped, module, decorated, routed, or otherwise
+    // indirected owners stay silent instead of inventing a direct call
+    // target. NoStaticPath establishes no statically linked test call, not
+    // the universal absence of a test, so the wording names the honest
+    // ordered route: add a relevant test/assertion, run the project's native
+    // verifier, then refresh. No exact test file or verify command is named:
+    // neither is evidenced for an owner with no static link. A text-only
+    // mention (an unrelated test that merely names the owner) is not a
+    // related test and keeps this generic guidance rather than a credited
+    // target.
+    if owner.is_module_owner() || owner.owner_kind != Some(OwnerKind::Function) {
+        return None;
+    }
+    // Command-registered functions stay silent: a Typer `@app.command()` (or
+    // any decorator) makes the owner a CLI entry, not a directly callable
+    // helper under test. A plain helper that merely shares a module with a
+    // Typer app keeps guidance — the file-wide receiver list is not evidence
+    // the helper itself is registered.
+    if !owner.decorators.is_empty()
+        || !owner.route_paths.is_empty()
+        || !owner.dynamic_route_decorators.is_empty()
+    {
+        return None;
+    }
+    let action = match probe_family {
+        ProbeFamily::Predicate => "a focused boundary assertion",
+        ProbeFamily::ReturnValue => "an exact return-value assertion",
+        ProbeFamily::ErrorPath => "an exception assertion",
+        ProbeFamily::FieldConstruction => "a field/object assertion",
+        ProbeFamily::SideEffect | ProbeFamily::CallDeletion => {
+            "an output/log/call-effect assertion"
+        }
+        ProbeFamily::MatchArm | ProbeFamily::StaticUnknown => "a focused assertion",
+    };
+    Some(format!(
+        "Python preview: no statically linked test calls `{}(`; add a test that calls the changed owner with {action}, run the project's native Python test command, then rerun `ripr check` to refresh the finding.",
+        owner.name
+    ))
+}
+
 fn python_recommended_next_step(
     class: &ExposureClass,
+    owner: &PythonOwner,
     probe_family: &ProbeFamily,
     has_oracle_eligible_relation: bool,
     missing_discriminators: &[MissingDiscriminatorFact],
 ) -> Option<String> {
     match class {
-        ExposureClass::StaticUnknown | ExposureClass::NoStaticPath => None,
+        ExposureClass::StaticUnknown => None,
+        ExposureClass::NoStaticPath => python_unlinked_owner_next_step(owner, probe_family),
         ExposureClass::Exposed => {
             Some("Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior.".to_string())
         }
@@ -862,7 +932,34 @@ impl PythonAdapter {
         visit_workspace_with_handwritten(&options.root, &options.root, handwritten, &mut |file| {
             selection.push(file)
         });
-        let (workspace_files, refused_files) = selection.finish();
+        let (mut workspace_files, mut refused_files) = selection.finish();
+        // Past the cap, spend it on the files whose text can reach the diff
+        // instead of the earliest paths (#10785). The second walk holds every
+        // path, so it runs only below the scan's own file bound.
+        let mut reach = None;
+        if refused_files > 0
+            && workspace_files.len() + refused_files <= workspace_reach::MAX_SCANNED_FILES
+        {
+            let mut discovered = Vec::new();
+            visit_workspace_with_handwritten(
+                &options.root,
+                &options.root,
+                handwritten,
+                &mut |file| discovered.push(file),
+            );
+            reach = workspace_reach::admit_by_reach(
+                &options.root,
+                discovered,
+                changed_files,
+                &changed_walk_paths,
+                walk_limits.max_workspace_files,
+                walk_limits.max_file_read_bytes,
+            );
+            if let Some(admission) = &reach {
+                workspace_files = admission.kept.clone();
+                refused_files = admission.discovered.len() - admission.kept.len();
+            }
+        }
         let workspace_read = read_workspace_sources_capped(
             &options.root,
             &workspace_files,
@@ -972,6 +1069,7 @@ impl PythonAdapter {
             &fixture_side_by_file,
             unreadable_conftest,
         );
+        param_fixtures::apply_literal_param_fixtures(&mut all_tests);
         fixtures::taint_admission_by_conftest(
             &mut all_tests,
             &implicit_conftests,
@@ -996,9 +1094,15 @@ impl PythonAdapter {
         bool_oracle::credit_bare_bool_asserts(&mut all_tests, &all_owners, |file| {
             workspace_read.sources.get(file).map(String::as_str)
         });
+        // Rival src-layout modules are found by path, so an over-cap run still
+        // sees every discovered module, read or not.
         related_tests::apply_src_module_ambiguity(
             &mut all_owners,
-            workspace_files.iter().filter(|file| !is_test_file(file)),
+            reach
+                .as_ref()
+                .map_or(&workspace_files, |admission| &admission.discovered)
+                .iter()
+                .filter(|file| !is_test_file(file)),
         );
         related_tests::apply_rival_definition_modules(&mut all_owners);
         related_tests::apply_class_facts(&mut all_owners);
@@ -1006,7 +1110,24 @@ impl PythonAdapter {
         // Walk-count cap disclosure: one named limitation carrying the
         // refused count, mirroring the TypeScript adapter's
         // `DiffScopeOversized` truncated-scan disclosure.
-        if refused_files > 0 {
+        // With a reach admission, only refused files that may reach the diff
+        // leave it partial; the rest name nothing the diff changes.
+        let refused_may_reach = reach
+            .as_ref()
+            .map_or(refused_files, |admission| admission.refused_reaching);
+        if refused_may_reach > 0 {
+            let detail = match &reach {
+                None => format!(
+                    "python workspace walk reached the {}-file cap ({PYTHON_MAX_WORKSPACE_FILES_ENV}); {refused_files} discovered .py file(s) were not analyzed; changed .py files are kept past this cap.",
+                    walk_limits.max_workspace_files,
+                ),
+                Some(admission) => format!(
+                    "python workspace walk reached the {}-file cap ({PYTHON_MAX_WORKSPACE_FILES_ENV}); {refused_may_reach} of the {} discovered .py file(s) that may reach the diff (naming what it changes, imported by a test or changed file that does, a conftest.py, or a package __init__.py above a changed file) were not analyzed, and {} that name nothing it changes were skipped; changed .py files are kept past this cap.",
+                    walk_limits.max_workspace_files,
+                    admission.reaching,
+                    admission.refused_unreached,
+                ),
+            };
             limitations.push(
                 AnalysisLimitation::new(
                     AnalysisLimitationKind::DiffScopeOversized,
@@ -1017,13 +1138,10 @@ impl PythonAdapter {
                     )?,
                 )
                 .with_affected_items(
-                    u64::try_from(refused_files)
+                    u64::try_from(refused_may_reach)
                         .map_err(|err| format!("refused file count overflows u64: {err}"))?,
                 )?
-                .with_detail(format!(
-                    "python workspace walk reached the {}-file cap ({PYTHON_MAX_WORKSPACE_FILES_ENV}); {refused_files} discovered .py file(s) were not analyzed; changed .py files are kept past this cap.",
-                    walk_limits.max_workspace_files,
-                ))?,
+                .with_detail(detail)?,
             );
         }
 
@@ -1159,6 +1277,7 @@ impl PythonAdapter {
 
         let mut findings: Vec<Finding> = Vec::new();
         let mut value_origins = crate::value_origins::ValueOrigins::default();
+        let mut related_memo = related_tests::RelatedCandidateMemo::default();
         let mut changed_count: usize = 0;
         for changed in python_changed_files {
             if absent_changed_paths.contains(&normalized_path(&changed.path)) {
@@ -1312,6 +1431,7 @@ impl PythonAdapter {
                         .get(&changed.path)
                         .map(String::as_str),
                     &mut value_origins,
+                    Some(&mut related_memo),
                 ) {
                     findings.push(finding);
                 }
@@ -1336,6 +1456,7 @@ impl PythonAdapter {
                 &all_tests,
                 &findings,
                 &mut value_origins,
+                &mut related_memo,
             );
             findings.extend(deleted);
         }
@@ -1422,6 +1543,9 @@ mod fixtures_tests;
 mod literal_fixture_tests;
 
 #[cfg(test)]
+mod param_fixture_tests;
+
+#[cfg(test)]
 mod dunder_entry_tests;
 
 #[cfg(test)]
@@ -1441,6 +1565,8 @@ mod literal_patch_tests;
 #[cfg(test)]
 mod helper_owner_call_tests;
 
+#[cfg(test)]
+mod imported_call_operator_tests;
 #[cfg(test)]
 mod module_value_tests;
 #[cfg(test)]

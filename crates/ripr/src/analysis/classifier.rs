@@ -76,6 +76,7 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins(
     propagation_origin: Option<&crate::analysis::diff::ChangedLine>,
     value_origins: Option<&std::sync::Mutex<crate::value_origins::ValueOrigins>>,
 ) -> Finding {
+    let read_trace = super::probe_read_trace::Scope::begin(probe);
     let owner_fn = resolve_owner_function(probe, index);
     // #3296: one chain resolution per probe, shared by the relation
     // stage and the activation rows (single authority, single scan).
@@ -200,6 +201,7 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins(
         index,
         candidate_index.owner_pin_syntax(),
     );
+    read_trace.finish();
     finding
 }
 

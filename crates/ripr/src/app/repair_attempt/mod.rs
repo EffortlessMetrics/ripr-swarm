@@ -2218,7 +2218,9 @@ pub(crate) fn edit_cage_policy_from_packet(
     // paths there, every rule path named here (including `target/ripr`), and
     // every other ignored path. Other languages keep observing every ignored
     // path: the trust-bound Python verify phase executes tests and retains
-    // its full ignored-path guard.
+    // its ignored-path guard. A Python repair only exempts untracked or
+    // ignored interpreter and test-runner caches (`EditCagePolicy::
+    // expects_python_tool_caches`, #10699), never a tracked path.
     let ignored_build_output =
         if Path::new(selected_target.path()).extension() == Some(std::ffi::OsStr::new("rs")) {
             Some(crate::edit_cage::CagePathRule::subtree(

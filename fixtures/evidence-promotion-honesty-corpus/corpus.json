@@ -406,6 +406,126 @@
       ]
     },
     {
+      "id": "rust_result_map_cfg_reader",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/result-map-cfg-reader.json",
+      "vector": "a_cfg_disabled_reader_must_not_supply_Result_identity",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_result_map_receiver_mismatch",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/result-map-receiver-mismatch.json",
+      "vector": "a_different_receiver_method_must_not_supply_Result_identity",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_result_map_opaque_glob",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/result-map-opaque-glob.json",
+      "vector": "an_external_glob_must_not_establish_standard_Result_or_Ok_identity",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        }
+      ]
+    },
+    {
+      "id": "rust_result_map_async_reader",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/result-map-async-reader.json",
+      "vector": "async_reader_annotation_must_not_establish_a_Result_receiver",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_result_map_unrelated_observer",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/result-map-unrelated-observer.json",
+      "vector": "an_Err_owner_call_and_unrelated_helper_assertion_do_not_observe_a_map_callback",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
       "id": "rust_pointer_owner_invisible_input",
       "language": "rust",
       "tier": "pure",
@@ -13133,6 +13253,29 @@
       "tier": "pure",
       "source_fixture": "fixtures/out_parameter_unrelated_write_no_promote",
       "vector": "out_parameter_name_mentioned_on_a_changed_line_that_writes_another_parameter_cannot_promote",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_out_parameter_named_empty_writer",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/out_parameter_named_empty_no_promote",
+      "vector": "named_empty_payload_does_not_make_an_unchanged_prefix_pin_observe_the_changed_write",
       "assertions": [
         {
           "type": "must_not_report_clean"

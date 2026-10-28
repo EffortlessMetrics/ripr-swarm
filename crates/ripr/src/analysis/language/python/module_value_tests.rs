@@ -973,6 +973,61 @@ fn the_target_assertion_is_identified_before_crediting_its_line() -> Check {
 }
 
 #[test]
+fn a_write_shared_with_another_file_survives_excluding_one_of_them() {
+    // #10857: the index counts the sources behind each write and subtracts
+    // the excluded file, so a write that file shares with another stays.
+    let sources = [
+        (Path::new("a.py"), "import c\nc.LIMIT = 1\n"),
+        (Path::new("b.py"), "import c\nc.LIMIT = 2\nc.RATE = 3\n"),
+        (Path::new("c.py"), "LIMIT = 10\nRATE = 5\n"),
+    ];
+    let index = super::module_value::ForeignIndex::build(sources.iter().copied(), false);
+    let module = Path::new("c.py");
+    let without_b = index.excluding(Path::new("b.py"));
+    assert!(without_b.may_rebind("LIMIT", module));
+    assert!(!without_b.may_rebind("RATE", module));
+    let without_a = index.excluding(Path::new("a.py"));
+    assert!(without_a.may_rebind("LIMIT", module));
+    assert!(without_a.may_rebind("RATE", module));
+    let without_c = index.excluding(module);
+    assert!(without_c.may_rebind("LIMIT", module) && without_c.may_rebind("RATE", module));
+}
+
+#[test]
+fn subtracting_the_excluded_file_matches_rebuilding_every_write_set() {
+    // #10857: an independent oracle for all five write sets, not just
+    // attributes. Each file shares some writes with another and holds some
+    // alone, and excluding each file (or none) must match the per-file
+    // rebuild the subtraction replaced.
+    let sources = [
+        (Path::new("c.py"), "RATES = {\"a\": 1}\nLIMIT = 10\n"),
+        (
+            Path::new("a.py"),
+            "import c\nc.LIMIT = 1\nc.RATES[\"b\"] = 2\nsetattr(c, \"LIMIT\", 3)\n",
+        ),
+        (
+            Path::new("b.py"),
+            "import c\nc.LIMIT = 2\nc.RATE = 3\nvalue = getattr(c, \"RATES\")\nc.RATES.clear()\n",
+        ),
+        (
+            Path::new("d.py"),
+            "import c\nimport b\nnames = dir(c)\nsetattr(c, \"RATE\", 4)\n",
+        ),
+    ];
+    let index = super::module_value::ForeignIndex::build(sources.iter().copied(), false);
+    let all = index.excluding(Path::new("absent.py"));
+    assert_eq!(all.written_sets(), [true; 5], "{all:?}");
+    for own in ["absent.py", "a.py", "b.py", "c.py", "d.py"] {
+        let own = Path::new(own);
+        assert_eq!(
+            index.excluding(own),
+            index.rebuilt_excluding(own),
+            "{own:?}"
+        );
+    }
+}
+
+#[test]
 fn one_workspace_index_gives_each_changed_file_its_own_foreign_view() {
     // #10125: the index is built once; each changed file sees every other
     // file's writes and none of its own.
@@ -2315,5 +2370,59 @@ fn multiline_imports_and_evaluated_code_withhold_credit() -> Check {
             TABLE_NEW,
         )?);
     }
+    Ok(())
+}
+
+// Class-creation and construction effects the model does not evaluate (#9619).
+#[test]
+fn a_dataclass_whose_creation_or_construction_may_raise_is_not_credited() -> Check {
+    let base = dc_default();
+    let factory = "from dataclasses import dataclass, field\n\n\n@dataclass\nclass Invoice:\n    amount: int\n    tax_rate: float = 0.25\n    tags: list = field(default_factory=fail)\n\n    def total(self):\n        return round(self.amount * (1 + self.tax_rate))\n";
+    for (label, source, test) in [
+        ("failing default_factory", factory.to_string(), DC_TEST),
+        (
+            "call default on an async method",
+            format!("{base}\n    async def other(self, extra=boom()):\n        return 1\n"),
+            DC_TEST,
+        ),
+        (
+            "call evaluated at class creation as a parameter default",
+            format!("{base}\n    def other(self, extra=boom()):\n        return 1\n"),
+            DC_TEST,
+        ),
+        (
+            "builtin annotation rebound to a marker",
+            base.replace("\n\n\n@dataclass", "\nfloat = ClassVar\n\n\n@dataclass"),
+            DC_TEST,
+        ),
+        (
+            "unknown decorator on another method",
+            format!("{base}\n    @tweak\n    def other(self):\n        return 1\n"),
+            DC_TEST,
+        ),
+        (
+            "test takes a fixture that may patch the class",
+            base.clone(),
+            "from hostile.settings import Invoice\n\n\ndef test_it(rate):\n    assert Invoice(100).total() == 120\n",
+        ),
+    ] {
+        let finding = classify_dc(&source, DC_NEW, &[], test)?;
+        assert_lambda_withheld(&finding, label);
+    }
+    // A directly parametrized argument is not a fixture request.
+    let parametrized = "import pytest\nfrom hostile.settings import Invoice\n\n\n@pytest.mark.parametrize(\"case\", [1])\ndef test_it(case):\n    assert Invoice(100).total() == 120\n";
+    let finding = classify_dc(&base, DC_NEW, &[], parametrized)?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    // Builtin descriptors and `list`/`dict` factories keep the credit.
+    let plain = format!(
+        "{}\n    @property\n    def big(self):\n        return self.amount >= 1000\n",
+        base.replace(
+            "    amount: int\n",
+            "    amount: int\n    tags: list = field(default_factory=list)\n"
+        )
+        .replace("import dataclass", "import dataclass, field")
+    );
+    let finding = classify_dc(&plain, DC_NEW, &[], DC_TEST)?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
     Ok(())
 }

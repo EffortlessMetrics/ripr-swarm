@@ -1,0 +1,12 @@
+diff --git a/trapkit/core.py b/trapkit/core.py
+--- a/trapkit/core.py
++++ b/trapkit/core.py
+@@ -130,7 +130,7 @@
+ 
+ 
+ def wrapped_conditional(a, b):
+-    return a * b
++    return b * a
+ 
+ 
+ def wrapped_finally(a, b):

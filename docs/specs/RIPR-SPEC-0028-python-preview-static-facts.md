@@ -55,10 +55,27 @@ read generated stubs, or consume runtime test output.
 
 Diff mode reads the workspace under a file-count cap
 (`RIPR_PYTHON_MAX_WORKSPACE_FILES`) and byte budgets. The count cap refuses only
-unchanged context: changed `.py` files are always kept, the rest of the cap is
-filled from the sorted remainder, and any refusal is a named
-`diff_scope_oversized` limitation that says changed files were kept. The byte
-budgets still apply to changed files and disclose their own refusals.
+unchanged context: changed `.py` files are always kept. When the workspace
+exceeds the cap, the rest of it is filled from the files that may reach the diff
+(#10785): every `conftest.py` and the package `__init__.py` files above a
+changed file; files whose text names a name a changed file defines (a `def` or
+`class` name at any depth, a top-level assignment target, a word of a decorator
+route literal) or a pytest fixture a reaching test module or `conftest.py`
+defines over such a name (a `fixture as` decorator alias and an `import ... as`
+alias of the name count, and fixture hosts are rescanned as fixture names join);
+for a module-level change, files that import the
+changed module, and for a `__dunder__` method change, files that import from a
+package above it; and the workspace modules that a reaching test or a changed
+file imports. A refused
+file outside that set names nothing a related-test relation could match, so it
+does not make the run partial. A refused file inside it is a named
+`diff_scope_oversized` limitation that counts the refused reaching files and
+says changed files were kept. A changed route literal with no fixed word in it
+(`@app.get("/")`, `@app.get("/{item_id}")`), an unreadable changed file, a
+fixture closure that does not settle, or a workspace past the scan's own file
+bound keeps the earlier behavior: the earliest paths fill the cap and
+every refusal is disclosed. The byte budgets still apply to changed files and
+disclose their own refusals.
 
 ## Owner Facts
 
@@ -359,7 +376,10 @@ renamed fixture (`name=`) and a test that rebinds the parameter name make no
 edge, nor does a parameter that a pytest `parametrize` names as an argname,
 read syntactically (variable argvalues, `pytest.param(marks=...)` and
 unreadable `indirect` values still count) unless `indirect=` is the literal
-`True` or a literal list naming it. A class-level `parametrize` (on the test's
+`True` or a literal list naming it, directly or through one never-rebound
+module `NAME = <value>` binding (#10685). The mark, its argnames and its
+`indirect` are read through imports and module names as RIPR-SPEC-0238 L8
+describes. A class-level `parametrize` (on the test's
 class or a local ancestor) counts the same way. When a file defines the same
 fixture name twice the last definition wins, and the analyzer attaches at most
 eight fixture definitions to one test (an implementation limit, not a pytest
@@ -494,7 +514,38 @@ the old default and fails with the new one. For this read the evaluator adds flo
 and the unshadowed one-argument builtin `round`.
 An explicit value for the field, a field default that is `field(...)` or
 computed, a method outside the evaluator, a rebound class or field, or a test
-that shadows, writes or may skip the construction keeps `decorator_indirection`. A function defined under a
+that shadows, writes or may skip the construction keeps `decorator_indirection`.
+The class body must also run nothing the model does not evaluate: a field call
+other than `field(default=<literal>)` or `field(default_factory=list|dict|set)`
+with the builtin unbound, an annotation other than an unbound builtin name, a
+non-literal parameter default or non-builtin annotation on any method (async
+included), or a decorator other than an unbound `property`, `classmethod` or
+`staticmethod` keeps the abstention, and a test that requests a fixture is not a
+reader (directly parametrized arguments are not fixture requests).
+An operator swap among `+`, `-` and `*` in the single `return` of an
+undecorated module function that calls an imported workspace function (#9619)
+is read without following the import: the line moves only the operator, so
+the call returns the same whole number `X` before and after. The call is a bare
+name that resolves to exactly one undecorated module-level function, bound once
+and rewritten nowhere, over parameters and literals, and the other operand is
+an expression over parameters and integer literals. A straight-line
+`assert owner(<literals>) == <integer>` of a test that names the owner through
+an import it does not rebind fixes `X` through the old operator (taking the
+assertion to hold before the diff, as for any passing test), and is the oracle
+when the new operator over that `X` gives another value; only then is the
+`missing_import_graph` limit lifted. An assertion both operators satisfy, a
+non-literal, keyword or short call, a second call, a division, a changed
+operand, side or argument, a decorated, unresolved, ambiguous or rebound
+callee or owner, a patched owner, any workspace file reachable from the owner's
+or the callee's module through imports that defines `__add__`, `__sub__`,
+`__mul__` or a reflected form (its result need not be the pinned number), or a
+test that rebinds, writes or may skip keeps `missing_import_graph`. The
+guarantee is bounded: the pass does not prove the call returns an ordinary
+integer. An exact integer assertion is taken to describe the returned value,
+and the abstention covers only arithmetic defined in reachable workspace
+files. A third-party or dynamically built type with its own `+`, `-` or `*` is
+not visible to this scan, and a pinned number it produced may not behave as the
+algebra assumes. A function defined under a
 decided module-level `if sys.version_info >= (3, 0):` condition (the only
 decided shapes are Python 2/3 version tuples, with `sys` the single plain
 import) is an ordinary function owner when its name has no other live
@@ -696,7 +747,15 @@ Another decorator named `parametrize` (a plugin or project helper) records
 no cases. Argvalues named by a variable, `indirect=`, starred rows, a `pytest.param`
 with any keyword but `id=` (a `marks=` skip or xfail case may never run), a
 unittest method (pytest does not parametrize it), and an argname the test
-body may rebind leave the call unresolved. A rebinding is read from the
+body may rebind leave the call unresolved. A test whose first statement after
+a docstring unpacks one argname (`quantity, rate = case`, alone on its lines)
+reads as parametrized by the target names, each case's row split by arity,
+and the unpack is not a rebinding (#10832). Every row must be a tuple of
+scalar literals (a bare target also takes a scalar literal) and every
+decorator a pytest mark; a list row (mutable, so a fixture may change it), a
+row naming a value (which may shadow the owner), a row of another arity, a
+target that is another parameter, and a later statement that names the
+argname or rebinds a target keep the argname's cases as they are. A rebinding is read from the
 parsed test body: any assignment, tuple, loop, `with` or `except` target, an
 import or `del` of the argname drops it from the cases, and a nested `def` or
 `class`, a `match` or a star import drops all cases. Any `lambda` in the test,
@@ -735,7 +794,15 @@ Otherwise it is the `<expected value>` placeholder
 claimed. These facts are evidence only until a later
 repair-card contract supplies the test shape, verify command, receipt command,
 and edit boundaries. Heuristic-only links, no related-test paths, and static
-limits must not emit repair guidance.
+limits must not emit repair guidance. "Repair guidance" here means an
+actionable repair target: a repair card, agent packet, placement, test node,
+or verify/receipt command. It does not preclude generic non-repair-ready
+advice: for a directly resolvable plain-function owner with no statically
+linked test call, the adapter may name the owner and the honest ordered
+route (add a relevant test/assertion, run the project's native verifier,
+then refresh) while repair readiness stays suppressed (#10708). A decorated,
+routed, command-registered, or otherwise indirected owner stays silent, and a
+later transitive-reach limitation silences the advice again.
 
 ### Sink alignment visibility
 
