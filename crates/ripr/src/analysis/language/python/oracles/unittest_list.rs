@@ -5,6 +5,7 @@ use super::super::related_tests::owner_module_callees;
 use super::super::{PythonImport, PythonOwner, PythonTest};
 use crate::domain::{OracleKind, OracleStrength};
 use rustpython_parser::ast::{self, Expr, Mod, Stmt};
+use std::collections::BTreeSet;
 use std::path::Path;
 
 pub(in crate::analysis::language::python) fn eligible_class(
@@ -30,11 +31,18 @@ pub(in crate::analysis::language::python) fn eligible_class(
         }),
         _ => false,
     };
+    let mut methods = BTreeSet::new();
     authentic
         && class.body.iter().all(|statement| match statement {
             // Reject setup/teardown, overrides, descriptors and dynamic hooks, as
             // assertListEqual delegates through assertSequenceEqual and fail.
-            Stmt::FunctionDef(function) => function.name.as_str().starts_with("test"),
+            // Python normalizes identifiers; conservatively reject non-ASCII
+            // names because the parser preserves their original spelling.
+            Stmt::FunctionDef(function) => {
+                function.name.as_str().is_ascii()
+                    && function.name.as_str().starts_with("test")
+                    && methods.insert(function.name.as_str())
+            }
             Stmt::Expr(expr) => matches!(expr.value.as_ref(), Expr::Constant(constant)
             if matches!(constant.value, ast::Constant::Str(_))),
             _ => false,

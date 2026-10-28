@@ -293,6 +293,36 @@ fn unittest_list_equal_keeps_duplicate_method_declarations_distinct() -> Result<
 }
 
 #[test]
+fn unittest_list_equal_withholds_shadowed_test_method() -> Result<(), String> {
+    let source = "def labels():\n    return [1, 2]\n";
+    for (methods, exposed) in [
+        (
+            "    def test_labels(self):\n        self.assertListEqual(labels(), [1, 2])\n",
+            true,
+        ),
+        (
+            "    def test_labels(self):\n        self.assertListEqual(labels(), [1, 2])\n    def test_labels(self):\n        pass\n",
+            false,
+        ),
+        (
+            "    def test_labels(self):\n        self.assertListEqual(labels(), [1, 2])\n    def test_other(self):\n        pass\n",
+            true,
+        ),
+        (
+            "    def test_K(self):\n        self.assertListEqual(labels(), [1, 2])\n    def test_K(self):\n        pass\n",
+            false,
+        ),
+    ] {
+        let tests = format!(
+            "import unittest\nfrom src.subject import labels\nclass Checks(unittest.TestCase):\n{methods}"
+        );
+        let finding = classify_case(source, &tests, 2, "    return [1, 1]", "    return [1, 2]")?;
+        assert_eq!(finding.class == ExposureClass::Exposed, exposed, "{tests}");
+    }
+    Ok(())
+}
+
+#[test]
 fn unittest_list_equal_withholds_derived_owner_results() -> Result<(), String> {
     let source = "class Answer:\n    def __init__(self, flag):\n        self.flag = flag\n    def fixed_list(self):\n        return [1, 2]\n    def __call__(self):\n        return [1, 2]\n    def __getitem__(self, index):\n        return self.fixed_list\n\ndef labels():\n    return Answer(1)\n";
     for call in ["labels().fixed_list()", "labels()()", "labels()[0]()"] {

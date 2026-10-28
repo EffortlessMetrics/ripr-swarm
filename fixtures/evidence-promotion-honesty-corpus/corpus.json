@@ -4964,6 +4964,21 @@
       ]
     },
     {
+      "id": "py_unittest_list_equal_shadowed_method",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_unittest_list_equal_shadowed_method",
+      "vector": "unittest_later_method_shadows_assertion",
+      "probe_family": "return_value",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" },
+        { "type": "expected_oracle", "kind": "unknown", "strength": "unknown" }
+      ]
+    },
+    {
       "id": "py_unittest_list_equal_nested_class",
       "language": "python",
       "tier": "pure",
