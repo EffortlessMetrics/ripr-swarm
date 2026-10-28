@@ -31,8 +31,9 @@ use super::related_tests::owner_module_paths;
 use super::source_facts::parse_module_result;
 use super::{PythonImport, PythonOwner};
 use crate::domain::OwnerKind;
+use rayon::prelude::*;
 use rustpython_parser::ast::{self, Expr, Mod, Stmt};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 /// Maximum number of package `__init__.py` hops followed from the owner module.
@@ -128,7 +129,14 @@ fn apply_with<'s>(
         source_of,
         declared: HashMap::new(),
         bodies: HashMap::new(),
+        primed: HashMap::new(),
     };
+    star_exports.prime(
+        owners
+            .iter()
+            .filter(|owner| !owner.name.starts_with('_') && !owner.is_module_owner())
+            .map(|owner| (owner.file.as_path(), owner.name.as_str())),
+    );
     // Only an exporter importing `name` itself or `*` can re-export `name`
     // (`imports_name`), so each owner visits those exporters alone, in their
     // original order: visiting the rest changed nothing and made the pass
@@ -312,14 +320,56 @@ struct StarExports<'s, F: Fn(&Path) -> Option<&'s str>> {
     declared: HashMap<PathBuf, AllDeclaration>,
     /// Top-level statements per module, parsed once; `None` when unreadable.
     bodies: HashMap<PathBuf, Option<Vec<Stmt>>>,
+    /// Answers for every star-exportable owner's own file, from one parallel
+    /// parse per file (#10914); anything else falls back to the lazy maps.
+    primed: HashMap<PathBuf, PrimedStarFacts>,
+}
+
+/// One module's star-export answers for the names its owners define.
+struct PrimedStarFacts {
+    declaration: AllDeclaration,
+    /// `binds_once` for each name asked of this file.
+    binds_once: HashMap<String, bool>,
 }
 
 impl<'s, F: Fn(&Path) -> Option<&'s str>> StarExports<'s, F> {
+    /// Answer `exports` and `binds_once` for the files and names the owner
+    /// loop asks about, parsing each file once on the rayon workers instead
+    /// of twice on the caller (`__all__` and the body were separate parses,
+    /// and the dynamic-namespace scan ran once per owner).
+    fn prime<'o>(&mut self, asked: impl Iterator<Item = (&'o Path, &'o str)>) {
+        let mut names_by_file: HashMap<&Path, HashSet<&str>> = HashMap::new();
+        for (file, name) in asked {
+            names_by_file.entry(file).or_default().insert(name);
+        }
+        let work: Vec<(&Path, &'s str, HashSet<&str>)> = names_by_file
+            .into_iter()
+            .filter_map(|(file, names)| Some((file, (self.source_of)(file)?, names)))
+            .collect();
+        let token = crate::analysis::cancellation::current_token();
+        let primed: Vec<(PathBuf, PrimedStarFacts)> = work
+            .par_iter()
+            .map(|(file, source, names)| {
+                crate::analysis::cancellation::with_optional_token(token.as_ref(), || {
+                    (file.to_path_buf(), primed_star_facts(file, source, names))
+                })
+            })
+            .collect();
+        self.primed.extend(primed);
+    }
+
     /// Whether exactly one top-level statement of `file` binds `name` (its
     /// own definition). A reassignment, a second definition or a conditional
     /// binding means a star import may bind something else, so this reader
     /// fails closed; so does an unreadable module.
     fn binds_once(&mut self, file: &Path, name: &str) -> bool {
+        if let Some(answer) = self
+            .primed
+            .get(file)
+            .and_then(|primed| primed.binds_once.get(name))
+        {
+            return *answer;
+        }
         let source_of = &self.source_of;
         let body = self.bodies.entry(file.to_path_buf()).or_insert_with(|| {
             source_of(file).and_then(|source| match parse_module_result(file, source) {
@@ -341,13 +391,17 @@ impl<'s, F: Fn(&Path) -> Option<&'s str>> StarExports<'s, F> {
 
     fn exports(&mut self, file: &Path, name: &str) -> bool {
         let source_of = &self.source_of;
-        let declaration =
-            self.declared
-                .entry(file.to_path_buf())
-                .or_insert_with(|| match source_of(file) {
-                    Some(source) => all_declaration(file, source),
-                    None => AllDeclaration::Unresolved,
-                });
+        let declaration = match self.primed.get(file) {
+            Some(primed) => &primed.declaration,
+            None => {
+                self.declared
+                    .entry(file.to_path_buf())
+                    .or_insert_with(|| match source_of(file) {
+                        Some(source) => all_declaration(file, source),
+                        None => AllDeclaration::Unresolved,
+                    })
+            }
+        };
         match declaration {
             AllDeclaration::Absent => true,
             AllDeclaration::Names(names) => names.iter().any(|listed| listed == name),
@@ -363,8 +417,45 @@ fn all_declaration(file: &Path, source: &str) -> AllDeclaration {
     let Ok(Mod::Module(module)) = parse_module_result(file, source) else {
         return AllDeclaration::Unresolved;
     };
+    all_declaration_of(&module.body)
+}
+
+/// [`StarExports::exports`] and [`StarExports::binds_once`] for `names` of
+/// one readable module, from a single parse: the same answers the lazy path
+/// gives from its two.
+fn primed_star_facts(file: &Path, source: &str, names: &HashSet<&str>) -> PrimedStarFacts {
+    let body = match parse_module_result(file, source) {
+        Ok(Mod::Module(module)) => Some(module.body),
+        _ => None,
+    };
+    let declaration = body
+        .as_deref()
+        .map_or(AllDeclaration::Unresolved, all_declaration_of);
+    let dynamic = writes_namespace_dynamically(source);
+    let binds_once = names
+        .iter()
+        .map(|name| {
+            let once = !dynamic
+                && body.as_ref().is_some_and(|body| {
+                    !body.iter().any(is_star_import)
+                        && body
+                            .iter()
+                            .filter(|stmt| stmt_binds(stmt, name, true))
+                            .count()
+                            == 1
+                });
+            ((*name).to_string(), once)
+        })
+        .collect();
+    PrimedStarFacts {
+        declaration,
+        binds_once,
+    }
+}
+
+fn all_declaration_of(body: &[Stmt]) -> AllDeclaration {
     let mut declaration = AllDeclaration::Absent;
-    for stmt in &module.body {
+    for stmt in body {
         let (value, extends) = match stmt {
             Stmt::Assign(assign) if assign.targets.iter().any(is_all_name) => {
                 (Some(assign.value.as_ref()), false)
@@ -575,4 +666,74 @@ fn literal_string_names(expr: &Expr) -> Option<Vec<String>> {
 
 fn is_package_init(file: &Path) -> bool {
     file.file_name().and_then(|name| name.to_str()) == Some("__init__.py")
+}
+
+#[cfg(test)]
+mod primed_tests {
+    use super::*;
+
+    /// The primed answers (one parallel parse per file) equal the lazy
+    /// reader's (two parses, a namespace scan per call) for every shape the
+    /// reader distinguishes (#10914).
+    #[test]
+    fn primed_star_answers_match_the_lazy_reader() {
+        let sources: HashMap<PathBuf, &str> = [
+            (
+                "once.py",
+                "def f():\n    pass\n\n\ndef g():\n    pass\n\n\ng = 1\n",
+            ),
+            (
+                "listed.py",
+                "__all__ = ['f']\n\n\ndef f():\n    pass\n\n\ndef g():\n    pass\n",
+            ),
+            (
+                "unresolved.py",
+                "__all__ = make()\n\n\ndef f():\n    pass\n",
+            ),
+            ("star.py", "from other import *\n\n\ndef f():\n    pass\n"),
+            ("dynamic.py", "def f():\n    pass\n\n\nglobals()['g'] = f\n"),
+            ("broken.py", "def (:\n"),
+            (
+                "branches.py",
+                "if X:\n    def f():\n        pass\nelse:\n    def f():\n        pass\n",
+            ),
+        ]
+        .into_iter()
+        .map(|(file, source)| (PathBuf::from(file), source))
+        .collect();
+        let source_of = |file: &Path| sources.get(file).copied();
+        let asked: Vec<(PathBuf, &str)> = sources
+            .keys()
+            .chain(std::iter::once(&PathBuf::from("missing.py")))
+            .flat_map(|file| ["f", "g"].map(|name| (file.clone(), name)))
+            .collect();
+        let fresh = || StarExports {
+            source_of,
+            declared: HashMap::new(),
+            bodies: HashMap::new(),
+            primed: HashMap::new(),
+        };
+        let mut lazy = fresh();
+        let mut primed = fresh();
+        primed.prime(asked.iter().map(|(file, name)| (file.as_path(), *name)));
+        assert_eq!(
+            primed.primed.len(),
+            sources.len(),
+            "every readable file is primed"
+        );
+        let mut answers = Vec::new();
+        for (file, name) in &asked {
+            let expected = (lazy.exports(file, name), lazy.binds_once(file, name));
+            let actual = (primed.exports(file, name), primed.binds_once(file, name));
+            assert_eq!(actual, expected, "{} {name}", file.display());
+            answers.push((file.display().to_string(), *name, actual));
+        }
+        // The shapes really differ, so equality is not vacuous.
+        answers.sort();
+        let distinct: HashSet<(bool, bool)> =
+            answers.iter().map(|(_, _, answer)| *answer).collect();
+        assert!(distinct.contains(&(true, true)), "{answers:?}");
+        assert!(distinct.contains(&(true, false)), "{answers:?}");
+        assert!(distinct.contains(&(false, false)), "{answers:?}");
+    }
 }
