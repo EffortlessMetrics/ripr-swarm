@@ -203,7 +203,7 @@ pub(super) fn extract_parser_probe_shapes(
                 range.start(),
                 range.end(),
             );
-            if has_error_path_text(&tail_text) {
+            if has_error_path_text(&tail_text) && !is_deferred_return_expr(tail_expr) {
                 push_probe_shape(
                     &mut shapes,
                     line_index,

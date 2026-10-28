@@ -2270,6 +2270,35 @@ fn is_tail_return_value_text(text: &str) -> bool {
         && !trimmed.starts_with("loop ")
 }
 
+/// A closure or async block returns deferred work, not the errors in its body.
+fn is_deferred_return_expr(mut expr: ast::Expr) -> bool {
+    loop {
+        match expr {
+            ast::Expr::ClosureExpr(_) => return true,
+            ast::Expr::BlockExpr(block) => {
+                if block.async_token().is_some() {
+                    return true;
+                }
+                let Some(statements) = block.stmt_list() else {
+                    return false;
+                };
+                if statements.statements().next().is_some() {
+                    return false;
+                }
+                match statements.tail_expr() {
+                    Some(inner) => expr = inner,
+                    None => return false,
+                }
+            }
+            ast::Expr::ParenExpr(paren) => match paren.expr() {
+                Some(inner) => expr = inner,
+                None => return false,
+            },
+            _ => return false,
+        }
+    }
+}
+
 fn has_error_path_text(text: &str) -> bool {
     text.contains("Err(")
         || text.contains("Error::")
@@ -4827,6 +4856,55 @@ mod shadow_fact_equivalence_tests {
             .map(|shape| shape.text.as_str().to_string())
             .filter(|text| text.trim_start().starts_with("return"))
             .collect())
+    }
+
+    #[test]
+    fn deferred_tail_does_not_become_owner_error_path() -> Result<(), String> {
+        let source = concat!(
+            "enum E { Bad, Direct }\n",
+            "fn closure() -> impl Fn() -> Result<(), E> { || { Err(E::Bad) } }\n",
+            "fn future() -> impl std::future::Future<Output = Result<(), E>> { async { Err(E::Bad) } }\n",
+            "fn wrapped() -> impl Fn() -> Result<(), E> { (|| { Err(E::Bad) }) }\n",
+            "fn block() -> impl Fn() -> Result<(), E> { { || { Err(E::Bad) } } }\n",
+            "fn async_closure() -> impl AsyncFn() -> Result<(), E> { async || { Err(E::Bad) } }\n",
+            "fn direct() -> Result<(), E> { (Err(E::Direct)) }\n",
+        );
+        let facts = summarize_file_with_parser(Path::new("src/lib.rs"), source)?;
+        let errors: Vec<&str> = facts
+            .probe_shapes
+            .iter()
+            .filter(|shape| shape.kind == ProbeShapeKind::ErrorPath)
+            .map(|shape| shape.text.as_str())
+            .collect();
+        assert!(
+            errors.contains(&"(Err(E::Direct))"),
+            "direct error control: {errors:?}"
+        );
+        assert!(
+            !errors.contains(&"|| { Err(E::Bad) }"),
+            "closure tail: {errors:?}"
+        );
+        assert!(
+            !errors.contains(&"async { Err(E::Bad) }"),
+            "async tail: {errors:?}"
+        );
+        assert!(
+            !errors.contains(&"(|| { Err(E::Bad) })"),
+            "wrapped tail: {errors:?}"
+        );
+        assert!(
+            !errors.contains(&"{ || { Err(E::Bad) } }"),
+            "block tail: {errors:?}"
+        );
+        assert!(
+            !errors.contains(&"async || { Err(E::Bad) }"),
+            "async closure tail: {errors:?}"
+        );
+        assert!(
+            errors.contains(&"Err(E::Bad)"),
+            "inner constructor: {errors:?}"
+        );
+        Ok(())
     }
 
     /// #6904: a `return` inside a closure or `async` block leaves that body,
