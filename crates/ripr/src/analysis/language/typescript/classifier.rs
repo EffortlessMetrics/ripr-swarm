@@ -9175,7 +9175,17 @@ pub(crate) fn no_static_path_recommendation(owner: &TypeScriptOwner) -> String {
             "TypeScript preview advisory: module initializer observer is missing context; add a direct `expect(IMPORTED_CONST).toBe(...)` or `expect(namespace.EXPORT).toEqual(...)` observer when safe, and keep helper-derived or dynamic initialization evidence advisory.".to_string()
         }
         _ => {
-            "TypeScript preview advisory: no test references the changed owner; add a test that calls the owner and asserts the changed behavior with `toBe` / `toEqual` before any repair packet is emitted.".to_string()
+            // #10708: NoStaticPath establishes no statically linked test
+            // call, not the universal absence of a test, so the wording
+            // names the honest ordered route: add a relevant test/call and
+            // assertion, run the project's native verifier, then refresh.
+            // No exact test file or verify command is named: neither is
+            // evidenced for an owner with no static link. Repair readiness
+            // stays suppressed on the finding itself.
+            format!(
+                "TypeScript preview advisory: no statically linked test calls `{}(`; add a test that calls the changed owner and asserts the changed behavior with `toBe` / `toEqual`, run the project's native test command, then rerun `ripr check` to refresh the finding.",
+                owner.name
+            )
         }
     }
 }

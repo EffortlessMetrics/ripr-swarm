@@ -1056,7 +1056,7 @@ fn find_related_tests_with_candidates<'a>(
         }
     };
     for test_index in candidate_indices {
-        let test = index.tests().at(test_index);
+        let test = index.test_at(test_index);
         // Registration proves the callback, not its owner. Match the repo
         // path before any relation can lend evidence, and keep a later
         // policy-modified fact from falling through as an ordinary test.

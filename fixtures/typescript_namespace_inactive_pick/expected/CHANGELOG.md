@@ -25,3 +25,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_namespace_inactive_pick (3)
+
+Reason:
+RIPR-SPEC-0113: honest no-static-path next step names the owner and the ordered add-test, native verifier, refresh route (#10708)
+
+Command:
+`cargo xtask goldens bless typescript_namespace_inactive_pick --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
