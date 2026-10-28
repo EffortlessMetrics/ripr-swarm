@@ -2373,7 +2373,14 @@ JSON fields:
   itself, so a comparison seam names the same equality boundary the
   classifier's missing-discriminator statement renders. Static-limit
   findings and probes with no owner identity may omit this field until a
-  non-actionable gap-state projection exists.
+  non-actionable gap-state projection exists. TypeScript preview findings
+  that carry a preview card state the content-addressed
+  `gap:typescript:typescript_preview:<fp8>` id (the one `ripr agent repair
+  --gap-id` accepts) without the `canonical_gap` object or a
+  `canonical_gap_group_size` (TypeScript ids carry no group semantics).
+  JavaScript preview findings state no id. The id is independent of
+  `preview_actionability.missing_actionability_fields`, which lists
+  `canonical_gap_id` only to say the repair packet is not yet ready (#10709).
 - `canonical_gap_group_size` is the number of raw findings in the current
   report that share the same `canonical_gap_id`, or omitted when no canonical
   gap identity is assigned.
