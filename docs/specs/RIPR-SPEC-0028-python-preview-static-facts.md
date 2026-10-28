@@ -617,15 +617,21 @@ local bound to a model function's result runs that function, so it is not one). 
 undecorated, defined once in its file, requests no fixture, has no autouse
 conftest fixture that may skip it, and runs nothing before the assertion but
 other assertions, `pass`, a docstring and its local bindings. A workspace file
-that writes or patches any name the chain runs, a code slot, any dunder
-attribute (`__new__`, `__getattribute__`, ...; in the owner module too),
-`__class__`/`__bases__`/`eval` in the module, any workspace file that walks
-frames or a function's globals (`__globals__`, `f_globals`, `f_locals`,
-`_getframe`, `currentframe`, `f_back`, `tb_frame`, `gc.get_referrers`/
-`get_referents`), since it can write a calling module under a name built at
-runtime, a call nesting deeper than 16, more than 4096 calls, or any
-name, call, operator or value outside that model decides nothing, and the
-finding keeps its verdict. `__setattr__`, `delattr` and those frame words, like `setattr`, mark a file
+that writes or patches any name the chain runs, a code slot, or any dunder
+attribute (`__new__`, `__getattribute__`, ...; in the owner module too)
+decides nothing, and the finding keeps its verdict. So do `__class__`,
+`__bases__` or `eval` in the owner module, a call nesting deeper than 16, more
+than 4096 calls, and any name, call, operator or value outside that model.
+
+Reflection refuses the credit wherever it appears, in the owner module or in
+any other workspace file: a reflective spelling (`getattr`, `dir`,
+`getmembers`, `locals`, `inspect`, `gc`, `exec`, `compile`, `attrgetter`,
+...), a frame or a function's globals (`__globals__`, `f_globals`,
+`f_locals`, `_getframe`, `currentframe`, `f_back`, `tb_frame`,
+`get_referrers`, `get_referents`), `gc.get_objects`, or `setattr`,
+`__setattr__` and `delattr`. Such code can write a module namespace under a
+name built at runtime, so no name it mentions bounds what it changes.
+`__setattr__`, `delattr` and the frame words, like `setattr`, also mark a file
 as a dynamic writer for every module-value pass.
 
 A `def name(`, `async def name(`, or `class name(` header in a test defines a

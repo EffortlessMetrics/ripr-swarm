@@ -24,8 +24,9 @@
 //!   walrus, and no `def` whose decorator, default or annotation runs code
 //!   while the class body does; it is built as `Class()` with no arguments;
 //! - no workspace file, the owner module included, writes a dunder attribute
-//!   or walks frames or a function's globals, which can write the module
-//!   namespace under a name built at runtime;
+//!   or reflects (`getattr`, `inspect`, `gc`, frames, a function's
+//!   `__globals__`, `setattr`, ...), which can write the module namespace under
+//!   a name built at runtime;
 //! - inside a callable, a name is a parameter, a call is a bare call of a model
 //!   function or class of the module, or a method call on an instance of a
 //!   model class (the method's receiver, a parameter holding one, or
@@ -50,7 +51,7 @@ use super::bool_oracle::count_bindings;
 use super::module_constants::ModuleBindingFacts;
 use super::module_value::{
     ModuleEdit, ModuleValueCredit, Value, arithmetic, assertion_expression, comparison,
-    keep_unshadowed, straight_line_assertion, with_line_replaced,
+    keep_unshadowed, mentions_reflection, straight_line_assertion, with_line_replaced,
 };
 use super::related_tests::import_source_module_matches_owner;
 use super::source_facts::parse_module_result;
@@ -73,19 +74,10 @@ const MAX_STEPS: usize = 4096;
 /// Words that let the owner's module replace a function or method's code, or
 /// an instance's class, without a binding the module facts see (those already
 /// treat `setattr`, `exec`, `globals`, `vars`, `__dict__` and `patch` as
-/// opaque). A function's `__globals__` and a frame's `f_globals`/`f_locals`
-/// write the module namespace through a subscript.
-const DYNAMIC_WORDS: [&str; 16] = [
+/// opaque). Reflection, frames and the garbage collector are refused through
+/// [`mentions_reflection`], in the owner module and in every other file.
+const DYNAMIC_WORDS: [&str; 7] = [
     "__code__",
-    "__globals__",
-    "f_globals",
-    "f_locals",
-    "_getframe",
-    "currentframe",
-    "f_back",
-    "tb_frame",
-    "get_referrers",
-    "get_referents",
     "__defaults__",
     "__closure__",
     "__class__",
@@ -177,14 +169,14 @@ fn credits<'a>(
         .find(|candidate| candidate.is_module_owner() && candidate.file == file)?;
     if module_owner.foreign_writes.may_replace_reader_code()
         || module_owner.foreign_writes.writes_dunder()
-        || module_owner.foreign_writes.walks_frames()
+        || module_owner.foreign_writes.reflection_elsewhere()
     {
         return None;
     }
     let old_source = with_line_replaced(new_source, line, old_line_text)?;
     let mut programs = Vec::new();
     for source in [old_source.as_str(), new_source] {
-        if has_dynamic_word(source) {
+        if has_dynamic_word(source) || mentions_reflection(source) {
             return None;
         }
         let Mod::Module(module) = parse_module_result(file, source).ok()? else {

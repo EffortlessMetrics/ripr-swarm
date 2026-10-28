@@ -85,6 +85,9 @@ pub(super) struct ForeignWrites {
     /// Some other reflective file also loads modules dynamically, so the
     /// modules it reaches are unknown.
     reflective_opaque: bool,
+    /// Some other file reflects ([`mentions_reflection`]): it may reach a
+    /// module's namespace under a name built at runtime (#9226).
+    reflection_elsewhere: bool,
     /// A workspace file could not be read or the scan hit its bound, so the
     /// absence of a write is unknown.
     unknown: bool,
@@ -114,9 +117,7 @@ const DYNAMIC_LOADERS: [&str; 13] = [
 ];
 
 /// Words that reach a module namespace through a frame, a function's globals
-/// or the garbage collector. Such a file can write any module whose code calls
-/// it, under a name built at runtime, so no name it mentions bounds what it
-/// changes (#9226).
+/// or the garbage collector's referrers (#9226).
 const FRAME_WALKERS: [&str; 9] = [
     "__globals__",
     "f_globals",
@@ -128,6 +129,19 @@ const FRAME_WALKERS: [&str; 9] = [
     "get_referrers",
     "get_referents",
 ];
+
+/// Whether `source` reflects: reaches objects through a frame, a function's
+/// globals, the garbage collector (`gc.get_objects()`), or a spelling that
+/// takes the name at runtime (`getattr`, `dir`, `inspect`, ...). Such code can
+/// write a module namespace under a name built at runtime, so no name it
+/// mentions bounds what it changes (#9226).
+pub(super) fn mentions_reflection(source: &str) -> bool {
+    REFLECTIVE_SPELLINGS
+        .iter()
+        .chain(&FRAME_WALKERS)
+        .chain(&["get_objects", "setattr", "__setattr__", "delattr"])
+        .any(|spelling| mentions_identifier(source, spelling))
+}
 
 /// Spellings that reach a module's objects without writing their names.
 const REFLECTIVE_SPELLINGS: [&str; 16] = [
@@ -272,6 +286,8 @@ struct IndexedSource<'a> {
     import_words: Vec<&'a str>,
     /// The reflective file also loads modules by name at runtime.
     reflective_opaque: bool,
+    /// The file reflects, whatever tables the workspace holds.
+    reflects: bool,
 }
 
 impl<'a> ForeignIndex<'a> {
@@ -370,6 +386,7 @@ impl<'a> ForeignIndex<'a> {
         }
         let mut excluded = ForeignTotals::default();
         let mut reflective_opaque = false;
+        let mut reflection_elsewhere = false;
         let mut unparsed = Vec::new();
         for indexed in &self.files {
             if indexed.file == own {
@@ -377,6 +394,7 @@ impl<'a> ForeignIndex<'a> {
                 continue;
             }
             reflective_opaque |= indexed.reflective_opaque;
+            reflection_elsewhere |= indexed.reflects;
             if indexed.assigned.is_none() {
                 unparsed.push(indexed.file);
             }
@@ -416,6 +434,7 @@ impl<'a> ForeignIndex<'a> {
             reflective_words: held_by_others(&totals.reflective_words, &excluded.reflective_words),
             reflective_reach: held_by_others(&totals.reflective_reach, &excluded.reflective_reach),
             reflective_opaque,
+            reflection_elsewhere,
             unknown,
         }
     }
@@ -504,14 +523,10 @@ impl ForeignWrites {
 }
 
 impl ForeignWrites {
-    /// Whether some other workspace file walks frames or a function's globals
-    /// ([`FRAME_WALKERS`]), so it may write this module's namespace.
-    pub(super) fn walks_frames(&self) -> bool {
-        self.unknown
-            || self
-                .dynamic_words
-                .iter()
-                .any(|word| FRAME_WALKERS.contains(&word.as_str()))
+    /// Whether some other workspace file reflects ([`mentions_reflection`]),
+    /// so it may write this module's namespace under a name built at runtime.
+    pub(super) fn reflection_elsewhere(&self) -> bool {
+        self.unknown || self.reflection_elsewhere
     }
 
     /// Whether some workspace file assigns a dunder attribute (`__new__`,
@@ -622,6 +637,7 @@ fn scan_source<'a>(
         } else {
             import_words(source)
         },
+        reflects: mentions_reflection(source),
         reflective_opaque: reflective
             && (source.contains("sys.modules")
                 || MODULE_LOADERS

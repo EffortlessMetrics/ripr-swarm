@@ -551,6 +551,28 @@ fn owner_module_hooks_and_class_body_code_are_not_credited() -> Check {
     )?;
     withheld(&finding, "foreign frame write");
 
+    // Reflection reaches the namespace under a name built at runtime: the
+    // garbage collector, in the owner, the package or a helper the test
+    // imports, and `getattr` with a built dunder name.
+    let gc_write = |name: &str| {
+        format!(
+            "import gc\n\nfor _space in gc.get_objects():\n    if type(_space) is dict and _space.get(\"render\") is {name}:\n        _space[\"_pad\"] = lambda: 2\n"
+        )
+    };
+    let owner_gc = format!("{functions}\n\n{}", gc_write("render"));
+    withheld(&run(&owner_gc, &[])?, "owner gc write");
+    let foreign_gc = format!(
+        "from reach.ledger import render as _render\n{}",
+        gc_write("_render")
+    );
+    withheld(
+        &run(functions, &[("reach/boot.py", foreign_gc.as_str())])?,
+        "foreign gc write",
+    );
+    let built =
+        format!("{functions}\n\ngetattr(render, \"__glob\" + \"als__\")[\"_pad\"] = lambda: 2\n");
+    withheld(&run(&built, &[])?, "built getattr name");
+
     // Many locals and many earlier assertions: the scan stays fast and the
     // pinned assertion still credits.
     let mut test = String::from("from reach.ledger import Ledger\n\n\ndef test_render_ledger():\n");
