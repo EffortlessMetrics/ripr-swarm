@@ -248,9 +248,22 @@ struct IndexedSource<'a> {
 }
 
 impl<'a> ForeignIndex<'a> {
+    /// The index parsing every file's assigned attributes itself.
+    #[cfg(test)]
     pub(super) fn build(
         sources: impl Iterator<Item = (&'a Path, &'a str)>,
         unread_files: bool,
+    ) -> Self {
+        Self::build_with_assigned(sources, unread_files, &std::collections::BTreeMap::new())
+    }
+
+    /// [`Self::build`], reading each file's assigned attributes from
+    /// `assigned` (the source-fact pass already parsed it) and parsing only
+    /// the files it does not hold (#10914).
+    pub(super) fn build_with_assigned(
+        sources: impl Iterator<Item = (&'a Path, &'a str)>,
+        unread_files: bool,
+        assigned: &std::collections::BTreeMap<std::path::PathBuf, Option<Vec<String>>>,
     ) -> Self {
         let mut files = Vec::new();
         let mut references = std::collections::BTreeMap::new();
@@ -280,7 +293,7 @@ impl<'a> ForeignIndex<'a> {
                 .par_iter()
                 .map(|&(file, source)| {
                     crate::analysis::cancellation::with_optional_token(token.as_ref(), || {
-                        scan_source(file, source, &tables)
+                        scan_source(file, source, &tables, assigned.get(file))
                     })
                 })
                 .collect();
@@ -521,6 +534,7 @@ fn scan_source<'a>(
     file: &'a Path,
     source: &'a str,
     tables: &std::collections::BTreeSet<String>,
+    parsed_assigned: Option<&Option<Vec<String>>>,
 ) -> (bool, IndexedSource<'a>) {
     let hides_import = DYNAMIC_LOADERS
         .iter()
@@ -528,7 +542,9 @@ fn scan_source<'a>(
         || source.contains("sys.modules")
         || (file.file_name().is_some_and(|name| name == "__init__.py")
             && mentions_identifier(source, "__all__"));
-    let assigned = assigned_attributes(source);
+    let assigned = parsed_assigned
+        .cloned()
+        .unwrap_or_else(|| assigned_attributes(source));
     let dynamic = assigned.is_none()
         || DYNAMIC_WRITERS
             .iter()
