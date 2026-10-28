@@ -18693,6 +18693,45 @@ fn receiver_boundary_scan_keeps_source_offsets_after_unicode_comments() {
 }
 
 #[test]
+fn repeated_nested_optional_calls_build_one_boundary_mask() {
+    let body = "// café\nother. /* x */ pricing?.loyaltyPrice(2);\n".repeat(256);
+    let mut masks = 0;
+    let found = super::related_tests::contains_member_call_name_with_mask(
+        &body,
+        "pricing",
+        "loyaltyPrice",
+        |source| {
+            masks += 1;
+            super::related_tests::make_boundary_mask(source)
+        },
+    );
+    assert!(
+        !found,
+        "nested receivers must not count as calls on the import"
+    );
+    assert_eq!(masks, 1, "the search must not remask each growing prefix");
+
+    let direct = format!("{body}\npricing?.loyaltyPrice(2);");
+    assert!(super::related_tests::contains_member_call_name(
+        &direct,
+        "pricing",
+        "loyaltyPrice"
+    ));
+
+    let mut obvious_masks = 0;
+    assert!(super::related_tests::contains_member_call_name_with_mask(
+        "expect(pricing?.loyaltyPrice(2));",
+        "pricing",
+        "loyaltyPrice",
+        |source| {
+            obvious_masks += 1;
+            super::related_tests::make_boundary_mask(source)
+        },
+    ));
+    assert_eq!(obvious_masks, 0, "obvious boundaries need no mask");
+}
+
+#[test]
 fn undercredit_4103_dynamic_import_member_call_is_credited() {
     let owner = test_owner("loyaltyPrice", "src/pricing.ts");
     let tests = extract_tests(

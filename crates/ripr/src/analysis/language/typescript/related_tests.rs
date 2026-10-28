@@ -3958,9 +3958,22 @@ pub(crate) fn contains_member_call_name(
     object_name: &str,
     method_name: &str,
 ) -> bool {
+    contains_member_call_name_with_mask(body_text, object_name, method_name, make_boundary_mask)
+}
+
+pub(super) fn contains_member_call_name_with_mask<F>(
+    body_text: &str,
+    object_name: &str,
+    method_name: &str,
+    mut make_mask: F,
+) -> bool
+where
+    F: FnMut(&str) -> (String, Vec<usize>),
+{
     if !is_safe_javascript_identifier(object_name) || !is_safe_javascript_identifier(method_name) {
         return false;
     }
+    let boundary_mask = std::cell::OnceCell::new();
     // Plain, optional-chain (`obj?.m(`) and non-null (`obj!.m(`) member calls
     // all reach the same member of the same object binding (#4103
     // under-credit: the punctuated forms were invisible to every member arm).
@@ -3972,7 +3985,14 @@ pub(crate) fn contains_member_call_name(
     .iter()
     .any(|needle| {
         body_text.match_indices(needle.as_str()).any(|(idx, _)| {
-            has_member_call_boundary(body_text, idx)
+            let boundary = match immediate_member_boundary(body_text, idx) {
+                Some(result) => result,
+                None => {
+                    let (mask, offsets) = boundary_mask.get_or_init(|| make_mask(body_text));
+                    has_member_call_boundary_in_mask(body_text, mask, offsets[idx], idx)
+                }
+            };
+            boundary
                 && !line_prefix_looks_like_comment_or_string(body_text, idx)
                 && !inside_block_comment(body_text, idx)
         })
@@ -4611,14 +4631,7 @@ pub(crate) fn innermost_scope_containing(
 /// every local declaration of `identifier`, and every use of it. See
 /// `local_identifier_declared_in_test_body` for the full lexical contract.
 pub(crate) fn scan_body_lexical_facts(body_text: &str, identifier: &str) -> BodyLexicalScan {
-    let boundary_mask = super::classifier::ts_mask_literals_and_comments(body_text);
-    // Masked non-ASCII characters may occupy fewer bytes than the source.
-    // Map character boundaries once instead of slicing it at source offsets.
-    let mut mask_offsets = vec![usize::MAX; body_text.len() + 1];
-    for ((source_at, _), (mask_at, _)) in body_text.char_indices().zip(boundary_mask.char_indices())
-    {
-        mask_offsets[source_at] = mask_at;
-    }
+    let (boundary_mask, mask_offsets) = make_boundary_mask(body_text);
     // Scope table: (open-brace offset, close-brace offset; `usize::MAX` while
     // the scope is still open). Entries are kept after closing so a nested
     // declaration can be tested for enclosing a specific use.
@@ -4848,11 +4861,31 @@ fn split_top_level_declarators(after: &str) -> Vec<&str> {
     parts.into_iter().filter(|part| !part.is_empty()).collect()
 }
 
+pub(super) fn make_boundary_mask(body_text: &str) -> (String, Vec<usize>) {
+    let mask = super::classifier::ts_mask_literals_and_comments(body_text);
+    // Masked non-ASCII characters may occupy fewer bytes than the source.
+    let mut offsets = vec![usize::MAX; body_text.len() + 1];
+    for ((source_at, _), (mask_at, _)) in body_text.char_indices().zip(mask.char_indices()) {
+        offsets[source_at] = mask_at;
+    }
+    (mask, offsets)
+}
+
+fn immediate_member_boundary(body_text: &str, idx: usize) -> Option<bool> {
+    if idx == 0 {
+        return Some(true);
+    }
+    body_text[..idx]
+        .chars()
+        .next_back()
+        .filter(|ch| !ch.is_whitespace() && *ch != '/')
+        .map(|ch| !is_javascript_identifier_char(ch) && ch != '.')
+}
+
 pub(crate) fn has_member_call_boundary(body_text: &str, idx: usize) -> bool {
     let prefix = &body_text[..idx];
-    let last = prefix.chars().next_back();
-    if let Some(ch) = last.filter(|ch| !ch.is_whitespace() && *ch != '/') {
-        return !is_javascript_identifier_char(ch) && ch != '.';
+    if let Some(result) = immediate_member_boundary(body_text, idx) {
+        return result;
     }
     let trimmed = prefix.trim_end();
     let last_line = trimmed.rsplit('\n').next().unwrap_or(trimmed);
@@ -4874,13 +4907,8 @@ fn has_member_call_boundary_in_mask(
     if mask_idx == usize::MAX {
         return has_member_call_boundary(body_text, idx);
     }
-    let prefix = &body_text[..idx];
-    if let Some(ch) = prefix
-        .chars()
-        .next_back()
-        .filter(|ch| !ch.is_whitespace() && *ch != '/')
-    {
-        return !is_javascript_identifier_char(ch) && ch != '.';
+    if let Some(result) = immediate_member_boundary(body_text, idx) {
+        return result;
     }
     boundary_mask_allows(&mask[..mask_idx])
 }
