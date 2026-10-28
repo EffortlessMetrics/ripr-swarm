@@ -18663,7 +18663,7 @@ fn optional_chain_namespace_receiver_must_be_the_imported_binding() {
         r#"import * as pricing from "../src/pricing";
 test("direct", () => { expect(pricing?.loyaltyPrice(2)).toBe(1); });
 test("commented direct", () => {
-  // Check the price.
+  // Café: check the price.
   pricing?.loyaltyPrice(2);
 });
 test("nested", () => { expect(other. pricing?.loyaltyPrice(2)).toBe(1); });
@@ -18683,6 +18683,13 @@ test("line commented nested", () => { other. // member
     assert_eq!(candidates.len(), 2, "{candidates:?}");
     assert_eq!(candidates[0].test.name, "direct");
     assert_eq!(candidates[1].test.name, "commented direct");
+}
+
+#[test]
+fn receiver_boundary_scan_keeps_source_offsets_after_unicode_comments() {
+    let body = "// café.\n pricing?.loyaltyPrice(2);\nother. /* 雪 */ pricing?.loyaltyPrice(2);";
+    let scan = super::related_tests::scan_body_lexical_facts(body, "pricing");
+    assert_eq!(scan.uses, vec!["// café.\n ".len()]);
 }
 
 #[test]

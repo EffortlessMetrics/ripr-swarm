@@ -4611,6 +4611,14 @@ pub(crate) fn innermost_scope_containing(
 /// every local declaration of `identifier`, and every use of it. See
 /// `local_identifier_declared_in_test_body` for the full lexical contract.
 pub(crate) fn scan_body_lexical_facts(body_text: &str, identifier: &str) -> BodyLexicalScan {
+    let boundary_mask = super::classifier::ts_mask_literals_and_comments(body_text);
+    // Masked non-ASCII characters may occupy fewer bytes than the source.
+    // Map character boundaries once instead of slicing it at source offsets.
+    let mut mask_offsets = vec![usize::MAX; body_text.len() + 1];
+    for ((source_at, _), (mask_at, _)) in body_text.char_indices().zip(boundary_mask.char_indices())
+    {
+        mask_offsets[source_at] = mask_at;
+    }
     // Scope table: (open-brace offset, close-brace offset; `usize::MAX` while
     // the scope is still open). Entries are kept after closing so a nested
     // declaration can be tested for enclosing a specific use.
@@ -4706,7 +4714,12 @@ pub(crate) fn scan_body_lexical_facts(body_text: &str, identifier: &str) -> Body
                     // name token itself. Comment/string occurrences cannot
                     // reach this arm (the state machine skips them).
                     if body_text[idx..].starts_with(identifier)
-                        && has_member_call_boundary(body_text, idx)
+                        && has_member_call_boundary_in_mask(
+                            body_text,
+                            &boundary_mask,
+                            mask_offsets[idx],
+                            idx,
+                        )
                         && body_text[idx + identifier.len()..]
                             .chars()
                             .next()
@@ -4841,14 +4854,40 @@ pub(crate) fn has_member_call_boundary(body_text: &str, idx: usize) -> bool {
     if let Some(ch) = last.filter(|ch| !ch.is_whitespace() && *ch != '/') {
         return !is_javascript_identifier_char(ch) && ch != '.';
     }
+    let trimmed = prefix.trim_end();
+    let last_line = trimmed.rsplit('\n').next().unwrap_or(trimmed);
+    if !trimmed.ends_with(['.', '/']) && !last_line.contains("//") {
+        return true;
+    }
     // Comments are trivia between the receiver and dot, but punctuation in
     // a comment is not a member access. Mask them before inspecting the token.
     let masked = super::classifier::ts_mask_literals_and_comments(prefix);
-    let trimmed = masked.trim_end();
-    if trimmed.ends_with('.') && !trimmed.ends_with("...") {
-        return false;
+    boundary_mask_allows(&masked)
+}
+
+fn has_member_call_boundary_in_mask(
+    body_text: &str,
+    mask: &str,
+    mask_idx: usize,
+    idx: usize,
+) -> bool {
+    if mask_idx == usize::MAX {
+        return has_member_call_boundary(body_text, idx);
     }
-    true
+    let prefix = &body_text[..idx];
+    if let Some(ch) = prefix
+        .chars()
+        .next_back()
+        .filter(|ch| !ch.is_whitespace() && *ch != '/')
+    {
+        return !is_javascript_identifier_char(ch) && ch != '.';
+    }
+    boundary_mask_allows(&mask[..mask_idx])
+}
+
+fn boundary_mask_allows(mask: &str) -> bool {
+    let trimmed = mask.trim_end();
+    !trimmed.ends_with('.') || trimmed.ends_with("...")
 }
 
 pub(crate) fn line_prefix_looks_like_comment_or_string(body_text: &str, idx: usize) -> bool {
