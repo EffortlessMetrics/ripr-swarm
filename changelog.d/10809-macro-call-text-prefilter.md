@@ -1,2 +1,2 @@
 <!-- section: Fixed -->
-- `ripr check` skips the parse and token walk of a file that never mentions a macro-generator name when it looks for the first `name!` call (imported-macro scan), so a workspace-wide index build does less parsing. On this repository's `crates/ripr` diff the warm check went from 132 s to 100 s on one machine, with byte-identical cold and warm reports (#10809).
+- `ripr check` skips the parse and token walk of a file that never mentions a macro-generator name when it looks for the first `name!` call (imported-macro scan). Results are unchanged. The saving is measured on the real parser entry, where an absent-name file no longer reaches it; an end-to-end speedup is tracked by the nightly warm-check rows rather than claimed here (#10809).
