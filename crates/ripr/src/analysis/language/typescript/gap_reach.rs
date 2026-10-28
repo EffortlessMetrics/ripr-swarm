@@ -58,8 +58,12 @@ pub(super) struct GapReach<'a> {
     needles: Vec<String>,
     alias_map: Option<&'a TsAliasMap>,
     package_names: Vec<String>,
+    /// The root `package.json` `exports` map, for the package's own name.
+    package_exports: Option<serde_json::Value>,
     /// Scoping is off: a bundler alias or a cross-language consumer exists.
     disabled: bool,
+    /// Directories whose own tsconfig remaps resolution for files beneath them.
+    remapped_dirs: Vec<String>,
 }
 
 impl<'a> GapReach<'a> {
@@ -78,10 +82,14 @@ impl<'a> GapReach<'a> {
             .into_iter()
             .flatten()
             .collect();
+        let package_exports = package_json
+            .as_deref()
+            .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())
+            .and_then(|manifest| manifest.get("exports").cloned());
         // A bundler, transpiler or test-runner alias is invisible to tsconfig.
         // Any config mentioning one makes every bare specifier suspect, so keep
         // the workspace-wide disclosure.
-        let bundler_alias = resolution_config_hides_imports(root, alias_map);
+        let hiding = resolution_config_hides_imports(root, alias_map);
         let mut needles: Vec<String> = owner_names
             .into_iter()
             .filter(|name| !name.is_empty())
@@ -94,7 +102,9 @@ impl<'a> GapReach<'a> {
             needles,
             alias_map,
             package_names,
-            disabled: bundler_alias || cross_language_consumer,
+            package_exports,
+            disabled: hiding.everywhere || cross_language_consumer,
+            remapped_dirs: hiding.dirs,
         }
     }
 
@@ -110,7 +120,10 @@ impl<'a> GapReach<'a> {
             if !seen.insert(path.clone()) {
                 continue;
             }
-            if seen.len() > CLOSURE_FILE_BUDGET || self.changed.contains(&path) {
+            if seen.len() > CLOSURE_FILE_BUDGET
+                || self.changed.contains(&path)
+                || self.is_under_remapped_dir(&path)
+            {
                 return true;
             }
             let Some(source) = self.sources.get(&path) else {
@@ -137,6 +150,13 @@ impl<'a> GapReach<'a> {
         false
     }
 
+    fn is_under_remapped_dir(&self, path: &str) -> bool {
+        self.remapped_dirs.iter().any(|dir| {
+            path.strip_prefix(dir.as_str())
+                .is_some_and(|rest| rest.starts_with('/'))
+        })
+    }
+
     fn follow(&self, from: &str, specifier: &str) -> Follow {
         if specifier.starts_with('.') {
             return self.follow_relative(from, specifier);
@@ -148,12 +168,12 @@ impl<'a> GapReach<'a> {
         if specifier.starts_with(['/', '~', '#', '$']) || specifier.starts_with("@/") {
             return Follow::MayReach;
         }
-        if self
+        if let Some(name) = self
             .package_names
             .iter()
-            .any(|name| specifier == name || specifier.starts_with(&format!("{name}/")))
+            .find(|name| specifier == name.as_str() || specifier.starts_with(&format!("{name}/")))
         {
-            return Follow::MayReach;
+            return self.follow_self_import(name, specifier);
         }
         if let Some(map) = self.alias_map {
             let unresolved_by_design = matches!(
@@ -168,6 +188,58 @@ impl<'a> GapReach<'a> {
             }
         }
         Follow::External
+    }
+
+    /// A package importing its own name resolves through `exports`. Only
+    /// targets that are workspace sources can be followed; a build output
+    /// (`./dist/...`) is not scanned, so it relates nothing the import scan
+    /// could see. A missing or pattern entry keeps the gap.
+    fn follow_self_import(&self, name: &str, specifier: &str) -> Follow {
+        let Some(exports) = &self.package_exports else {
+            return Follow::MayReach;
+        };
+        let subpath = match specifier.strip_prefix(name) {
+            Some("") => ".".to_string(),
+            Some(rest) => format!(".{rest}"),
+            None => return Follow::MayReach,
+        };
+        let entry = match exports {
+            serde_json::Value::Object(map) if map.keys().any(|key| key.starts_with('.')) => {
+                match map.get(&subpath) {
+                    Some(entry) => entry,
+                    None => return Follow::MayReach,
+                }
+            }
+            other if subpath == "." => other,
+            _ => return Follow::MayReach,
+        };
+        let mut targets = Vec::new();
+        let mut pending = vec![entry];
+        while let Some(value) = pending.pop() {
+            match value {
+                serde_json::Value::String(target) => targets.push(target.as_str()),
+                serde_json::Value::Object(map) => pending.extend(map.values()),
+                serde_json::Value::Array(items) => pending.extend(items),
+                _ => {}
+            }
+        }
+        let mut found = Vec::new();
+        for target in targets {
+            let Some(relative) = target.strip_prefix("./") else {
+                return Follow::MayReach;
+            };
+            if relative.contains('*') {
+                return Follow::MayReach;
+            }
+            if self.sources.contains_key(relative) {
+                found.push(relative.to_string());
+            }
+        }
+        if found.is_empty() {
+            Follow::External
+        } else {
+            Follow::Files(found)
+        }
     }
 
     fn follow_relative(&self, from: &str, specifier: &str) -> Follow {
@@ -211,23 +283,43 @@ enum Follow {
     MayReach,
 }
 
+/// Where a resolution-hiding config applies.
+#[derive(Default)]
+struct ConfigHiding {
+    /// Resolution is remapped somewhere the scan cannot localize.
+    everywhere: bool,
+    /// A nested package tsconfig that extends, references or sets `paths`
+    /// remaps only files beneath its own directory (relative, `/`-separated).
+    dirs: Vec<String>,
+}
+
+impl ConfigHiding {
+    fn everywhere() -> Self {
+        Self {
+            everywhere: true,
+            dirs: Vec::new(),
+        }
+    }
+}
+
 /// Config that lets a bare or relative specifier resolve somewhere the import
 /// scan cannot see. Checked over every `tsconfig*` / `jsconfig*` / `package.json`
 /// within a few levels of the root, since a package-level config is not loaded
 /// by the alias map.
-fn resolution_config_hides_imports(root: &Path, alias_map: Option<&TsAliasMap>) -> bool {
+fn resolution_config_hides_imports(root: &Path, alias_map: Option<&TsAliasMap>) -> ConfigHiding {
     const ALWAYS: [&str; 8] = [
         "rootDirs",
         "moduleNameMapper",
         "moduleDirectories",
         "modulePaths",
-        "alias",
+        "plugin-alias",
         "module-resolver",
         "_moduleAliases",
         "tsconfig-paths",
     ];
     let mut pending = vec![(root.to_path_buf(), 0usize)];
     let mut visited = 0usize;
+    let mut hiding = ConfigHiding::default();
     while let Some((dir, depth)) = pending.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;
@@ -253,13 +345,13 @@ fn resolution_config_hides_imports(root: &Path, alias_map: Option<&TsAliasMap>) 
             }
             visited += 1;
             if visited > 200 {
-                return true;
+                return ConfigHiding::everywhere();
             }
             let Ok(text) = std::fs::read_to_string(&path) else {
-                return true;
+                return ConfigHiding::everywhere();
             };
-            if ALWAYS.iter().any(|marker| text.contains(marker)) {
-                return true;
+            if ALWAYS.iter().any(|marker| text.contains(marker)) || mentions_alias_key(&text) {
+                return ConfigHiding::everywhere();
             }
             if is_ts_config {
                 // TypeScript decodes JSONC keys, including `\u` escapes. The
@@ -272,10 +364,10 @@ fn resolution_config_hides_imports(root: &Path, alias_map: Option<&TsAliasMap>) 
                             serde_json::from_str::<serde_json::Value>(&normalized).ok()
                         })
                 else {
-                    return true;
+                    return ConfigHiding::everywhere();
                 };
                 if !config.is_object() {
-                    return true;
+                    return ConfigHiding::everywhere();
                 }
                 let mut pending = vec![&config];
                 let mut resolves = false;
@@ -286,9 +378,9 @@ fn resolution_config_hides_imports(root: &Path, alias_map: Option<&TsAliasMap>) 
                                 // `baseUrl` and `rootDirs` can redirect imports
                                 // even when a root alias map loaded successfully.
                                 if matches!(key.as_str(), "baseUrl" | "rootDirs") {
-                                    return true;
+                                    return ConfigHiding::everywhere();
                                 }
-                                if matches!(key.as_str(), "paths" | "extends" | "references") {
+                                if key == "paths" {
                                     resolves = true;
                                 }
                                 pending.push(child);
@@ -298,16 +390,152 @@ fn resolution_config_hides_imports(root: &Path, alias_map: Option<&TsAliasMap>) 
                         _ => {}
                     }
                 }
+                resolves |= extends_may_remap(&config, &dir)
+                    || references_leave_the_scan(&config, &dir, root);
                 // Only the root config feeds the alias map, and only when it
                 // loaded. Anything else that remaps resolution is invisible.
                 let loaded_root = depth == 0 && alias_map.is_some_and(TsAliasMap::has_tsconfig);
                 if resolves && !loaded_root {
-                    return true;
+                    if depth == 0 {
+                        return ConfigHiding::everywhere();
+                    }
+                    let relative = dir
+                        .strip_prefix(root)
+                        .ok()
+                        .map(|rel| rel.to_string_lossy().replace('\\', "/"));
+                    match relative {
+                        Some(rel) if !rel.is_empty() => {
+                            if !hiding.dirs.contains(&rel) {
+                                hiding.dirs.push(rel);
+                            }
+                        }
+                        _ => return ConfigHiding::everywhere(),
+                    }
                 }
             }
         }
     }
+    hiding
+}
+
+/// Whether a JSONC tsconfig declares `paths`, `baseUrl` or `rootDirs` anywhere.
+fn declares_resolution_remap(config: &serde_json::Value) -> bool {
+    let mut pending = vec![config];
+    while let Some(value) = pending.pop() {
+        match value {
+            serde_json::Value::Object(entries) => {
+                for (key, child) in entries {
+                    if matches!(key.as_str(), "paths" | "baseUrl" | "rootDirs") {
+                        return true;
+                    }
+                    pending.push(child);
+                }
+            }
+            serde_json::Value::Array(items) => pending.extend(items),
+            _ => {}
+        }
+    }
     false
+}
+
+fn read_tsconfig(path: &Path) -> Option<serde_json::Value> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let normalized = super::tsconfig::strip_jsonc(&text).ok()?;
+    serde_json::from_str(&normalized).ok()
+}
+
+/// Top-level `"extends"` entries as specifiers; `None` when malformed.
+fn extends_specifiers(config: &serde_json::Value) -> Option<Vec<&str>> {
+    match config.get("extends") {
+        None => Some(Vec::new()),
+        Some(serde_json::Value::String(spec)) => Some(vec![spec.as_str()]),
+        Some(serde_json::Value::Array(items)) => items
+            .iter()
+            .map(|item| item.as_str())
+            .collect::<Option<Vec<_>>>(),
+        Some(_) => None,
+    }
+}
+
+/// Whether the `extends` chain of `config` (in `dir`) could remap resolution.
+/// A package base config (`@scope/tsconfig`) can carry `paths`, so it keeps
+/// the gap; a workspace-relative chain is followed and only a chain that
+/// declares `paths`, `baseUrl` or `rootDirs`, or cannot be read, does.
+fn extends_may_remap(config: &serde_json::Value, dir: &Path) -> bool {
+    const MAX_CHAIN: usize = 8;
+    let mut pending: Vec<(serde_json::Value, std::path::PathBuf, usize)> =
+        vec![(config.clone(), dir.to_path_buf(), 0)];
+    while let Some((current, current_dir, chain)) = pending.pop() {
+        let Some(specs) = extends_specifiers(&current) else {
+            return true;
+        };
+        for spec in specs {
+            if !spec.starts_with('.') || chain >= MAX_CHAIN {
+                return true;
+            }
+            let base = current_dir.join(spec);
+            let with_json = std::path::PathBuf::from(format!("{}.json", base.display()));
+            let Some(path) = [base, with_json].into_iter().find(|path| path.is_file()) else {
+                return true;
+            };
+            let Some(parsed) = read_tsconfig(&path) else {
+                return true;
+            };
+            if declares_resolution_remap(&parsed) {
+                return true;
+            }
+            let next_dir = path.parent().map_or(current_dir.clone(), Path::to_path_buf);
+            pending.push((parsed, next_dir, chain + 1));
+        }
+    }
+    false
+}
+
+/// Whether a project `"references"` entry names a config this scan does not
+/// visit itself (outside the root, missing, hidden or beyond the depth bound).
+fn references_leave_the_scan(config: &serde_json::Value, dir: &Path, root: &Path) -> bool {
+    let Some(references) = config.get("references") else {
+        return false;
+    };
+    let Some(items) = references.as_array() else {
+        return true;
+    };
+    items.iter().any(|item| {
+        let Some(reference) = item.get("path").and_then(serde_json::Value::as_str) else {
+            return true;
+        };
+        let target = dir.join(reference);
+        let file = if target.is_dir() {
+            target.join("tsconfig.json")
+        } else {
+            target
+        };
+        let Ok(relative) = file.strip_prefix(root) else {
+            return true;
+        };
+        let components: Vec<_> = relative
+            .components()
+            .map(|part| part.as_os_str().to_string_lossy().into_owned())
+            .collect();
+        let skipped = components.iter().any(|part| {
+            part == ".."
+                || (part.starts_with('.') && part != ".")
+                || matches!(part.as_str(), "node_modules" | "target" | "dist" | "build")
+        });
+        !file.is_file() || skipped || components.len() > 5
+    })
+}
+
+/// Whether `text` uses an `alias` key or identifier (`resolve.alias`, `alias:`,
+/// `"alias"`, `alias({...})`). A hyphenated name such as the lint rule
+/// `typescript/no-this-alias` is not a resolution alias.
+fn mentions_alias_key(text: &str) -> bool {
+    text.match_indices("alias").any(|(at, _)| {
+        !text[..at]
+            .chars()
+            .next_back()
+            .is_some_and(|prev| prev.is_alphanumeric() || matches!(prev, '_' | '$' | '-'))
+    })
 }
 
 /// Build, transpile and test-runner configs that can alias module names.
@@ -747,6 +975,30 @@ mod tests {
                 true,
             ),
             (
+                "plugin-alias-import",
+                "vite.config.ts",
+                "import a from '@rollup/plugin-alias';\nexport default { plugins: [a({})] };",
+                true,
+            ),
+            (
+                "lint-rule-named-alias",
+                "vite.config.ts",
+                "export default { lint: { rules: { 'typescript/no-this-alias': 'error' } } };",
+                false,
+            ),
+            (
+                "alias-key-after-lint-rule",
+                "vite.config.ts",
+                "export default { lint: { 'no-this-alias': 'error' }, resolve: { alias: { a: './b' } } };",
+                true,
+            ),
+            (
+                "plain-tsconfig",
+                "tsconfig.json",
+                r#"{"compilerOptions": {"strict": true}}"#,
+                false,
+            ),
+            (
                 "plain-vitest",
                 "vitest.config.ts",
                 "export default { test: { globals: true } };",
@@ -759,7 +1011,231 @@ mod tests {
             std::fs::create_dir_all(parent).map_err(|err| format!("dirs: {err}"))?;
             std::fs::write(&path, text).map_err(|err| format!("write config: {err}"))?;
             assert_eq!(
-                resolution_config_hides_imports(&root, None),
+                {
+                    let hiding = resolution_config_hides_imports(&root, None);
+                    hiding.everywhere || !hiding.dirs.is_empty()
+                },
+                hides,
+                "{label}"
+            );
+            let _ = std::fs::remove_dir_all(&root);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_nested_package_tsconfig_remaps_only_its_own_directory() -> Result<(), String> {
+        let root = temp_root("nested-extends")?;
+        let nested = root.join("runtime-tests/node");
+        std::fs::create_dir_all(&nested).map_err(|err| format!("dirs: {err}"))?;
+        std::fs::write(
+            nested.join("tsconfig.json"),
+            r#"{"extends": "../../tsconfig.base.json"}"#,
+        )
+        .map_err(|err| format!("write config: {err}"))?;
+        let hiding = resolution_config_hides_imports(&root, None);
+        assert!(!hiding.everywhere);
+        assert_eq!(hiding.dirs, vec!["runtime-tests/node".to_string()]);
+
+        let entries = [
+            ("test/a.test.ts", "import { x } from '../src/x';\n"),
+            ("src/x.ts", "export const x = 1;\n"),
+            ("src/changed.ts", "export function changedFn() {}\n"),
+            ("runtime-tests/node/b.test.ts", "export const y = 1;\n"),
+        ];
+        let (owned, ()) = files(&entries);
+        let sources: HashMap<String, &String> = owned
+            .iter()
+            .map(|(path, source)| (path.clone(), source))
+            .collect();
+        let reach = GapReach::new(
+            &sources,
+            &["src/changed.ts".to_string()],
+            std::iter::empty(),
+            None,
+            &root,
+            false,
+        );
+        assert!(!reach.may_reach(Path::new("test/a.test.ts")));
+        assert!(reach.may_reach(Path::new("runtime-tests/node/b.test.ts")));
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    fn check_in(root: &Path, entries: &[(&str, &str)], changed: &[&str], gap: &str) -> bool {
+        let (owned, ()) = files(entries);
+        let sources: HashMap<String, &String> = owned
+            .iter()
+            .map(|(path, source)| (path.clone(), source))
+            .collect();
+        GapReach::new(
+            &sources,
+            &changed
+                .iter()
+                .map(|path| path.to_string())
+                .collect::<Vec<_>>(),
+            std::iter::empty(),
+            None,
+            root,
+            false,
+        )
+        .may_reach(Path::new(gap))
+    }
+
+    #[test]
+    fn a_self_import_follows_exports_only_into_workspace_sources() -> Result<(), String> {
+        let entries = [
+            ("test/a.test.ts", "import { j } from 'pkg/jsx';\n"),
+            ("src/changed.ts", "export function changedFn() {}\n"),
+        ];
+        let write = |label: &str, manifest: &str| -> Result<std::path::PathBuf, String> {
+            let root = temp_root(label)?;
+            std::fs::write(root.join("package.json"), manifest)
+                .map_err(|err| format!("write manifest: {err}"))?;
+            Ok(root)
+        };
+        // Build output is not a scanned source: the import relates nothing.
+        let built = write(
+            "self-built",
+            r#"{"name": "pkg", "exports": {"./jsx": {"import": "./dist/jsx.js"}}}"#,
+        )?;
+        assert!(!check_in(
+            &built,
+            &entries,
+            &["src/changed.ts"],
+            "test/a.test.ts"
+        ));
+        // An exports target that is a changed source reaches it.
+        let source = write(
+            "self-source",
+            r#"{"name": "pkg", "exports": {"./jsx": "./src/changed.ts"}}"#,
+        )?;
+        assert!(check_in(
+            &source,
+            &entries,
+            &["src/changed.ts"],
+            "test/a.test.ts"
+        ));
+        // No exports map, no entry for the subpath, or a pattern keeps the gap.
+        for (label, manifest) in [
+            ("self-none", r#"{"name": "pkg", "main": "dist/index.js"}"#),
+            (
+                "self-missing",
+                r#"{"name": "pkg", "exports": {".": "./dist/index.js"}}"#,
+            ),
+            (
+                "self-pattern",
+                r#"{"name": "pkg", "exports": {"./*": "./dist/*.js"}}"#,
+            ),
+        ] {
+            let root = write(label, manifest)?;
+            assert!(
+                check_in(&root, &entries, &["src/changed.ts"], "test/a.test.ts"),
+                "{label}"
+            );
+            let _ = std::fs::remove_dir_all(&root);
+        }
+        let _ = std::fs::remove_dir_all(&built);
+        let _ = std::fs::remove_dir_all(&source);
+        Ok(())
+    }
+
+    /// Label, files written under the root, whether imports are hidden.
+    type ChainCase<'a> = (&'a str, &'a [(&'a str, &'a str)], bool);
+
+    #[test]
+    fn a_workspace_extends_chain_hides_imports_only_when_it_remaps() -> Result<(), String> {
+        // (label, files, scanned tsconfig, hides)
+        let cases: [ChainCase; 8] = [
+            (
+                "plain-base",
+                &[
+                    (
+                        "tsconfig.spec.json",
+                        r#"{"extends": "./tsconfig.base.json"}"#,
+                    ),
+                    (
+                        "tsconfig.base.json",
+                        r#"{"compilerOptions": {"strict": true}}"#,
+                    ),
+                ],
+                false,
+            ),
+            (
+                "base-paths",
+                &[
+                    (
+                        "tsconfig.spec.json",
+                        r#"{"extends": "./tsconfig.base.json"}"#,
+                    ),
+                    (
+                        "tsconfig.base.json",
+                        r#"{"compilerOptions": {"paths": {"x": ["./y"]}}}"#,
+                    ),
+                ],
+                true,
+            ),
+            (
+                "second-link-base-url",
+                &[
+                    ("tsconfig.spec.json", r#"{"extends": "./mid"}"#),
+                    ("mid.json", r#"{"extends": "./tsconfig.base.json"}"#),
+                    (
+                        "tsconfig.base.json",
+                        r#"{"compilerOptions": {"baseUrl": "."}}"#,
+                    ),
+                ],
+                true,
+            ),
+            (
+                "missing-base",
+                &[("tsconfig.spec.json", r#"{"extends": "./gone.json"}"#)],
+                true,
+            ),
+            (
+                "unreadable-base",
+                &[
+                    (
+                        "tsconfig.spec.json",
+                        r#"{"extends": "./tsconfig.base.json"}"#,
+                    ),
+                    ("tsconfig.base.json", "{ not json"),
+                ],
+                true,
+            ),
+            (
+                "package-base",
+                &[("tsconfig.spec.json", r#"{"extends": "@scope/tsconfig"}"#)],
+                true,
+            ),
+            (
+                "scanned-reference",
+                &[
+                    ("tsconfig.json", r#"{"references": [{"path": "./lib"}]}"#),
+                    (
+                        "lib/tsconfig.json",
+                        r#"{"compilerOptions": {"strict": true}}"#,
+                    ),
+                ],
+                false,
+            ),
+            (
+                "missing-reference",
+                &[("tsconfig.json", r#"{"references": [{"path": "./gone"}]}"#)],
+                true,
+            ),
+        ];
+        for (label, entries, hides) in cases {
+            let root = temp_root(label)?;
+            for (file, text) in entries {
+                let path = root.join(file);
+                let parent = path.parent().ok_or("config path has a parent")?;
+                std::fs::create_dir_all(parent).map_err(|err| format!("dirs: {err}"))?;
+                std::fs::write(&path, text).map_err(|err| format!("write config: {err}"))?;
+            }
+            let hiding = resolution_config_hides_imports(&root, None);
+            assert_eq!(
+                hiding.everywhere || !hiding.dirs.is_empty(),
                 hides,
                 "{label}"
             );
