@@ -578,6 +578,36 @@ pub(super) fn bare_owner_call_is_shadowed(
 /// `Some((true, ..))` is the `assert_ne!` family (the asserted relation is
 /// inequality); `None` is not an equality assertion at all.
 fn equality_assertion_shape(oracle_text: &str) -> Option<(bool, Vec<String>)> {
+    EQUALITY_SHAPE_MEMO.with(|memo| {
+        let mut memo = memo.borrow_mut();
+        if let Some(shape) = memo.get(oracle_text) {
+            return shape.clone();
+        }
+        let shape = equality_assertion_shape_uncached(oracle_text);
+        if memo.len() >= EQUALITY_SHAPE_MEMO_ENTRIES {
+            memo.clear();
+        }
+        memo.insert(oracle_text.to_string(), shape.clone());
+        shape
+    })
+}
+
+/// Per-thread memo of [`equality_assertion_shape`], keyed by the full oracle
+/// text (equality, never a hash), so a hit is exactly the shape a fresh call
+/// returns. The shape reads only the assertion text, but the verdict asks it
+/// once per (seam, related test, oracle) and again per rstest row; masking and
+/// splitting the same assertion each time was a quarter of cold repo-exposure
+/// evidence on regex (#10932).
+const EQUALITY_SHAPE_MEMO_ENTRIES: usize = 4096;
+
+type EqualityShape = Option<(bool, Vec<String>)>;
+
+thread_local! {
+    static EQUALITY_SHAPE_MEMO: std::cell::RefCell<std::collections::HashMap<String, EqualityShape>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+fn equality_assertion_shape_uncached(oracle_text: &str) -> Option<(bool, Vec<String>)> {
     let trimmed = oracle_text.trim_start();
     let starts_with_any = |names: &[&str]| {
         names.iter().any(|name| {
@@ -1503,6 +1533,31 @@ fn fold_block(
 mod tests {
     use super::*;
     use crate::analysis::rust_index::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+
+    #[test]
+    fn equality_shape_memo_returns_what_a_fresh_shape_would() {
+        let texts = [
+            "assert_eq!(discounted_total(1, 2)\n, 3\n)",
+            "assert_ne!(discounted_total(1, 2)\n, 4\n)",
+            "debug_assert_eq!(f(1)\n, 1\n)",
+            "assert!(flag)",
+            "assert_eq!(discounted_total(1, 2)\n, 3\n)",
+        ];
+        for text in texts {
+            let fresh = equality_assertion_shape_uncached(text);
+            assert_eq!(equality_assertion_shape(text), fresh, "first ask: {text}");
+            assert_eq!(equality_assertion_shape(text), fresh, "memo hit: {text}");
+        }
+        assert!(
+            equality_assertion_shape("assert!(flag)").is_none(),
+            "a non-equality assertion stays not an equality shape"
+        );
+        assert_eq!(
+            equality_assertion_shape("assert_ne!(f(1)\n, 2\n)").map(|shape| shape.0),
+            Some(true),
+            "the assert_ne family keeps its inequality flag through the memo"
+        );
+    }
 
     fn verdict_for_owner(owner: &str, assertion: &str) -> Result<ExactValueVerdict, String> {
         let adapter = RaRustSyntaxAdapter;
