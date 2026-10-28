@@ -148,8 +148,9 @@ impl MacroVisibility {
         let Some(source) = self.sources.get(file) else {
             return ImportedMacros::default();
         };
-        // Parsing is the cost: most files never spell a generator's name as
-        // a call, and `first_macro_call` would parse each of them to say so.
+        // first_macro_call already rejects absent name substrings. This
+        // stronger gate also avoids parsing incidental hits such as `at`
+        // or `t_` when the generator is `t`; the parser still decides maybes.
         if !may_call_generator(source, &self.generators) {
             return ImportedMacros::default();
         }

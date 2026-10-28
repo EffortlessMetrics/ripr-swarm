@@ -89,7 +89,7 @@ fn identifier_lookalikes_and_inert_spellings_are_not_parser_calls() {
         assert_eq!(first_macro_call(source, &names), None, "{source:?}");
     }
 }
-fn unfiltered(visibility: &MacroVisibility, file: &Path) -> ImportedMacros {
+fn without_boundary_filter(visibility: &MacroVisibility, file: &Path) -> ImportedMacros {
     let Some(source) = visibility.sources.get(file) else {
         return ImportedMacros::default();
     };
@@ -128,7 +128,7 @@ fn filtered_imports_preserve_unicode_raw_and_token_tree_calls() {
         let file = Path::new("tests/cases.rs");
         let actual = v.imported_macros(file);
         assert_eq!(actual.definitions, definition, "{source:?}");
-        assert_eq!(actual, unfiltered(&v, file));
+        assert_eq!(actual, without_boundary_filter(&v, file));
     }
 }
 
@@ -147,6 +147,9 @@ fn the_production_route_skips_parsing_only_for_proven_absence() {
         let calls = std::cell::Cell::new(0);
         let file = Path::new("tests/cases.rs");
         let actual = v.imported_macros_with_parser(file, |source, names| {
+            // These fixtures pass the parser owner's substring gate, so
+            // entry here reaches its parse request (possibly memoized).
+            assert!(names.iter().any(|name| source.contains(name.as_str())));
             calls.set(calls.get() + 1);
             first_macro_call(source, names)
         });
@@ -157,7 +160,7 @@ fn the_production_route_skips_parsing_only_for_proven_absence() {
             "{source:?}"
         );
         assert_eq!(actual, v.imported_macros(file));
-        assert_eq!(actual, unfiltered(&v, file));
+        assert_eq!(actual, without_boundary_filter(&v, file));
     }
 }
 
@@ -170,7 +173,7 @@ fn filtered_group_and_path_imports_preserve_the_complete_splice() -> Result<(), 
         let file = Path::new("src/cases.rs");
         let actual = v.imported_macros(file);
         assert!(!actual.definitions.is_empty());
-        let reference = unfiltered(&v, file);
+        let reference = without_boundary_filter(&v, file);
         assert_eq!(actual, reference);
         let spliced = splice_imported_macros(source, &actual);
         assert_eq!(spliced, splice_imported_macros(source, &reference));
@@ -189,71 +192,88 @@ fn filtered_group_and_path_imports_preserve_the_complete_splice() -> Result<(), 
 
 #[test]
 fn identical_input_resolver_measurement() {
-    // 32 distinct texts exceed the four-entry parse memo. Setup is outside
-    // timing; each variant gets its own resolver with equally warm memos.
-    let mut sources = vec![(
-        PathBuf::from("src/lib.rs"),
-        Arc::<str>::from(
-            "#[macro_export] macro_rules! t { () => { #[test] fn a() {} }; } mod case0;",
-        ),
-    )];
-    for file in 0..32 {
-        let mut source = format!("// distinct input {file}\n");
-        for function in 0..64 {
-            source.push_str(&format!(
-                "fn f{function}(x: u64) -> u64 {{ x + {function} }}\n"
+    // The reference retains first_macro_call's landed substring prefilter.
+    // 32 distinct texts exceed the four-entry parse memo; setup is untimed.
+    for (population, name, call_count) in [
+        ("incidental_substrings", "t", 1),
+        ("name_absent", "test_table", 0),
+        ("all_real_calls", "test_table", 32),
+    ] {
+        let definition =
+            format!("#[macro_export] macro_rules! {name} {{ () => {{ #[test] fn a() {{}} }}; }}");
+        let mut root = definition.clone();
+        for file in 0..32 {
+            root.push_str(&format!(" mod case{file};"));
+        }
+        let mut sources = vec![(PathBuf::from("src/lib.rs"), Arc::<str>::from(root))];
+        let mut expected = Vec::new();
+        for file in 0..32 {
+            let mut source = format!("// distinct input {file}\n");
+            for function in 0..64 {
+                source.push_str(&format!(
+                    "fn f{function}(x: u64) -> u64 {{ x + {function} }}\n"
+                ));
+            }
+            if file < call_count {
+                let prefix_start = source.len();
+                source.push_str(&format!("crate::{name}!();\n"));
+                expected.push(ImportedMacros {
+                    definitions: definition.clone(),
+                    path_imports: Vec::new(),
+                    blanked_prefixes: vec![(prefix_start, prefix_start + 7)],
+                });
+            } else {
+                expected.push(ImportedMacros::default());
+            }
+            assert_eq!(source.contains(name), population != "name_absent");
+            sources.push((
+                PathBuf::from(format!("src/case{file}.rs")),
+                Arc::from(source),
             ));
         }
-        if file == 0 {
-            source.push_str("crate::t!();\n");
-        }
-        sources.push((
-            PathBuf::from(format!("src/case{file}.rs")),
-            Arc::from(source),
-        ));
-    }
-    let filtered = MacroVisibility::new(sources.clone().into_iter());
-    let reference = MacroVisibility::new(sources.clone().into_iter());
-    let paths: Vec<_> = sources.iter().skip(1).map(|(path, _)| path).collect();
-    let run = |with_filter: bool| -> Vec<ImportedMacros> {
-        paths
-            .iter()
-            .map(|path| {
-                if with_filter {
-                    filtered.imported_macros(path)
+        let filtered = MacroVisibility::new(sources.clone().into_iter());
+        let reference = MacroVisibility::new(sources.clone().into_iter());
+        let paths: Vec<_> = sources.iter().skip(1).map(|(path, _)| path).collect();
+        let run = |with_boundary_filter: bool| -> Vec<ImportedMacros> {
+            paths
+                .iter()
+                .map(|path| {
+                    if with_boundary_filter {
+                        filtered.imported_macros(path)
+                    } else {
+                        without_boundary_filter(&reference, path)
+                    }
+                })
+                .collect()
+        };
+        assert_eq!(expected.len(), 32);
+        assert_eq!(
+            expected
+                .iter()
+                .filter(|result| !result.definitions.is_empty())
+                .count(),
+            call_count
+        );
+        assert_eq!(run(false), expected, "{population}");
+        assert_eq!(run(true), expected, "{population}");
+        let mut filtered_times = Vec::new();
+        let mut reference_times = Vec::new();
+        for round in 0..6 {
+            for with_boundary_filter in [round % 2 == 0, round % 2 != 0] {
+                let start = std::time::Instant::now();
+                let result = std::hint::black_box(run(with_boundary_filter));
+                let elapsed = start.elapsed();
+                assert_eq!(result, expected, "{population}");
+                if with_boundary_filter {
+                    filtered_times.push(elapsed);
                 } else {
-                    unfiltered(&reference, path)
+                    reference_times.push(elapsed);
                 }
-            })
-            .collect()
-    };
-    let expected = run(false);
-    assert_eq!(expected.len(), 32);
-    assert_eq!(
-        expected
-            .iter()
-            .filter(|result| !result.definitions.is_empty())
-            .count(),
-        1
-    );
-    assert_eq!(run(true), expected);
-    let mut filtered_times = Vec::new();
-    let mut reference_times = Vec::new();
-    for round in 0..6 {
-        for with_filter in [round % 2 == 0, round % 2 != 0] {
-            let start = std::time::Instant::now();
-            let result = std::hint::black_box(run(with_filter));
-            let elapsed = start.elapsed();
-            assert_eq!(result, expected);
-            if with_filter {
-                filtered_times.push(elapsed);
-            } else {
-                reference_times.push(elapsed);
             }
         }
+        let bytes: usize = sources.iter().skip(1).map(|(_, source)| source.len()).sum();
+        println!(
+            "{population}: identical 32 sources, {bytes} bytes, {call_count} imported results, 6 alternating pairs; with_boundary_filter={filtered_times:?}; without_boundary_filter={reference_times:?}; all resolver fields equal"
+        );
     }
-    let bytes: usize = sources.iter().skip(1).map(|(_, source)| source.len()).sum();
-    println!(
-        "identical inputs: 32 sources, {bytes} bytes, 6 alternating pairs; filtered={filtered_times:?}; unfiltered={reference_times:?}; all resolver fields equal"
-    );
 }
