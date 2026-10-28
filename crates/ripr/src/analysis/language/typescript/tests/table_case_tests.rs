@@ -118,6 +118,33 @@ fn non_literal_table_stays_unresolved() -> Result<(), String> {
     Ok(())
 }
 
+#[test]
+fn shadowed_undefined_table_cell_stays_unresolved() -> Result<(), String> {
+    let source = "import { test, expect } from 'vitest';\nimport { loyaltyTier } from '../src/tier';\nconst undefined = 1000;\ntest.each([[undefined, \"gold\"]])(\"row\", (points, tier) => {\n  const undefined = 500;\n  expect(loyaltyTier(points)).toBe(tier);\n});\n";
+    assert_eq!(
+        observed_and_expected(source),
+        vec![(Some("loyaltyTier(points)".to_string()), None, true, 6)]
+    );
+    let literal = source.replace("[[undefined,", "[[1000,");
+    assert_eq!(
+        observed_and_expected(&literal),
+        vec![(
+            Some("loyaltyTier(1000)".to_string()),
+            Some("\"gold\"".to_string()),
+            false,
+            6
+        )]
+    );
+    let unresolved = tier_finding("shadowed-undefined-table", source)?;
+    assert_eq!(unresolved.class, ExposureClass::WeaklyExposed);
+    assert_evidence_contains(&unresolved, "typescript_table_case_unresolved");
+    assert_eq!(
+        tier_finding("literal-table-control", &literal)?.class,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
 /// A non-ASCII parameter or body fails closed: the row substitution scans
 /// ASCII identifiers only.
 #[test]

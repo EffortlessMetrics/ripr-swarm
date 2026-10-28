@@ -10,7 +10,8 @@
 //!
 //! Fail-closed: anything else returns `None` and the caller keeps the
 //! row-parameter assertions (`typescript_table_case_unresolved`). That
-//! covers a table that is a variable, a spread or a non-literal cell, object
+//! covers a table that is a variable, a spread or a non-literal cell (including
+//! the shadowable identifier `undefined`), object
 //! rows, destructured, defaulted or rest parameters, rows whose length
 //! differs from the parameter count, a parameter used anywhere other than a
 //! plain read inside parentheses or brackets (a member name, an object key
@@ -119,7 +120,9 @@ pub(crate) fn literal_array_rows(
         let mut cells = Vec::new();
         for cell in &row.elements {
             let cell = cell.as_expression()?;
-            if !is_literal_cell(cell) {
+            // `undefined` can be shadowed at the table or callback site, so
+            // moving its text into the callback can change its meaning.
+            if matches!(cell, Expression::Identifier(_)) || !is_literal_cell(cell) {
                 return None;
             }
             let span = cell.span();

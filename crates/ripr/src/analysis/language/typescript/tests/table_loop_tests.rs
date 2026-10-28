@@ -118,6 +118,21 @@ fn a_non_literal_cell_keeps_the_loop_assertion() -> Result<(), String> {
 }
 
 #[test]
+fn a_shadowed_undefined_cell_keeps_the_loop_assertion() -> Result<(), String> {
+    let source = loop_test(
+        "    [undefined, \"gold\"],",
+        &format!("    const undefined = 500;\n{ASSERT}"),
+    )
+    .replace("  const rows", "  const undefined = 1000;\n  const rows");
+    keeps_loop_variable(&source);
+    assert_eq!(
+        tier_class("loop-shadowed-undefined", &source)?,
+        ExposureClass::WeaklyExposed
+    );
+    Ok(())
+}
+
+#[test]
 fn a_table_read_elsewhere_keeps_the_loop_assertion() {
     let pushed = loop_test(TWO_ROWS, ASSERT)
         .replace("  for (const", "  rows.push([5, \"x\"]);\n  for (const");
