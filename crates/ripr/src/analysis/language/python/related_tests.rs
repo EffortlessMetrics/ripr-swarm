@@ -184,6 +184,13 @@ thread_local! {
     pub(super) static RELATED_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
+// Helper-caller scans that ran on the rayon workers, so a test can pin the
+// parallel path rather than only its result (#10914).
+#[cfg(test)]
+thread_local! {
+    pub(super) static PARALLEL_HELPER_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// Below this many tests the relation scan stays on the calling thread.
 const PARALLEL_RELATION_MIN_TESTS: usize = 512;
 
@@ -308,15 +315,35 @@ pub(super) fn helper_owner_call_candidates<'a>(
         frontier = next;
     }
     let mut found: Vec<HelperOwnerCallCandidate<'a>> = Vec::new();
+    let mut seen: std::collections::HashSet<(&'a Path, &'a str)> = std::collections::HashSet::new();
+    let token = crate::analysis::cancellation::current_token();
     for caller in callers {
-        for test in all_tests {
-            if found.iter().any(|existing| {
-                existing.candidate.test.file == test.file
-                    && existing.candidate.test.qualified_name == test.qualified_name
-            }) {
-                continue;
-            }
-            if related_test_relation(test, caller).is_some_and(PythonRelationKind::uses_oracle) {
+        // The relation is per-test and pure, so a large workspace scans it
+        // on the rayon workers; the first caller to reach a test still wins
+        // because the fold below runs in caller and test order (pandas: one
+        // changed helper scanned ~23k tests serially per caller).
+        // A test an earlier caller already credited keeps that caller, so skip
+        // its relation check.
+        let related = |test: &'a PythonTest| {
+            !seen.contains(&(test.file.as_path(), test.qualified_name.as_str()))
+                && related_test_relation(test, caller).is_some_and(PythonRelationKind::uses_oracle)
+        };
+        let reached: Vec<&'a PythonTest> = if all_tests.len() >= PARALLEL_RELATION_MIN_TESTS {
+            #[cfg(test)]
+            PARALLEL_HELPER_SCANS.with(|scans| scans.set(scans.get() + 1));
+            all_tests
+                .par_iter()
+                .filter(|test| {
+                    crate::analysis::cancellation::with_optional_token(token.as_ref(), || {
+                        related(test)
+                    })
+                })
+                .collect()
+        } else {
+            all_tests.iter().filter(|test| related(test)).collect()
+        };
+        for test in reached {
+            if seen.insert((test.file.as_path(), test.qualified_name.as_str())) {
                 found.push(HelperOwnerCallCandidate {
                     candidate: PythonRelatedCandidate {
                         test,

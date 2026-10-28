@@ -62,6 +62,9 @@ mod boundary_input;
 mod boundary_input_tests;
 mod bounded_read;
 mod bun_bridge;
+mod call_removal_guard;
+#[cfg(test)]
+mod call_removal_tests;
 #[cfg(test)]
 mod capability_disposition_tests;
 mod catch_arm_guard;
@@ -972,14 +975,19 @@ impl TypeScriptAdapter {
                         // index: unique within this changed file, so the key
                         // needs no cloned Strings.
                         let context = owner_contexts.entry(owner_idx).or_insert_with(|| {
-                            owner_line_context(
+                            let mut context = owner_line_context(
                                 owner,
                                 &all_tests,
                                 Some(&options.root),
                                 &reexport_index,
                                 &relation_index,
                                 alias_map_ref,
-                            )
+                            );
+                            context.single_line_replacement = matches!(
+                                (changed.added_lines.as_slice(), changed.removed_lines.as_slice()),
+                                ([added], [removed]) if added.line == removed.new_side_line
+                            );
+                            context
                         });
                         classify_resolved_owner(
                             &changed.path,
