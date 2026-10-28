@@ -376,8 +376,14 @@ corpus grew from 27 to 54 packets and 36 case definitions changed, which left th
 8/27 population with no unchanged common case: false verdict 1/54, false
 actionable 0/28, false exposed 1/26 (the parked `perl-testmore-tier-far-from-boundary`
 known-false row, #8979) and false silent 0/26, at
-`ea5229fba660d284841b3954f73ca7948a88d0ea`. Every recorded rate is at or better than
-the one it replaces. The Perl abstention row is deliberately not re-recorded: its rate
+`ea5229fba660d284841b3954f73ca7948a88d0ea`. The aggregate rates are at or better than
+the ones they replace, but this is a corpus migration with retained per-case
+regressions, not a regression-free acceptance: no case is unchanged across the
+two populations, and four producer cases that read ideal in the old population
+read abstained now (`perl-test2-format-entry-like`,
+`perl-testexception-close-out-dies-ok`, `perl-testmore-points-cmp-ok-positive`,
+`perl-testmore-round-cents-like`; each is `not_discriminated`). Those losses
+need an explicit source disposition. The Perl abstention row is deliberately not re-recorded: its rate
 rose from 8/27 to 40/54 because the pinned producer emits only `file_proximity`
 relations for files whose first package is a sibling (#10525), so recording it would
 accept that regression. It keeps failing its comparison until #10525 lands or the
