@@ -12,6 +12,7 @@
   "findings": [
     {
       "id": "probe:src_audit.ts:typescript_preview:a853f862",
+      "canonical_gap_id": "gap:typescript:typescript_preview:a853f862",
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.40,
@@ -139,6 +140,7 @@
     },
     {
       "id": "probe:src_audit.ts:typescript_preview:fe5718af",
+      "canonical_gap_id": "gap:typescript:typescript_preview:fe5718af",
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.40,

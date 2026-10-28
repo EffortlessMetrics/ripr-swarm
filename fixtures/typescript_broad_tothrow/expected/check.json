@@ -12,6 +12,7 @@
   "findings": [
     {
       "id": "probe:src_parser.ts:typescript_preview:c440ffa1",
+      "canonical_gap_id": "gap:typescript:typescript_preview:c440ffa1",
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.40,
