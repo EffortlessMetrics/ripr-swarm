@@ -765,11 +765,20 @@ fn enclosing_header_generics(owner: &FunctionSummary, index: &RustIndex) -> Opti
         return Some(Vec::new());
     };
     let masked = crate::analysis::extract::mask_comments_and_strings(&facts.source);
-    let before: String = masked
-        .lines()
+    // Every earlier line, plus the owner's own line up to its `fn` keyword: a
+    // header opened on the same line (`impl<T> S<T> { fn f(..) .. }`) counts.
+    let lines: Vec<&str> = masked.lines().collect();
+    let mut before = lines
+        .iter()
         .take(owner.start_line.saturating_sub(1))
+        .copied()
         .collect::<Vec<_>>()
         .join("\n");
+    if let Some(own) = lines.get(owner.start_line.saturating_sub(1)) {
+        let upto = own.find("fn ").map_or(*own, |at| &own[..at]);
+        before.push('\n');
+        before.push_str(upto);
+    }
     let part = |ch: Option<char>| ch.is_some_and(|ch| ch.is_alphanumeric() || ch == '_');
     let mut names = Vec::new();
     for keyword in ["impl", "trait"] {
@@ -867,10 +876,23 @@ fn renamed_from(masked: &str, target: &str) -> Vec<String> {
             .map_or(0, |found| found + 1);
         let mut original = &before[start..];
         if original == "self" {
-            // `use Type::{self as Name}`: the original is the path segment
-            // before `::{self`.
-            let head = before[..start].trim_end();
-            let head = head.strip_suffix('{').unwrap_or(head).trim_end();
+            // `use Type::{Other, self as Name}`: the original is the path
+            // segment before the `::{` of the group holding `self`, wherever
+            // `self` sits in it.
+            let mut depth = 0usize;
+            let mut open = None;
+            for (offset, ch) in before[..start].char_indices().rev() {
+                match ch {
+                    '}' => depth += 1,
+                    '{' if depth == 0 => {
+                        open = Some(offset);
+                        break;
+                    }
+                    '{' => depth -= 1,
+                    _ => {}
+                }
+            }
+            let head = open.map_or("", |open| before[..open].trim_end());
             let head = head.strip_suffix("::").unwrap_or(head);
             let begin = head
                 .rfind(|ch: char| !(ch.is_alphanumeric() || ch == '_'))

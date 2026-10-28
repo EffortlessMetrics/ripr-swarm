@@ -20032,6 +20032,15 @@ fn a_self_import_rename_is_followed_to_its_type() {
         renamed_from("use crate::Loud::{self as Quiet};", "Quiet").contains(&"Loud".to_string())
     );
     assert!(renamed_from("use crate::Loud as Quiet;", "Quiet").contains(&"Loud".to_string()));
+    for grouped in [
+        "use crate::Loud::{Other, self as Quiet};",
+        "use crate::Loud::{Other, nested::{Deep}, self as Quiet, More};",
+    ] {
+        assert!(
+            renamed_from(grouped, "Quiet").contains(&"Loud".to_string()),
+            "{grouped}"
+        );
+    }
     assert!(renamed_from("use crate::Loud as Other;", "Quiet").is_empty());
 }
 
@@ -20056,5 +20065,26 @@ fn an_earlier_impl_trait_argument_does_not_hide_the_real_impl_header() -> Result
             "x"
         )?);
     }
+    Ok(())
+}
+
+#[test]
+fn a_header_on_the_owners_own_line_is_read() -> Result<(), String> {
+    let impl_lib = |header: &str, signature: &str| {
+        format!("pub struct S<T>(pub T);\n{header} {{ pub fn f{signature} {{ x }} }}\n")
+    };
+    assert!(may_name_non_plain_drop(
+        &impl_lib("impl<T> S<T>", "(x: T) -> T"),
+        "f",
+        "x"
+    )?);
+    assert!(!may_name_non_plain_drop(
+        &impl_lib("impl S<u32>", "(x: u32) -> u32"),
+        "f",
+        "x"
+    )?);
+    let trait_lib = |ret: &str| format!("pub trait Tr<T> {{ fn f(x: T) -> {ret} {{ x }} }}\n");
+    assert!(may_name_non_plain_drop(&trait_lib("T"), "f", "x")?);
+    assert!(!may_name_non_plain_drop(&trait_lib("u32"), "f", "x")?);
     Ok(())
 }

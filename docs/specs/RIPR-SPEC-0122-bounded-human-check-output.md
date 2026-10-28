@@ -754,7 +754,8 @@ not a head-only row and prints no note.
   so they still start: a bool local (`let ok = v == 6; assert!(ok)`), an open
   range (`v > 5 && v < 7`) and `(6..=6).contains(&v)`. The `Drop` read does
   not follow a lowercase type name or an implementor behind a trait object;
-  the latter withholds only through the `dyn`/`impl` rule.
+  the latter withholds only through the `dyn`/`impl` rule. A trait default
+  method with `where Self: Sized` also withholds (an over-withhold).
 - Format parsing tests for `human-full` and `text-full`.
 - CLI unit tests for repo-scope warnings with `--base` and `--diff`, and no
   warning for diff-scoped JSON.

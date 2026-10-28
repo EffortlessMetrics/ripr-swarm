@@ -19,6 +19,7 @@
   error-variant assertion naming a different variant. A bool local
   (`let ok = v == 6; assert!(ok)`), an open range (`v > 5 && v < 7`) and
   `(6..=6).contains(&v)` are not recognized as pins and still start; a
-  lowercase type name is not followed for `Drop`.
+  lowercase type name is not followed for `Drop`. A trait default method
+  with `where Self: Sized` also withholds (an over-withhold).
   `ripr repair <seam>` does not apply the finding-level static-limited verdict
   that `ripr check` uses; it relies on the seam-level evidence and these gates.
