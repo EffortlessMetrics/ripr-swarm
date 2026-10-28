@@ -874,16 +874,16 @@ impl PartialDiffScope {
         // budget that analyzes the whole diff rides along when it can be
         // granted (#10894).
         let raise = |env: &str, min: usize, whole: Option<usize>, budget: usize| {
-            let whole = whole.filter(|whole| *whole > budget.max(min));
+            let larger_whole = whole.filter(|value| *value > budget.max(min));
             if min > budget {
-                Some(match whole {
-                    Some(whole) => {
-                        format!("{env} to at least {min} ({whole} to select the whole diff)")
+                Some(match larger_whole {
+                    Some(value) => {
+                        format!("{env} to at least {min} ({value} to select the whole diff)")
                     }
                     None => format!("{env} to at least {min}"),
                 })
             } else {
-                whole.map(|whole| format!("{env} to {whole} to select the whole diff"))
+                larger_whole.map(|value| format!("{env} to {value} to select the whole diff"))
             }
         };
         let (whole_files, whole_lines) = self.whole_diff_budgets.unzip();
