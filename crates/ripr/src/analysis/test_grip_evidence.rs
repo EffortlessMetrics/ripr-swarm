@@ -756,9 +756,10 @@ fn returns_generic_or_opaque_type(
     })
 }
 
-/// The generic parameter names of the last `impl` or `trait` header before the
+/// The generic parameter names of every `impl` and `trait` header before the
 /// owner in its file, or `None` when one cannot be read (withhold). Over-reads:
-/// the nearest preceding header need not enclose the owner.
+/// a preceding header need not enclose the owner, and an `impl Trait` argument
+/// or return type (no `<` follows) adds nothing, so it cannot hide a real header.
 fn enclosing_header_generics(owner: &FunctionSummary, index: &RustIndex) -> Option<Vec<String>> {
     let Some(facts) = index.files().get(&owner.file) else {
         return Some(Vec::new());
@@ -772,25 +773,22 @@ fn enclosing_header_generics(owner: &FunctionSummary, index: &RustIndex) -> Opti
     let part = |ch: Option<char>| ch.is_some_and(|ch| ch.is_alphanumeric() || ch == '_');
     let mut names = Vec::new();
     for keyword in ["impl", "trait"] {
-        let Some((at, _)) = before
-            .match_indices(keyword)
-            .filter(|(at, word)| {
-                !part(before[..*at].chars().next_back())
-                    && !part(before[at + word.len()..].chars().next())
-            })
-            .last()
-        else {
-            continue;
-        };
-        let header = before[at + keyword.len()..].trim_start();
-        if header.starts_with('<') {
-            names.extend(generic_parameter_names(header)?.0);
-        } else if keyword == "trait" {
-            // `trait Name<T>`: skip the name, then read any generics.
-            let name_end = header.find(|ch: char| !(ch.is_alphanumeric() || ch == '_'));
-            let rest = name_end.map_or("", |end| header[end..].trim_start());
-            if rest.starts_with('<') {
-                names.extend(generic_parameter_names(rest)?.0);
+        for (at, word) in before.match_indices(keyword) {
+            if part(before[..at].chars().next_back())
+                || part(before[at + word.len()..].chars().next())
+            {
+                continue;
+            }
+            let header = before[at + keyword.len()..].trim_start();
+            if header.starts_with('<') {
+                names.extend(generic_parameter_names(header)?.0);
+            } else if keyword == "trait" {
+                // `trait Name<T>`: skip the name, then read any generics.
+                let name_end = header.find(|ch: char| !(ch.is_alphanumeric() || ch == '_'));
+                let rest = name_end.map_or("", |end| header[end..].trim_start());
+                if rest.starts_with('<') {
+                    names.extend(generic_parameter_names(rest)?.0);
+                }
             }
         }
     }

@@ -20034,3 +20034,27 @@ fn a_self_import_rename_is_followed_to_its_type() {
     assert!(renamed_from("use crate::Loud as Quiet;", "Quiet").contains(&"Loud".to_string()));
     assert!(renamed_from("use crate::Loud as Other;", "Quiet").is_empty());
 }
+
+#[test]
+fn an_earlier_impl_trait_argument_does_not_hide_the_real_impl_header() -> Result<(), String> {
+    let lib = |earlier: &str, header: &str, signature: &str| {
+        format!(
+            "pub struct S<T>(pub T);\n{earlier}{header} {{\n    pub fn f{signature} {{\n        x\n    }}\n}}\n"
+        )
+    };
+    let earlier_arg = "pub fn a(f: impl Fn()) {\n    f();\n}\n";
+    let earlier_ret = "pub fn r() -> impl Iterator<Item = u32> {\n    0..1\n}\n";
+    for earlier in [earlier_arg, earlier_ret] {
+        assert!(may_name_non_plain_drop(
+            &lib(earlier, "impl<T> S<T>", "(x: T) -> T"),
+            "f",
+            "x"
+        )?);
+        assert!(!may_name_non_plain_drop(
+            &lib(earlier, "impl S<u32>", "(x: u32) -> u32"),
+            "f",
+            "x"
+        )?);
+    }
+    Ok(())
+}
