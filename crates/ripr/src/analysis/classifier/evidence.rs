@@ -2,19 +2,21 @@ use crate::analysis::classify::{
     ASSERTION_CONTEXT_UNESTABLISHED, ArmSelector, AssertionRefusal, EffectStateCarrier,
     HELPER_RESULT_NOT_FORWARDED, OwnerInputs, OwnerPinSyntax, OwnerReturnPin, ProbeContext,
     PropagationWitnessV1, ReturnOracleAdmission, TransitiveReachIndex, WrapperEntryPairing,
-    activation_and_boundary_input, assertion_observes_collection_argument, assertion_out_parameter,
+    activation_and_boundary_input, assertion_compares_hand_built_field,
+    assertion_observes_collection_argument, assertion_observes_scope_end, assertion_out_parameter,
     body_contains_owner_call, call_parameter_names, callee_is_unique, chain_entry_pin_admits,
     chain_forwards_to_observed_hops, chain_passes_effect_target_to_observed_hops, classify,
     confidence_score, constructor_starts_empty, contains_as_whole_word, current_path_witness_with,
     direct_call_name, direct_collection_mutation_receiver, expected_operand_value,
     fallible_check_receipt, fallible_literal_witness, function_returns_value, getter_plainly_reads,
     getter_plainly_reads_key, has_same_test_boundary_oracle_pairing, helper_only_reach,
-    helper_pins_owner_call, infection_evidence_for_owner, local_flow_sinks, method_cannot_store,
-    observes_returned_element_field, operand_only_pin, oracle_crediting_relations,
-    outer_imported_names, owner_touches_field_only_at, package_prefix, parameter_rebound,
-    propagation_evidence_with_witness, reach_evidence, reveal_outcome,
-    same_test_pairing_missing_summary, setter_plainly_writes, signature_parameters,
-    unconditional_owner_insert_field, unexercised_mask_bits, wrapper_return_boundary_pinned,
+    helper_pins_owner_call, infection_evidence_for_owner, is_drop_destructor, local_flow_sinks,
+    method_cannot_store, observes_returned_element_field, operand_only_pin,
+    oracle_crediting_relations, outer_imported_names, owner_touches_field_only_at, package_prefix,
+    parameter_rebound, propagation_evidence_with_witness, pushed_collection_compared_whole,
+    pushed_literal_path, reach_evidence, reveal_outcome, same_test_pairing_missing_summary,
+    setter_plainly_writes, signature_parameters, unconditional_owner_insert_field,
+    unexercised_mask_bits, wrapper_return_boundary_pinned,
 };
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::facts::{FunctionSummary, OracleFact, RustIndex, TestSummary};
@@ -61,6 +63,10 @@ pub(in crate::analysis) struct ClassifiedProbeEvidence {
     /// related `assert_eq!` was refused for an analyzer limit, so the gap
     /// rests on what ripr could not read (RIPR-SPEC-0240).
     pub(in crate::analysis) refusals_are_analyzer_limits: bool,
+    /// An admitted weaker oracle sits beside a refused `assert_eq!` that
+    /// calls the owner, and every such refusal rests on an analyzer limit
+    /// (#5431, RIPR-SPEC-0240).
+    pub(in crate::analysis) mixed_refusal_is_analyzer_limit: bool,
     /// Related tests `(file, name)` whose reach to the owner is established
     /// by indexed implicit dispatch (a trait impl the language runs without
     /// a named call). Their relation reason is proximity-only, so
@@ -201,6 +207,16 @@ impl ClassifiedProbeEvidence {
         .or_else(|| {
             context.owner_fn.and_then(|owner| {
                 crate::analysis::classify::constant_tail_witness(context.probe, owner, &flow_sinks)
+            })
+        })
+        .or_else(|| {
+            context.owner_fn.and_then(|owner| {
+                crate::analysis::classify::result_map_witness(
+                    context.probe,
+                    owner,
+                    context.index,
+                    &flow_sinks,
+                )
             })
         })
         .or_else(|| {
@@ -655,6 +671,7 @@ impl ClassifiedProbeEvidence {
         // (#6778). Keep this owner walk local to the probe; unused proximity
         // gates still do not build the graph.
         let owner_reach = std::cell::OnceCell::new();
+        let pushed_path = std::cell::OnceCell::<Option<String>>::new();
         let owner_locals = context
             .owner_fn
             .map(owner_local_binding_names)
@@ -766,7 +783,30 @@ impl ClassifiedProbeEvidence {
             context.probe.before.as_deref(),
             context.probe.after.as_deref(),
         );
+        let map_callback_pin_required = matches!(
+            &propagation_witness,
+            Some(PropagationWitnessDiagnostic::Valid(witness))
+                if witness.limitations.iter().any(|limit| limit == "result_map_callback_payload")
+        );
+        let direct_owner_pin_admits = |test: &TestSummary, assertion: &OracleFact| {
+            owner_return_pin.as_ref().is_some_and(|pin| {
+                pin.admits(
+                    test,
+                    assertion,
+                    context.index,
+                    &|file, name| {
+                        context.index.files().get(file).is_some_and(|facts| {
+                            context.test_file_imports_foreign_callee_name(file, &facts.source, name)
+                        })
+                    },
+                    pin_syntax,
+                )
+            })
+        };
         let owner_pin_admits = |test: &TestSummary, assertion: &OracleFact| {
+            if map_callback_pin_required {
+                return direct_owner_pin_admits(test, assertion);
+            }
             // #5352: an exact assertion on the helper chain's entry pins
             // the owner's returned value when every observed hop
             // forwards it (the entry form of the owner-return pin).
@@ -800,23 +840,7 @@ impl ClassifiedProbeEvidence {
                 || fallible_checks.iter().any(|receipt| {
                     receipt.valid_for(context.probe) && receipt.admits(test, assertion)
                 })
-                || owner_return_pin.as_ref().is_some_and(|pin| {
-                    pin.admits(
-                        test,
-                        assertion,
-                        context.index,
-                        &|file, name| {
-                            context.index.files().get(file).is_some_and(|facts| {
-                                context.test_file_imports_foreign_callee_name(
-                                    file,
-                                    &facts.source,
-                                    name,
-                                )
-                            })
-                        },
-                        pin_syntax,
-                    )
-                })
+                || direct_owner_pin_admits(test, assertion)
         };
         let fallback_expansion = crate::analysis::classify::ImplicitExpansionMemo::default();
         let expansion = crate::analysis::classify::ImplicitExpansionContext::new(
@@ -852,6 +876,7 @@ impl ClassifiedProbeEvidence {
                     crate::analysis::classify::returned_closure_pin_required(context.probe, owner)
                 }),
                 owner_return_pin: &owner_pin_admits,
+                owner_return_pin_required: map_callback_pin_required,
                 wrapper_return_pin: &|test, assertion| {
                     wrapper_boundary_probe.is_some()
                         && context.related_tests.iter().any(|(related, reason)| {
@@ -882,7 +907,14 @@ impl ClassifiedProbeEvidence {
                                         )
                                         .activation
                                     });
-                                wrapper_return_boundary_pinned(owner, assertion, chain, activation)
+                                wrapper_return_boundary_pinned(
+                                    owner,
+                                    assertion,
+                                    chain,
+                                    activation,
+                                    test,
+                                    context.index,
+                                )
                             })
                 },
                 assertion_admitted: &assertion_admitted,
@@ -894,6 +926,22 @@ impl ClassifiedProbeEvidence {
                         return None;
                     }
                     let owner = context.owner_fn?;
+                    // A destructor runs at scope end, which the shared-sink
+                    // authority below has no reading for. Only the scope-end
+                    // carrier confirms one (#10814); any other test stays
+                    // unconfirmed.
+                    if is_drop_destructor(owner, context.index) {
+                        return Some(context.index.files().get(&test.file).is_some_and(|facts| {
+                            assertion_observes_scope_end(
+                                owner,
+                                &context.probe.expression,
+                                test,
+                                assertion,
+                                &facts.source,
+                                &expansion,
+                            )
+                        }));
+                    }
                     let reach =
                         owner_reach.get_or_init(|| proximity_reach.owner_reach(&owner.name));
                     reach
@@ -947,6 +995,31 @@ impl ClassifiedProbeEvidence {
                                 pin_syntax,
                             )
                         })
+                },
+                pushed_literal_observed: &|test, assertion| {
+                    // The path depends only on the owner and probe, so it is
+                    // computed once per probe, not per test and assertion.
+                    context.owner_fn.is_some_and(|owner| {
+                        pushed_path
+                            .get_or_init(|| {
+                                pushed_literal_path(owner, context.probe, context.index)
+                            })
+                            .as_deref()
+                            .is_some_and(|path| {
+                                assertion_compares_hand_built_field(
+                                    &test.body,
+                                    &assertion.text,
+                                    path,
+                                    &owner.name,
+                                ) && pushed_collection_compared_whole(
+                                    owner,
+                                    path,
+                                    test,
+                                    assertion,
+                                    context.index,
+                                )
+                            })
+                    })
                 },
                 out_parameter_read: &|test, assertion| {
                     context.owner_fn.and_then(|owner| {
@@ -1197,8 +1270,7 @@ impl ClassifiedProbeEvidence {
             && let Some(owner) = context.owner_fn
             && let Some(pin) = operand_only_pin(
                 &context.probe.expression,
-                &owner.name,
-                owner.body.as_str(),
+                owner,
                 outer_imports.as_ref(),
                 &context.related_tests,
                 context.index,
@@ -1328,12 +1400,17 @@ impl ClassifiedProbeEvidence {
         };
         // #9871: a reader-only relation has no owner pin to refuse against, so
         // an owner-name scan would only add a misleading refusal note.
+        let mut owner_refusals_are_limits = false;
+        let credits = oracle_crediting_relations(&context.related_tests);
         let assertion_refusal = (context.const_readers.is_empty()
             && (observe.summary == ASSERTION_CONTEXT_UNESTABLISHED
                 || discriminate.state != StageState::Yes))
             .then(|| {
                 let mut notes = Vec::new();
-                for (test, _) in &context.related_tests {
+                // Owner-calling refusals in tests that could have credited an
+                // oracle, and whether each rests on an analyzer limit.
+                let mut crediting_owner_refusals: Vec<bool> = Vec::new();
+                for (test, reason) in &context.related_tests {
                     for assertion in &test.assertions {
                         let Some(refusal) = pin_syntax.equality_assertion_refusal(
                             context.probe,
@@ -1368,12 +1445,27 @@ impl ClassifiedProbeEvidence {
                             calls_owner,
                             is_analyzer_limit: is_limit(&refusal),
                         };
+                        if note.calls_owner && credits(*reason) {
+                            crediting_owner_refusals.push(note.is_analyzer_limit);
+                        }
                         notes.push(note);
                     }
                 }
+                // #5431: every refusal of an assertion that calls the owner
+                // rests on a limit of ripr's own reading.
+                owner_refusals_are_limits = !crediting_owner_refusals.is_empty()
+                    && crediting_owner_refusals.iter().all(|limit| *limit);
                 preferred_refusal_note(notes)
             })
             .flatten();
+        // A refused owner-calling assertion beside an admitted weaker one:
+        // the refused assertion may be the exact oracle the gap asks for.
+        let mixed_refusal_is_analyzer_limit = owner_refusals_are_limits
+            && observe.summary != ASSERTION_CONTEXT_UNESTABLISHED
+            && [&reach, &infect, &propagate]
+                .iter()
+                .all(|stage| stage.state == StageState::Yes)
+            && discriminate.state != StageState::Yes;
         if let Some(note) = &assertion_refusal {
             evidence.push(format!(
                 "{ASSERTION_NOT_CREDITED_PREFIX}{}: {}",
@@ -1507,6 +1599,7 @@ impl ClassifiedProbeEvidence {
             reach_ruled_out,
             assertion_refusal,
             refusals_are_analyzer_limits,
+            mixed_refusal_is_analyzer_limit,
             implicit_dispatch_tests,
             debug_assert_eq_pins,
             related_call_budget_saturated,

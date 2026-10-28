@@ -161,7 +161,8 @@ language run.
 For each change, the first match wins:
 
 1. a class-capping static limit (rule 1) gives `static_unknown`;
-2. no bound relation (rule 3) gives `no_static_path`;
+2. no bound relation (rule 3) gives `no_static_path`, or `static_unknown` on a
+   `partial` packet whose only relations are `file_proximity` (rule 10, #8352);
 3. established sink alignment (rule 9) gives `exposed`;
 4. otherwise the aggregate of the per-relation classes (rule 8).
 
@@ -182,7 +183,7 @@ For each change, the first match wins:
    `perl_packet_contract_migration_corpus_pins_real_producer_dispositions`
    pins.
 2. **No relations.** A change with no bound relation is `no_static_path`,
-   reach `no`.
+   reach `no`, except on a `partial` packet (rule 10).
 3. **Relation binding.** A relation binds to a change only when
    `relation.change_id` is the change id and `relation.owner_id` is the
    change owner, compared as exact strings. A relation whose change id is
@@ -242,7 +243,11 @@ For each change, the first match wins:
    `perl_already_discriminated:` and
    no gap, suggested location, suggested assertion or missing
    discriminator.
-10. **Partial packets.** `packet_status: partial` does not cap the class.
+10. **Partial packets.** `packet_status: partial` does not cap the class,
+    except that a partial packet with no relation other than
+    `file_proximity` (including none) is `static_unknown` with no gap and
+    no location, because the run may not have emitted the link (#8352;
+    example 16).
     A sink-aligned change in a partial packet is `exposed`. A partial
     packet records a partial language run and gets no canonical gap. It
     keeps `perl_suggested_test_location` under rule 13.
@@ -579,7 +584,11 @@ cases.
     / medium. Neither has a location (class unchanged; today location
     emitted).
 16. `relations: []`: `no_static_path`, reach `no`, gap, no location
-    (unchanged).
+    (unchanged). On a `partial` packet, the real producer's status, the
+    same facts, or relations that are only `file_proximity`, read
+    `static_unknown`, no gap, no location (#8352): a
+    partial run may simply not have emitted the link, so neither "no
+    static path" nor "reachable" is an assessed result.
 17. `changed_observable: "return $amount * 0.9"`, `observed_sink:
     "$amount * 0.9"`: `exposed`, `perl_already_discriminated:`, no gap, no
     location (unchanged).

@@ -1670,6 +1670,29 @@ fn module_entry_relation(
     // entry the test reaches is a decorated method.
     let mut decorated = false;
     let mut ordinary = false;
+    // A test that replaces the changed method, or a sibling on the chain to it,
+    // runs the replacement and not the class code (#9942): a spy that fabricates
+    // the value, an assignment on an instance or the prototype, or a
+    // `defineProperty`. A bare call-through spy still runs the real method.
+    let replaced = owner
+        .module_entries
+        .iter()
+        .any(|entry| entry.class_member.is_some())
+        && std::iter::once(owner.name.as_str())
+            .chain(
+                owner
+                    .module_entries
+                    .iter()
+                    .filter(|entry| entry.class_member.is_some())
+                    .map(|entry| entry.name.as_str()),
+            )
+            .any(|name| {
+                test_spies_owner_with_fabrication_for_owner(test, name, false)
+                    || class_entries::assigns_member_named(&test.body_text, name)
+            });
+    if replaced {
+        return None;
+    }
     for entry in &owner.module_entries {
         let entry_owner = module_entry_owner(owner, entry);
         if owner_call_relation(
@@ -1900,12 +1923,13 @@ pub(crate) fn receiver_owner_call_relation(
     // `describe`, `cart = new Cart()` in a `beforeEach`) is the object the
     // body calls, unless the body declares or reassigns that name itself.
     for binding in test.scope_bindings.iter() {
+        let body = binding_scan_body(test, binding);
         if binding
             .constructed_by
             .as_ref()
             .is_some_and(|constructor| constructor_names.contains(constructor))
-            && !local_identifier_declared_in_test_body(&test.body_text, &binding.name)
-            && !super::tests_extract::identifier_written_in(&test.body_text, &binding.name)
+            && !local_identifier_declared_in_test_body(body, &binding.name)
+            && !super::tests_extract::identifier_written_in(body, &binding.name)
         {
             push_unique_string(&mut receiver_names, binding.name.clone());
         }
@@ -1954,8 +1978,14 @@ pub(crate) fn owner_method_receiver_names(
                     .constructed_by
                     .as_ref()
                     .is_some_and(|constructor| constructor_names.contains(constructor))
-                    && !local_identifier_declared_in_test_body(&test.body_text, &binding.name)
-                    && !super::tests_extract::identifier_written_in(&test.body_text, &binding.name)
+                    && !local_identifier_declared_in_test_body(
+                        binding_scan_body(test, binding),
+                        &binding.name,
+                    )
+                    && !super::tests_extract::identifier_written_in(
+                        binding_scan_body(test, binding),
+                        &binding.name,
+                    )
                 {
                     push_unique_string(&mut receivers, binding.name.clone());
                 }
@@ -1968,6 +1998,16 @@ pub(crate) fn owner_method_receiver_names(
         }
         _ => Vec::new(),
     }
+}
+
+/// The text a shadow or write scan of `binding` covers. A destructured
+/// fixture parameter is the binding itself, not a declaration that shadows
+/// it, so its scan starts after the parameter list.
+fn binding_scan_body<'t>(test: &'t TypeScriptTest, binding: &TypeScriptScopeBinding) -> &'t str {
+    binding
+        .parameter_end
+        .and_then(|end| test.body_text.get(end..))
+        .unwrap_or(&test.body_text)
 }
 
 pub(crate) fn class_method_owner_call_relation(
