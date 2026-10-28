@@ -89,3 +89,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — recording_double_observer_refusals (8)
+
+Reason:
+RIPR-SPEC-0240: refuse ambiguous inherent dyn sink methods; native E0034 and frozen 62d22496 false-exposed pair justify two new static_unknown findings, with sixteen-finding honesty invariants and the original fourteen finding objects unchanged
+
+Command:
+`cargo xtask goldens bless recording_double_observer_refusals --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

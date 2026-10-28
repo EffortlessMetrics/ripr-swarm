@@ -2,10 +2,10 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/recording_double_observer_refusals/input
 
-Summary: 14 changed behaviors checked: 0 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 0 no test path, 14 unclear. 14 found, 0 suppressed by your settings
+Summary: 16 changed behaviors checked: 0 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 0 no test path, 16 unclear. 16 found, 0 suppressed by your settings
 
 Analysis outcome: findings below (analysis complete)
-  Counts: 7 changed file(s), 14 changed line(s), 7 candidate line(s), 14 changed behavior(s) checked, 14 finding(s)
+  Counts: 8 changed file(s), 16 changed line(s), 8 candidate line(s), 16 changed behavior(s) checked, 16 finding(s)
 
 Start here:
   State: ripr cannot tell from reading the code whether tests would notice this
@@ -48,8 +48,10 @@ Next: drill into the top finding:
 No test stub here: the change shows up as a side effect or call, which needs an observer or mock ripr cannot write
 
 Hidden:
-  13 lower-priority finding(s) omitted from default human output.
+  15 lower-priority finding(s) omitted from default human output.
     - ./src/assertion_message.rs:13 (unknown)
+    - ./src/dyn_inherent.rs:13 (unknown)
+    - ./src/dyn_inherent.rs:13 (unknown)
     - ./src/let_else.rs:13 (unknown)
     - ./src/let_else.rs:13 (unknown)
     - ./src/owned_clone.rs:13 (unknown)

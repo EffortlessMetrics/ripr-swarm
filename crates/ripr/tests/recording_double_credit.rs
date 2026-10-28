@@ -420,6 +420,49 @@ fn plain_test_cfg_uses_the_shared_predicate_authority() -> Result<(), String> {
 }
 
 #[test]
+fn inherent_dyn_methods_cannot_supply_recording_credit() -> Result<(), String> {
+    let base = source(
+        "self.lines.push(line);",
+        "&mut dyn Sink",
+        &format!("{SETUP}\n        assert_eq!(recorder.lines, vec![\"n=3\".to_string()]);"),
+    );
+    // These source-only controls have ambiguous method binding (E0034), not
+    // a runnable early-exit witness. Raw method declarations also stay refused.
+    for ty in [
+        "dyn Sink",
+        "dyn r#Sink",
+        "(dyn Sink)",
+        "((dyn Sink))",
+        "dyn (Sink)",
+        "dyn (r#Sink)",
+        "dyn (self::Sink)",
+        "dyn Sink + '_",
+        "dyn self::Sink",
+        "dyn crate::r#Sink",
+        "dyn /* target */ Sink",
+    ] {
+        assert_reading(
+            ty,
+            &format!("{base}\nimpl {ty} {{ fn send(&mut self, _: String) {{}} }}\n"),
+            false,
+        )?;
+    }
+    assert_reading(
+        "raw inherent method",
+        &format!("{base}\nimpl dyn Sink {{ fn r#send(&mut self, _: String) {{}} }}\n"),
+        false,
+    )?;
+    for declarations in [
+        "impl dyn Sink { fn other(&mut self, _: String) {} }",
+        "trait Other {} impl dyn Other { fn send(&mut self, _: String) {} }",
+        "struct Wrapper<T: ?Sized>(Box<T>); impl Wrapper<dyn Sink> { fn send(&mut self, _: String) {} }",
+    ] {
+        assert_reading(declarations, &format!("{base}\n{declarations}\n"), true)?;
+    }
+    Ok(())
+}
+
+#[test]
 fn user_push_dispatch_cannot_supply_recording_credit() -> Result<(), String> {
     let base = source(
         "self.lines.push(line);",

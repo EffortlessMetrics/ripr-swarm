@@ -71,6 +71,46 @@ fn root(node: &SyntaxNode) -> bool {
     node.parent()
         .is_some_and(|p| p.kind() == ra_ap_syntax::SyntaxKind::SOURCE_FILE)
 }
+fn is_target_dyn_trait(ty: ast::Type, trait_name: &str) -> bool {
+    match ty {
+        ast::Type::ParenType(paren) => paren
+            .ty()
+            .is_some_and(|ty| is_target_dyn_trait(ty, trait_name)),
+        ast::Type::DynTraitType(dyn_trait) => dyn_trait.type_bound_list().is_some_and(|bounds| {
+            bounds.bounds().any(|bound| {
+                let Some(ast::Type::PathType(path)) = bound.ty() else {
+                    return false;
+                };
+                path.path()
+                    .and_then(|path| path.segment())
+                    .and_then(|segment| segment.name_ref())
+                    .is_some_and(|name| name.text().trim_start_matches("r#") == trait_name)
+            })
+        }),
+        _ => false,
+    }
+}
+fn has_inherent_dyn_competitor(
+    implementation: &ast::Impl,
+    trait_name: &str,
+    method_name: &str,
+) -> bool {
+    implementation.trait_().is_none()
+        && implementation
+            .self_ty()
+            .is_some_and(|ty| is_target_dyn_trait(ty, trait_name))
+        && implementation.assoc_item_list().is_some_and(|items| {
+            items
+                .syntax()
+                .children()
+                .filter_map(ast::Fn::cast)
+                .any(|function| {
+                    function
+                        .name()
+                        .is_some_and(|name| name.text().trim_start_matches("r#") == method_name)
+                })
+        })
+}
 #[derive(Default)]
 struct Inputs {
     integers: std::collections::BTreeSet<String>,
@@ -401,6 +441,11 @@ impl RecordingDouble {
         }
         let mut doubles = BTreeMap::new();
         for implementation in tree.syntax().descendants().filter_map(ast::Impl::cast) {
+            // The owner's dyn call is ambiguous when an inherent method has
+            // the same name; the recorder's trait writer cannot resolve it.
+            if has_inherent_dyn_competitor(&implementation, &trait_name, &method_name) {
+                return None;
+            }
             if implementation.attrs().next().is_some()
                 || implementation
                     .trait_()

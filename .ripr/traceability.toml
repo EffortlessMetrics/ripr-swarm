@@ -18193,20 +18193,6 @@ id = "RIPR-SPEC-0240"
 name = "Unknown, not a gap"
 spec = "docs/specs/RIPR-SPEC-0240-unknown-not-a-gap.md"
 tests = [
-  "crates/ripr/tests/recording_double_credit.rs::fixture_setup_owns_only_exclusively_acquired_roots",
-  "crates/ripr/tests/recording_double_credit.rs::plain_test_cfg_uses_the_shared_predicate_authority",
-  "crates/ripr/tests/recording_double_credit.rs::a_scalar_shadow_drops_slice_provenance",
-  "crates/ripr/tests/recording_double_credit.rs::the_changed_call_cannot_hide_execution_in_format_arguments",
-  "crates/ripr/tests/recording_double_credit.rs::a_double_declared_in_the_test_module_is_credited",
-  "crates/ripr/tests/recording_double_credit.rs::exact_recorded_argument_is_credited",
-  "crates/ripr/tests/recording_double_credit.rs::assertion_diagnostic_arguments_cannot_supply_recording_credit",
-  "crates/ripr/tests/recording_double_credit.rs::hidden_execution_and_module_value_twins_cannot_supply_credit",
-  "crates/ripr/tests/recording_double_credit.rs::missing_argument_transfer_is_never_credited",
-  "crates/ripr/tests/recording_double_credit.rs::primitive_slice_setup_and_later_append_keep_the_exact_pin",
-  "crates/ripr/tests/recording_double_credit.rs::recording_credit_preserves_observer_and_receiver_refusals",
-  "crates/ripr/tests/recording_double_credit.rs::user_read_methods_do_not_supply_recording_credit",
-  "crates/ripr/tests/recording_double_credit.rs::user_push_dispatch_cannot_supply_recording_credit",
-  "crates/ripr/tests/framework_oracle_limit.rs::a_hand_written_recorder_compared_by_field_is_credited",
   "crates/ripr/tests/operator_call_credit.rs::block_statements_followed_by_minus_stay_unrelated",
   "crates/ripr/tests/operator_call_credit.rs::standalone_add_assign_keeps_typed_operand_and_unique_impl_gates",
   "crates/ripr/tests/proximity_oracle_credit.rs::unrelated_same_file_assertion_cannot_supply_the_oracle",
@@ -18360,10 +18346,8 @@ fixtures = [
   "fixtures/parser_formatted_input_provenance",
   "fixtures/gap_withheld_feature_gated_test",
   "fixtures/gap_kept_ignored_test",
-  "fixtures/recording_double_observer_refusals",
 ]
 code = [
-  "crates/ripr/src/analysis/classify/effect_carrier/recording.rs",
   "crates/ripr/src/analysis/classify/reveal.rs",
   "crates/ripr/src/analysis/classify/gap_admission.rs",
   "crates/ripr/src/analysis/classify/pinned_shape.rs",
@@ -18376,7 +18360,6 @@ outputs = [
   "fixtures/macro_site_scoped_rest_limit/expected/check.json",
   "fixtures/gap_withheld_feature_gated_test/expected/check.json",
   "fixtures/gap_kept_ignored_test/expected/check.json",
-  "fixtures/recording_double_observer_refusals/expected/check.json",
 ]
 metrics = [
   "unit_test_pass_rate",

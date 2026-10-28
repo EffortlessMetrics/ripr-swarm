@@ -455,6 +455,11 @@ non-ignored related test matches one of these shapes:
   inherent vector mutation. A competing mutable-receiver method does not
   displace the inherent vector mutation. This guard does not broaden the
   existing refusal for an owner calling a push-named sink method.
+  An inherent method on the target dyn trait with the sink method's name also
+  refuses credit: Rust reports an ambiguous call, so the recorder's trait writer
+  does not establish its binding. Raw trait references, qualified paths,
+  parentheses, lifetimes and ordinary comments do not bypass this check.
+  Other methods, other dyn traits and wrapper types retain their existing scope.
   Concrete mutable parameters, standard collection receivers,
   count-only observations, before-call assertions, no-op/constant writers and
   comparisons of another field retain their prior refusals. This rule grants
