@@ -99,10 +99,49 @@ fn scalar_literal(operand: &str) -> bool {
                 .replace('_', "")
                 .parse::<f64>()
                 .is_ok()
-        || (text.len() >= 2
-            && (text.starts_with('"') || text.starts_with('\''))
-            && text.ends_with(text.chars().next().unwrap_or('"'))
-            && !text[1..text.len() - 1].contains(text.chars().next().unwrap_or('"')))
+        || string_literals_only(text)
+}
+
+/// One or more adjacent string literals, which numpy reads as a 0-d scalar.
+/// Covers `r`/`b`/`u`/`f` prefixes, triple quotes and implicit concatenation.
+fn string_literals_only(text: &str) -> bool {
+    let mut rest = text.trim_start();
+    let mut seen = false;
+    while !rest.is_empty() {
+        let body = rest.trim_start_matches(|c: char| {
+            matches!(c, 'r' | 'R' | 'b' | 'B' | 'u' | 'U' | 'f' | 'F')
+        });
+        if rest.len() - body.len() > 2 {
+            return false;
+        }
+        let Some(quote) = body.chars().next().filter(|c| matches!(c, '"' | '\'')) else {
+            return false;
+        };
+        let triple: String = std::iter::repeat_n(quote, 3).collect();
+        let (open, end) = if body.starts_with(&triple) {
+            (3, triple.as_str())
+        } else {
+            (1, &body[..1])
+        };
+        let mut idx = open;
+        let bytes = body.as_bytes();
+        let close = loop {
+            if idx >= body.len() {
+                return false;
+            }
+            if bytes[idx] == b'\\' {
+                idx += 2;
+                continue;
+            }
+            if body.get(idx..).is_some_and(|tail| tail.starts_with(end)) {
+                break idx;
+            }
+            idx += 1;
+        };
+        seen = true;
+        rest = body[close + end.len()..].trim_start();
+    }
+    seen
 }
 
 /// `0x2`, `0b1` and `0o7`, which `f64` parsing does not read.

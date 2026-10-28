@@ -262,7 +262,29 @@ fn given_a_patch_call_split_across_lines_then_the_helper_is_not_credited() {
 fn given_a_scalar_operand_then_the_numpy_helper_is_not_credited() {
     // `assert_array_equal(f(), 3)` passes for `[3]` too, so a shape change is unseen.
     for expected in [
-        "2", "-2", "2.5", "1e3", "1j", "0x2", "0b1", "0o7", "0XFF", "True", "None", "\"x\"", "(2)",
+        "2",
+        "-2",
+        "2.5",
+        "1e3",
+        "1j",
+        "0x2",
+        "0b1",
+        "0o7",
+        "0XFF",
+        "True",
+        "None",
+        "\"x\"",
+        "(2)",
+        "b\"x\"",
+        "r'x'",
+        "f\"x\"",
+        "u'x'",
+        "rb'x'",
+        "\"\"\"x\"\"\"",
+        "'''x'''",
+        "\"a\" \"b\"",
+        "'a' 'it\\'s'",
+        "\"\u{e9}\\\"\"",
     ] {
         assert_not_credited(
             NP,
@@ -364,4 +386,20 @@ fn given_the_helper_in_a_loop_or_branch_then_it_is_still_credited() {
     );
 
     assert_eq!(strengths(&source), vec![OracleStrength::Strong]);
+}
+
+#[test]
+fn given_a_non_literal_operand_then_it_is_not_read_as_a_string_scalar() {
+    // A name, call or concatenation expression is not a literal scalar, so the numpy helper still credits.
+    for expected in ["name", "\"a\" + other", "bytes_of(\"x\")"] {
+        let source = numpy_test(
+            NP,
+            &format!("    np.testing.assert_array_equal(parse(\"1\"), {expected})"),
+        );
+        assert_eq!(
+            strengths(&source),
+            vec![OracleStrength::Strong],
+            "{expected}"
+        );
+    }
 }
