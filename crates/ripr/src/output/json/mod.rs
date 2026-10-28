@@ -336,6 +336,7 @@ mod tests {
             uninspected_changed_lines_lower_bound: 120,
             stop_reason: crate::analysis::PartialDiffStopReason::LineBudget,
             next_file_changed_lines: Some(50),
+            whole_diff_budgets: None,
             partition_identity: "b".repeat(64),
         }
     }
