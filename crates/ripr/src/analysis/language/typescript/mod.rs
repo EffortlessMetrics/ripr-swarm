@@ -80,6 +80,7 @@ mod enum_member_guard;
 mod error_payload_guard;
 mod extraction_cache;
 mod field_update_guard;
+mod fixture_receivers;
 mod gap_reach;
 mod guard_entry_guard;
 mod helper_inline;
@@ -234,6 +235,21 @@ pub(crate) use value_hiding_guard::*;
 pub(crate) struct TypeScriptAdapter;
 
 pub(crate) fn source_type_for(path: &Path) -> SourceType {
+    let source_type = source_type_for_extension(path);
+    // `*.d.ts` / `*.d.mts` / `*.d.cts` are declaration files: every top-level
+    // declaration is ambient, so `export const x: T;` is valid there and a
+    // parse error only when read as ordinary TypeScript (#10812).
+    let declaration_file = matches!(
+        path.extension().and_then(|ext| ext.to_str()),
+        Some("ts" | "mts" | "cts")
+    ) && path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .is_some_and(|stem| stem.ends_with(".d"));
+    source_type.with_typescript_definition(declaration_file)
+}
+
+fn source_type_for_extension(path: &Path) -> SourceType {
     match path.extension().and_then(|ext| ext.to_str()) {
         Some("tsx") => SourceType::tsx(),
         Some("ts") => SourceType::ts(),

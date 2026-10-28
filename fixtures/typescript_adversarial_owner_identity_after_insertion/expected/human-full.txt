@@ -3,12 +3,17 @@ mode: fast
 root: fixtures/typescript_adversarial_owner_identity_after_insertion/input
 config: <cwd>/fixtures/typescript_adversarial_owner_identity_after_insertion/input/ripr.toml
 
-Summary: 2 probe(s), 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 2 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+Summary: 2 changed behavior(s) checked: 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 2 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
 
 Changed file(s) by language: typescript = 1
 
 Analysis outcome: findings below (analysis complete; complete_with_findings)
-  Counts: 1 changed file(s), 9 changed line(s), 2 candidate line(s), 2 probe(s), 2 finding(s)
+  Counts: 1 changed file(s), 9 changed line(s), 2 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
 
 WARNING src/pricing.ts:6
   id: probe:src_pricing.ts:typescript_preview:fff3ea84
@@ -16,9 +21,10 @@ WARNING src/pricing.ts:6
 Changed
   after:  export const DEFAULT_FEE_RULE: FeeRule = { bps: 300, cap: 50 };
 
-Probe
+Change type
+  a condition or comparison changed
   family: predicate
-  delta:  control
+  delta:  control (changes which code path runs)
   owner:  typescript:src/pricing.ts::DEFAULT_FEE_RULE
 
 Language
@@ -88,9 +94,10 @@ WARNING src/pricing.ts:14
 Changed
   after:    if (amount >= threshold) {
 
-Probe
+Change type
+  a condition or comparison changed
   family: predicate
-  delta:  control
+  delta:  control (changes which code path runs)
   owner:  typescript:src/pricing.ts::applyDiscount
 
 Language

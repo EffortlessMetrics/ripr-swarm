@@ -72,7 +72,9 @@ pub(super) fn qualified_free_hop(
         arguments,
         receiver: None,
         through_macro: false,
+        module_qualified: true,
         transparent_macros_rebound: super::transparent_macro_name_rebound(&caller.body, index),
+        diverging_handlers: Vec::new(),
     })
 }
 

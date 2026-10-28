@@ -33,7 +33,10 @@ fn assert_locations(root: PathBuf, currentness: SourceCurrentness) {
             "{rendered}"
         );
     }
-    assert!(rendered.contains("Summary: 3 probes ("), "{rendered}");
+    assert!(
+        rendered.contains("Summary: 3 changed behaviors checked: "),
+        "{rendered}"
+    );
     assert_eq!(
         rendered.matches("    - ./src/").count(),
         3 - usize::from(selected)

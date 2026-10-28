@@ -46,7 +46,7 @@ jobs:
           components: llvm-tools-preview
 
       - name: Install CI tools
-        uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+        uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
         with:
           tool: nextest
 
@@ -61,6 +61,7 @@ jobs:
         run: |
           cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml
           cargo fetch --locked --manifest-path fixtures/owner_return_pin_json_real_literal/input/Cargo.toml
+          cargo fetch --locked --manifest-path crates/ripr/tests/fixtures/proptest_singleton/input/Cargo.toml
 
       # The policy tests spawn `cargo test --no-run -p xtask` themselves; warming it
       # keeps that build off the clock, as the gates job's policy preflight does.
@@ -145,18 +146,27 @@ jobs:
           shared-key: ripr-swarm-rust-shards-${{ runner.os }}
           save-if: false
 
+      # A partial "re-run failed jobs" uploads fresh artifacts only for the
+      # re-run shards (#10605), so the download cannot be limited to the
+      # current attempt: every attempt's shard artifacts come down, and
+      # `verify-test-shards` reads each shard's latest attempt at or below the
+      # verifying one (its run-context check binds the choice to this run,
+      # checkout, and partition).
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
-          pattern: ${{ inputs.artifact-name }}-nextest-shard-*-${{ github.run_attempt }}
+          pattern: ${{ inputs.artifact-name }}-nextest-shard-*
           path: shards
 
       # `verify-test-shards` accepts the shards only as conservation of the one
       # unpartitioned run: each shard's status, run context (repository, checkout,
       # run, attempt, profile, partition, exit) and JUnit report (complete, no
-      # failures, testcases equal to its partition list) must be current and green,
-      # and the partition lists must be a disjoint cover of the workspace list. It
+      # failures, testcases equal to its partition list) must be green for the
+      # shard's latest attempt at or below the verifying attempt, and the
+      # partition lists must be a disjoint cover of the workspace list. It
       # writes the combined junit.xml and run-context.txt the unpartitioned step
-      # retains, so consumers of `<artifact>-nextest-<attempt>` read the same files.
+      # retains, so consumers of `<artifact>-nextest-<attempt>` read the same
+      # files; a partial re-run is disclosed as `verified_attempts` in the
+      # combined context.
       - name: Check the shards are a complete, disjoint, green cover
         run: |
           cargo xtask verify-test-shards \

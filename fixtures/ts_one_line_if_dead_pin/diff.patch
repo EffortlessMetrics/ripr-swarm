@@ -1,0 +1,13 @@
+diff --git a/src/pick.ts b/src/pick.ts
+index 0000000..1111111 100644
+--- a/src/pick.ts
++++ b/src/pick.ts
+@@ -1,7 +1,7 @@
+ export function pick(s: number, admin: boolean): number {
+   if (!admin) {
+-    if (s > 404) { return 1; }
++    if (s >= 404) { return 1; }
+     return 2;
+   }
+   return 3;
+ }
