@@ -2,7 +2,7 @@
   "case_id": "py-numpy-shadowed-np",
   "subject_id": "authored-py-pytest-numpy",
   "origin": "authored",
-  "anchor": "src/extra.py:14",
+  "anchor": "src/extra.py:18",
   "behavior_family": "arithmetic_constant",
   "test_shape": "numpy_name_defined_in_test_file",
   "hard_case": true,

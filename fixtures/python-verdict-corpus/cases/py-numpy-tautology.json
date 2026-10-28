@@ -4,7 +4,7 @@
   "diff": "cases/py-numpy-tautology.diff",
   "anchor": {
     "file": "src/extra.py",
-    "line": 14
+    "line": 26
   },
   "edit_kind": "behavior_change",
   "behavior_family": "arithmetic_constant",

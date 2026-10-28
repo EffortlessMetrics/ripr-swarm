@@ -243,6 +243,43 @@ fn given_the_helper_is_patched_or_set_by_name_then_it_is_not_credited() {
 }
 
 #[test]
+fn given_a_patch_call_split_across_lines_then_the_helper_is_not_credited() {
+    assert_not_credited(
+        &format!("{NP}\nfrom unittest import mock"),
+        &format!(
+            "    p = mock.patch(\n        \"numpy.testing.assert_array_equal\",\n        lambda a, b: None,\n    )\n    p.start()\n{CALL}"
+        ),
+    );
+    assert_not_credited(
+        NP,
+        &format!(
+            "    monkeypatch.setattr(\n        \"numpy.testing.assert_array_equal\", lambda a, b: None\n    )\n{CALL}"
+        ),
+    );
+}
+
+#[test]
+fn given_a_scalar_operand_then_the_numpy_helper_is_not_credited() {
+    // `assert_array_equal(f(), 3)` passes for `[3]` too, so a shape change is unseen.
+    for expected in ["2", "-2", "2.5", "True", "None", "\"x\"", "(2)"] {
+        assert_not_credited(
+            NP,
+            &format!("    np.testing.assert_array_equal(parse(\"1\"), {expected})"),
+        );
+        assert_not_credited(
+            NP,
+            &format!("    np.testing.assert_equal({expected}, parse(\"1\"))"),
+        );
+    }
+}
+
+#[test]
+fn given_a_scalar_operand_then_assertpy_is_still_credited() {
+    let source = "from assertpy import assert_that\nfrom src.arrays import parse\n\n\ndef test_parse():\n    assert_that(parse(\"1\")).is_equal_to(2)\n";
+    assert_eq!(strengths(source), vec![OracleStrength::Strong]);
+}
+
+#[test]
 fn given_the_file_rebinds_names_dynamically_then_the_helper_is_not_credited() {
     for marker in [
         "globals()[\"np\"] = fake",

@@ -69,7 +69,7 @@ pub(super) fn credit_known_equality_helpers<'a>(
             let Some(helper) = &assertion.known_equality_helper else {
                 continue;
             };
-            if imports.proves(helper) {
+            if imports.proves(helper) && !broadcasts_a_scalar(helper) {
                 assertion.gate_text = format!("assert {} == {}", helper.left, helper.right);
                 assertion.oracle_kind = OracleKind::ExactValue;
                 assertion.oracle_strength = OracleStrength::Strong;
@@ -77,6 +77,31 @@ pub(super) fn credit_known_equality_helpers<'a>(
             }
         }
     }
+}
+
+/// `assert_array_equal(f(), 3)` and `assert_equal(f(), 3)` broadcast a scalar,
+/// so they pass for `[3]` as well as `3`; a shape change would go unnoticed
+/// and the call is not the `==` it would be elsewhere. assertpy compares
+/// with `==` and is not affected.
+fn broadcasts_a_scalar(helper: &PythonKnownEqualityHelper) -> bool {
+    helper.library == KnownEqualityLibrary::NumpyTesting
+        && (scalar_literal(&helper.left) || scalar_literal(&helper.right))
+}
+
+fn scalar_literal(operand: &str) -> bool {
+    let text = operand.trim().trim_start_matches(['-', '+']).trim();
+    let text = text.trim_start_matches('(').trim_end_matches(')').trim();
+    matches!(text, "True" | "False" | "None")
+        || text.replace('_', "").parse::<f64>().is_ok()
+        || text.ends_with(['j', 'J'])
+            && text[..text.len() - 1]
+                .replace('_', "")
+                .parse::<f64>()
+                .is_ok()
+        || (text.len() >= 2
+            && (text.starts_with('"') || text.starts_with('\''))
+            && text.ends_with(text.chars().next().unwrap_or('"'))
+            && !text[1..text.len() - 1].contains(text.chars().next().unwrap_or('"')))
 }
 
 /// One test file's top-level imports and the checks that keep them trusted.
@@ -300,11 +325,39 @@ fn patches_the_helper(
             sensitive.extend(["assertpy", "assert_that", "is_equal_to"]);
         }
     }
-    source.lines().any(|line| {
+    let has_marker = |line: &str| {
         ["patch", "mock", "Mock", "setattr"]
             .iter()
             .any(|marker| line.contains(marker))
-            && sensitive.iter().any(|word| mentions_word(line, word))
+    };
+    if source
+        .lines()
+        .any(|line| has_marker(line) && sensitive.iter().any(|word| mentions_word(line, word)))
+    {
+        return true;
+    }
+    // A patch call split across lines puts its target (`"numpy.testing.assert_array_equal"`)
+    // on a line of its own, so a library word inside a string literal anywhere in a file
+    // that patches or mocks at all refuses it.
+    source.lines().any(has_marker)
+        && source
+            .lines()
+            .filter(|line| !import_line(line))
+            .any(|line| library_word_in_string(line, library))
+}
+
+fn library_word_in_string(line: &str, library: KnownEqualityLibrary) -> bool {
+    let words: &[&str] = match library {
+        KnownEqualityLibrary::NumpyTesting => {
+            &["numpy", "testing", "assert_array_equal", "assert_equal"]
+        }
+        KnownEqualityLibrary::Assertpy => &["assertpy", "assert_that", "is_equal_to"],
+    };
+    words.iter().any(|word| {
+        line.match_indices(word).any(|(at, _)| {
+            let before = &line[..at];
+            before.matches('\"').count() % 2 == 1 || before.matches('\'').count() % 2 == 1
+        })
     })
 }
 

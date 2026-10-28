@@ -2,7 +2,7 @@
   "case_id": "py-numpy-patched-helper",
   "subject_id": "authored-py-pytest-numpy",
   "origin": "authored",
-  "anchor": "src/extra.py:14",
+  "anchor": "src/extra.py:22",
   "behavior_family": "arithmetic_constant",
   "test_shape": "numpy_helper_monkeypatched",
   "hard_case": true,

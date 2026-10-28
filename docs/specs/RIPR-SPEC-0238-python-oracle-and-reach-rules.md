@@ -1100,7 +1100,11 @@ mutant calibrates the rule; ripr reports only the static shape.
     the helper, and `globals(`, `vars(`, `exec(`, `eval(`, `__dict__`,
     `sys.modules`, `importlib`, `__import__` or `import *` anywhere refuses
     the file. The call is not under a `with`, `try` or `match`, where it may
-    be expected to fail (`with pytest.raises(AssertionError)`). The reported
+    be expected to fail (`with pytest.raises(AssertionError)`). A numpy
+    helper with a scalar literal operand (`assert_array_equal(f(), 3)`) is
+    not read either: numpy broadcasts the scalar, so the call passes for
+    `[3]` as well as `3` and a shape change goes unseen (assertpy compares
+    with `==` and is unaffected). The reported
     oracle text stays the call as written; the equality gates (rule 4, the
     tautology and wrapped-argument gates) read the equivalent comparison.
     `assert_allclose`, `assert_almost_equal`, `assert_array_almost_equal`,

@@ -1,12 +1,9 @@
 diff --git a/src/extra.py b/src/extra.py
 --- a/src/extra.py
 +++ b/src/extra.py
-@@ -11,7 +11,7 @@
+@@ -23,4 +23,4 @@
  
  
- def widen(text):
+ def mirror(text):
 -    return [int(text) + 1]
 +    return [int(text) + 2]
- 
- 
- def narrow(text):
