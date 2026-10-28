@@ -168,6 +168,20 @@ fn unvaried_arithmetic_operand(
             continue;
         }
         let table = table_cases(candidate.test)?;
+        if factor_swap
+            && strong_assertions.iter().any(|assertion| {
+                observed_literal_sibling_change(
+                    old_line,
+                    line_text,
+                    owner,
+                    candidate.test,
+                    &table,
+                    assertion,
+                )
+            })
+        {
+            return None;
+        }
         if strong_assertions.iter().any(|assertion| {
             !arithmetic_rows_agree(
                 candidate.test,
@@ -197,6 +211,138 @@ fn unvaried_arithmetic_operand(
                 discriminator: format!("a table row that varies {operand}"),
                 action: format!("Add a table row that varies `{operand}`."),
             }
+        }
+    })
+}
+
+/// A whole-result row can observe a changed literal beside the swap. This
+/// intentionally admits only a direct, undecorated two-line function and a
+/// direct single-assert parametrized test; uncertain bindings retain the gap.
+fn observed_literal_sibling_change(
+    old_line: &str,
+    new_line: &str,
+    owner: &PythonOwner,
+    test: &PythonTest,
+    table: &PythonParametrizeCases,
+    assertion: &PythonAssertion,
+) -> bool {
+    if owner.owner_kind != Some(OwnerKind::Function)
+        || !owner.decorators.is_empty()
+        || owner.end_line != owner.start_line + 1
+        || owner.term_facts.may_yield()
+        || !old_line.trim().starts_with("return ")
+        || !new_line.trim().starts_with("return ")
+        || test.parametrize.is_none()
+        || test.decorators.len() != 1
+        || !test
+            .fixtures
+            .iter()
+            .all(|name| test.takes_parametrize_value(name))
+        || !table
+            .argnames()
+            .iter()
+            .all(|name| test.takes_parametrize_value(name))
+    {
+        return false;
+    }
+    let Ok(Mod::Module(module)) = parse_module_result(Path::new("t.py"), &test.body_text) else {
+        return false;
+    };
+    let [Stmt::FunctionDef(function)] = module.body.as_slice() else {
+        return false;
+    };
+    if !matches!(function.body.as_slice(), [Stmt::Assert(_)]) {
+        return false;
+    }
+    let Some(old) = line_value_expr(old_line).and_then(|text| parse_expr(&text)) else {
+        return false;
+    };
+    let Some(new) = line_value_expr(new_line).and_then(|text| parse_expr(&text)) else {
+        return false;
+    };
+    let (old_items, new_items) = match (&old, &new) {
+        (Expr::Tuple(a), Expr::Tuple(b)) => (&a.elts, &b.elts),
+        (Expr::List(a), Expr::List(b)) => (&a.elts, &b.elts),
+        _ => return false,
+    };
+    if old_items.len() != 2 || new_items.len() != 2 {
+        return false;
+    }
+    let Some(index) = (0..2).find(|&i| swaps_factors(&old_items[i], &new_items[i])) else {
+        return false;
+    };
+    let Expr::BinOp(product) = &old_items[index] else {
+        return false;
+    };
+    let (Expr::Name(left), Expr::Name(right)) = (product.left.as_ref(), product.right.as_ref())
+    else {
+        return false;
+    };
+    if !owner.term_facts.is_stable_parameter(left.id.as_str())
+        || !owner.term_facts.is_stable_parameter(right.id.as_str())
+    {
+        return false;
+    }
+    let Some(stmts) = assertion_stmts(&assertion.gate_text) else {
+        return false;
+    };
+    let names = owner_names(owner, test);
+    let Some((owner_call, expected)) = owner_call_and_expected(&stmts, &names) else {
+        return false;
+    };
+    let Expr::Call(call) = owner_call else {
+        return false;
+    };
+    if !call.keywords.is_empty()
+        || call.args.len() != owner.parameters.len()
+        || owner.parameters.iter().any(|p| p.keyword_only)
+    {
+        return false;
+    }
+    let columns = table.argnames();
+    let Some(expected_name) = expr_plain_name(expected).filter(|name| columns.contains(name))
+    else {
+        return false;
+    };
+    let Some(bindings) = row_argument_env(owner_call, owner, |arg| {
+        expr_plain_name(arg).filter(|name| columns.contains(name))
+    }) else {
+        return false;
+    };
+    let (Some(left_column), Some(right_column)) = (
+        bindings.get(left.id.as_str()),
+        bindings.get(right.id.as_str()),
+    ) else {
+        return false;
+    };
+    let sibling = 1 - index;
+    let (Some(NumericFactor::Integer(old_sibling)), Some(NumericFactor::Integer(new_sibling))) = (
+        numeric_factor_literal(&old_items[sibling]),
+        numeric_factor_literal(&new_items[sibling]),
+    ) else {
+        return false;
+    };
+    if old_sibling == new_sibling {
+        return false;
+    }
+    table.cases.iter().any(|row| {
+        let Some(expected) = row.get(&expected_name).and_then(|text| parse_expr(text)) else { return false; };
+        let expected_items = match (&old, &expected) {
+            (Expr::Tuple(_), Expr::Tuple(value)) => &value.elts,
+            (Expr::List(_), Expr::List(value)) => &value.elts,
+            _ => return false,
+        };
+        if expected_items.len() != 2 || !matches!(numeric_factor_literal(&expected_items[sibling]), Some(NumericFactor::Integer(value)) if value == old_sibling) { return false; }
+        let Some(left) = row.get(left_column).and_then(|text| parse_expr(text)).and_then(|expr| numeric_factor_literal(&expr)) else { return false; };
+        let Some(right) = row.get(right_column).and_then(|text| parse_expr(text)).and_then(|expr| numeric_factor_literal(&expr)) else { return false; };
+        let Some(expected_product) = numeric_factor_literal(&expected_items[index]) else { return false; };
+        match (left, right, expected_product) {
+            (NumericFactor::Integer(a), NumericFactor::Integer(b), NumericFactor::Integer(want)) => a.checked_mul(b) == Some(want),
+            (NumericFactor::Float(a), NumericFactor::Float(b), NumericFactor::Float(want)) => {
+                let product = a * b;
+                product.is_finite() && product.partial_cmp(&want) == Some(std::cmp::Ordering::Equal)
+            }
+            _ => false,
         }
     })
 }

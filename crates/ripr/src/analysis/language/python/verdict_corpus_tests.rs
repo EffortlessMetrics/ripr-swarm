@@ -2315,7 +2315,43 @@ fn factor_swap_with_observed_float_sibling_edit_keeps_exact_oracle() -> Result<(
     let table = "import pytest\nfrom src.shop import area\n\n@pytest.mark.parametrize(\"a,b,want\", [(1.5, 2.0, (3.0, 1))])\ndef test_area(a, b, want):\n    assert area(a, b) == want\n";
     let finding = classify_finding(owner, 2, "    return (a * b, 1)", table)?;
     assert_eq!(finding.class, ExposureClass::Exposed);
-    assert!(!finding.missing.iter().any(|text| text.contains("multiplication order")));
+    assert!(
+        !finding
+            .missing
+            .iter()
+            .any(|text| text.contains("multiplication order"))
+    );
+    Ok(())
+}
+
+#[test]
+fn factor_swap_sibling_proof_refuses_unobserved_or_uncertain_rows() -> Result<(), String> {
+    let owner = "def area(a, b):\n    return (b * a, 2)\n";
+    let prefix = "import pytest\nfrom src.shop import area\n\n@pytest.mark.parametrize(\"a,b,want\", [(1.5, 2.0, (3.0, 1))])\ndef test_area(a, b, want):\n";
+    for body in [
+        "    assert area(a, b)[0] == want[0]\n",
+        "    a = 9\n    assert area(a, b) == want\n",
+        "    assert area(a, b, 5) == want\n",
+    ] {
+        assert_ne!(
+            classify(
+                owner,
+                2,
+                "    return (a * b, 1)",
+                &format!("{prefix}{body}")
+            )?,
+            ExposureClass::Exposed,
+            "{body}"
+        );
+    }
+    let wrong_expected = format!(
+        "{}    assert area(a, b) == want\n",
+        prefix.replace("(3.0, 1)", "(4.0, 1)")
+    );
+    assert_ne!(
+        classify(owner, 2, "    return (a * b, 1)", &wrong_expected)?,
+        ExposureClass::Exposed
+    );
     Ok(())
 }
 
