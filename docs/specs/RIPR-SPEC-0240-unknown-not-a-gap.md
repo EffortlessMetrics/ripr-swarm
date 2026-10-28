@@ -735,7 +735,9 @@ brings its own `Money` in by `use` or declares one (`type`, `struct`, `enum`,
 test's enclosing scopes leave the type and trait bindings clear. A foreign
 named import, local alias, local module or possibly binding macro in those
 scopes refuses the lift; unrelated sibling modules do not. A direct
-`super::Money` import from the owner's module is admitted. Other same-name imports,
+`super::Money` import from the owner's module is admitted, including the
+grouped `super::Money::{self}` spelling. A grouped `other::Money::{self}`
+binds the foreign `Money` and refuses the lift. Other same-name imports,
 foreign globs, cross-file calls, unparsed or ambiguous scopes are withheld
 when their identity cannot be established. A local alias to the owner still
 fails closed at the relation stage. The test must also reach this impl directly

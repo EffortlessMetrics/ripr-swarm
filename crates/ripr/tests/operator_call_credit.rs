@@ -668,6 +668,35 @@ fn classes(case: &Case) -> Result<Vec<ExposureClass>, String> {
 }
 
 #[test]
+fn grouped_self_import_binds_the_enclosing_type_name() -> Result<(), String> {
+    let base = Case {
+        label: "grouped_self",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        ..ADD
+    };
+    let foreign = Case {
+        label: "grouped_self_foreign",
+        extra_items: "mod other { pub type Money = i64; }\n#[cfg(test)] mod named { use super::*; use crate::other::Money::{self}; #[test] fn named_call() { let _ = Money::add(1, 1); } }",
+        ..base
+    };
+    assert_eq!(classes(&foreign)?, [ExposureClass::StaticUnknown]);
+    let owner = Case {
+        label: "grouped_self_owner",
+        extra_items: "#[cfg(test)] mod named { use super::Money::{self}; use std::ops::Add; #[test] fn named_call() { let _ = Money::add(super::Money(1), super::Money(1)); } }",
+        ..base
+    };
+    assert_eq!(classes(&owner)?, [ExposureClass::WeaklyExposed]);
+    let sibling = Case {
+        label: "grouped_self_sibling",
+        extra_items: "mod other { pub type Money = i64; }\n#[cfg(test)] mod unrelated { use crate::other::Money::{self}; }\n#[cfg(test)] mod named { use super::*; #[test] fn named_call() { let _ = Money::add(Money(1), Money(1)); } }",
+        ..base
+    };
+    assert_eq!(classes(&sibling)?, [ExposureClass::WeaklyExposed]);
+    Ok(())
+}
+
+#[test]
 fn module_type_bindings_do_not_name_the_operator_owner() -> Result<(), String> {
     let base = Case {
         label: "module_binding",

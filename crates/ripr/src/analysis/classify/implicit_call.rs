@@ -331,10 +331,14 @@ fn type_path_scope_is_clear(
             return super::reveal::flattened_use_paths(&item.syntax().text().to_string())
                 .iter()
                 .all(|import| {
+                    // In `use a::T::{self}`, the leaf binds `T`, not `self`.
+                    // Retain the flattened path's existing contract for its
+                    // other consumers; normalize only this binding check.
+                    let target = import.path.strip_suffix("::self").unwrap_or(&import.path);
                     let bound = import
                         .alias
                         .as_deref()
-                        .unwrap_or_else(|| import.path.rsplit("::").next().unwrap_or(""));
+                        .unwrap_or_else(|| target.rsplit("::").next().unwrap_or(""));
                     let bound = bound.strip_prefix("r#").unwrap_or(bound);
                     if bound == "*" {
                         return matches!(
@@ -343,11 +347,11 @@ fn type_path_scope_is_clear(
                         );
                     }
                     if bound == path.self_type {
-                        return owner_path(&import.path);
+                        return owner_path(target);
                     }
                     if bound == path.trait_name {
-                        return import.path == format!("std::ops::{}", path.trait_name)
-                            || import.path == format!("core::ops::{}", path.trait_name);
+                        return target == format!("std::ops::{}", path.trait_name)
+                            || target == format!("core::ops::{}", path.trait_name);
                     }
                     true
                 });
