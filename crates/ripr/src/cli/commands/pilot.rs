@@ -473,6 +473,21 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         output::pilot::render_pilot_summary_md(&classified, context),
     )?;
     timings.record("write_artifacts", write_started, Some(classified.len()));
+    // #10727: the sidecar is written last, so it cannot change any other
+    // artifact. A run without `-v` drops a prior run's sidecar rather than
+    // leave it standing as this run's timings.
+    timings.finish();
+    let timings_path = pilot_timings_path(&artifacts);
+    if crate::is_verbose() {
+        if let Err(error) = write_pilot_file(&timings_path, timings.render_json()) {
+            // The atomic writer keeps the old file when a replace fails, so
+            // drop it: a prior run's timings must not read as this run's.
+            remove_timeout_packet_sibling(&timings_path)?;
+            eprintln!("ripr pilot: timings sidecar not written: {error}");
+        }
+    } else {
+        remove_timeout_packet_sibling(&timings_path)?;
+    }
 
     print!(
         "{}",
@@ -1033,6 +1048,14 @@ fn remove_timeout_packet_sibling(path: &Path) -> Result<(), String> {
     }
 }
 
+/// `pilot-timings.json` beside the summary: the machine-readable twin of the
+/// `-v` stage table (#10727).
+fn pilot_timings_path(artifacts: &output::pilot::PilotArtifacts) -> PathBuf {
+    artifacts
+        .pilot_summary_json
+        .with_file_name("pilot-timings.json")
+}
+
 /// Publish the timeout packet: remove the prior-run siblings this run will
 /// not rewrite (#7425), then overwrite the two summaries with the partial
 /// timeout result. Extracted verbatim from `pilot`'s timeout branch so the
@@ -1044,6 +1067,7 @@ fn publish_timeout_packet(
     context: output::pilot::PilotSummaryContext<'_>,
 ) -> Result<(), String> {
     remove_unwritten_timeout_packet_siblings(artifacts)?;
+    remove_timeout_packet_sibling(&pilot_timings_path(artifacts))?;
     let summary_json = output::pilot::render_pilot_timeout_summary_json(context);
     write_pilot_file(&artifacts.pilot_summary_json, &summary_json)?;
     write_pilot_file(
@@ -1862,6 +1886,8 @@ mod tests {
             std::fs::write(path, stale)
                 .map_err(|err| format!("write stale {}: {err}", path.display()))?;
         }
+        std::fs::write(pilot_timings_path(&artifacts), stale)
+            .map_err(|err| format!("write stale timings sidecar: {err}"))?;
         std::fs::write(dir.join("unrelated.txt"), "keep-me")
             .map_err(|err| format!("write unrelated: {err}"))?;
         let root = dir.join("repo");
@@ -1885,6 +1911,10 @@ mod tests {
             },
         )?;
 
+        assert!(
+            !pilot_timings_path(&artifacts).exists(),
+            "a timeout run must not leave the previous run's timings sidecar"
+        );
         let summary = std::fs::read_to_string(&artifacts.pilot_summary_json)
             .map_err(|err| format!("read timeout summary: {err}"))?;
         assert!(

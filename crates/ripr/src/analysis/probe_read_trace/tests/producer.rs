@@ -131,6 +131,20 @@ fn actual_index_views_record_present_absent_and_all_conservative_sets() -> Resul
         assert!(!tests.is_empty());
         line
     })?;
+    // A test read by position names that one fact; it is not a whole-set read.
+    let first = index.tests().at(0);
+    let subject = format!(
+        "{}:{}:{}",
+        first.file.display(),
+        first.start_line,
+        first.name
+    );
+    assert_read("test-at", Kind::Test, &subject, || {
+        let line = line!() + 1;
+        let found = index.test_at(0);
+        assert_eq!(found.name, first.name);
+        line
+    })?;
     Ok(())
 }
 
@@ -190,6 +204,15 @@ fn actual_classification_preserves_findings_and_value_origins_with_shared_memos(
             .iter()
             .any(|finding| traced_origins.files(finding).is_some()),
         "fixture must exercise the real origin side output"
+    );
+    // The related-test selector reads candidates by position; reverting it to the
+    // whole-set view would leave no keyed test read in any row.
+    assert!(
+        rows.iter().any(
+            |row| row.reads.iter().any(|entry| entry.read.kind == Kind::Test
+                && Path::new(entry.read.site.file).ends_with("classify/related_tests.rs"))
+        ),
+        "classification must record a keyed test read at the related-test site"
     );
     assert!(rows.iter().all(|row| row.observed_read_events > 0
         && row.classification_returned
