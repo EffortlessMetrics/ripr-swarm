@@ -2839,6 +2839,8 @@ fn missing_config_detects_typescript_one_level_below_root_and_under_workspace_co
         ("ts-marker-in-src", "src/tsconfig.json"),
         ("ts-marker-in-tests", "tests/jsconfig.json"),
         ("ts-marker-in-container", "packages/tsconfig.json"),
+        ("ts-container-own-src", "packages/src/index.ts"),
+        ("ts-container-own-tests", "apps/tests/foo.ts"),
     ];
     for (label, file) in layouts {
         let root = temp_root(label)?;

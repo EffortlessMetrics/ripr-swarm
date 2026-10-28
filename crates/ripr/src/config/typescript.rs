@@ -185,16 +185,17 @@ fn detect_nested_typescript_package(root: &Path) -> bool {
         if has_typescript_project_marker(&child) {
             return true;
         }
-        if TYPESCRIPT_WORKSPACE_CONTAINERS.contains(&name) {
-            child_directories(&child)
+        // `src`/`tests` are the root source markers themselves; the root
+        // already walked them, so only their own marker counts. Every other
+        // child, workspace container included, gets the root test.
+        let is_source_dir = TYPESCRIPT_SOURCE_DIR_MARKERS.contains(&name);
+        if !is_source_dir && detect_typescript_package_root(&child, true) {
+            return true;
+        }
+        TYPESCRIPT_WORKSPACE_CONTAINERS.contains(&name)
+            && child_directories(&child)
                 .iter()
                 .any(|package| detect_typescript_package_root(package, true))
-        } else {
-            // `src`/`tests` are the root source markers themselves; the
-            // root already walked them, so only their own marker counts.
-            !TYPESCRIPT_SOURCE_DIR_MARKERS.contains(&name)
-                && detect_typescript_package_root(&child, true)
-        }
     })
 }
 
