@@ -92,6 +92,7 @@ fn scalar_literal(operand: &str) -> bool {
     let text = operand.trim().trim_start_matches(['-', '+']).trim();
     let text = text.trim_start_matches('(').trim_end_matches(')').trim();
     matches!(text, "True" | "False" | "None")
+        || prefixed_integer(text)
         || text.replace('_', "").parse::<f64>().is_ok()
         || text.ends_with(['j', 'J'])
             && text[..text.len() - 1]
@@ -102,6 +103,19 @@ fn scalar_literal(operand: &str) -> bool {
             && (text.starts_with('"') || text.starts_with('\''))
             && text.ends_with(text.chars().next().unwrap_or('"'))
             && !text[1..text.len() - 1].contains(text.chars().next().unwrap_or('"')))
+}
+
+/// `0x2`, `0b1` and `0o7`, which `f64` parsing does not read.
+fn prefixed_integer(text: &str) -> bool {
+    let digits = text.replace('_', "");
+    let lower = digits.to_ascii_lowercase();
+    [("0x", 16), ("0b", 2), ("0o", 8)]
+        .iter()
+        .any(|(prefix, radix)| {
+            lower
+                .strip_prefix(prefix)
+                .is_some_and(|rest| !rest.is_empty() && i128::from_str_radix(rest, *radix).is_ok())
+        })
 }
 
 /// One test file's top-level imports and the checks that keep them trusted.

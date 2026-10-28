@@ -34,7 +34,7 @@
   },
   "reasoning": "Trap: `np.testing.assert_array_equal(mirror(\"1\"), mirror(\"1\"))` compares the owner with itself, so reading it as the equality it runs must not make it a pin.",
   "labeling_observation": {
-    "ripr_commit": "ba58624c",
+    "ripr_commit": "35cf5f96",
     "full_checkout_verdict": "gap",
     "full_checkout_classifications": [
       "weakly_exposed"

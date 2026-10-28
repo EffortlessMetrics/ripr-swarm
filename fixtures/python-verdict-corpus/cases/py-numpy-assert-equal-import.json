@@ -35,7 +35,7 @@
   },
   "reasoning": "`assert_equal(pair(\"1\"), (2, 3))` imported with `from numpy.testing import assert_equal` pins the whole tuple, so `+ 2` fails it. Rule 28 reads the imported callable as `assert pair(\"1\") == (2, 3)`.",
   "labeling_observation": {
-    "ripr_commit": "ba58624c",
+    "ripr_commit": "35cf5f96",
     "full_checkout_verdict": "credited",
     "full_checkout_classifications": [
       "exposed"

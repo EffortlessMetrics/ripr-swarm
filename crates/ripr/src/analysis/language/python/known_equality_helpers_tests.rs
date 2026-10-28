@@ -261,7 +261,9 @@ fn given_a_patch_call_split_across_lines_then_the_helper_is_not_credited() {
 #[test]
 fn given_a_scalar_operand_then_the_numpy_helper_is_not_credited() {
     // `assert_array_equal(f(), 3)` passes for `[3]` too, so a shape change is unseen.
-    for expected in ["2", "-2", "2.5", "True", "None", "\"x\"", "(2)"] {
+    for expected in [
+        "2", "-2", "2.5", "1e3", "1j", "0x2", "0b1", "0o7", "0XFF", "True", "None", "\"x\"", "(2)",
+    ] {
         assert_not_credited(
             NP,
             &format!("    np.testing.assert_array_equal(parse(\"1\"), {expected})"),

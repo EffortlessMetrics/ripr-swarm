@@ -34,7 +34,7 @@
   },
   "reasoning": "Trap: the equality helper runs under `pytest.raises(AssertionError)`, so the test passes when the helper fails and rule 28 must not read it as a pin.",
   "labeling_observation": {
-    "ripr_commit": "ba58624c",
+    "ripr_commit": "35cf5f96",
     "full_checkout_verdict": "limited",
     "full_checkout_classifications": [
       "static_unknown"

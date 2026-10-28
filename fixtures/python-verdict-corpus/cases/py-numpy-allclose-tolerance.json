@@ -34,7 +34,7 @@
   },
   "reasoning": "Trap: `np.testing.assert_allclose` compares within a tolerance, so it is not the equality rule 28 credits, and a 1e-12 change passes it.",
   "labeling_observation": {
-    "ripr_commit": "ba58624c",
+    "ripr_commit": "35cf5f96",
     "full_checkout_verdict": "limited",
     "full_checkout_classifications": [
       "static_unknown"
