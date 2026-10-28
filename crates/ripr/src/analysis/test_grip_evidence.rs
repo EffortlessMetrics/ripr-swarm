@@ -643,7 +643,7 @@ fn is_should_panic(test: &TestSummary) -> bool {
 fn names_non_plain_drop_type(owner: &FunctionSummary, expression: &str, index: &RustIndex) -> bool {
     let body: &str = &owner.body;
     let signature = body.find('{').map_or(body, |open| &body[..open]);
-    if returns_generic_parameter(signature) {
+    if returns_generic_or_opaque_type(owner, signature, index) {
         return true;
     }
     let masked: Vec<String> = index
@@ -686,52 +686,149 @@ fn names_non_plain_drop_type(owner: &FunctionSummary, expression: &str, index: &
     false
 }
 
-/// Whether the return type of `signature` (after `->`) names a generic
-/// parameter the function declares (`fn mk<T>(x: T) -> T`).
-fn returns_generic_parameter(signature: &str) -> bool {
+/// Whether the owner's return type is one the caller (or an implementor)
+/// chooses, so the start cannot prove it plain: it names a generic parameter of
+/// the function or of the enclosing `impl`/`trait` header, is `Self` inside a
+/// generic `impl`, or is opaque (`impl Trait`, `dyn Trait`). Unbalanced generics
+/// withhold.
+fn returns_generic_or_opaque_type(
+    owner: &FunctionSummary,
+    signature: &str,
+    index: &RustIndex,
+) -> bool {
     let word = |ch: char| ch.is_alphanumeric() || ch == '_';
     let Some(fn_at) = signature.find("fn ") else {
         return false;
     };
     let after = &signature[fn_at + 3..];
-    let Some(rest) = after
-        .find(|ch: char| !word(ch) && !ch.is_whitespace())
-        .map(|at| &after[at..])
-        .filter(|rest| rest.starts_with('<'))
-    else {
+    let name_end = after.find(|ch: char| !word(ch)).unwrap_or(after.len());
+    let rest = after[name_end..].trim_start();
+    let mut names: Vec<String> = Vec::new();
+    let rest = if rest.starts_with('<') {
+        let Some((params, end)) = generic_parameter_names(rest) else {
+            return true;
+        };
+        names.extend(params);
+        &rest[end..]
+    } else {
+        rest
+    };
+    // The return type starts at the first `->` after the parameter list's
+    // closing parenthesis, so an arrow inside the list or the type is not it.
+    let Some(open) = rest.find('(') else {
         return false;
     };
-    // The generics list: split at depth-1 commas, ending at the matching `>`
-    // (a `->` inside a bound does not close it).
+    let mut depth = 0usize;
+    let mut close = None;
+    for (offset, ch) in rest[open..].char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    close = Some(open + offset + 1);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let Some(close) = close else {
+        return true;
+    };
+    let Some(ret) = rest[close..].trim_start().strip_prefix("->") else {
+        return false;
+    };
+    let ret = ret
+        .split(|ch: char| !word(ch))
+        .take_while(|token| *token != "where")
+        .collect::<Vec<_>>();
+    let impl_generics = enclosing_header_generics(owner, index);
+    let Some(impl_generics) = impl_generics else {
+        return true;
+    };
+    let in_generic_impl = !impl_generics.is_empty();
+    names.extend(impl_generics);
+    ret.iter().any(|token| {
+        names.iter().any(|name| name.as_str() == *token)
+            || matches!(*token, "impl" | "dyn")
+            || (in_generic_impl && *token == "Self")
+    })
+}
+
+/// The generic parameter names of the last `impl` or `trait` header before the
+/// owner in its file, or `None` when one cannot be read (withhold). Over-reads:
+/// the nearest preceding header need not enclose the owner.
+fn enclosing_header_generics(owner: &FunctionSummary, index: &RustIndex) -> Option<Vec<String>> {
+    let Some(facts) = index.files().get(&owner.file) else {
+        return Some(Vec::new());
+    };
+    let masked = crate::analysis::extract::mask_comments_and_strings(&facts.source);
+    let before: String = masked
+        .lines()
+        .take(owner.start_line.saturating_sub(1))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let part = |ch: Option<char>| ch.is_some_and(|ch| ch.is_alphanumeric() || ch == '_');
+    let mut names = Vec::new();
+    for keyword in ["impl", "trait"] {
+        let Some((at, _)) = before
+            .match_indices(keyword)
+            .filter(|(at, word)| {
+                !part(before[..*at].chars().next_back())
+                    && !part(before[at + word.len()..].chars().next())
+            })
+            .last()
+        else {
+            continue;
+        };
+        let header = before[at + keyword.len()..].trim_start();
+        if header.starts_with('<') {
+            names.extend(generic_parameter_names(header)?.0);
+        } else if keyword == "trait" {
+            // `trait Name<T>`: skip the name, then read any generics.
+            let name_end = header.find(|ch: char| !(ch.is_alphanumeric() || ch == '_'));
+            let rest = name_end.map_or("", |end| header[end..].trim_start());
+            if rest.starts_with('<') {
+                names.extend(generic_parameter_names(rest)?.0);
+            }
+        }
+    }
+    Some(names)
+}
+
+/// The parameter names of the generics list at the start of `text` (`<T, 'a,
+/// const N: usize>`) and the offset just past its closing `>`, or `None` when
+/// the list is unbalanced. A `->` inside a bound does not close it.
+fn generic_parameter_names(text: &str) -> Option<(Vec<String>, usize)> {
+    let word = |ch: char| ch.is_alphanumeric() || ch == '_';
     let mut depth = 0usize;
     let mut params: Vec<&str> = Vec::new();
     let mut start = 1;
-    let mut closed = false;
+    let mut end = None;
     let mut previous = ' ';
-    for (offset, ch) in rest.char_indices() {
+    for (offset, ch) in text.char_indices() {
         match ch {
             '<' | '(' | '[' => depth += 1,
             '>' if previous == '-' => {}
             '>' | ')' | ']' => {
                 depth = depth.saturating_sub(1);
                 if depth == 0 {
-                    params.push(&rest[start..offset]);
-                    closed = true;
+                    params.push(&text[start..offset]);
+                    end = Some(offset + 1);
                     break;
                 }
             }
             ',' if depth == 1 => {
-                params.push(&rest[start..offset]);
+                params.push(&text[start..offset]);
                 start = offset + 1;
             }
             _ => {}
         }
         previous = ch;
     }
-    if !closed {
-        return true;
-    }
-    let names: Vec<&str> = params
+    let end = end?;
+    let names = params
         .iter()
         .filter_map(|param| {
             let param = param.trim();
@@ -743,15 +840,10 @@ fn returns_generic_parameter(signature: &str) -> bool {
                 .split(|ch: char| !word(ch))
                 .next()
                 .filter(|name| !name.is_empty())
+                .map(str::to_string)
         })
         .collect();
-    let Some(arrow) = signature.rfind("->") else {
-        return false;
-    };
-    let ret = &signature[arrow + 2..];
-    let ret = ret.find(" where").map_or(ret, |at| &ret[..at]);
-    ret.split(|ch: char| !word(ch))
-        .any(|token| names.contains(&token))
+    Some((names, end))
 }
 
 /// The names `target` is imported as through `use .. Original as target`.
@@ -775,7 +867,18 @@ fn renamed_from(masked: &str, target: &str) -> Vec<String> {
         let start = before
             .rfind(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
             .map_or(0, |found| found + 1);
-        let original = &before[start..];
+        let mut original = &before[start..];
+        if original == "self" {
+            // `use Type::{self as Name}`: the original is the path segment
+            // before `::{self`.
+            let head = before[..start].trim_end();
+            let head = head.strip_suffix('{').unwrap_or(head).trim_end();
+            let head = head.strip_suffix("::").unwrap_or(head);
+            let begin = head
+                .rfind(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+                .map_or(0, |found| found + 1);
+            original = &head[begin..];
+        }
         if !original.is_empty() {
             originals.push(original.to_string());
         }
@@ -783,11 +886,13 @@ fn renamed_from(masked: &str, target: &str) -> Vec<String> {
     originals
 }
 
-/// The text of the `struct`, `enum` or `union` definition of `name` (from its
-/// name through the closing `}` or the terminating `;`), or empty when the
-/// source defines none.
+/// The text of every `struct`, `enum` or `union` definition named `name` (from
+/// its name through the closing `}` or the terminating `;`), joined; empty
+/// when the source defines none. Same-named types in different modules are
+/// all read, since the path that picks one is not resolved.
 fn type_definition_region(masked: &str, name: &str) -> String {
     let part = |ch: Option<char>| ch.is_some_and(|ch| ch.is_alphanumeric() || ch == '_');
+    let mut regions = String::new();
     for keyword in ["struct", "enum", "union"] {
         for (at, word) in masked.match_indices(keyword) {
             let rest = &masked[at + word.len()..];
@@ -822,10 +927,11 @@ fn type_definition_region(masked: &str, name: &str) -> String {
                     _ => {}
                 }
             }
-            return rest[ident.len()..region_end].to_string();
+            regions.push_str(&rest[ident.len()..region_end]);
+            regions.push('\n');
         }
     }
-    String::new()
+    regions
 }
 
 /// Token-level read of `type <name>`: comments and strings are masked, then a

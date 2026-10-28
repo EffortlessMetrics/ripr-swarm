@@ -738,9 +738,12 @@ not a head-only row and prints no note.
   strong exact assertion, a statically contradicted assertion, a function-value
   or executor-helper reach, a changed struct literal, a related `#[ignore]` or
   `#[should_panic]` test, a returned type that may have a non-plain `Drop`
-  (read through `Self`, `use .. as` renames and workspace struct, enum or union
-  fields; an unresolved type alias, a generic return type, or a workspace with
-  a macro, `extern crate` or outside-crate item also withholds), a test that
+  (read through `Self`, `use .. as` and `use Type::{self as Name}` renames, and
+  the fields of every workspace struct, enum or union of that name; an
+  unresolved type alias, a return type naming a generic parameter of the
+  function or of a preceding `impl` or `trait` header, `Self` in a generic
+  `impl`, an `impl Trait` or `dyn Trait` return, or a workspace with a macro,
+  `extern crate` or outside-crate item also withholds), a test that
   pins the owner call, or a local bound from it through `let` or a tuple
   destructure, with `==`, `.eq(`, `!(.. != ..)` or a closed `>= .. && .. <=`
   range, an exact error-variant assertion that names a different variant (whole
@@ -749,7 +752,9 @@ not a head-only row and prints no note.
   with one plain-language reason and the manual `ripr agent stub` route
   (`crates/ripr/tests/return_value_repair_start.rs`). Not recognized as pins,
   so they still start: a bool local (`let ok = v == 6; assert!(ok)`), an open
-  range (`v > 5 && v < 7`) and `(6..=6).contains(&v)`.
+  range (`v > 5 && v < 7`) and `(6..=6).contains(&v)`. The `Drop` read does
+  not follow a lowercase type name or an implementor behind a trait object;
+  the latter withholds only through the `dyn`/`impl` rule.
 - Format parsing tests for `human-full` and `text-full`.
 - CLI unit tests for repo-scope warnings with `--base` and `--diff`, and no
   warning for diff-scoped JSON.

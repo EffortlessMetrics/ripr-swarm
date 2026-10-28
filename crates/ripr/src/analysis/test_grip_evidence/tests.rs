@@ -19918,6 +19918,9 @@ fn a_generic_return_type_withholds() -> Result<(), String> {
         "<T: Fn(u32) -> u32>(x: T) -> T",
         "<const N: usize, T>(x: [T; N]) -> T",
         "<T>(x: Vec<T>) -> Option<T>",
+        "<T>(x: T) -> (T, Box<dyn Fn() -> u8>)",
+        "<T>(x: T) -> T\nwhere\n    T: Clone",
+        "<T>(f: fn(T) -> u8, x: T) -> T",
     ] {
         assert!(
             may_name_non_plain_drop(&lib(generic), "mk", "x")?,
@@ -19928,6 +19931,8 @@ fn a_generic_return_type_withholds() -> Result<(), String> {
         "(x: u32) -> u32",
         "<T>(x: T) -> u32",
         "<T>(x: T) -> String where T: Clone",
+        "<T>(x: T) -> String\nwhere\n    T: Clone",
+        "<T>(f: fn(T) -> u8, x: T) -> u8",
         "(x: Vec<u32>) -> Option<u32>",
     ] {
         assert!(
@@ -19936,4 +19941,96 @@ fn a_generic_return_type_withholds() -> Result<(), String> {
         );
     }
     Ok(())
+}
+
+#[test]
+fn opaque_dyn_and_impl_returns_withhold() -> Result<(), String> {
+    let lib = |signature: &str| format!("pub fn mk{signature} {{\n    x\n}}\n");
+    for opaque in [
+        "(x: u32) -> impl Iterator<Item = u32>",
+        "(x: u32) -> Box<dyn Fn() -> u8>",
+        "(x: u32) -> &'static dyn std::fmt::Debug",
+    ] {
+        assert!(
+            may_name_non_plain_drop(&lib(opaque), "mk", "x")?,
+            "{opaque}"
+        );
+    }
+    assert!(!may_name_non_plain_drop(
+        &lib("(x: u32) -> Box<u32>"),
+        "mk",
+        "x"
+    )?);
+    Ok(())
+}
+
+#[test]
+fn enclosing_impl_generics_in_the_return_type_withhold() -> Result<(), String> {
+    let lib = |header: &str, signature: &str| {
+        format!(
+            "pub struct S<T>(pub T);\n{header} {{\n    pub fn f{signature} {{\n        x\n    }}\n}}\n"
+        )
+    };
+    for (header, signature) in [
+        ("impl<T> S<T>", "(x: T) -> T"),
+        ("impl<T> S<T>", "(x: T) -> Option<T>"),
+        ("impl<T> S<T>", "(x: T) -> Self"),
+        ("impl<T: Clone> S<T>", "(x: T) -> T"),
+    ] {
+        assert!(
+            may_name_non_plain_drop(&lib(header, signature), "f", "x")?,
+            "{header} {signature}"
+        );
+    }
+    for (header, signature) in [
+        ("impl S<u32>", "(x: u32) -> u32"),
+        ("impl S<u32>", "(x: u32) -> Self"),
+        ("impl<T> S<T>", "(x: u32) -> u32"),
+    ] {
+        assert!(
+            !may_name_non_plain_drop(&lib(header, signature), "f", "x")?,
+            "{header} {signature}"
+        );
+    }
+    let trait_lib = |ret: &str| {
+        format!("pub trait Tr<T> {{\n    fn f(x: T) -> {ret} {{\n        x\n    }}\n}}\n")
+    };
+    assert!(may_name_non_plain_drop(&trait_lib("T"), "f", "x")?);
+    assert!(!may_name_non_plain_drop(&trait_lib("u32"), "f", "x")?);
+    Ok(())
+}
+
+#[test]
+fn same_named_types_in_other_modules_are_all_read() -> Result<(), String> {
+    let lib = |drop: &str, second: &str| {
+        format!(
+            "pub struct Loud(pub u32);\n{drop}pub mod a {{\n    pub struct W(pub u8);\n}}\npub mod b {{\n    pub struct W(pub {second});\n}}\npub fn mk(x: u32) -> b::W {{\n    make(x)\n}}\n"
+        )
+    };
+    assert!(may_name_non_plain_drop(
+        &lib(EXIT_DROP, "super::Loud"),
+        "mk",
+        "make(x)"
+    )?);
+    assert!(!may_name_non_plain_drop(
+        &lib(PLAIN_DROP, "super::Loud"),
+        "mk",
+        "make(x)"
+    )?);
+    assert!(!may_name_non_plain_drop(
+        &lib(EXIT_DROP, "u8"),
+        "mk",
+        "make(x)"
+    )?);
+    Ok(())
+}
+
+#[test]
+fn a_self_import_rename_is_followed_to_its_type() {
+    use super::renamed_from;
+    assert!(
+        renamed_from("use crate::Loud::{self as Quiet};", "Quiet").contains(&"Loud".to_string())
+    );
+    assert!(renamed_from("use crate::Loud as Quiet;", "Quiet").contains(&"Loud".to_string()));
+    assert!(renamed_from("use crate::Loud as Other;", "Quiet").is_empty());
 }
