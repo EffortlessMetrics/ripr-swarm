@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `ripr check` builds the macro-generator name set and registers macro-generated tests across files in parallel instead of one file at a time, keeping file order and the first error in file order. On this repository's `crates/ripr` diff the `index_macro_generated_tests` phase measured about 7.5 s before and 5.5 to 7.3 s after on one four-core machine, with byte-identical reports; the end-to-end gain is a few seconds and noisy, so the nightly warm-check rows are the gate (#10809).

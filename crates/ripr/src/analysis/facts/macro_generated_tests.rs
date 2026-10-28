@@ -10,39 +10,62 @@
 
 use super::macro_visibility::MacroVisibility;
 use super::{RustIndex, TestFact};
+use crate::analysis::cancellation;
 use crate::analysis::syntax::expand_local_test_macros_with;
 use crate::analysis::syntax::ra::summarize_file_with_parser;
+use rayon::prelude::*;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 pub(super) fn register_macro_generated_tests(index: &mut RustIndex) -> Result<(), String> {
-    let mut generated: Vec<TestFact> = Vec::new();
     let visibility = MacroVisibility::new(
         index
             .files
             .iter()
             .map(|(path, file)| (path.clone(), file.data.source.clone())),
     );
-    for (path, file) in &index.files {
-        // Resolving a file's imported definitions re-parses it, so a large
-        // workspace spends its whole budget in this loop unless each file
-        // observes the run's token (#1604).
-        crate::analysis::cancellation::checkpoint()?;
-        let imported = visibility.imported_macros(path);
-        for expansion in expand_local_test_macros_with(&file.data.source, &imported) {
-            let Ok(facts) = summarize_file_with_parser(path, &expansion.text) else {
-                continue;
-            };
-            // The same exact attribute-path rule the style normalizer
-            // applies to hand-written tests; the parser's own check is a
-            // prefix match.
-            for mut test in facts.tests.into_iter().filter(|test| {
-                super::test_styles::attributes_define_test(test.attrs.iter().map(String::as_str))
-            }) {
-                pin_to_invocation(&mut test, path, expansion.start_line, expansion.end_line);
-                generated.push(test);
-            }
-        }
+    // Resolving a file's imported definitions re-parses it, so a large
+    // workspace spends its whole budget here unless each file observes the
+    // run's token (#1604). Files are independent, and `collect` on an indexed
+    // parallel iterator keeps input order, so the generated facts and the
+    // first error in input order match the serial walk (#10809).
+    let token = cancellation::current_token();
+    let files: Vec<_> = index.files.iter().collect();
+    let per_file: Vec<Result<Vec<TestFact>, String>> = files
+        .par_iter()
+        .map(|(path, file)| {
+            cancellation::with_optional_token(token.as_ref(), || {
+                cancellation::checkpoint()?;
+                let mut generated = Vec::new();
+                let imported = visibility.imported_macros(path);
+                for expansion in expand_local_test_macros_with(&file.data.source, &imported) {
+                    let Ok(facts) = summarize_file_with_parser(path, &expansion.text) else {
+                        continue;
+                    };
+                    // The same exact attribute-path rule the style normalizer
+                    // applies to hand-written tests; the parser's own check is
+                    // a prefix match.
+                    for mut test in facts.tests.into_iter().filter(|test| {
+                        super::test_styles::attributes_define_test(
+                            test.attrs.iter().map(String::as_str),
+                        )
+                    }) {
+                        pin_to_invocation(
+                            &mut test,
+                            path,
+                            expansion.start_line,
+                            expansion.end_line,
+                        );
+                        generated.push(test);
+                    }
+                }
+                Ok(generated)
+            })
+        })
+        .collect();
+    let mut generated: Vec<TestFact> = Vec::new();
+    for facts in per_file {
+        generated.extend(facts?);
     }
     if generated.is_empty() {
         return Ok(());

@@ -25,6 +25,7 @@ use crate::analysis::sync_memo::SyncMemo;
 use crate::analysis::syntax::{
     ImportedMacros, MacroScope, first_macro_call, generator_calls, macro_scope,
 };
+use rayon::prelude::*;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
@@ -76,17 +77,22 @@ impl Clone for MacroVisibility {
 impl MacroVisibility {
     pub(crate) fn new(files: impl Iterator<Item = (PathBuf, Arc<str>)>) -> Self {
         let sources: BTreeMap<PathBuf, Arc<str>> = files.collect();
-        let mut generators = BTreeSet::new();
-        for source in sources.values() {
-            if !source.contains("macro_rules") || !source.contains("test") {
-                continue;
-            }
-            for scoped in macro_scope(source).unwrap_or_default().macros {
-                if scoped.text.contains("test") {
-                    generators.insert(scoped.name);
-                }
-            }
-        }
+        // Each file's scan is independent and the names land in a set, so the
+        // fan-out cannot change the result (#10809).
+        let generators: BTreeSet<String> = sources
+            .par_iter()
+            .flat_map_iter(|(_, source)| {
+                let scoped = if source.contains("macro_rules") && source.contains("test") {
+                    macro_scope(source).unwrap_or_default().macros
+                } else {
+                    Vec::new()
+                };
+                scoped
+                    .into_iter()
+                    .filter(|scoped| scoped.text.contains("test"))
+                    .map(|scoped| scoped.name)
+            })
+            .collect();
         Self {
             sources,
             generators,
