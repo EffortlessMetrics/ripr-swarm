@@ -1,6 +1,8 @@
 # Fixture: typescript_reexport_unparsed_star
 
-Spec: RIPR-SPEC-0095, RIPR-SPEC-0108
+Spec: RIPR-SPEC-0095
+
+Related honesty contract: RIPR-SPEC-0108.
 
 ## Given
 
