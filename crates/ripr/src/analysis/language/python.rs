@@ -67,6 +67,7 @@ mod approx_band;
 mod arm_activation;
 mod bool_oracle;
 mod boundary;
+mod call_chain;
 mod caplog_text;
 mod classify;
 mod conditional_defs;
@@ -1568,6 +1569,8 @@ mod literal_patch_tests;
 #[cfg(test)]
 mod helper_owner_call_tests;
 
+#[cfg(test)]
+mod call_chain_tests;
 #[cfg(test)]
 mod imported_call_operator_tests;
 #[cfg(test)]

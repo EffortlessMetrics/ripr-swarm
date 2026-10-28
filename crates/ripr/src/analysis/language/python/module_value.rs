@@ -1841,7 +1841,12 @@ pub(super) fn evaluate(expr: &Expr, scope: &Scope<'_>) -> Option<Value> {
     }
 }
 
-fn arithmetic(op: &ast::Operator, left: &Value, right: &Value, floats: bool) -> Option<Value> {
+pub(super) fn arithmetic(
+    op: &ast::Operator,
+    left: &Value,
+    right: &Value,
+    floats: bool,
+) -> Option<Value> {
     if let (Value::Str(left), Value::Str(right), ast::Operator::Add) = (left, right, op) {
         return Some(Value::Str(format!("{left}{right}")));
     }
@@ -1888,7 +1893,12 @@ fn arithmetic(op: &ast::Operator, left: &Value, right: &Value, floats: bool) -> 
     .map(Value::Int)
 }
 
-fn comparison(op: &ast::CmpOp, left: &Value, right: &Value, floats: bool) -> Option<bool> {
+pub(super) fn comparison(
+    op: &ast::CmpOp,
+    left: &Value,
+    right: &Value,
+    floats: bool,
+) -> Option<bool> {
     let ordering = match (left, right) {
         (Value::Str(left), Value::Str(right)) => Some(left.cmp(right)),
         _ if floats && (matches!(left, Value::Float(_)) || matches!(right, Value::Float(_))) => {

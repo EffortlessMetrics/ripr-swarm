@@ -5,6 +5,7 @@ use super::assertion_selection::{
     strength_only_assertion,
 };
 use super::boundary::{BoundaryActivation, python_boundary_evidence};
+use super::call_chain::call_chain_credits;
 use super::caplog_text::{PythonLogVerdict, python_log_evidence};
 use super::dataclass_default::dataclass_default_credits;
 use super::discriminators::python_missing_discriminators;
@@ -413,8 +414,15 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
                     all_tests,
                 );
                 if default.is_empty() {
-                    imported_call = true;
-                    imported_call_credits(&edit, owner, owners, all_tests)
+                    let imported = imported_call_credits(&edit, owner, owners, all_tests);
+                    if imported.is_empty() {
+                        // A one-`return` owner read through a chain of
+                        // one-`return` callers a test pins (#9226).
+                        call_chain_credits(&edit, owner, owners, all_tests)
+                    } else {
+                        imported_call = true;
+                        imported
+                    }
                 } else {
                     default
                 }

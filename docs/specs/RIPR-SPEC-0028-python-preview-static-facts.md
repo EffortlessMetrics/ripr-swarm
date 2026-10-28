@@ -588,6 +588,30 @@ line continuation cannot hide a table from the foreign-store scan.
 Preceding assertions must evaluate true under the same bounded old/new scope
 before a later assertion can supply the value-flip credit.
 
+A change to the single `return` of an undecorated module function or method
+that no test calls directly (#9226) relates as `module_value_call` to a test
+whose straight-line `assert <entry> == <literal>` holds with the old body and
+fails with the new one, evaluated through a chain of model callables. The
+changed line is the file's only changed line. A model callable is a top-level
+undecorated synchronous `def` with plain positional parameters (no defaults,
+`*args`, keywords, or annotations other than a bare name) whose body is one
+`return` after an optional docstring, bound once in the module. It may also be
+such a method of a model class: a top-level class with no bases, keywords or
+decorators, bound once, whose body holds only a docstring, `pass` and `def`s,
+with no dunder method and no method defined twice, built as `Class()` with no
+arguments. Inside a callable a name is a parameter, and a call is a bare call
+of a model function or class of the module, `self.method(...)` on the method's
+own receiver, or `Class().method(...)`, all with positional arguments. Values
+and operators are the module-value evaluator's integers, booleans and strings,
+plus `str * int` repetition (at most 4096 characters) and `.upper()`/`.lower()`
+of an ASCII string. The test reaches the entry through a function or class it
+imports from the owner's module and does not rebind, or through a local it binds
+once to `Class()` before the assertion. It requests no fixture and may not
+skip. A workspace file that writes or patches any name the chain runs, a code
+slot, `__class__`/`__bases__`/`eval` in the module, a call nesting deeper than
+16, or any name, call, operator or value outside that model decides nothing,
+and the finding keeps its verdict.
+
 A `def name(`, `async def name(`, or `class name(` header in a test defines a
 local; it is not a call of `name`.
 
