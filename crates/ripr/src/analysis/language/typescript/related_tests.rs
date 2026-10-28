@@ -3022,6 +3022,8 @@ fn test_references_owner(
         if import.namespace {
             // `k.triple` is a property of a CommonJS function export, not it.
             return !owner.commonjs_whole_function
+                && !local_identifier_declared_in_test_body(body, &import.local)
+                && !enclosing_scope_shadows(test, &import.local)
                 && contains_member_reference(body, &import.local, &owner.name);
         }
         // Same default-export rule as `import_references_owner_call` (#4103):

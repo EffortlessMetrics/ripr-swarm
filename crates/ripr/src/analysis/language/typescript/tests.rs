@@ -16880,6 +16880,40 @@ it("tiers", () => {
     }
 }
 
+#[test]
+fn namespace_value_reference_does_not_relate_a_shadowed_binding() {
+    let owner = &f5_9_owners()[1];
+    for (label, source, related) in [
+        (
+            "imported namespace",
+            "import * as pricing from '../src/pricing';\nit('tiers', () => { expect(pricing.loyaltyPrice).toBeDefined(); });",
+            true,
+        ),
+        (
+            "body-local shadow",
+            "import * as pricing from '../src/pricing';\nit('tiers', () => {\n  const pricing = { loyaltyPrice: 1 };\n  expect(pricing.loyaltyPrice).toBeDefined();\n});",
+            false,
+        ),
+        (
+            "enclosing shadow",
+            "import * as pricing from '../src/pricing';\ndescribe('suite', () => { const pricing = { loyaltyPrice: 1 }; it('tiers', () => { expect(pricing.loyaltyPrice).toBeDefined(); }); });",
+            false,
+        ),
+    ] {
+        let tests = extract_tests(Path::new("test/pricing.test.ts"), source);
+        assert_eq!(tests.len(), 1, "{label}: fixture must parse one test");
+        let candidates = related_test_candidates(
+            owner,
+            &tests,
+            None,
+            &ReExportIndex::empty(),
+            None,
+            &RelationIndex::empty(),
+        );
+        assert_eq!(!candidates.is_empty(), related, "{label}");
+    }
+}
+
 // ── Silent-gap disclosure: unreadable files, test-file parse errors, ────────
 // ── and partial test extraction (typescript_test_extraction_partial) ────────
 //
