@@ -308,15 +308,30 @@ pub(super) fn helper_owner_call_candidates<'a>(
         frontier = next;
     }
     let mut found: Vec<HelperOwnerCallCandidate<'a>> = Vec::new();
+    let mut seen: std::collections::HashSet<(&'a Path, &'a str)> = std::collections::HashSet::new();
+    let token = crate::analysis::cancellation::current_token();
     for caller in callers {
-        for test in all_tests {
-            if found.iter().any(|existing| {
-                existing.candidate.test.file == test.file
-                    && existing.candidate.test.qualified_name == test.qualified_name
-            }) {
-                continue;
-            }
-            if related_test_relation(test, caller).is_some_and(PythonRelationKind::uses_oracle) {
+        // The relation is per-test and pure, so a large workspace scans it
+        // on the rayon workers; the first caller to reach a test still wins
+        // because the fold below runs in caller and test order (pandas: one
+        // changed helper scanned ~23k tests serially per caller).
+        let related = |test: &'a PythonTest| {
+            related_test_relation(test, caller).is_some_and(PythonRelationKind::uses_oracle)
+        };
+        let reached: Vec<&'a PythonTest> = if all_tests.len() >= PARALLEL_RELATION_MIN_TESTS {
+            all_tests
+                .par_iter()
+                .filter(|test| {
+                    crate::analysis::cancellation::with_optional_token(token.as_ref(), || {
+                        related(test)
+                    })
+                })
+                .collect()
+        } else {
+            all_tests.iter().filter(|test| related(test)).collect()
+        };
+        for test in reached {
+            if seen.insert((test.file.as_path(), test.qualified_name.as_str())) {
                 found.push(HelperOwnerCallCandidate {
                     candidate: PythonRelatedCandidate {
                         test,
