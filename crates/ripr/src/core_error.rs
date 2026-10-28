@@ -99,9 +99,11 @@ pub(crate) enum CheckFailureKind {
     /// (#10712).
     SeamPolicyOmitted,
     /// A `ripr agent start --seam-id` names a seam the inventory has and
-    /// policy permits, but whose class (opaque or `*_unknown`) is a static
-    /// limitation, not a repairable gap, so no workflow can start. Not a
-    /// policy decision; `agent packet` still renders its inspection packet.
+    /// policy permits, but the shared repair-admission gate refuses: its
+    /// class (opaque or `*_unknown`) is a static limitation, not a repairable
+    /// gap, or `ripr repair` reports it not repair-eligible, so no workflow
+    /// can start. Not a policy decision; `agent packet` still renders its
+    /// inspection packet.
     SeamNotActionable,
     /// A `--at`/`--finding`/`explain` selector matched no finding. This is
     /// usage-class, not an operational failure: the CLI keeps it prose-only
@@ -271,7 +273,7 @@ impl CoreError {
         }
     }
 
-    /// A `ripr agent start --seam-id` for a static-limitation seam (#10712).
+    /// A `ripr agent start --seam-id` the repair-admission gate refuses (#10712).
     /// `detail` is the exact human diagnostic, kept verbatim.
     pub(crate) fn seam_not_actionable(detail: impl Into<String>) -> Self {
         Self::CheckFailure {
