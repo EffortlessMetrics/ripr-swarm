@@ -1,0 +1,9 @@
+[package]
+name = "thr"
+version = "0.0.0"
+edition = "2024"
+
+[dependencies]
+other_dep = { path = "other_dep" }
+
+[workspace]

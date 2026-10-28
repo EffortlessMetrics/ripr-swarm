@@ -572,6 +572,15 @@ impl RustIndex {
             order: Some(&self.test_order),
         }
     }
+    /// The test fact at `position` of [`Self::tests`], read as that one fact
+    /// rather than as the whole set. Positions come from a candidate list the
+    /// caller already holds, so the read depends on the fact it returns.
+    #[track_caller]
+    pub fn test_at(&self, position: usize) -> &TestFact {
+        let test = &self.test_facts[self.test_order[position]];
+        crate::analysis::probe_read_trace::test(&test.file, test.start_line, &test.name);
+        test
+    }
     pub fn files(&self) -> IndexFiles<'_> {
         IndexFiles { index: self }
     }

@@ -1997,6 +1997,45 @@ fn star_import_fails_closed_when_another_binding_may_win_the_name() -> Result<()
         ExposureClass::WeaklyExposed,
         "the module conditionally rebinds fee"
     );
+    for (extra, why) in [
+        (
+            "globals()[\"fee\"] = lambda amount: amount + 4",
+            "module writes globals() dynamically",
+        ),
+        (
+            "globals().update(fee=lambda amount: amount + 4)",
+            "module updates globals()",
+        ),
+        (
+            "exec(\"fee = lambda amount: amount + 4\")",
+            "module execs a rebind",
+        ),
+        ("from src.other import *", "module-side star import"),
+        (
+            "globals ()[\"fee\"] = lambda amount: amount + 4",
+            "whitespace before the call",
+        ),
+        (
+            "try:\n    import fast\nexcept ImportError:\n    from src.other import *",
+            "star import in an except handler",
+        ),
+        (
+            "for _ in range(1):\n    from src.other import *",
+            "star import in a loop",
+        ),
+    ] {
+        let module = format!("{FEE}\n\n{extra}\n");
+        assert_eq!(
+            classify(
+                &module,
+                2,
+                FEE_OLD,
+                &test_module("from src.shop import *", body)
+            )?,
+            ExposureClass::WeaklyExposed,
+            "{why}"
+        );
+    }
     for (import, why) in [
         (
             "from src.shop import *\nfrom src.shop import charge as fee",
