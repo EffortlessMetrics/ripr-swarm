@@ -1,0 +1,45 @@
+{
+  "case_id": "py-numpy-spaced-exec",
+  "subject_id": "authored-py-pytest-numpy",
+  "diff": "cases/py-numpy-spaced-exec.diff",
+  "anchor": {
+    "file": "src/extra.py",
+    "line": 38
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "arithmetic_constant",
+  "test_shape": "numpy_helper_rebound_by_spaced_exec",
+  "hard_case": "False-credit trap: the test looks like it checks the owner but cannot notice a change to it.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.11.15, pytest 9.2.0, numpy 2.4.6, assertpy 1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return [int(text) + 2]",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the owner returns [3] instead of [2] for \"1\"; the test replaced numpy's helper with a no-op through `exec (...)`"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "Trap: the test replaces `np.testing.assert_array_equal` with a no-op through `exec (\"...\")` (a space before the parenthesis) before calling it, so the import no longer names the code that runs.",
+  "labeling_observation": {
+    "ripr_commit": "bebafae2",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": []
+}
