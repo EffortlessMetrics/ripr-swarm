@@ -191,3 +191,37 @@ fn a_computed_argument_keeps_the_credit() -> Result<(), String> {
     );
     Ok(())
 }
+
+#[test]
+fn a_relational_sibling_that_holds_on_both_versions_does_not_expose_the_change()
+-> Result<(), String> {
+    // `backoff_ms(3, 100) > backoff_ms(1, 100)` is true before (800 > 200) and after (2700 > 300).
+    let findings = findings(
+        POW,
+        POW_OLD,
+        "use invisible::backoff_ms;\n\n#[test]\nfn first() {\n    assert_eq!(backoff_ms(0, 100), 100);\n}\n\n#[test]\nfn grows() {\n    assert!(backoff_ms(3, 100) > backoff_ms(1, 100));\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn a_relational_assertion_that_flips_between_versions_keeps_the_credit() -> Result<(), String> {
+    // Control: `backoff_ms(3, 100) > 1000` is true after (2700) and false before (800).
+    let findings = findings(
+        POW,
+        POW_OLD,
+        "use invisible::backoff_ms;\n\n#[test]\nfn first() {\n    assert_eq!(backoff_ms(0, 100), 100);\n}\n\n#[test]\nfn big() {\n    assert!(backoff_ms(3, 100) > 1000);\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert!(
+        !finding
+            .ripr
+            .infect
+            .summary
+            .contains("evaluate to the same value"),
+        "{finding:?}"
+    );
+    Ok(())
+}

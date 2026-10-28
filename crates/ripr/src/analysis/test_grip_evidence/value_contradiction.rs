@@ -328,8 +328,23 @@ pub(in crate::analysis) fn change_is_invisible_to_every_assertion(
         // assertion, may separate the versions at an input the fold never saw.
         // The call may sit in either operand, or in the `let` that binds the
         // operand, so the operands are resolved before the mentions are counted.
-        let resolved: Vec<Vec<ResolvedOperand>> = test
-            .assertions
+        // A relational assertion (`assert!(f(3) > f(1))`) passes on the
+        // baseline exactly when its comparison folds the same way there, so
+        // it is invisible when the comparison's truth value is unchanged.
+        let mut relational_mentions = 0usize;
+        let mut equality_assertions = Vec::new();
+        for oracle in &test.assertions {
+            match relational_assertion(&oracle.text, &owner.name) {
+                Some(relational) => {
+                    if !relational.truth_unchanged(current, &baseline) {
+                        return false;
+                    }
+                    relational_mentions += relational.owner_calls;
+                }
+                None => equality_assertions.push(oracle),
+            }
+        }
+        let resolved: Vec<Vec<ResolvedOperand>> = equality_assertions
             .iter()
             .map(|oracle| assertion_operands(&oracle.text, test.body.as_str()))
             .collect();
@@ -345,7 +360,9 @@ pub(in crate::analysis) fn change_is_invisible_to_every_assertion(
             })
             .map(|operand| count_name_tokens(&operand.text, &owner.name))
             .sum();
-        if count_name_tokens(test.body.as_str(), &owner.name) != resolved_mentions {
+        if count_name_tokens(test.body.as_str(), &owner.name)
+            != resolved_mentions + relational_mentions
+        {
             return false;
         }
         resolved.iter().all(|operands| {
@@ -385,6 +402,120 @@ pub(in crate::analysis) fn change_is_invisible_to_every_assertion(
             }
         })
     })
+}
+
+/// An `assert!(left OP right)` whose comparison is `<`, `<=`, `>` , `>=` or
+/// `!=` and whose sides are each an integer literal expression or one bare
+/// call of the owner with literal arguments.
+struct RelationalAssertion {
+    operator: &'static str,
+    left: String,
+    right: String,
+    owner_name: String,
+    owner_calls: usize,
+}
+
+fn relational_assertion(oracle_text: &str, owner_name: &str) -> Option<RelationalAssertion> {
+    let trimmed = oracle_text.trim_start();
+    let body = trimmed
+        .strip_prefix("assert!")
+        .or_else(|| trimmed.strip_prefix("debug_assert!"))?
+        .trim_start();
+    let inside = super::delimited_contents_at(body, body.find(['(', '['])?)?;
+    let condition = super::split_top_level_commas(&inside).into_iter().next()?;
+    let bytes = condition.as_bytes();
+    let mut depth = 0i32;
+    let mut found = None;
+    let mut at = 0;
+    while let Some(&byte) = bytes.get(at) {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth -= 1,
+            b'"' | b'\'' | b'&' | b'|' | b'!' if depth == 0 => {
+                if byte == b'!' && bytes.get(at + 1) == Some(&b'=') {
+                    if found.replace((at, "!=")).is_some() {
+                        return None;
+                    }
+                    at += 1;
+                } else {
+                    return None;
+                }
+            }
+            b'=' if depth == 0 => {
+                // `==` is the equality family; a lone `=` is not an assertion.
+                return None;
+            }
+            b'<' | b'>' if depth == 0 => {
+                let two = bytes.get(at + 1) == Some(&b'=');
+                let operator = match (byte, two) {
+                    (b'<', true) => "<=",
+                    (b'<', false) => "<",
+                    (b'>', true) => ">=",
+                    _ => ">",
+                };
+                if found.replace((at, operator)).is_some() {
+                    return None;
+                }
+                at += usize::from(two);
+            }
+            _ => {}
+        }
+        at += 1;
+    }
+    let (index, operator) = found?;
+    let width = operator.len();
+    let left = condition[..index].trim().to_string();
+    let right = condition[index + width..].trim().to_string();
+    let calls = count_name_tokens(&left, owner_name) + count_name_tokens(&right, owner_name);
+    if calls == 0 || left.is_empty() || right.is_empty() {
+        return None;
+    }
+    Some(RelationalAssertion {
+        operator,
+        left,
+        right,
+        owner_name: owner_name.to_string(),
+        owner_calls: calls,
+    })
+}
+
+impl RelationalAssertion {
+    fn side(&self, text: &str, body: &str) -> Option<i128> {
+        let environment = BTreeMap::new();
+        match count_name_tokens(text, &self.owner_name) {
+            0 => fold_expression(text, &environment),
+            1 => {
+                let arguments = owner_call_arguments(text, &self.owner_name)?;
+                let mut values = Vec::with_capacity(arguments.len());
+                for argument in &arguments {
+                    values.push(fold_expression(argument, &environment)?);
+                }
+                fold_function_text(body, &values)
+            }
+            _ => None,
+        }
+    }
+
+    fn holds(&self, body: &str) -> Option<bool> {
+        let left = self.side(&self.left, body)?;
+        let right = self.side(&self.right, body)?;
+        Some(match self.operator {
+            "<" => left < right,
+            "<=" => left <= right,
+            ">" => left > right,
+            ">=" => left >= right,
+            _ => left != right,
+        })
+    }
+
+    /// Only a completed fold on both versions that gives the same truth
+    /// value counts; anything unfolded keeps today's credit.
+    fn truth_unchanged(&self, current: &str, baseline: &str) -> bool {
+        matches!(
+            (self.holds(current), self.holds(baseline)),
+            (Some(changed), Some(unchanged)) if changed == unchanged
+        )
+    }
 }
 
 /// The compared operands of an equality assertion (either order, or the two
@@ -2097,6 +2228,55 @@ mod tests {
     fn an_assertion_below_the_cap_cannot_see_the_raised_cap() -> Result<(), String> {
         let test = "#[test]\nfn low() {\n    assert_eq!(owner(3), 3);\n}";
         assert!(invisible(CAP, "n.min(5)", "n.min(6)", test)?);
+        Ok(())
+    }
+
+    const POWER: &str =
+        "pub fn owner(attempt: u32, base: u64) -> u64 {\n    base * 3u64.pow(attempt)\n}";
+
+    #[test]
+    fn a_relational_sibling_that_holds_on_both_versions_stays_invisible() -> Result<(), String> {
+        // `owner(3,100) > owner(1,100)` is 2700 > 300 changed and 800 > 200 before.
+        let test = "#[test]\nfn a() {\n    assert_eq!(owner(0, 100), 100);\n}\n#[test]\nfn grows() {\n    assert!(owner(3, 100) > owner(1, 100));\n}";
+        assert!(invisible(
+            POWER,
+            "base * 2u64.pow(attempt)",
+            "base * 3u64.pow(attempt)",
+            test
+        )?);
+        Ok(())
+    }
+
+    #[test]
+    fn a_relational_assertion_that_flips_between_versions_is_visible() -> Result<(), String> {
+        // 2700 > 1000 changed, 800 > 1000 before: this test can tell them apart.
+        let test = "#[test]\nfn a() {\n    assert_eq!(owner(0, 100), 100);\n}\n#[test]\nfn big() {\n    assert!(owner(3, 100) > 1000);\n}";
+        assert!(!invisible(
+            POWER,
+            "base * 2u64.pow(attempt)",
+            "base * 3u64.pow(attempt)",
+            test
+        )?);
+        Ok(())
+    }
+
+    #[test]
+    fn a_relational_assertion_with_an_unfoldable_side_keeps_the_credit() -> Result<(), String> {
+        let test =
+            "#[test]\nfn a() {\n    let n = 3;\n    assert!(owner(n, 100) > owner(1, 100));\n}";
+        assert!(!invisible(
+            POWER,
+            "base * 2u64.pow(attempt)",
+            "base * 3u64.pow(attempt)",
+            test
+        )?);
+        let test = "#[test]\nfn a() {\n    assert!(owner(3, 100) > owner(1, 100) && true);\n}";
+        assert!(!invisible(
+            POWER,
+            "base * 2u64.pow(attempt)",
+            "base * 3u64.pow(attempt)",
+            test
+        )?);
         Ok(())
     }
 

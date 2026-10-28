@@ -3088,7 +3088,13 @@ unmet condition keeps today's reading:
 3. At least one related test names the owner, and every such test is a plain
    test (no case table, no local shadow of the owner's name) whose
    assertions are all equality assertions whose first operand is one bare
-   owner call with literal arguments that fold.
+   owner call with literal arguments that fold, or relational assertions
+   (`assert!(left > right)` with `<`, `<=`, `>`, `>=` or `!=`, no `&&`/`||`)
+   whose sides are each a literal expression or one bare owner call with
+   literal arguments that fold, and whose comparison has the same truth value
+   under the current and the baseline body (`backoff_ms(3, 100) >
+   backoff_ms(1, 100)` is true for `2^n` and `3^n`; `backoff_ms(3, 100) >
+   1000` is not, so that test keeps the credit).
 4. At every such call the owner folds to the same value under the current and
    the baseline body, while a grid of integer arguments (each parameter over
    `0, 1, 2, 3, 5, 6, 7, 10`, at most three parameters; a single-parameter
