@@ -11460,7 +11460,12 @@ fn unresolved_alias_import_names_the_import_in_no_reach_text() -> Result<(), Str
             "next step must contain {expected:?}; got: {step}"
         );
     }
-    for forbidden in ["vitest run", "npx vitest", "tests/owner.test.ts", "test_owner"] {
+    for forbidden in [
+        "vitest run",
+        "npx vitest",
+        "tests/owner.test.ts",
+        "test_owner",
+    ] {
         assert!(
             !step.contains(forbidden),
             "no invented exact file/command may appear; found {forbidden:?} in: {step}"
@@ -11509,7 +11514,12 @@ fn untested_function_owner_guidance_names_owner_and_ordered_route() -> Result<()
             "next step must contain {expected:?}; got: {step}"
         );
     }
-    for forbidden in ["vitest run", "npx vitest", "tests/lib.test.ts", "test_shipping"] {
+    for forbidden in [
+        "vitest run",
+        "npx vitest",
+        "tests/lib.test.ts",
+        "test_shipping",
+    ] {
         assert!(
             !step.contains(forbidden),
             "no invented exact file/command may appear; found {forbidden:?} in: {step}"
