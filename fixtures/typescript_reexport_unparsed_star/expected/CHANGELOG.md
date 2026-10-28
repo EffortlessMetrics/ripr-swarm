@@ -37,3 +37,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_reexport_unparsed_star (4)
+
+Reason:
+RIPR-SPEC-0088, RIPR-SPEC-0095 and RIPR-SPEC-0108: integrate landed #10919 canonical_gap_id projection for this new TypeScript fixture. The identity is gap:typescript:typescript_preview:368e4177; one no_static_path finding, zero related tests and repair_packet_ready=false remain unchanged. Both human projections are byte-identical.
+
+Command:
+`cargo xtask goldens bless typescript_reexport_unparsed_star --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
