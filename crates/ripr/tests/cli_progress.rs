@@ -908,9 +908,22 @@ fn verbose_pilot_prints_a_stage_table_and_leaves_stdout_and_packet_bytes_unchang
         .skip(1)
         .take_while(|line| line.starts_with("  "))
         .collect();
-    let stages: Vec<&str> = table
+    let all_stages: Vec<&str> = table
         .iter()
         .filter_map(|line| line.split_whitespace().next())
+        .collect();
+    // The inventory's own phases ride beneath it; which of them ran depends
+    // on whether the plain run above left a warm cache.
+    assert!(
+        all_stages
+            .iter()
+            .any(|stage| stage.starts_with("inventory.")),
+        "no inventory phase rows: {verbose_err}"
+    );
+    let stages: Vec<&str> = all_stages
+        .iter()
+        .copied()
+        .filter(|stage| !stage.starts_with("inventory."))
         .collect();
     assert_eq!(
         stages,
@@ -966,7 +979,11 @@ fn verbose_pilot_prints_a_stage_table_and_leaves_stdout_and_packet_bytes_unchang
         .iter()
         .filter_map(|row| row["stage"].as_str())
         .collect();
-    let table_stages: Vec<&str> = stages.iter().copied().filter(|s| *s != "total").collect();
+    let table_stages: Vec<&str> = all_stages
+        .iter()
+        .copied()
+        .filter(|stage| *stage != "total")
+        .collect();
     assert_eq!(sidecar_stages, table_stages, "{sidecar}");
     assert!(sidecar["total_ms"].is_u64(), "{sidecar}");
     let again = run_pilot(&root, &out, &[])?;
@@ -992,6 +1009,53 @@ fn verbose_pilot_fails_rather_than_leave_an_unwritable_sidecar_as_current() -> R
         !verbose.status.success(),
         "an unreplaceable sidecar must not read as current: {}",
         stderr_text(&verbose)
+    );
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+fn verbose_table_stages(output: &std::process::Output) -> Vec<String> {
+    stderr_text(output)
+        .lines()
+        .skip_while(|line| !line.starts_with("ripr pilot: stage timings"))
+        .skip(1)
+        .take_while(|line| line.starts_with("  "))
+        .filter_map(|line| line.split_whitespace().next().map(str::to_string))
+        .collect()
+}
+
+#[test]
+fn verbose_pilot_names_the_cold_inventory_phases_and_then_the_cache_load() -> Result<(), String> {
+    let root = repo_fixture_root("pilot-phases")?;
+    let out = root.join("pilot-out");
+    // A fresh fixture root has no cache, so the first run computes.
+    let cold = run_pilot(&root, &out, &["-v"])?;
+    assert!(cold.status.success(), "{}", stderr_text(&cold));
+    let cold_stages = verbose_table_stages(&cold);
+    for phase in [
+        "inventory.seams",
+        "inventory.evidence",
+        "inventory.classify",
+    ] {
+        assert!(
+            cold_stages.iter().any(|stage| stage == phase),
+            "a cold run times {phase}: {cold_stages:?}"
+        );
+    }
+    let warm = run_pilot(&root, &out, &["-v"])?;
+    assert!(warm.status.success(), "{}", stderr_text(&warm));
+    let warm_stages = verbose_table_stages(&warm);
+    assert!(
+        warm_stages
+            .iter()
+            .any(|stage| stage == "inventory.cache_load"),
+        "a warm run shows its cache load: {warm_stages:?}"
+    );
+    assert!(
+        !warm_stages
+            .iter()
+            .any(|stage| stage == "inventory.classify"),
+        "a warm run does not recompute: {warm_stages:?}"
     );
     ignore_remove_dir_all(&root);
     Ok(())
