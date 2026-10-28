@@ -29,6 +29,9 @@ pub(crate) struct PreviewFactCacheStats {
     pub(crate) store_errors: usize,
     /// Files whose content changed while a prior-run envelope existed.
     pub(crate) invalidated_files: std::collections::BTreeSet<std::path::PathBuf>,
+    /// The cache base exists but cannot be used; nothing was read or stored.
+    /// Reported once, not as a corrupt entry per file.
+    pub(crate) unusable_base: Option<String>,
 }
 
 impl PreviewFactCacheStats {
@@ -45,6 +48,7 @@ impl PreviewFactCacheStats {
             || self.corrupt_ignored > 0
             || self.stores > 0
             || self.store_errors > 0
+            || self.unusable_base.is_some()
     }
 }
 
@@ -69,6 +73,11 @@ pub(crate) fn render_fact_cache_line(
         0 => {}
         1 => line.push_str("; 1 corrupt entry ignored"),
         count => line.push_str(&format!("; {count} corrupt entries ignored")),
+    }
+    if let Some(reason) = &stats.unusable_base {
+        line.push_str(&format!(
+            "; cache base unusable, nothing read or stored: {reason}"
+        ));
     }
     Some(line)
 }

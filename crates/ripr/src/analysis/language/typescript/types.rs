@@ -300,6 +300,50 @@ impl<T> Default for Shared<T> {
     }
 }
 
+impl<T: PartialEq> Shared<T> {
+    /// Point at `previous`'s list when it holds the same items. Serialization
+    /// writes each test's copy, so a decoded file would otherwise hold one
+    /// list per test again.
+    fn share_with(&mut self, previous: &Self) {
+        if !std::sync::Arc::ptr_eq(&self.0, &previous.0) && self.0 == previous.0 {
+            self.0 = std::sync::Arc::clone(&previous.0);
+        }
+    }
+}
+
+/// Restore the sharing of one file's file-wide lists after decoding its
+/// tests: each list is compared with the previous test's only, so the pass is
+/// linear in the file's tests.
+pub(crate) fn reshare_file_lists(tests: &mut [TypeScriptTest]) {
+    for index in 1..tests.len() {
+        let (before, after) = tests.split_at_mut(index);
+        let (Some(previous), Some(test)) = (before.last(), after.first_mut()) else {
+            continue;
+        };
+        test.mocks_in_file.share_with(&previous.mocks_in_file);
+        test.imports_in_file.share_with(&previous.imports_in_file);
+        test.unstable_member_roots_in_file
+            .share_with(&previous.unstable_member_roots_in_file);
+        test.identity_helpers_in_file
+            .share_with(&previous.identity_helpers_in_file);
+        test.default_member_only_locals_in_file
+            .share_with(&previous.default_member_only_locals_in_file);
+        test.written_locals_in_file
+            .share_with(&previous.written_locals_in_file);
+        test.mock_factories_in_file
+            .share_with(&previous.mock_factories_in_file);
+        test.mock_spread_sources_in_file
+            .share_with(&previous.mock_spread_sources_in_file);
+    }
+}
+
+#[cfg(test)]
+impl<T> Shared<T> {
+    pub(crate) fn same_list(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
 impl<T> From<Vec<T>> for Shared<T> {
     fn from(items: Vec<T>) -> Self {
         Self(std::sync::Arc::new(items))

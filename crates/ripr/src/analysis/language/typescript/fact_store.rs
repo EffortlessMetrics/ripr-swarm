@@ -251,6 +251,7 @@ impl TypeScriptFileFactStore {
 
     /// Borrow of the versioned entry directory (`entry_dir` without the flag),
     /// for the layer-inventory pin in seam_cache's tests.
+    #[cfg(test)]
     pub(crate) fn dir_path(&self) -> &Path {
         &self.dir
     }
@@ -271,7 +272,7 @@ impl TypeScriptFileFactStore {
     /// directory, or holds Git-tracked entries ripr did not write). At most
     /// once per instance; a missing base stays `None` — the ordinary cold
     /// cache whose lookups read as silent misses.
-    fn unusable_base_reason(&self) -> Option<&str> {
+    pub(crate) fn unusable_base_reason(&self) -> Option<&str> {
         self.unusable_base_reason
             .get_or_init(|| {
                 seam_cache::cache_dir_not_a_directory_reason(&self.base)
@@ -309,9 +310,13 @@ impl TypeScriptFileFactStore {
                 if let Err(reason) = envelope.validate_integrity() {
                     return corrupt_entry(&path, reason);
                 }
+                let mut test_extraction = envelope.test_extraction;
+                if let Some((tests, _, _)) = test_extraction.as_mut() {
+                    super::types::reshare_file_lists(tests);
+                }
                 CacheLoad::Hit(PersistedFileFacts {
                     file_facts: envelope.file_facts,
-                    test_extraction: envelope.test_extraction,
+                    test_extraction,
                 })
             }
             Err(reason) => corrupt_entry(&path, format!("decode failed: {reason}")),
@@ -355,18 +360,21 @@ impl TypeScriptFileFactStore {
     /// `Ok(true)` when an envelope was written; `Ok(false)` when the per-run
     /// byte budget was already exhausted (the parse is sunk either way, so
     /// skipping the write is correctness-neutral); `Err` on an IO or encode
-    /// failure. `approx_bytes` is the caller's size estimate (the source
-    /// length) feeding the budget.
+    /// failure. The budget is charged the encoded envelope's length, which
+    /// can be many times the source's.
     pub(crate) fn store(
         &self,
         key: &TypeScriptFileFactKey,
         file_facts: &FileFacts,
         test_extraction: Option<&TestExtraction>,
-        approx_bytes: usize,
     ) -> Result<bool, String> {
         if let Some(reason) = self.unusable_base_reason() {
             return Err(reason.to_owned());
         }
+        let envelope =
+            TypeScriptFileFactEnvelope::new(key, file_facts.clone(), test_extraction.cloned());
+        let bytes = seam_cache::encode_integrity_body(&envelope, envelope.expected_digest()?)?;
+        let approx_bytes = bytes.len();
         let mut remaining = self.remaining_store_bytes.load(Ordering::Relaxed);
         loop {
             if remaining < approx_bytes {
@@ -384,9 +392,6 @@ impl TypeScriptFileFactStore {
         }
         std::fs::create_dir_all(&self.dir)
             .map_err(|err| format!("create typescript file fact cache dir failed: {err}"))?;
-        let envelope =
-            TypeScriptFileFactEnvelope::new(key, file_facts.clone(), test_extraction.cloned());
-        let bytes = seam_cache::encode_integrity_body(&envelope, envelope.expected_digest()?)?;
         crate::atomic_file::write_cache(
             &self.dir.join(key.filename()),
             &bytes,
@@ -394,6 +399,23 @@ impl TypeScriptFileFactStore {
         )?;
         Ok(true)
     }
+}
+
+/// Whether `facts` read nothing but the file's own bytes. A relative
+/// re-export resolves its target on disk (a directory's `index` or
+/// `package.json`, a missing `tsc` output mapped back to source), and that
+/// target can change while this file's content does not, so such a file is
+/// recomputed every run instead of persisted.
+pub(crate) fn export_facts_are_disk_independent(facts: &FileFacts) -> bool {
+    let exports = &facts.export_facts;
+    // A renamed own export (`export { a as c }`) is a self-hop: its target is
+    // the file's own module, resolved without the filesystem.
+    exports
+        .entries
+        .iter()
+        .all(|((module, _), (_, target))| target == module)
+        && exports.star_edges.is_empty()
+        && exports.namespace_exports.is_empty()
 }
 
 /// The envelope fields the known-path snapshot needs; serde skips the rest

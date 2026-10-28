@@ -116,6 +116,14 @@ fn cold_run_persists_per_file_facts_for_every_workspace_file() -> Result<(), Str
     let store = TypeScriptFileFactStore::at(&root);
 
     let result = run_adapter(&root, &[small_changed_file()]);
+    // Count the envelopes before the fixture (and the cache under it) is
+    // removed.
+    let persisted = store
+        .entry_dir()
+        .0
+        .read_dir()
+        .map(|entries| entries.filter_map(|entry| entry.ok()).count());
+    let entry_dir = store.entry_dir().0;
     let _ = std::fs::remove_dir_all(&root);
     let result = result?;
 
@@ -138,11 +146,8 @@ fn cold_run_persists_per_file_facts_for_every_workspace_file() -> Result<(), Str
         result.preview_fact_cache
     );
 
-    let (entry_dir, _) = store.entry_dir();
-    let persisted = std::fs::read_dir(&entry_dir)
-        .map_err(|err| format!("read fact-store entry dir {}: {err}", entry_dir.display()))?
-        .filter_map(|entry| entry.ok())
-        .count();
+    let persisted = persisted
+        .map_err(|err| format!("read fact-store entry dir {}: {err}", entry_dir.display()))?;
     assert_eq!(
         persisted,
         3,
@@ -355,6 +360,7 @@ fn fact_cache_line_discloses_real_counts_and_stays_silent_on_zero_work() {
             stores: 0,
             store_errors: 0,
             invalidated_files: Default::default(),
+            unusable_base: None,
         },
     );
     assert_eq!(
@@ -371,6 +377,7 @@ fn fact_cache_line_discloses_real_counts_and_stays_silent_on_zero_work() {
             stores: 1,
             store_errors: 0,
             invalidated_files: Default::default(),
+            unusable_base: None,
         },
     );
     assert_eq!(
@@ -385,4 +392,135 @@ fn fact_cache_line_discloses_real_counts_and_stays_silent_on_zero_work() {
         None,
         "a run that did no cache work stays silent instead of borrowing counts"
     );
+}
+
+/// A relative re-export resolves its target on disk, which can change while
+/// the barrel's bytes do not, so the barrel is recomputed every run; a renamed
+/// own export resolves to the file itself and is persisted like any file.
+#[test]
+fn a_barrel_that_re_exports_through_the_filesystem_is_never_persisted() -> Result<(), String> {
+    let root = build_fixture("fact-store-barrel")?;
+    ts_write_file(
+        &root.join("src/index.ts"),
+        "export * from \"./small\";\nexport { greet as hello } from \"./small\";\n",
+    )?;
+    ts_write_file(
+        &root.join("src/own.ts"),
+        "function inner(): number {\n  return 1;\n}\nexport { inner as outer };\n",
+    )?;
+
+    let cold = run_adapter(&root, &[small_changed_file()]);
+    let warm = run_adapter(&root, &[small_changed_file()]);
+    let _ = std::fs::remove_dir_all(&root);
+    let (cold, warm) = (cold?, warm?);
+
+    assert_eq!(
+        (
+            cold.preview_fact_cache.misses,
+            cold.preview_fact_cache.stores
+        ),
+        (5, 4),
+        "every file is parsed cold, and all but the barrel are persisted: {:?}",
+        cold.preview_fact_cache
+    );
+    assert_eq!(
+        (warm.preview_fact_cache.hits, warm.preview_fact_cache.misses),
+        (4, 1),
+        "the barrel is the one file recomputed warm: {:?}",
+        warm.preview_fact_cache
+    );
+    assert_eq!(
+        finding_identities(&cold.findings),
+        finding_identities(&warm.findings)
+    );
+    Ok(())
+}
+
+/// A process that already holds a file's facts in memory (an LSP refresh)
+/// neither reads the envelope again nor rewrites it.
+#[test]
+fn facts_already_in_memory_skip_the_persistent_store() -> Result<(), String> {
+    let root = build_fixture("fact-store-in-memory")?;
+    let cold = run_adapter(&root, &[small_changed_file()]);
+    let options = ts_analysis_options(root.clone());
+    let refresh = TypeScriptAdapter::analyze_diff_with_read_limits(
+        &options,
+        &[small_changed_file()],
+        FIXTURE_FILE_READ_LIMIT,
+        FIXTURE_WORKSPACE_READ_BUDGET,
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    let (cold, refresh) = (cold?, refresh?);
+
+    assert_eq!(cold.preview_fact_cache.stores, 3);
+    assert!(
+        !refresh.preview_fact_cache.did_work(),
+        "an in-memory refresh does no store work: {:?}",
+        refresh.preview_fact_cache
+    );
+    assert_eq!(
+        finding_identities(&cold.findings),
+        finding_identities(&refresh.findings)
+    );
+    Ok(())
+}
+
+/// A cache base that exists but is not a directory is reported once, not as
+/// one corrupt entry per workspace file, and the run still completes.
+#[test]
+fn an_unusable_cache_base_is_reported_once() -> Result<(), String> {
+    let root = build_fixture("fact-store-unusable-base")?;
+    ts_write_file(&root.join("target/ripr/cache"), "not a directory\n")?;
+    let result = run_adapter(&root, &[small_changed_file()]);
+    let _ = std::fs::remove_dir_all(&root);
+    let result = result?;
+
+    let stats = &result.preview_fact_cache;
+    assert!(stats.unusable_base.is_some(), "{stats:?}");
+    assert_eq!(
+        (
+            stats.hits,
+            stats.misses,
+            stats.corrupt_ignored,
+            stats.stores,
+            stats.store_errors
+        ),
+        (0, 0, 0, 0, 0),
+        "nothing is read or stored: {stats:?}"
+    );
+    let line = render_fact_cache_line("typescript", stats).unwrap_or_default();
+    assert_eq!(line.matches("cache base unusable").count(), 1, "{line}");
+    assert!(!result.findings.is_empty());
+    Ok(())
+}
+
+/// Each test serializes its own copy of the file-wide lists; a decoded file
+/// shares one list across its tests again, as extraction built it.
+#[test]
+fn a_decoded_test_file_shares_its_file_wide_lists_again() -> Result<(), String> {
+    let root = build_fixture("fact-store-reshare")?;
+    let test_file = Path::new("tests/two.test.ts");
+    let source = "import { greet } from \"../src/small\";\n\ntest(\"one\", () => {\n  expect(greet(\"A\")).toBe(\"Hello, A\");\n});\n\ntest(\"two\", () => {\n  expect(greet(\"B\")).toBe(\"Hello, B\");\n});\n";
+    ts_write_file(&root.join(test_file), source)?;
+    let cold = run_adapter(&root, &[small_changed_file()]);
+    let store = TypeScriptFileFactStore::at(&root);
+    let loaded = store.load(&super::fact_store::TypeScriptFileFactKey::new(
+        test_file, source, &root, None,
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    cold?;
+
+    let crate::analysis::seam_cache::CacheLoad::Hit(persisted) = loaded else {
+        return Err("the test file's envelope loads".to_string());
+    };
+    let (tests, _, _) = persisted
+        .test_extraction
+        .ok_or("the envelope holds the extraction")?;
+    let [first, second] = tests.as_slice() else {
+        return Err(format!("two tests, got {}", tests.len()));
+    };
+    assert!(!first.imports_in_file.is_empty());
+    assert!(first.imports_in_file.same_list(&second.imports_in_file));
+    assert!(first.mocks_in_file.same_list(&second.mocks_in_file));
+    Ok(())
 }

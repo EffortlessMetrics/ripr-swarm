@@ -601,13 +601,15 @@ impl TypeScriptAdapter {
         // Counts are real admissions only — the `-v` line renders them.
         let fact_store = fact_store::TypeScriptFileFactStore::at(&options.root);
         let mut fact_cache_stats = PreviewFactCacheStats::zero_work();
+        // An unusable base is reported once; nothing is read or stored.
+        fact_cache_stats.unusable_base = fact_store.unusable_base_reason().map(str::to_owned);
+        let fact_store_usable = fact_cache_stats.unusable_base.is_none();
         // `(key, approx bytes, facts, extraction)` for every file this run
         // recomputed. Deferred so storing never interleaves with parsing;
         // worker-refusal files never reach here, exactly like the memory
         // cache, and are not persisted.
         let mut pending_fact_stores: Vec<(
             fact_store::TypeScriptFileFactKey,
-            usize,
             std::rc::Rc<extraction_cache::FileFacts>,
             Option<extraction_cache::TestExtraction>,
         )> = Vec::new();
@@ -623,8 +625,23 @@ impl TypeScriptAdapter {
                 alias_map_ref,
             );
             let mut recomputed_facts = false;
-            match fact_store.load(&fact_key) {
-                crate::analysis::seam_cache::CacheLoad::Hit(persisted) => {
+            // A process that already holds this file's facts (an LSP refresh)
+            // neither reads nor rewrites the envelope.
+            let in_memory = extraction_cache::file_facts_in_memory(
+                relative,
+                source,
+                &options.root,
+                alias_map_ref,
+            ) && (!is_test_file(relative)
+                || extraction_cache::test_extraction_in_memory(relative, source));
+            let lookup = if fact_store_usable && !in_memory {
+                Some(fact_store.load(&fact_key))
+            } else {
+                None
+            };
+            match lookup {
+                None => {}
+                Some(crate::analysis::seam_cache::CacheLoad::Hit(persisted)) => {
                     fact_cache_stats.hits += 1;
                     extraction_cache::seed_file_facts(
                         relative,
@@ -641,7 +658,7 @@ impl TypeScriptAdapter {
                         );
                     }
                 }
-                crate::analysis::seam_cache::CacheLoad::Miss => {
+                Some(crate::analysis::seam_cache::CacheLoad::Miss) => {
                     fact_cache_stats.misses += 1;
                     recomputed_facts = true;
                     // A miss against a snapshot entry means the file's
@@ -652,7 +669,7 @@ impl TypeScriptAdapter {
                         fact_cache_stats.invalidated_files.insert(relative.clone());
                     }
                 }
-                crate::analysis::seam_cache::CacheLoad::CorruptIgnored { .. } => {
+                Some(crate::analysis::seam_cache::CacheLoad::CorruptIgnored { .. }) => {
                     fact_cache_stats.corrupt_ignored += 1;
                     fact_cache_stats.misses += 1;
                     recomputed_facts = true;
@@ -707,12 +724,7 @@ impl TypeScriptAdapter {
                 // content-keyed, so the cached default facts are as honest as
                 // the in-memory cache's.
                 if recomputed_facts {
-                    pending_fact_stores.push((
-                        fact_key,
-                        source.len(),
-                        std::rc::Rc::clone(&facts),
-                        None,
-                    ));
+                    pending_fact_stores.push((fact_key, std::rc::Rc::clone(&facts), None));
                 }
                 continue;
             }
@@ -722,13 +734,17 @@ impl TypeScriptAdapter {
                 // what snapshot promotion mutates, so promotion still reads
                 // the filesystem on every run.
                 let extraction = extraction_cache::test_extraction_cached(relative, source);
-                if recomputed_facts {
+                // A worker failure serves an empty extraction it never caches;
+                // only a cached extraction is a function of the bytes.
+                if recomputed_facts
+                    && fact_store::export_facts_are_disk_independent(&facts)
+                    && extraction_cache::test_extraction_in_memory(relative, source)
+                {
                     // Persist the raw cached extraction (pre-promotion), so a
                     // warm run re-applies snapshot promotion from disk facts
                     // exactly like a memory hit does.
                     pending_fact_stores.push((
                         fact_key,
-                        source.len(),
                         std::rc::Rc::clone(&facts),
                         Some((
                             extraction.0.clone(),
@@ -795,13 +811,8 @@ impl TypeScriptAdapter {
                 // session re-save without re-parsing the whole workspace.
                 // Test extraction is cached separately (#10017): only its
                 // pure step, never snapshot promotion.
-                if recomputed_facts {
-                    pending_fact_stores.push((
-                        fact_key,
-                        source.len(),
-                        std::rc::Rc::clone(&facts),
-                        None,
-                    ));
+                if recomputed_facts && fact_store::export_facts_are_disk_independent(&facts) {
+                    pending_fact_stores.push((fact_key, std::rc::Rc::clone(&facts), None));
                 }
                 all_owners.extend(facts.owners.clone());
             }
@@ -810,8 +821,8 @@ impl TypeScriptAdapter {
         // #10725: flush the envelopes this run recomputed — one content-keyed
         // envelope per file, after parsing so the writes never interleave
         // with it. Store failures disclose as counters, never as a failed run.
-        for (key, approx_bytes, facts, test_extraction) in pending_fact_stores {
-            match fact_store.store(&key, &facts, test_extraction.as_ref(), approx_bytes) {
+        for (key, facts, test_extraction) in pending_fact_stores {
+            match fact_store.store(&key, &facts, test_extraction.as_ref()) {
                 Ok(true) => fact_cache_stats.stores += 1,
                 Ok(false) => {}
                 Err(_) => fact_cache_stats.store_errors += 1,

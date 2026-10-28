@@ -76,12 +76,25 @@ cache's.
 ### Integrity and admission
 
 Every envelope carries the seam_cache typed integrity digest over its
-identity and served fields. A tampered, truncated, or unsigned entry fails
-validation, is corrupt-ignored, and is recomputed — never served. The
-untrusted-base and not-a-directory probes refuse to read or write a cache
-base that holds entries ripr did not write. Storing is bounded per run
-(approximate byte budget); exhausting the budget only skips writes, which
-is correctness-neutral because the parse already happened. Storing defers
+identity and served fields. The digest detects corruption: a truncated,
+mismatched or unsigned entry fails validation, is corrupt-ignored, and is
+recomputed, never served. It is not keyed, so it does not authenticate
+provenance: whoever can write the cache directory can write a consistent
+entry. The not-a-directory and Git-tracked-entry probes refuse to read or
+write an unusable base, and the run reports that once instead of a corrupt
+entry per file. Storing is bounded per run by the encoded envelope bytes;
+exhausting the budget only skips writes, which is correctness-neutral
+because the parse already happened.
+
+A file whose export facts resolve a relative re-export (`export * from`,
+`export { x } from`, `export * as ns from`) is recomputed every run and
+never persisted: the resolution reads the filesystem (a directory's
+`index`, its `package.json`, a `tsc` output mapped back to source), which
+can change while the barrel's bytes do not. A renamed own export resolves to
+the file itself and is persisted. A test extraction is persisted only when
+the process-lifetime cache holds it; a parse-worker failure serves an empty
+extraction that is never cached or persisted. A process that already holds a
+file's facts in memory neither reads nor rewrites its envelope. Storing defers
 until after the parse loop, so cache IO never interleaves with parsing.
 
 ### Warm-run semantics and disclosure
