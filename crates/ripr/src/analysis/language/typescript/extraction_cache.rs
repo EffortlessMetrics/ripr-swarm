@@ -522,8 +522,8 @@ fn test_extraction_cache_len() -> usize {
 
 /// Export facts for `(path, source)` under `(workspace_root, alias_map)`,
 /// served from the combined process-lifetime facts cache (#10071, replacing
-/// the #10063 export-facts cache). Worker refusal or failure degrades to
-/// `None` (uncached, skipped by the caller exactly as before).
+/// the #10063 export-facts cache). Worker refusal, failure, or a parser error
+/// returns `None`: unavailable facts are not evidence of an empty export set.
 pub(crate) fn export_facts_cached(
     relative: &Path,
     source: &str,
@@ -531,8 +531,9 @@ pub(crate) fn export_facts_cached(
     alias_map: Option<&TsAliasMap>,
 ) -> Option<ModuleExportFacts> {
     file_facts_cached(relative, source, workspace_root, alias_map)
-        .map(|facts| facts.export_facts.clone())
         .ok()
+        .filter(|facts| facts.parse_error.is_none())
+        .map(|facts| facts.export_facts.clone())
 }
 
 /// Phase-2 facts for `(path, source)` under `(workspace_root, alias_map)`,
