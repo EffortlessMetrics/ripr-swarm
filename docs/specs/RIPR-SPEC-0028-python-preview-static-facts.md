@@ -599,27 +599,34 @@ undecorated synchronous `def` with plain positional parameters (no defaults,
 `yield`, `await` or `:=`. It may also be such a method of a model class: a
 top-level class with no bases, keywords or decorators, bound once, whose body
 holds only a docstring, `pass` and `def`s, with no method whose name starts
-with `__` (dunder or name-mangled) and no method defined twice, built as
-`Class()` with no arguments. Inside a callable a name is a parameter, and a call is a bare call
+with `__` (dunder or name-mangled), no method defined twice or bound by a
+walrus or `global`, and no `def` carrying a decorator, a default, or an
+annotation other than a bare name or string (each runs while the class body
+does), built as `Class()` with no arguments. Inside a callable a name is a parameter, and a call is a bare call
 of a model function or class of the module, or a method call on an instance
 of a model class (the method's receiver, a parameter holding one, or
 `Class()`), all with positional arguments. Values
 and operators are the module-value evaluator's integers, booleans and strings,
 plus `str * int` repetition (at most 4096 characters) and `.upper()`/`.lower()`
 of an ASCII string. The test reaches the entry through a function or class it
-imports from the owner's module (`from M import name`, or `alias.name` for an
-`import` that binds the owner module itself; a package import alone may not
-load it) and does not rebind, or through a local it binds once to `Class()`
-before the assertion and uses only as a method receiver. The test is
+imports with `from M import name` from the owner's module and does not rebind
+(`import pkg.mod as alias` and `from pkg import mod` read `mod` as a package
+attribute, which `pkg/__init__.py` may rebind, so they do not count), or through a local it binds once to `Class()`
+of a model class before the assertion and uses only as a method receiver (a
+local bound to a model function's result runs that function, so it is not one). The test is
 undecorated, defined once in its file, requests no fixture, has no autouse
 conftest fixture that may skip it, and runs nothing before the assertion but
 other assertions, `pass`, a docstring and its local bindings. A workspace file
 that writes or patches any name the chain runs, a code slot, any dunder
-attribute (`__new__`, `__getattribute__`, ...), `__class__`/`__bases__`/`eval`
-in the module, a call nesting deeper than 16, more than 4096 calls, or any
+attribute (`__new__`, `__getattribute__`, ...; in the owner module too),
+`__class__`/`__bases__`/`eval` in the module, any workspace file that walks
+frames or a function's globals (`__globals__`, `f_globals`, `f_locals`,
+`_getframe`, `currentframe`, `f_back`, `tb_frame`, `gc.get_referrers`/
+`get_referents`), since it can write a calling module under a name built at
+runtime, a call nesting deeper than 16, more than 4096 calls, or any
 name, call, operator or value outside that model decides nothing, and the
-finding keeps its verdict. `__setattr__` and `delattr`, like `setattr`, mark a
-file as a dynamic writer for every module-value pass.
+finding keeps its verdict. `__setattr__`, `delattr` and those frame words, like `setattr`, mark a file
+as a dynamic writer for every module-value pass.
 
 A `def name(`, `async def name(`, or `class name(` header in a test defines a
 local; it is not a call of `name`.

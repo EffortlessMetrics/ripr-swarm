@@ -141,14 +141,10 @@ fn a_self_call_chain_pinned_through_a_local_instance_is_credited() -> Check {
         "{:?}",
         finding.evidence
     );
-    // The same chain built inline, and through a module receiver.
-    for test in [
-        "from reach.ledger import Ledger\n\n\ndef test_render_ledger():\n    assert Ledger().render_ledger() == \"|  |\"\n",
-        "import reach.ledger as ledger_module\n\n\ndef test_render_ledger():\n    assert ledger_module.Ledger().render_ledger() == \"|  |\"\n",
-    ] {
-        let finding = ledger_finding(&new_side(LEDGER), test)?;
-        assert_eq!(finding.class, ExposureClass::Exposed, "{test}: {finding:?}");
-    }
+    // The same chain built inline.
+    let test = "from reach.ledger import Ledger\n\n\ndef test_render_ledger():\n    assert Ledger().render_ledger() == \"|  |\"\n";
+    let finding = ledger_finding(&new_side(LEDGER), test)?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{test}: {finding:?}");
     Ok(())
 }
 
@@ -334,12 +330,46 @@ fn guards_around_the_evaluator_refuse_unproven_chains() -> Check {
         "from reach.ledger import Ledger\n\n\ndef test_render_ledger():\n    assert Ledger().render_ledger() == \"|  |\"\n\n\ndef test_render_ledger():\n    assert True\n",
         // The package is imported but the owner module is not.
         "import reach\n\n\ndef test_render_ledger():\n    assert reach.Ledger().render_ledger() == \"|  |\"\n",
+        // A submodule reached as a package attribute, which the package's
+        // `__init__.py` may rebind.
+        "import reach.ledger as ledger_module\n\n\ndef test_render_ledger():\n    assert ledger_module.Ledger().render_ledger() == \"|  |\"\n",
+        "from reach import ledger\n\n\ndef test_render_ledger():\n    assert ledger.Ledger().render_ledger() == \"|  |\"\n",
     ] {
         withheld(&ledger_finding(&new, test)?, test);
     }
+    // The package does rebind the submodule name.
+    let finding = ledger_finding_with(
+        &new,
+        "import reach.ledger as ledger_module\n\n\ndef test_render_ledger():\n    assert ledger_module.Ledger().render_ledger() == \"|  |\"\n",
+        &[(
+            "reach/__init__.py",
+            "from . import ledger as _real\n\n\nclass ledger:\n    class Ledger:\n        def render_ledger(self):\n            return \"|  |\"\n",
+        )],
+    )?;
+    withheld(&finding, "package shadows submodule");
     // An earlier assertion that holds on both sides keeps the credit.
     let test = "from reach.ledger import Ledger\n\n\ndef test_render_ledger():\n    assert Ledger().render_ledger() != \"-\"\n    assert Ledger().render_ledger() == \"|  |\"\n";
     let finding = ledger_finding(&new, test)?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+
+    // A local bound to a model function's result is not an instance: the
+    // call runs code before the assertion (here it may skip the test), as
+    // the same call written as a statement does.
+    let source = format!(
+        "from reach.helpers import skip_all\n\n\n{new}\n\ndef prepare():\n    return skip_all()\n"
+    );
+    let helpers = [(
+        "reach/helpers.py",
+        "import pytest\n\n\ndef skip_all():\n    pytest.skip(\"off\")\n",
+    )];
+    for test in [
+        "from reach.ledger import Ledger, prepare\n\n\ndef test_render_ledger():\n    unused = prepare()\n    assert Ledger().render_ledger() == \"|  |\"\n",
+        "from reach.ledger import Ledger, prepare\n\n\ndef test_render_ledger():\n    prepare()\n    assert Ledger().render_ledger() == \"|  |\"\n",
+    ] {
+        withheld(&ledger_finding_with(&source, test, &helpers)?, test);
+    }
+    let test = "from reach.ledger import Ledger, prepare\n\n\ndef test_render_ledger():\n    ledger = Ledger()\n    assert ledger.render_ledger() == \"|  |\"\n";
+    let finding = ledger_finding_with(&source, test, &helpers)?;
     assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
 
     // An autouse conftest fixture may skip the test.
@@ -404,5 +434,140 @@ fn guards_around_the_evaluator_refuse_unproven_chains() -> Check {
         "        return 3",
     )?;
     withheld(&finding, "fan-out budget");
+    Ok(())
+}
+
+/// Negatives for the second review: the owner module itself installs a hook,
+/// the class body rebinds a method while it runs, the module namespace is
+/// written through a function's globals or a frame, and cost stays linear in
+/// the test's assertions.
+#[test]
+fn owner_module_hooks_and_class_body_code_are_not_credited() -> Check {
+    let new = new_side(LEDGER);
+    for source in [
+        // The owner module writes a lookup or construction hook on its class.
+        format!("{new}\n\nLedger.__getattribute__ = lambda self, name: lambda: \"|  |\"\n"),
+        format!("{new}\n\nclass _Fixed:\n    def render_ledger(self):\n        return \"|  |\"\n\n\nLedger.__new__ = lambda cls: _Fixed()\n"),
+        // A default or decorator in the class body rebinds the method.
+        new.replacen(
+            "    def render_ledger(self):",
+            "    def other(self, x=(_ledger_pad := (lambda self: 2))):\n        return 0\n\n    def render_ledger(self):",
+            1,
+        ),
+        new.replacen(
+            "    def render_ledger(self):",
+            "    @((_ledger_pad := (lambda self: 2)) and (lambda f: f))\n    def other(self):\n        return 0\n\n    def render_ledger(self):",
+            1,
+        ),
+        // A default that runs code without a walrus.
+        new.replacen(
+            "    def render_ledger(self):",
+            "    def other(self, x=print()):\n        return 0\n\n    def render_ledger(self):",
+            1,
+        ),
+    ] {
+        withheld(&ledger_finding(&source, LEDGER_TEST)?, &source);
+    }
+
+    // A decorator or default calls a helper that writes the class namespace
+    // through its caller's frame, under a name built at runtime.
+    let helpers = "import sys\n\n\ndef rebind(f=None):\n    sys._getframe(1).f_locals[\"_ledger\" + \"_pad\"] = lambda self: 2\n    return f\n";
+    for source in [
+        new.replacen(
+            "class Ledger:",
+            "from reach.helpers import rebind\n\n\nclass Ledger:",
+            1,
+        )
+        .replacen(
+            "    def render_ledger(self):",
+            "    @rebind\n    def other(self):\n        return 0\n\n    def render_ledger(self):",
+            1,
+        ),
+        new.replacen(
+            "class Ledger:",
+            "from reach.helpers import rebind\n\n\nclass Ledger:",
+            1,
+        )
+        .replacen(
+            "    def render_ledger(self):",
+            "    def other(self, x=rebind()):\n        return 0\n\n    def render_ledger(self):",
+            1,
+        ),
+    ] {
+        let finding = ledger_finding_with(&source, LEDGER_TEST, &[("reach/helpers.py", helpers)])?;
+        withheld(&finding, &source);
+    }
+
+    // A module-level function chain whose namespace is written through
+    // `__globals__` or a frame.
+    let functions =
+        "def _pad():\n    return 3\n\n\ndef render():\n    return \"|\" + \" \" * _pad() + \"|\"\n";
+    let test = "from reach.ledger import render\n\n\ndef test_render():\n    assert render() == \"|  |\"\n";
+    let run = |source: &str, extra: &[(&str, &str)]| -> Result<Finding, String> {
+        let mut files = vec![
+            ("reach/__init__.py", ""),
+            ("reach/ledger.py", source),
+            ("tests/test_ledger.py", test),
+        ];
+        files.extend_from_slice(extra);
+        let line = source
+            .lines()
+            .position(|line| line == "    return 3")
+            .ok_or("no changed line")?
+            + 1;
+        classify(
+            &files,
+            "reach/ledger.py",
+            line,
+            "    return 2",
+            "    return 3",
+        )
+    };
+    let finding = run(functions, &[])?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    for source in [
+        format!("{functions}\n\nrender.__globals__[\"_pad\"] = lambda: 2\n"),
+        format!("{functions}\n\nimport sys\nsys._getframe().f_globals[\"_pad\"] = lambda: 2\n"),
+    ] {
+        withheld(&run(&source, &[])?, &source);
+    }
+    let finding = run(
+        functions,
+        &[(
+            "reach/patches.py",
+            "from reach import ledger as target\n\ngetattr(target, \"ren\" + \"der\").__globals__[\"_p\" + \"ad\"] = lambda: 2\n",
+        )],
+    )?;
+    withheld(&finding, "foreign __globals__ write");
+    // The owner module calls a helper at import that writes the owner's
+    // globals through its caller's frame, under a name built at runtime.
+    let source = format!("from reach.helpers import install\n\n\n{functions}\n\ninstall()\n");
+    let finding = run(
+        &source,
+        &[(
+            "reach/helpers.py",
+            "import sys\n\n\ndef install():\n    sys._getframe(1).f_globals[\"_p\" + \"ad\"] = lambda: 2\n",
+        )],
+    )?;
+    withheld(&finding, "foreign frame write");
+
+    // Many locals and many earlier assertions: the scan stays fast and the
+    // pinned assertion still credits.
+    let mut test = String::from("from reach.ledger import Ledger\n\n\ndef test_render_ledger():\n");
+    for local in 0..200 {
+        test.push_str(&format!("    l{local} = Ledger()\n"));
+    }
+    for _ in 0..200 {
+        test.push_str("    assert 1 == 1\n");
+    }
+    test.push_str("    assert l0.render_ledger() == \"|  |\"\n");
+    let started = std::time::Instant::now();
+    let finding = ledger_finding(&new, &test)?;
+    let elapsed = started.elapsed();
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    assert!(
+        elapsed.as_secs() < 20,
+        "200 locals and assertions took {elapsed:?}"
+    );
     Ok(())
 }

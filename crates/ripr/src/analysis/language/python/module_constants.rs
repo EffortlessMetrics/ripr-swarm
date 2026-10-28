@@ -241,6 +241,24 @@ impl ModuleBindingFacts {
     pub(super) fn may_assign_attribute(&self, name: &str) -> bool {
         self.opaque || self.attributes.contains(name) || self.attributes.contains("*")
     }
+
+    /// Whether a walrus or `global` anywhere in the module may bind `name`,
+    /// including into a class namespace, or the module is opaque.
+    pub(super) fn may_rebind(&self, name: &str) -> bool {
+        self.opaque || self.rebound.contains(name)
+    }
+
+    /// Whether the module assigns a dunder attribute (`X.__new__ = ...`),
+    /// which can change what a class builds or looks up (#9226).
+    pub(super) fn assigns_dunder(&self) -> bool {
+        self.opaque
+            || self.attributes.iter().any(|attribute| {
+                attribute == "*"
+                    || (attribute.len() > 4
+                        && attribute.starts_with("__")
+                        && attribute.ends_with("__"))
+            })
+    }
 }
 
 /// The constants still visible inside a function owner: those its parameters

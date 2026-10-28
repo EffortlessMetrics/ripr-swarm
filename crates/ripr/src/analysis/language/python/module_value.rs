@@ -42,8 +42,17 @@ use std::path::Path;
 
 /// Words that mark a file able to rewrite another module's attribute at
 /// runtime without an assignment statement.
-const DYNAMIC_WRITERS: [&str; 12] = [
+const DYNAMIC_WRITERS: [&str; 21] = [
     "setattr",
+    "__globals__",
+    "f_globals",
+    "f_locals",
+    "_getframe",
+    "currentframe",
+    "f_back",
+    "tb_frame",
+    "get_referrers",
+    "get_referents",
     "__setattr__",
     "delattr",
     "patch",
@@ -102,6 +111,22 @@ const DYNAMIC_LOADERS: [&str; 13] = [
     "builtins",
     "__builtins__",
     "__dict__",
+];
+
+/// Words that reach a module namespace through a frame, a function's globals
+/// or the garbage collector. Such a file can write any module whose code calls
+/// it, under a name built at runtime, so no name it mentions bounds what it
+/// changes (#9226).
+const FRAME_WALKERS: [&str; 9] = [
+    "__globals__",
+    "f_globals",
+    "f_locals",
+    "_getframe",
+    "currentframe",
+    "f_back",
+    "tb_frame",
+    "get_referrers",
+    "get_referents",
 ];
 
 /// Spellings that reach a module's objects without writing their names.
@@ -466,6 +491,16 @@ impl ForeignWrites {
 }
 
 impl ForeignWrites {
+    /// Whether some other workspace file walks frames or a function's globals
+    /// ([`FRAME_WALKERS`]), so it may write this module's namespace.
+    pub(super) fn walks_frames(&self) -> bool {
+        self.unknown
+            || self
+                .dynamic_words
+                .iter()
+                .any(|word| FRAME_WALKERS.contains(&word.as_str()))
+    }
+
     /// Whether some workspace file assigns a dunder attribute (`__new__`,
     /// `__getattribute__`, `__class__`, ...), which can change what any
     /// class builds or looks up without naming the method (#9226).

@@ -20,9 +20,12 @@
 //! - a model class is a top-level `class` with no bases, keywords or
 //!   decorators, bound once, whose body holds only a docstring, `pass` and
 //!   `def`s, with no method named `__...` (no `__init__`, attribute hook,
-//!   operator or name-mangled method) and no method defined twice; it is built
-//!   as `Class()` with no arguments, and no workspace file writes a dunder
-//!   attribute;
+//!   operator or name-mangled method), no method defined twice or bound by a
+//!   walrus, and no `def` whose decorator, default or annotation runs code
+//!   while the class body does; it is built as `Class()` with no arguments;
+//! - no workspace file, the owner module included, writes a dunder attribute
+//!   or walks frames or a function's globals, which can write the module
+//!   namespace under a name built at runtime;
 //! - inside a callable, a name is a parameter, a call is a bare call of a model
 //!   function or class of the module, or a method call on an instance of a
 //!   model class (the method's receiver, a parameter holding one, or
@@ -30,12 +33,13 @@
 //!   module-value operators, `str * int` repeats a string and an ASCII string's
 //!   `.upper()`/`.lower()` change its case;
 //! - a straight-line `assert <entry> == <literal>` of a test reaches the chain
-//!   through a function or class it imports from the owner's module and does
-//!   not rebind, or through a local bound once to `Class()` before the
-//!   assertion and used only as a method receiver; the test requests no
-//!   fixture, carries no decorator, is the only definition of its name, may not
-//!   be skipped by a conftest, and runs only assertions and such bindings
-//!   before the credited one, every earlier assertion holding on both sides;
+//!   through a function or class it imports with `from M import name` from the
+//!   owner's module and does not rebind, or through a local bound once to
+//!   `Class()` of a model class before the assertion and used only as a method
+//!   receiver; the test requests no fixture, carries no decorator, is the only
+//!   definition of its name, may not be skipped by a conftest, and runs only
+//!   assertions, `pass`, a docstring and such bindings before the credited
+//!   one, every earlier assertion holding on both sides;
 //! - the assertion holds under the old body and fails under the new one.
 //!
 //! Anything the evaluator cannot decide is not a credit, and the finding keeps
@@ -48,9 +52,7 @@ use super::module_value::{
     ModuleEdit, ModuleValueCredit, Value, arithmetic, assertion_expression, comparison,
     keep_unshadowed, straight_line_assertion, with_line_replaced,
 };
-use super::related_tests::{
-    import_module_may_be_owners, import_source_module_matches_owner, owner_module_paths,
-};
+use super::related_tests::import_source_module_matches_owner;
 use super::source_facts::parse_module_result;
 use super::{PythonOwner, PythonTest};
 use crate::domain::OwnerKind;
@@ -71,9 +73,19 @@ const MAX_STEPS: usize = 4096;
 /// Words that let the owner's module replace a function or method's code, or
 /// an instance's class, without a binding the module facts see (those already
 /// treat `setattr`, `exec`, `globals`, `vars`, `__dict__` and `patch` as
-/// opaque).
-const DYNAMIC_WORDS: [&str; 7] = [
+/// opaque). A function's `__globals__` and a frame's `f_globals`/`f_locals`
+/// write the module namespace through a subscript.
+const DYNAMIC_WORDS: [&str; 16] = [
     "__code__",
+    "__globals__",
+    "f_globals",
+    "f_locals",
+    "_getframe",
+    "currentframe",
+    "f_back",
+    "tb_frame",
+    "get_referrers",
+    "get_referents",
     "__defaults__",
     "__closure__",
     "__class__",
@@ -165,6 +177,7 @@ fn credits<'a>(
         .find(|candidate| candidate.is_module_owner() && candidate.file == file)?;
     if module_owner.foreign_writes.may_replace_reader_code()
         || module_owner.foreign_writes.writes_dunder()
+        || module_owner.foreign_writes.walks_frames()
     {
         return None;
     }
@@ -177,6 +190,11 @@ fn credits<'a>(
         let Mod::Module(module) = parse_module_result(file, source).ok()? else {
             return None;
         };
+        // The owner's own module may install a lookup or construction hook
+        // (`Ledger.__getattribute__ = ...`) without naming a method.
+        if ModuleBindingFacts::of(source, &module.body).assigns_dunder() {
+            return None;
+        }
         let program = Program::of(source, &module.body);
         // The owner is a model callable on both sides, so the edit is the
         // change of its one `return`.
@@ -223,6 +241,10 @@ fn credits<'a>(
         let Some(body) = test_body(test) else {
             continue;
         };
+        let rows = statement_rows(&test.body_text, &body);
+        let instances = local_instances(test, &body, &rows, &spellings, &|class| {
+            old.classes.contains_key(class) && new.classes.contains_key(class)
+        });
         // Assertions run in order: a later one is reached only when every
         // earlier one passes, so each earlier assertion must evaluate true
         // on both sides before a later flip counts.
@@ -240,7 +262,11 @@ fn credits<'a>(
             let Some(index) = assertion.line.checked_sub(test.line) else {
                 break;
             };
-            let locals = local_instances(test, &body, index, &spellings);
+            let locals: BTreeMap<String, String> = instances
+                .iter()
+                .filter(|(row, _, _)| *row < index)
+                .map(|(_, name, class)| (name.clone(), class.clone()))
+                .collect();
             let scope = TestScope {
                 spellings: &spellings,
                 locals: &locals,
@@ -259,7 +285,7 @@ fn credits<'a>(
             let Some(entry) = pinned_entry(&expression) else {
                 break;
             };
-            if !inert_prelude(&test.body_text, &body, index, &locals) {
+            if !inert_prelude(&body, &rows, index, &locals) {
                 break;
             }
             // The sides differ only in the owner's body, so a flip shows the
@@ -359,10 +385,16 @@ fn model_class(
             Stmt::FunctionDef(function) => {
                 let name = function.name.as_str();
                 // A dunder changes construction or lookup; a `__private`
-                // name is mangled outside the class body.
+                // name is mangled outside the class body. A decorator or
+                // default runs while the class body executes and may bind a
+                // method name there (a walrus), so any def carrying one keeps
+                // the class out of the model.
                 if name.starts_with("__")
                     || seen.contains(&name)
                     || facts.may_assign_attribute(name)
+                    || facts.may_rebind(name)
+                    || !function.decorator_list.is_empty()
+                    || runs_definition_code(function)
                 {
                     return None;
                 }
@@ -375,6 +407,27 @@ fn model_class(
         }
     }
     Some(methods)
+}
+
+/// Whether a `def` evaluates anything when it runs: a default, or an
+/// annotation other than a bare name or string.
+fn runs_definition_code(function: &ast::StmtFunctionDef) -> bool {
+    let arguments = &function.args;
+    let plain = |annotation: Option<&Expr>| {
+        annotation
+            .is_none_or(|annotation| matches!(annotation, Expr::Name(_)) || is_string(annotation))
+    };
+    arguments
+        .posonlyargs
+        .iter()
+        .chain(&arguments.args)
+        .chain(&arguments.kwonlyargs)
+        .any(|argument| argument.default.is_some() || !plain(argument.def.annotation.as_deref()))
+        || [&arguments.vararg, &arguments.kwarg]
+            .into_iter()
+            .flatten()
+            .any(|argument| !plain(argument.annotation.as_deref()))
+        || !plain(function.returns.as_deref())
 }
 
 fn is_string(expr: &Expr) -> bool {
@@ -485,26 +538,22 @@ fn test_body(test: &PythonTest) -> Option<Vec<Stmt>> {
         })
 }
 
-/// Locals the test binds once, before the assertion at body line `index`, to
-/// `Class()` for an imported model class.
+/// The locals of the test bound once to `Class()` of a model class and used
+/// only as a method receiver, each with the body row of its binding. Built
+/// once per test, so its cost does not grow with the assertion count.
 fn local_instances(
     test: &PythonTest,
     body: &[Stmt],
-    index: usize,
+    rows: &[usize],
     spellings: &BTreeMap<String, String>,
-) -> BTreeMap<String, String> {
-    let mut locals = BTreeMap::new();
-    for statement in body {
-        let Some(offset) = usize::try_from(u32::from(statement.range().start())).ok() else {
-            continue;
-        };
-        let row = test
-            .body_text
-            .get(..offset)
-            .map_or(usize::MAX, |prefix| prefix.matches('\n').count());
-        if row >= index {
-            break;
-        }
+    model_class: &dyn Fn(&str) -> bool,
+) -> Vec<(usize, String, String)> {
+    let Ok(tokens) = lex(&test.body_text, Mode::Module).collect::<Result<Vec<_>, _>>() else {
+        return Vec::new();
+    };
+    let tokens: Vec<&Tok> = tokens.iter().map(|(token, _)| token).collect();
+    let mut locals = Vec::new();
+    for (statement, &row) in body.iter().zip(rows) {
         let Stmt::Assign(assign) = statement else {
             continue;
         };
@@ -515,15 +564,18 @@ fn local_instances(
         if !call.args.is_empty() || !call.keywords.is_empty() {
             continue;
         }
+        // Only `Class()` of a model class on both sides builds an instance
+        // without running code; a model function's call is not a binding.
         let Some(class) = super::expr_full_name(&call.func)
             .and_then(|spelling| spellings.get(&spelling).cloned())
+            .filter(|entry| model_class(entry))
         else {
             continue;
         };
         if count_bindings(body, target.id.as_str()) == 1
-            && used_only_as_receiver(&test.body_text, target.id.as_str())
+            && used_only_as_receiver(&tokens, target.id.as_str())
         {
-            locals.insert(target.id.to_string(), class);
+            locals.push((row, target.id.to_string(), class));
         }
     }
     locals
@@ -533,18 +585,12 @@ fn local_instances(
 /// assertion, a docstring, `pass`, or the binding of a model instance local.
 /// Any other call may skip or end the test, or change what the chain runs.
 fn inert_prelude(
-    body_text: &str,
     body: &[Stmt],
+    rows: &[usize],
     index: usize,
     locals: &BTreeMap<String, String>,
 ) -> bool {
-    for (position, statement) in body.iter().enumerate() {
-        let Some(offset) = usize::try_from(u32::from(statement.range().start())).ok() else {
-            return false;
-        };
-        let row = body_text
-            .get(..offset)
-            .map_or(usize::MAX, |prefix| prefix.matches('\n').count());
+    for (position, (statement, &row)) in body.iter().zip(rows).enumerate() {
         if row >= index {
             return true;
         }
@@ -564,27 +610,39 @@ fn inert_prelude(
     false
 }
 
-/// The spellings a test calls the owner module's `name` by: a `from M
-/// import name` of the owner module, or `alias.name` for an `import` that
-/// binds the owner module itself (a package import alone may not load it).
-fn entry_spellings(test: &PythonTest, module_owner: &PythonOwner, name: &str) -> Vec<String> {
-    let paths = owner_module_paths(&module_owner.file);
-    let mut spellings = Vec::new();
-    for import in &test.imports {
-        if import.imported == name
-            && import_source_module_matches_owner(import, module_owner, &test.file)
-        {
-            spellings.push(import.alias.clone());
-        }
-        let bound = if import.source_module.is_empty() {
-            import.imported.clone()
-        } else {
-            format!("{}.{}", import.source_module, import.imported)
-        };
-        if import_module_may_be_owners(import, module_owner, &test.file) && paths.contains(&bound) {
-            spellings.push(format!("{}.{name}", import.alias));
+/// The body row of each top-level statement of a test body, counted once.
+/// A statement whose offset does not fit reads as past every assertion.
+fn statement_rows(body_text: &str, body: &[Stmt]) -> Vec<usize> {
+    let mut rows = Vec::with_capacity(body.len());
+    let (mut seen, mut row) = (0, 0);
+    for statement in body {
+        let offset = usize::try_from(u32::from(statement.range().start())).unwrap_or(usize::MAX);
+        match body_text.get(seen..offset) {
+            Some(gap) => {
+                row += gap.matches('\n').count();
+                seen = offset;
+                rows.push(row);
+            }
+            None => rows.push(usize::MAX),
         }
     }
+    rows
+}
+
+/// The spellings a test calls the owner module's `name` by: only `from M
+/// import name` of the owner module, which reads `name` from the loaded module
+/// itself. `import pkg.mod as alias` and `from pkg import mod` resolve `mod`
+/// as an attribute of the package, which its `__init__.py` may rebind.
+fn entry_spellings(test: &PythonTest, module_owner: &PythonOwner, name: &str) -> Vec<String> {
+    let spellings = test
+        .imports
+        .iter()
+        .filter(|import| {
+            import.imported == name
+                && import_source_module_matches_owner(import, module_owner, &test.file)
+        })
+        .map(|import| import.alias.clone())
+        .collect();
     keep_unshadowed(test, spellings)
 }
 
@@ -592,11 +650,7 @@ fn entry_spellings(test: &PythonTest, module_owner: &PythonOwner, name: &str) ->
 /// receiver of a method call (`local.name(`). An instance attribute write
 /// (`local._pad = ...`), a `del`, or handing the instance to other code may
 /// change what its methods run, so any other mention keeps the local out.
-fn used_only_as_receiver(body_text: &str, local: &str) -> bool {
-    let Ok(tokens) = lex(body_text, Mode::Module).collect::<Result<Vec<_>, _>>() else {
-        return false;
-    };
-    let tokens: Vec<&Tok> = tokens.iter().map(|(token, _)| token).collect();
+fn used_only_as_receiver(tokens: &[&Tok], local: &str) -> bool {
     tokens.iter().enumerate().all(|(index, token)| {
         let Tok::Name { name } = token else {
             return true;
