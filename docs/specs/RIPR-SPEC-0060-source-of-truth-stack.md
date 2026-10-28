@@ -159,6 +159,20 @@ should precede blocking CI promotion.
 
 ### Local Rust gate selection roots
 
+`check-fast` records the local `origin/main` commit, `HEAD` commit, effective
+merge-base and selected path count before executing gates and in its report.
+The path inventory is computed from those captured commits. Strict receipt
+validation rejects identity or path changes during the run, and rejects a
+gate report with a missing, duplicate or different selector identity even when
+the before/after snapshots agree. Reconcile the selected basis and retry after
+such a refusal; unrelated main movement does not require rebasing a candidate.
+
+Local remote-ref freshness is not checked. If the recorded basis is unexpected,
+fetch `origin main` and retry. Offline, detached, behind/diverged, net-empty,
+staged, unstaged and untracked authoring remain supported. This binds the
+committed selector, not the source bytes consumed by gates: gates inspect the
+live worktree and this receipt does not qualify an immutable candidate.
+
 `cargo xtask check-fast` selects its Rust gates (workspace Clippy and
 test-source policy) from the same committed `origin/main...HEAD` selector. A
 changed path selects them when it is `Cargo.lock`, `Cargo.toml`, any
@@ -176,6 +190,12 @@ Controls in `xtask/src/main.rs` and `xtask/src/check_fast_strict.rs`:
 - `non_workspace_rust_and_near_prefixes_keep_existing_categories`;
 - `committed_workspace_test_changes_select_rust_gates`;
 - `workspace_rust_targets_require_complete_rust_receipts`.
+
+Selector identity controls additionally cover
+`selector_ref_drift_with_unchanged_paths_is_refused`,
+`stable_selector_refuses_missing_duplicate_or_other_report_identity` and
+`native_selection_preserves_divergence_detached_dirty_and_empty_workflows`
+in `xtask/src/check_fast_strict.rs` and `xtask/src/check_fast_selector.rs`.
 
 ### Early local support-tier validation
 
