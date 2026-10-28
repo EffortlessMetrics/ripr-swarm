@@ -7,6 +7,64 @@ use crate::analysis_outcome::AnalysisLimitationKind;
 const FIRST_FILE: &str =
     "diff --git a/src/a.rs b/src/a.rs\n--- a/src/a.rs\n+++ b/src/a.rs\n@@ -1 +1 @@\n-old\n+new\n";
 
+#[test]
+fn unprefixed_line_inside_hunk_is_malformed_even_if_counts_later_match() -> Result<(), String> {
+    let input = "--- a/src/a.rs\n+++ b/src/a.rs\n@@ -1 +1 @@\n-old\ncorrupt line\n+new\n@@ -4 +4 @@\n-before\n+after\n";
+    for parsed in [
+        parse_unbounded(input),
+        parse_bounded_lines(input.lines(), 8)?,
+    ] {
+        let malformed: Vec<_> = parsed
+            .limitations
+            .iter()
+            .filter(|item| {
+                item.kind == AnalysisLimitationKind::MalformedDiff
+                    && item.path.as_deref() == Some("src/a.rs")
+            })
+            .collect();
+        assert_eq!(
+            malformed.len(),
+            1,
+            "corrupt hunk must be disclosed: {parsed:?}"
+        );
+        assert_eq!(malformed[0].affected_items, Some(1));
+        let file = &parsed.changed_files[0];
+        assert!(
+            file.added_lines
+                .iter()
+                .any(|line| line.line == 4 && line.text == "after")
+        );
+    }
+    let control =
+        "--- a/src/a.rs\n+++ b/src/a.rs\n@@ -1 +1 @@\n-old\n\\ No newline at end of file\n+new\n";
+    assert!(
+        !parse_unbounded(control)
+            .limitations
+            .iter()
+            .any(|item| item.kind == AnalysisLimitationKind::MalformedDiff)
+    );
+    // Multiple errors, including a later underflow or incomplete close, are
+    // still one malformed hunk rather than one limitation per symptom.
+    for body in [
+        "@@ -1,2 +1,2 @@\nwrong\nwrong again\n-old\n+new\n",
+        "@@ -1 +1 @@\nwrong\n-old\n+new\n+excess\n",
+    ] {
+        let input = format!("--- a/src/a.rs\n+++ b/src/a.rs\n{body}");
+        for parsed in [
+            parse_unbounded(&input),
+            parse_bounded_lines(input.lines(), 8)?,
+        ] {
+            let malformed = parsed
+                .limitations
+                .iter()
+                .find(|item| item.kind == AnalysisLimitationKind::MalformedDiff)
+                .ok_or("missing malformed limitation")?;
+            assert_eq!(malformed.affected_items, Some(1));
+        }
+    }
+    Ok(())
+}
+
 fn assert_stops_at_header(prefix: &str, limit: usize, observed: usize) -> Result<(), String> {
     let prefix_reads = Cell::new(0);
     let tail_reads = Cell::new(0);

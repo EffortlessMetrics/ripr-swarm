@@ -214,6 +214,7 @@ mod parser_state {
         new_line: usize,
         in_hunk: bool,
         remaining_hunk_lines: Option<(usize, usize)>,
+        current_hunk_malformed: bool,
         saw_old_path_marker: bool,
         section_old_path: Option<PathBuf>,
         deletion_section: bool,
@@ -412,7 +413,7 @@ mod parser_state {
                 (
                     AnalysisLimitationKind::MalformedDiff,
                     AnalysisRecoveryKind::Retry,
-                    "A two-way hunk has invalid ranges or its body does not match the declared old/new line counts. Obtain the complete valid unified diff and re-run; retained changed lines are advisory only.",
+                    "A two-way hunk has invalid ranges or body lines, or its body does not match the declared old/new line counts. Obtain the complete valid unified diff and re-run; retained changed lines are advisory only.",
                     path,
                     *count,
                 )
@@ -605,9 +606,11 @@ mod parser_state {
         pub(super) fn close_hunk(&mut self) {
             if let Some(remaining) = self.remaining_hunk_lines.take()
                 && remaining != (0, 0)
+                && !self.current_hunk_malformed
             {
                 self.record_malformed_hunk();
             }
+            self.current_hunk_malformed = false;
             self.in_hunk = false;
             // A plain-diff file boundary also ends a symlink section; git's
             // own sections reset it at `diff --git` (#4594 review).
@@ -633,12 +636,22 @@ mod parser_state {
                 Some(b'-') => (1, 0),
                 Some(b'+') => (0, 1),
                 Some(b' ') | None => (1, 1),
-                _ => return,
+                _ if raw.starts_with("\\ No newline at end of file") => return,
+                _ => {
+                    if (old, new) != (0, 0) && !self.current_hunk_malformed {
+                        self.record_malformed_hunk();
+                        self.current_hunk_malformed = true;
+                    }
+                    return;
+                }
             };
             match (old.checked_sub(consumed.0), new.checked_sub(consumed.1)) {
                 (Some(old), Some(new)) => self.remaining_hunk_lines = Some((old, new)),
                 _ => {
-                    self.record_malformed_hunk();
+                    if !self.current_hunk_malformed {
+                        self.record_malformed_hunk();
+                        self.current_hunk_malformed = true;
+                    }
                     // One record per malformed hunk; keep its earlier lines as
                     // advisory evidence rather than discarding parsed changes.
                     self.remaining_hunk_lines = None;
@@ -954,8 +967,8 @@ mod parser_state {
             // debt. `+`/`-`/context/empty are the forms recorded or advanced
             // below; quarantined conflict lines above are validated content
             // with their own typed limitation. Anything else — notably an
-            // unprefixed malformed line after an `@@` header — is silently
-            // ignored by this parser and must not read as a parsed hunk, or
+            // unprefixed malformed line after an `@@` header — is not body
+            // evidence and must not read as a parsed hunk, or
             // a header-plus-garbage stream would project a complete
             // zero-change outcome again.
             let validated_body =
