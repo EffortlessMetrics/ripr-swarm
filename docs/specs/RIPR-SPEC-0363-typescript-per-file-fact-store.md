@@ -120,8 +120,9 @@ the memory cache.
 
 - Python diff mode has no persistent store yet; its warm path is a
   follow-up reusing this pattern.
-- `ripr doctor` does not yet probe the new layer's entry directory; the
-  layer registers its cache base but no doctor surface (follow-up).
+- `ripr doctor` probes the layer's entry directory for writability (it
+  is in `production_entry_dirs` when TypeScript is built in) but reports
+  no per-layer reuse or entry counts.
 - Reuse counts are per-run admissions, not a cross-run history.
 - The store is workspace-root-scoped; copying a cache between roots
   changes the embedded root hash and reads as a miss.

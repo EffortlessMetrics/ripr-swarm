@@ -315,11 +315,11 @@ impl<T: PartialEq> Shared<T> {
 /// tests: each list is compared with the previous test's only, so the pass is
 /// linear in the file's tests.
 pub(crate) fn reshare_file_lists(tests: &mut [TypeScriptTest]) {
-    for index in 1..tests.len() {
-        let (before, after) = tests.split_at_mut(index);
-        let (Some(previous), Some(test)) = (before.last(), after.first_mut()) else {
-            continue;
-        };
+    let mut tests = tests.iter_mut();
+    let Some(mut previous) = tests.next() else {
+        return;
+    };
+    for test in tests {
         test.mocks_in_file.share_with(&previous.mocks_in_file);
         test.imports_in_file.share_with(&previous.imports_in_file);
         test.unstable_member_roots_in_file
@@ -334,6 +334,7 @@ pub(crate) fn reshare_file_lists(tests: &mut [TypeScriptTest]) {
             .share_with(&previous.mock_factories_in_file);
         test.mock_spread_sources_in_file
             .share_with(&previous.mock_spread_sources_in_file);
+        previous = test;
     }
 }
 

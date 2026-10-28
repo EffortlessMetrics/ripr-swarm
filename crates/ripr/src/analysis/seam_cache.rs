@@ -5007,8 +5007,9 @@ mod tests {
             actual, expected,
             "every produced layer must be maintainable"
         );
+        let registered: BTreeSet<_> = cache_layer_names().iter().copied().collect();
         assert_eq!(
-            expected.len(),
+            registered.len(),
             cache_layer_names().len(),
             "duplicate layer name"
         );

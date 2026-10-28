@@ -37,7 +37,7 @@ pub(crate) use crate::analysis::language::adapter::render_fact_cache_line;
 /// On-disk schema version of a `typescript-file-facts` envelope. Any change
 /// to a serialized fact spelling (field rename, type change, new label) is
 /// a schema change: bump this so stale entries read as misses.
-pub(crate) const TYPESCRIPT_FILE_FACT_SCHEMA_VERSION: &str = "1";
+pub(crate) const TYPESCRIPT_FILE_FACT_SCHEMA_VERSION: &str = "2";
 
 /// Approximate per-run ceiling on newly persisted fact bytes. Parsing the
 /// file already happened by store time, so exhausting the budget only skips
@@ -407,15 +407,11 @@ impl TypeScriptFileFactStore {
 /// target can change while this file's content does not, so such a file is
 /// recomputed every run instead of persisted.
 pub(crate) fn export_facts_are_disk_independent(facts: &FileFacts) -> bool {
-    let exports = &facts.export_facts;
-    // A renamed own export (`export { a as c }`) is a self-hop: its target is
-    // the file's own module, resolved without the filesystem.
-    exports
-        .entries
-        .iter()
-        .all(|((module, _), (_, target))| target == module)
-        && exports.star_edges.is_empty()
-        && exports.namespace_exports.is_empty()
+    // An own export list (`export { a as c }`, no `from`) records a
+    // self-hop resolved without the filesystem. Every `export ... from`
+    // resolves on disk, even one whose target is this module today, so the
+    // flag, not the recorded target, decides.
+    !facts.export_facts.re_exports_from_source
 }
 
 /// The envelope fields the known-path snapshot needs; serde skips the rest

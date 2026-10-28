@@ -39,13 +39,7 @@ mod range_vec {
         ranges: &[std::ops::Range<usize>],
         s: S,
     ) -> Result<S::Ok, S::Error> {
-        serde::Serialize::serialize(
-            &ranges
-                .iter()
-                .map(|range| (range.start, range.end))
-                .collect::<Vec<_>>(),
-            s,
-        )
+        s.collect_seq(ranges.iter().map(|range| (range.start, range.end)))
     }
 
     pub(super) fn deserialize<'de, D: serde::Deserializer<'de>>(

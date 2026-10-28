@@ -436,6 +436,102 @@ fn a_barrel_that_re_exports_through_the_filesystem_is_never_persisted() -> Resul
     Ok(())
 }
 
+/// `export { a as b } from './'` resolves `./` through the directory, which
+/// today lands on this very file; a later `package.json` can move it without
+/// touching the barrel, so the barrel is never persisted even though its
+/// recorded target equals its own module (#10725 review).
+#[test]
+fn a_re_export_that_resolves_back_to_its_own_file_is_never_persisted() -> Result<(), String> {
+    let root = build_fixture("fact-store-self-directory")?;
+    ts_write_file(
+        &root.join("src/index.ts"),
+        "export function foo(): number {\n  return 1;\n}\nexport { foo as bar } from \"./\";\n",
+    )?;
+    let fresh_root = build_fixture("fact-store-self-directory-fresh")?;
+
+    let cold = run_adapter(&root, &[small_changed_file()]);
+    // Redirect the directory without editing the barrel.
+    let redirect = ts_write_file(&root.join("src/package.json"), "{\"main\": \"other.ts\"}\n")
+        .and_then(|()| {
+            ts_write_file(
+                &root.join("src/other.ts"),
+                "export function foo(): number {\n  return 2;\n}\n",
+            )
+        });
+    let warm = redirect.and_then(|()| run_adapter(&root, &[small_changed_file()]));
+    let fresh = std::fs::read_dir(root.join("src"))
+        .map_err(|error| error.to_string())
+        .and_then(|entries| {
+            for entry in entries {
+                let path = entry.map_err(|error| error.to_string())?.path();
+                let Some(name) = path.file_name() else {
+                    continue;
+                };
+                let source = std::fs::read(&path).map_err(|error| error.to_string())?;
+                std::fs::write(fresh_root.join("src").join(name), source)
+                    .map_err(|error| error.to_string())?;
+            }
+            run_adapter(&fresh_root, &[small_changed_file()])
+        });
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&fresh_root);
+    let (cold, warm, fresh) = (cold?, warm?, fresh?);
+
+    assert_eq!(
+        (
+            cold.preview_fact_cache.misses,
+            cold.preview_fact_cache.stores
+        ),
+        (4, 3),
+        "the self-resolving barrel is parsed but not persisted: {:?}",
+        cold.preview_fact_cache
+    );
+    assert_eq!(
+        warm.preview_fact_cache.hits, 3,
+        "only the three plain files are reused: {:?}",
+        warm.preview_fact_cache
+    );
+    assert_eq!(
+        finding_identities(&warm.findings),
+        finding_identities(&fresh.findings),
+        "a warm run after the redirect matches a cold run on the same tree"
+    );
+    Ok(())
+}
+
+/// On Unix a filename may hold a literal backslash, which path normalization
+/// folds into a separator; such a file would share an envelope with its
+/// folded twin, so it is neither read from nor written to the store.
+#[cfg(unix)]
+#[test]
+fn a_test_file_whose_name_holds_a_backslash_is_never_persisted() -> Result<(), String> {
+    let root = build_fixture("fact-store-backslash")?;
+    ts_write_file(&root.join("tests/a/b.test.ts"), SMALL_TEST_SOURCE)?;
+    ts_write_file(&root.join("tests/a\\b.test.ts"), SMALL_TEST_SOURCE)?;
+
+    let cold = run_adapter(&root, &[small_changed_file()]);
+    let warm = run_adapter(&root, &[small_changed_file()]);
+    let _ = std::fs::remove_dir_all(&root);
+    let (cold, warm) = (cold?, warm?);
+
+    assert_eq!(
+        cold.preview_fact_cache.stores, 4,
+        "the backslash-named twin is not persisted: {:?}",
+        cold.preview_fact_cache
+    );
+    assert_eq!(
+        (warm.preview_fact_cache.hits, warm.preview_fact_cache.misses),
+        (4, 0),
+        "the twin is recomputed without a store lookup: {:?}",
+        warm.preview_fact_cache
+    );
+    assert_eq!(
+        finding_identities(&cold.findings),
+        finding_identities(&warm.findings)
+    );
+    Ok(())
+}
+
 /// A process that already holds a file's facts in memory (an LSP refresh)
 /// neither reads the envelope again nor rewrites it.
 #[test]

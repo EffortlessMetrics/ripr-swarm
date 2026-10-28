@@ -521,6 +521,7 @@ impl TypeScriptAdapter {
                 limitations: Vec::new(),
                 rust_diagnostic_origins: Default::default(),
                 rust_consumed_sources: Default::default(),
+                preview_fact_cache: Default::default(),
             });
         }
         // Phase 1: discover and index every accepted file in the workspace
@@ -653,7 +654,12 @@ impl TypeScriptAdapter {
                 alias_map_ref,
             ) && (!is_test_file(relative)
                 || extraction_cache::test_extraction_in_memory(relative, source));
-            let lookup = if fact_store_usable && !in_memory {
+            // An envelope is named by the normalized path, but a test
+            // extraction embeds the exact one; a Unix filename with a literal
+            // backslash would share an envelope with its folded twin, so such
+            // a file is neither read nor persisted (#10725 review).
+            let path_is_lossless = relative.to_string_lossy() == normalized_path(relative);
+            let lookup = if fact_store_usable && path_is_lossless && !in_memory {
                 Some(fact_store.load(&fact_key))
             } else {
                 None
@@ -765,11 +771,7 @@ impl TypeScriptAdapter {
                     pending_fact_stores.push((
                         fact_key,
                         std::rc::Rc::clone(&facts),
-                        Some((
-                            extraction.0.clone(),
-                            extraction.1.clone(),
-                            extraction.2.clone(),
-                        )),
+                        Some((*extraction).clone()),
                     ));
                 }
                 let (mut tests, conditional_credit_gap, expansion) = (
