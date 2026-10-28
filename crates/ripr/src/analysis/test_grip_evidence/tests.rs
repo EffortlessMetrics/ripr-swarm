@@ -19815,6 +19815,32 @@ fn may_name_non_plain_drop(source: &str, owner: &str, expression: &str) -> Resul
     Ok(names_non_plain_drop_type(function, expression, &index))
 }
 
+#[test]
+fn drop_type_gate_masks_the_corpus_once_across_many_seams() -> Result<(), String> {
+    let index = index_from_files(&[(
+        PathBuf::from("src/lib.rs"),
+        "pub struct Row(pub u32);\npub fn mk(x: u32) -> Row {\n    Row(x)\n}\n",
+    )])?;
+    let function = index
+        .functions()
+        .iter()
+        .find(|function| function.name == "mk")
+        .ok_or_else(|| "no function `mk` indexed".to_string())?;
+    MASK_BUILD_COUNT.with(|count| count.set(0));
+    for _ in 0..25 {
+        if names_non_plain_drop_type(function, "Row(x)", &index) {
+            return Err("a plain Row must not withhold".to_string());
+        }
+    }
+    let builds = MASK_BUILD_COUNT.with(|count| count.get());
+    if builds != 1 {
+        return Err(format!(
+            "expected one masking pass over 25 seams, saw {builds}"
+        ));
+    }
+    Ok(())
+}
+
 const EXIT_DROP: &str =
     "impl Drop for Loud {\n    fn drop(&mut self) {\n        std::process::exit(0);\n    }\n}\n";
 const PLAIN_DROP: &str = "impl Drop for Loud {\n    fn drop(&mut self) {}\n}\n";

@@ -836,3 +836,27 @@ fn renamed_wrapped_or_generic_non_plain_drop_is_not_a_repair_start() -> Result<(
     )?;
     Ok(())
 }
+
+/// Devin finding: a discarded owner result beside an unrelated relational
+/// assertion does not observe the owner, so no repair start is offered; the
+/// positive twin (the assertion reads a local bound from the call) still is.
+#[test]
+fn discarded_owner_result_with_unrelated_assertion_is_not_a_repair_start() -> Result<(), String> {
+    assert_no_start(
+        "discarded-unrelated",
+        DBL_OLD,
+        DBL_NEW,
+        "use ar::dbl;\n\n#[test]\nfn unrelated() {\n    let _ = dbl(2);\n    assert!(1 > 0);\n}\n",
+    )?;
+    Ok(())
+}
+
+#[test]
+fn bound_owner_result_with_relational_assertion_still_reaches_repair() -> Result<(), String> {
+    assert_repair_ready(
+        "bound-local",
+        DBL_OLD,
+        DBL_NEW,
+        "use ar::dbl;\n\n#[test]\nfn bound() {\n    let r = dbl(2);\n    assert!(r > 0);\n}\n",
+    )
+}

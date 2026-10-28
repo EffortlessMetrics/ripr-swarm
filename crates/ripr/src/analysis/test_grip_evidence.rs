@@ -606,6 +606,16 @@ fn return_value_missing_discriminator(
     if names_non_plain_drop_type(owner_fn, seam.expression(), index) {
         return None;
     }
+    // A start needs a test assertion that observes the owner's result: one
+    // that mentions the call or a local bound from it. `let _ = f(2);
+    // assert!(1 > 0);` calls the owner but never reads its value, so adding a
+    // discriminator is not a repair of that test's gap and `check` agrees.
+    if !related_summaries
+        .iter()
+        .any(|test| test_assertion_observes_owner(test, &owner_fn.name))
+    {
+        return None;
+    }
     let direct_call_with_target = related_tests.iter().any(|test| {
         test.relation_reason == RelationReason::DirectOwnerCall && test.test_target.is_some()
     });
@@ -623,6 +633,12 @@ fn is_should_panic(test: &TestSummary) -> bool {
         let compact: String = attr.chars().filter(|ch| !ch.is_whitespace()).collect();
         compact.contains("should_panic")
     })
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Times the masked-source memo was built on this thread (#10701 work pin).
+    static MASK_BUILD_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Whether the owner's signature or the changed expression may name a type
@@ -646,11 +662,17 @@ fn names_non_plain_drop_type(owner: &FunctionSummary, expression: &str, index: &
     if returns_generic_or_opaque_type(owner, signature, index) {
         return true;
     }
-    let masked: Vec<String> = index
-        .files()
-        .iter()
-        .map(|(_, facts)| crate::analysis::extract::mask_comments_and_strings(&facts.source))
-        .collect();
+    // Masked once per index and read once per type name: a run with many
+    // qualifying seams does no per-seam whole-corpus work.
+    let masked = index.call_identity_memos.masked_sources(|| {
+        #[cfg(test)]
+        MASK_BUILD_COUNT.with(|count| count.set(count.get() + 1));
+        index
+            .files()
+            .iter()
+            .map(|(_, facts)| crate::analysis::extract::mask_comments_and_strings(&facts.source))
+            .collect()
+    });
     let uppercase_words = |text: &str| -> Vec<String> {
         text.split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
             .filter(|word| word.starts_with(|ch: char| ch.is_ascii_uppercase()))
@@ -671,17 +693,21 @@ fn names_non_plain_drop_type(owner: &FunctionSummary, expression: &str, index: &
         if !seen.insert(word.clone()) {
             continue;
         }
-        if masked
-            .iter()
-            .any(|source| source_declares_type_alias_masked(source, &word))
-            || !crate::analysis::classify::drop_is_plain_in_closed_sources(index, &word)
-        {
+        let (aliased, next) = index.call_identity_memos.type_word_facts(&word, || {
+            let aliased = masked
+                .iter()
+                .any(|source| source_declares_type_alias_masked(source, &word));
+            let mut next = Vec::new();
+            for source in masked {
+                next.extend(renamed_from(source, &word));
+                next.extend(uppercase_words(&type_definition_region(source, &word)));
+            }
+            (aliased, next)
+        });
+        if aliased || !crate::analysis::classify::drop_is_plain_in_closed_sources(index, &word) {
             return true;
         }
-        for source in &masked {
-            pending.extend(renamed_from(source, &word));
-            pending.extend(uppercase_words(&type_definition_region(source, &word)));
-        }
+        pending.extend(next);
     }
     false
 }
@@ -1025,6 +1051,20 @@ fn test_pins_owner_call_by_equality(
         &locals,
         source.as_deref(),
     )
+}
+
+/// Whether some assertion of `test` mentions a call of `owner_name` or a local
+/// bound from one. Syntactic and over-approximate: it only decides whether a
+/// start may be offered.
+fn test_assertion_observes_owner(test: &TestSummary, owner_name: &str) -> bool {
+    let call = format!("{owner_name}(");
+    let locals = owner_result_locals(&test.body, owner_name);
+    test.assertions.iter().any(|oracle| {
+        oracle.text.contains(&call)
+            || locals
+                .iter()
+                .any(|local| mentions_identifier(&oracle.text, local))
+    })
 }
 
 /// Names bound by a `let` whose initializer calls `owner_name`

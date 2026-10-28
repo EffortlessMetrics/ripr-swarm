@@ -112,9 +112,43 @@ pub(crate) struct CallIdentityMemos {
     /// workspace declares, read once per index so a receiver-type check is a
     /// lookup instead of a masked scan of every indexed file.
     type_name_counts: std::sync::OnceLock<BTreeMap<String, usize>>,
+    /// #10701: every indexed source with comments and strings masked, built
+    /// once per index for the repair-start Drop-type gate.
+    masked_sources: std::sync::OnceLock<Vec<String>>,
+    /// #10701: per type name, whether a `type` alias declares it and which
+    /// further type names its renames and definitions mention, so each name is
+    /// read from the corpus once per run instead of once per seam.
+    type_word_facts: Mutex<BTreeMap<String, (bool, Vec<String>)>>,
 }
 
 impl CallIdentityMemos {
+    /// The memoized masked sources, built by `build` on first use.
+    pub(in crate::analysis) fn masked_sources(
+        &self,
+        build: impl FnOnce() -> Vec<String>,
+    ) -> &[String] {
+        self.masked_sources.get_or_init(build)
+    }
+
+    /// The memoized facts for type name `word`, computed by `compute` on
+    /// first use (recomputed, not cached, if the lock is poisoned).
+    pub(in crate::analysis) fn type_word_facts(
+        &self,
+        word: &str,
+        compute: impl FnOnce() -> (bool, Vec<String>),
+    ) -> (bool, Vec<String>) {
+        if let Ok(cache) = self.type_word_facts.lock()
+            && let Some(found) = cache.get(word)
+        {
+            return found.clone();
+        }
+        let computed = compute();
+        if let Ok(mut cache) = self.type_word_facts.lock() {
+            cache.insert(word.to_string(), computed.clone());
+        }
+        computed
+    }
+
     /// The memoized type-name declaration counts, built by `build` on first use.
     pub(super) fn type_name_counts(
         &self,
