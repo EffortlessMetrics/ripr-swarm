@@ -346,13 +346,18 @@ fn real_spelling_parent(root: &Path, alias: &Path, name: &str) -> Option<String>
     (alias_parent != Some(std::ffi::OsStr::new(parent))).then(|| parent.to_string())
 }
 
-/// `true` when `prefix` ends with `component` as a whole path component, not
-/// as the tail of a longer name (`unreal` does not end with the `real`
-/// component).
+/// `true` when `prefix` ends with `component` as a whole path component: the
+/// text before it is empty or ends with a separator, quote, bracket or
+/// whitespace. Any other character (`unreal`, `my.real`, `a+real`) may belong
+/// to a longer name, so the match keeps counting.
 fn ends_with_component(prefix: &str, component: &str) -> bool {
     prefix.strip_suffix(component).is_some_and(|rest| {
         rest.chars().next_back().is_none_or(|before| {
-            !(before.is_alphanumeric() || matches!(before, '_' | '-' | '$' | '@'))
+            before.is_whitespace()
+                || matches!(
+                    before,
+                    '/' | '\\' | '\'' | '"' | '`' | '(' | '[' | '{' | ',' | ':' | '='
+                )
         })
     })
 }
@@ -1119,6 +1124,41 @@ mod tests {
         let scan =
             visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
         assert_eq!(scan.skipped_links, 0, "{:?}", scan.files);
+        Ok(())
+    }
+
+    /// Punctuation inside a directory name is not a component boundary:
+    /// `my.real/skills` is not the `real/skills` spelling, in raw text or in a
+    /// decoded literal, while the plain true spelling stays exempt (#10901 review).
+    #[cfg(unix)]
+    #[test]
+    fn discovery_does_not_exempt_a_parent_with_punctuation_before_the_target_parent()
+    -> std::io::Result<()> {
+        use std::os::unix::fs::symlink;
+        let workspace = TempWorkspace::new("link-alias-punctuation-parent");
+        workspace.write("real/skills/x.ts", "export const x = 1;\n");
+        std::fs::create_dir_all(workspace.0.join("my.real"))?;
+        symlink("../real/skills", workspace.0.join("my.real/skills"))?;
+        assert_eq!(
+            std::fs::canonicalize(workspace.0.join("my.real/skills"))?,
+            std::fs::canonicalize(workspace.0.join("real/skills"))?,
+            "the alias must resolve to the real indexed directory, not dangle"
+        );
+        for (import, expected) in [
+            ("import { x } from '../my.real/skills/x';\n", 1),
+            ("import { x } from '../my.real\\u002fskills/x';\n", 1),
+            ("import { x } from '../a+real/skills/x';\n", 1),
+            ("import { x } from '../real/skills/x';\n", 0),
+            // An escaped separator before the real spelling is not exempted:
+            // the raw-text pass cannot see it as a component. Over-counting is
+            // the safe direction.
+            ("import { x } from '..\\u002freal/skills/x';\n", 1),
+        ] {
+            workspace.write("tests/x.test.ts", import);
+            let scan =
+                visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+            assert_eq!(scan.skipped_links, expected, "{import}: {:?}", scan.files);
+        }
         Ok(())
     }
 

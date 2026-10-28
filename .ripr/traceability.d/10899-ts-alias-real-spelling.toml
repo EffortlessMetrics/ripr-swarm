@@ -4,4 +4,5 @@ id = "RIPR-SPEC-0027"
 tests = [
   "crates/ripr/src/analysis/language/typescript/discovery.rs::tests::discovery_ignores_the_real_spelling_of_an_alias_target",
   "crates/ripr/src/analysis/language/typescript/discovery.rs::tests::discovery_does_not_exempt_a_parent_that_only_ends_with_the_target_parent",
+  "crates/ripr/src/analysis/language/typescript/discovery.rs::tests::discovery_does_not_exempt_a_parent_with_punctuation_before_the_target_parent",
 ]
