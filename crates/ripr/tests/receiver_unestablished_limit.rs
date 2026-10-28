@@ -439,7 +439,14 @@ fn a_bare_factory_shadowed_by_an_import_keeps_the_gap() -> Result<(), String> {
         "fn r#fixture()->Other{Other} std::assert_eq!(fixture().read(), 4);",
     )?
     .finding()?;
-    assert_keeps_gap("a raw-named nested fn shadows the free fn", &raw)
+    assert_keeps_gap("a raw-named nested fn shadows the free fn", &raw)?;
+    let binding = Workspace::create_shaped(
+        Placement::Generated,
+        shape,
+        "let r#fixture = || Other; std::assert_eq!(fixture().read(), 4);",
+    )?
+    .finding()?;
+    assert_keeps_gap("a raw local binding shadows the free fn", &binding)
 }
 
 /// `foreign::Widget::seeded()` is a different type than the local `Widget`,
@@ -513,6 +520,23 @@ fn an_unauthoritative_inherent_factory_declaration_keeps_the_gap() -> Result<(),
                 ..Shape::default()
             },
             statement,
+        ),
+        (
+            "cfg gated through a comment between cfg and its predicate",
+            Shape {
+                prelude: trait_fallback,
+                widget_items: "#[cfg/* gap */(any())] pub fn seeded()->Self{Widget}",
+                ..Shape::default()
+            },
+            statement,
+        ),
+        (
+            "raw generic spelled like the owner",
+            Shape {
+                widget_items: "pub fn seeded<r#Widget>(v: Widget)->Widget{v}",
+                ..Shape::default()
+            },
+            "std::assert_eq!(Widget::seeded(Other).read(), 4);",
         ),
         (
             "generic spelled like the owner",

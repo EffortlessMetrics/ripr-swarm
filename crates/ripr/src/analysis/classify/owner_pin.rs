@@ -13654,17 +13654,35 @@ pub(super) fn imported_enum_variant_value(
 /// file does not parse or the line is not in it.
 fn imports_visible_at_line(source: &str, line: usize) -> Option<String> {
     let parse = parse_clean_source_file(source)?;
-    // The end of the line, so a block opened on the test's own line (`fn t() {`)
-    // contains the point and its own `use` items count.
-    let at = source
-        .split_inclusive('\n')
-        .take(line.checked_sub(1)? + 1)
-        .map(str::len)
-        .sum::<usize>()
-        .checked_sub(1)?;
-    let at = ra_ap_syntax::TextSize::try_from(at).ok()?;
-    let imports: Vec<String> = parse
-        .tree()
+    let line_of = |offset: ra_ap_syntax::TextSize| {
+        let offset = usize::from(offset).min(source.len());
+        source.as_bytes()[..offset]
+            .iter()
+            .filter(|byte| **byte == b'\n')
+            .count()
+            + 1
+    };
+    // The test is the one `fn` whose header spans the reported line. Two on one
+    // line (or none) leave its lexical scope unestablished, so no import counts:
+    // the line's end can lie inside a following sibling module.
+    let tree = parse.tree();
+    let mut candidates = tree
+        .syntax()
+        .descendants()
+        .filter_map(ast::Fn::cast)
+        .filter(|item| {
+            let start = line_of(item.syntax().text_range().start());
+            let header = item
+                .fn_token()
+                .map_or(start, |token| line_of(token.text_range().start()));
+            (start..=header).contains(&line)
+        });
+    let (Some(test_fn), None) = (candidates.next(), candidates.next()) else {
+        return None;
+    };
+    let at = test_fn.syntax().text_range().start();
+    let own_block = test_fn.body()?.stmt_list()?.syntax().clone();
+    let imports: Vec<String> = tree
         .syntax()
         .descendants()
         .filter_map(ast::Use::cast)
@@ -13677,7 +13695,7 @@ fn imports_visible_at_line(source: &str, line: usize) -> Option<String> {
                         || ast::SourceFile::can_cast(node.kind())
                         || ast::StmtList::can_cast(node.kind())
                 })
-                .is_some_and(|scope| scope.text_range().contains(at))
+                .is_some_and(|scope| scope == own_block || scope.text_range().contains(at))
         })
         .map(|item| item.syntax().text().to_string())
         .collect();

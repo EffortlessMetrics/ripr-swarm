@@ -273,27 +273,32 @@ impl SourceSnapshot {
         let (Some(item), None) = (matches.next(), matches.next()) else {
             return None;
         };
+        // `r#Widget` and `Widget` are one identifier; compare their canonical form.
+        let unraw = |text: &str| text.strip_prefix("r#").unwrap_or(text).to_string();
+        let ty = unraw(ty);
         let spelled = |list: Option<ast::GenericParamList>| {
             list.into_iter()
                 .flat_map(|list| list.generic_params())
                 .any(|param| match param {
                     ast::GenericParam::TypeParam(param) => {
-                        param.name().is_some_and(|name| name.text() == ty)
+                        param.name().is_some_and(|name| unraw(&name.text()) == ty)
                     }
                     ast::GenericParam::ConstParam(param) => {
-                        param.name().is_some_and(|name| name.text() == ty)
+                        param.name().is_some_and(|name| unraw(&name.text()) == ty)
                     }
                     ast::GenericParam::LifetimeParam(_) => false,
                 })
         };
         let unestablished_cfg = |node: &dyn HasAttrs| {
             node.attrs().any(|attr| {
+                // Token text without trivia, so a comment between `cfg` and `(`
+                // cannot hide the predicate; raw identifiers are canonicalized.
                 let text: String = attr
                     .syntax()
-                    .text()
-                    .to_string()
-                    .chars()
-                    .filter(|c| !c.is_whitespace())
+                    .descendants_with_tokens()
+                    .filter_map(|element| element.into_token())
+                    .filter(|token| !token.kind().is_trivia())
+                    .map(|token| unraw(token.text()))
                     .collect();
                 (text.starts_with("#[cfg(") || text.starts_with("#[cfg_attr("))
                     && text != "#[cfg(test)]"

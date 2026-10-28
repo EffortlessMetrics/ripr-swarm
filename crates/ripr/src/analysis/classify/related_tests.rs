@@ -4068,7 +4068,12 @@ fn free_fn_returns_type(
             .any(|keyword| {
                 super::owner_pin::whole_word_offsets(&masked, name)
                     .into_iter()
-                    .any(|offset| masked[..offset].trim_end().ends_with(keyword.trim_end()))
+                    .any(|offset| {
+                        // `let r#name` binds the same identifier as `let name`.
+                        let before = masked[..offset].trim_end();
+                        let before = before.strip_suffix("r#").unwrap_or(before).trim_end();
+                        before.ends_with(keyword.trim_end())
+                    })
             })
     });
     // A `fn name` nested in a body (or any other non-free fn of that name in the
