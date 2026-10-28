@@ -1766,12 +1766,16 @@ fn binary_root_alias_requires_manifest_authority_and_automatic_targets() -> Resu
         Some("[package]\nname='app'\nversion='0.1.0'\n[lib]\nname='app'\n"),
         Some("[package]\nname='app'\nversion='0.1.0'\nedition.workspace=true\n"),
     ] {
+        // Keep dependency binding valid so each negative case exercises
+        // target authority rather than failing earlier on dependency lookup.
+        let manifest = manifest
+            .map(|text| format!("{text}\n[dependencies]\nmy_macros={{path='../macros'}}\n"));
         let names = alias_test_names_with_manifest(
             &[
                 ("app/src/bin/worker.rs", &binary),
                 ("macros/src/lib.rs", WRAPPER_MACRO),
             ],
-            manifest,
+            manifest.as_deref(),
         )?;
         assert!(
             names.is_empty(),
