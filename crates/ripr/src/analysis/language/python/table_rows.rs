@@ -169,16 +169,7 @@ fn unvaried_arithmetic_operand(
         }
         let table = table_cases(candidate.test)?;
         if factor_swap
-            && strong_assertions.iter().any(|assertion| {
-                observed_literal_sibling_change(
-                    old_line,
-                    line_text,
-                    owner,
-                    candidate.test,
-                    &table,
-                    assertion,
-                )
-            })
+            && observed_literal_sibling_change(old_line, line_text, owner, candidate.test, &table)
         {
             return None;
         }
@@ -224,7 +215,6 @@ fn observed_literal_sibling_change(
     owner: &PythonOwner,
     test: &PythonTest,
     table: &PythonParametrizeCases,
-    assertion: &PythonAssertion,
 ) -> bool {
     if owner.owner_kind != Some(OwnerKind::Function)
         || !owner.decorators.is_empty()
@@ -251,7 +241,24 @@ fn observed_literal_sibling_change(
     let [Stmt::FunctionDef(function)] = module.body.as_slice() else {
         return false;
     };
-    if !matches!(function.body.as_slice(), [Stmt::Assert(_)]) {
+    let [actual_assertion @ Stmt::Assert(_)] = function.body.as_slice() else {
+        return false;
+    };
+    let args = &function.args;
+    let columns = table.argnames();
+    let signature: BTreeSet<String> = args
+        .args
+        .iter()
+        .map(|arg| arg.def.arg.to_string())
+        .collect();
+    if !args.posonlyargs.is_empty()
+        || !args.kwonlyargs.is_empty()
+        || args.vararg.is_some()
+        || args.kwarg.is_some()
+        || args.args.iter().any(|arg| arg.default.is_some())
+        || args.args.len() != columns.len()
+        || signature != columns
+    {
         return false;
     }
     let Some(old) = line_value_expr(old_line).and_then(|text| parse_expr(&text)) else {
@@ -283,11 +290,9 @@ fn observed_literal_sibling_change(
     {
         return false;
     }
-    let Some(stmts) = assertion_stmts(&assertion.gate_text) else {
-        return false;
-    };
     let names = owner_names(owner, test);
-    let Some((owner_call, expected)) = owner_call_and_expected(&stmts, &names) else {
+    let Some((owner_call, expected)) = owner_call_and_expected_from_stmt(actual_assertion, &names)
+    else {
         return false;
     };
     let Expr::Call(call) = owner_call else {
@@ -299,7 +304,6 @@ fn observed_literal_sibling_change(
     {
         return false;
     }
-    let columns = table.argnames();
     let Some(expected_name) = expr_plain_name(expected).filter(|name| columns.contains(name))
     else {
         return false;

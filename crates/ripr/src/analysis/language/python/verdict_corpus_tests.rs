@@ -2332,6 +2332,7 @@ fn factor_swap_sibling_proof_refuses_unobserved_or_uncertain_rows() -> Result<()
         "    assert area(a, b)[0] == want[0]\n",
         "    a = 9\n    assert area(a, b) == want\n",
         "    assert area(a, b, 5) == want\n",
+        "    assert False and area(a, b) == want\n",
     ] {
         assert_ne!(
             classify(
@@ -2352,6 +2353,20 @@ fn factor_swap_sibling_proof_refuses_unobserved_or_uncertain_rows() -> Result<()
         classify(owner, 2, "    return (a * b, 1)", &wrong_expected)?,
         ExposureClass::Exposed
     );
+    for signature in ["a, b", "a, b, want=None", "a, b, want, /"] {
+        let test = format!(
+            "{}    assert area(a, b) == want\n",
+            prefix.replace(
+                "def test_area(a, b, want):",
+                &format!("def test_area({signature}):")
+            )
+        );
+        assert_ne!(
+            classify(owner, 2, "    return (a * b, 1)", &test)?,
+            ExposureClass::Exposed,
+            "{signature}"
+        );
+    }
     Ok(())
 }
 
