@@ -27,4 +27,6 @@
   or a path-qualified call whose qualifier resolves to the owner through the
   shared call identity (`crate`/`self`/`super`, the owner's crate name, a
   `use`-bound path, its module path). A same-name call through another module
-  (`other::dbl(2)`), or a qualifier that cannot be read, does not observe it.
+  (`other::dbl(2)`), another type or primitive (`X::dbl(2)`, `u32::dbl(2)`), an
+  uppercase module, or a qualifier that cannot be read, does not observe it; a
+  method is observed only through a method call or its own self type.

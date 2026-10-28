@@ -851,141 +851,93 @@ fn discarded_owner_result_with_unrelated_assertion_is_not_a_repair_start() -> Re
     Ok(())
 }
 
-/// Identifier collisions are not calls of the owner: `undbl(`, `xdbl(` and
-/// `dbl_x(` in an assertion, or a local bound from them, beside a discarded
-/// real `dbl(2)` do not observe it.
-#[test]
-fn identifier_collisions_with_the_owner_name_are_not_a_repair_start() -> Result<(), String> {
-    for (case, call) in [("undbl", "undbl"), ("xdbl", "xdbl"), ("dbl-x", "dbl_x")] {
-        let helper = format!("fn {call}(x: i32) -> i32 {{ x }}\n");
-        assert_no_start(
-            &format!("collide-assert-{case}"),
-            DBL_OLD,
-            DBL_NEW,
-            &format!(
-                "use ar::dbl;\n{helper}\n#[test]\nfn t() {{\n    let _ = dbl(2);\n    assert!({call}(2) > 0);\n}}\n"
-            ),
-        )?;
-        assert_no_start(
-            &format!("collide-local-{case}"),
-            DBL_OLD,
-            DBL_NEW,
-            &format!(
-                "use ar::dbl;\n{helper}\n#[test]\nfn t() {{\n    let _ = dbl(2);\n    let r = {call}(2);\n    assert!(r > 0);\n}}\n"
-            ),
-        )?;
-    }
-    Ok(())
-}
+const W_OLD: &str =
+    "pub struct W;\nimpl W {\n    pub fn dbl(x: i32) -> i32 {\n        x * 2\n    }\n}\n";
+const W_NEW: &str =
+    "pub struct W;\nimpl W {\n    pub fn dbl(x: i32) -> i32 {\n        x * 3\n    }\n}\n";
+/// Same-named functions that are not the owner: a lowercase and an uppercase
+/// module, an inherent type, a primitive via a trait impl, and name collisions.
+const RIVALS: &str = "mod other { pub fn dbl(x: i32) -> i32 { x } }\nmod Other { pub fn dbl(x: i32) -> i32 { x } }\nstruct X;\nimpl X { fn dbl(x: i32) -> i32 { x } }\ntrait T { fn dbl(self) -> u32; }\nimpl T for u32 { fn dbl(self) -> u32 { self } }\nfn undbl(x: i32) -> i32 { x }\nfn xdbl(x: i32) -> i32 { x }\nfn dbl_x(x: i32) -> i32 { x }\nfn of(x: i32) -> i32 { x }\n";
 
-/// Comments and string literals in an assertion are not observations of the
-/// owner; a message argument beside a real call does not hide the call.
+/// A call that is not the owner's (an identifier collision, a comment or
+/// string, or a same-named function reached through another module, type or
+/// primitive) beside a discarded real call is no observation of the owner,
+/// directly or through a local. Free functions and methods are both owners.
 #[test]
-fn owner_named_only_in_a_comment_or_string_is_not_a_repair_start() -> Result<(), String> {
-    for (case, assertion) in [
-        ("block-comment", "assert!(1 > 0 /* dbl(2) */);"),
-        ("line-comment", "assert!(1 > 0 // dbl(2)\n    );"),
-        ("message", "assert!(1 > 0, \"dbl(2) wrong\");"),
-        ("literals", "assert_eq!(\"dbl(\", \"dbl(\");"),
+fn calls_that_are_not_the_owner_do_not_observe_it() -> Result<(), String> {
+    let calls = [
+        "undbl(2)",
+        "xdbl(2)",
+        "dbl_x(2)",
+        "other::dbl(2)",
+        "Other::dbl(2)",
+        "X::dbl(2)",
+        "u32::dbl(2)",
+    ];
+    for call in calls {
+        for body in [
+            format!("assert!({call} > 0);"),
+            format!("let r = {call};\n    assert!(r > 0);"),
+        ] {
+            for (old, new, real) in [
+                (DBL_OLD, DBL_NEW, "dbl(2)"),
+                (W_OLD, W_NEW, "ar::W::dbl(2)"),
+            ] {
+                assert_no_start(
+                    &format!("{call}: {body}"),
+                    old,
+                    new,
+                    &format!("{RIVALS}\n#[test]\nfn t() {{\n    let _ = {real};\n    {body}\n}}\n"),
+                )?;
+            }
+        }
+    }
+    for assertion in [
+        "assert!(1 > 0 /* dbl(2) */);",
+        "assert!(1 > 0 // dbl(2)\n    );",
+        "assert!(1 > 0, \"dbl(2) wrong\");",
+        "assert_eq!(\"dbl(\", \"dbl(\");",
+        "assert!(1 > 0);",
     ] {
         assert_no_start(
-            &format!("masked-{case}"),
+            assertion,
             DBL_OLD,
             DBL_NEW,
-            &format!(
-                "use ar::dbl;\n\n#[test]\nfn t() {{\n    let _ = dbl(2);\n    {assertion}\n}}\n"
-            ),
+            &format!("#[test]\nfn t() {{\n    let _ = ar::dbl(2);\n    {assertion}\n}}\n"),
         )?;
     }
-    Ok(())
-}
-
-#[test]
-fn owner_call_beside_a_message_argument_still_reaches_repair() -> Result<(), String> {
-    assert_repair_ready(
-        "call-with-message",
-        DBL_OLD,
-        DBL_NEW,
-        "use ar::dbl;\n\n#[test]\nfn t() {\n    assert!(dbl(2) > 0, \"dbl(2) wrong\");\n}\n",
-    )
-}
-
-/// A module of the test crate that also defines `dbl`; `other::dbl(2)` is a
-/// different function from the owner `ar::dbl`.
-const RIVAL_MOD: &str = "mod other {\n    pub fn dbl(x: i32) -> i32 {\n        x\n    }\n}\n";
-
-/// A path-qualified call counts as observing the owner only when its qualifier
-/// settles on the owner: `other::dbl(2)` (a different module that also defines
-/// `dbl`) beside a discarded real `dbl(2)` is not an observation, directly or
-/// through a local; the owner's own qualified and bare calls are.
-#[test]
-fn same_named_function_in_another_module_is_not_a_repair_start() -> Result<(), String> {
-    assert_no_start(
-        "rival-assert",
-        DBL_OLD,
-        DBL_NEW,
-        &format!(
-            "use ar::dbl;\n{RIVAL_MOD}\n#[test]\nfn t() {{\n    let _ = dbl(2);\n    assert!(other::dbl(2) > 0);\n}}\n"
-        ),
-    )?;
-    assert_no_start(
-        "rival-local",
-        DBL_OLD,
-        DBL_NEW,
-        &format!(
-            "use ar::dbl;\n{RIVAL_MOD}\n#[test]\nfn t() {{\n    let _ = dbl(2);\n    let r = other::dbl(2);\n    assert!(r > 0);\n}}\n"
-        ),
-    )?;
-    Ok(())
-}
-
-#[test]
-fn owner_calls_beside_a_same_named_rival_module_still_reach_repair() -> Result<(), String> {
-    assert_repair_ready(
-        "rival-qualified",
-        DBL_OLD,
-        DBL_NEW,
-        &format!("{RIVAL_MOD}\n#[test]\nfn t() {{\n    assert!(ar::dbl(2) > 0);\n}}\n"),
-    )?;
-    assert_repair_ready(
-        "rival-bound",
-        DBL_OLD,
-        DBL_NEW,
-        &format!(
-            "{RIVAL_MOD}\n#[test]\nfn t() {{\n    let r = ar::dbl(2);\n    assert!(r > 0);\n}}\n"
-        ),
-    )
-}
-
-#[test]
-fn one_letter_owner_is_not_observed_through_a_longer_name() -> Result<(), String> {
-    let old = "pub fn f(x: i32) -> i32 {\n    x * 2\n}\n";
-    let new = "pub fn f(x: i32) -> i32 {\n    x * 3\n}\n";
     assert_no_start(
         "one-letter",
-        old,
-        new,
-        "use ar::f;\nfn of(x: i32) -> i32 { x }\n\n#[test]\nfn t() {\n    let _ = f(2);\n    assert!(of(2) > 0);\n}\n",
+        "pub fn f(x: i32) -> i32 {\n    x * 2\n}\n",
+        "pub fn f(x: i32) -> i32 {\n    x * 3\n}\n",
+        &format!(
+            "{RIVALS}\n#[test]\nfn t() {{\n    let _ = ar::f(2);\n    assert!(of(2) > 0);\n}}\n"
+        ),
     )?;
     Ok(())
 }
 
+/// The owner's own spellings still start: crate-qualified, bound local,
+/// a message argument beside the call, and `W::dbl` for the owner's self type,
+/// all with the rivals present.
 #[test]
-fn qualified_owner_call_in_an_assertion_still_reaches_repair() -> Result<(), String> {
+fn the_owners_own_calls_still_reach_repair() -> Result<(), String> {
+    for body in [
+        "assert!(ar::dbl(2) > 0);",
+        "let r = ar::dbl(2);\n    assert!(r > 0);",
+        "assert!(ar::dbl(2) > 0, \"dbl(2) wrong\");",
+    ] {
+        assert_repair_ready(
+            body,
+            DBL_OLD,
+            DBL_NEW,
+            &format!("{RIVALS}\n#[test]\nfn t() {{\n    {body}\n}}\n"),
+        )?;
+    }
     assert_repair_ready(
-        "qualified",
-        DBL_OLD,
-        DBL_NEW,
-        "#[test]\nfn q() {\n    assert!(ar::dbl(2) > 0);\n}\n",
-    )
-}
-
-#[test]
-fn bound_owner_result_with_relational_assertion_still_reaches_repair() -> Result<(), String> {
-    assert_repair_ready(
-        "bound-local",
-        DBL_OLD,
-        DBL_NEW,
-        "use ar::dbl;\n\n#[test]\nfn bound() {\n    let r = dbl(2);\n    assert!(r > 0);\n}\n",
+        "self-type",
+        W_OLD,
+        W_NEW,
+        &format!("use ar::W;\n{RIVALS}\n#[test]\nfn t() {{\n    assert!(W::dbl(2) > 0);\n}}\n"),
     )
 }

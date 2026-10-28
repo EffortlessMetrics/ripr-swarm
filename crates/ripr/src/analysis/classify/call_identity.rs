@@ -48,7 +48,7 @@
 
 use super::super::rust_index::{FunctionSummary, RustIndex, TestSummary};
 use crate::analysis::extract::mask_comments_and_strings;
-use crate::analysis::facts::FunctionContainer;
+use crate::analysis::facts::{FunctionContainer, FunctionImplContext};
 use crate::analysis::syntax::{
     NameScope, NameScopes, RustModuleTreeEdge, UseBinding, rust_module_tree_scan,
 };
@@ -2101,7 +2101,8 @@ fn call_sites(body: &str, name: &str, with_methods: bool) -> Vec<Option<Vec<Stri
 
 /// Whether `text` holds a call that can be the owner's: a bare or method
 /// call (name-only, as the other readers), or a path-qualified call whose
-/// qualifier settles on the owner through the shared identity. A qualifier
+/// qualifier settles on the owner (a method's own self type, or a free
+/// function's path through the shared identity). A qualifier
 /// naming another module, or one this scan cannot read, does not count, so
 /// a same-named function elsewhere is not an observation of the owner.
 pub(in crate::analysis) fn text_calls_owner(
@@ -2115,8 +2116,14 @@ pub(in crate::analysis) fn text_calls_owner(
         .any(|qualifier| match qualifier {
             None => false,
             Some(segments) if segments.is_empty() => true,
-            _ if owner.item.container != FunctionContainer::Free => true,
-            Some(segments) if names_a_type(&segments) => true,
+            // A method is reached as `Type::name(..)` only through its own
+            // self type; any other qualifier is another function.
+            Some(segments) if owner.item.container != FunctionContainer::Free => {
+                match (&owner.impl_context, segments.last()) {
+                    (FunctionImplContext::Impl { self_type }, Some(last)) => self_type == last,
+                    _ => false,
+                }
+            }
             Some(segments) => qualified_call_names_owner(index, owner, test, &segments),
         })
 }

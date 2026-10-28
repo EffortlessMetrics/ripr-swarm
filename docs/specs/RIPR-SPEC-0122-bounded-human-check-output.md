@@ -800,7 +800,8 @@ not a head-only row and prints no note.
   An assertion observes the owner through a bare or method call of its name,
   or a path-qualified call whose qualifier resolves to the owner through the
   shared call identity; a same-name call through another module
-  (`other::dbl(2)`) or an unreadable qualifier does not.
+  (`other::dbl(2)`), another type or primitive, or an unreadable qualifier does
+  not; a method is observed only through a method call or its own self type.
 - Format parsing tests for `human-full` and `text-full`.
 - CLI unit tests for repo-scope warnings with `--base` and `--diff`, and no
   warning for diff-scoped JSON.
