@@ -238,6 +238,13 @@ impl TsAliasMapLoadGap {
     }
 }
 
+// Counts full digest renders on this thread so a test can tell a memo hit
+// from a recomputation that happens to return an equal value.
+#[cfg(test)]
+thread_local! {
+    static DIGEST_COMPUTATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 impl TsAliasMap {
     /// Deterministic content digest for cache keys (the export-facts cache
     /// keys its entries by every input that can change resolution
@@ -250,6 +257,8 @@ impl TsAliasMap {
 
     fn compute_cache_digest(&self) -> (u64, u64) {
         use std::hash::{Hash, Hasher};
+        #[cfg(test)]
+        DIGEST_COMPUTATIONS.with(|count| count.set(count.get() + 1));
         let mut first = std::collections::hash_map::DefaultHasher::new();
         let mut second = std::collections::hash_map::DefaultHasher::new();
         first.write_u8(0xA7);
@@ -929,25 +938,35 @@ mod tests {
         let files = [PathBuf::from("pkg/src/a.ts")];
         let packages = super::super::workspace_packages::WorkspacePackages::discover(&root, &files);
         assert!(!packages.is_empty(), "fixture must discover its package");
-        let empty = TsAliasMap::workspace_packages_only(&root, Default::default());
-        let before = empty.cache_digest();
-        assert_eq!(empty.cache_digest(), before, "repeat call is memoized");
+        let computations = || DIGEST_COMPUTATIONS.with(|count| count.get());
+        let map = TsAliasMap::workspace_packages_only(&root, packages.clone());
+        let start = computations();
+        let first = map.cache_digest();
+        assert_eq!(computations(), start + 1, "first call renders the table");
+        assert_eq!(map.cache_digest(), first);
         assert_eq!(
-            empty.clone().cache_digest(),
-            before,
+            map.clone().cache_digest(),
+            first,
             "a clone keeps the digest"
         );
-        let with_packages = empty.with_workspace_packages(packages.clone());
-        assert_ne!(
-            with_packages.cache_digest(),
-            before,
+        assert_eq!(
+            computations(),
+            start + 1,
+            "repeat and cloned calls must hit the memo, not re-render the table"
+        );
+        let empty = TsAliasMap::workspace_packages_only(&root, Default::default());
+        let empty_digest = empty.cache_digest();
+        assert_ne!(empty_digest, first, "fixture table must change the digest");
+        let replaced = empty.with_workspace_packages(packages.clone());
+        assert_eq!(
+            replaced.cache_digest(),
+            first,
             "replacing the package table must reset the memoized digest"
         );
-        let fresh = TsAliasMap::workspace_packages_only(&root, packages);
         assert_eq!(
-            fresh.cache_digest(),
-            with_packages.cache_digest(),
-            "the memo must equal a digest computed from scratch"
+            computations(),
+            start + 3,
+            "the empty map and the replaced map each render once"
         );
         let _ = fs::remove_dir_all(&root);
     }
