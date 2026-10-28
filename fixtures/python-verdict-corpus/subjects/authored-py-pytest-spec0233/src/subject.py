@@ -174,3 +174,7 @@ def perr_exc_length(text):
 def on_parse(text, handler):
     handler(int(text))
     return handler
+
+
+def label_key_lambda(x):
+    return sorted(x, key=lambda: 0) + [1]

@@ -1,0 +1,4 @@
+[package]
+name = "rust_diverging_call_error_side"
+version = "0.1.0"
+edition = "2024"

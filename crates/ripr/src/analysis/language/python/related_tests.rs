@@ -1,11 +1,13 @@
 use super::PythonFramework;
 use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion};
+use super::fixtures::literal_owner_instance_fixture;
 use super::source_utils::normalized_path;
 use super::{
     PythonImport, PythonOwner, PythonTest, first_python_string_literal, line_prefix_before,
     python_callee_start_has_boundary, python_prefix_hides_code, python_string_literal_value,
 };
 use crate::domain::{ExposureClass, OracleKind, OracleStrength, OwnerKind, RelatedTest};
+use rayon::prelude::*;
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
@@ -126,23 +128,97 @@ pub(super) struct PythonRepairPlacement {
     pub(super) location_reason: &'static str,
 }
 
+/// Owner-level candidates already computed in one diff run (#10750). They
+/// depend only on the owner and the run's tests, so every changed line of an
+/// owner shares one scan instead of repeating it per line. A memo belongs to
+/// one `all_tests` slice; the lifetime ties its candidates to it.
+#[derive(Default)]
+pub(super) struct RelatedCandidateMemo<'a> {
+    by_owner: HashMap<OwnerKey, Vec<PythonRelatedCandidate<'a>>>,
+    helpers: HashMap<OwnerKey, Vec<HelperOwnerCallCandidate<'a>>>,
+}
+
+type OwnerKey = (PathBuf, usize, usize, String);
+
+fn owner_key(owner: &PythonOwner) -> OwnerKey {
+    (
+        owner.file.clone(),
+        owner.start_line,
+        owner.end_line,
+        owner.qualified_name.clone(),
+    )
+}
+
+impl<'a> RelatedCandidateMemo<'a> {
+    pub(super) fn candidates(
+        &mut self,
+        owner: &PythonOwner,
+        all_tests: &'a [PythonTest],
+    ) -> Vec<PythonRelatedCandidate<'a>> {
+        self.by_owner
+            .entry(owner_key(owner))
+            .or_insert_with(|| related_test_candidates(owner, all_tests))
+            .clone()
+    }
+
+    /// [`helper_owner_call_candidates`] for the owner, once per run: an owner
+    /// no test relates to directly otherwise rescans every test through each
+    /// same-module caller on every changed line.
+    pub(super) fn helper_candidates(
+        &mut self,
+        owner: &PythonOwner,
+        owners: &[PythonOwner],
+        all_tests: &'a [PythonTest],
+    ) -> Vec<HelperOwnerCallCandidate<'a>> {
+        self.helpers
+            .entry(owner_key(owner))
+            .or_insert_with(|| helper_owner_call_candidates(owner, owners, all_tests))
+            .clone()
+    }
+}
+
+// Full relation scans on this thread, so a test can pin one scan per owner
+// rather than one per changed line (#10750).
+#[cfg(test)]
+thread_local! {
+    pub(super) static RELATED_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Below this many tests the relation scan stays on the calling thread.
+const PARALLEL_RELATION_MIN_TESTS: usize = 512;
+
 pub(super) fn related_test_candidates<'a>(
     owner: &PythonOwner,
     all_tests: &'a [PythonTest],
 ) -> Vec<PythonRelatedCandidate<'a>> {
-    let mut candidates: Vec<PythonRelatedCandidate<'a>> = all_tests
-        .iter()
-        .filter_map(|test| {
-            related_test_relation(test, owner).map(|relation| PythonRelatedCandidate {
-                test,
-                relation: if super::test_activation::activation_control(test).is_some() {
-                    PythonRelationKind::ActivationLimited
-                } else {
-                    relation
-                },
-            })
+    #[cfg(test)]
+    RELATED_SCANS.with(|scans| scans.set(scans.get() + 1));
+    let relate = |test: &'a PythonTest| {
+        related_test_relation(test, owner).map(|relation| PythonRelatedCandidate {
+            test,
+            relation: if super::test_activation::activation_control(test).is_some() {
+                PythonRelationKind::ActivationLimited
+            } else {
+                relation
+            },
         })
-        .collect();
+    };
+    // Every changed line of a large workspace scans every test (#10750:
+    // pandas, ~23k tests). The relation is per-test and pure, and the sort
+    // below fixes the order, so a large scan runs on the rayon workers.
+    let mut candidates: Vec<PythonRelatedCandidate<'a>> = if all_tests.len()
+        >= PARALLEL_RELATION_MIN_TESTS
+    {
+        let token = crate::analysis::cancellation::current_token();
+        all_tests
+            .par_iter()
+            .filter_map(|test| {
+                crate::analysis::cancellation::with_optional_token(token.as_ref(), || relate(test))
+            })
+            .collect()
+    } else {
+        all_tests.iter().filter_map(relate).collect()
+    };
     sort_related_candidates(&mut candidates);
     candidates
 }
@@ -168,6 +244,7 @@ const MAX_HELPER_CALLER_DEPTH: usize = 3;
 
 /// A weak `helper_owner_call` candidate and the same-module caller the test
 /// calls (`Version.__init__` for `_validate_epoch`).
+#[derive(Clone)]
 pub(super) struct HelperOwnerCallCandidate<'a> {
     pub(super) candidate: PythonRelatedCandidate<'a>,
     pub(super) caller: String,
@@ -332,6 +409,11 @@ pub(super) fn verify_command_for_test(test: &PythonTest) -> Option<String> {
 /// grammars are testable anywhere (#4378 pattern).
 pub(super) fn verify_command_for_test_on(test: &PythonTest, windows: bool) -> Option<String> {
     let path = normalized_path(&test.file);
+    // A doctest example is synthesized under a path no file has (rule 26);
+    // pytest has no node for it, so no command is advertised.
+    if path.starts_with("tests/__doctest__/") {
+        return None;
+    }
     match test.framework {
         PythonFramework::Pytest => {
             let node = test.qualified_name.replace('.', "::");
@@ -1588,12 +1670,12 @@ fn import_alias_calls_owner(test: &PythonTest, owner: &PythonOwner) -> bool {
                 && !test_rebinds_import_alias(test, &import.alias)
                 && contains_attribute_call(&test.body_text, &import.alias, &owner.name))
             || (!is_method_owner
-                && !test_rebinds_import_alias(test, &import.alias)
                 && submodule_receivers(import, owner, &test.file)
                     .iter()
                     .any(|receiver| {
                         contains_attribute_call(&test.body_text, receiver, &owner.name)
-                    }))
+                    })
+                && !test_rebinds_import_alias(test, &import.alias))
     })
 }
 
@@ -2757,7 +2839,7 @@ pub(super) fn owner_method_bound_locals(
             locals.push(var);
         }
     }
-    for path in setup_bound_receivers(test, owner, class, method) {
+    for path in instance_bound_receivers(test, owner, class, method) {
         if !locals.contains(&path) {
             locals.push(path);
         }
@@ -2786,6 +2868,34 @@ pub(super) fn setup_bound_receivers(
         .filter(|receiver| contains_attribute_call(&test.body_text, &receiver.path, method))
         .map(|receiver| receiver.path.clone())
         .collect()
+}
+
+/// Receivers that already hold an instance of the owner class when the test
+/// body starts and that the body calls `method` on: setup-hook paths
+/// ([`setup_bound_receivers`]) and fixture parameters whose fixture returns a
+/// fresh literal-built instance of the class (#9619).
+fn instance_bound_receivers(
+    test: &PythonTest,
+    owner: &PythonOwner,
+    class: &str,
+    method: &str,
+) -> Vec<String> {
+    let mut receivers = setup_bound_receivers(test, owner, class, method);
+    let owner_class = owner
+        .qualified_name
+        .rsplit_once('.')
+        .map(|(class, _)| class);
+    if owner_class == Some(class) {
+        for fixture in &test.fixtures {
+            if literal_owner_instance_fixture(test, owner, fixture)
+                && contains_attribute_call(&test.body_text, fixture, method)
+                && !receivers.contains(fixture)
+            {
+                receivers.push(fixture.clone());
+            }
+        }
+    }
+    receivers
 }
 
 /// Whether the assertion text calls `.method(` only on receivers that are not
@@ -2874,7 +2984,7 @@ pub(super) fn strong_test_calls_owner_method_on_bound_receiver(
             super::test_activation::activation_control(test).is_none()
                 && (owner_class_locals(test, owner, class).iter().any(|local| {
                     body_calls_method_on_owner_bound_receiver(&test.body_text, local, method)
-                }) || !setup_bound_receivers(test, owner, class, method).is_empty())
+                }) || !instance_bound_receivers(test, owner, class, method).is_empty())
         })
     })
 }
@@ -2999,12 +3109,14 @@ fn test_references_module_symbol(test: &PythonTest, owner: &PythonOwner, symbol:
             return !test_binds_local(test, &import.alias)
                 && contains_name_reference(body, &import.alias);
         }
-        !test_binds_local(test, &import.alias)
-            && ((imported_module_matches_owner(import, owner, &test.file)
-                && contains_member_reference(body, &import.alias, symbol))
-                || submodule_receivers(import, owner, &test.file)
-                    .iter()
-                    .any(|receiver| contains_member_reference(body, receiver, symbol)))
+        // The module match is cheap and almost always false; the binding
+        // scan reads the whole body, so it runs only for a matching import.
+        ((imported_module_matches_owner(import, owner, &test.file)
+            && contains_member_reference(body, &import.alias, symbol))
+            || submodule_receivers(import, owner, &test.file)
+                .iter()
+                .any(|receiver| contains_member_reference(body, receiver, symbol)))
+            && !test_binds_local(test, &import.alias)
     })
 }
 

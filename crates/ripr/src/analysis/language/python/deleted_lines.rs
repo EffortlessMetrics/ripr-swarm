@@ -11,6 +11,7 @@
 use super::classify::{
     ChangeSite, classify_change_for_owner_with_value_origins, is_python_declaration_line,
 };
+use super::related_tests::RelatedCandidateMemo;
 use super::{
     ChangedFile, Finding, PythonNoBehaviorContext, PythonOwner, PythonTest, is_python_import_line,
     is_python_no_behavior_line, is_python_structural_line, line_is_in_ranges, normalized_path,
@@ -62,15 +63,16 @@ pub(super) type NewSource<'a> = Option<&'a str>;
     clippy::too_many_arguments,
     reason = "deleted-line inputs plus explicit producer origin context"
 )]
-pub(super) fn deleted_line_findings_with_value_origins(
+pub(super) fn deleted_line_findings_with_value_origins<'a>(
     changed: &ChangedFile,
     counterparts: &BTreeMap<usize, &ChangedLine>,
     old_side: &OldSideRanges<'_>,
     new_source: NewSource<'_>,
     owners: &[PythonOwner],
-    tests: &[PythonTest],
+    tests: &'a [PythonTest],
     findings: &[Finding],
     value_origins: &mut crate::value_origins::ValueOrigins,
+    related: &mut RelatedCandidateMemo<'a>,
 ) -> Vec<Finding> {
     let paired: BTreeSet<usize> = counterparts.values().map(|removed| removed.line).collect();
     // Removed headers an added header replaced: the owner they open lives on.
@@ -135,6 +137,7 @@ pub(super) fn deleted_line_findings_with_value_origins(
             // off here.
             None,
             Some(&mut finding_origins),
+            Some(&mut *related),
         ) else {
             continue;
         };

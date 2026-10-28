@@ -2,10 +2,15 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/rust_wrapper_unicode_macro_suffix/input
 
-Summary: 2 probe(s), 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 2 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+Summary: 2 changed behavior(s) checked: 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 2 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
 
 Analysis outcome: findings below (analysis complete; complete_with_findings)
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
 
 Shared evidence and guidance
   E1 [findings 1, 2]: reach yes: Related tests appear to reach is_bulk: wrapper_pins_the_boundary
@@ -26,11 +31,12 @@ Finding 1: NOTE ./src/lib.rs:2
 Changed
   before: qty >= 10
   after:  10 <= qty
-Probe
+Change type
+  a condition or comparison changed
   family: predicate
-  delta:  control
+  delta:  control (changes which code path runs)
   owner:  src/lib.rs::is_bulk
-  canonical gap: gap:rust:src/lib.rs:is_bulk:predicate_boundary:predicate:10==qty
+  gap id (for scripts): gap:rust:src/lib.rs:is_bulk:predicate_boundary:predicate:10==qty
 Static exposure
   propagation_unknown (note, confidence 0.66)
 Evidence
@@ -41,9 +47,9 @@ Evidence
   shared evidence: E4, E5, E6, E7, E8, E9, E10, E11
 Weakness
   - Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact oracle do not establish that discriminator
-  - No clear propagation path from changed behavior to an observable sink
+  - ripr could not follow the changed value to something a test can check (a return value or side effect)
 Stop reasons:
-  - propagation_evidence_unknown — ripr could not tell whether the changed value flows to something a test observes
+  - ripr could not tell whether the changed value flows to something a test observes (propagation_evidence_unknown)
     Next: Assert on the value the change flows into (the return value or an observable field), not only on success.
 Next step
   shared guidance: N1
@@ -56,24 +62,25 @@ Finding 2: NOTE ./src/lib.rs:2
 Changed
   before: qty >= 10
   after:  10 <= qty
-Probe
+Change type
+  a returned value changed
   family: return_value
-  delta:  value
+  delta:  value (changes a computed value)
   owner:  src/lib.rs::is_bulk
-  canonical gap: gap:rust:src/lib.rs:is_bulk:return_value:return_value:10<=qty
+  gap id (for scripts): gap:rust:src/lib.rs:is_bulk:return_value:return_value:10<=qty
 Static exposure
   propagation_unknown (note, confidence 0.66)
 Evidence
   shared evidence: E1
   - infection yes: Reachable tests can plausibly activate this changed behavior
   shared evidence: E2, E3
-  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression
+  - discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression
   shared evidence: E4, E5, E6, E7, E8, E9, E10, E11
 Weakness
-  - No clear propagation path from changed behavior to an observable sink
+  - ripr could not follow the changed value to something a test can check (a return value or side effect)
   - No strong discriminator was detected
 Stop reasons:
-  - propagation_evidence_unknown — ripr could not tell whether the changed value flows to something a test observes
+  - ripr could not tell whether the changed value flows to something a test observes (propagation_evidence_unknown)
     Next: Assert on the value the change flows into (the return value or an observable field), not only on success.
 Next step
   shared guidance: N1

@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 0000000..0000000 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -39,7 +39,7 @@
+     x * RATE
+ }
+ 
+-pub const WINDOW: u32 = 30;
++pub const WINDOW: u32 = 31;
+ 
+ #[cfg(windows)]
+ pub fn in_window(n: u32) -> bool {

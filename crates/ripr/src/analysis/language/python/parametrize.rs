@@ -19,9 +19,9 @@
 //! caller keeps today's unresolved behavior. A case value is kept as source
 //! text; the caller decides whether it is a literal.
 
-use super::expr_full_name;
-use super::module_constants::body_bound_names;
+use super::module_constants::{PythonModuleNames, body_bound_names};
 use super::source_utils::text_for_range;
+use super::{PythonImport, expr_full_name};
 use rustpython_parser::ast::{self, Expr, Ranged};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -103,52 +103,243 @@ pub(super) fn parametrize_cases(
     (any && !product.is_empty()).then_some(PythonParametrizeCases { cases: product })
 }
 
-/// Argnames a pytest parametrize decorator supplies directly to the test,
-/// read syntactically and independent of the literal-cases parser (which
-/// gives up on variable argvalues, `pytest.param(marks=...)`, large products
-/// and any `indirect=`). An argname is excluded only when `indirect=` is the
-/// literal `True` or a literal list naming it; any other `indirect` value is
-/// treated as not routing to a fixture, so the name is not resolved as one.
-pub(super) fn direct_argnames(decorators: &[Expr]) -> Vec<String> {
-    let mut direct = Vec::new();
+/// How a parametrize argname reaches the test, read from `indirect=`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Routing {
+    /// pytest passes the value to the test (no `indirect=`, literal `False`
+    /// or `None`, or a literal string list that omits the name).
+    Direct,
+    /// Literal `True` or a literal string list naming it: the value goes to
+    /// the fixture of that name.
+    Routed,
+    /// A value the read cannot settle (`indirect=IND`, a computed list, a
+    /// non-boolean constant): either may happen (#10685).
+    Unsettled,
+}
+
+/// The names a test's parametrize decorators may lean on (#10685): the
+/// imports in effect where the test is defined, the module's never-rebound
+/// names and `NAME = <value>` bindings, and the names the enclosing class
+/// body binds (empty at module scope; a class body is looked up before the
+/// module).
+#[derive(Clone, Copy)]
+pub(super) struct ParametrizeScope<'a> {
+    pub(super) imports: &'a [PythonImport],
+    pub(super) module_values: &'a PythonModuleNames<'a>,
+    pub(super) class_names: &'a [String],
+    /// The enclosing class body binds names the walk cannot enumerate.
+    pub(super) class_opaque: bool,
+}
+
+impl<'a> ParametrizeScope<'a> {
+    /// The module value a bare name in a decorator evaluates to: bound once,
+    /// before the decorator runs, and not shadowed by the class body.
+    fn module_value(&self, name: &str, use_offset: usize) -> Option<&'a Expr> {
+        if self.class_shadows(name) {
+            return None;
+        }
+        self.module_values
+            .values
+            .iter()
+            .find(|value| value.name == name && value.offset < use_offset)
+            .map(|value| value.value)
+    }
+
+    /// The enclosing class body binds `name` (or binds names the walk
+    /// cannot enumerate), so it is looked up there, not in the module.
+    fn class_shadows(&self, name: &str) -> bool {
+        self.class_opaque || self.class_names.iter().any(|bound| bound == name)
+    }
+
+    /// `expr` with one bare-name indirection read through the module.
+    fn resolve<'e>(&self, expr: &'e Expr) -> &'e Expr
+    where
+        'a: 'e,
+    {
+        match expr {
+            Expr::Name(name) => self
+                .module_value(name.id.as_str(), usize::from(name.range.start()))
+                .unwrap_or(expr),
+            _ => expr,
+        }
+    }
+
+    /// [`Self::resolve`] for argnames and `indirect`, which pytest reads
+    /// when the decorator runs: a module list (or other mutable display)
+    /// may have changed by then (`IND = []; IND.append("q")`), so only a
+    /// constant or a tuple is read through the name.
+    fn resolve_value<'e>(&self, expr: &'e Expr) -> &'e Expr
+    where
+        'a: 'e,
+    {
+        match self.resolve(expr) {
+            value @ (Expr::Constant(_) | Expr::Tuple(_)) => value,
+            _ => expr,
+        }
+    }
+
+    /// Whether `func` names pytest's own `parametrize`. A root an import
+    /// binds (`import pytest as pt`, `from pytest import mark as m`)
+    /// resolves through it when the module binds the root only there and
+    /// the class body does not rebind it; a module alias of the callee
+    /// (`parametrize = pytest.mark.parametrize`) reads through once. A root
+    /// no import binds keeps the canonical spellings
+    /// [`is_parametrize_name`] accepts.
+    fn parametrize_kind(&self, func: &Expr) -> Option<MarkKind> {
+        let func = self.resolve(func);
+        if !matches!(func, Expr::Name(_) | Expr::Attribute(_)) {
+            return None;
+        }
+        let name = expr_full_name(func)?;
+        let canonical = is_parametrize_name(&name);
+        // A spelling pytest's own mark could have, whose root the read
+        // cannot pin: its argnames still count toward the fixture limit
+        // and make no fixture edge.
+        let unsettled = canonical.then_some(MarkKind::Unsettled);
+        let (root, tail) = name.split_once('.').unwrap_or((name.as_str(), ""));
+        if self.class_shadows(root) {
+            return unsettled;
+        }
+        let Some(import) = self
+            .imports
+            .iter()
+            .rev()
+            .find(|import| import.alias == root)
+        else {
+            return canonical.then_some(MarkKind::Pytest);
+        };
+        let mut resolved = if import.source_module.is_empty() {
+            import.imported.clone()
+        } else {
+            format!("{}.{}", import.source_module, import.imported)
+        };
+        if !tail.is_empty() {
+            resolved.push('.');
+            resolved.push_str(tail);
+        }
+        if resolved != "pytest.mark.parametrize" {
+            return unsettled;
+        }
+        if self.module_values.holds(root) {
+            Some(MarkKind::Pytest)
+        } else {
+            Some(MarkKind::Unsettled)
+        }
+    }
+
+    /// The pytest parametrize call a decorator applies, and how certain
+    /// the read is: the decorator itself, or the call a module name holds
+    /// (`cases = pytest.mark.parametrize(...)`; `@cases`).
+    fn parametrize_call<'e>(&self, decorator: &'e Expr) -> Option<(&'e ast::ExprCall, MarkKind)>
+    where
+        'a: 'e,
+    {
+        match self.resolve(decorator) {
+            Expr::Call(call) => Some((call, self.parametrize_kind(&call.func)?)),
+            _ => None,
+        }
+    }
+}
+
+/// Whether a parametrize decorator is pytest's own mark.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MarkKind {
+    Pytest,
+    /// It may be pytest's mark or another `parametrize`: every argname is
+    /// [`Routing::Unsettled`].
+    Unsettled,
+}
+
+/// Whether any decorator applies pytest's parametrize through an alias or a
+/// module name that the spelling check in `is_parametrized` cannot see.
+pub(super) fn applies_parametrize(decorators: &[Expr], scope: ParametrizeScope<'_>) -> bool {
+    decorators
+        .iter()
+        .any(|decorator| scope.parametrize_call(decorator).is_some())
+}
+
+/// Each argname of the test's pytest parametrize decorators with its
+/// routing, read syntactically and independent of the literal-cases parser
+/// (which gives up on variable argvalues, `pytest.param(marks=...)`, large
+/// products and any `indirect=`).
+fn argname_routings(decorators: &[Expr], scope: ParametrizeScope<'_>) -> Vec<(String, Routing)> {
+    let mut found = Vec::new();
     for decorator in decorators {
-        let Expr::Call(call) = decorator else {
+        let Some((call, kind)) = scope.parametrize_call(decorator) else {
             continue;
         };
-        if !expr_full_name(&call.func).is_some_and(|name| is_parametrize_name(&name)) {
-            continue;
-        }
         let mut argnames = call.args.first();
-        let mut indirect = None;
+        // `indirect` is the third positional parameter of
+        // `parametrize(argnames, argvalues, indirect, ids, scope)`.
+        let mut indirect = call.args.get(2);
+        // A `*args` or `**kwargs` splat may carry `indirect` unseen.
+        let mut splat = call.args.iter().any(|arg| matches!(arg, Expr::Starred(_)));
         for keyword in &call.keywords {
             match keyword.arg.as_ref().map(|arg| arg.as_str()) {
                 Some("argnames") => argnames = Some(&keyword.value),
                 Some("indirect") => indirect = Some(&keyword.value),
+                None => splat = true,
                 _ => {}
             }
         }
-        let Some((names, _)) = argnames.and_then(argnames_list) else {
+        let Some((names, _)) = argnames.and_then(|expr| argnames_list(scope.resolve_value(expr)))
+        else {
             continue;
         };
         for name in names {
-            if !indirect.is_some_and(|value| indirect_routes(value, &name)) {
-                direct.push(name);
-            }
+            let routing = if splat || kind == MarkKind::Unsettled {
+                Routing::Unsettled
+            } else {
+                indirect.map_or(Routing::Direct, |value| {
+                    indirect_routing(scope.resolve_value(value), &name)
+                })
+            };
+            found.push((name, routing));
         }
     }
-    direct
+    found
 }
 
-/// Whether a literal `indirect=` value routes `name` to its fixture.
-fn indirect_routes(value: &Expr, name: &str) -> bool {
-    let listed = |elements: &[Expr]| {
-        string_elements(elements).is_some_and(|names| names.iter().any(|listed| listed == name))
+/// Argnames not definitely routed to a fixture. They are never resolved as
+/// fixtures, so a fixture of the same name makes no `fixture_owner_call`
+/// edge unless `indirect=` literally routes to it (RIPR-SPEC-0028).
+pub(super) fn direct_argnames(decorators: &[Expr], scope: ParametrizeScope<'_>) -> Vec<String> {
+    argname_routings(decorators, scope)
+        .into_iter()
+        .filter(|(_, routing)| *routing != Routing::Routed)
+        .map(|(name, _)| name)
+        .collect()
+}
+
+/// Argnames whose `indirect=` value the read cannot settle. pytest may pass
+/// them through a fixture that changes the value, so they still count
+/// toward `unresolved_pytest_fixture` (RIPR-SPEC-0238 L8, #10685).
+pub(super) fn unsettled_indirect_argnames(
+    decorators: &[Expr],
+    scope: ParametrizeScope<'_>,
+) -> Vec<String> {
+    argname_routings(decorators, scope)
+        .into_iter()
+        .filter(|(_, routing)| *routing == Routing::Unsettled)
+        .map(|(name, _)| name)
+        .collect()
+}
+
+fn indirect_routing(value: &Expr, name: &str) -> Routing {
+    let listed = |elements: &[Expr]| match string_elements(elements) {
+        Some(names) if names.iter().any(|listed| listed == name) => Routing::Routed,
+        Some(_) => Routing::Direct,
+        None => Routing::Unsettled,
     };
     match value {
-        Expr::Constant(constant) => matches!(constant.value, ast::Constant::Bool(true)),
+        Expr::Constant(constant) => match constant.value {
+            ast::Constant::Bool(true) => Routing::Routed,
+            ast::Constant::Bool(false) | ast::Constant::None => Routing::Direct,
+            _ => Routing::Unsettled,
+        },
         Expr::List(list) => listed(&list.elts),
         Expr::Tuple(tuple) => listed(&tuple.elts),
-        _ => false,
+        _ => Routing::Unsettled,
     }
 }
 
@@ -162,6 +353,10 @@ fn is_parametrize_name(name: &str) -> bool {
 
 /// The cases of one `parametrize(argnames, argvalues, ...)` call.
 fn decorator_cases(source: &str, call: &ast::ExprCall) -> Option<Vec<Vec<(String, String)>>> {
+    // A third positional argument is `indirect`; a splat may hide one.
+    if call.args.len() > 2 || call.args.iter().any(|arg| matches!(arg, Expr::Starred(_))) {
+        return None;
+    }
     let mut argnames = call.args.first();
     let mut argvalues = call.args.get(1);
     for keyword in &call.keywords {

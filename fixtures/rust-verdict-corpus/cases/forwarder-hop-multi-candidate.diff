@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -88,7 +88,7 @@
+ 
+ impl Left {
+     pub fn try_halve(&mut self, wanted: usize) -> Result<bool, Overflow> {
+-        if wanted > 4 {
++        if wanted >= 4 {
+             self.halves += 1;
+             return Ok(true);
+         }

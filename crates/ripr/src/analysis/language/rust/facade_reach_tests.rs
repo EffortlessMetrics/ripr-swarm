@@ -113,7 +113,7 @@ struct Setup {
     owner_visibility: &'static str,
     layout: Layout,
     mode: AnalysisMode,
-    /// An unparseable manifest that makes the dependency graph Limited.
+    /// An unparseable workspace-member manifest that makes the dependency graph Limited.
     broken_manifest: bool,
     /// Extra test file in the OWNER's own package.
     owner_package_test: Option<&'static str>,
@@ -145,9 +145,18 @@ fn finding_for(setup: &Setup) -> Result<Finding, String> {
     let root: PathBuf =
         std::env::temp_dir().join(format!("ripr-facade-reach-{}-{stamp}", setup.label));
     let dir = setup.facade_dir;
+    // The broken manifest is selected by `members`: an unparsable manifest
+    // outside every member would not limit the graph.
+    let broken_member = if setup.broken_manifest {
+        ", \"broken\""
+    } else {
+        ""
+    };
     write(
         &root.join("Cargo.toml"),
-        &format!("[workspace]\nmembers = [\"inner\", \"{dir}\"]\nresolver = \"2\"\n"),
+        &format!(
+            "[workspace]\nmembers = [\"inner\", \"{dir}\"{broken_member}]\nresolver = \"2\"\n"
+        ),
     )?;
     write(
         &root.join("inner/Cargo.toml"),

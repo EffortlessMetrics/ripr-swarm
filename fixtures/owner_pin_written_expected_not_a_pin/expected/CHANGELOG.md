@@ -121,3 +121,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — owner_pin_written_expected_not_a_pin (11)
+
+Reason:
+RIPR-SPEC-0122: plain-language wording for the default and human-full check views (#10691); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless owner_pin_written_expected_not_a_pin --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
