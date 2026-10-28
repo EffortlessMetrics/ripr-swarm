@@ -169,6 +169,7 @@
     },
     {
       "id": "probe:web_discount.ts:typescript_preview:55f72c10",
+      "canonical_gap_id": "gap:typescript:typescript_preview:55f72c10",
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.40,

@@ -1217,6 +1217,7 @@ mod tests {
                         arguments: vec!["l".to_string()],
                         receiver: None,
                         through_macro,
+                        module_qualified: false,
                         transparent_macros_rebound: false,
                         diverging_handlers: Vec::new(),
                     }

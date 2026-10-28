@@ -8,7 +8,7 @@
   },
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "predicate_boundary",
-  "test_shape": "helper_chain_path_qualified_call_site",
+  "test_shape": "helper_chain_path_qualified_accept",
   "hard_case": null,
   "truth": {
     "state": "discriminated",
@@ -40,7 +40,7 @@
       "silent"
     ]
   },
-  "reasoning": "classify_path reaches wide_p as meter::wide_p(input), a path-qualified call site. The abcd and abc rows fail both mutants of the helper's comparison. Spec cells: RIPR-SPEC-0159#5.",
+  "reasoning": "Accept shape of RIPR-SPEC-0159#5: classify_path reaches wide_p as meter::wide_p(input), a path-qualified call whose qualifier names the child module `meter` that defines wide_p, so the hop binds as reach only. The abcd and abc rows fail both mutants of the helper's comparison. The reject shape (an imported first segment) is spec-b-0159-path-qualified-imported-module. Spec cells: RIPR-SPEC-0159#5.",
   "labeling_observation": {
     "ripr_commit": "f88e3952",
     "full_checkout_verdict": "limited",

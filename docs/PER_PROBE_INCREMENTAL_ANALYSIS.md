@@ -200,10 +200,18 @@ Rows contain a probe id when representable, reads grouped by kind/subject/site
 and count, `universe_observed`, and observed/dropped event counts. Repeated
 reads at one site are counted. Identity and subject text is retained only when
 UTF-8 and at most 512 bytes; it is never truncated into another path. At most
-64 distinct read entries are retained per invocation. The JSON body is capped
+64 distinct read entries are retained per invocation. Reads past that detail
+cap are not lost from the row: `sites` carries, for each kind and calling
+site, the event count and the number of distinct subjects (a hash count, kept
+for at most 8192 subjects per site, after which `distinct_is_lower_bound` is
+true; a hash collision can undercount by one and is not specified further; a
+site first seen after 64 sites are held is not recorded, only its events are
+added to `dropped_site_events`). These
+totals say how many different facts a site read; they do not name them or seal
+what they were derived from. The JSON body is capped
 at 32 KiB; if its escaped encoding exceeds that bound, all read detail is
-omitted with an explicit flag and dropped-event count. The whole-set flag
-survives either bound. A failed stderr write may leave missing or incomplete
+omitted with an explicit flag and dropped-event count; `sites` is kept. The
+whole-set flag survives either bound. A failed stderr write may leave missing or incomplete
 trace data; it does not change analysis or panic. Reject an incomplete JSON
 line rather than counting it as a finished observation.
 

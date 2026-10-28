@@ -1554,12 +1554,36 @@ fn an_indirect_parametrize_argname_is_an_unresolved_fixture() -> Result<(), Stri
             );
         }
     }
+    // Marks pytest refuses at collection (#10867): the test never runs, so
+    // it carries the collection-error activation control and lends nothing.
+    for mark in [
+        ", indirect=None",
+        ", indirect=[\"other\"]",
+        ", indirect=(\"quantity\", \"other\")",
+    ] {
+        for (shape, tests) in [("module", module(mark)), ("class", class(mark))] {
+            assert_eq!(
+                limit(&tests)?,
+                Some(crate::domain::StaticLimitKind::DecoratorIndirection),
+                "{shape}{mark}"
+            );
+        }
+    }
+    // A mark the read cannot pin to pytest (`import mylib as pytest`) is not
+    // a pytest collection error: its argname stays an unsettled fixture.
+    for mark in [", indirect=None", ", indirect=[\"other\"]"] {
+        let tests = module(mark).replace("import pytest\n", "import mylib as pytest\n");
+        assert_eq!(
+            limit(&tests)?,
+            Some(crate::domain::StaticLimitKind::UnresolvedPytestFixture),
+            "mylib{mark}"
+        );
+    }
     // Control: values that leave the name direct keep it a pytest value.
     for mark in [
         ", indirect=False",
-        ", indirect=None",
-        ", indirect=[\"other\"]",
         ", indirect=()",
+        ", indirect=[]",
         ", False",
     ] {
         for (shape, tests) in [("module", module(mark)), ("class", class(mark))] {

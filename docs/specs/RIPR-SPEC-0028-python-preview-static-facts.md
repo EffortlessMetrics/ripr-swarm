@@ -758,7 +758,9 @@ list/tuple argvalues literal with rows of the right arity (`pytest.param(...)`
 unwrapped), stacked decorators as a product of at most 256 cases. A
 single-name list/tuple argnames takes tuple rows, as pytest unpacks them.
 Another decorator named `parametrize` (a plugin or project helper) records
-no cases. Argvalues named by a variable, `indirect=`, starred rows, a `pytest.param`
+no cases; the mark is read through imports and module names as
+RIPR-SPEC-0238 L8 describes, and a mark whose root that read cannot pin to
+pytest records none for the whole test (#10867). Argvalues named by a variable, `indirect=`, starred rows, a `pytest.param`
 with any keyword but `id=` (a `marks=` skip or xfail case may never run), a
 unittest method (pytest does not parametrize it), and an argname the test
 body may rebind leave the call unresolved. A test whose first statement after
