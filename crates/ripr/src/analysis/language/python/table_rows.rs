@@ -223,6 +223,7 @@ fn observed_literal_sibling_change(
         || !old_line.trim().starts_with("return ")
         || !new_line.trim().starts_with("return ")
         || test.parametrize.is_none()
+        || !test.simple_literal_parametrize
         || test.decorators.len() != 1
         || !test
             .fixtures

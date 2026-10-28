@@ -2367,6 +2367,14 @@ fn factor_swap_sibling_proof_refuses_unobserved_or_uncertain_rows() -> Result<()
             "{signature}"
         );
     }
+    let extra_option = format!(
+        "{}    assert area(a, b) == want\n",
+        prefix.replace("(3.0, 1))])", "(3.0, 1))], scope=\"invalid\")")
+    );
+    assert_ne!(
+        classify(owner, 2, "    return (a * b, 1)", &extra_option)?,
+        ExposureClass::Exposed
+    );
     Ok(())
 }
 
