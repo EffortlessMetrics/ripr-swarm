@@ -7,7 +7,7 @@
   "retained_files": [
     {
       "path": "pyproject.toml",
-      "sha256": "d9ee74a76cce5b625a3a64fd726253cceb0691584d6db1c18b75a7f1139b48b5"
+      "sha256": "48ce15335db477ebe394aca7d62922c86e74bcb0be95c01e65ab49ad03db93ce"
     },
     {
       "path": "src/__init__.py",
@@ -18,12 +18,44 @@
       "sha256": "54f4b82eddcbe3c593ab832cecd66f90c4995936259b45fd115de17f1b064868"
     },
     {
+      "path": "src/extra.py",
+      "sha256": "3d9d2dd5e888014bdd049c4b28b021f0d2e1d960c7df9f1a813806522534d3a4"
+    },
+    {
       "path": "tests/__init__.py",
       "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
     {
       "path": "tests/test_arrays.py",
       "sha256": "665e69dbaf682507744858b0e224dad77d28ae99221ca6b022390773fb3910dd"
+    },
+    {
+      "path": "tests/test_mirror.py",
+      "sha256": "86d2d87e346e68dfb51126ef8f21c9972c871c40db09e3e208a6b06ac0740ee3"
+    },
+    {
+      "path": "tests/test_narrow.py",
+      "sha256": "3c8a8a64fcec2a2bec137fa6a5dd518b87aafb26fa408496e0e6c81312143e5c"
+    },
+    {
+      "path": "tests/test_pair.py",
+      "sha256": "ec1319cc0c8a1cc9fc7449b2317c9485d38e2f3f57642a74a6fbaeec5b84997f"
+    },
+    {
+      "path": "tests/test_patched.py",
+      "sha256": "44bc551ea070d9b1ac63cd2b4895e3ab197238bacc5f3d53f64c2e4dfe946716"
+    },
+    {
+      "path": "tests/test_scaled.py",
+      "sha256": "ace26cd04cf85b7e2fc744a5e228c6ab1d815106bba0d913441b5e6e434bf6bf"
+    },
+    {
+      "path": "tests/test_total.py",
+      "sha256": "456ac77a8ce2acda7228ff2912ddb03131d17456596ae9c91d33ae050651f630"
+    },
+    {
+      "path": "tests/test_widen.py",
+      "sha256": "0c1d5c5d02204e0ac3402d5b628a9295d0b96b2a0c85e755f8c82e2b9023d2e0"
     }
   ]
 }

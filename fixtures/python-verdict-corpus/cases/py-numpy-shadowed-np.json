@@ -1,0 +1,37 @@
+{
+  "case_id": "py-numpy-shadowed-np",
+  "subject_id": "authored-py-pytest-numpy",
+  "diff": "cases/py-numpy-shadowed-np.diff",
+  "anchor": {
+    "file": "src/extra.py",
+    "line": 14
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "arithmetic_constant",
+  "test_shape": "numpy_name_defined_in_test_file",
+  "hard_case": "False-credit trap: the test looks like it checks the owner but cannot notice a change to it.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.11.15, pytest 9.2.0, numpy 2.4.6, assertpy 1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return [int(text) + 2]",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the owner returns [3] instead of [2] for \"1\"; the test file's own `np.testing.assert_array_equal` does nothing"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "Trap: `np` is a test-local object whose `assert_array_equal` is a no-op, with no numpy import to prove otherwise.",
+  "spec_examples": []
+}

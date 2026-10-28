@@ -1,0 +1,38 @@
+{
+  "case_id": "py-numpy-assert-equal-import",
+  "subject_id": "authored-py-pytest-numpy",
+  "diff": "cases/py-numpy-assert-equal-import.diff",
+  "anchor": {
+    "file": "src/extra.py",
+    "line": 6
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "arithmetic_constant",
+  "test_shape": "numpy_assert_equal_from_import",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.11.15, pytest 9.2.0, numpy 2.4.6, assertpy 1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return (int(text) + 2, 3)",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests/test_pair.py::test_pair",
+        "equivalence_review": "not equivalent: the owner returns (3, 3) instead of (2, 3) for \"1\""
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "`assert_equal(pair(\"1\"), (2, 3))` imported with `from numpy.testing import assert_equal` pins the whole tuple, so `+ 2` fails it. Rule 28 reads the imported callable as `assert pair(\"1\") == (2, 3)`.",
+  "spec_examples": []
+}
