@@ -1582,7 +1582,7 @@ fn transitional_refusal_aliases_apply(
             return true;
         }
         // The opening may move, the line's indentation may not.
-        let indent = |line: &str| line.len() - line.trim_start().len();
+        let indent = |line: &str| line[..line.len() - line.trim_start().len()].to_string();
         if indent(old) != indent(new) {
             return false;
         }
@@ -3750,6 +3750,13 @@ mod tests {
             || transitional_refusal_aliases_apply("match_arm_blind", "human.txt", &old, &reindented)
         {
             return Err("an indentation change must not pass the alias".to_string());
+        }
+        let tabbed = gripped.replace("  no repair start", "\t no repair start");
+        if tabbed == gripped
+            || tabbed.len() != gripped.len()
+            || transitional_refusal_aliases_apply("match_arm_blind", "human.txt", &old, &tabbed)
+        {
+            return Err("an equal-length whitespace substitution must not pass".to_string());
         }
         if transitional_refusal_aliases_apply("match_arm_blind", "check.json", &old, &gripped) {
             return Err("an unlisted surface stays strict".to_string());
