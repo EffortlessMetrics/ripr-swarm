@@ -3661,6 +3661,9 @@ id = "RIPR-SPEC-0028"
 name = "Python preview static facts"
 spec = "docs/specs/RIPR-SPEC-0028-python-preview-static-facts.md"
 tests = [
+  "crates/ripr/src/analysis/language/python/tests.rs::protocol_entry_quoted_for_membership_reads_keep_receiver_credit",
+  "crates/ripr/src/analysis/language/python/tests.rs::protocol_entry_unterminated_literals_do_not_invent_receiver_credit",
+  "crates/ripr/src/analysis/language/python/tests.rs::protocol_entry_real_for_targets_still_withhold_receiver_credit",
   "crates/ripr/src/analysis/language/python/module_field_tests.rs::dynamic_namespace_reload_does_not_credit_module_object",
   "crates/ripr/src/analysis/language/python/module_field_tests.rs::dynamic_namespace_dunder_setattr_does_not_credit_module_object",
   "crates/ripr/src/analysis/language/python/module_field_tests.rs::dynamic_namespace_renamed_delattr_does_not_credit_module_object",
