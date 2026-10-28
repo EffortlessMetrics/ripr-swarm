@@ -1276,6 +1276,23 @@ fn parametrize_cases_off_boundary_are_weakly_exposed() -> Result<(), String> {
     Ok(())
 }
 
+/// A helper named `param` can return a value different from its argument.
+#[test]
+fn custom_param_helper_does_not_invent_a_boundary_input() -> Result<(), String> {
+    let tests = "import pytest\nfrom src.subject import bulk_discount\n\nclass Factory:\n    def param(self, value):\n        return 100\n\nfactory = Factory()\n\n@pytest.mark.parametrize(\"quantity\", [factory.param(50)])\ndef test_bulk_discount(quantity):\n    assert bulk_discount(quantity) == 0.15\n";
+    let finding = classify_case(
+        DISCOUNT_SOURCE,
+        tests,
+        2,
+        "    if quantity > 100:",
+        "    if quantity >= 100:",
+    )?;
+    assert_owner(&finding, "bulk_discount");
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    assert!(!observed(&finding, "quantity = 50"), "{finding:?}");
+    Ok(())
+}
+
 /// Positive control for #4559: one case on the boundary keeps `exposed`, also
 /// through a stacked decorator (the cases are the product).
 #[test]

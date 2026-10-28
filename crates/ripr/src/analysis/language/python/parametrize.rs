@@ -437,6 +437,10 @@ fn row_values(row: &Expr, arity: usize, bare_single: bool) -> Option<Vec<&Expr>>
         && expr_full_name(&call.func)
             .is_some_and(|name| name == "param" || name.ends_with(".param"))
     {
+        // Other helpers can transform values or return marked cases.
+        if expr_full_name(&call.func).is_none_or(|name| name != "pytest.param") {
+            return None;
+        }
         if call.args.iter().any(|arg| matches!(arg, Expr::Starred(_)))
             || call
                 .keywords
@@ -523,6 +527,21 @@ mod tests {
             let source = format!("{decorator}\ndef test_x(a):\n    pass\n");
             assert_eq!(cases(&source), None, "{decorator}");
         }
+    }
+
+    #[test]
+    fn unrelated_param_calls_are_not_unwrapped_as_pytest_cases() {
+        for call in ["factory.param(0)", "param(0)"] {
+            let source =
+                format!("@pytest.mark.parametrize(\"a\", [{call}])\ndef test_x(a):\n    pass\n");
+            assert_eq!(cases(&source), None, "{call}");
+        }
+        let mixed =
+            "@pytest.mark.parametrize(\"a\", [1, factory.param(0)])\ndef test_x(a):\n    pass\n";
+        assert_eq!(cases(mixed), None);
+        let source =
+            "@pytest.mark.parametrize(\"a\", [pytest.param(0)])\ndef test_x(a):\n    pass\n";
+        assert_eq!(cases(source), Some(vec![pairs(&[("a", "0")])]));
     }
 
     #[test]
