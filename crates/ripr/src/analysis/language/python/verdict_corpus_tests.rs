@@ -19,6 +19,25 @@ fn classify(
     old_line: &str,
     test_source: &str,
 ) -> Result<ExposureClass, String> {
+    classify_finding(owner, line, old_line, test_source).map(|finding| finding.class)
+}
+
+fn classify_finding(
+    owner: &str,
+    line: usize,
+    old_line: &str,
+    test_source: &str,
+) -> Result<crate::domain::Finding, String> {
+    classify_finding_with_delta(owner, line, old_line, test_source, false)
+}
+
+fn classify_finding_with_delta(
+    owner: &str,
+    line: usize,
+    old_line: &str,
+    test_source: &str,
+    sole_line_replacement: bool,
+) -> Result<crate::domain::Finding, String> {
     let mut owners = extract_owners(Path::new(OWNER_FILE), owner);
     // The workspace pass fills the star-export fact from the module source.
     reexports::apply_package_reexports(&mut owners, |file| {
@@ -29,15 +48,19 @@ fn classify(
         .lines()
         .nth(line - 1)
         .ok_or_else(|| format!("owner has no line {line}"))?;
-    classify_change_with_old(
+    classify::classify_change_with_context(
         Path::new(OWNER_FILE),
         line,
         new_line,
         Some(old_line),
         &owners,
         &tests,
+        classify::PythonNoBehaviorContext {
+            sole_line_replacement,
+            ..Default::default()
+        },
+        None,
     )
-    .map(|finding| finding.class)
     .ok_or_else(|| "changed line should classify".to_string())
 }
 
@@ -2063,11 +2086,77 @@ const AREA: &str = "def area(a, b):\n    return b * a\n";
 const AREA_TABLE: &str = "import pytest\nfrom src.shop import area\n\n\n@pytest.mark.parametrize(\"a,b,want\", [(3, 7, 21)])\ndef test_area(a, b, want):\n    assert area(a, b) == want\n";
 
 #[test]
-fn reordered_factors_are_not_an_unvaried_table_operand() -> Result<(), String> {
-    // `a * b` -> `b * a` changes no value, so rows that agree on both sides
-    // say nothing about an operand the table fails to vary.
+fn untyped_factor_reorder_keeps_the_unvaried_table_reading() -> Result<(), String> {
+    // Integer test rows do not establish the production function's operand
+    // types: the same function accepts noncommutative __mul__/__rmul__ objects.
     assert_eq!(
         classify(AREA, 2, "    return a * b", AREA_TABLE)?,
+        ExposureClass::WeaklyExposed
+    );
+    Ok(())
+}
+
+#[test]
+fn annotated_factor_reorder_keeps_the_unvaried_table_reading() -> Result<(), String> {
+    // An annotation does not reject a custom __mul__/__rmul__ argument at
+    // runtime. Defaults and one typed operand do not establish numerics either.
+    for signature in [
+        "a: int, b: int",
+        "a: float, b: float",
+        "a: int, b",
+        "a=3, b=7",
+    ] {
+        let owner = format!("def area({signature}):\n    return b * a\n");
+        assert_eq!(
+            classify(&owner, 2, "    return a * b", AREA_TABLE)?,
+            ExposureClass::WeaklyExposed,
+            "{signature}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn factor_reorder_guidance_requires_order_sensitive_operands() -> Result<(), String> {
+    for (owner, old) in [
+        (AREA, "    return a * b"),
+        ("def area(a, b):\n    return 7 * a\n", "    return a * 7"),
+    ] {
+        let finding = classify_finding(owner, 2, old, AREA_TABLE)?;
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+        assert!(finding.missing.iter().any(|text| {
+            text.contains("Add a table row whose operands distinguish multiplication order.")
+        }));
+        assert!(
+            finding
+                .activation
+                .missing_discriminators
+                .iter()
+                .any(|fact| {
+                    fact.value == "a table row whose operands distinguish multiplication order"
+                })
+        );
+        assert!(
+            !finding
+                .missing
+                .iter()
+                .any(|text| text.contains("varies") || text.contains("do not vary"))
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn reordered_factors_are_not_an_unvaried_table_operand() -> Result<(), String> {
+    // Actual numeric literals establish the equivalence; parameter names do
+    // not. The table still has a strong exact-value oracle for this product.
+    assert_eq!(
+        classify(
+            "def area(a, b):\n    return 7 * 3\n",
+            2,
+            "    return 3 * 7",
+            AREA_TABLE
+        )?,
         ExposureClass::Exposed
     );
     // A sum reorders strings, so it keeps the unvaried-operand reading.
@@ -2077,6 +2166,108 @@ fn reordered_factors_are_not_an_unvaried_table_operand() -> Result<(), String> {
             2,
             "    return a + b",
             AREA_TABLE
+        )?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+#[test]
+fn nested_factor_reorder_guidance_requires_order_sensitive_operands() -> Result<(), String> {
+    let table = "import pytest\nfrom src.shop import area\n\n@pytest.mark.parametrize(\"a,b,want\", [(3,7,(21,)), (4,8,(32,))])\ndef test_area(a,b,want):\n    assert area(a,b) == want\n";
+    let finding = classify_finding(
+        "def area(a,b):\n    return (b * a,)\n",
+        2,
+        "    return (a * b,)",
+        table,
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert!(
+        finding
+            .missing
+            .iter()
+            .any(|text| text.contains("operands distinguish multiplication order"))
+    );
+    assert!(
+        !finding
+            .missing
+            .iter()
+            .any(|text| text.contains("varies") || text.contains("do not vary"))
+    );
+    Ok(())
+}
+
+#[test]
+fn float_table_factor_reorder_does_not_gain_static_credit() -> Result<(), String> {
+    let table = AREA_TABLE.replace("[(3, 7, 21)]", "[(1.5, 2.0, 3.0), (-4.0, 2.0, -8.0)]");
+    let finding = classify_finding(AREA, 2, "    return a * b", &table)?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert!(
+        finding
+            .missing
+            .iter()
+            .any(|text| text.contains("operands distinguish multiplication order"))
+    );
+    Ok(())
+}
+
+#[test]
+fn quoted_hash_does_not_mask_a_factor_reorder() -> Result<(), String> {
+    let table = AREA_TABLE.replace("[(3, 7, 21)]", "[(3, 7, (21, '#'))]");
+    let finding = classify_finding(
+        "def area(a,b):\n    return b * a, '#'\n",
+        2,
+        "    return a * b, '#'",
+        &table,
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert!(
+        finding
+            .missing
+            .iter()
+            .any(|text| text.contains("operands distinguish multiplication order"))
+    );
+    Ok(())
+}
+
+#[test]
+fn factor_reorder_preserves_literal_and_grouping_boundaries() -> Result<(), String> {
+    for row in [
+        "[(3, 2.0, 6.0)]",
+        "[(-170141183460469231731687303715884105728, 0, 0)]",
+    ] {
+        let table = AREA_TABLE.replace("[(3, 7, 21)]", row);
+        assert_eq!(
+            classify(AREA, 2, "    return a * b", &table)?,
+            ExposureClass::WeaklyExposed,
+            "{row}"
+        );
+    }
+    let table = AREA_TABLE.replace("[(3, 7, 21)]", "[(2, 7, 3.0)]");
+    let finding = classify_finding(
+        "def area(a,b):\n    return 1.5 * a # a real comment\n",
+        2,
+        "    return a * 1.5 # a real comment",
+        &table,
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert!(finding.activation.missing_discriminators.iter().any(|fact| fact.value == "a table row whose operands distinguish multiplication order"));
+    assert_eq!(
+        classify(
+            "def area(a,b):\n    return 2.0 * 1.5\n",
+            2,
+            "    return 1.5 * 2.0",
+            &table
+        )?,
+        ExposureClass::Exposed
+    );
+    let table = "import pytest\nfrom src.shop import area\n\n@pytest.mark.parametrize(\"a,b,c,want\", [(1e308,1e-308,1e-308,1e-308)])\ndef test_area(a,b,c,want):\n    assert area(a,b,c) == want\n";
+    assert_eq!(
+        classify(
+            "def area(a,b,c):\n    return a * (b * c)\n",
+            2,
+            "    return (a * b) * c",
+            table
         )?,
         ExposureClass::Exposed
     );
@@ -2130,6 +2321,93 @@ fn an_owner_called_in_a_lambda_over_unresolved_code_abstains() -> Result<(), Str
     ] {
         assert_ne!(scale_class(body)?, ExposureClass::StaticUnknown, "{body}");
     }
+    Ok(())
+}
+
+#[test]
+fn factor_swap_with_observed_float_sibling_edit_keeps_exact_oracle() -> Result<(), String> {
+    let owner = "def area(a, b):\n    return (b * a, 2)\n";
+    let table = "import pytest\nfrom src.shop import area\n\n@pytest.mark.parametrize(\"a,b,want\", [(1.5, 2.0, (3.0, 1))])\ndef test_area(a, b, want):\n    assert area(a, b) == want\n";
+    let finding = classify_finding_with_delta(owner, 2, "    return (a * b, 1)", table, true)?;
+    assert_ne!(
+        classify(owner, 2, "    return (a * b, 1)", table)?,
+        ExposureClass::Exposed
+    );
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    assert!(
+        !finding
+            .missing
+            .iter()
+            .any(|text| text.contains("multiplication order"))
+    );
+    Ok(())
+}
+
+#[test]
+fn factor_swap_sibling_proof_refuses_unobserved_or_uncertain_rows() -> Result<(), String> {
+    let owner = "def area(a, b):\n    return (b * a, 2)\n";
+    let prefix = "import pytest\nfrom src.shop import area\n\n@pytest.mark.parametrize(\"a,b,want\", [(1.5, 2.0, (3.0, 1))])\ndef test_area(a, b, want):\n";
+    let classify_proven = |test: &str| {
+        classify_finding_with_delta(owner, 2, "    return (a * b, 1)", test, true)
+            .map(|finding| finding.class)
+    };
+    for body in [
+        "    assert area(a, b)[0] == want[0]\n",
+        "    a = 9\n    assert area(a, b) == want\n",
+        "    assert area(a, b, 5) == want\n",
+        "    assert False and area(a, b) == want\n",
+    ] {
+        assert_ne!(
+            classify_proven(&format!("{prefix}{body}"))?,
+            ExposureClass::Exposed,
+            "{body}"
+        );
+    }
+    let wrong_expected = format!(
+        "{}    assert area(a, b) == want\n",
+        prefix.replace("(3.0, 1)", "(4.0, 1)")
+    );
+    assert_ne!(classify_proven(&wrong_expected)?, ExposureClass::Exposed);
+    for signature in ["a, b", "a, b, want=None", "a, b, want, /"] {
+        let test = format!(
+            "{}    assert area(a, b) == want\n",
+            prefix.replace(
+                "def test_area(a, b, want):",
+                &format!("def test_area({signature}):")
+            )
+        );
+        assert_ne!(
+            classify_proven(&test)?,
+            ExposureClass::Exposed,
+            "{signature}"
+        );
+    }
+    let extra_option = format!(
+        "{}    assert area(a, b) == want\n",
+        prefix.replace("(3.0, 1))])", "(3.0, 1))], scope=\"invalid\")")
+    );
+    assert_ne!(classify_proven(&extra_option)?, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn rebound_factor_table_does_not_hide_independent_strong_test() -> Result<(), String> {
+    let owner = "def area(a, b):\n    return (b * a, 2)\n";
+    let tests = "import pytest\nfrom src.shop import area\n\n@pytest.mark.parametrize(\"a,b,want\", [(1.5, 2.0, (3.0, 1))])\ndef test_table(a, b, want):\n    a = 9\n    assert area(a, b) == want\n\ndef test_independent():\n    assert area(1.5, 2.0) == (3.0, 1)\n";
+    assert_eq!(
+        classify(owner, 2, "    return (a * b, 1)", tests)?,
+        ExposureClass::Exposed
+    );
+    let same_test = "import pytest\nfrom src.shop import area\n\n@pytest.mark.parametrize(\"a,b,want\", [(1.5, 2.0, (18.0, 1))])\ndef test_table(a, b, want):\n    a = 9\n    assert area(a, b) == want\n    assert area(1.5, 2.0) == (3.0, 1)\n";
+    assert_eq!(
+        classify(owner, 2, "    return (a * b, 1)", same_test)?,
+        ExposureClass::Exposed
+    );
+    let mixed = "import pytest\nfrom src.shop import area\n\n@pytest.mark.parametrize(\"a,want\", [(1.5, (3.0, 1))])\ndef test_table(a, want):\n    a = 9\n    assert area(a, 2.0) == want\n";
+    assert_ne!(
+        classify(owner, 2, "    return (a * b, 1)", mixed)?,
+        ExposureClass::Exposed
+    );
     Ok(())
 }
 

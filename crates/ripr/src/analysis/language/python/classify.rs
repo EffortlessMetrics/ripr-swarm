@@ -768,7 +768,14 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
         && inactive_term.is_none()
         && guarded_arm_gap.is_none())
     .then(|| {
-        python_unvaried_table_operand(line_text, old_line_text, owner, &related_candidates, &focus)
+        python_unvaried_table_operand(
+            line_text,
+            old_line_text,
+            owner,
+            &related_candidates,
+            &focus,
+            no_behavior.sole_line_replacement,
+        )
     })
     .flatten();
     let mut table_downgraded = false;
@@ -1012,8 +1019,8 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
             StageState::Yes,
             StageState::Weak,
             vec![format!(
-                "A strong Python oracle reaches `{}`, but {}; static evidence cannot confirm the changed operand is discriminated. Add a table row that varies `{}`.",
-                owner.name, gap.reason, gap.operand,
+                "A strong Python oracle reaches `{}`, but {}; static evidence cannot confirm the changed operand is discriminated. {}",
+                owner.name, gap.reason, gap.action,
             )],
         )
     } else if strongest_strength >= OracleStrength::Strong.rank()
@@ -1268,7 +1275,7 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
             unvaried_table
                 .as_ref()
                 .map(|gap| MissingDiscriminatorFact {
-                    value: format!("a table row that varies {}", gap.operand),
+                    value: gap.discriminator.clone(),
                     reason: gap.reason.clone(),
                     flow_sink: flow_sink.clone(),
                 })

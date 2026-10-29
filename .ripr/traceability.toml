@@ -17174,6 +17174,17 @@ id = "RIPR-SPEC-0238"
 name = "Python oracle and reach rules"
 spec = "docs/specs/RIPR-SPEC-0238-python-oracle-and-reach-rules.md"
 tests = [
+  "crates/ripr/src/analysis/language/python/verdict_corpus_tests.rs::factor_reorder_guidance_requires_order_sensitive_operands",
+  "crates/ripr/src/analysis/language/python/verdict_corpus_tests.rs::nested_factor_reorder_guidance_requires_order_sensitive_operands",
+  "crates/ripr/src/analysis/language/python/verdict_corpus_tests.rs::float_table_factor_reorder_does_not_gain_static_credit",
+  "crates/ripr/src/analysis/language/python/verdict_corpus_tests.rs::quoted_hash_does_not_mask_a_factor_reorder",
+  "crates/ripr/src/analysis/language/python/verdict_corpus_tests.rs::factor_reorder_preserves_literal_and_grouping_boundaries",
+  "crates/ripr/src/analysis/language/python/table_rows.rs::tests::factor_swap_numeric_reader_preserves_primitive_boundaries",
+  "crates/ripr/src/analysis/language/python/verdict_corpus_tests.rs::untyped_factor_reorder_keeps_the_unvaried_table_reading",
+  "crates/ripr/src/analysis/language/python/verdict_corpus_tests.rs::annotated_factor_reorder_keeps_the_unvaried_table_reading",
+  "crates/ripr/src/analysis/language/python/verdict_corpus_tests.rs::reordered_factors_are_not_an_unvaried_table_operand",
+  "crates/ripr/src/analysis/language/python/verdict_corpus_tests.rs::a_changed_factor_still_reads_an_unvaried_table_operand",
+  "crates/ripr/src/analysis/language/python/verdict_corpus_tests.rs::a_reorder_beside_a_sibling_edit_is_not_a_pure_reorder",
   "crates/ripr/src/analysis/language/python/tests.rs::a_straight_line_alias_of_a_captured_log_read_is_evaluated",
   "crates/ripr/src/analysis/language/python/tests.rs::an_alias_that_is_not_a_plain_snapshot_keeps_abstaining",
   "crates/ripr/src/analysis/language/python/tests.rs::alias_replacement_skips_string_literals_and_longer_names",
@@ -17217,6 +17228,7 @@ tests = [
   "crates/ripr/src/analysis/language/python/python_tests.rs::classify_change_does_not_relate_typed_route_to_a_value_the_router_rejects",
 ]
 fixtures = [
+  "fixtures/python_factor_reorder",
   "fixtures/python_caplog_alias_in_literal",
   "fixtures/python_caplog_custom_fixture",
   "fixtures/python_caplog_renamed_fixture",
@@ -17233,6 +17245,7 @@ fixtures = [
   "fixtures/python_empty_sink_module_comparison",
 ]
 code = [
+  "crates/ripr/src/analysis/language/python/table_rows.rs",
   "crates/ripr/src/analysis/language/python/caplog_text.rs",
   "crates/ripr/src/analysis/language/python/fixtures.rs",
   "crates/ripr/src/analysis/language/python/helper_assertions.rs",

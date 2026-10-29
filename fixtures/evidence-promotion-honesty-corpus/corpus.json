@@ -14258,6 +14258,30 @@
       ]
     },
     {
+      "id": "python_factor_reorder_unknown_operands",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_factor_reorder",
+      "vector": "numeric_table_rows_cannot_establish_runtime_commutativity_of_named_operands",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 4
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
       "id": "python_table_bool_key_get_fallback",
       "language": "python",
       "tier": "pure",

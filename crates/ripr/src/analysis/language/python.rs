@@ -432,6 +432,8 @@ struct PythonTest {
     /// pass (`fixtures.rs`); empty until then.
     fixture_defs: Vec<PythonFixtureDef>,
     parametrized: bool,
+    /// The original single parametrization is a plain two-argument literal call.
+    simple_literal_parametrize: bool,
     /// Argnames a pytest parametrize decorator supplies directly (not routed
     /// to a fixture by `indirect=`); never resolved as fixtures (#4563).
     direct_parametrized: Vec<String>,
