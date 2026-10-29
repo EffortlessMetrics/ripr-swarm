@@ -14243,6 +14243,19 @@ Field contract:
 - `missing_artifact`, `malformed_artifact`, `stale_artifact`, `wrong_root`,
   `blocked_artifact`, and `timeout` require `status = "blocked"` and a
   bounded next command when one is known.
+- For a check-output-derived or legacy preview/mixed (or unclassifiable)
+  records ledger with no selected repair, `blocked_artifact`
+  carries `selected.reason_code = "source_currentness_unavailable"`
+  rather than claiming current no-action from incomplete corpus authority. A
+  known distinct producer root yields `wrong_root` with reason code
+  `check_output_wrong_root`. Its inspection command runs a fresh default
+  worktree check without redirecting over an input and is offered only when
+  selected head resolves to the live HEAD; it is not a replay of input options.
+  A still-no-action preview/mixed result remains limited until corpus
+  provenance is available (#7452). `missing_artifacts` on this blocked state
+  means missing source authority, not necessarily a missing file.
+  `first-pr --check` also refuses an older check-output no-action packet; it
+  does not rerun analysis or rewrite that packet.
 - When a Rust first-pr run lacks both the repo-exposure report and the gap
   ledger, `selected.artifact` remains the first recovery step and
   `selected.also_missing[]` names the gap ledger and its regeneration command.
@@ -18760,6 +18773,14 @@ the ledger carries no `source_subject` and instead a top-level
 `unverifiable_subject`. Re-rendering an unstamped ledger with `--records`
 stays unstamped. A ledger rendered in memory by another report is not
 stamped.
+
+For `--check-output`, the top-level optional `input_root` retains the source
+report's root spelling separately from the ledger's selected `root`. A missing
+or relative producer root is not an absolute checkout identity. This additive
+field does not authenticate the input or imply complete corpus provenance.
+`check_output_provenance` retains that root and the original source-subject
+limitation across subsequent `--records` ledger projections; changing the
+immediate input kind cannot make a check-derived no-action conclusion current.
 
 ### Gap artifact source subject
 

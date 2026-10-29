@@ -1,0 +1,446 @@
+//! #10983: a no-action check report must not acquire current authority merely
+//! by being composed into a ledger, including across roots or after test edits.
+#![cfg(feature = "lang-python")]
+
+use serde_json::Value;
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    process::Command,
+    sync::atomic::{AtomicU64, Ordering},
+};
+
+const WEAK: &str = "import unittest\nfrom calculator import discount\n\nclass DiscountTests(unittest.TestCase):\n    def test_boundary(self):\n        self.assertIsInstance(discount(100), (int, float))\n";
+const STRONG: &str = "import unittest\nfrom calculator import discount\n\nclass DiscountTests(unittest.TestCase):\n    def test_boundary(self):\n        self.assertIsInstance(discount(100), (int, float))\n        self.assertEqual(discount(100), 100)\n";
+
+fn cmd(root: &Path, bin: &str, args: &[&str]) -> Result<Vec<u8>, String> {
+    let out = Command::new(bin)
+        .current_dir(root)
+        .args(args)
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        return Err(format!(
+            "{bin} {args:?} failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        ));
+    }
+    Ok(out.stdout)
+}
+fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
+    cmd(root, "git", args)
+}
+fn ripr(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
+    cmd(root, env!("CARGO_BIN_EXE_ripr"), args)
+}
+fn text(p: &Path) -> Result<&str, String> {
+    p.to_str().ok_or_else(|| "non-UTF8 test path".into())
+}
+fn check(root: &Path) -> Result<Value, String> {
+    let bytes = ripr(
+        root,
+        &[
+            "check",
+            "--root",
+            text(root)?,
+            "--base",
+            "HEAD~1",
+            "--worktree",
+            "--json",
+        ],
+    )?;
+    serde_json::from_slice(&bytes).map_err(|e| e.to_string())
+}
+fn first_pr(root: &Path, input: &Path, output: &Path, ledger: &Path) -> Result<Value, String> {
+    ripr(
+        root,
+        &[
+            "first-pr",
+            "--root",
+            text(root)?,
+            "--base",
+            "HEAD~1",
+            "--head",
+            "HEAD",
+            "--check-output",
+            text(input)?,
+            "--gap-ledger",
+            text(ledger)?,
+            "--out-dir",
+            text(output)?,
+        ],
+    )?;
+    serde_json::from_slice(&fs::read(output.join("start-here.json")).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())
+}
+fn fixture() -> Result<PathBuf, String> {
+    static N: AtomicU64 = AtomicU64::new(0);
+    let p = std::env::temp_dir().join(format!(
+        "ripr-10983-{}-{}",
+        std::process::id(),
+        N.fetch_add(1, Ordering::Relaxed)
+    ));
+    fs::create_dir_all(p.join("tests")).map_err(|e| e.to_string())?;
+    fs::write(p.join(".gitignore"), "/target/\n").map_err(|e| e.to_string())?;
+    fs::write(p.join("calculator.py"), "def discount(total):\n    if total >= 100:\n        return total * 0.9\n    return total\n").map_err(|e| e.to_string())?;
+    fs::write(p.join("tests/test_calculator.py"), WEAK).map_err(|e| e.to_string())?;
+    git(&p, &["-c", "init.templateDir=", "init", "-q"])?;
+    git(&p, &["config", "user.name", "synthetic"])?;
+    git(&p, &["config", "user.email", "fixture@example.invalid"])?;
+    git(&p, &["config", "commit.gpgSign", "false"])?;
+    git(&p, &["add", "."])?;
+    git(&p, &["commit", "-qm", "base"])?;
+    fs::write(
+        p.join("calculator.py"),
+        "def discount(total):\n    if total > 100:\n        return total * 0.9\n    return total\n",
+    )
+    .map_err(|e| e.to_string())?;
+    git(&p, &["add", "calculator.py"])?;
+    git(&p, &["commit", "-qm", "change"])?;
+    Ok(p)
+}
+
+#[test]
+fn no_action_does_not_promote_unbound_or_stale_preview_check() -> Result<(), String> {
+    let a = fixture()?;
+    let b = a.with_extension("other");
+    let parent = a.parent().ok_or("missing parent")?;
+    git(
+        parent,
+        &["clone", "-q", "--no-hardlinks", text(&a)?, text(&b)?],
+    )?;
+    fs::write(a.join("tests/test_calculator.py"), STRONG).map_err(|e| e.to_string())?;
+    let strong = check(&a)?;
+    assert_eq!(
+        strong["summary"]["exposed"], 1,
+        "nonempty strong control: {strong}"
+    );
+    assert_eq!(strong["root"], text(&a)?);
+    let input = a.with_extension("strong.json");
+    fs::write(
+        &input,
+        serde_json::to_vec(&strong).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    // Existing preview corpus authority is unavailable: a current strong
+    // artifact is useful evidence but is not a current no-action conclusion.
+    let same = first_pr(
+        &a,
+        &input,
+        &a.join("target/same"),
+        &a.join("target/same-ledger.json"),
+    )?;
+    assert_eq!(
+        same["status"], "blocked",
+        "strong preview subject must be explicitly limited: {same}"
+    );
+    assert_ne!(same["selected"]["output_state"], "no_actionable_gap");
+    assert_eq!(
+        same["selected"]["reason_code"],
+        "source_currentness_unavailable"
+    );
+    let message = same["selected"]["message"]
+        .as_str()
+        .ok_or("missing limitation")?;
+    assert!(message.contains("limitation remains"), "{message}");
+    let markdown =
+        fs::read_to_string(a.join("target/same/start-here.md")).map_err(|e| e.to_string())?;
+    assert!(markdown.contains("do not infer no action"), "{markdown}");
+    // A pre-fix no-action packet cannot become valid merely by asking the
+    // validate-only route to check its shape and version.
+    let mut historical = same.clone();
+    historical["status"] = serde_json::json!("no_action");
+    historical["selected"] = serde_json::json!({"state": "no_action", "output_state": "no_actionable_gap", "reason": "historical", "records_total": 1});
+    let packet_path = a.join("target/same/start-here.json");
+    fs::write(
+        &packet_path,
+        serde_json::to_vec_pretty(&historical).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    let checked = Command::new(env!("CARGO_BIN_EXE_ripr"))
+        .current_dir(&a)
+        .args([
+            "first-pr",
+            "--root",
+            text(&a)?,
+            "--base",
+            "HEAD~1",
+            "--head",
+            "HEAD",
+            "--check-output",
+            text(&input)?,
+            "--gap-ledger",
+            text(&a.join("target/same-ledger.json"))?,
+            "--out-dir",
+            text(&a.join("target/same"))?,
+            "--check",
+        ])
+        .output()
+        .map_err(|e| e.to_string())?;
+    assert_eq!(
+        checked.status.code(),
+        Some(2),
+        "{}",
+        String::from_utf8_lossy(&checked.stderr)
+    );
+    assert!(String::from_utf8_lossy(&checked.stderr).contains("source_currentness_unavailable"));
+    let direct_ledger = a.join("target/same-ledger.json");
+    let retained_ledger = fs::read(&direct_ledger).map_err(|e| e.to_string())?;
+    historical["inputs"]
+        .as_object_mut()
+        .ok_or("packet inputs")?
+        .remove("check_output");
+    fs::write(
+        &packet_path,
+        serde_json::to_vec_pretty(&historical).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    for kind in ["missing", "malformed", "unclassifiable"] {
+        match kind {
+            "missing" => fs::remove_file(&direct_ledger).map_err(|e| e.to_string())?,
+            "malformed" => fs::write(&direct_ledger, "{").map_err(|e| e.to_string())?,
+            _ => fs::write(&direct_ledger, "{}").map_err(|e| e.to_string())?,
+        }
+        let checked = Command::new(env!("CARGO_BIN_EXE_ripr"))
+            .current_dir(&a)
+            .args([
+                "first-pr",
+                "--root",
+                text(&a)?,
+                "--base",
+                "HEAD~1",
+                "--head",
+                "HEAD",
+                "--out-dir",
+                text(&a.join("target/same"))?,
+                "--check",
+            ])
+            .output()
+            .map_err(|e| e.to_string())?;
+        assert_eq!(checked.status.code(), Some(2));
+        let expected = if kind == "unclassifiable" {
+            "source kind is unavailable"
+        } else {
+            "source ledger is missing or malformed"
+        };
+        assert!(
+            String::from_utf8_lossy(&checked.stderr).contains(expected),
+            "{}",
+            String::from_utf8_lossy(&checked.stderr)
+        );
+    }
+    fs::write(&direct_ledger, retained_ledger).map_err(|e| e.to_string())?;
+    // A ledger-to-ledger projection must carry the original check producer's
+    // identity and its limitation; otherwise changing source_kind to records
+    // would bypass no-action admission.
+    let rewrapped_ledger = a.join("target/rewrapped-ledger.json");
+    let rewrapped_md = a.join("target/rewrapped-ledger.md");
+    ripr(
+        &a,
+        &[
+            "reports",
+            "gap-ledger",
+            "--root",
+            text(&a)?,
+            "--records",
+            text(&direct_ledger)?,
+            "--out",
+            text(&rewrapped_ledger)?,
+            "--out-md",
+            text(&rewrapped_md)?,
+        ],
+    )?;
+    let direct: Value =
+        serde_json::from_slice(&fs::read(&direct_ledger).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
+    let rewrapped: Value =
+        serde_json::from_slice(&fs::read(&rewrapped_ledger).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
+    assert_eq!(rewrapped["inputs"]["source_kind"], "records");
+    assert_eq!(
+        rewrapped["check_output_provenance"],
+        direct["check_output_provenance"]
+    );
+    assert_eq!(rewrapped["input_root"], text(&a)?);
+    let rendered_ledger = fs::read_to_string(&rewrapped_md).map_err(|e| e.to_string())?;
+    assert!(
+        rendered_ledger.contains("Check-output producer root"),
+        "{rendered_ledger}"
+    );
+    assert!(rendered_ledger.contains(text(&a)?), "{rendered_ledger}");
+    ripr(
+        &a,
+        &[
+            "first-pr",
+            "--root",
+            text(&a)?,
+            "--base",
+            "HEAD~1",
+            "--head",
+            "HEAD",
+            "--gap-ledger",
+            text(&rewrapped_ledger)?,
+            "--out-dir",
+            text(&a.join("target/rewrapped"))?,
+        ],
+    )?;
+    let projected: Value = serde_json::from_slice(
+        &fs::read(a.join("target/rewrapped/start-here.json")).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    assert_eq!(
+        projected["selected"]["reason_code"], "source_currentness_unavailable",
+        "{projected}"
+    );
+    let mut legacy = rewrapped.clone();
+    legacy
+        .as_object_mut()
+        .ok_or("ledger object")?
+        .remove("check_output_provenance");
+    legacy
+        .as_object_mut()
+        .ok_or("ledger object")?
+        .remove("input_root");
+    let legacy_path = a.join("target/legacy-rewrapped.json");
+    fs::write(
+        &legacy_path,
+        serde_json::to_vec(&legacy).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    ripr(
+        &a,
+        &[
+            "first-pr",
+            "--root",
+            text(&a)?,
+            "--base",
+            "HEAD~1",
+            "--head",
+            "HEAD",
+            "--gap-ledger",
+            text(&legacy_path)?,
+            "--out-dir",
+            text(&a.join("target/legacy"))?,
+        ],
+    )?;
+    let legacy_packet: Value = serde_json::from_slice(
+        &fs::read(a.join("target/legacy/start-here.json")).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    assert_eq!(
+        legacy_packet["selected"]["reason_code"], "source_currentness_unavailable",
+        "{legacy_packet}"
+    );
+    let other_check = check(&b)?;
+    assert_eq!(
+        other_check["summary"]["weakly_exposed"], 1,
+        "different-root weak control: {other_check}"
+    );
+    let other = first_pr(
+        &b,
+        &input,
+        &b.join("target/other"),
+        &b.join("target/other-ledger.json"),
+    )?;
+    assert_eq!(other["selected"]["output_state"], "wrong_root", "{other}");
+    assert!(
+        other["commands"].get("regenerate_gap_ledger").is_none(),
+        "{other}"
+    );
+    for id in ["check_output", "gap_ledger"] {
+        let artifact = other["artifacts"]
+            .as_array()
+            .ok_or("artifacts")?
+            .iter()
+            .find(|entry| entry["id"] == id)
+            .ok_or("artifact")?;
+        assert!(artifact["regeneration_command"].is_null(), "{artifact}");
+    }
+    let ledger: Value = serde_json::from_slice(
+        &fs::read(b.join("target/other-ledger.json")).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    assert_eq!(
+        ledger["input_root"],
+        text(&a)?,
+        "producer root must survive derivation: {ledger}"
+    );
+    assert_eq!(ledger["root"], text(&b)?);
+    #[cfg(unix)]
+    {
+        // Execute the literal wrong-root inspection; it must use B's weak
+        // worktree and leave A's supplied artifact untouched.
+        let before = fs::read(&input).map_err(|e| e.to_string())?;
+        let command = other["selected"]["next_command"]
+            .as_str()
+            .ok_or("missing recovery")?;
+        let bin_dir = Path::new(env!("CARGO_BIN_EXE_ripr"))
+            .parent()
+            .ok_or("missing binary directory")?;
+        let mut paths = vec![bin_dir.to_path_buf()];
+        paths.extend(std::env::split_paths(
+            &std::env::var_os("PATH").unwrap_or_default(),
+        ));
+        let path = std::env::join_paths(paths).map_err(|e| e.to_string())?;
+        let result = Command::new("sh")
+            .current_dir(&b)
+            .env("PATH", path)
+            .args(["-c", command])
+            .output()
+            .map_err(|e| e.to_string())?;
+        assert!(
+            result.status.success(),
+            "recovery failed: {}\n{}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert_eq!(
+            fs::read(&input).map_err(|e| e.to_string())?,
+            before,
+            "foreign input changed"
+        );
+        assert!(
+            String::from_utf8_lossy(&result.stdout).contains("1 weakly_exposed"),
+            "selected-root inspection: {}",
+            String::from_utf8_lossy(&result.stdout)
+        );
+    }
+    fs::write(a.join("tests/test_calculator.py"), WEAK).map_err(|e| e.to_string())?;
+    let weak = check(&a)?;
+    assert_eq!(
+        weak["summary"]["weakly_exposed"], 1,
+        "same-root stale control: {weak}"
+    );
+    let stale = first_pr(
+        &a,
+        &input,
+        &a.join("target/stale"),
+        &a.join("target/stale-ledger.json"),
+    )?;
+    assert_eq!(
+        stale["status"], "blocked",
+        "old strong input cannot yield no action: {stale}"
+    );
+    assert_ne!(stale["selected"]["output_state"], "no_actionable_gap");
+    let refreshed = a.with_extension("weak.json");
+    fs::write(
+        &refreshed,
+        serde_json::to_vec(&weak).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    let recovered = first_pr(
+        &a,
+        &refreshed,
+        &a.join("target/recovered"),
+        &a.join("target/recovered-ledger.json"),
+    )?;
+    assert_eq!(
+        recovered["status"], "actionable",
+        "refresh should expose the actual gap: {recovered}"
+    );
+    fs::remove_dir_all(&a).map_err(|e| e.to_string())?;
+    fs::remove_dir_all(&b).map_err(|e| e.to_string())?;
+    fs::remove_file(input).map_err(|e| e.to_string())?;
+    fs::remove_file(refreshed).map_err(|e| e.to_string())?;
+    Ok(())
+}

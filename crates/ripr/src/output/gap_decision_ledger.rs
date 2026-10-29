@@ -63,9 +63,13 @@ pub(crate) struct GapDecisionLedgerReport {
     /// gate reads the same position on the ledger it reads on check output.
     run_limitations: Option<Value>,
     /// The analysis input's `source_subject` stamp and root, kept so a writer
-    /// can derive the ledger stamp from them (#4544). Never rendered.
+    /// can derive the ledger stamp from them (#4544). The check producer's
+    /// root is also retained on the rendered ledger as provenance (#10983).
     input_source_subject: Option<Value>,
     input_root: Option<String>,
+    /// Origin of check-output records, carried across `--records` derivation
+    /// so an intermediate ledger cannot erase the producer's root/limits.
+    check_output_provenance: Option<Value>,
     /// Content digests the analysis saw for the files the records name,
     /// copied from the input stamp. `None` until a writer derives it.
     source_subject: Option<GapSourceSubject>,
@@ -559,6 +563,24 @@ pub(crate) fn build_gap_decision_ledger_report(
     }
     .to_string();
 
+    let check_output_provenance = match input.source_kind {
+        GapDecisionLedgerSourceKind::CheckOutput => Some(serde_json::json!({
+            "root": input_root.clone(),
+        })),
+        GapDecisionLedgerSourceKind::Records => source_value_snapshot.as_ref().and_then(|value| {
+            value.get("check_output_provenance").cloned().or_else(|| {
+                (value.pointer("/inputs/source_kind").and_then(Value::as_str)
+                    == Some("check_output"))
+                .then(|| {
+                    serde_json::json!({
+                        "root": value.get("input_root"),
+                        "source_subject_unavailable": value.get("source_subject_unavailable"),
+                    })
+                })
+            })
+        }),
+        GapDecisionLedgerSourceKind::RepoExposure => None,
+    };
     GapDecisionLedgerReport {
         status,
         root: input.root,
@@ -572,6 +594,7 @@ pub(crate) fn build_gap_decision_ledger_report(
         run_limitations,
         input_source_subject,
         input_root,
+        check_output_provenance,
         source_subject: None,
         source_subject_unavailable: None,
         records,
@@ -601,6 +624,10 @@ pub(crate) fn render_gap_decision_ledger_json(
         root: &'a str,
         generated_at: &'a str,
         inputs: &'a GapDecisionLedgerInputs,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        input_root: Option<&'a str>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        check_output_provenance: Option<&'a Value>,
         summary: &'a GapDecisionLedgerSummary,
         #[serde(skip_serializing_if = "Option::is_none")]
         analysis_outcome: Option<&'a Value>,
@@ -623,6 +650,12 @@ pub(crate) fn render_gap_decision_ledger_json(
         root: &report.root,
         generated_at: &report.generated_at,
         inputs: &report.inputs,
+        input_root: report
+            .check_output_provenance
+            .as_ref()
+            .and_then(|origin| origin.get("root"))
+            .and_then(Value::as_str),
+        check_output_provenance: report.check_output_provenance.as_ref(),
         summary: &report.summary,
         analysis_outcome: report.analysis_outcome.as_ref(),
         run_limitations: report.run_limitations.as_ref(),
@@ -681,6 +714,17 @@ pub(crate) fn stamp_gap_decision_ledger_source_subject(
             report.source_subject = None;
             report.source_subject_unavailable = Some(reason);
         }
+    }
+    if report.inputs.source_kind == "check_output"
+        && let Some(origin) = report
+            .check_output_provenance
+            .as_mut()
+            .and_then(Value::as_object_mut)
+    {
+        origin.insert(
+            "source_subject_unavailable".to_string(),
+            serde_json::json!(report.source_subject_unavailable),
+        );
     }
     Ok(())
 }
@@ -776,6 +820,20 @@ pub(crate) fn render_gap_decision_ledger_markdown(report: &GapDecisionLedgerRepo
     out.push_str("# RIPR Gap Decision Ledger\n\n");
     out.push_str(&format!("Status: `{}`\n\n", md_inline(&report.status)));
     out.push_str(&format!("Root: `{}`\n\n", md_inline(&report.root)));
+    if let Some(origin) = &report.check_output_provenance {
+        let source_root = origin
+            .get("root")
+            .and_then(Value::as_str)
+            .unwrap_or("unavailable");
+        let subject_limit = origin
+            .get("source_subject_unavailable")
+            .and_then(Value::as_str)
+            .unwrap_or("not recorded");
+        out.push_str(&format!(
+            "Check-output producer root: `{}`; producer subject limitation: `{}`. These are provenance disclosures, not complete corpus currentness.\n\n",
+            md_inline(source_root), md_inline(subject_limit)
+        ));
+    }
     out.push_str("Authority: gate-decision artifacts own pass/fail authority. This report is advisory projection input.\n\n");
     if let Some(outcome) = &report.analysis_outcome {
         let complete = outcome

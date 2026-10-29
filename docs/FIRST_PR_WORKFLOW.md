@@ -207,6 +207,17 @@ a `Receipt boundary` line says so. That movement is static evidence, not a
 runtime or mutation result. Rerunning `ripr first-pr` after the edit reports
 the evidence as stale and prints a refresh that also passes `--worktree`, so
 the next run selects the next open gap rather than the one just closed.
+When a check-output ledger has no repairable row, first-pr does not turn that
+absence into a current no-action claim: the preview/mixed corpus identity is
+not yet available. It reports `source_currentness_unavailable`, retains
+the input root separately from the selected root, and offers a fresh
+selected-workspace check to inspect. If that fresh check still has no repairable
+row, the limitation remains; a fresh check alone does not establish whole-corpus
+currentness. A known distinct producer root instead reports `wrong_root`. When
+the selected head is the live HEAD, the suggested command is a fresh default
+worktree analysis for inspection, not a replay of the original mode or policy;
+it does not redirect over the supplied input. Otherwise no live-worktree check
+is offered: use a checkout at the selected head and the intended configuration.
 `ripr pr-summary` carries the same start command as
 its first local reproduction command, and its Markdown, like
 `gate-decision.md`, follows the start with the after-phase step and the same
