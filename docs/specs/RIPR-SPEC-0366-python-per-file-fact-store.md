@@ -151,3 +151,27 @@ The fact-store tests:
    every other file is reused.
 3. Flipping one byte inside a cached envelope: the entry is never served, and
    the file is recomputed.
+
+## Test Mapping
+
+- `crates/ripr/src/analysis/language/python/fact_store/tests.rs`:
+  `stored_facts_restore_every_interned_field`,
+  `a_table_that_does_not_cover_its_items_is_refused`,
+  `store_serves_by_content_and_never_a_damaged_entry`,
+  `a_warm_run_serves_every_file_and_an_edit_recomputes_only_that_file`.
+
+## Implementation Mapping
+
+- `crates/ripr/src/analysis/language/python/fact_store.rs`: the
+  content-keyed store, the interned stored form, the envelope, integrity and
+  the base probes.
+- `crates/ripr/src/analysis/language/python/fact_serde.rs`: serde adapters
+  for text ranges and the guarded-return operator.
+- `crates/ripr/src/analysis/language/python.rs`: the load-or-extract wiring
+  in the facts loop, the debug hit cross-check and the stats fill.
+- `crates/ripr/src/analysis/seam_cache.rs`: the `python-file-facts` layer and
+  the compact integrity encoder.
+
+## Metrics
+
+- `unit_test_pass_rate`: the tests above are required Rust tests.
