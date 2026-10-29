@@ -4,5 +4,7 @@ id = "RIPR-SPEC-0243"
 tests = [
   "crates/ripr/src/analysis/language/typescript/tests.rs::describe_run_if_indexes_an_untitled_callback_only_suite_under_the_factory_guard",
   "crates/ripr/src/analysis/language/typescript/tests.rs::describe_run_if_untitled_suite_with_an_inactive_options_object_is_not_descended",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::describe_run_if_untitled_callback_parameter_binding_a_runner_name_is_not_a_registration",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::describe_run_if_untitled_callback_strict_directive_keeps_block_functions_block_local",
   "crates/ripr/src/analysis/language/typescript/tests.rs::analyze_diff_does_not_disclose_an_untitled_conditional_suite",
 ]

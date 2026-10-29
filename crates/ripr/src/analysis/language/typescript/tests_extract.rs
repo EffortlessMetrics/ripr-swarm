@@ -2712,13 +2712,14 @@ fn destructuring_ranges(text: &str) -> Vec<std::ops::Range<usize>> {
 
 /// Parameter names of the registration callback in a statement's call
 /// (`describe.each(...)('x', (row) => ...)`, `it('x', ({ fixture }) => ...)`,
-/// `it('x', { timeout }, (t) => ...)`).
+/// `it('x', { timeout }, (t) => ...)`). An untitled conditional suite's
+/// callback is the first argument, so its parameters are read there too.
 fn statement_callback_parameter_names(stmt: &Statement<'_>) -> Vec<String> {
     let Some(call) = statement_call(stmt) else {
         return Vec::new();
     };
     call.arguments
-        .get(declaration_callback_index(call))
+        .get(registration_callback_index(call))
         .map(argument_parameter_names)
         .unwrap_or_default()
 }
@@ -3140,6 +3141,31 @@ fn conditional_describe_factory<'s, 'a>(
     .then_some(&**factory)
 }
 
+/// Whether the registration call is the untitled callback-only conditional
+/// suite: `describe.skipIf(cond)(() => { ... })` / `describe.runIf(...)` with
+/// its callback in the title position (#10982).
+fn untitled_conditional_describe(call: &oxc_ast::ast::CallExpression<'_>) -> bool {
+    conditional_describe_factory(call).is_some()
+        && matches!(
+            call.arguments.first(),
+            Some(
+                oxc_ast::ast::Argument::ArrowFunctionExpression(_)
+                    | oxc_ast::ast::Argument::FunctionExpression(_)
+            )
+        )
+}
+
+/// The callback argument of a registration statement, shared by the body,
+/// parameter and strict-mode readers so all three see the same callback: an
+/// untitled conditional suite carries its callback in the title position.
+fn registration_callback_index(call: &oxc_ast::ast::CallExpression<'_>) -> usize {
+    if untitled_conditional_describe(call) {
+        0
+    } else {
+        declaration_callback_index(call)
+    }
+}
+
 /// `describe.skipIf(cond)('name', () => { ... })` and the `runIf` twin: the
 /// suite name, its body and the factory call's source as the guard. The
 /// condition is a runtime value static analysis does not evaluate, so the
@@ -3156,20 +3182,10 @@ fn conditional_describe_body<'a>(
     if !declaration_options_are_active(call) {
         return None;
     }
-    let untitled = matches!(
-        call.arguments.first(),
-        Some(
-            oxc_ast::ast::Argument::ArrowFunctionExpression(_)
-                | oxc_ast::ast::Argument::FunctionExpression(_)
-        )
-    );
     let name = title_argument(call.arguments.first()?, source, call.span.start as usize)?;
-    let callback_index = if untitled {
-        0
-    } else {
-        declaration_callback_index(call)
-    };
-    let body = function_body_statements_from_argument(call.arguments.get(callback_index)?)?;
+    let body = function_body_statements_from_argument(
+        call.arguments.get(registration_callback_index(call))?,
+    )?;
     let guard = snippet_for_span(
         source.text(),
         factory.span.start as usize,
@@ -4501,7 +4517,7 @@ fn statement_callback_is_strict(statement: &Statement<'_>) -> bool {
         || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Describe)
         || conditional_describe_factory(call).is_some()
     {
-        declaration_callback_index(call)
+        registration_callback_index(call)
     } else {
         // The other supported callback traversal is Array#forEach.
         0

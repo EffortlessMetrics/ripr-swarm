@@ -19738,6 +19738,21 @@ fn describe_run_if_untitled_suite_with_an_inactive_options_object_is_not_descend
     assert_eq!(tests[0].local_name, "y");
 }
 
+#[test]
+fn describe_run_if_untitled_callback_parameter_binding_a_runner_name_is_not_a_registration() {
+    let source = "describe.runIf(c)((test) => { test('x', () => { expect(f(1)).toBe(2); }); });\n";
+    let tests = extract_tests(Path::new("tests/a.test.ts"), source);
+    assert!(tests.is_empty(), "{tests:?}");
+}
+
+#[test]
+fn describe_run_if_untitled_callback_strict_directive_keeps_block_functions_block_local() {
+    let source = "describe.runIf(c)(() => {\n  'use strict';\n  { function describe() {} }\n  describe('real', () => {\n    it('x', () => { expect(f(1)).toBe(2); });\n  });\n});\n";
+    let tests = extract_tests(Path::new("tests/a.test.ts"), source);
+    assert_eq!(tests.len(), 1, "{tests:?}");
+    assert_eq!(tests[0].local_name, "x");
+}
+
 /// The untitled callback-only conditional suite
 /// (`describe.runIf(cond)(() => { ... })`) is indexed under its factory
 /// guard, so it must not fire the `typescript_test_extraction_partial`
