@@ -3186,7 +3186,7 @@ Durable rules:
   wrapper listing and a compile attempt that uses it - before writing that a
   capability is unavailable.
 
-### Receiver and helper admission needs execution and declaration identity (#8004)
+## 2026-10-25: Receiver and helper admission needs execution and declaration identity (#8004)
 
 An assertion operand parsed in a synthetic function must not borrow the outer
 receiver through an operand-local item: `struct value;` introduces a value

@@ -254,6 +254,7 @@ impl<'a> CompactGripContext<'a> {
         memo(&self.owner_named_cache).clear();
         memo(&self.same_module_cache).clear();
         memo(&self.parsed_sources).clear();
+        memo(&self.inherent_helper_reach).clear();
         memo(&self.shared_grips).release_unheld();
     }
 

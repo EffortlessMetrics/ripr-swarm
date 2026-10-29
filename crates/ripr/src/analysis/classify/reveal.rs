@@ -4586,18 +4586,16 @@ impl FileUseStatements {
         source: &str,
         callee: &str,
     ) -> bool {
-        let key = (file.to_path_buf(), callee.to_string());
+        let file = file.to_path_buf();
+        let key = (file.clone(), callee.to_string());
         if let Some(known) = self.macro_defined.borrow().get(&key) {
             return *known;
         }
-        let sites = std::sync::Arc::clone(
-            self.macro_sites
-                .borrow_mut()
-                .entry(file.to_path_buf())
-                .or_insert_with(|| {
-                    std::sync::Arc::new(super::macro_item_names::MacroSites::scan(source))
-                }),
-        );
+        // Build the scan outside the memo lock: a full-file parse behind the
+        // guard would serialize workers that first query different files.
+        let sites = self
+            .macro_sites
+            .get_or_build(&file, || super::macro_item_names::MacroSites::scan(source));
         let defined = sites.may_define(callee);
         self.macro_defined.borrow_mut().insert(key, defined);
         defined

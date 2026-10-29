@@ -13,11 +13,13 @@
   struct a verified declaration. Qualified paths and shadowing locals are
   refused (#7415).
 - Accepted cost: verdict-corpus rows `lib-rstest-fixture-injected-receiver`,
-  `serde-derive-rename-field-upper` and `serde-derive-rename-variant-lower`
-  move from credited/ideal to gap/`false_actionable` on discriminating tests
-  (rstest-injected receiver, bare-imported unit variant), a false actionable
-  signal accepted in exchange for refusing unproven credit. They are listed
-  under `known-false/`; restoring credit is tracked in #8782.
+  `serde-derive-rename-field-upper`, `serde-derive-rename-variant-lower` and
+  `spec0228-pushed-literal-hand-built-expected` move from credited/ideal to
+  gap/`false_actionable` on discriminating tests (rstest-injected receiver,
+  bare-imported unit variant, the UFCS argument form `str::to_uppercase(sku)`
+  on the hand-built expected-collection route), a false actionable signal
+  accepted in exchange for refusing unproven credit. They are listed under
+  `known-false/`; restoring credit is tracked in #8782.
 - Source-snapshot facts (parse, lines, declarations, ancestry) and test-module
   shadow answers are reused per run, keeping ambiguous-declaration refusal
   (#7415, #8004).
