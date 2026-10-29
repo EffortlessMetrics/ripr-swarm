@@ -190,11 +190,27 @@ impl<'a> GapReach<'a> {
         Follow::External
     }
 
-    /// A package importing its own name resolves through `exports`. Only
-    /// targets that are workspace sources can be followed; a build output
-    /// (`./dist/...`) is not scanned, so it relates nothing the import scan
-    /// could see. A missing or pattern entry keeps the gap.
+    /// A package importing its own name resolves through `exports`. The
+    /// adapter's resolver is authoritative where it resolves (including a
+    /// build-output export mirrored to `src/`); otherwise only targets that
+    /// are workspace sources are followed, and an unscanned build output
+    /// relates nothing. A missing or pattern entry keeps the gap.
     fn follow_self_import(&self, name: &str, specifier: &str) -> Follow {
+        // The adapter's own resolver maps a build-output export back to its
+        // `src/` counterpart; follow exactly the file it relates tests to.
+        if let Some(map) = self.alias_map {
+            if let Some(resolved) = map.resolve(specifier) {
+                let resolved = normalized_path(&resolved);
+                return if self.sources.contains_key(&resolved) {
+                    Follow::Files(vec![resolved])
+                } else {
+                    Follow::MayReach
+                };
+            }
+            if map.workspace_package_dir_for(specifier).is_some() {
+                return Follow::MayReach;
+            }
+        }
         let Some(exports) = &self.package_exports else {
             return Follow::MayReach;
         };
@@ -474,7 +490,9 @@ fn extends_may_remap(config: &serde_json::Value, dir: &Path) -> bool {
                 return true;
             }
             let base = current_dir.join(spec);
-            let with_json = std::path::PathBuf::from(format!("{}.json", base.display()));
+            let mut with_json = base.clone().into_os_string();
+            with_json.push(".json");
+            let with_json = std::path::PathBuf::from(with_json);
             let Some(path) = [base, with_json].into_iter().find(|path| path.is_file()) else {
                 return true;
             };
@@ -513,13 +531,22 @@ fn references_leave_the_scan(config: &serde_json::Value, dir: &Path, root: &Path
         let Ok(relative) = file.strip_prefix(root) else {
             return true;
         };
-        let components: Vec<_> = relative
-            .components()
-            .map(|part| part.as_os_str().to_string_lossy().into_owned())
-            .collect();
+        // Lexically resolve `..` (`packages/a/../b`); climbing above the root
+        // leaves the scan.
+        let mut components: Vec<String> = Vec::new();
+        for part in relative.components() {
+            match part {
+                // The guard pops: `..` with nothing left climbs above the root.
+                std::path::Component::ParentDir if components.pop().is_none() => return true,
+                std::path::Component::ParentDir => {}
+                std::path::Component::Normal(name) => {
+                    components.push(name.to_string_lossy().into_owned());
+                }
+                _ => {}
+            }
+        }
         let skipped = components.iter().any(|part| {
-            part == ".."
-                || (part.starts_with('.') && part != ".")
+            part.starts_with('.')
                 || matches!(part.as_str(), "node_modules" | "target" | "dist" | "build")
         });
         !file.is_file() || skipped || components.len() > 5
@@ -1146,7 +1173,7 @@ mod tests {
     #[test]
     fn a_workspace_extends_chain_hides_imports_only_when_it_remaps() -> Result<(), String> {
         // (label, files, scanned tsconfig, hides)
-        let cases: [ChainCase; 8] = [
+        let cases: [ChainCase; 10] = [
             (
                 "plain-base",
                 &[
@@ -1220,6 +1247,28 @@ mod tests {
                 false,
             ),
             (
+                "sibling-reference-through-parent",
+                &[
+                    (
+                        "packages/a/tsconfig.json",
+                        r#"{"references": [{"path": "../b"}]}"#,
+                    ),
+                    (
+                        "packages/b/tsconfig.json",
+                        r#"{"compilerOptions": {"strict": true}}"#,
+                    ),
+                ],
+                false,
+            ),
+            (
+                "reference-above-root",
+                &[(
+                    "tsconfig.json",
+                    r#"{"references": [{"path": "../outside"}]}"#,
+                )],
+                true,
+            ),
+            (
                 "missing-reference",
                 &[("tsconfig.json", r#"{"references": [{"path": "./gone"}]}"#)],
                 true,
@@ -1241,6 +1290,49 @@ mod tests {
             );
             let _ = std::fs::remove_dir_all(&root);
         }
+        Ok(())
+    }
+
+    #[test]
+    fn a_build_output_export_follows_the_source_the_adapter_resolves() -> Result<(), String> {
+        let root = temp_root("self-mirror")?;
+        std::fs::create_dir_all(root.join("src")).map_err(|err| format!("dirs: {err}"))?;
+        for (file, text) in [
+            (
+                "package.json",
+                r#"{"name": "pkg", "exports": {".": "./dist/index.js"}}"#,
+            ),
+            ("tsconfig.json", r#"{"compilerOptions": {"strict": true}}"#),
+            ("src/index.ts", "export function changedFn() {}\n"),
+        ] {
+            std::fs::write(root.join(file), text).map_err(|err| format!("write: {err}"))?;
+        }
+        let entries = [
+            ("test/a.test.ts", "import { changedFn } from 'pkg';\n"),
+            ("src/index.ts", "export function changedFn() {}\n"),
+        ];
+        let (owned, ()) = files(&entries);
+        let sources: HashMap<String, &String> = owned
+            .iter()
+            .map(|(path, source)| (path.clone(), source))
+            .collect();
+        let workspace: Vec<std::path::PathBuf> = entries
+            .iter()
+            .map(|(path, _)| std::path::PathBuf::from(path))
+            .collect();
+        let packages =
+            super::super::workspace_packages::WorkspacePackages::discover(&root, &workspace);
+        let map = TsAliasMap::workspace_packages_only(&root, packages);
+        let reach = GapReach::new(
+            &sources,
+            &["src/index.ts".to_string()],
+            std::iter::empty(),
+            Some(&map),
+            &root,
+            false,
+        );
+        assert!(reach.may_reach(Path::new("test/a.test.ts")));
+        let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }
 }
