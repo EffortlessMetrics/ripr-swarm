@@ -8,14 +8,14 @@
 use super::{PythonFramework, PythonImport, PythonTest, expr_full_name};
 use rustpython_parser::ast::{self, Expr, Stmt};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) enum DeclarationSite {
     Function,
     Class,
     Module,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct PythonActivationControl {
     name: String,
     site: DeclarationSite,

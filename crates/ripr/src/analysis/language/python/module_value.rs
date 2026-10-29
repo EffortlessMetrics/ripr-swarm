@@ -59,7 +59,7 @@ const DYNAMIC_WRITERS: [&str; 10] = [
 /// assigned attribute names, and every word of a file that holds a dynamic
 /// writer (`setattr`, `patch`, `monkeypatch`, `importlib.reload`,
 /// `sys.modules`, ...). Filled for the module owner of a changed file.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct ForeignWrites {
     attributes: Vec<String>,
     dynamic_words: Vec<String>,

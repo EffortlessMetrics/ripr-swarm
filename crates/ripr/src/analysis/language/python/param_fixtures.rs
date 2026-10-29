@@ -54,7 +54,7 @@ use std::collections::BTreeMap;
 
 /// One literal `params=` row: its source text and, for a tuple row, the
 /// source text of each element.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct FixtureParamRow {
     pub(super) text: String,
     pub(super) elements: Option<Vec<String>>,

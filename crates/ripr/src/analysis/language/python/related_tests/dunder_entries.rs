@@ -28,7 +28,7 @@ use crate::domain::OwnerKind;
 use std::collections::HashMap;
 
 /// Class-level facts the entry binding reads, filled once per workspace.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(in crate::analysis::language::python) struct PythonClassFacts {
     /// Sole observing source after the truthiness-only physical isolation audit.
     /// Unknown/default contexts cannot provide the new integer truthiness credit.

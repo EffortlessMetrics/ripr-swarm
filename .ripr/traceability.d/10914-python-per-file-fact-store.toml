@@ -1,0 +1,22 @@
+# Registers the Python per-file fact store (#10914) as a new behavior spec:
+# diff-mode check persists per-file facts keyed by content and a warm run
+# serves untouched files from the store with findings identical to a cold run.
+[[behavior]]
+id = "RIPR-SPEC-0366"
+name = "python per-file fact persistence"
+spec = "docs/specs/RIPR-SPEC-0366-python-per-file-fact-store.md"
+tests = [
+  "crates/ripr/src/analysis/language/python/fact_store/tests.rs::stored_facts_restore_every_interned_field",
+  "crates/ripr/src/analysis/language/python/fact_store/tests.rs::a_table_that_does_not_cover_its_items_is_refused",
+  "crates/ripr/src/analysis/language/python/fact_store/tests.rs::store_serves_by_content_and_never_a_damaged_entry",
+  "crates/ripr/src/analysis/language/python/fact_store/tests.rs::a_warm_run_serves_every_file_and_an_edit_recomputes_only_that_file",
+]
+code = [
+  "crates/ripr/src/analysis/language/python/fact_store.rs",
+  "crates/ripr/src/analysis/language/python/fact_serde.rs",
+  "crates/ripr/src/analysis/language/python.rs",
+  "crates/ripr/src/analysis/seam_cache.rs",
+]
+metrics = [
+  "unit_test_pass_rate",
+]

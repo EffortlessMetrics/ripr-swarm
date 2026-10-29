@@ -30,7 +30,7 @@ const MAX_PARAMETRIZE_CASES: usize = 256;
 
 /// The generated cases of a parametrized test: one map per case from
 /// argname to the argvalue's source text.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct PythonParametrizeCases {
     pub(super) cases: Vec<BTreeMap<String, String>>,
 }

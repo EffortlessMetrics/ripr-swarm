@@ -364,7 +364,7 @@ pub(super) fn module_binding_count(statements: &[Stmt], source: &str, name: &str
 /// What a module can do to a fixture instance besides its recorded plain
 /// fixtures (#9619), read for the test's module and every `conftest.py` up
 /// its chain before a literal-construction fixture counts as isolated.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct FixtureSideEffects {
     /// Text, decorators included, of every fixture-decorated def that is not
     /// recorded as a plain fixture (a `name=` override) and of every
