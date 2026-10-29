@@ -4201,7 +4201,12 @@ fn base_type_name(name: &str) -> &str {
 /// `name` is judged by its declared return type alone. With none, `default`
 /// is credited only by positive evidence of `impl Default for ty` or a unique
 /// `#[derive(Default)]` type, and `from` only by an `impl From<_> for ty`.
-fn associated_constructor_names_own_type(index: &RustIndex, ty: &str, name: &str) -> bool {
+fn associated_constructor_names_own_type(
+    index: &RustIndex,
+    ty: &str,
+    name: &str,
+    test_file: &Path,
+) -> bool {
     let inherent = index.functions().iter().any(|function| {
         function.name == name
             && matches!(&function.item.container,
@@ -4221,7 +4226,11 @@ fn associated_constructor_names_own_type(index: &RustIndex, ty: &str, name: &str
         })
     };
     match name {
-        "default" => trait_impl("Default") || type_derives_default(index, ty),
+        "default" => {
+            trait_impl("Default")
+                || type_derives_default(index, ty)
+                || type_derives_default_in_file(index, ty, test_file)
+        }
         "from" => trait_impl("From"),
         _ => false,
     }
@@ -4977,7 +4986,7 @@ pub(in crate::analysis) fn inherent_receiver_call_resolves(
                 // A free-function receiver head: `fixture().method()`.
                 free_fn_returns_type(index, name, impl_type)
             } else {
-                associated_constructor_names_own_type(index, ty, name)
+                associated_constructor_names_own_type(index, ty, name, &test.file)
             }
         })
     };
@@ -5394,11 +5403,74 @@ fn visible_receiver_binding_names_type(
                 });
             }
         }
-        if ast::Fn::can_cast(ancestor.kind()) {
-            return false;
+        if let Some(function) = ast::Fn::cast(ancestor) {
+            return fn_param_names_type(&function, name, impl_type);
         }
     }
     false
+}
+
+/// Whether `function` declares a plain parameter `name` whose whole type is
+/// the unqualified `impl_type`, optionally behind `&`/`&mut`. An rstest
+/// fixture is injected through exactly such a parameter. A qualified path,
+/// generic argument list or `impl`/`dyn` type is not the nominal owner.
+fn fn_param_names_type(function: &ast::Fn, name: &str, impl_type: &str) -> bool {
+    function.param_list().is_some_and(|list| {
+        list.params().any(|param| {
+            let Some(ast::Pat::IdentPat(pattern)) = param.pat() else {
+                return false;
+            };
+            if pattern.at_token().is_some()
+                || pattern.name().is_none_or(|bound| bound.text() != name)
+            {
+                return false;
+            }
+            let Some(ty) = param.ty() else {
+                return false;
+            };
+            let text = ty.syntax().text().to_string();
+            let text = text.trim().trim_start_matches('&').trim();
+            let text = text.strip_prefix("mut ").unwrap_or(text).trim();
+            text == impl_type
+        })
+    })
+}
+
+/// A struct/enum/union `ty` declared exactly once in `test_file`, carrying
+/// `#[derive(.. Default ..)]`, with no import in that file binding `ty`. The
+/// workspace-wide uniqueness of [`type_derives_default`] is too strong for a
+/// file-local fixture type that sibling modules also spell.
+fn type_derives_default_in_file(index: &RustIndex, ty: &str, test_file: &Path) -> bool {
+    let Some(tree) = index
+        .source_syntax
+        .get(index, test_file)
+        .and_then(|s| s.tree())
+    else {
+        return false;
+    };
+    let syntax = tree.syntax();
+    if syntax.descendants().filter_map(ast::Use::cast).any(|item| {
+        item.syntax().descendants().any(|node| {
+            ast::Name::cast(node.clone()).is_some_and(|bound| bound.text() == ty)
+                || ast::NameRef::cast(node).is_some_and(|bound| bound.text() == ty)
+        })
+    }) {
+        return false;
+    }
+    let mut found = Vec::new();
+    for adt in syntax.descendants().filter_map(ast::Adt::cast) {
+        if adt.name().is_none_or(|name| name.text() != ty) {
+            continue;
+        }
+        found.push(ast::HasAttrs::attrs(&adt).any(|attr| {
+            let text = attr.syntax().text().to_string();
+            text.trim_start().starts_with("#[derive(")
+                && text
+                    .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                    .any(|word| word == "Default")
+        }));
+    }
+    matches!(found.as_slice(), [true])
 }
 
 /// Helper last hops borrow the direct owner's complete receiver refusal,
@@ -12560,8 +12632,9 @@ let r = try_parse_summary(\"x\");",
     }
 
     /// #7415: keep the conservative corpus boundary separate from runtime
-    /// truth. Arbitrary factories, parameters and imported bare variants do
-    /// not gain receiver proof merely because the method name is unique.
+    /// truth. Arbitrary factories and imported bare variants do not gain
+    /// receiver proof merely because the method name is unique. A plain typed
+    /// parameter (an injected rstest fixture) names its declared type.
     #[test]
     fn inherent_receiver_corpus_boundary_and_live_scope() {
         for (body, method, ty, expected) in [
@@ -12602,7 +12675,7 @@ let r = try_parse_summary(\"x\");",
                 "fn t(account: Account) { assert_eq!(account.monthly_fee(), 5); }",
                 "monthly_fee",
                 "Account",
-                false,
+                true,
             ),
             (
                 "fn t() { let account: Account = make(); assert_eq!(account.monthly_fee(), 5); }",
