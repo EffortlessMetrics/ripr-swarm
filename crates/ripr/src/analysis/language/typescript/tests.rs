@@ -8595,6 +8595,44 @@ fn ava_truthy_is_smoke_only() {
     assert_eq!(assertions[0].oracle_strength, OracleStrength::Smoke);
 }
 
+/// An all-literal array expected value is a concrete discriminator, not a
+/// dynamic argument (`t.deepEqual(x, [10, 20, 30])`).
+#[test]
+fn ava_deep_equal_all_literal_array_is_not_dynamic() {
+    let source = "t.deepEqual(score(10, 3), [10, -20, [30, 'a']]);";
+    let allocator = Allocator::default();
+    let parse_result = Parser::new(&allocator, source, SourceType::ts()).parse();
+    let assertions = collect_expect_assertions_in_statements(
+        &parse_result.program.body,
+        &SourceText::new(source),
+        Some("t"),
+    );
+    assert_eq!(assertions.len(), 1);
+    assert!(!assertions[0].has_dynamic_matcher_arg, "{assertions:?}");
+    assert!(assertions[0].expected_value_or_variant.is_some());
+}
+
+/// Discriminating negative: arrays holding an identifier, call, spread, object
+/// or hole stay dynamic.
+#[test]
+fn ava_deep_equal_non_literal_arrays_stay_dynamic() {
+    for expected in ["[10, x]", "[10, f()]", "[...xs]", "[{a: 1}]", "[1, , 2]"] {
+        let source = format!("t.deepEqual(score(10, 3), {expected});");
+        let allocator = Allocator::default();
+        let parse_result = Parser::new(&allocator, &source, SourceType::ts()).parse();
+        let assertions = collect_expect_assertions_in_statements(
+            &parse_result.program.body,
+            &SourceText::new(&source),
+            Some("t"),
+        );
+        assert_eq!(assertions.len(), 1, "{expected}");
+        assert!(
+            assertions[0].has_dynamic_matcher_arg,
+            "`{expected}` must stay dynamic: {assertions:?}"
+        );
+    }
+}
+
 /// Tape / node:test positive equality aliases use the same receiver-gated path
 /// as AVA: `t.equal(...)`, `t.strictEqual(...)`, and positive deep-equality
 /// forms are exact-value oracles when the receiver matches the test callback
@@ -8792,6 +8830,80 @@ fn named_limitation_dynamic_assertion_emitted_for_dynamic_matcher_arg() -> Resul
     assert_evidence_contains(&finding, "typescript_oracle_confidence: medium");
     // repair_packet_ready stays false
     assert_evidence_contains(&finding, "repair_route:");
+    Ok(())
+}
+
+/// Discriminating negative for the family-scoped limit (RIPR-SPEC-0104): a dynamic
+/// error-family expectation (AVA `throwsAsync` with a dynamic option) cannot hide
+/// a discriminator for a changed predicate, so it must NOT raise
+/// `typescript_dynamic_assertion_unresolved`. The sibling test above keeps a
+/// dynamic value-family assertion raising the limit.
+#[test]
+fn named_limitation_dynamic_assertion_not_emitted_for_other_family_assertion() -> Result<(), String>
+{
+    let owner = test_owner("clamp", "src/clamp.ts");
+    // Manually construct a test with a dynamic matcher arg
+    let test = TypeScriptTest {
+        name: "clamps below minimum".to_string(),
+        local_name: "clamps below minimum".to_string(),
+        describe_names: Vec::new(),
+        file: PathBuf::from("tests/clamp.test.ts"),
+        line: 1,
+        reach_body_text: None,
+        body_text: "const expected = computeExpected(0);\nclamp(-5, 0, 10);\nexpect(clamp(-5, 0, 10)).toBe(expected);".to_string(),
+        assertions: vec![TypeScriptAssertion {
+            matcher: "throwsAsync".to_string(),
+            argument_count: 1,
+            line: 3,
+            oracle_kind: OracleKind::BroadError,
+            oracle_strength: OracleStrength::Strong,
+            mock_payload: None,
+            error_payload: None,
+            observed_expression: Some("clamp(-5, 0, 10)".to_string()),
+            expected_value_or_variant: None,
+            has_dynamic_matcher_arg: true,
+            dynamic_expected_text: None,
+            oracle_confidence: OracleConfidence::Medium,
+            rendered_call: None,
+            loose_number_expected: false,
+            expected_object_const: None,
+            compares_reference_identity: false,
+        }],
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
+        assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
+        factory_call_line: None,
+        setup_hook_bodies: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/clamp".to_string(),
+            imported: Some("clamp".to_string()),
+            local: "clamp".to_string(),
+            namespace: false,
+        }].into(),
+    };
+    let finding = classify_change(
+        Path::new("src/clamp.ts"),
+        2,
+        "    if (value < min) {",
+        &[owner],
+        &[test],
+        None,
+        &ReExportIndex::empty(),
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert_evidence_lacks(
+        &finding,
+        "typescript_limitation: typescript_dynamic_assertion_unresolved",
+    );
     Ok(())
 }
 

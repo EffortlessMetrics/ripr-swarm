@@ -3211,8 +3211,7 @@ fn literal_array_elements(array: &oxc_ast::ast::ArrayExpression<'_>) -> bool {
         Element::UnaryExpression(unary) => {
             matches!(
                 unary.operator,
-                oxc_ast::ast::UnaryOperator::UnaryNegation
-                    | oxc_ast::ast::UnaryOperator::UnaryPlus
+                oxc_ast::ast::UnaryOperator::UnaryNegation | oxc_ast::ast::UnaryOperator::UnaryPlus
             ) && matches!(unary.argument, Expression::NumericLiteral(_))
         }
         _ => false,
