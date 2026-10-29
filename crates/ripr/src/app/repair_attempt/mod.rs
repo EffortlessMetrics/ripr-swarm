@@ -4670,6 +4670,14 @@ mod tests {
         if !required.iter().any(|value| value == "attempt_id") {
             return Err("schema after omitted durable attempt_id".to_string());
         }
+        let versions = schema["$defs"]["after"]["properties"]["delta_binding"]["enum"]
+            .as_array()
+            .ok_or_else(|| "schema delta binding enum missing".to_string())?;
+        if !versions.iter().any(|value| value == "path-state-v1")
+            || !versions.iter().any(serde_json::Value::is_null)
+        {
+            return Err("schema does not admit the current and legacy binding forms".to_string());
+        }
         Ok(())
     }
 
@@ -6403,6 +6411,13 @@ mod tests {
                     "legacy path-only binding must be unknown: {legacy_reading:?}"
                 ));
             }
+            let mut invalid = legacy.clone();
+            if let Some(after) = invalid.after.as_mut() {
+                after.delta_binding = Some("unknown-version".to_string());
+            }
+            if validate_manifest(&invalid).is_ok() {
+                return Err("unknown delta binding version was accepted".to_string());
+            }
             let manifest_bytes =
                 std::fs::read(&prepared.manifest_path).map_err(|error| error.to_string())?;
             let mut legacy_json: serde_json::Value =
@@ -6411,6 +6426,17 @@ mod tests {
                 .as_object_mut()
                 .ok_or("missing after")?
                 .remove("delta_binding");
+            let mut null_json = legacy_json.clone();
+            null_json["after"]["delta_binding"] = serde_json::Value::Null;
+            let null_manifest: RepairAttemptManifest =
+                serde_json::from_value(null_json).map_err(|error| error.to_string())?;
+            validate_manifest(&null_manifest)?;
+            if repair_attempt_head_reading(&root, &null_manifest, Some(&head))
+                .head_current
+                .is_some()
+            {
+                return Err("null delta binding must remain unknown".to_string());
+            }
             std::fs::write(
                 &prepared.manifest_path,
                 serde_json::to_vec(&legacy_json).map_err(|error| error.to_string())?,
