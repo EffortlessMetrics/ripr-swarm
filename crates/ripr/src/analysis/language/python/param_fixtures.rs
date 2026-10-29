@@ -194,6 +194,13 @@ fn literal_param_cases(
     {
         return None;
     }
+    // The unpacked fixture must be an isolated literal-param fixture the test
+    // requests (checked below), so a test without one skips the parse.
+    if !test.fixture_defs.iter().any(|def| {
+        def.isolated && def.literal_params.is_some() && test.fixtures.contains(&def.name)
+    }) {
+        return None;
+    }
     let Ok(Mod::Module(module)) = parse(&test.body_text, Mode::Module, "<python-test-body>") else {
         return None;
     };
