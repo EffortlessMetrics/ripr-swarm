@@ -109,7 +109,21 @@ fn ordinary(index: &RustIndex) -> Result<TestFact, String> {
     Ok(test.clone())
 }
 
-fn assert_state(index: &RustIndex, admitted: bool) -> Result<Value, String> {
+fn assert_state(index: &RustIndex, admitted: bool, label: &str) -> Result<Value, String> {
+    for path in ["src/lib.rs", "tests/ordinary.rs", PROPERTY_PATH] {
+        let context = index
+            .execution_context(Path::new(path))
+            .ok_or_else(|| format!("{label}: missing execution context for {path}"))?;
+        assert_eq!(
+            context.roots,
+            std::collections::BTreeSet::from([PathBuf::from(path)]),
+            "{label}: wrong execution roots for {path}"
+        );
+        assert!(
+            context.edges.is_empty(),
+            "{label}: unexpected ancestry for {path}"
+        );
+    }
     ordinary(index)?;
     let tests = index
         .tests()
@@ -124,7 +138,9 @@ fn assert_state(index: &RustIndex, admitted: bool) -> Result<Value, String> {
     let seam = predicate(index)?;
     if admitted {
         let [test] = tests.as_slice() else {
-            return Err("admitted property must have exactly one TestFact".into());
+            return Err(format!(
+                "{label}: admitted property must have exactly one TestFact"
+            ));
         };
         assert_eq!(test.name, "exact_boundary");
         assert_eq!(test.start_line, 3);
@@ -146,7 +162,11 @@ fn assert_state(index: &RustIndex, admitted: bool) -> Result<Value, String> {
         assert_eq!(receipt.name_scopes.scopes.len(), 2);
         assert!(receipt.name_scopes.scopes[0].fn_body);
         assert!(!receipt.name_scopes.scopes[1].fn_body);
-        assert_eq!(seam.class, SeamGripClass::StronglyGripped, "{seam:?}");
+        assert_eq!(
+            seam.class,
+            SeamGripClass::StronglyGripped,
+            "{label}: {seam:?}"
+        );
         assert_eq!(seam.evidence.related_tests.len(), 1);
         assert_eq!(seam.evidence.related_tests[0].test_name, "exact_boundary");
         assert!(
@@ -154,7 +174,7 @@ fn assert_state(index: &RustIndex, admitted: bool) -> Result<Value, String> {
                 .observed_values
                 .iter()
                 .any(|value| value.value == "100"),
-            "{seam:?}"
+            "{label}: {seam:?}"
         );
         for stage in [
             &seam.evidence.reach,
@@ -163,51 +183,75 @@ fn assert_state(index: &RustIndex, admitted: bool) -> Result<Value, String> {
             &seam.evidence.observe,
             &seam.evidence.discriminate,
         ] {
-            assert_eq!(stage.state, StageState::Yes, "{seam:?}");
+            assert_eq!(stage.state, StageState::Yes, "{label}: {seam:?}");
         }
     } else {
         assert!(
             tests.is_empty(),
-            "refused property retained a generated test"
+            "{label}: refused property retained a generated test"
         );
         assert!(index.proptest_receipts.is_empty());
         assert_eq!(file.unresolved_property_macros.len(), 1);
-        assert_ne!(seam.class, SeamGripClass::StronglyGripped, "{seam:?}");
-        assert!(seam.evidence.related_tests.is_empty(), "{seam:?}");
-        assert!(seam.evidence.observed_values.is_empty(), "{seam:?}");
+        assert_ne!(
+            seam.class,
+            SeamGripClass::StronglyGripped,
+            "{label}: {seam:?}"
+        );
+        assert!(seam.evidence.related_tests.is_empty(), "{label}: {seam:?}");
+        assert!(
+            seam.evidence.observed_values.is_empty(),
+            "{label}: {seam:?}"
+        );
         for stage in [
             &seam.evidence.reach,
             &seam.evidence.activate,
             &seam.evidence.observe,
             &seam.evidence.discriminate,
         ] {
-            assert_ne!(stage.state, StageState::Yes, "{seam:?}");
+            assert_ne!(stage.state, StageState::Yes, "{label}: {seam:?}");
         }
     }
     serde_json::to_value(seam).map_err(|error| error.to_string())
 }
 
-fn assert_same(left: &RustIndex, right: &RustIndex, admitted: bool) -> Result<(), String> {
+fn assert_same(
+    left: &RustIndex,
+    right: &RustIndex,
+    admitted: bool,
+    label: &str,
+) -> Result<(), String> {
     // Entire facts and receipt scopes are compared, not just test names or the
     // final class: stale authority can otherwise hide behind an unchanged label.
     assert_eq!(
         left.tests().iter().collect::<Vec<_>>(),
-        right.tests().iter().collect::<Vec<_>>()
+        right.tests().iter().collect::<Vec<_>>(),
+        "{label}: TestFacts"
     );
-    assert_eq!(left.proptest_receipts.len(), right.proptest_receipts.len());
+    assert_eq!(
+        left.proptest_receipts.len(),
+        right.proptest_receipts.len(),
+        "{label}: receipt count"
+    );
     for (key, receipt) in &left.proptest_receipts {
         let other = right
             .proptest_receipts
             .get(key)
-            .ok_or("receipt identity mismatch")?;
-        assert_eq!(receipt.test, other.test);
-        assert_eq!(receipt.source, other.source);
-        assert_eq!(receipt.line_offset, other.line_offset);
-        assert_eq!(receipt.name_scopes, other.name_scopes);
+            .ok_or_else(|| format!("{label}: receipt identity mismatch"))?;
+        assert_eq!(receipt.test, other.test, "{label}: receipt TestFact");
+        assert_eq!(receipt.source, other.source, "{label}: receipt source");
+        assert_eq!(
+            receipt.line_offset, other.line_offset,
+            "{label}: receipt offset"
+        );
+        assert_eq!(
+            receipt.name_scopes, other.name_scopes,
+            "{label}: receipt scopes"
+        );
     }
     assert_eq!(
-        assert_state(left, admitted)?,
-        assert_state(right, admitted)?
+        assert_state(left, admitted, &format!("{label}: reference"))?,
+        assert_state(right, admitted, &format!("{label}: candidate"))?,
+        "{label}: classified predicate"
     );
     Ok(())
 }
@@ -240,6 +284,23 @@ fn reconstructed(fixture: &Fixture, files: &[(PathBuf, Vec<u8>)]) -> Result<Rust
         raw.owned_file(Path::new(PROPERTY_PATH))
     );
     normalize_reconstructed_source_roles(&mut raw, &fixture.0, &[])?;
+    // Local normalization intentionally leaves external composition to its
+    // caller. Even an admitted receipt cannot supply owner reach without it.
+    assert!(raw.execution_context(Path::new(PROPERTY_PATH)).is_none());
+    let uncomposed = predicate(&raw)?;
+    assert_eq!(
+        uncomposed.class,
+        SeamGripClass::Ungripped,
+        "normalized without composition: {uncomposed:?}"
+    );
+    assert!(
+        uncomposed.evidence.related_tests.is_empty(),
+        "normalized without composition: {uncomposed:?}"
+    );
+    // This fixture has the whole corpus, so use the ordinary composition
+    // authority before the downstream seam/evidence/classification consumers.
+    compose_fixture_source_roles(&mut raw, &fixture.0);
+    raw.finalize()?;
     Ok(raw)
 }
 
@@ -253,18 +314,23 @@ fn registered_property_authority_matches_reconstructed_and_incremental_indexes()
         .map(|(path, _)| path.clone())
         .collect::<Vec<_>>();
     let fresh = build_index(&fixture.0, &paths)?;
-    assert_state(&fresh, true)?;
+    assert_state(&fresh, true, "fresh")?;
     let cold =
         build_index_from_loaded_files_with_cache_and_test_harnesses(&fixture.0, &files, &[])?;
     assert_eq!(cold.file_fact_cache.misses, files.len());
     assert_eq!(cold.file_fact_cache.stores, files.len());
-    assert_same(&fresh, &cold.index, true)?;
+    assert_same(&fresh, &cold.index, true, "cold file cache")?;
     let warm =
         build_index_from_loaded_files_with_cache_and_test_harnesses(&fixture.0, &files, &[])?;
     assert_eq!(warm.file_fact_cache.hits, files.len());
     assert_eq!(warm.file_fact_cache.misses, 0);
-    assert_same(&fresh, &warm.index, true)?;
-    assert_same(&fresh, &reconstructed(&fixture, &files)?, true)?;
+    assert_same(&fresh, &warm.index, true, "warm file cache")?;
+    assert_same(
+        &fresh,
+        &reconstructed(&fixture, &files)?,
+        true,
+        "reconstructed",
+    )?;
     let core = files
         .iter()
         .filter(|(path, _)| path != Path::new(PROPERTY_PATH))
@@ -274,9 +340,14 @@ fn registered_property_authority_matches_reconstructed_and_incremental_indexes()
     assert!(core.index.proptest_receipts.is_empty());
     assert_eq!(core.index.tests().len(), 1);
     let extended = reuse_cached_index_with_loaded_files(core, &fixture.0, &files, &[])?;
-    assert_same(&fresh, &extended.index, true)?;
+    assert_same(&fresh, &extended.index, true, "incremental addition")?;
     // Promotion of other index instances must never contaminate cached parse facts.
-    assert_same(&fresh, &reconstructed(&fixture, &files)?, true)?;
+    assert_same(
+        &fresh,
+        &reconstructed(&fixture, &files)?,
+        true,
+        "reconstructed after promotion",
+    )?;
     Ok(())
 }
 
@@ -289,7 +360,7 @@ fn registered_property_reuse_revokes_configuration_and_provider_authority() -> R
         .map(|(path, _)| path.clone())
         .collect::<Vec<_>>();
     let original = build_index(&fixture.0, &paths)?;
-    let original_predicate = assert_state(&original, true)?;
+    let original_predicate = assert_state(&original, true, "original fresh")?;
     let ordinary_before = ordinary(&original)?;
     let mut cached =
         build_index_from_loaded_files_with_cache_and_test_harnesses(&fixture.0, &files, &[])?;
@@ -304,15 +375,30 @@ fn registered_property_reuse_revokes_configuration_and_provider_authority() -> R
         }
         assert_eq!(fixture.loaded()?, files, "{premise} changed Rust bytes");
         let refused = build_index(&fixture.0, &paths)?;
-        assert_state(&refused, false)?;
-        assert_same(&refused, &reconstructed(&fixture, &files)?, false)?;
+        assert_state(&refused, false, &format!("{premise}: refused fresh"))?;
+        assert_same(
+            &refused,
+            &reconstructed(&fixture, &files)?,
+            false,
+            &format!("{premise}: refused reconstructed"),
+        )?;
         let warm =
             build_index_from_loaded_files_with_cache_and_test_harnesses(&fixture.0, &files, &[])?;
         assert_eq!(warm.file_fact_cache.hits, files.len());
-        assert_same(&refused, &warm.index, false)?;
+        assert_same(
+            &refused,
+            &warm.index,
+            false,
+            &format!("{premise}: refused warm cache"),
+        )?;
         cached = reuse_cached_index_with_loaded_files(cached, &fixture.0, &files, &[])?;
         assert_eq!(cached.files_content_hash, source_hash);
-        assert_same(&refused, &cached.index, false)?;
+        assert_same(
+            &refused,
+            &cached.index,
+            false,
+            &format!("{premise}: refused reuse"),
+        )?;
         assert_eq!(ordinary(&cached.index)?, ordinary_before);
         if premise == "configuration" {
             std::fs::remove_file(fixture.0.join(".cargo/config.toml"))
@@ -323,11 +409,29 @@ fn registered_property_reuse_revokes_configuration_and_provider_authority() -> R
         assert_eq!(fixture.loaded()?, files);
         cached = reuse_cached_index_with_loaded_files(cached, &fixture.0, &files, &[])?;
         assert_eq!(cached.files_content_hash, source_hash);
-        assert_same(&original, &cached.index, true)?;
-        assert_eq!(assert_state(&cached.index, true)?, original_predicate);
+        assert_same(
+            &original,
+            &cached.index,
+            true,
+            &format!("{premise}: restored reuse"),
+        )?;
+        assert_eq!(
+            assert_state(&cached.index, true, &format!("{premise}: restored reuse"))?,
+            original_predicate
+        );
         let restored = build_index(&fixture.0, &paths)?;
-        assert_same(&original, &restored, true)?;
-        assert_same(&original, &reconstructed(&fixture, &files)?, true)?;
+        assert_same(
+            &original,
+            &restored,
+            true,
+            &format!("{premise}: restored fresh"),
+        )?;
+        assert_same(
+            &original,
+            &reconstructed(&fixture, &files)?,
+            true,
+            &format!("{premise}: restored reconstructed"),
+        )?;
         assert_eq!(ordinary(&restored)?, ordinary_before);
     }
     Ok(())

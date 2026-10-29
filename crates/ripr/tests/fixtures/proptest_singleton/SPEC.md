@@ -84,15 +84,18 @@ evidence and unknown/none oracle fields, not only the final classification.
 
 The internal index controls compare fresh, cold/warm file-cache,
 reconstructed-role and incremental-addition paths through actual seam
-inventory, evidence and classification consumers. The positive requires the
-exact generated TestFact, full receipt source/line offset/name scopes, one
-related property, boundary 100 and established stages. With Rust bytes fixed,
-root Cargo `[env] PROPTEST_CASES='0'` and a changed provider checksum must revoke
-the same authority through reconstruction and incremental reuse; restoring
-each premise must recover the original classified predicate. A separately
-named ordinary witness retains its complete facts. Raw cached parsing and its
-wire round-trip retain the unresolved macro and never store promoted property
-authority.
+inventory, evidence and classification consumers. Reconstruction first checks
+that local role normalization alone grants no execution ancestry or property
+relation, then runs the ordinary composition authority over the complete
+fixture corpus and finalizes the index before classification. The positive
+requires the exact generated TestFact, full receipt source/line offset/name
+scopes, one related property, boundary 100 and established stages. With Rust
+bytes fixed, root Cargo `[env] PROPTEST_CASES='0'` and a changed provider checksum
+must revoke the same authority through reconstruction and incremental reuse;
+restoring each premise must recover the original classified predicate. A
+separately named ordinary witness retains its complete facts. Raw cached
+parsing and its wire round-trip retain the unresolved macro and never store
+promoted property authority.
 
 ## Must Not
 
