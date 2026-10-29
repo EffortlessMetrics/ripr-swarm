@@ -657,17 +657,21 @@ CPython trusts them; the residual risk is a stale timestamp pyc after a
 same-size edit whose mtime lands in the compile second or is restored
 (`rsync -t`, `tar`, CI caches), which CPython itself would load. A pytest or
 tox configuration beside any workspace source, or above one, whose
-`pythonpath`, `python_paths` or `PYTHONPATH` setting holds anything but
-relative workspace directories (an archive, an absolute or parent path, an
-expansion such as `{toxinidir}`, or entries that cannot be read off its
-lines) refuses the credit, since such a path can hold code the scan does not
-read; `pythonpath = ["."]` keeps it. With a second import root, a compiled
-extension named like the owner or one of its packages in any source
-directory refuses it too.
+`pythonpath`, `python_paths` or `PYTHONPATH` setting names anything but its
+own directory refuses the credit: any other entry (an archive, a directory
+the workspace walk excludes, a root holding only compiled extensions, a path
+outside the workspace, an expansion such as `{toxinidir}`, or entries that
+cannot be read off its lines) can hold code the scan does not read.
+`pythonpath = ["."]` keeps it. TOML configurations are parsed, so every
+`pythonpath` key at any depth counts and a mention outside such a key (an
+`addopts` override) refuses; an INI value runs on across blank and comment
+lines, as iniconfig reads it. A compiled extension or sourceless `.pyc` in
+the workspace root or any source directory named like the owner or one of
+its packages (a compiled `__init__` counts as its package) refuses it too.
 What the environment supplies is outside the static claim and stays a
-residual risk: a `PYTHONPATH` set by the caller, a `.pth` file in site
-packages, or an installed non-editable copy that wins over the checkout
-(#10969). A test whose module has header effects is
+residual risk: a `PYTHONPATH` set by the caller (a Makefile, a noxfile, CI
+configuration, `.envrc`), a `.pth` file in site packages, or an installed
+non-editable copy that wins over the checkout (#10969). A test whose module has header effects is
 refused like one under a conftest with effects. Because these are
 whole-word matches over every workspace file, the credit rarely applies in
 repositories that use reflection anywhere; that is missed credit, not a

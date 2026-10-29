@@ -716,7 +716,7 @@ fn owner_module_hooks_and_class_body_code_are_not_credited() -> Check {
             functions.to_string(),
             vec![(
                 "pyproject.toml",
-                "[tool.pytest.ini_options]\npythonpath = [\n    \".\",\n    \"reach\",\n]\n",
+                "[tool.pytest.ini_options]\npythonpath = [\n    \".\",\n]\n",
             )],
             true,
         ),
@@ -735,15 +735,10 @@ fn owner_module_hooks_and_class_body_code_are_not_credited() -> Check {
         (
             "tox PYTHONPATH expansion",
             functions.to_string(),
-            // A directory literally spelled like the expansion exists, so
-            // only the expansion marks the entry as unread.
-            vec![
-                (
-                    "tox.ini",
-                    "[testenv]\nsetenv =\n    PYTHONPATH = {toxinidir}/vendor\n",
-                ),
-                ("{toxinidir}/vendor/keep.py", "VALUE = 1\n"),
-            ],
+            vec![(
+                "tox.ini",
+                "[testenv]\nsetenv =\n    PYTHONPATH = {toxinidir}/vendor\n",
+            )],
             false,
         ),
         (
@@ -766,6 +761,90 @@ fn owner_module_hooks_and_class_body_code_are_not_credited() -> Check {
                 ("src/reach.abi3.so", "\x7fELF"),
             ],
             false,
+        ),
+        (
+            "pytest pythonpath of a workspace directory",
+            functions.to_string(),
+            vec![
+                ("pytest.ini", "[pytest]\npythonpath = vendor\n"),
+                ("vendor/ledger.py", "def render():\n    return \"|  |\"\n"),
+            ],
+            false,
+        ),
+        (
+            "pytest pythonpath of an extension-only root",
+            functions.to_string(),
+            vec![
+                ("pytest.ini", "[pytest]\npythonpath = src\n"),
+                ("src/ledger.cpython-313-x86_64-linux-gnu.so", "\x7fELF"),
+            ],
+            false,
+        ),
+        (
+            "package initializer extension in a second root",
+            functions.to_string(),
+            vec![
+                ("src/reach/tool.py", "VALUE = 1\n"),
+                (
+                    "src/reach/__init__.cpython-313-x86_64-linux-gnu.so",
+                    "\x7fELF",
+                ),
+            ],
+            false,
+        ),
+        (
+            "pytest pythonpath continued past a blank line",
+            functions.to_string(),
+            vec![
+                ("pytest.ini", "[pytest]\npythonpath = .\n\n    vendor.zip\n"),
+                ("vendor.zip", "PK"),
+            ],
+            false,
+        ),
+        (
+            "pytest pythonpath continued past a comment",
+            functions.to_string(),
+            vec![
+                (
+                    "pytest.ini",
+                    "[pytest]\npythonpath = .\n# vendored\n    vendor.zip\n",
+                ),
+                ("vendor.zip", "PK"),
+            ],
+            false,
+        ),
+        (
+            "pyproject pythonpath with a bracket in an entry",
+            functions.to_string(),
+            vec![(
+                "pyproject.toml",
+                "[tool.pytest.ini_options]\npythonpath = [\".\", \"]\"]\n",
+            )],
+            false,
+        ),
+        (
+            "pyproject pythonpath as a dotted key",
+            functions.to_string(),
+            vec![(
+                "pyproject.toml",
+                "tool.pytest.ini_options.pythonpath = [\"vendor.zip\"]\n",
+            )],
+            false,
+        ),
+        (
+            "pyproject pythonpath through addopts",
+            functions.to_string(),
+            vec![(
+                "pyproject.toml",
+                "[tool.pytest.ini_options]\naddopts = \"-o pythonpath=vendor.zip\"\n",
+            )],
+            false,
+        ),
+        (
+            "pytest pythonpath of its own directory",
+            functions.to_string(),
+            vec![("pytest.ini", "[pytest]\npythonpath = .\n")],
+            true,
         ),
         (
             "pytest config without an import path",
@@ -896,6 +975,31 @@ fn owner_module_hooks_and_class_body_code_are_not_credited() -> Check {
             );
         } else {
             withheld(&finding, "__init__ extension");
+        }
+    }
+    // A namespace package owner: with no source in the root, only the root
+    // scan sees a `reach` extension or sourceless pyc there, which the import
+    // picks over the namespace portion.
+    let namespace_test = "from reach.ledger import render\n\n\ndef test_render():\n    assert render() == \"|  |\"\n";
+    for (extension, credited) in [
+        (None, true),
+        (Some("reach.abi3.so"), false),
+        (Some("reach.pyc"), false),
+    ] {
+        let mut files = vec![
+            ("reach/ledger.py", functions),
+            ("tests/test_ledger.py", namespace_test),
+        ];
+        files.extend(extension.map(|extension| (extension, "\x7fELF")));
+        let finding = classify(&files, "reach/ledger.py", 2, "    return 2", "    return 3")?;
+        if credited {
+            assert_eq!(
+                finding.class,
+                ExposureClass::Exposed,
+                "namespace owner: {finding:?}"
+            );
+        } else {
+            withheld(&finding, "root extension");
         }
     }
     // A workspace file that puts an archive first on `sys.path` hands a

@@ -674,10 +674,11 @@ fn pyc_unchecked(pyc: &Path) -> bool {
 
 /// Whether a pytest or tox configuration in the workspace sets an import
 /// path (`pythonpath`, `python_paths`, a `PYTHONPATH` environment entry)
-/// that may hold code the scan does not read: an entry that is not a
-/// relative directory inside the workspace (an archive, an absolute or
-/// parent path, an expansion such as `{toxinidir}` or `$HOME`), or a setting
-/// whose entries cannot be read off its lines. Every directory holding a
+/// other than its own directory (`.`). Any other entry can hold code the
+/// scan does not read: an archive, a directory the workspace walk excludes,
+/// a root holding only compiled extensions, a path outside the workspace or
+/// an expansion such as `{toxinidir}`. A setting whose entries cannot be
+/// read off its lines counts as one. Every directory holding a
 /// source, and each of its ancestors, is checked, since pytest reads the
 /// first configuration above its arguments. An unreadable configuration
 /// counts as such a setting (#9226).
@@ -702,17 +703,44 @@ pub(super) fn import_path_configured<'a>(
         ]
         .iter()
         .any(|name| match std::fs::read_to_string(base.join(name)) {
-            Ok(text) => sets_unread_import_path(&base, &text),
+            Ok(text) => sets_unread_import_path(name.ends_with(".toml"), &text),
             Err(error) => error.kind() != std::io::ErrorKind::NotFound,
         })
     })
 }
 
-/// Whether `text` (a configuration in `base`) sets an import path holding
-/// anything but workspace directories. The entries are the words after the
-/// setting's `=` on its line, through a TOML array's closing `]` or an INI
-/// value's indented continuation lines.
-fn sets_unread_import_path(base: &Path, text: &str) -> bool {
+/// Whether the configuration `text` sets an import path other than `.`. A
+/// TOML file is parsed, and every `pythonpath` or `python_paths` key at any
+/// depth must hold `.` alone; a mention the parsed keys do not account for
+/// (an `addopts` override, a dotted or quoted key) refuses. In an INI file
+/// the entries are the whitespace-separated words after the key's `=`
+/// through its continuation lines, which, as in iniconfig, run on across
+/// blank and `#`/`;` comment lines.
+fn sets_unread_import_path(toml_file: bool, text: &str) -> bool {
+    let lowered = text.to_ascii_lowercase();
+    let mentions = lowered.matches("pythonpath").count() + lowered.matches("python_paths").count();
+    if mentions == 0 {
+        return false;
+    }
+    if toml_file {
+        let Ok(table) = text.parse::<toml::Table>() else {
+            return true;
+        };
+        let mut settings = Vec::new();
+        let table = toml::Value::Table(table);
+        import_path_values(&table, &mut settings);
+        return settings.len() != mentions
+            || settings.iter().any(|value| match value {
+                toml::Value::String(entry) => !own_directory(entry),
+                toml::Value::Array(entries) => {
+                    entries.is_empty()
+                        || entries
+                            .iter()
+                            .any(|entry| entry.as_str().is_none_or(|entry| !own_directory(entry)))
+                }
+                _ => true,
+            });
+    }
     let lines: Vec<&str> = text.lines().collect();
     lines.iter().enumerate().any(|(at, line)| {
         let lowered = line.to_ascii_lowercase();
@@ -726,57 +754,75 @@ fn sets_unread_import_path(base: &Path, text: &str) -> bool {
         if key != "pythonpath" && key != "python_paths" {
             return true;
         }
-        let mut entries = vec![value.to_string()];
-        let array = value.trim_start().starts_with('[');
-        let mut next = at + 1;
-        while (array && !entries.concat().contains(']'))
-            || (!array
-                && lines
-                    .get(next)
-                    .is_some_and(|line| line.starts_with([' ', '\t']) && !line.trim().is_empty()))
-        {
-            let Some(line) = lines.get(next) else {
-                return true;
-            };
-            entries.push((*line).to_string());
-            next += 1;
+        let mut words: Vec<&str> = value.split_whitespace().collect();
+        for line in &lines[at + 1..] {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with(['#', ';']) {
+                continue;
+            }
+            if !line.starts_with([' ', '\t']) {
+                break;
+            }
+            words.extend(trimmed.split_whitespace());
         }
-        let words: Vec<String> = entries
-            .concat()
-            .split(|ch: char| ch.is_whitespace() || matches!(ch, ',' | '[' | ']' | '"' | '\''))
-            .filter(|word| !word.is_empty())
-            .map(str::to_string)
-            .collect();
-        words.is_empty()
-            || words.iter().any(|word| {
-                let entry = Path::new(word);
-                word.contains(['$', '%', '{', '}', '~', '=', '\\'])
-                    || entry.is_absolute()
-                    || entry
-                        .components()
-                        .any(|part| matches!(part, std::path::Component::ParentDir))
-                    || !base.join(entry).is_dir()
-            })
+        words.is_empty() || words.iter().any(|word| !own_directory(word))
     })
 }
 
+/// Every value under a `pythonpath` or `python_paths` key in `value`.
+fn import_path_values<'v>(value: &'v toml::Value, settings: &mut Vec<&'v toml::Value>) {
+    match value {
+        toml::Value::Table(table) => {
+            for (key, value) in table {
+                let key = key.to_ascii_lowercase();
+                if key == "pythonpath" || key == "python_paths" {
+                    settings.push(value);
+                } else {
+                    import_path_values(value, settings);
+                }
+            }
+        }
+        toml::Value::Array(values) => {
+            for value in values {
+                import_path_values(value, settings);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Whether an import path entry names the configuration's own directory.
+fn own_directory(entry: &str) -> bool {
+    entry == "." || entry == "./"
+}
+
 /// The module names of the compiled extension modules (`name.*.so`,
-/// `name.so`, `name.*.pyd`, `name.pyd`) in every directory holding a
-/// workspace source, or `None` when one cannot be read. With more than one
+/// `name.so`, `name.*.pyd`, `name.pyd`) and sourceless bytecode
+/// (`name.pyc`) in the workspace root and every
+/// directory holding a workspace source, with a compiled `__init__` named by
+/// its package, or `None` when one cannot be read. With more than one
 /// import root, an extension in another root can shadow a source module or
 /// a package of the same name (#9226).
 pub(super) fn extension_names<'a>(
     root: &Path,
     files: impl Iterator<Item = &'a Path>,
 ) -> Option<std::collections::BTreeSet<String>> {
-    let directories: std::collections::BTreeSet<&Path> = files.filter_map(Path::parent).collect();
+    let mut directories: std::collections::BTreeSet<&Path> =
+        files.filter_map(Path::parent).collect();
+    directories.insert(Path::new(""));
     let mut names = std::collections::BTreeSet::new();
     for directory in directories {
         for entry in std::fs::read_dir(root.join(directory)).ok()? {
             let name = entry.ok()?.file_name();
             let name = name.to_str()?;
-            if name.ends_with(".so") || name.ends_with(".pyd") {
-                names.insert(name.split('.').next().unwrap_or_default().to_string());
+            if name.ends_with(".so") || name.ends_with(".pyd") || name.ends_with(".pyc") {
+                // A compiled package initializer stands for its package.
+                let module = name.split('.').next().unwrap_or_default();
+                if module == "__init__" {
+                    names.insert(directory.file_name()?.to_str()?.to_string());
+                } else {
+                    names.insert(module.to_string());
+                }
             }
         }
     }
