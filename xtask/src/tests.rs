@@ -51940,7 +51940,7 @@ fn editor_lsp_workflow_fixture_pins_saved_workspace_loop() -> Result<(), String>
         .map_err(|err| format!("failed to read editor hover fixture: {err}"))?;
     for needle in [
         "## Evidence Path",
-        "## Missing discriminator",
+        "## Missing test input",
         "## Suggested test shape",
         "## Handoff, verify, and receipt commands",
         "## Status projection",
