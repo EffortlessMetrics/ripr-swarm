@@ -40,29 +40,44 @@ use super::bool_oracle::count_bindings;
 use super::source_facts::parse_module_result;
 use super::{KnownEqualityLibrary, PythonKnownEqualityHelper, PythonTest};
 use crate::domain::{OracleKind, OracleStrength};
+use rayon::prelude::*;
 use rustpython_parser::ast::{Mod, Stmt};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 /// Re-read every provable numpy.testing / assertpy equality candidate as the
 /// comparison it runs.
 pub(super) fn credit_known_equality_helpers<'a>(
     tests: &mut [PythonTest],
-    read_source: impl Fn(&Path) -> Option<&'a str>,
+    read_source: impl Fn(&Path) -> Option<&'a str> + Sync,
 ) {
-    let mut files: BTreeMap<PathBuf, Option<FileImports>> = BTreeMap::new();
-    for test in tests.iter_mut() {
-        if test
-            .assertions
+    let uses_helper = |test: &PythonTest| {
+        test.assertions
             .iter()
-            .all(|assertion| assertion.known_equality_helper.is_none())
-        {
+            .any(|assertion| assertion.known_equality_helper.is_some())
+    };
+    // Each file is parsed once; the parses run in parallel (#10914).
+    let paths: BTreeSet<&Path> = tests
+        .iter()
+        .filter(|test| uses_helper(test))
+        .map(|test| test.file.as_path())
+        .collect();
+    let token = crate::analysis::cancellation::current_token();
+    let files: BTreeMap<PathBuf, Option<FileImports>> = paths
+        .into_par_iter()
+        .map(|path| {
+            let imports =
+                crate::analysis::cancellation::with_optional_token(token.as_ref(), || {
+                    read_source(path).and_then(|source| FileImports::read(path, source))
+                });
+            (path.to_path_buf(), imports)
+        })
+        .collect();
+    for test in tests.iter_mut() {
+        if !uses_helper(test) {
             continue;
         }
-        let imports = files.entry(test.file.clone()).or_insert_with(|| {
-            read_source(&test.file).and_then(|s| FileImports::read(&test.file, s))
-        });
-        let Some(imports) = imports else {
+        let Some(Some(imports)) = files.get(&test.file) else {
             continue;
         };
         for assertion in &mut test.assertions {
