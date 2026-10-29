@@ -240,9 +240,9 @@ fn crate_qualified_method_cli_guards_the_layout_class() -> Result<(), String> {
         write(&root, "tests/api.rs", "")?;
 
         // Rival-free baseline: the library's own inline test pins the owner
-        // through `crate::`, so the seam exposes.
+        // through `crate::`, so the seam exposes. The fixture starts from a
+        // fresh workspace, so no `src/main.rs` exists to remove.
         write(&root, "src/lib.rs", DBL_LIB_WITH_UNIT)?;
-        std::fs::remove_file(root.join("src/main.rs")).ok();
         let baseline = single_finding(&check(&root)?, "baseline")?;
         if baseline["classification"] != "exposed" {
             return Err(format!(
