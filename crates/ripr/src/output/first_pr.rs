@@ -1500,7 +1500,7 @@ fn unbound_no_action_limit(
         &["check_output_provenance", "source_subject_unavailable"],
     )
     .or_else(|| string_path(ledger, &["source_subject_unavailable"]))
-        .unwrap_or_else(|| "source_corpus_provenance_unavailable".to_string());
+    .unwrap_or_else(|| "source_corpus_provenance_unavailable".to_string());
     let source_label = source_root.as_deref().unwrap_or("unavailable");
     let mut message = format!(
         "The no-action conclusion cannot be bound to the current workspace: source root `{source_label}`; source subject `{subject}`; complete source-corpus currentness is unavailable (preview/mixed corpus provenance: #7452). {inspection_boundary} If a fresh check still has no repairable gap, this limitation remains until the producer can establish corpus currentness. Do not treat the fresh check alone as proof of no action."
