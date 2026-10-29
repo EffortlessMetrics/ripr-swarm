@@ -47,7 +47,8 @@
 //!   `addopts` or an import path other than its own directory, and neither
 //!   a directory holding a source or above one nor a package directory
 //!   below one along the owner's dotted path holds an extension or
-//!   sourceless pyc named like the owner or one of its packages, since each
+//!   sourceless pyc named like the owner or one of its packages, and no
+//!   other package is named for the owner's whole dotted path, since each
 //!   can put an archive or unread code ahead of the owner;
 //! - inside a callable, a name is a parameter, a call is a bare call of a model
 //!   function or class of the module, or a method call on an instance of a

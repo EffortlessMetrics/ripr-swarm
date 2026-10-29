@@ -866,7 +866,10 @@ pub(super) fn shadowed_by_extension(
 /// sourceless `.pyc`) for the next component of that path or for the
 /// package's `__init__`. Under pytest's prepend mode a test directory goes
 /// first on `sys.path`, so `tests/reach/ledger.pyc` in a directory with no
-/// source is what `import reach.ledger` loads. `roots` are every directory
+/// source is what `import reach.ledger` loads. A directory named for the
+/// whole path with an initializer of any kind (`tests/reach/ledger/
+/// __init__.pyc`) is a package that wins over the module the same way,
+/// unless it is the owner's own package. `roots` are every directory
 /// holding a source or above one; their own entries are left to
 /// `extension_names`. An unreadable directory or name counts as one
 /// (#9226).
@@ -883,9 +886,12 @@ pub(super) fn compiled_package_shadow(
         };
         parts.push(part);
     }
-    if parts.last() == Some(&"__init__") {
+    let own_package = if parts.last() == Some(&"__init__") {
         parts.pop();
-    }
+        file.parent().map(|package| root.join(package))
+    } else {
+        None
+    };
     roots.iter().any(|base| {
         (0..parts.len()).any(|start| {
             let mut directory = root.join(base);
@@ -898,8 +904,29 @@ pub(super) fn compiled_package_shadow(
                     return false;
                 }
             }
-            false
+            own_package.as_ref() != Some(&directory) && initializer_in(&directory)
         })
+    })
+}
+
+/// Whether `directory` holds a package initializer of any kind (`__init__`
+/// source, bytecode or extension), or cannot be read.
+fn initializer_in(directory: &Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return true;
+    };
+    entries.into_iter().any(|entry| {
+        let Ok(entry) = entry else {
+            return true;
+        };
+        let file_name = entry.file_name();
+        let Some(file_name) = file_name.to_str() else {
+            return true;
+        };
+        file_name.split('.').next() == Some("__init__")
+            && [".py", ".pyc", ".so", ".pyd"]
+                .iter()
+                .any(|suffix| file_name.ends_with(suffix))
     })
 }
 

@@ -673,7 +673,9 @@ on `sys.path`) named like the owner or one of its packages (a
 compiled `__init__` counts as its package) refuses it, and so does one in a
 package directory below such a root along a dotted path the owner can be
 imported by (`tests/reach/ledger.pyc`, which pytest's prepend mode puts
-ahead of `reach/ledger.py`).
+ahead of `reach/ledger.py`), as does a package directory named for the
+whole path with an initializer of any kind (`tests/reach/ledger/
+__init__.pyc`) other than the owner's own package.
 What the environment supplies is outside the static claim and stays a
 residual risk: a `PYTHONPATH` or `PYTEST_ADDOPTS` set by the caller (a
 Makefile, a noxfile, CI configuration, `.envrc`), a `.pth` file in site packages, or an installed

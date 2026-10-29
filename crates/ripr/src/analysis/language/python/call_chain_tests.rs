@@ -1050,26 +1050,34 @@ fn owner_module_hooks_and_class_body_code_are_not_credited() -> Check {
     // pytest's prepend mode puts `tests/`, the first ancestor of a test in a
     // `tests/unit` package without `__init__.py`, first on `sys.path`, though
     // `tests/` holds no source; a sourceless package there is what the test
-    // imports. A top-level owner is shadowed the same way.
+    // imports. A `tests/reach/ledger/` package beats `reach/ledger.py` the
+    // same way once `tests/reach` is the `reach` package; a directory there
+    // with no initializer is only a namespace portion and keeps the credit.
     let unit_test = "from reach.ledger import render\n\n\ndef test_render():\n    assert render() == \"|  |\"\n";
-    for (shadow, credited) in [
-        (None, true),
-        (Some("tests/reach/__init__.pyc"), false),
-        (Some("tests/reach.pyc"), false),
-    ] {
+    let shadows: [(&[&str], bool); 5] = [
+        (&[], true),
+        (&["tests/reach/__init__.pyc"], false),
+        (&["tests/reach.pyc"], false),
+        (
+            &["tests/reach/__init__.py", "tests/reach/ledger/__init__.pyc"],
+            false,
+        ),
+        (&["tests/reach/ledger/notes.txt"], true),
+    ];
+    for (shadow, credited) in shadows {
         let mut files = vec![
             ("reach/__init__.py", ""),
             ("reach/ledger.py", functions),
             ("tests/unit/__init__.py", ""),
             ("tests/unit/test_ledger.py", unit_test),
         ];
-        files.extend(shadow.map(|shadow| (shadow, "\x00")));
+        files.extend(shadow.iter().map(|path| (*path, "")));
         let finding = classify(&files, "reach/ledger.py", 2, "    return 2", "    return 3")?;
         if credited {
             assert_eq!(
                 finding.class,
                 ExposureClass::Exposed,
-                "unit test owner: {finding:?}"
+                "unit test owner {shadow:?}: {finding:?}"
             );
         } else {
             withheld(&finding, "sourceless shadow in a source-free test root");
