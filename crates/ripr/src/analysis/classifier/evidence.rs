@@ -424,12 +424,14 @@ impl ClassifiedProbeEvidence {
             owner_has_other_callers,
             assertion_macros_rebound,
         );
-        // #10980: when the whole-test contradiction withheld every credited
-        // activation path, the stage discloses the withholding instead of
-        // reading the withheld tests' literals as if they still ran (the
-        // same disclosure rule the repo-seam activation authority states at
-        // its `withheld_activation_tests` branch, #7007).
-        let infect = if withheld_activation_tests > 0 && activation.observed_values.is_empty() {
+        // #10980: when the whole-test contradiction withheld EVERY credited
+        // activation path (the repo-seam authority's own branch condition,
+        // #7007), the stage discloses the withholding instead of reading the
+        // withheld tests' literals as if they still ran. A credited test
+        // keeps its normal infection reading even when it passes no
+        // comparable values (a zero-argument owner), so this fires only on
+        // an empty credited set, never on empty observed values.
+        let infect = if withheld_activation_tests > 0 && activation_credited.is_empty() {
             StageEvidence::new(
                 StageState::Unknown,
                 Confidence::Low,
@@ -2480,6 +2482,73 @@ mod tests {
             clean_class,
             ExposureClass::Exposed,
             "the clean assertion must keep its credit: {clean_summary}"
+        );
+        Ok(())
+    }
+
+    /// #10980 review control: a credited test keeps its normal infection
+    /// reading when a sibling test is withheld, even when the credited test
+    /// passes no comparable values (a zero-argument owner whose literal
+    /// tail the equality fold reads). The withholding fires only on an
+    /// empty credited set, so the clean test's reach keeps infection `yes`.
+    #[test]
+    fn a_credited_zero_argument_test_keeps_infection_beside_a_withheld_sibling()
+    -> Result<(), String> {
+        use crate::domain::ExposureClass;
+
+        let source = "pub fn answer() -> i32 {\n    3\n}\n\n\
+             #[cfg(test)]\nmod tests {\n    use super::*;\n\
+             #[test]\nfn pins_new_value() {\nassert_eq!(answer(), 3);\n}\n\
+             #[test]\nfn stale_old_value() {\nassert_eq!(answer(), 2);\n}\n}\n";
+        let path = PathBuf::from("src/lib.rs");
+        let facts = crate::analysis::syntax::ra::summarize_file_with_parser(&path, source)?;
+        let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: facts.functions.clone(),
+            tests: facts.tests.clone(),
+            files: [(path, facts)].into_iter().collect(),
+            ..Default::default()
+        });
+        crate::analysis::facts::compose_fixture_source_roles(&mut index, std::path::Path::new(""));
+        let owner = index
+            .functions()
+            .iter()
+            .find(|function| function.name == "answer")
+            .ok_or("missing owner")?;
+        let tests = index
+            .tests()
+            .iter()
+            .filter(|test| test.name == "pins_new_value" || test.name == "stale_old_value")
+            .map(|test| (test, RelationReason::DirectOwnerCall))
+            .collect::<Vec<_>>();
+        assert_eq!(tests.len(), 2, "nonempty subject: both fixture tests parse");
+        let probe = Probe {
+            id: ProbeId("probe:zero-arg-mixed".to_string()),
+            location: SourceLocation::new("src/lib.rs", 2, 5),
+            owner: Some(owner.id.clone()),
+            family: ProbeFamily::ReturnValue,
+            delta: DeltaKind::Value,
+            before: Some("2".to_string()),
+            after: Some("3".to_string()),
+            expression: "3".to_string(),
+            expected_sinks: Vec::new(),
+            required_oracles: Vec::new(),
+        };
+        let context = ProbeContext::new(&probe, Some(owner), tests, false, &index, true);
+        let evidence = ClassifiedProbeEvidence::gather(
+            &context,
+            &probe.expression,
+            &crate::analysis::classify::TransitiveReachIndex::new(context.index),
+        );
+        assert_eq!(
+            evidence.infect.state,
+            StageState::Yes,
+            "the credited zero-argument test keeps infection credit: {}",
+            evidence.infect.summary
+        );
+        assert_ne!(
+            evidence.classify(&probe),
+            ExposureClass::InfectionUnknown,
+            "the mixed zero-argument case must not read infection unknown"
         );
         Ok(())
     }
