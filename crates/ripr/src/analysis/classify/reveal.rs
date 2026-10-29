@@ -2007,7 +2007,16 @@ fn analyze_related_assertions(
     return_admission: &ReturnOracleAdmission<'_>,
     arm_selector: Option<&ArmSelector>,
 ) -> RevealAssertionAnalysis {
-    let probe_tokens = if is_effect_family(&probe.family) {
+    let probe_tokens = if let Some(fields) = changed_literal_fields(probe) {
+        // The diff changed some initializers of a struct literal and left the
+        // rest: only the changed fields' text names the behavior, so an
+        // assertion on an untouched field (`url` beside a changed
+        // `timeout_ms`) observes nothing the diff moved.
+        fields
+            .iter()
+            .flat_map(|(name, text)| extract_identifier_tokens(&format!("{name} {text}")))
+            .collect()
+    } else if is_effect_family(&probe.family) {
         // An effect target rooted at a binding the owner itself introduces
         // (`let table = ..; table.validate()?;`) names a value no test can
         // hold: a test's same-named local is a different binding, so the
@@ -2016,15 +2025,6 @@ fn analyze_related_assertions(
         effect_target_tokens(analysis_expression)
             .into_iter()
             .filter(|token| !owner_local_bindings.contains(token))
-            .collect()
-    } else if let Some(fields) = changed_literal_fields(probe) {
-        // The diff changed some initializers of a returned struct literal
-        // and left the rest: only the changed fields' text names the
-        // behavior, so an assertion on an untouched field (`url` beside a
-        // changed `timeout_ms`) observes nothing the diff moved.
-        fields
-            .iter()
-            .flat_map(|(name, text)| extract_identifier_tokens(&format!("{name} {text}")))
             .collect()
     } else {
         extract_identifier_tokens(analysis_expression)
@@ -2207,7 +2207,9 @@ fn analyze_related_assertions(
         ProbeFamily::FieldConstruction => {
             constructed_field.map(str::to_string).into_iter().collect()
         }
-        _ => Vec::new(),
+        _ => changed_literal_fields(probe)
+            .map(|fields| fields.into_iter().map(|(name, _)| name).collect())
+            .unwrap_or_default(),
     };
     let override_owner = probe
         .owner
@@ -3200,13 +3202,10 @@ struct RevealMatchContext<'a> {
 /// The field a `field_construction` expression assigns: the identifier
 /// before a single `:` (`total: a + b`), or the whole shorthand
 /// identifier (`storage,`).
-/// The `(field, initializer)` pairs a `return_value` probe on a struct literal
+/// The `(field, initializer)` pairs a probe on a struct literal expression
 /// changed, when the diff touched only some of its fields
 /// ([`changed_struct_literal_fields`]).
 fn changed_literal_fields(probe: &Probe) -> Option<Vec<(String, String)>> {
-    if probe.family != ProbeFamily::ReturnValue {
-        return None;
-    }
     let before = probe.before.as_deref()?;
     let names = changed_struct_literal_fields(before, &probe.expression)?;
     let after = struct_literal_field_texts(&probe.expression);

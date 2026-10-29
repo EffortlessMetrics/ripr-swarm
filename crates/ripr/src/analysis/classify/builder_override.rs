@@ -128,26 +128,37 @@ impl<'a> OwnerCall<'a> {
 /// spread does not. Empty for anything that is not one struct literal.
 pub(super) fn struct_literal_fields(expression: &str) -> Vec<String> {
     struct_literal_initializers(expression)
-        .0
+        .fields
         .into_iter()
         .map(|(name, _)| name)
         .collect()
 }
 
-/// `(field, initializer text)` pairs of a struct literal, in source order; a
-/// shorthand initializer's text is the field name, and whether a `..base`
-/// spread follows. Empty for anything that is not one struct literal.
+/// The `(field, initializer text)` pairs of a struct literal, in source order.
 pub(super) fn struct_literal_field_texts(expression: &str) -> Vec<(String, String)> {
-    struct_literal_initializers(expression).0
+    struct_literal_initializers(expression).fields
 }
 
-fn struct_literal_initializers(expression: &str) -> (Vec<(String, String)>, bool) {
+/// A struct literal read from its `RecordExpr`.
+#[derive(Default)]
+struct StructLiteral {
+    /// The literal's type or enum-variant path (`Request`, `E::Old`).
+    path: String,
+    /// `(field, initializer text)` pairs in source order; a shorthand
+    /// initializer's text is the field name.
+    fields: Vec<(String, String)>,
+    /// Whether a `..base` spread follows.
+    spread: bool,
+}
+
+/// Reads one struct literal. Empty for anything that is not one.
+fn struct_literal_initializers(expression: &str) -> StructLiteral {
     let source = format!(
         "fn __ripr_struct_literal() {{ let _ = {}; }}",
         expression.trim().trim_end_matches(';')
     );
     let Some(parse) = parse_clean_source_file(&source) else {
-        return (Vec::new(), false);
+        return StructLiteral::default();
     };
     let Some(ast::Expr::RecordExpr(record)) = parse
         .tree()
@@ -156,10 +167,10 @@ fn struct_literal_initializers(expression: &str) -> (Vec<(String, String)>, bool
         .find_map(ast::LetStmt::cast)
         .and_then(|statement| statement.initializer())
     else {
-        return (Vec::new(), false);
+        return StructLiteral::default();
     };
     let Some(list) = record.record_expr_field_list() else {
-        return (Vec::new(), false);
+        return StructLiteral::default();
     };
     let fields = list
         .fields()
@@ -171,7 +182,14 @@ fn struct_literal_initializers(expression: &str) -> (Vec<(String, String)>, bool
             Some((name, text))
         })
         .collect();
-    (fields, list.spread().is_some())
+    StructLiteral {
+        path: record
+            .path()
+            .map(|path| normalized(&path.syntax().text().to_string()))
+            .unwrap_or_default(),
+        fields,
+        spread: list.spread().is_some(),
+    }
 }
 
 /// The fields whose initializer differs between a struct literal's `before`
@@ -181,27 +199,57 @@ fn struct_literal_initializers(expression: &str) -> (Vec<(String, String)>, bool
 /// -> `Request { url, timeout_ms: t.unwrap_or(3_000) }` names `timeout_ms`
 /// alone). `None` otherwise, so a caller keeps every field in play.
 pub(super) fn changed_struct_literal_fields(before: &str, after: &str) -> Option<Vec<String>> {
-    let (before, before_spread) = struct_literal_initializers(before);
-    let (after, after_spread) = struct_literal_initializers(after);
-    if after.is_empty()
-        || before_spread
-        || after_spread
-        || before.len() != after.len()
-        || before.iter().zip(&after).any(|(b, a)| b.0 != a.0)
+    let (before, after) = (
+        struct_literal_initializers(before),
+        struct_literal_initializers(after),
+    );
+    if after.fields.is_empty()
+        || before.spread
+        || after.spread
+        || before.path != after.path
+        || before.fields.len() != after.fields.len()
+        || before
+            .fields
+            .iter()
+            .zip(&after.fields)
+            .any(|(b, a)| b.0 != a.0)
     {
         return None;
     }
     let changed: Vec<String> = before
+        .fields
         .iter()
-        .zip(&after)
+        .zip(&after.fields)
         .filter(|(b, a)| normalized(&b.1) != normalized(&a.1))
         .map(|(_, a)| a.0.clone())
         .collect();
-    (!changed.is_empty() && changed.len() < after.len()).then_some(changed)
+    (!changed.is_empty() && changed.len() < after.fields.len()).then_some(changed)
 }
 
+/// The initializer's non-trivia tokens joined by one space, so formatting and
+/// comments never count as a change while whitespace inside a string or char
+/// literal (one token) still does. Text that does not parse compares as itself.
 fn normalized(text: &str) -> String {
-    text.split_whitespace().collect()
+    let source = format!("fn __ripr_initializer() {{ let _ = {text}; }}");
+    let Some(parse) = parse_clean_source_file(&source) else {
+        return text.to_string();
+    };
+    let Some(expr) = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::LetStmt::cast)
+        .and_then(|statement| statement.initializer())
+    else {
+        return text.to_string();
+    };
+    expr.syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| !matches!(token.kind(), SyntaxKind::WHITESPACE | SyntaxKind::COMMENT))
+        .map(|token| token.text().to_string())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// The subset of `fields` whose every mention in `assertion` is a field read
@@ -1776,9 +1824,21 @@ mod tests {
             changed_struct_literal_fields(before, after),
             Some(vec!["t".to_string()])
         );
-        // Whitespace is not a change.
+        // Whitespace is not a change, except inside a string literal.
         assert_eq!(
             changed_struct_literal_fields(before, "R { url: u, t: x.unwrap_or(30_000), n:  3 }"),
+            None
+        );
+        assert_eq!(
+            changed_struct_literal_fields(
+                "R { a: \"x y\", b: 1, c: 0 }",
+                "R { a: \"x  y\", b: 1, c: 0 }"
+            ),
+            Some(vec!["a".to_string()])
+        );
+        // A different type or variant path keeps every field in play.
+        assert_eq!(
+            changed_struct_literal_fields("E::Old { a: 1, b: 2 }", "E::New { a: 1, b: 3 }"),
             None
         );
         // Every field changed, a different field list, a spread, or a
