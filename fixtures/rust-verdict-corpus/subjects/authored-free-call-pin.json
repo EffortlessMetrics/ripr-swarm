@@ -1,0 +1,21 @@
+{
+  "subject_id": "authored-free-call-pin",
+  "origin": "authored",
+  "version_label": "authored 2026-10-27; private owners reached through free direct calls that an integration test pins at the entry (#9638)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "3ddf3f04a0544ae7030f325a5bc0e39f83c58de1614f8778fc534e78e63a446f"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "9b1958a1210a3566844e7af510fd25fe21c56f9c58f90685e36fb66fda96c7a3"
+    },
+    {
+      "path": "tests/main.rs",
+      "sha256": "1be7e1e958d269fab7706be4c6c80093494821c8b828ec51b2562dd6cb91e20d"
+    }
+  ]
+}

@@ -40,9 +40,9 @@ use related_tests::{
 
 use super::classify::{
     assertion_observes_collection_argument, assertion_observes_direct_collection_for_probe,
-    call_text_may_call_free_function, direct_collection_mutation_receiver, owner_call_text,
-    reach_evidence as classify_reach_evidence, relation_establishes_reach,
-    test_calls_free_function,
+    call_text_may_call_free_function, direct_collection_mutation_receiver, is_ignored,
+    owner_call_text, reach_evidence as classify_reach_evidence,
+    related_tests_reach_owner_indirectly, relation_establishes_reach, test_calls_free_function,
 };
 use super::facts::{CallFact, FunctionImplContext};
 use super::new_test_target::{self, NewTestTargetAdmission};
@@ -454,6 +454,22 @@ fn evidence_for_seam_with_context(
         .filter(|test| test_has_contradicted_assertion(test, owner_fn))
         .count();
 
+    let mut missing_discriminators = missing_discriminators;
+    let path_established = [&reach, &activate, &propagate]
+        .iter()
+        .all(|stage| stage.state == StageState::Yes);
+    if let Some(fact) = return_value_missing_discriminator(
+        seam,
+        &related_tests,
+        &related,
+        path_established.then_some(&discriminate),
+        statically_contradicted_related_tests,
+        owner_fn,
+        context.index,
+    ) {
+        missing_discriminators.push(fact);
+    }
+
     let mut evidence = TestGripEvidence {
         seam_id: seam.id().clone(),
         related_tests,
@@ -471,6 +487,911 @@ fn evidence_for_seam_with_context(
     let saturated = call_budget::any_saturated(related.iter().copied());
     call_budget::withhold(&mut evidence, saturated);
     evidence
+}
+
+/// The producer-owned `return_value` missing-discriminator fact (#10701): a
+/// changed plain return expression is repairable only when a related test
+/// calls the owner directly with an edit target, reach, activation and
+/// propagation hold, the oracle is weak or absent, and no assertion is
+/// statically contradicted. Anything else emits nothing (fail-closed).
+const RETURN_VALUE_START_REASON: &str = "no related test asserts the exact changed return value";
+const ERROR_VARIANT_START_REASON: &str = "no related test asserts the exact changed error variant";
+
+fn return_value_missing_discriminator(
+    seam: &RepoSeam,
+    related_tests: &[Arc<RelatedTestGrip>],
+    related_summaries: &[&TestSummary],
+    discriminate: Option<&StageEvidence>,
+    statically_contradicted_related_tests: usize,
+    owner_fn: Option<&FunctionSummary>,
+    index: &RustIndex,
+) -> Option<MissingDiscriminatorFact> {
+    if !matches!(seam.kind(), SeamKind::ReturnValue | SeamKind::ErrorVariant)
+        || statically_contradicted_related_tests > 0
+    {
+        return None;
+    }
+    // `check` withholds the gap when a test reaches the owner as a function
+    // value or inside an executor helper; repair must agree.
+    let owner_fn = owner_fn?;
+    let related_identities: Vec<(&str, &Path, usize)> = related_tests
+        .iter()
+        .map(|test| (test.test_name.as_str(), test.file.as_path(), test.line))
+        .collect();
+    if related_tests_reach_owner_indirectly(
+        seam.file(),
+        seam.display_line(),
+        &owner_fn.name,
+        &related_identities,
+        index,
+    ) {
+        return None;
+    }
+    // `discriminate` is `None` unless reach, activation and propagation are
+    // established; a statically limited change must not start a repair.
+    if !matches!(
+        discriminate.map(|stage| &stage.state),
+        Some(StageState::Weak | StageState::No)
+    ) {
+        return None;
+    }
+    // `check` judges a struct literal per changed field and the seam does not
+    // know which changed, so the start is withheld.
+    if seam.kind() == SeamKind::ReturnValue && is_struct_literal_expression(seam.expression()) {
+        return None;
+    }
+    let (description, reason) = match seam.required_discriminator() {
+        super::seams::RequiredDiscriminator::ReturnValue { description } => {
+            (description, RETURN_VALUE_START_REASON)
+        }
+        super::seams::RequiredDiscriminator::ErrorVariant { variant } => {
+            (variant, ERROR_VARIANT_START_REASON)
+        }
+        _ => return None,
+    };
+    if description.trim().is_empty() {
+        return None;
+    }
+    // A related test that asserts an exact error variant other than the new
+    // one is contradicted by the change (or not about it): adding a variant
+    // assertion beside it is not the repair, so the start is withheld.
+    if reason == ERROR_VARIANT_START_REASON
+        && related_summaries.iter().any(|test| {
+            test.assertions.iter().any(|oracle| {
+                oracle.kind == OracleKind::ExactErrorVariant
+                    && !mentions_path(&oracle.text, description.as_str())
+            })
+        })
+    {
+        return None;
+    }
+    // A lone equality between an owner call and an owner-free value
+    // (`assert!(f(x) == lit)`, or the terminal Err-return guard twin) already
+    // pins the changed value, so repair must not start; syntactic, errs
+    // toward withholding.
+    if related_summaries
+        .iter()
+        .any(|test| test_pins_owner_call_by_equality(test, &owner_fn.name, index))
+    {
+        return None;
+    }
+    // `#[ignore]` never runs and `#[should_panic]` passes by panicking, so a
+    // strengthened one is no repair: such a related owner caller withholds.
+    if related_summaries
+        .iter()
+        .any(|test| is_ignored(test) || is_should_panic(test))
+    {
+        return None;
+    }
+    // An assertion cannot fix a test whose failure is swallowed: a non-plain
+    // `Drop` type may exit the process while unwinding, so `check` already
+    // demotes an exact assertion. An unreadable workspace withholds.
+    if names_non_plain_drop_type(owner_fn, seam.expression(), index) {
+        return None;
+    }
+    // A start needs an assertion that observes the owner's result (the call or
+    // a local bound from it); `let _ = f(2); assert!(1 > 0);` never reads it.
+    if !related_summaries
+        .iter()
+        .any(|test| test_assertion_observes_owner(test, owner_fn, index))
+    {
+        return None;
+    }
+    let direct_call_with_target = related_tests.iter().any(|test| {
+        test.relation_reason == RelationReason::DirectOwnerCall && test.test_target.is_some()
+    });
+    direct_call_with_target.then(|| MissingDiscriminatorFact {
+        value: description.clone(),
+        reason: reason.to_string(),
+        flow_sink: None,
+    })
+}
+
+/// Whether `test` expects a panic, so passing means panicking (any
+/// `should_panic` form, with or without an expected message).
+fn is_should_panic(test: &TestSummary) -> bool {
+    test.attrs.iter().any(|attr| {
+        let compact: String = attr.chars().filter(|ch| !ch.is_whitespace()).collect();
+        compact.contains("should_panic")
+    })
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Times the masked-source memo was built on this thread (#10701 work pin).
+    static MASK_BUILD_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Whether the owner's signature or the changed expression may name a type
+/// with a non-plain `Drop` impl. Fails closed: `Self` is read as the impl's
+/// self type (withheld when not established); a type alias withholds; a
+/// `use .. as Name` rename is followed; a workspace struct, enum or union is
+/// followed into the types it names; a return type that is one of the owner's
+/// generic parameters withholds; a workspace holding a macro or outside-crate
+/// item calls no type plain. A name no workspace source declares is a
+/// standard-library type, whose `Drop` cannot exit the process.
+fn names_non_plain_drop_type(owner: &FunctionSummary, expression: &str, index: &RustIndex) -> bool {
+    let body: &str = &owner.body;
+    let signature = body.find('{').map_or(body, |open| &body[..open]);
+    if returns_generic_or_opaque_type(owner, signature, index) {
+        return true;
+    }
+    // Masked once per index, read once per type name.
+    let masked = index.call_identity_memos.masked_sources(|| {
+        #[cfg(test)]
+        MASK_BUILD_COUNT.with(|count| count.set(count.get() + 1));
+        index
+            .files()
+            .iter()
+            .map(|(_, facts)| crate::analysis::extract::mask_comments_and_strings(&facts.source))
+            .collect()
+    });
+    let uppercase_words = |text: &str| -> Vec<String> {
+        text.split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+            .filter(|word| word.starts_with(|ch: char| ch.is_ascii_uppercase()))
+            .map(str::to_string)
+            .collect()
+    };
+    let mut pending = uppercase_words(&format!("{signature}\n{expression}"));
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    while let Some(word) = pending.pop() {
+        let word = if word == "Self" {
+            match &owner.impl_context {
+                FunctionImplContext::Impl { self_type } => self_type.clone(),
+                _ => return true,
+            }
+        } else {
+            word
+        };
+        if !seen.insert(word.clone()) {
+            continue;
+        }
+        let (aliased, next) = index.call_identity_memos.type_word_facts(&word, || {
+            let aliased = masked
+                .iter()
+                .any(|source| source_declares_type_alias_masked(source, &word));
+            let mut next = Vec::new();
+            for source in masked {
+                next.extend(renamed_from(source, &word));
+                next.extend(uppercase_words(&type_definition_region(source, &word)));
+            }
+            (aliased, next)
+        });
+        if aliased || !crate::analysis::classify::drop_is_plain_in_closed_sources(index, &word) {
+            return true;
+        }
+        pending.extend(next);
+    }
+    false
+}
+
+/// Whether the owner's return type is one the caller (or an implementor)
+/// chooses, so the start cannot prove it plain: it names a generic parameter of
+/// the function or of the enclosing `impl`/`trait` header, is `Self` inside a
+/// generic `impl`, or is opaque (`impl Trait`, `dyn Trait`). Unbalanced generics
+/// withhold.
+fn returns_generic_or_opaque_type(
+    owner: &FunctionSummary,
+    signature: &str,
+    index: &RustIndex,
+) -> bool {
+    let word = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let Some(fn_at) = signature.find("fn ") else {
+        return false;
+    };
+    let after = &signature[fn_at + 3..];
+    let name_end = after.find(|ch: char| !word(ch)).unwrap_or(after.len());
+    let rest = after[name_end..].trim_start();
+    let mut names: Vec<String> = Vec::new();
+    let rest = if rest.starts_with('<') {
+        let Some((params, end)) = generic_parameter_names(rest) else {
+            return true;
+        };
+        names.extend(params);
+        &rest[end..]
+    } else {
+        rest
+    };
+    // The return type starts at the first `->` after the parameter list.
+    let Some(open) = rest.find('(') else {
+        return false;
+    };
+    let mut depth = 0usize;
+    let mut close = None;
+    for (offset, ch) in rest[open..].char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    close = Some(open + offset + 1);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let Some(close) = close else {
+        return true;
+    };
+    let Some(ret) = rest[close..].trim_start().strip_prefix("->") else {
+        return false;
+    };
+    let ret = ret
+        .split(|ch: char| !word(ch))
+        .take_while(|token| *token != "where")
+        .collect::<Vec<_>>();
+    let impl_generics = enclosing_header_generics(owner, index);
+    let Some(impl_generics) = impl_generics else {
+        return true;
+    };
+    let in_generic_impl = !impl_generics.is_empty();
+    names.extend(impl_generics);
+    ret.iter().any(|token| {
+        names.iter().any(|name| name.as_str() == *token)
+            || matches!(*token, "impl" | "dyn")
+            || (in_generic_impl && *token == "Self")
+    })
+}
+
+/// The generic parameter names of every `impl`/`trait` header before the owner
+/// in its file, or `None` when unreadable (withhold). Over-reads: a preceding
+/// header need not enclose the owner.
+fn enclosing_header_generics(owner: &FunctionSummary, index: &RustIndex) -> Option<Vec<String>> {
+    let Some(facts) = index.files().get(&owner.file) else {
+        return Some(Vec::new());
+    };
+    let masked = crate::analysis::extract::mask_comments_and_strings(&facts.source);
+    // Earlier lines plus the owner's line up to its `fn` (same-line header).
+    let lines: Vec<&str> = masked.lines().collect();
+    let mut before = lines
+        .iter()
+        .take(owner.start_line.saturating_sub(1))
+        .copied()
+        .collect::<Vec<_>>()
+        .join("\n");
+    if let Some(own) = lines.get(owner.start_line.saturating_sub(1)) {
+        // Cut at the owner's own `fn <name>`, not an earlier `fn` of the line.
+        let own_fn = format!("fn {}", owner.name);
+        let upto = own
+            .find(&own_fn)
+            .or_else(|| own.find("fn "))
+            .map_or(*own, |at| &own[..at]);
+        before.push('\n');
+        before.push_str(upto);
+    }
+    let part = |ch: Option<char>| ch.is_some_and(|ch| ch.is_alphanumeric() || ch == '_');
+    let mut names = Vec::new();
+    for keyword in ["impl", "trait"] {
+        for (at, word) in before.match_indices(keyword) {
+            if part(before[..at].chars().next_back())
+                || part(before[at + word.len()..].chars().next())
+            {
+                continue;
+            }
+            let header = before[at + keyword.len()..].trim_start();
+            if header.starts_with('<') {
+                names.extend(generic_parameter_names(header)?.0);
+            } else if keyword == "trait" {
+                // `trait Name<T>`: skip the name, then read any generics.
+                let name_end = header.find(|ch: char| !(ch.is_alphanumeric() || ch == '_'));
+                let rest = name_end.map_or("", |end| header[end..].trim_start());
+                if rest.starts_with('<') {
+                    names.extend(generic_parameter_names(rest)?.0);
+                }
+            }
+        }
+    }
+    Some(names)
+}
+
+/// The parameter names of the generics list at the start of `text` and the
+/// offset past its closing `>`, or `None` when unbalanced. A `->` in a bound
+/// does not close it.
+fn generic_parameter_names(text: &str) -> Option<(Vec<String>, usize)> {
+    let word = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let mut depth = 0usize;
+    let mut params: Vec<&str> = Vec::new();
+    let mut start = 1;
+    let mut end = None;
+    let mut previous = ' ';
+    for (offset, ch) in text.char_indices() {
+        match ch {
+            '<' | '(' | '[' => depth += 1,
+            '>' if previous == '-' => {}
+            '>' | ')' | ']' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    params.push(&text[start..offset]);
+                    end = Some(offset + 1);
+                    break;
+                }
+            }
+            ',' if depth == 1 => {
+                params.push(&text[start..offset]);
+                start = offset + 1;
+            }
+            _ => {}
+        }
+        previous = ch;
+    }
+    let end = end?;
+    let names = params
+        .iter()
+        .filter_map(|param| {
+            let param = param.trim();
+            let param = param.strip_prefix("const ").unwrap_or(param).trim_start();
+            if param.starts_with('\'') {
+                return None;
+            }
+            param
+                .split(|ch: char| !word(ch))
+                .next()
+                .filter(|name| !name.is_empty())
+                .map(str::to_string)
+        })
+        .collect();
+    Some((names, end))
+}
+
+/// The names `target` is imported as through `use .. Original as target`.
+fn renamed_from(masked: &str, target: &str) -> Vec<String> {
+    let part = |ch: Option<char>| ch.is_some_and(|ch| ch.is_alphanumeric() || ch == '_');
+    let mut originals = Vec::new();
+    for (at, _) in masked.match_indices(target) {
+        if part(masked[..at].chars().next_back())
+            || part(masked[at + target.len()..].chars().next())
+        {
+            continue;
+        }
+        let before = masked[..at].trim_end();
+        let Some(before) = before.strip_suffix("as") else {
+            continue;
+        };
+        if part(before.chars().next_back()) {
+            continue;
+        }
+        let before = before.trim_end();
+        let start = before
+            .rfind(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+            .map_or(0, |found| found + 1);
+        let mut original = &before[start..];
+        if original == "self" {
+            // `use Type::{Other, self as Name}`: the original is the segment
+            // before the group holding `self`.
+            let mut depth = 0usize;
+            let mut open = None;
+            for (offset, ch) in before[..start].char_indices().rev() {
+                match ch {
+                    '}' => depth += 1,
+                    '{' if depth == 0 => {
+                        open = Some(offset);
+                        break;
+                    }
+                    '{' => depth -= 1,
+                    _ => {}
+                }
+            }
+            let head = open.map_or("", |open| before[..open].trim_end());
+            let head = head.strip_suffix("::").unwrap_or(head);
+            let begin = head
+                .rfind(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+                .map_or(0, |found| found + 1);
+            original = &head[begin..];
+        }
+        if !original.is_empty() {
+            originals.push(original.to_string());
+        }
+    }
+    originals
+}
+
+/// The text of every `struct`, `enum` or `union` named `name` (name through the
+/// closing `}` or `;`), joined. Same-named types in different modules are all
+/// read, since the path that picks one is not resolved.
+fn type_definition_region(masked: &str, name: &str) -> String {
+    let part = |ch: Option<char>| ch.is_some_and(|ch| ch.is_alphanumeric() || ch == '_');
+    let mut regions = String::new();
+    for keyword in ["struct", "enum", "union"] {
+        for (at, word) in masked.match_indices(keyword) {
+            let rest = &masked[at + word.len()..];
+            if part(masked[..at].chars().next_back()) || !rest.starts_with(char::is_whitespace) {
+                continue;
+            }
+            let rest = rest.trim_start();
+            let ident: String = rest
+                .chars()
+                .take_while(|ch| ch.is_alphanumeric() || *ch == '_')
+                .collect();
+            if ident != name {
+                continue;
+            }
+            let mut depth = 0usize;
+            let mut region_end = rest.len();
+            for (offset, ch) in rest.char_indices() {
+                match ch {
+                    '(' | '{' | '[' => depth += 1,
+                    ')' | ']' => depth = depth.saturating_sub(1),
+                    '}' => {
+                        depth = depth.saturating_sub(1);
+                        if depth == 0 {
+                            region_end = offset + 1;
+                            break;
+                        }
+                    }
+                    ';' if depth == 0 => {
+                        region_end = offset + 1;
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+            regions.push_str(&rest[ident.len()..region_end]);
+            regions.push('\n');
+        }
+    }
+    regions
+}
+
+/// Token-level read of `type <name>` in comment- and string-masked source.
+#[cfg(test)]
+fn source_declares_type_alias(source: &str, name: &str) -> bool {
+    source_declares_type_alias_masked(
+        &crate::analysis::extract::mask_comments_and_strings(source),
+        name,
+    )
+}
+
+/// [`source_declares_type_alias`] over already-masked source text.
+fn source_declares_type_alias_masked(masked: &str, name: &str) -> bool {
+    let part = |ch: char| ch.is_alphanumeric() || ch == '_';
+    masked.match_indices("type").any(|(at, word)| {
+        let before = masked[..at].chars().next_back();
+        let rest = &masked[at + word.len()..];
+        if before.is_some_and(part) || !rest.starts_with(char::is_whitespace) {
+            return false;
+        }
+        let rest = rest.trim_start();
+        let ident: String = rest.chars().take_while(|ch| part(*ch)).collect();
+        ident == name
+    })
+}
+
+/// Whether `expression` is a struct literal, not a block, `if`, `match` or loop.
+fn is_struct_literal_expression(expression: &str) -> bool {
+    let trimmed = expression.trim();
+    let trimmed = trimmed.strip_prefix("return ").unwrap_or(trimmed).trim();
+    let Some(open) = trimmed.find('{') else {
+        return false;
+    };
+    let path = trimmed[..open].trim_end();
+    let name = path.rsplit("::").next().unwrap_or(path);
+    trimmed.ends_with('}')
+        && !path.is_empty()
+        && path
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == ':')
+        && name
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_uppercase())
+}
+
+/// Whether one of `test`'s assertions pins the value of a call to `owner_name`
+/// or of a local derived from it: a lone top-level equality (RIPR-SPEC-0197 /
+/// RIPR-SPEC-0154 shapes) or, more broadly, `.eq(`, a negated `!=` or a closed
+/// `>=`/`<=` range over such a value. The breadth only withholds a start.
+fn test_pins_owner_call_by_equality(
+    test: &TestSummary,
+    owner_name: &str,
+    index: &RustIndex,
+) -> bool {
+    let source = index
+        .files()
+        .get(&test.file)
+        .map(|facts| facts.source.clone());
+    let locals = owner_result_locals(&test.body, owner_name);
+    assertions_pin_owner_by_equality(
+        test.assertions.iter().map(|oracle| oracle.text.as_str()),
+        owner_name,
+        &locals,
+        source.as_deref(),
+    )
+}
+
+/// Whether some assertion of `test` mentions a call of `owner_name` or a local
+/// bound from one. Syntactic and over-approximate: it only decides whether a
+/// start may be offered.
+fn test_assertion_observes_owner(
+    test: &TestSummary,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
+    let calls_owner =
+        |text: &str| crate::analysis::classify::text_calls_owner(index, owner, test, text);
+    let locals = owner_result_locals_with(&test.body, &calls_owner, true);
+    test.assertions.iter().any(|oracle| {
+        // Comments and string literals (including `assert!` messages) are not
+        // observations.
+        let masked = crate::analysis::extract::mask_comments_and_strings(&oracle.text);
+        calls_owner(&masked)
+            || locals
+                .iter()
+                .any(|local| mentions_identifier(&masked, local))
+    })
+}
+
+/// Names bound by a `let` whose initializer calls `owner_name`
+/// (`let v = f(2);`, `let (a, b) = f(2);`) or mentions a bound name
+/// (`let w = v;`), so a comparison of such a local pins the owner's value as a
+/// call does. Reads the masked body. Not followed: a field write, a mutation,
+/// a closure, a loop variable or a function parameter.
+fn owner_result_locals(body: &str, owner_name: &str) -> Vec<String> {
+    owner_result_locals_with(body, &|text| mentions_owner_call(text, owner_name), false)
+}
+
+/// [`owner_result_locals`] with the caller's reading of "this initializer
+/// calls the owner". With `rebinding_drops` the `let`s are read in order and a
+/// later `let` (or bare `let v;`) rebinding a name to a non-owner expression
+/// drops it, so a shadowed name grants no observation; the pin reader keeps
+/// the additive reading, whose over-approximation only withholds.
+/// Scope-blind: an inner-block `let`, `if let` or loop variable is read as a
+/// flat rebinding in order.
+fn owner_result_locals_with(
+    body: &str,
+    calls_owner: &dyn Fn(&str) -> bool,
+    rebinding_drops: bool,
+) -> Vec<String> {
+    let masked = crate::analysis::extract::mask_comments_and_strings(body);
+    let mut lets: Vec<(Vec<String>, &str)> = Vec::new();
+    for statement in masked.split(';') {
+        let Some(at) = statement.find("let ") else {
+            continue;
+        };
+        if at > 0
+            && statement[..at]
+                .chars()
+                .next_back()
+                .is_some_and(|ch| ch.is_alphanumeric() || ch == '_')
+        {
+            continue;
+        }
+        let rest = &statement[at + 4..];
+        let (pattern, init) = match rest.split_once('=') {
+            Some(split) => split,
+            None if rebinding_drops => (rest, ""),
+            None => continue,
+        };
+        // The pattern ends at a type annotation's single `:` (not `::`).
+        let bytes = pattern.as_bytes();
+        let end = (0..bytes.len())
+            .find(|&i| {
+                bytes[i] == b':'
+                    && bytes.get(i + 1) != Some(&b':')
+                    && (i == 0 || bytes[i - 1] != b':')
+            })
+            .unwrap_or(bytes.len());
+        let names: Vec<String> = pattern[..end]
+            .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+            .filter(|word| {
+                word.starts_with(|ch: char| ch.is_lowercase() || ch == '_')
+                    && *word != "_"
+                    && !matches!(*word, "mut" | "ref")
+            })
+            .map(str::to_string)
+            .collect();
+        if !names.is_empty() {
+            lets.push((names, init));
+        }
+    }
+    let mut locals: Vec<String> = Vec::new();
+    if rebinding_drops {
+        for (names, init) in &lets {
+            if calls_owner(init) || locals.iter().any(|local| mentions_identifier(init, local)) {
+                for name in names {
+                    if !locals.contains(name) {
+                        locals.push(name.clone());
+                    }
+                }
+            } else {
+                locals.retain(|local| !names.contains(local));
+            }
+        }
+        return locals;
+    }
+    loop {
+        let before = locals.len();
+        for (names, init) in &lets {
+            if calls_owner(init) || locals.iter().any(|local| mentions_identifier(init, local)) {
+                for name in names {
+                    if !locals.contains(name) {
+                        locals.push(name.clone());
+                    }
+                }
+            }
+        }
+        if locals.len() == before {
+            return locals;
+        }
+    }
+}
+
+/// Whether `text` spells `path` (`E::Bad`, `Bad`) with no identifier
+/// character on either side, so `E::B` is not found in `E::Bad`. A leading
+/// `::` is allowed (`crate::E::B`).
+fn mentions_path(text: &str, path: &str) -> bool {
+    let part = |ch: Option<char>| ch.is_some_and(|ch| ch.is_alphanumeric() || ch == '_');
+    !path.is_empty()
+        && text.match_indices(path).any(|(at, _)| {
+            !part(text[..at].chars().next_back()) && !part(text[at + path.len()..].chars().next())
+        })
+}
+
+/// Whether `text` calls `name` as a whole identifier: no identifier character
+/// before it (a path or method receiver is fine) and `(` or a turbofish after
+/// it, so `undbl(` and `dbl_x(` are not calls of `dbl`.
+fn mentions_owner_call(text: &str, name: &str) -> bool {
+    let part = |ch: Option<char>| ch.is_some_and(|ch| ch.is_alphanumeric() || ch == '_');
+    !name.is_empty()
+        && text.match_indices(name).any(|(at, _)| {
+            let after = text[at + name.len()..].trim_start();
+            !part(text[..at].chars().next_back())
+                && (after.starts_with('(') || after.starts_with("::<"))
+        })
+}
+
+/// Whether `operand` mentions `name` as a whole identifier.
+fn mentions_identifier(operand: &str, name: &str) -> bool {
+    operand.match_indices(name).any(|(at, _)| {
+        let before = operand[..at].chars().next_back();
+        let after = operand[at + name.len()..].chars().next();
+        let part = |ch: Option<char>| ch.is_some_and(|ch| ch.is_alphanumeric() || ch == '_');
+        !part(before) && !part(after)
+    })
+}
+
+/// The pure core of [`test_pins_owner_call_by_equality`]. A terminal
+/// Err-return guard is a pin only through the prelude `Err`: a file that
+/// declares `Err` as a value (`fn Err`, `const Err`, ...) makes the guard an
+/// ordinary statement (RIPR-SPEC-0197), read by the same authority the
+/// owner-pin credit uses. A file fact that cannot be read withholds: the
+/// guard is kept as a pin, so no start is offered on unknown ground.
+fn assertions_pin_owner_by_equality<'a>(
+    assertions: impl IntoIterator<Item = &'a str>,
+    owner_name: &str,
+    locals: &[String],
+    source: Option<&str>,
+) -> bool {
+    let call = format!("{owner_name}(");
+    // Evaluated only when a guard assertion is seen; an unreadable file
+    // (`None`) is not shadowed, so the guard stays a pin and withholds.
+    let err_shadowed = || {
+        source.is_some_and(|source| {
+            crate::analysis::syntax::source_declares_value_name(source, "Err")
+        })
+    };
+    let mentions =
+        |text: &str| text.contains(&call) || locals.iter().any(|l| mentions_identifier(text, l));
+    assertions.into_iter().any(|text| {
+        let guard = crate::analysis::extract::err_return_guard_twin(text).is_some();
+        if guard && err_shadowed() {
+            return false;
+        }
+        crate::analysis::classify::equality_condition_operands(text)
+            .is_some_and(|operands| operands.iter().any(|operand| mentions(operand)))
+            || (!guard && comparison_pins_value(text, &mentions))
+    })
+}
+
+/// A broader, syntactic read of an assertion that pins a value derived from
+/// the owner call without a lone top-level `==`: `x.eq(&6)`, a negated
+/// inequality `!(x != 6)`, or a closed range `x >= 6 && x <= 6`. A plain
+/// `!=`, `.ne(`, `assert_ne!`, a one-sided bound, a comparison nested in
+/// another expression (`f(x) != 0 == true`) or any `||` is a weak check and
+/// not a pin. Over-reading these shapes only withholds a repair start.
+fn comparison_pins_value(text: &str, mentions: &dyn Fn(&str) -> bool) -> bool {
+    let masked = crate::analysis::extract::mask_comments_and_strings(text);
+    if !mentions(&masked) || masked.contains("||") {
+        return false;
+    }
+    masked.contains(".eq(")
+        || (masked.contains("!=")
+            && masked.match_indices("!(").any(|(at, _)| {
+                // `!(` after an identifier is a macro bang (`assert!(`), not a negation.
+                !masked[..at]
+                    .chars()
+                    .next_back()
+                    .is_some_and(|ch| ch.is_alphanumeric() || ch == '_')
+            }))
+        || (masked.contains(">=") && masked.contains("<=") && masked.contains("&&"))
+}
+
+#[cfg(test)]
+mod equality_pin_tests {
+    use super::{mentions_identifier, owner_result_locals};
+
+    fn pins<'a>(
+        assertions: impl IntoIterator<Item = &'a str>,
+        owner_name: &str,
+        source: Option<&str>,
+    ) -> bool {
+        super::assertions_pin_owner_by_equality(assertions, owner_name, &[], source)
+    }
+
+    #[test]
+    fn an_equality_on_a_local_bound_from_the_owner_call_pins() {
+        let body = "let v = weight(4);\n    assert!(v == 12);";
+        let locals = owner_result_locals(body, "weight");
+        assert_eq!(locals, ["v"]);
+        let pinned = |assertion: &str, locals: &[String]| {
+            super::assertions_pin_owner_by_equality([assertion], "weight", locals, Some(""))
+        };
+        assert!(pinned("assert!(v == 12);", &locals));
+        assert!(!pinned("assert!(v > 0);", &locals), "weak stays unpinned");
+        assert!(!pinned("assert!(vv == 12);", &locals), "whole identifiers");
+        assert!(!pinned("assert!(v == 12);", &[]), "no local, no pin");
+    }
+
+    #[test]
+    fn derived_locals_and_destructures_are_followed_to_a_fixed_point() {
+        let locals = |body: &str| owner_result_locals(body, "weight");
+        assert_eq!(locals("let v = weight(4); let w = v;"), ["v", "w"]);
+        assert_eq!(locals("let w = v; let v = weight(4);"), ["v", "w"]);
+        assert_eq!(locals("let (a, mut b) = weight(4);"), ["a", "b"]);
+        assert_eq!(locals("let Some(x) = weight(4) else { return };"), ["x"]);
+        assert!(locals("let w = v; let u = other(4);").is_empty());
+    }
+
+    #[test]
+    fn broader_comparison_shapes_pin_but_a_weak_bound_does_not() {
+        let locals = ["v".to_string()];
+        let pins = |assertion: &str| {
+            super::assertions_pin_owner_by_equality([assertion], "weight", &locals, Some(""))
+        };
+        for pinned in [
+            "assert!(v.eq(&6));",
+            "assert!(!(v != 6));",
+            "assert!(v >= 6 && v <= 6);",
+            "assert!(weight(4).eq(&6));",
+        ] {
+            assert!(pins(pinned), "{pinned}");
+        }
+        for weak in [
+            "assert!(v > 0);",
+            "assert!(v >= 1);",
+            "assert!(v < 100);",
+            "assert!(other == 6);",
+            "assert!(w >= 6 && w <= 6);",
+            "assert!(v > 0, \"v == 6\");",
+            "assert!(v != 0);",
+            "assert!(v.ne(&6));",
+            "assert_ne!(v, 0);",
+            "assert_eq!(v != 0, true);",
+            "assert!(v.eq(&6) || lenient);",
+            "assert!(v >= 6 || v <= 6);",
+        ] {
+            assert!(!pins(weak), "{weak}");
+        }
+    }
+
+    #[test]
+    fn variant_paths_match_whole_identifiers_only() {
+        use super::mentions_path as mentions;
+        assert!(mentions("matches!(r, Err(E::Bad))", "E::Bad"));
+        assert!(mentions("matches!(r, Err(crate::E::Bad))", "E::Bad"));
+        assert!(mentions("matches!(r, Err(Bad))", "Bad"));
+        assert!(!mentions("matches!(r, Err(E::Bad))", "E::B"));
+        assert!(!mentions("matches!(r, Err(E::Bad))", "B"));
+        assert!(!mentions("matches!(r, Err(E::B))", "E::Bad"));
+        assert!(!mentions("matches!(r, Err(XE::B))", "E::B"));
+    }
+
+    #[test]
+    fn type_aliases_are_read_as_tokens_not_substrings() {
+        use super::source_declares_type_alias as declares;
+        for spelling in [
+            "type Out = Loud;",
+            "pub type Out = Loud;",
+            "pub(crate) type Out<T> = Loud<T>;",
+            "type\nOut = Loud;",
+            "type   /* c */\n\tOut\n= Loud;",
+            "impl X for Y {\n    type Out = Loud;\n}",
+        ] {
+            assert!(declares(spelling, "Out"), "{spelling}");
+        }
+        for other in [
+            "type Output = Loud;",
+            "type Outer = Loud;",
+            "// type Out = Loud;",
+            "const S: &str = \"type Out\";",
+            "fn mytype Out() {}",
+            "let t: Out = Loud;",
+        ] {
+            assert!(!declares(other, "Out"), "{other}");
+        }
+    }
+
+    #[test]
+    fn locals_come_only_from_lets_that_call_the_owner() {
+        let locals = |body: &str| owner_result_locals(body, "weight");
+        assert_eq!(locals("let mut v: u32 = weight(4);"), ["v"]);
+        assert_eq!(locals("let r = weight(4).unwrap();"), ["r"]);
+        assert!(locals("let v = other(4);").is_empty());
+        assert!(locals("let v = 4; assert!(weight(v) > 0);").is_empty());
+        assert!(locals("// let v = weight(4);").is_empty());
+        assert!(mentions_identifier("v + 1", "v"));
+        assert!(!mentions_identifier("value + 1", "v"));
+    }
+
+    const GUARD: &str = "if weight(4) != 12 { return Err(\"mismatch\"); }";
+    const PLAIN: &str = "assert!(weight(4) == 12);";
+
+    #[test]
+    fn plain_and_guard_equalities_pin_the_owner() {
+        assert!(pins([PLAIN], "weight", Some("fn t() {}")));
+        assert!(pins([GUARD], "weight", Some("fn t() {}")));
+        assert!(
+            pins([GUARD], "weight", None),
+            "an unreadable file withholds"
+        );
+    }
+
+    #[test]
+    fn a_declared_value_err_unpins_only_the_guard() {
+        let shadowed = "fn Err(_: &str) -> Result<(), String> { Ok(()) }";
+        assert!(!pins([GUARD], "weight", Some(shadowed)));
+        assert!(pins([PLAIN], "weight", Some(shadowed)));
+    }
+
+    #[test]
+    fn lookalike_names_comments_and_strings_do_not_shadow_err() {
+        for source in [
+            "fn Error_case() {}",
+            "fn t() { let Errors = 1; }",
+            "// fn Err(_: &str) {}",
+            "const S: &str = \"fn Err\";",
+        ] {
+            assert!(pins([GUARD], "weight", Some(source)), "{source}");
+        }
+    }
+
+    #[test]
+    fn struct_literals_are_told_from_blocks_and_calls() {
+        use super::is_struct_literal_expression as lit;
+        assert!(lit("Config {\n    a: 1,\n    b,\n}"));
+        assert!(lit("return crate::Config { a: 1 }"));
+        assert!(!lit("if a { 1 } else { 2 }"));
+        assert!(!lit("match a { _ => 1 }"));
+        assert!(!lit("{ 1 }"));
+        assert!(!lit("x * 3"));
+        assert!(!lit("make(Config { a: 1 })"));
+    }
+
+    #[test]
+    fn other_owner_calls_and_non_equalities_do_not_pin() {
+        assert!(!pins([PLAIN], "other", Some("")));
+        assert!(!pins(["assert!(weight(4) > 0);"], "weight", Some("")));
+    }
 }
 
 fn new_test_target_admission(
@@ -649,7 +1570,7 @@ fn activate_evidence(
     if let (Some(selection), Some(owner_fn)) = (&observed_argument_selection, owner_fn) {
         for indexed in activation_credited.iter() {
             observed.extend(observed_value_facts_for_test(
-                seam, indexed, index, owner_fn, selection,
+                seam, indexed, context, owner_fn, selection,
             ));
         }
     }
@@ -687,7 +1608,7 @@ fn activate_evidence(
         || owner_fn.is_some_and(|owner_fn| {
             seam.kind() == SeamKind::PredicateBoundary
                 && activation_credited.iter().any(|indexed| {
-                    boundary_equality_overlap_score(seam, indexed, index, owner_fn) > 0
+                    boundary_equality_overlap_score(seam, indexed, context, owner_fn) > 0
                 })
         });
     // A constant whose value ripr cannot see and whose declaration it
@@ -919,10 +1840,11 @@ struct ObservedArgumentOperand {
 fn observed_value_facts_for_test(
     seam: &RepoSeam,
     indexed: &CompactTest<'_>,
-    index: &RustIndex,
+    context: &CompactGripContext<'_>,
     owner_fn: &FunctionSummary,
     observed_argument_selection: &ObservedArgumentSelection,
 ) -> Vec<ValueFact> {
+    let index = context.index;
     let owner_name = owner_fn.name.as_str();
     let mut observed: Vec<ValueFact> = Vec::new();
     if matches!(
@@ -961,6 +1883,17 @@ fn observed_value_facts_for_test(
                 continue;
             };
             let arg = projected_argument_expression(&arg, argument_operand.projection.as_deref());
+            if suffixed_decimal_integer_value(&arg).is_some()
+                && !super::classify::bound_free_owner_calls(
+                    index,
+                    owner_fn,
+                    indexed.test,
+                    &call.text,
+                    context.pin_syntax(),
+                )
+            {
+                continue;
+            }
             let mut emitted = false;
             // Direct literal first (matches pre-v2 behavior).
             for value in scalar_values(&arg) {
@@ -1444,15 +2377,12 @@ fn activation_overlap_score(
     };
     let owner_fn = owner.owner_fn;
 
-    let mut score = boundary_equality_overlap_score(seam, indexed, context.index, owner_fn);
+    let mut score = boundary_equality_overlap_score(seam, indexed, context, owner_fn);
     let required_text = required_discriminator_text(seam);
-    score +=
-        observed_value_facts_for_test(seam, indexed, context.index, owner_fn, &owner.selection)
-            .iter()
-            .filter(|fact| {
-                observed_value_matches_required_discriminator(&fact.value, required_text)
-            })
-            .count();
+    score += observed_value_facts_for_test(seam, indexed, context, owner_fn, &owner.selection)
+        .iter()
+        .filter(|fact| observed_value_matches_required_discriminator(&fact.value, required_text))
+        .count();
     score
 }
 
@@ -1469,7 +2399,7 @@ fn observed_value_matches_required_discriminator(value: &str, required_text: &st
 fn boundary_equality_overlap_score(
     seam: &RepoSeam,
     indexed: &CompactTest<'_>,
-    index: &RustIndex,
+    context: &CompactGripContext<'_>,
     owner_fn: &FunctionSummary,
 ) -> usize {
     if seam.kind() != SeamKind::PredicateBoundary {
@@ -1505,7 +2435,29 @@ fn boundary_equality_overlap_score(
         let left_arg = projected_argument_expression(left_arg, left_operand.projection.as_deref());
         let right_arg =
             projected_argument_expression(right_arg, right_operand.projection.as_deref());
-        if arguments_overlap_at_boundary(seam, indexed, index, left_arg, right_arg, call) {
+        // Preserve the pre-existing identical-text equality route for
+        // ordinary nonfree owners after owner_call_text. This does not grant
+        // them the new suffixed-value reader: different text still needs the
+        // free-owner authority below, as does every free-owner shortcut.
+        let existing_nonfree_equality = owner_fn.impl_context != FunctionImplContext::Free
+            && left_arg.trim() == right_arg.trim();
+        // Guard the free-owner identical-text shortcut too: two equal typed
+        // arguments to a shadowed function are not the owner's boundary.
+        if [&left_arg, &right_arg]
+            .into_iter()
+            .any(|argument| suffixed_decimal_integer_value(argument).is_some())
+            && !existing_nonfree_equality
+            && !super::classify::bound_free_owner_calls(
+                context.index,
+                owner_fn,
+                indexed.test,
+                &call.text,
+                context.pin_syntax(),
+            )
+        {
+            continue;
+        }
+        if arguments_overlap_at_boundary(seam, indexed, context.index, left_arg, right_arg, call) {
             score += 1;
         }
     }
@@ -3211,6 +4163,9 @@ fn scalar_values(arg: &str) -> Vec<String> {
     if trimmed.starts_with('"') || trimmed.starts_with('\'') {
         return vec![trimmed.to_string()];
     }
+    if let Some(value) = suffixed_decimal_integer_value(trimmed) {
+        return vec![value];
+    }
     // Numeric literal (optionally negative, decimal, with `_` separators).
     let numeric_body = trimmed.strip_prefix('-').unwrap_or(trimmed);
     if !numeric_body.is_empty()
@@ -3235,6 +4190,32 @@ fn scalar_values(arg: &str) -> Vec<String> {
         return vec![trimmed.to_string()];
     }
     Vec::new()
+}
+
+/// Preserve the explicit type in source while comparing its numeric value
+/// through the same reader as a diff boundary. That reader scans expressions,
+/// so first establish one whole decimal integer token, optionally negated.
+/// Casts, methods, ranges, exponents and computed expressions do not qualify.
+fn suffixed_decimal_integer_value(text: &str) -> Option<String> {
+    let suffixes: &[&str] = if text.starts_with('-') {
+        &["i8", "i16", "i32", "i64", "i128", "isize"]
+    } else {
+        &[
+            "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize",
+        ]
+    };
+    let unsigned = text.strip_prefix('-').unwrap_or(text);
+    let digits = suffixes
+        .iter()
+        .find_map(|suffix| unsigned.strip_suffix(*suffix))?;
+    if !digits.starts_with(|ch: char| ch.is_ascii_digit())
+        || !digits
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || byte == b'_')
+    {
+        return None;
+    }
+    numeric_boundary_literal(text)
 }
 
 fn sort_value_facts(values: &mut Vec<ValueFact>) {

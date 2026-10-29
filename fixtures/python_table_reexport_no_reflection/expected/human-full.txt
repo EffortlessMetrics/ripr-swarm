@@ -3,12 +3,17 @@ mode: fast
 root: fixtures/python_table_reexport_no_reflection/input
 config: <cwd>/fixtures/python_table_reexport_no_reflection/input/ripr.toml
 
-Summary: 1 probe(s), 1 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+Summary: 1 changed behavior(s) checked: 1 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
 
 Changed file(s) by language: python = 1
 
 Analysis outcome: findings below (analysis complete; complete_with_findings)
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
 
 INFO rates/table.py:1
   id: probe:rates_table.py:python_preview:742c3f98
@@ -16,11 +21,12 @@ INFO rates/table.py:1
 Changed
   after:  RATES = {"silver": 6}
 
-Probe
+Change type
+  a condition or comparison changed
   family: predicate
-  delta:  control
+  delta:  control (changes which code path runs)
   owner:  python:rates/table.py::<module>
-  canonical gap: gap:python:rates/table.py:<module>:predicate_boundary:predicate:rates=silver_6
+  gap id (for scripts): gap:python:rates/table.py:<module>:predicate_boundary:predicate:rates=silver_6
 
 Language
   language: python

@@ -1,14 +1,14 @@
 # Golden Output Changes
 
-## Pending — integration composition to cache generation 1.117 (#8610, #10792)
+## Pending — integration composition to cache generation 1.119 (#8610, #10792)
 
 Integration update:
 The `#8610` entry below was generated at the candidate's own `1.114`
 generation. Merging `main` composed that semantic transition onto main's
-`1.116` line (`1.114` #9478, `1.115` #10797, `1.116` #10819), so the
-admitted generation for this candidate is `1.117` (sharded/compact
-`0.124`). The two `unchanged-after-attempt` snapshots adopt
-`"cache_schema_version": "1.117"` with their content commitments
+classified line (`1.114` #9478, `1.115` #10797, `1.116` #10819, `1.117`
+#10839, `1.118` #10814), so the admitted generation for this candidate is
+`1.119` (sharded/compact `0.126`). The two `unchanged-after-attempt`
+snapshots adopt `"cache_schema_version": "1.119"` with their content commitments
 recomputed through the same raw-JSON placeholder procedure, and
 `agent-verify.json` / `agent-receipt.json` adopt the derived commitments
 and artifact byte hashes. No boundary-gap evidence, movement class or
@@ -50,6 +50,17 @@ record, changing its gap state or replacing its commitment each exited 2 at
 the mutated after artifact's content-commitment check. These are results from
 the named frozen producer; the current-head CLI-smoke test was not executed
 during this bounded regeneration.
+## Pending — suffixed integer activation cache generation (#10839)
+
+The portable unchanged-attempt snapshots follow corpus cache generation 1.116
+to 1.117 for whole suffixed decimal arguments in repository activation. The
+native CLI-smoke failure on merge `f36d916b3579e8bfcddd7bee5305787fb8b749ac`
+records the normalized production snapshot: it differs from the prior fixture
+only at the corpus generation and artifact content commitment. Refresh those
+two fields and their dependent verify commitments and receipt byte hashes.
+Weak grip, unchanged movement, historical currentness, incomplete receipt
+status and fail-closed first-action routing remain unchanged. No other fixture
+output is regenerated.
 
 ## Pending — typed function-pointer composition (#9478, #9705)
 
@@ -117,6 +128,13 @@ The same snapshots follow corpus cache generation 1.115 to 1.116 for a `let`
 literal that a tuple, struct or `for` pattern rebinds no longer pairing with the
 owner call (RIPR-SPEC-0158, #10819), with the same scope: generation, content
 commitment, dependent verify commitments and receipt byte hashes only.
+
+### Drop scope-end carrier cache generation parity
+
+The same snapshots follow corpus cache generation 1.117 to 1.118 for a standard
+`Drop::drop` credited through a scope-end carrier (RIPR-SPEC-0240, #10814), with
+the same scope: generation, content commitment, dependent verify commitments and
+receipt byte hashes only.
 
 ## Pending — boundary_gap (9)
 
@@ -1376,6 +1394,19 @@ verify commitments and receipt byte hashes only.
 
 Reason:
 RIPR-SPEC-0122: define finding, unsuppressed, unknown, base-side and candidate line in the evidence legend (#9244)
+
+Command:
+`cargo xtask goldens bless boundary_gap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — boundary_gap (30)
+
+Reason:
+RIPR-SPEC-0122: plain-language wording for the default and human-full check views (#10691); human text only, check.json unchanged
 
 Command:
 `cargo xtask goldens bless boundary_gap --reason "..."`

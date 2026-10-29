@@ -1,0 +1,7 @@
+# Registers the nested-package TypeScript auto-detection tests (#10941) under RIPR-SPEC-0026.
+[[extend]]
+id = "RIPR-SPEC-0026"
+tests = [
+  "crates/ripr/src/config/tests.rs::missing_config_detects_typescript_one_level_below_root_and_under_workspace_containers",
+  "crates/ripr/src/config/tests.rs::missing_config_ignores_nested_typescript_that_is_vendored_hidden_too_deep_or_plain_javascript",
+]

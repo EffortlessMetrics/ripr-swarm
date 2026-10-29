@@ -55,7 +55,9 @@ impl HumanTriageState {
         match self {
             Self::TopGap => "a test gap to inspect or repair",
             Self::NoActionableGap => "no gap selected for repair",
-            Self::StaticLimited => "limited by static analysis",
+            Self::StaticLimited => {
+                "ripr cannot tell from reading the code whether tests would notice this"
+            }
             Self::PreviewLimited => "preview language, advisory only",
             Self::MissingScope => "nothing in scope",
         }
@@ -197,9 +199,9 @@ pub(crate) fn render_human_triage(
                 finding.class == ExposureClass::NoStaticPath && finding.static_limit_kind.is_none()
             });
             out.push_str(if plain_no_path {
-                "  Safe next action: review the unresolved static path and existing tests before treating this as repair-ready\n"
+                "  Safe next action: look at the reason below and the existing tests before adding a test\n"
             } else {
-                "  Safe next action: inspect the named static limitation before treating this as repair-ready\n"
+                "  Safe next action: look at the reason below before adding a test\n"
             });
         }
         NextActionCheckCase::PreviewAdvisory => {
@@ -976,11 +978,11 @@ fn packet_closed_preview_safe_action(finding: &Finding, why_not_actionable: &str
         .language
         .map_or("preview-language", LanguageId::display_name);
     let manual_step = match finding.class {
-        ExposureClass::NoStaticPath => "add a test that calls it by hand",
-        // An unknown class is a visibility limit (for example the Bun bridge's
-        // cross-language gap), not a known weak test: ask for the same check
-        // the Python static-limit line names, not a test edit.
-        ExposureClass::StaticUnknown
+        // A missing static path or unknown class is a visibility limit, not
+        // proof that a test is absent or weak. Inspect existing observations
+        // before prescribing a test edit; readiness remains unchanged.
+        ExposureClass::NoStaticPath
+        | ExposureClass::StaticUnknown
         | ExposureClass::InfectionUnknown
         | ExposureClass::PropagationUnknown => "check by hand whether a test observes this change",
         _ => "add or strengthen a test by hand",
@@ -998,7 +1000,7 @@ fn packet_closed_preview_safe_action(finding: &Finding, why_not_actionable: &str
     let specific = specific
         .strip_prefix("is not agent-packet eligible: ")
         .unwrap_or(specific);
-    let reason = one_line(specific);
+    let reason = one_line(&super::evidence_lines::plain_internal_wording(specific));
     format!(
         "  Safe next action: this {language} preview finding's repair packet is not ready ({reason}); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; {manual_step}, then rerun `ripr check`\n"
     )
@@ -2105,7 +2107,10 @@ mod tests {
             None,
             CheckDiffProvenance::CommittedHistory,
         );
-        assert!(!out.contains("limited by static analysis"), "{out}");
+        assert!(
+            !out.contains("ripr cannot tell from reading the code"),
+            "{out}"
+        );
         assert!(out.contains("src/lib.rs"), "{out}");
     }
 
@@ -2223,7 +2228,10 @@ mod tests {
             None,
             CheckDiffProvenance::CommittedHistory,
         );
-        assert!(!out.contains("limited by static analysis"), "{out}");
+        assert!(
+            !out.contains("ripr cannot tell from reading the code"),
+            "{out}"
+        );
         assert!(out.contains("src/lib.rs"), "{out}");
     }
 
@@ -2420,7 +2428,10 @@ mod tests {
             None,
             CheckDiffProvenance::CommittedHistory,
         );
-        assert!(out.contains("limited by static analysis"), "{out}");
+        assert!(
+            out.contains("ripr cannot tell from reading the code whether tests would notice this"),
+            "{out}"
+        );
     }
 
     /// #9346 review: the witnessed whole-function shape with an explicit

@@ -1857,6 +1857,12 @@ impl TypeScriptAssertionBindings {
     /// identifier is `callee_root` (`test`, `it`, `test.only`): the
     /// `node:test` context assert is read only when that root is bound to
     /// `node:test` (RIPR-SPEC-0252), not merely because the file imports it.
+    /// Whether the registration root is bound to AVA's `test`, whose macro form
+    /// `test(title, macro, fn)` puts the callback at argument 2.
+    pub(crate) fn registration_is_ava(&self, callee_root: Option<&str>) -> bool {
+        callee_root.is_some_and(|root| self.ava_tests.iter().any(|local| local == root))
+    }
+
     pub(crate) fn for_registration(&self, callee_root: Option<&str>) -> Self {
         let mut bindings = self.clone();
         bindings.node_test_runner =

@@ -5,7 +5,10 @@
 mod registry;
 #[cfg(test)]
 use registry::json_manifest_digests;
-pub(crate) use registry::{LiteralJsonIdentity, eligible_json_root, verified_json_identity};
+pub(crate) use registry::{
+    LiteralJsonIdentity, eligible_json_root, eligible_proptest_root, verified_json_identity,
+    verified_proptest_identity,
+};
 
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;

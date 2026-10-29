@@ -221,7 +221,7 @@
       "repair_route": "add trusted related-test matching for this owner shape before emitting a repair packet",
       "future_support": "test title, describe title, and file-stem tokens never relate a test that does not reference the owner; they only rank tests that already reference it",
       "must_remain_non_actionable": true,
-      "required_evidence_fragment": "No test references `applyDiscount(`",
+      "required_evidence_fragment": "No statically linked test call to `applyDiscount(` was established",
       "raw_evidence_refs": [
         "fixtures/typescript_related_test_name_proximity/expected/check.json#probe:src_pricing.ts:typescript_preview:bd772dc8"
       ],
