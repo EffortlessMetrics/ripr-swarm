@@ -263,5 +263,11 @@ fn a_relational_assertion_that_flips_between_versions_keeps_the_credit() -> Resu
             .contains("evaluate to the same value"),
         "{finding:?}"
     );
+    // The flip is a discriminator for the relational reading too, so the
+    // truth-value summary must not appear either (#10920 review).
+    assert!(
+        !finding.ripr.infect.summary.contains("same truth value"),
+        "{finding:?}"
+    );
     Ok(())
 }

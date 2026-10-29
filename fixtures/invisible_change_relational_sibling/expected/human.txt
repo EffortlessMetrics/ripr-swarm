@@ -12,7 +12,7 @@ Start here:
   Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
   File: ./src/lib.rs:2
   Static exposure: weak (severity: warning, confidence 0.92)
-  Why weak: a related test reaches this change, but no test input tells the old and new behavior apart
+  Why weak: a related test reaches this change, but no assertion tells the old and new behavior apart
   Gap ID (for scripts): gap:rust:src/lib.rs:backoff_ms:return_value:return_value:base*3u64.pow_attempt
   Changed behavior: base * 3u64.pow(attempt)
   Related test (1 of 2 matched rows): tests/backoff.rs:4 first_attempt_waits_the_base
