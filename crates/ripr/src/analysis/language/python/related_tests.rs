@@ -11,6 +11,7 @@ use crate::domain::{ExposureClass, OracleKind, OracleStrength, OwnerKind, Relate
 use rayon::prelude::*;
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 #[cfg(test)]
 mod verify_command_tests;
@@ -138,6 +139,7 @@ pub(super) struct RelatedCandidateMemo<'a> {
     by_owner: HashMap<OwnerKey, Vec<PythonRelatedCandidate<'a>>>,
     helpers: HashMap<OwnerKey, Vec<HelperOwnerCallCandidate<'a>>>,
     alignment_preps: HashMap<OwnerKey, AlignmentPrep<'a>>,
+    alignment_lookup: Option<Rc<TestLookup<'a>>>,
 }
 
 type OwnerKey = (PathBuf, usize, usize, String);
@@ -178,10 +180,10 @@ impl<'a> RelatedCandidateMemo<'a> {
             .clone()
     }
 
-    /// The owner's sink-alignment index, once per run (#10914): it indexes
-    /// every test by name and collects the owner's import aliases across
-    /// every test, which repeated per changed line was most of a large
-    /// workspace's per-line cost.
+    /// The owner's sink-alignment prep, once per owner (#10914): the owner's
+    /// import aliases across every test, which repeated per changed line was
+    /// most of a large workspace's per-line cost. The test index it reads
+    /// covers every test, so the run builds it once and every owner shares it.
     pub(super) fn alignment_prep(
         &mut self,
         owner: &PythonOwner,
@@ -189,7 +191,12 @@ impl<'a> RelatedCandidateMemo<'a> {
     ) -> &AlignmentPrep<'a> {
         self.alignment_preps
             .entry(owner_key(owner))
-            .or_insert_with(|| AlignmentPrep::new(owner, all_tests))
+            .or_insert_with(|| {
+                let lookup = self
+                    .alignment_lookup
+                    .get_or_insert_with(|| AlignmentPrep::lookup(all_tests));
+                AlignmentPrep::with_lookup(owner, all_tests, Rc::clone(lookup))
+            })
     }
 }
 

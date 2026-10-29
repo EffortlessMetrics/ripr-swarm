@@ -688,21 +688,41 @@ pub(super) fn oracle_is_pure_len_aggregate(oracle: &str, changed_literals: &str)
 
 /// Per-finding state that does not depend on the related rows: the test index
 /// and the owner's import-alias locals across every test. Built once so a
-/// caller that aligns many rows separately does not rebuild it per row.
+/// caller that aligns many rows separately does not rebuild it per row. The
+/// index covers every test, not one owner, so a run shares one across all of
+/// its owners and only the alias tokens are per owner.
 pub(super) struct AlignmentPrep<'a> {
-    lookup: TestLookup<'a>,
+    lookup: Rc<TestLookup<'a>>,
     alias_tokens: Vec<String>,
 }
 
-// Alignment indexes built on this thread, so a test can pin one per owner
-// rather than one per changed line (#10914).
+// Alignment preps and test indexes built on this thread, so a test can pin one
+// prep per owner and one index per run rather than one per changed line (#10914).
 #[cfg(test)]
 thread_local! {
     pub(super) static ALIGNMENT_PREPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(super) static ALIGNMENT_LOOKUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 impl<'a> AlignmentPrep<'a> {
     pub(super) fn new(owner: &PythonOwner, all_tests: &'a [PythonTest]) -> Self {
+        Self::with_lookup(owner, all_tests, Self::lookup(all_tests))
+    }
+
+    /// The test index an [`AlignmentPrep`] reads, for a caller that shares one
+    /// across owners through [`AlignmentPrep::with_lookup`].
+    pub(super) fn lookup(all_tests: &'a [PythonTest]) -> Rc<TestLookup<'a>> {
+        #[cfg(test)]
+        ALIGNMENT_LOOKUPS.with(|lookups| lookups.set(lookups.get() + 1));
+        Rc::new(TestLookup::new(all_tests))
+    }
+
+    /// `lookup` must index exactly `all_tests`.
+    pub(super) fn with_lookup(
+        owner: &PythonOwner,
+        all_tests: &'a [PythonTest],
+        lookup: Rc<TestLookup<'a>>,
+    ) -> Self {
         #[cfg(test)]
         ALIGNMENT_PREPS.with(|preps| preps.set(preps.get() + 1));
         let mut alias_tokens: Vec<String> = all_tests
@@ -711,7 +731,7 @@ impl<'a> AlignmentPrep<'a> {
             .collect();
         alias_tokens.retain(|token| token.len() >= 2);
         Self {
-            lookup: TestLookup::new(all_tests),
+            lookup,
             alias_tokens,
         }
     }
@@ -840,7 +860,7 @@ pub(super) fn classify_sink_alignment_prepared(
     // behavior family (a `pytest.raises` for a changed `return`) never
     // credits, whichever branch its text would pass.
     let focus = PythonAssertionFocus::for_change(family, line_text, old_line_text);
-    let test_lookup = &prep.lookup;
+    let test_lookup = &*prep.lookup;
     let mut units = alignment_units(
         &strong_tests,
         test_lookup,
