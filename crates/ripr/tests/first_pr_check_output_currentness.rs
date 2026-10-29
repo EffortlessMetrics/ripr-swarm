@@ -464,7 +464,7 @@ fn legacy_unknown_empty_diff_is_limited_but_explicit_repo_exposure_is_no_action(
     let legacy_path = root.join("target/legacy-empty.json");
     fs::create_dir_all(root.join("target")).map_err(|e| e.to_string())?;
     fs::write(&legacy_path, legacy).map_err(|e| e.to_string())?;
-    let run = |input: &Path, name: &str| -> Result<Value, String> {
+    let run = |input: &Path, name: &str, base: &str| -> Result<Value, String> {
         let output = root.join("target").join(name);
         ripr(
             &root,
@@ -473,7 +473,7 @@ fn legacy_unknown_empty_diff_is_limited_but_explicit_repo_exposure_is_no_action(
                 "--root",
                 text(&root)?,
                 "--base",
-                "HEAD~1",
+                base,
                 "--head",
                 "HEAD",
                 "--gap-ledger",
@@ -487,7 +487,7 @@ fn legacy_unknown_empty_diff_is_limited_but_explicit_repo_exposure_is_no_action(
         )
         .map_err(|e| e.to_string())
     };
-    let limited = run(&legacy_path, "legacy-empty")?;
+    let limited = run(&legacy_path, "legacy-empty", "HEAD~1")?;
     assert_eq!(limited["status"], "blocked", "{limited}");
     assert_eq!(
         limited["selected"]["reason_code"], "source_currentness_unavailable",
@@ -495,7 +495,11 @@ fn legacy_unknown_empty_diff_is_limited_but_explicit_repo_exposure_is_no_action(
     );
     let explicit = root.join("target/explicit-empty.json");
     fs::write(&explicit, include_str!("../../../fixtures/first_successful_pr/empty-diff/inputs/reports/gap-decision-ledger.json")).map_err(|e| e.to_string())?;
-    let allowed = run(&explicit, "explicit-empty")?;
+    assert!(
+        git(&root, &["diff", "--name-only", "HEAD", "HEAD"])?.is_empty(),
+        "positive diff must be empty"
+    );
+    let allowed = run(&explicit, "explicit-empty", "HEAD")?;
     assert_eq!(allowed["status"], "no_action", "{allowed}");
     assert_eq!(allowed["selected"]["output_state"], "clean", "{allowed}");
     assert!(
