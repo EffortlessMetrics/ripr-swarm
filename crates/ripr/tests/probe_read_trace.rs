@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 
 const PREFIX: &str = "ripr_probe_read_trace ";
 const STREAM_CAP: u64 = 1024 * 1024;
-const SOURCE: &str = "pub fn price(qty: u32) -> u32 {\n    if qty > 10 { 90 } else { 100 }\n}\npub fn op(bytes: &[u8]) -> bool {\n    bytes.contains(&b'=')\n}\npub mod alpha {\n    use super::op;\n    pub fn parse(bytes: &[u8]) -> bool {\n        op(bytes)\n    }\n}\npub mod beta {\n    pub fn parse(bytes: &[u8]) -> bool {\n        !bytes.is_empty()\n    }\n}\n#[cfg(test)]\nmod tests {\n    use super::op as parse;\n    use super::*;\n    #[test]\n    fn boundary() {\n        assert_eq!(price(10), 90);\n    }\n    #[test]\n    fn renamed_alias_calls_ambiguous_entry() {\n        assert!(parse(b\"=1.0\"));\n    }\n}\n";
+const SOURCE: &str = "pub fn price(qty: u32) -> u32 {\n    if qty > 10 { 90 } else { 100 }\n}\npub fn op(bytes: &[u8]) -> bool {\n    bytes.contains(&b'=')\n}\npub mod alpha {\n    use super::op;\n    pub fn parse(bytes: &[u8]) -> bool {\n        op(bytes)\n    }\n}\npub mod beta {\n    pub fn parse(bytes: &[u8]) -> bool {\n        !bytes.is_empty()\n    }\n}\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn boundary() {\n        assert_eq!(price(10), 90);\n    }\n    #[test]\n    fn calls_ambiguous_entry() {\n        assert!(parse(b\"=1.0\"));\n    }\n}\n";
 
 struct Fixture(PathBuf);
 impl Fixture {
@@ -209,10 +209,12 @@ fn real_check_trace_is_opt_in_and_preserves_nonempty_json() -> Result<(), String
         rows.iter().any(|row| row["universe_observed"] == true),
         "fixture must reach a real whole-set view"
     );
-    // #10933: the uniqueness-stop probe for `op` reaches
-    // `source_imports_foreign_entry` inside its classification scope, so at
-    // least one traced row carries a `memo`-kind read for the
-    // `foreign_entry_import` product.
+    // #10933: the `op` probe's uniqueness-stop chain is entered by the
+    // test's bare `parse(` call, so `source_imports_foreign_entry` runs
+    // inside that probe's classification scope; at least one traced row
+    // carries a `memo`-kind read for the `foreign_entry_import` product.
+    // (A renamed `use .. as parse` import would shadow the entry and veto
+    // it instead — see `tests_call_matching`'s `free_shadowed` guard.)
     assert!(
         rows.iter().any(|row| row["reads"]
             .as_array()
