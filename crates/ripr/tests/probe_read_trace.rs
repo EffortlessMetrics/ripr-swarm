@@ -216,12 +216,10 @@ fn real_check_trace_is_opt_in_and_preserves_nonempty_json() -> Result<(), String
     assert!(
         rows.iter().any(|row| row["reads"]
             .as_array()
-            .is_some_and(
-                |reads| reads.iter().any(|entry| entry["read"]["kind"] == "memo"
-                    && entry["read"]["subject"]
-                        .as_str()
-                        .is_some_and(|subject| subject.starts_with("foreign_entry_import:")))
-            )),
+            .is_some_and(|reads| reads.iter().any(|entry| entry["kind"] == "memo"
+                && entry["subject"]
+                    .as_str()
+                    .is_some_and(|subject| subject.starts_with("foreign_entry_import:"))))),
         "no traced probe row records a foreign_entry_import memo read"
     );
     assert_eq!(
