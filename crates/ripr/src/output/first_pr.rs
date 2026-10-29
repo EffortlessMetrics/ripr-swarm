@@ -14,6 +14,7 @@ use crate::output::start_here_state::{
 #[cfg(not(windows))]
 use crate::testing::cwd_placeholder::{project_cwd_text, project_renderer_cwd, project_root_text};
 use serde_json::{Map, Value, json};
+use sha2::{Digest, Sha256};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -317,6 +318,8 @@ fn check_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
     let (json_path, markdown_path) =
         check_packet_paths(repo, &root, root_recovery.is_some(), None, options)?;
     let preflight_recovery = root_recovery.or_else(|| git_preflight_recovery(&root, options));
+    let current_preflight_no_action =
+        matches!(&preflight_recovery, Some(Selection::NoAction { .. }));
     let packet = validate_start_here_packet(&json_path, &markdown_path)?;
     let out_dir = json_path.parent().ok_or_else(|| {
         format!(
@@ -343,16 +346,24 @@ fn check_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
     // `--check` must not validate that conclusion merely because its schema
     // and producer version are intact. This is validation only: do not run
     // analysis or rewrite the packet here.
-    if packet.get("status").and_then(Value::as_str) == Some("no_action") {
+    if packet.get("status").and_then(Value::as_str) == Some("no_action")
+        && !current_preflight_no_action
+    {
         let direct_check_output = packet
             .pointer("/inputs/check_output")
             .and_then(Value::as_str)
             .is_some();
         let ledger_path = string_path(&packet, &["inputs", "gap_ledger"])
             .ok_or("first-pr --check: no-action source ledger is unavailable; recompose before relying on the packet")?;
-        let ledger = read_json(&resolve_path(&root, &ledger_path)).map_err(|_| {
+        let (ledger, ledger_digest) = read_json_with_digest(&resolve_path(&root, &ledger_path)).map_err(|_| {
             "first-pr --check: no-action source ledger is missing or malformed; recompose before relying on the packet".to_string()
         })?;
+        let recorded_digest = string_path(&packet, &["inputs", "gap_ledger_sha256"]).ok_or(
+            "first-pr --check: source_currentness_unavailable; this historical no-action packet does not bind its source ledger bytes. Recompose before relying on it",
+        )?;
+        if recorded_digest != ledger_digest {
+            return Err("first-pr --check: stale_evidence; the no-action source ledger differs from the bytes used to compose the packet. Recompose before relying on it".to_string());
+        }
         let source_kind = string_path(&ledger, &["inputs", "source_kind"])
             .ok_or("first-pr --check: no-action source kind is unavailable; recompose before relying on the packet")?;
         if direct_check_output || requires_no_action_source_limit(&ledger) {
@@ -472,16 +483,22 @@ fn validate_current_preflight_recovery(
 fn render_start_here_packet(root: &Path, options: &FirstPrOptions) -> Value {
     let gap_path = resolve_path(root, &options.gap_ledger);
     let mut warnings = Vec::new();
-    let selection = match read_json(&gap_path) {
-        Ok(gap_ledger) => select_from_gap_ledger(&gap_ledger, root, options),
-        Err(ArtifactReadError::Missing) => missing_gap_ledger_selection(root, options),
-        Err(ArtifactReadError::Malformed(message)) => Selection::blocked(
-            "malformed_artifact",
-            format!("The gap decision ledger could not be parsed: {message}"),
-            Some(format!(
-                "Regenerate the gap ledger with `{}` before assigning repair work.",
-                regenerate_gap_ledger_command(root, options)
-            )),
+    let (selection, ledger_digest) = match read_json_with_digest(&gap_path) {
+        Ok((gap_ledger, digest)) => (
+            select_from_gap_ledger(&gap_ledger, root, options),
+            Some(digest),
+        ),
+        Err(ArtifactReadError::Missing) => (missing_gap_ledger_selection(root, options), None),
+        Err(ArtifactReadError::Malformed(message)) => (
+            Selection::blocked(
+                "malformed_artifact",
+                format!("The gap decision ledger could not be parsed: {message}"),
+                Some(format!(
+                    "Regenerate the gap ledger with `{}` before assigning repair work.",
+                    regenerate_gap_ledger_command(root, options)
+                )),
+            ),
+            None,
         ),
     };
     if let Some(warning) = selection.warning() {
@@ -492,7 +509,13 @@ fn render_start_here_packet(root: &Path, options: &FirstPrOptions) -> Value {
         warnings.extend(preflight.warnings());
     }
 
-    render_start_here_packet_with_selection(root, options, selection, warnings, preflight)
+    let no_action = matches!(&selection, Selection::NoAction { .. });
+    let mut packet =
+        render_start_here_packet_with_selection(root, options, selection, warnings, preflight);
+    if no_action && let Some(digest) = ledger_digest {
+        packet["inputs"]["gap_ledger_sha256"] = Value::String(digest);
+    }
+    packet
 }
 
 fn render_start_here_recovery_packet(
@@ -1503,10 +1526,11 @@ fn is_check_output_derived(ledger: &Value) -> bool {
 }
 
 /// Older `--records` projections may already have lost their check-output
-/// origin. Preview/mixed or unclassifiable populations lack complete corpus
-/// authority; changing the immediate input kind cannot turn them into a
-/// current no-action. Keep explicitly stable Rust records on their existing
-/// route; their separate corpus authority is owned elsewhere.
+/// origin. Preview/mixed, presentation-text, or unclassifiable populations
+/// lack complete corpus authority; changing the immediate input kind cannot
+/// turn them into a current no-action. Keep explicitly non-presentation Rust
+/// records on their existing route; their separate corpus authority is owned
+/// elsewhere.
 fn requires_no_action_source_limit(ledger: &Value) -> bool {
     if is_check_output_derived(ledger) {
         return true;
@@ -1521,6 +1545,8 @@ fn requires_no_action_source_limit(ledger: &Value) -> bool {
         || records.iter().any(|record| {
             string_path(record, &["language"]).as_deref() != Some("rust")
                 || string_path(record, &["language_status"]).as_deref() != Some("stable")
+                || string_path(record, &["evidence_class"])
+                    .is_none_or(|class| class == "presentation_text")
         })
 }
 
@@ -2600,6 +2626,21 @@ fn read_json(path: &Path) -> Result<Value, ArtifactReadError> {
         }
     })?;
     serde_json::from_str(&text).map_err(|err| ArtifactReadError::Malformed(err.to_string()))
+}
+
+/// Read and hash the same bytes that selection consumes. A later replacement
+/// at the same path cannot validate an older no-action packet as current.
+fn read_json_with_digest(path: &Path) -> Result<(Value, String), ArtifactReadError> {
+    let bytes = fs::read(path).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            ArtifactReadError::Missing
+        } else {
+            ArtifactReadError::Malformed(format!("read failed: {error}"))
+        }
+    })?;
+    let value = serde_json::from_slice(&bytes)
+        .map_err(|error| ArtifactReadError::Malformed(error.to_string()))?;
+    Ok((value, format!("sha256:{:x}", Sha256::digest(&bytes))))
 }
 
 fn gap_records(value: &Value) -> Vec<&Value> {
@@ -4092,6 +4133,7 @@ mod tests {
         let text = packet.to_string();
         assert!(text.contains("Go (1 file(s))"), "{text}");
         assert!(!text.contains("Pass the repository root"), "{text}");
+        check_first_pr(&repo, &options)?;
 
         // A nested Cargo crate below the Go root means `--root` should point
         // at that crate, so the recovery stays `wrong_root`.
@@ -5024,6 +5066,7 @@ mod tests {
             &ledger,
             json!({
                 "schema_version": "0.1",
+                "inputs": {"source_kind": "repo_exposure"},
                 "records": [
                     {
                         "gap_id": "gap:report-only",
@@ -5047,6 +5090,43 @@ mod tests {
         assert_eq!(packet["status"], "no_action");
         assert_eq!(packet["selected"]["state"], "no_action");
         assert_eq!(packet["selected"]["output_state"], "no_actionable_gap");
+        cleanup(&repo)
+    }
+
+    #[test]
+    fn no_action_check_binds_the_consumed_ledger_bytes() -> Result<(), String> {
+        let repo = temp_repo("first-pr-no-action-ledger-binding")?;
+        let ledger_path = repo.join(DEFAULT_GAP_LEDGER);
+        let ledger = json!({
+            "schema_version": "0.1",
+            "inputs": {"source_kind": "repo_exposure"},
+            "records": [{"gap_id": "gap:report-only", "language": "rust", "language_status": "stable", "scope": "pr_local", "gap_state": "report_only", "policy_state": "not_policy_targeted", "repairability": "analyzer_limitation"}]
+        });
+        write_json(&ledger_path, ledger.clone())?;
+        write_json(
+            &repo.join(DEFAULT_REVIEW_COMMENTS),
+            review_comments_report(Vec::new()),
+        )?;
+        let options = FirstPrOptions::default();
+        write_first_pr(&repo, &options)?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        assert_eq!(packet["status"], "no_action", "{packet}");
+        assert!(
+            packet["inputs"]["gap_ledger_sha256"]
+                .as_str()
+                .is_some_and(|s| s.starts_with("sha256:"))
+        );
+        check_first_pr(&repo, &options)?;
+        let mut replacement = ledger;
+        replacement["replacement"] = json!(true);
+        write_json(&ledger_path, replacement)?;
+        let error = match check_first_pr(&repo, &options) {
+            Ok(()) => {
+                return Err("replacement must not validate an older no-action packet".to_string());
+            }
+            Err(error) => error,
+        };
+        assert!(error.contains("stale_evidence"), "{error}");
         cleanup(&repo)
     }
 
@@ -5113,10 +5193,15 @@ mod tests {
             unbound_no_action_limit(&old_records, &root, &options).is_some(),
             "legacy preview rewrap must remain limited"
         );
-        old_records["records"] = json!([{"language": "rust", "language_status": "stable"}]);
+        old_records["records"] = json!([{"language": "rust", "language_status": "stable", "evidence_class": "predicate"}]);
         assert!(
             unbound_no_action_limit(&old_records, &root, &options).is_none(),
             "stable Rust records retain their existing route"
+        );
+        old_records["records"] = json!([{"language": "rust", "language_status": "stable", "evidence_class": "presentation_text"}]);
+        assert!(
+            unbound_no_action_limit(&old_records, &root, &options).is_some(),
+            "old check-output presentation-text rewrap must remain limited"
         );
         old_records["records"] = json!([{"language_status": "stable"}]);
         assert!(
@@ -5159,6 +5244,54 @@ mod tests {
         }
         cleanup(&root)?;
         cleanup(&other)
+    }
+
+    #[test]
+    fn legacy_rust_presentation_check_rewrap_cannot_become_current_no_action() -> Result<(), String>
+    {
+        use crate::output::gap_decision_ledger::{
+            GapDecisionLedgerInput, GapDecisionLedgerSourceKind, build_gap_decision_ledger_report,
+            render_gap_decision_ledger_json,
+        };
+        let root = temp_repo("first-pr-legacy-presentation")?;
+        let input = json!({"root": root.to_string_lossy(), "finding_alignment": {"items": [{
+            "evidence_class": "presentation_text", "gap_state": "already_observed",
+            "actionability": "none", "canonical_gap_id": "pt::HELP",
+            "raw_findings": [{"file": "src/lib.rs", "line": 1}],
+            "presentation_text": {"constant_name": "HELP", "text_literal": "hello"}
+        }]}});
+        let report = build_gap_decision_ledger_report(GapDecisionLedgerInput {
+            root: root.to_string_lossy().into_owned(),
+            generated_at: "test".to_string(),
+            source_kind: GapDecisionLedgerSourceKind::CheckOutput,
+            records_path: "check.json".to_string(),
+            records_json: Ok(input.to_string()),
+        });
+        let mut legacy: Value = serde_json::from_str(&render_gap_decision_ledger_json(&report)?)
+            .map_err(|e| e.to_string())?;
+        assert_eq!(legacy["records"].as_array().map(Vec::len), Some(1));
+        assert_eq!(legacy["records"][0]["language"], "rust");
+        assert_eq!(legacy["records"][0]["evidence_class"], "presentation_text");
+        assert_eq!(legacy["records"][0]["gap_state"], "already_observed");
+        legacy["inputs"]["source_kind"] = json!("records");
+        legacy
+            .as_object_mut()
+            .ok_or("ledger object")?
+            .remove("check_output_provenance");
+        legacy
+            .as_object_mut()
+            .ok_or("ledger object")?
+            .remove("input_root");
+        write_json(
+            &root.join(DEFAULT_REVIEW_COMMENTS),
+            review_comments_report(Vec::new()),
+        )?;
+        let selected = select_from_gap_ledger(&legacy, &root, &FirstPrOptions::default()).to_json();
+        assert_eq!(
+            selected["reason_code"], "source_currentness_unavailable",
+            "{selected}"
+        );
+        cleanup(&root)
     }
 
     /// #4224: a TypeScript finding whose repair packet failed closed used to

@@ -14243,7 +14243,7 @@ Field contract:
 - `missing_artifact`, `malformed_artifact`, `stale_artifact`, `wrong_root`,
   `blocked_artifact`, and `timeout` require `status = "blocked"` and a
   bounded next command when one is known.
-- For a check-output-derived or legacy preview/mixed (or unclassifiable)
+- For a check-output-derived or legacy preview/mixed, presentation-text, or unclassifiable
   records ledger with no selected repair, `blocked_artifact`
   carries `selected.reason_code = "source_currentness_unavailable"`
   rather than claiming current no-action from incomplete corpus authority. A
@@ -14255,7 +14255,12 @@ Field contract:
   provenance is available (#7452). `missing_artifacts` on this blocked state
   means missing source authority, not necessarily a missing file.
   `first-pr --check` also refuses an older check-output no-action packet; it
-  does not rerun analysis or rewrite that packet.
+  does not rerun analysis or rewrite that packet. Ledger-selected no-action
+  packets include `inputs.gap_ledger_sha256`, a SHA-256 of the exact ledger
+  bytes selection consumed. `--check` refuses a missing digest or a replaced
+  ledger; this binds the packet to its input, not the input to current source.
+  A currently revalidated unsupported-language preflight no-action never
+  consumed a ledger and does not need that digest.
 - When a Rust first-pr run lacks both the repo-exposure report and the gap
   ledger, `selected.artifact` remains the first recovery step and
   `selected.also_missing[]` names the gap ledger and its regeneration command.
