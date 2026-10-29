@@ -63,3 +63,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — owner_self_body_same_name_with_caller_control (6)
+
+Reason:
+RIPR-SPEC-0122: when the missing-check line reports no boundary input, the proximity next step names that missing input instead of reading as unrelated (#10978)
+
+Command:
+`cargo xtask goldens bless owner_self_body_same_name_with_caller_control --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

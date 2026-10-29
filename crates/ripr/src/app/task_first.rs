@@ -42,7 +42,10 @@ pub(crate) enum RepairStartDecision {
     Start {
         seam_id: String,
     },
-    Action(Box<CanonicalNextActionV1>),
+    /// The canonical action, plus one plain description per listed candidate
+    /// (file:line and the changed code) when the action is a selection, so the
+    /// stop never shows bare ids (#10978).
+    Action(Box<CanonicalNextActionV1>, Vec<String>),
     NoEligible {
         total_seams: usize,
         /// Distinct ineligibility reasons rendered in the bounded list.
@@ -74,6 +77,9 @@ pub(crate) struct RepairStartFacts<'a> {
     pub(crate) ineligible_reasons_total: usize,
     /// The current HEAD, when it could be read.
     pub(crate) head: Option<&'a str>,
+    /// One plain description per eligible seam, aligned with `eligible_ids`
+    /// (empty when the gatherer has none): where the change is and what it is.
+    pub(crate) candidate_notes: &'a [String],
     /// The before-phase command for the single candidate, if any. Ignored
     /// unless exactly one seam is eligible.
     pub(crate) start_spec: Option<&'a CommandSpec>,
@@ -154,7 +160,12 @@ pub(crate) fn decide_repair_start(
             .ok_or_else(|| "repair-start decision bound no subject".to_string())?;
         return Ok(RepairStartDecision::Start { seam_id });
     }
-    Ok(RepairStartDecision::Action(Box::new(action)))
+    let described = if single {
+        Vec::new()
+    } else {
+        facts.candidate_notes.to_vec()
+    };
+    Ok(RepairStartDecision::Action(Box::new(action), described))
 }
 
 /// The one repair-admission gate, shared by the auto selector and the
@@ -351,6 +362,10 @@ fn ineligibility_label(reason: RepairPacketIneligibility) -> &'static str {
             "ripr cannot resolve a safe external-language test target for this seam"
         }
         RepairPacketIneligibility::RouteNotReady => "repair route not ready",
+        // #10703: the same limitation `ripr check` names for this seam.
+        RepairPacketIneligibility::NamedStaticLimitation => {
+            "ripr does not report a gap here: a `#[should_panic]` test passes only if something panics, and ripr cannot tell whether the changed code causes that panic (`ripr check` reports the same limitation). Check by hand that the test's input reaches the changed check; add a test only if it does not"
+        }
     }
 }
 
@@ -408,10 +423,14 @@ pub(crate) fn resolve_repair_start(root: &Path) -> Result<RepairStartDecision, S
     // classes, so no eligible seam is lost.
     let policy = AgentBriefPolicy::from_config(&config);
     let mut eligible_ids = Vec::new();
+    let mut candidate_notes: Vec<String> = Vec::new();
     let mut refusal_reasons: Vec<String> = Vec::new();
     for entry in &classified {
         match repair_refusal_reason(entry, policy, Some(root)) {
-            None => eligible_ids.push(entry.seam.id().as_str().to_string()),
+            None => {
+                eligible_ids.push(entry.seam.id().as_str().to_string());
+                candidate_notes.push(describe_candidate(entry));
+            }
             // Name the shared gate's own reason among the no-eligible
             // reasons so the limitation is diagnosable.
             Some(reason) => refusal_reasons.push(reason),
@@ -433,8 +452,105 @@ pub(crate) fn resolve_repair_start(root: &Path) -> Result<RepairStartDecision, S
         ineligible_reasons: &reasons,
         ineligible_reasons_total: reasons_total,
         head: head.as_deref(),
+        candidate_notes: &candidate_notes,
         start_spec: spec.as_ref(),
     })
+}
+
+/// The two-sentence refusal for a seam whose repair has no test file ripr can
+/// edit (#10978): where the change is, why ripr cannot pick a place for the
+/// test, and what to do next, with the stub command pre-filled. `source` is
+/// the seam's file text, read only to name its inline test modules.
+pub(crate) fn no_test_route_refusal(
+    root: &Path,
+    seam_id: &str,
+    seam: Option<&crate::analysis::ClassifiedSeam>,
+    source: Option<&str>,
+) -> String {
+    let root_arg = shell_arg(&bound_root(&root.to_string_lossy()));
+    let Some(entry) = seam else {
+        return format!(
+            "ripr did not start a repair for `{seam_id}`: it found no test file it can safely edit, and no seam with that id exists in the current code. Run `ripr check` to list the current findings, then write the test by hand or run `ripr agent stub --root {root_arg} --at FILE:LINE --kind KIND` with the location and kind it prints."
+        );
+    };
+    let file = crate::analysis::stable_path_text(entry.seam.file());
+    let line = entry.seam.display_line();
+    let family = crate::analysis::probe_family_for_seam_kind(entry.seam.kind());
+    let at = shell_arg(&format!("{file}:{line}"));
+    let stub = format!("ripr agent stub --root {root_arg} --at {at} --kind {family}");
+    let inline: Vec<String> = source
+        .and_then(crate::analysis::governed_cfg_test_modules)
+        .map(|modules| {
+            modules
+                .into_iter()
+                .filter(|module| module.is_inline)
+                .map(|module| module.name)
+                .collect()
+        })
+        .unwrap_or_default();
+    let is_production_rust = file.ends_with(".rs") && !crate::analysis::is_test_surface_path(&file);
+    let (why, place) = match inline.as_slice() {
+        [] => (
+            format!(
+                "it found no test in `tests/` that it can safely add to and `{file}` has no `#[cfg(test)]` test module"
+            ),
+            "a file in `tests/`".to_string(),
+        ),
+        [only] if is_production_rust => (
+            format!(
+                "it could not confirm that `mod {only}` in `{file}` is a safe place to add the test"
+            ),
+            format!("`mod {only}` in `{file}`"),
+        ),
+        names if is_production_rust => {
+            let listed = names
+                .iter()
+                .map(|name| format!("`mod {name}`"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            (
+                format!(
+                    "`{file}` has {} test modules ({listed}) and ripr cannot tell which one to edit",
+                    names.len()
+                ),
+                format!("one of those modules in `{file}`, or a file in `tests/`"),
+            )
+        }
+        _ => (
+            "it found no test file it can safely edit".to_string(),
+            "a file in `tests/`".to_string(),
+        ),
+    };
+    format!(
+        "ripr did not start a repair for the change at `{file}:{line}`: {why}. Add the test yourself to {place}, or run `{stub}` to write a starter test; no repair attempt was started."
+    )
+}
+
+/// Longest changed-code excerpt shown beside a candidate.
+const CANDIDATE_CODE_CHARS: usize = 70;
+
+/// One plain line for a selectable seam: where the change is and the changed
+/// code, then the exact command that picks it (#10978). The excerpt is the
+/// seam's own expression collapsed to one line and bounded.
+fn describe_candidate(entry: &crate::analysis::ClassifiedSeam) -> String {
+    let file = crate::analysis::stable_path_text(entry.seam.file());
+    let collapsed = entry
+        .seam
+        .expression()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let code = if collapsed.chars().count() > CANDIDATE_CODE_CHARS {
+        let cut: String = collapsed.chars().take(CANDIDATE_CODE_CHARS).collect();
+        format!("{cut}...")
+    } else {
+        collapsed
+    };
+    format!(
+        "{file}:{}  `{code}`  -> ripr repair {}",
+        entry.seam.display_line(),
+        entry.seam.id().as_str()
+    )
 }
 
 /// What an explicit `ripr repair` item resolved to: the seam to start,
@@ -2294,6 +2410,7 @@ pub(crate) mod tests {
             ineligible_reasons: reasons,
             ineligible_reasons_total: reasons_total,
             head: Some("head1"),
+            candidate_notes: &[],
             start_spec,
         }
     }
@@ -2311,7 +2428,7 @@ pub(crate) mod tests {
                 }
                 Ok(())
             }
-            RepairStartDecision::Start { .. } | RepairStartDecision::Action(_) => {
+            RepairStartDecision::Start { .. } | RepairStartDecision::Action(..) => {
                 Err("zero visible seams must not start or select".to_string())
             }
         }
@@ -2334,7 +2451,7 @@ pub(crate) mod tests {
                 }
                 Ok(())
             }
-            RepairStartDecision::Start { .. } | RepairStartDecision::Action(_) => {
+            RepairStartDecision::Start { .. } | RepairStartDecision::Action(..) => {
                 Err("zero eligible seams must not start or select".to_string())
             }
         }
@@ -2363,7 +2480,7 @@ pub(crate) mod tests {
                 }
                 Ok(())
             }
-            RepairStartDecision::Start { .. } | RepairStartDecision::Action(_) => {
+            RepairStartDecision::Start { .. } | RepairStartDecision::Action(..) => {
                 Err("zero eligible seams must not start or select".to_string())
             }
         }
@@ -2375,7 +2492,7 @@ pub(crate) mod tests {
     fn decide_single_candidate_without_spec_does_not_start() -> Result<(), String> {
         let eligible = vec!["seam:demo".to_string()];
         match decide_repair_start(&facts(&eligible, 1, &[], 0, None))? {
-            RepairStartDecision::Action(action) => {
+            RepairStartDecision::Action(action, _) => {
                 if action.is_executable() {
                     return Err("an unoffered candidate must not execute".to_string());
                 }
@@ -2397,7 +2514,7 @@ pub(crate) mod tests {
         let eligible = vec!["seam:a".to_string(), "seam:b".to_string()];
         let spec = repair_start_command_spec(".", "seam:a");
         match decide_repair_start(&facts(&eligible, 2, &[], 0, Some(&spec)))? {
-            RepairStartDecision::Action(action) => {
+            RepairStartDecision::Action(action, _) => {
                 if action.action_class() != NextActionClass::ChooseItem {
                     return Err("several candidates must choose, not run".to_string());
                 }
