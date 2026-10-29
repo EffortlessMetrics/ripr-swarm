@@ -764,10 +764,9 @@ fn returns_generic_or_opaque_type(
     })
 }
 
-/// The generic parameter names of every `impl` and `trait` header before the
-/// owner in its file, or `None` when one cannot be read (withhold). Over-reads:
-/// a preceding header need not enclose the owner, and an `impl Trait` argument
-/// or return type (no `<` follows) adds nothing, so it cannot hide a real header.
+/// The generic parameter names of every `impl`/`trait` header before the owner
+/// in its file, or `None` when unreadable (withhold). Over-reads: a preceding
+/// header need not enclose the owner.
 fn enclosing_header_generics(owner: &FunctionSummary, index: &RustIndex) -> Option<Vec<String>> {
     let Some(facts) = index.files().get(&owner.file) else {
         return Some(Vec::new());
@@ -817,9 +816,9 @@ fn enclosing_header_generics(owner: &FunctionSummary, index: &RustIndex) -> Opti
     Some(names)
 }
 
-/// The parameter names of the generics list at the start of `text` (`<T, 'a,
-/// const N: usize>`) and the offset just past its closing `>`, or `None` when
-/// the list is unbalanced. A `->` inside a bound does not close it.
+/// The parameter names of the generics list at the start of `text` and the
+/// offset past its closing `>`, or `None` when unbalanced. A `->` in a bound
+/// does not close it.
 fn generic_parameter_names(text: &str) -> Option<(Vec<String>, usize)> {
     let word = |ch: char| ch.is_alphanumeric() || ch == '_';
     let mut depth = 0usize;
@@ -919,10 +918,9 @@ fn renamed_from(masked: &str, target: &str) -> Vec<String> {
     originals
 }
 
-/// The text of every `struct`, `enum` or `union` definition named `name` (from
-/// its name through the closing `}` or the terminating `;`), joined; empty
-/// when the source defines none. Same-named types in different modules are
-/// all read, since the path that picks one is not resolved.
+/// The text of every `struct`, `enum` or `union` named `name` (name through the
+/// closing `}` or `;`), joined. Same-named types in different modules are all
+/// read, since the path that picks one is not resolved.
 fn type_definition_region(masked: &str, name: &str) -> String {
     let part = |ch: Option<char>| ch.is_some_and(|ch| ch.is_alphanumeric() || ch == '_');
     let mut regions = String::new();
@@ -967,8 +965,7 @@ fn type_definition_region(masked: &str, name: &str) -> String {
     regions
 }
 
-/// Token-level read of `type <name>`: comments and strings are masked, then a
-/// `type` word followed (after any whitespace) by the identifier `name`.
+/// Token-level read of `type <name>` in comment- and string-masked source.
 #[cfg(test)]
 fn source_declares_type_alias(source: &str, name: &str) -> bool {
     source_declares_type_alias_masked(
@@ -992,8 +989,7 @@ fn source_declares_type_alias_masked(masked: &str, name: &str) -> bool {
     })
 }
 
-/// Whether `expression` is a struct literal (`Config { .. }`, possibly
-/// returned or path-qualified), not a block, `if`, `match` or loop.
+/// Whether `expression` is a struct literal, not a block, `if`, `match` or loop.
 fn is_struct_literal_expression(expression: &str) -> bool {
     let trimmed = expression.trim();
     let trimmed = trimmed.strip_prefix("return ").unwrap_or(trimmed).trim();
@@ -1071,6 +1067,8 @@ fn owner_result_locals(body: &str, owner_name: &str) -> Vec<String> {
 /// later `let` (or bare `let v;`) rebinding a name to a non-owner expression
 /// drops it, so a shadowed name grants no observation; the pin reader keeps
 /// the additive reading, whose over-approximation only withholds.
+/// Scope-blind: an inner-block `let`, `if let` or loop variable is read as a
+/// flat rebinding in order.
 fn owner_result_locals_with(
     body: &str,
     calls_owner: &dyn Fn(&str) -> bool,

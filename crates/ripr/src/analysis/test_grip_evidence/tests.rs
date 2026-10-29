@@ -19815,6 +19815,14 @@ fn may_name_non_plain_drop(source: &str, owner: &str, expression: &str) -> Resul
     Ok(names_non_plain_drop_type(function, expression, &index))
 }
 
+fn mk_x(source: &str) -> Result<bool, String> {
+    may_name_non_plain_drop(source, "mk", "x")
+}
+
+fn f_x(source: &str) -> Result<bool, String> {
+    may_name_non_plain_drop(source, "f", "x")
+}
+
 fn mk_make(source: &str) -> Result<bool, String> {
     may_name_non_plain_drop(source, "mk", "make(x)")
 }
@@ -19969,10 +19977,7 @@ fn a_generic_return_type_withholds() -> Result<(), String> {
         "<T>(x: T) -> T\nwhere\n    T: Clone",
         "<T>(f: fn(T) -> u8, x: T) -> T",
     ] {
-        assert!(
-            may_name_non_plain_drop(&lib(generic), "mk", "x")?,
-            "{generic}"
-        );
+        assert!(mk_x(&lib(generic))?, "{generic}");
     }
     for concrete in [
         "(x: u32) -> u32",
@@ -19982,10 +19987,7 @@ fn a_generic_return_type_withholds() -> Result<(), String> {
         "<T>(f: fn(T) -> u8, x: T) -> u8",
         "(x: Vec<u32>) -> Option<u32>",
     ] {
-        assert!(
-            !may_name_non_plain_drop(&lib(concrete), "mk", "x")?,
-            "{concrete}"
-        );
+        assert!(!mk_x(&lib(concrete))?, "{concrete}");
     }
     Ok(())
 }
@@ -19998,16 +20000,9 @@ fn opaque_dyn_and_impl_returns_withhold() -> Result<(), String> {
         "(x: u32) -> Box<dyn Fn() -> u8>",
         "(x: u32) -> &'static dyn std::fmt::Debug",
     ] {
-        assert!(
-            may_name_non_plain_drop(&lib(opaque), "mk", "x")?,
-            "{opaque}"
-        );
+        assert!(mk_x(&lib(opaque))?, "{opaque}");
     }
-    assert!(!may_name_non_plain_drop(
-        &lib("(x: u32) -> Box<u32>"),
-        "mk",
-        "x"
-    )?);
+    assert!(!mk_x(&lib("(x: u32) -> Box<u32>"))?);
     Ok(())
 }
 
@@ -20024,26 +20019,20 @@ fn enclosing_impl_generics_in_the_return_type_withhold() -> Result<(), String> {
         ("impl<T> S<T>", "(x: T) -> Self"),
         ("impl<T: Clone> S<T>", "(x: T) -> T"),
     ] {
-        assert!(
-            may_name_non_plain_drop(&lib(header, signature), "f", "x")?,
-            "{header} {signature}"
-        );
+        assert!(f_x(&lib(header, signature))?, "{header} {signature}");
     }
     for (header, signature) in [
         ("impl S<u32>", "(x: u32) -> u32"),
         ("impl S<u32>", "(x: u32) -> Self"),
         ("impl<T> S<T>", "(x: u32) -> u32"),
     ] {
-        assert!(
-            !may_name_non_plain_drop(&lib(header, signature), "f", "x")?,
-            "{header} {signature}"
-        );
+        assert!(!f_x(&lib(header, signature))?, "{header} {signature}");
     }
     let trait_lib = |ret: &str| {
         format!("pub trait Tr<T> {{\n    fn f(x: T) -> {ret} {{\n        x\n    }}\n}}\n")
     };
-    assert!(may_name_non_plain_drop(&trait_lib("T"), "f", "x")?);
-    assert!(!may_name_non_plain_drop(&trait_lib("u32"), "f", "x")?);
+    assert!(f_x(&trait_lib("T"))?);
+    assert!(!f_x(&trait_lib("u32"))?);
     Ok(())
 }
 
@@ -20089,16 +20078,8 @@ fn an_earlier_impl_trait_argument_does_not_hide_the_real_impl_header() -> Result
     let earlier_arg = "pub fn a(f: impl Fn()) {\n    f();\n}\n";
     let earlier_ret = "pub fn r() -> impl Iterator<Item = u32> {\n    0..1\n}\n";
     for earlier in [earlier_arg, earlier_ret] {
-        assert!(may_name_non_plain_drop(
-            &lib(earlier, "impl<T> S<T>", "(x: T) -> T"),
-            "f",
-            "x"
-        )?);
-        assert!(!may_name_non_plain_drop(
-            &lib(earlier, "impl S<u32>", "(x: u32) -> u32"),
-            "f",
-            "x"
-        )?);
+        assert!(f_x(&lib(earlier, "impl<T> S<T>", "(x: T) -> T"))?);
+        assert!(!f_x(&lib(earlier, "impl S<u32>", "(x: u32) -> u32"))?);
     }
     Ok(())
 }
@@ -20119,8 +20100,8 @@ fn a_header_on_the_owners_own_line_is_read() -> Result<(), String> {
         "x"
     )?);
     let trait_lib = |ret: &str| format!("pub trait Tr<T> {{ fn f(x: T) -> {ret} {{ x }} }}\n");
-    assert!(may_name_non_plain_drop(&trait_lib("T"), "f", "x")?);
-    assert!(!may_name_non_plain_drop(&trait_lib("u32"), "f", "x")?);
+    assert!(f_x(&trait_lib("T"))?);
+    assert!(!f_x(&trait_lib("u32"))?);
     Ok(())
 }
 
@@ -20131,15 +20112,7 @@ fn a_header_after_an_earlier_fn_on_the_owners_line_is_read() -> Result<(), Strin
             "pub struct S<T>(pub T);\nimpl S<u32> {{ fn g() {{}} }} {second} {{ pub fn f{signature} {{ x }} }}\n"
         )
     };
-    assert!(may_name_non_plain_drop(
-        &lib("impl<T> S<T>", "(x: T) -> T"),
-        "f",
-        "x"
-    )?);
-    assert!(!may_name_non_plain_drop(
-        &lib("impl S<u8>", "(x: u8) -> u8"),
-        "f",
-        "x"
-    )?);
+    assert!(f_x(&lib("impl<T> S<T>", "(x: T) -> T"))?);
+    assert!(!f_x(&lib("impl S<u8>", "(x: u8) -> u8"))?);
     Ok(())
 }

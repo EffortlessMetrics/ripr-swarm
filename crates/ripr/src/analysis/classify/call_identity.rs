@@ -2102,11 +2102,26 @@ fn call_sites(body: &str, name: &str, with_methods: bool) -> Vec<(Option<Vec<Str
     calls
 }
 
-/// Whether `text` holds a call that can be the owner's: a bare call of a free
-/// function, a method call of a method, or a path-qualified call whose
-/// qualifier settles on the owner (a method's own self type, or a free
-/// function's path through the shared identity). Anything else, or a
-/// qualifier this scan cannot read, does not count.
+/// Whether the test's file defines a rival `fn <owner name>` (any scope).
+fn test_file_defines_fn(index: &RustIndex, test: &TestSummary, owner: &FunctionSummary) -> bool {
+    index.files().get(&test.file).is_none_or(|facts| {
+        let (name, masked) = (&owner.name, mask_comments_and_strings(&facts.source));
+        let defs = masked
+            .match_indices(name.as_str())
+            .filter(|&(at, _)| {
+                !ident_char_before(&masked, at)
+                    && !ident_char_at(&masked, at + name.len())
+                    && head_word(masked[..at].trim_end()) == "fn"
+            })
+            .count();
+        // The owner's own definition is not a rival.
+        defs > usize::from(test.file == owner.file)
+    })
+}
+
+/// Whether `text` calls the owner: a bare call of a free function, a method
+/// call of a method, or a qualified call whose qualifier settles on the owner.
+/// Anything else, or an unreadable qualifier, does not count.
 pub(in crate::analysis) fn text_calls_owner(
     index: &RustIndex,
     owner: &FunctionSummary,
@@ -2117,13 +2132,14 @@ pub(in crate::analysis) fn text_calls_owner(
         .into_iter()
         .any(|(qualifier, is_method)| match qualifier {
             None => false,
-            // A method call reaches only a method and a bare call only a free
-            // function; an unestablished container counts neither.
+            // A method call reaches only a method, a bare call a free function.
             Some(segments) if segments.is_empty() => match owner.item.container {
                 FunctionContainer::Inherent { .. }
                 | FunctionContainer::TraitImpl { .. }
                 | FunctionContainer::Trait { .. } => is_method,
-                FunctionContainer::Free | FunctionContainer::Local => !is_method,
+                FunctionContainer::Free | FunctionContainer::Local => {
+                    !is_method && !test_file_defines_fn(index, test, owner)
+                }
                 FunctionContainer::Unknown => false,
             },
             // A method is reached as `Type::name(..)` only through its own
@@ -2143,7 +2159,10 @@ pub(in crate::analysis) fn text_calls_owner(
                             || module_path_of(owner, true).is_some_and(|path| {
                                 let rest = match module.split_first() {
                                     Some((first, rest))
-                                        if first == "crate" || index.package_names.contains(first) =>
+                                        if (first == "crate"
+                                            && !under_tests_dir(&test.file)
+                                            && package_key(&test.file) == package_key(&owner.file))
+                                            || index.package_names.contains(first) =>
                                     {
                                         rest
                                     }

@@ -23,12 +23,12 @@
   with `where Self: Sized` also withholds (an over-withhold).
   `ripr repair <seam>` does not apply the finding-level static-limited verdict
   that `ripr check` uses; it relies on the seam-level evidence and these gates.
-  An assertion observes the owner through a bare or method call of its name,
-  or a path-qualified call whose qualifier resolves to the owner through the
-  shared call identity (`crate`/`self`/`super`, the owner's crate name, a
-  `use`-bound path, its module path). A same-name call through another module
-  (`other::dbl(2)`), another type or primitive (`X::dbl(2)`, `u32::dbl(2)`), an
-  uppercase module, or a qualifier that cannot be read, does not observe it; a
-  method is observed only through a method call or its own self type (when another type of
-  that name has a same-named method, its module path must also resolve to the
-  owner), and a later `let` rebinding of a bound name drops it.
+  An assertion observes the owner only through a bare call (free owner), a
+  method call (method owner), or a path-qualified call whose qualifier
+  resolves to the owner (its crate, module path or self type; a same-named
+  function, type or primitive elsewhere, or an unreadable qualifier, does not),
+  and a later `let` rebinding of a bound name drops it.
+  Known limits (#10948): method receiver types, scoped `let` shadowing,
+  non-indexed rival types, and `Self::`, `<W as T>::`, turbofish and `use .. as`
+  type spellings are not resolved (the last over-withhold); a bare call of a
+  name the test file defines itself never counts.

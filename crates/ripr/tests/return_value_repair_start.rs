@@ -926,6 +926,35 @@ fn calls_that_are_not_the_owner_do_not_observe_it() -> Result<(), String> {
     ] {
         refuses_unless_genuine(bad, DBL_OLD, DBL_NEW, frame, bad, good)?;
     }
+    // A bare call of a name the test file defines itself may not be the owner.
+    for local in [
+        "fn dbl(x: i32) -> i32 { x }\n",
+        "fn other() {\n    fn dbl(x: i32) -> i32 { x }\n}\n",
+    ] {
+        let test = format!(
+            "{local}#[test]\nfn t() {{\n    let _ = ar::dbl(2);\n    assert!(@ > 0);\n}}\n"
+        );
+        refuses_unless_genuine(local, DBL_OLD, DBL_NEW, &test, "dbl(2)", "ar::dbl(2)")?;
+    }
+    // In an integration test `crate::` names the test crate, not the library.
+    let test = "pub struct W;\nimpl W { pub fn dbl(x: i32) -> i32 { x } }\nfn dbl(x: i32) -> i32 { x }\n#[test]\nfn t() {\n    let _ = ar::W::dbl(2);\n    assert!(@ > 0);\n}\n";
+    refuses_unless_genuine(
+        "crate-W",
+        W_OLD,
+        W_NEW,
+        test,
+        "crate::W::dbl(2)",
+        "ar::W::dbl(2)",
+    )?;
+    let test = "fn dbl(x: i32) -> i32 { x }\n#[test]\nfn t() {\n    let _ = ar::dbl(2);\n    assert!(@ > 0);\n}\n";
+    refuses_unless_genuine(
+        "crate-dbl",
+        DBL_OLD,
+        DBL_NEW,
+        test,
+        "crate::dbl(2)",
+        "ar::dbl(2)",
+    )?;
     // Another type of the same name with a same-named method is not the owner.
     let test = "mod other { pub struct W; impl W { pub fn dbl(x: i32) -> i32 { x } } }\n#[test]\nfn t() {\n    let _ = ar::W::dbl(2);\n    assert!(@ > 0);\n}\n";
     refuses_unless_genuine(
