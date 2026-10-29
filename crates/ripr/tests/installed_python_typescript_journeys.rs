@@ -1763,6 +1763,89 @@ fn gap_currentness_survives_only_proven_workflow_projection_cleanup() -> Result<
     if forged? {
         return Err("forged retained evidence established custody".to_string());
     }
+
+    // A legacy retained pair without the new snapshot role cannot establish
+    // custody after projections disappear.
+    let manifest_path = attempt
+        .root
+        .join("target/ripr/repair-attempts")
+        .join(&attempt.attempt_id)
+        .join("attempt.json");
+    let original_manifest = std::fs::read(&manifest_path).map_err(|error| error.to_string())?;
+    let mut legacy: serde_json::Value =
+        serde_json::from_slice(&original_manifest).map_err(|error| error.to_string())?;
+    legacy["terminal_artifacts"]
+        .as_array_mut()
+        .ok_or("no terminal roles")?
+        .retain(|artifact| artifact["role"] != "after_check_findings");
+    std::fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&legacy).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::rename(&workflow, &saved).map_err(|error| error.to_string())?;
+    let legacy_current = current();
+    std::fs::rename(&saved, &workflow).map_err(|error| error.to_string())?;
+    if legacy_current? {
+        return Err("legacy pair invented missing snapshot custody".to_string());
+    }
+
+    // A pre-existing forged staged snapshot cannot be promoted: with no
+    // committed terminal roles, pending recovery must replace it from the
+    // canonically validated shared snapshot before committing descriptors.
+    legacy
+        .as_object_mut()
+        .ok_or("manifest is not an object")?
+        .remove("terminal_artifacts");
+    std::fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&legacy).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(&retained_path, b"forged staged snapshot").map_err(|error| error.to_string())?;
+    let recovered = attempt.after(false)?;
+    expect_exit(
+        recovered.status.success(),
+        false,
+        "finished attempt after pending recovery",
+    )?;
+    let recovered_manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&manifest_path).map_err(|error| error.to_string())?)
+            .map_err(|error| error.to_string())?;
+    if !recovered_manifest["terminal_artifacts"]
+        .as_array()
+        .is_some_and(|roles| {
+            roles
+                .iter()
+                .any(|role| role["role"] == "after_check_findings")
+        })
+        || std::fs::read(&retained_path).map_err(|error| error.to_string())? != bytes
+    {
+        return Err("forged staged snapshot was promoted or pending recovery failed".to_string());
+    }
+
+    // A crash before retention followed by a forged shared snapshot cannot
+    // promote the terminal pair or the third role.
+    std::fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&legacy).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(&after, b"forged pending snapshot").map_err(|error| error.to_string())?;
+    let pending = attempt.after(false)?;
+    expect_exit(pending.status.success(), false, "forged pending promotion")?;
+    let pending_manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&manifest_path).map_err(|error| error.to_string())?)
+            .map_err(|error| error.to_string())?;
+    if pending_manifest
+        .get("terminal_artifacts")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|roles| !roles.is_empty())
+    {
+        return Err("forged pending snapshot was promoted".to_string());
+    }
+    std::fs::write(&after, bytes).map_err(|error| error.to_string())?;
+    std::fs::write(&manifest_path, original_manifest).map_err(|error| error.to_string())?;
     Ok(())
 }
 
