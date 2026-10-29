@@ -606,14 +606,16 @@ mod tests {
             // (`shell_arg`: console quotes on Windows, single quotes on
             // Unix), and the glob-lookalike pathspec stays literal — the
             // quote form is owned by `shell_arg`, not spelled here (#10996).
+            let expected_prefix = format!("git -C {}", shell_arg(&root_text));
             assert!(
-                command.starts_with(&format!("git -C {}", shell_arg(&root_text)))
+                command.starts_with(&expected_prefix)
                     && command.contains("--literal-pathspecs commit"),
-                "{command}"
+                "Expected command to start with '{expected_prefix}' and contain '--literal-pathspecs commit'. Actual command: {command}"
             );
+            let expected_suffix = format!("-- {}", shell_arg("src/[ab].py"));
             assert!(
-                command.ends_with(&format!("-- {}", shell_arg("src/[ab].py"))),
-                "{command}"
+                command.ends_with(&expected_suffix),
+                "Expected command to end with '{expected_suffix}'. Actual command: {command}"
             );
             let command = command.replace("<message>", "hint");
             let status = std::process::Command::new("sh")

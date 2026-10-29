@@ -6715,7 +6715,7 @@ mod tests {
         );
         assert!(
             anchored_message.contains(&anchored_commit),
-            "{anchored_message}"
+            "Expected message to contain:\n{anchored_commit}\n\nActual message:\n{anchored_message}"
         );
 
         let clean_routed = pilot_routed_to_check_message(&routes, ".", Some(&clean));
