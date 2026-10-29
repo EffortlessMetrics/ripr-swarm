@@ -34,6 +34,7 @@ use super::sink_alignment::{
 use super::static_limits::{
     LAMBDA_LIMIT_EVIDENCE, heuristic_only_relation_limit, implicit_dunder_dispatch_limit,
     module_object_rebind_limit, static_limit_for_focused_change, unpinned_equality_dunder_limit,
+    unresolved_pytest_fixture_names,
 };
 use super::table_rows::python_unvaried_table_operand;
 use super::term_activation::python_inactive_term_evidence;
@@ -1531,6 +1532,19 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
         }
         if test.parametrized {
             evidence.push(format!("test_parametrized: pytest ({})", test.name));
+        }
+        if static_limit
+            .as_ref()
+            .is_some_and(|limit| limit.kind == StaticLimitKind::UnresolvedPytestFixture)
+        {
+            let blockers = unresolved_pytest_fixture_names(test, owner);
+            if !blockers.is_empty() {
+                evidence.push(format!(
+                    "unresolved_fixtures: {} ({})",
+                    blockers.join(", "),
+                    test.name
+                ));
+            }
         }
         if let Some(command) = verify_command_for_test(test) {
             evidence.push(format!("test_verify_command: {command} ({})", test.name));
