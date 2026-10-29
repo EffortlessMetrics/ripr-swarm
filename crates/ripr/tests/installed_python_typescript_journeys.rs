@@ -2014,6 +2014,110 @@ fn gap_projection_custody_uses_the_explicit_attempt_store() -> Result<(), String
     Ok(())
 }
 
+/// Two actual attempts in one repository, retaining the first attempt and
+/// all compatibility projections before starting the second (#10988).
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn repeated_gap_attempt_is_current_and_keeps_test_byte_binding() -> Result<(), String> {
+    let first = GapAttempt::start("gap-real-repeat")?;
+    let manifest = first.manifest_for_only_attempt()?;
+    let base = manifest["gap_binding"]["base_commit"]
+        .as_str()
+        .ok_or("no immutable base")?
+        .to_string();
+    first.commit_closing_test()?;
+    let output = first.after(true)?;
+    expect_exit(output.status.success(), true, "first real attempt")?;
+    let workflow = first.root.join("target/ripr/workflow");
+    for path in [
+        workflow.join("after.check-findings.json"),
+        workflow.join("agent-verify.json"),
+        workflow.join("analysis-outcome.json"),
+        first.root.join("target/ripr/reports/agent-receipt.json"),
+    ] {
+        if !path.is_file() {
+            return Err(format!("first attempt did not leave {}", path.display()));
+        }
+    }
+    let test_path = first.root.join("test/pricing.test.ts");
+    let repaired = std::fs::read_to_string(&test_path).map_err(|error| error.to_string())?;
+    let needle = "  it(\"discounts exactly at the threshold\", () => {\n    expect(discountedTotal(10000)).toBe(9500);\n  });\n\n";
+    if !repaired.contains(needle) {
+        return Err("closing test missing".to_string());
+    }
+    std::fs::write(&test_path, repaired.replacen(needle, "", 1))
+        .map_err(|error| error.to_string())?;
+    fixture_git_ok(&first.root, &["add", "test/pricing.test.ts"])?;
+    fixture_git_ok(&first.root, &["commit", "-q", "-m", "reopen gap"])?;
+    let (ok, before) = ripr(
+        &first.decoy,
+        &[
+            "agent",
+            "repair",
+            "--gap-id",
+            &first.gap,
+            "--base",
+            &base,
+            "--root",
+            &first.root_arg,
+            "--phase",
+            "before",
+        ],
+    )?;
+    expect_exit(ok, true, &format!("second before: {before}"))?;
+    let attempts = first.root.join("target/ripr/repair-attempts");
+    let ids = std::fs::read_dir(&attempts)
+        .map_err(|error| error.to_string())?
+        .filter_map(Result::ok)
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .filter(|name| name.starts_with("repair-attempt-") && name != &first.attempt_id)
+        .collect::<Vec<_>>();
+    if ids.len() != 1 {
+        return Err(format!("expected one second attempt, got {ids:?}"));
+    }
+    let second = &ids[0];
+    std::fs::write(&test_path, &repaired).map_err(|error| error.to_string())?;
+    fixture_git_ok(&first.root, &["add", "test/pricing.test.ts"])?;
+    fixture_git_ok(&first.root, &["commit", "-q", "-m", "reclose gap"])?;
+    let output = ripr_output(
+        &first.decoy,
+        &["continue", "--root", &first.root_arg, "--attempt", second],
+    )?;
+    let (stdout, stderr) = text_of(&output);
+    expect_exit(
+        output.status.success(),
+        true,
+        &format!("second after: {stdout}\n{stderr}"),
+    )?;
+    let current = || -> Result<bool, String> {
+        let (ok, status) = ripr(
+            &first.decoy,
+            &["agent", "status", "--root", &first.root_arg, "--json"],
+        )?;
+        expect_exit(ok, true, "repeat status")?;
+        let document: serde_json::Value =
+            serde_json::from_str(&status).map_err(|error| error.to_string())?;
+        document["repair_attempts"]
+            .as_array()
+            .ok_or("no attempt rows")?
+            .iter()
+            .find(|row| row["attempt_id"].as_str() == Some(second.as_str()))
+            .and_then(|row| row["head_current"].as_bool())
+            .ok_or_else(|| format!("no second currentness: {status}"))
+    };
+    if !current()? {
+        return Err("second attempt was immediately noncurrent".to_string());
+    }
+    std::fs::write(&test_path, format!("{repaired}\n// drift\n"))
+        .map_err(|error| error.to_string())?;
+    let drift = current();
+    std::fs::write(&test_path, repaired).map_err(|error| error.to_string())?;
+    if drift? || !current()? {
+        return Err("bound test drift/restoration was misread".to_string());
+    }
+    Ok(())
+}
+
 /// Human (non `--json`) gap-bound after output names the closure and this
 /// attempt's receipt, and replaces a stale seam receipt planted at the
 /// receipt path rather than summarizing it.
