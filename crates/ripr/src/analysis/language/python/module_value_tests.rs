@@ -1085,16 +1085,64 @@ fn the_source_fact_parse_gives_the_foreign_index_the_same_attribute_writes() -> 
         return Err(format!("broken.py does not parse: {assigned:?}"));
     }
     let parsed = super::module_value::ForeignIndex::build(sources.iter().copied(), false);
-    let shared = super::module_value::ForeignIndex::build_with_assigned(
-        sources.iter().copied(),
-        false,
-        &assigned,
-    );
+    let prior = assigned
+        .iter()
+        .map(|(file, assigned)| {
+            (
+                file.clone(),
+                super::module_value::PriorFileFacts {
+                    assigned: assigned.clone(),
+                    lexes: None,
+                },
+            )
+        })
+        .collect();
+    let shared =
+        super::module_value::ForeignIndex::build_with_prior(sources.iter().copied(), false, &prior);
     for (own, _) in &sources {
         if shared.excluding(own) != parsed.excluding(own) {
             return Err(format!(
                 "{own:?}: shared {:?} != parsed {:?}",
                 shared.excluding(own),
+                parsed.excluding(own)
+            ));
+        }
+    }
+    // The workspace pass also hands over its lexes of each file (dict-literal
+    // names, import words), which a warm run serves from the fact store.
+    let lexed_prior: std::collections::BTreeMap<_, _> = sources
+        .iter()
+        .map(|(file, source)| {
+            let facts = super::source_facts::extract_workspace_source_facts(file, source);
+            (
+                file.to_path_buf(),
+                super::module_value::PriorFileFacts {
+                    assigned: facts.assigned_attributes,
+                    lexes: facts.foreign_lexes,
+                },
+            )
+        })
+        .collect();
+    if lexed_prior.values().any(|prior| prior.lexes.is_none()) {
+        return Err("every workspace file carries its lexes".to_string());
+    }
+    let b_lexes = lexed_prior
+        .get(Path::new("b.py"))
+        .and_then(|prior| prior.lexes.as_ref())
+        .ok_or("b.py lexes")?;
+    if b_lexes.dict_literal_names != ["RATE"] {
+        return Err(format!("b.py binds the RATE table: {b_lexes:?}"));
+    }
+    let lexed = super::module_value::ForeignIndex::build_with_prior(
+        sources.iter().copied(),
+        false,
+        &lexed_prior,
+    );
+    for (own, _) in &sources {
+        if lexed.excluding(own) != parsed.excluding(own) {
+            return Err(format!(
+                "{own:?}: lexed {:?} != parsed {:?}",
+                lexed.excluding(own),
                 parsed.excluding(own)
             ));
         }
@@ -1115,11 +1163,20 @@ fn the_foreign_index_reads_supplied_attribute_writes_instead_of_parsing() {
         Some(vec!["LIMIT".to_string()]),
     )]);
     let parsed = super::module_value::ForeignIndex::build(sources.iter().copied(), false);
-    let shared = super::module_value::ForeignIndex::build_with_assigned(
-        sources.iter().copied(),
-        false,
-        &assigned,
-    );
+    let prior = assigned
+        .iter()
+        .map(|(file, assigned)| {
+            (
+                file.clone(),
+                super::module_value::PriorFileFacts {
+                    assigned: assigned.clone(),
+                    lexes: None,
+                },
+            )
+        })
+        .collect();
+    let shared =
+        super::module_value::ForeignIndex::build_with_prior(sources.iter().copied(), false, &prior);
     assert!(
         !parsed
             .excluding(Path::new("b.py"))
