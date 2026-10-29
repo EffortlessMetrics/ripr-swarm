@@ -96,8 +96,8 @@
       "stop_reasons": [],
       "oracle_kind": "exact_value",
       "oracle_strength": "strong",
-      "recommended_next_step": "The indexed related tests do not establish a call to the changed owner, and no test input at the boundary of the changed comparison was detected. Inspect existing tests, doctests and examples for a call that passes a value on each side of that boundary before changing assertions; add a test only if that inspection finds none.",
-      "suggested_next_action": "The indexed related tests do not establish a call to the changed owner, and no test input at the boundary of the changed comparison was detected. Inspect existing tests, doctests and examples for a call that passes a value on each side of that boundary before changing assertions; add a test only if that inspection finds none.",
+      "recommended_next_step": "The indexed related tests do not establish a call to the changed owner, and no test input that exercises the changed condition was detected. Inspect existing tests, doctests and examples for a call whose input makes that condition both true and false before changing assertions; add a test only if that inspection finds none.",
+      "suggested_next_action": "The indexed related tests do not establish a call to the changed owner, and no test input that exercises the changed condition was detected. Inspect existing tests, doctests and examples for a call whose input makes that condition both true and false before changing assertions; add a test only if that inspection finds none.",
       "language": "rust",
       "source_currentness": "candidate_current"
     }

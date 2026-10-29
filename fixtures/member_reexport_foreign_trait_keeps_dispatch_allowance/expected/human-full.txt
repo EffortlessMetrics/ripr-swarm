@@ -43,7 +43,7 @@ Weakness
   - No detected boundary input for the changed predicate
 
 Next step
-  The indexed related tests do not establish a call to the changed owner, and no test input at the boundary of the changed comparison was detected. Inspect existing tests, doctests and examples for a call that passes a value on each side of that boundary before changing assertions; add a test only if that inspection finds none
+  The indexed related tests do not establish a call to the changed owner, and no test input that exercises the changed condition was detected. Inspect existing tests, doctests and examples for a call whose input makes that condition both true and false before changing assertions; add a test only if that inspection finds none
 Drill in:
   ripr explain --root <cwd>/fixtures/member_reexport_foreign_trait_keeps_dispatch_allowance/input --diff <cwd>/fixtures/member_reexport_foreign_trait_keeps_dispatch_allowance/diff.patch --mode fast probe:util_src_stream_take.rs:predicate:b1141696
   ripr context --root <cwd>/fixtures/member_reexport_foreign_trait_keeps_dispatch_allowance/input --diff <cwd>/fixtures/member_reexport_foreign_trait_keeps_dispatch_allowance/diff.patch --mode fast --at probe:util_src_stream_take.rs:predicate:b1141696

@@ -16,7 +16,7 @@ const PROXIMITY_ONLY_INSPECTION_NEXT_STEP: &str = "The indexed related tests do 
 /// The same inspection step when the finding's own missing-check line says no
 /// boundary input was detected (#10978): the step names that missing input
 /// instead of leaving the two lines to read as unrelated.
-const PROXIMITY_ONLY_BOUNDARY_INSPECTION_NEXT_STEP: &str = "The indexed related tests do not establish a call to the changed owner, and no test input at the boundary of the changed comparison was detected. Inspect existing tests, doctests and examples for a call that passes a value on each side of that boundary before changing assertions; add a test only if that inspection finds none.";
+const PROXIMITY_ONLY_BOUNDARY_INSPECTION_NEXT_STEP: &str = "The indexed related tests do not establish a call to the changed owner, and no test input that exercises the changed condition was detected. Inspect existing tests, doctests and examples for a call whose input makes that condition both true and false before changing assertions; add a test only if that inspection finds none.";
 const NO_BOUNDARY_INPUT_MISSING: &str = "No detected boundary input for the changed predicate";
 
 #[cfg(test)]

@@ -521,7 +521,7 @@ fn evidence_for_seam_with_context(
         seam.display_line(),
         context.index,
     );
-    panic_outcome::withhold(&mut evidence, &panicking);
+    panic_outcome::withhold(seam, &mut evidence, &panicking);
     evidence
 }
 
@@ -1515,7 +1515,7 @@ pub(crate) fn compact_evidence_for_seam(
         seam.display_line(),
         context.index,
     );
-    panic_outcome::withhold(&mut evidence, &panicking);
+    panic_outcome::withhold(seam, &mut evidence, &panicking);
     evidence
 }
 

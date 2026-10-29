@@ -160,12 +160,10 @@ pub(crate) fn decide_repair_start(
             .ok_or_else(|| "repair-start decision bound no subject".to_string())?;
         return Ok(RepairStartDecision::Start { seam_id });
     }
-    let described = if single {
-        Vec::new()
-    } else {
-        facts.candidate_notes.to_vec()
-    };
-    Ok(RepairStartDecision::Action(Box::new(action), described))
+    Ok(RepairStartDecision::Action(
+        Box::new(action),
+        facts.candidate_notes.to_vec(),
+    ))
 }
 
 /// The one repair-admission gate, shared by the auto selector and the
@@ -513,7 +511,7 @@ pub(crate) fn no_test_route_refusal(
                     "`{file}` has {} test modules ({listed}) and ripr cannot tell which one to edit",
                     names.len()
                 ),
-                format!("one of those modules in `{file}`, or a file in `tests/`"),
+                "one of those modules or in a file in `tests/`".to_string(),
             )
         }
         _ => (
@@ -522,7 +520,7 @@ pub(crate) fn no_test_route_refusal(
         ),
     };
     format!(
-        "ripr did not start a repair for the change at `{file}:{line}`: {why}. Add the test yourself to {place}, or run `{stub}` to write a starter test; no repair attempt was started."
+        "ripr did not start a repair for the change at `{file}:{line}`: {why}. Write the test by hand in {place}, or run `{stub}` to write a starter test; no repair attempt was started."
     )
 }
 

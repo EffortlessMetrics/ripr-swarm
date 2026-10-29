@@ -2230,7 +2230,7 @@ fn repair_two_items_requires_explicit_selection() -> Result<(), String> {
 /// Populate a committed workspace whose only test is an assertion-free
 /// `#[should_panic]` test and whose changed guard (`b == 0` becomes `b == 1`)
 /// decides the panic it expects (#10703).
-fn populate_should_panic_fixture(root: &Path) -> Result<(), String> {
+fn populate_should_panic_fixture(root: &Path, extra_test: &str) -> Result<(), String> {
     std::fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(root.join("tests")).map_err(|e| e.to_string())?;
     std::fs::write(root.join("Cargo.toml"), FIXTURE_CARGO_TOML).map_err(|e| e.to_string())?;
@@ -2242,7 +2242,9 @@ fn populate_should_panic_fixture(root: &Path) -> Result<(), String> {
     std::fs::write(root.join("src/lib.rs"), lib("b == 0")).map_err(|e| e.to_string())?;
     std::fs::write(
         root.join("tests/t.rs"),
-        "use boundary_gap_fixture::div;\n\n#[test]\n#[should_panic]\nfn t() {\n    div(1, 0);\n}\n",
+        format!(
+            "use boundary_gap_fixture::div;\n\n#[test]\n#[should_panic]\nfn t() {{\n    div(1, 0);\n}}\n{extra_test}"
+        ),
     )
     .map_err(|e| e.to_string())?;
     init_repo(root)?;
@@ -2262,7 +2264,7 @@ fn populate_should_panic_fixture(root: &Path) -> Result<(), String> {
 fn repair_declines_the_should_panic_limitation_check_names() -> Result<(), String> {
     let fixture = Fixture::dir("facade-should-panic")?;
     let root = &fixture.root;
-    populate_should_panic_fixture(root)?;
+    populate_should_panic_fixture(root, "")?;
     let root_arg = root.to_string_lossy().into_owned();
 
     let check = run_ripr(root, &["check", "--root", &root_arg, "--base", "HEAD~1"])?;
@@ -2291,6 +2293,31 @@ fn repair_declines_the_should_panic_limitation_check_names() -> Result<(), Strin
         attempt_ids(root).is_empty(),
         "no attempt may start for a named limitation"
     );
+    Ok(())
+}
+
+/// #10703 discriminating negative: the same changed guard with a weak
+/// asserting test beside the `#[should_panic]` test is a plain weak-grip gap
+/// for `check`, so the named-limitation predicate does not apply and `repair`
+/// still starts, exactly as it did before the limitation was shared.
+#[test]
+fn repair_still_starts_when_a_weak_asserting_test_sits_beside_should_panic() -> Result<(), String> {
+    let fixture = Fixture::dir("facade-should-panic-weak")?;
+    let root = &fixture.root;
+    populate_should_panic_fixture(
+        root,
+        "\n#[test]\nfn ok() {\n    assert!(div(4, 2) > 0);\n}\n",
+    )?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let check = run_ripr(root, &["check", "--root", &root_arg, "--base", "HEAD~1"])?;
+    let check_out = stdout_text(&check);
+    assert!(
+        !check_out.contains("named limitation"),
+        "a weak asserting test keeps the plain gap:\n{check_out}"
+    );
+    let repair = run_ripr(root, &["repair", "--root", &root_arg])?;
+    assert_exit(&repair, 0, "repair starts for the plain weak gap");
+    assert_eq!(attempt_ids(root).len(), 1, "one attempt starts");
     Ok(())
 }
 

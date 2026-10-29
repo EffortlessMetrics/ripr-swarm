@@ -44,7 +44,7 @@ Weakness
   - No detected boundary input for the changed predicate
 
 Next step
-  The indexed related tests do not establish a call to the changed owner, and no test input at the boundary of the changed comparison was detected. Inspect existing tests, doctests and examples for a call that passes a value on each side of that boundary before changing assertions; add a test only if that inspection finds none
+  The indexed related tests do not establish a call to the changed owner, and no test input that exercises the changed condition was detected. Inspect existing tests, doctests and examples for a call whose input makes that condition both true and false before changing assertions; add a test only if that inspection finds none
 Drill in:
   ripr explain --root <cwd>/fixtures/owner_self_body_same_name_with_caller_control/input --diff <cwd>/fixtures/owner_self_body_same_name_with_caller_control/diff.patch --mode fast probe:src_lib.rs:predicate:6fb64460
   ripr context --root <cwd>/fixtures/owner_self_body_same_name_with_caller_control/input --diff <cwd>/fixtures/owner_self_body_same_name_with_caller_control/diff.patch --mode fast --at probe:src_lib.rs:predicate:6fb64460

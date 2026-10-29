@@ -19,6 +19,8 @@
 use super::TestGripEvidence;
 use crate::analysis::classify::should_panic_tests_deciding_changed_panic;
 use crate::analysis::rust_index::{FunctionSummary, RustIndex};
+use crate::analysis::seam_classification::classify_seam;
+use crate::analysis::seams::{RepoSeam, SeamGripClass};
 use crate::domain::{Confidence, StageEvidence, StageState, StaticLimitKind};
 use std::path::Path;
 
@@ -50,12 +52,16 @@ fn clause(tests: &[String]) -> String {
 
 /// Withhold the absence claims of `evidence` under the panic-outcome limit.
 /// `tests` is [`deciding_tests`]. Returns `true` when the evidence changed.
-pub(super) fn withhold(evidence: &mut TestGripEvidence, tests: &[String]) -> bool {
-    if tests.is_empty() || !matches!(evidence.reach.state, StageState::Yes | StageState::Weak) {
+///
+/// Gated on the condition `withhold_should_panic_gap` applies to a finding:
+/// the seam must read `reachable_unrevealed` before the withhold (no
+/// assertion observes the change). A seam that also has a weak asserting
+/// test is a weak-grip gap, so it keeps its gap and its repair route.
+pub(super) fn withhold(seam: &RepoSeam, evidence: &mut TestGripEvidence, tests: &[String]) -> bool {
+    if tests.is_empty() || classify_seam(seam, evidence) != SeamGripClass::ReachableUnrevealed {
         return false;
     }
     let clause = clause(tests);
-    let mut changed = false;
     for (label, stage) in [
         ("Activation", &mut evidence.activate),
         ("Propagation", &mut evidence.propagate),
@@ -68,26 +74,13 @@ pub(super) fn withhold(evidence: &mut TestGripEvidence, tests: &[String]) -> boo
                 Confidence::Low,
                 format!("{label} unresolved: {clause}"),
             );
-            changed = true;
         }
     }
-    if !evidence.missing_discriminators.is_empty() {
-        evidence.missing_discriminators.clear();
-        changed = true;
-    }
-    // A stage that was already unknown or yes keeps its state; the typed
-    // reason still has to be reachable from the evidence record.
-    if !evidence.names_static_limit(LIMIT) {
-        evidence.discriminate = StageEvidence::new(
-            if evidence.discriminate.state == StageState::Opaque {
-                StageState::Opaque
-            } else {
-                StageState::Unknown
-            },
-            Confidence::Low,
-            format!("Discrimination unresolved: {clause}"),
-        );
-        changed = true;
-    }
-    changed
+    evidence.missing_discriminators.clear();
+    // `reachable_unrevealed` means discrimination read `no`, so it was
+    // rewritten above and now names the typed limit.
+    true
 }
+
+#[cfg(test)]
+mod tests;

@@ -18,8 +18,8 @@ Start here:
   Missing check: No detected boundary input for the changed predicate
   Related test: src/lib.rs:30 other_test
   Next step: The indexed related tests do not establish a call to the changed owner, and no test
-    input at the boundary of the changed comparison was detected. Inspect existing tests, doctests
-    and examples for a call that passes a value on each side of that boundary before changing
+    input that exercises the changed condition was detected. Inspect existing tests, doctests and
+    examples for a call whose input makes that condition both true and false before changing
     assertions; add a test only if that inspection finds none
   Evidence: reach weak · infection weak · propagation yes · observation yes · discriminator not established
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
