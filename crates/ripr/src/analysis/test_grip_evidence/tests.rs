@@ -19724,6 +19724,188 @@ fn field_projected_collection_repo_seam_retains_indexed_target() -> Result<(), S
     Ok(())
 }
 
+#[test]
+fn named_call_scan_sees_calls_after_an_earlier_line_comment() {
+    // The single-line stripper truncated a whole body at its first `//`.
+    for (body, expected) in [
+        ("// delegates\nfn wrapper() {\n    compute(1);\n}\n", true),
+        ("fn wrapper() {\n    // compute(1);\n}\n", false),
+        ("fn wrapper() {\n    let s = \"compute(1)\";\n}\n", false),
+        ("fn compute() {}\n", false),
+    ] {
+        assert_eq!(
+            call_text_contains_named_call(body, "compute"),
+            expected,
+            "{body}"
+        );
+    }
+}
+
+// #7415: index-backed oracles for the bounded inherent-receiver rule.
+fn receiver_rule_parts(source: &str, call: &str) -> Result<(FixtureIndex, String), String> {
+    let source = format!("{source}\n#[test]\nfn t() {{\n    {call}\n}}\n");
+    Ok((
+        index_from_files(&[(PathBuf::from("src/lib.rs"), &source)])?,
+        source,
+    ))
+}
+
+fn receiver_resolves(source: &str, call: &str) -> Result<bool, String> {
+    let (index, _) = receiver_rule_parts(source, call)?;
+    let find = |name: &str| {
+        index
+            .functions()
+            .iter()
+            .find(|f| f.name == name && f.item.has_self_param)
+    };
+    let owner = find("area").ok_or("missing owner")?;
+    let caller = index
+        .tests()
+        .iter()
+        .find(|t| t.name == "t")
+        .ok_or("missing test")?;
+    Ok(crate::analysis::classify::inherent_owner_call_resolves(
+        caller, owner, &index,
+    ))
+}
+
+/// `Site { v }` with `area(&self)`, then `$items` inside the same impl.
+macro_rules! site {
+    ($items:literal) => {
+        concat!(
+            "pub struct Site { v: u32 }\npub struct Cache;\npub struct Foreign;\n",
+            "impl Site { pub fn area(&self) -> u32 { self.v } ",
+            $items
+        )
+    };
+}
+
+#[test]
+#[rustfmt::skip]
+fn inherent_receiver_constructors_need_indexed_declarations() -> Result<(), String> {
+    let bound = "let s = Site::make();\n    assert_eq!(s.area(), 1);";
+    for (source, call, expected) in [
+        // Factory return type: Self/Site admit; wrappers, async, self, foreign
+        // types, a type parameter named Site and where/inline bounds refuse.
+        (site!("pub fn make() -> Self { Site { v: 1 } } }"), bound, true),
+        (site!("pub fn make() -> Site { Site { v: 1 } } }"), bound, true),
+        (site!("pub fn make() -> Result<Self, ()> { todo!() } }"), bound, false),
+        (site!("pub async fn make() -> Self { Site { v: 1 } } }"), bound, false),
+        (site!("pub fn make(&self) -> Self { Site { v: 1 } } }"), bound, false),
+        (site!("pub fn make() -> Foreign { Foreign } }"), bound, false),
+        (site!("pub fn make<Site>() -> Site { todo!() } }"), bound, false),
+        (site!("pub fn make<F>(f: F) -> Foreign where F: Fn() -> Self { f(); Foreign } }"), bound, false),
+        (site!("pub fn make<F: Fn() -> Self>(f: F) -> Foreign { f(); Foreign } }"), bound, false),
+        (site!("pub fn make() -> Self { Site { v: 1 } } } impl Site { pub fn make() -> Foreign { Foreign } }"), bound, false),
+        (site!("pub fn make() -> Self { Site { v: 1 } } }"), "assert_eq!(Other::make().area(), 1);", false),
+        // Constructor-sounding names return a foreign type; qualified paths.
+        (site!("pub fn new() -> Self { Site { v: 1 } } pub fn with_x() -> Self { Site { v: 1 } } pub fn from_parts(v: u32) -> Site { Site { v } } pub fn with_cache() -> Cache { Cache } pub fn new_cache() -> Cache { Cache } pub fn from_cache(_v: u32) -> Cache { Cache } }"), "assert_eq!(Site::new().area(), 1);", true),
+        (site!("pub fn with_x() -> Self { Site { v: 1 } } }"), "assert_eq!(Site::with_x().area(), 1);", true),
+        (site!("pub fn from_parts(v: u32) -> Site { Site { v } } }"), "assert_eq!(Site::from_parts(1).area(), 1);", true),
+        (site!("}"), "assert_eq!(Site { v: 1 }.area(), 1);", true),
+        (site!("pub fn with_cache() -> Cache { Cache } }"), "assert_eq!(Site::with_cache().area(), 1);", false),
+        (site!("pub fn new_cache() -> Cache { Cache } }"), "assert_eq!(Site::new_cache().area(), 1);", false),
+        (site!("pub fn from_cache(_v: u32) -> Cache { Cache } }"), "assert_eq!(Site::from_cache(1).area(), 1);", false),
+        (site!("pub fn new() -> Self { Site { v: 1 } } }"), "assert_eq!(foreign::Site::new().area(), 1);", false),
+        (site!("}"), "assert_eq!(foreign::Site { v: 1 }.area(), 1);", false),
+        (site!("pub fn with_x() -> Self { Site { v: 1 } } }"), "assert_eq!(crate::foreign::Site::with_x().area(), 1);", false),
+        (site!("}"), "assert_eq!(Site::missing().area(), 1);", false),
+        // Default / From need positive impl or derive evidence.
+        ("#[derive(Default)]\npub struct Site { v: u32 }\nimpl Site { pub fn area(&self) -> u32 { self.v } }", "assert_eq!(Site::default().area(), 1);", true),
+        ("pub struct Site { v: u32 }\nimpl Default for Site { fn default() -> Self { Site { v: 1 } } }\nimpl Site { pub fn area(&self) -> u32 { self.v } }", "assert_eq!(Site::default().area(), 1);", true),
+        ("pub struct Site { v: u32 }\nimpl From<u8> for Site { fn from(v: u8) -> Self { Site { v: v.into() } } }\nimpl Site { pub fn area(&self) -> u32 { self.v } }", "assert_eq!(Site::from(1).area(), 1);", true),
+        (site!("}"), "assert_eq!(Site::default().area(), 1);", false),
+        (site!("}"), "assert_eq!(Site::from(1).area(), 1);", false),
+        (site!("pub fn default() -> Cache { Cache } }"), "assert_eq!(Site::default().area(), 1);", false),
+        (site!("pub fn default() -> Self { Site { v: 1 } } }"), "assert_eq!(Site::default().area(), 1);", true),
+        ("#[derive(Default)]\npub struct Cache;\npub struct Site { v: u32 }\nimpl Site { pub fn area(&self) -> u32 { self.v } }", "assert_eq!(Site::default().area(), 1);", false),
+        ("pub struct Cache;\nimpl From<u8> for Cache { fn from(_v: u8) -> Self { Cache } }\npub struct Site { v: u32 }\nimpl Site { pub fn area(&self) -> u32 { self.v } }", "assert_eq!(Site::from(1).area(), 1);", false),
+        ("#[derive(Default)]\npub struct Site { v: u32 }\nimpl Site { pub fn area(&self) -> u32 { self.v } }", "assert_eq!(foreign::Site::default().area(), 1);", false),
+        // Generic owner: turbofish and inherent factory on `Site<T>`.
+        ("pub struct Site<T> { v: T }\nimpl<T> Site<T> { pub fn new(v: T) -> Self { Site { v } } pub fn area(&self) -> u32 { 1 } }", "assert_eq!(Site::<u8>::new(1).area(), 1);", true),
+        ("pub struct Site<T> { v: T }\nimpl<T> Site<T> { pub fn new(v: T) -> Self { Site { v } } pub fn area(&self) -> u32 { 1 } }", "assert_eq!(Site::new(1).area(), 1);", true),
+        // Free fixture function returning the owner type, and its refusals.
+        (concat!(site!("}"), "\nfn fixture() -> Site { Site { v: 1 } }"), "assert_eq!(fixture().area(), 1);", true),
+        (concat!(site!("}"), "\nfn fixture() -> Site { Site { v: 1 } }"), "let s = fixture();\n    assert_eq!(s.area(), 1);", true),
+        (concat!(site!("}"), "\nfn fixture() -> Cache { Cache }"), "assert_eq!(fixture().area(), 1);", false),
+        (concat!(site!("}"), "\nasync fn fixture() -> Site { Site { v: 1 } }"), "assert_eq!(fixture().area(), 1);", false),
+        (site!("}"), "assert_eq!(fixture().area(), 1);", false),
+        (concat!(site!("}"), "\nfn fixture() -> Site { Site { v: 1 } }\nmod other { pub fn fixture() -> super::Cache { super::Cache } }"), "assert_eq!(fixture().area(), 1);", false),
+        (concat!(site!("}"), "\nfn fixture() -> Site { Site { v: 1 } }"), "let fixture = || 0;\n    assert_eq!(fixture().area(), 1);", false),
+        // Bare unit struct is a value only when verified; a constant is not.
+        ("pub struct Site;\nimpl Site { pub fn area(&self) -> u32 { 1 } }", "assert_eq!(Site.area(), 1);", true),
+        ("pub struct Site { v: u32 }\nimpl Site { pub fn area(&self) -> u32 { self.v } }\npub struct Cache;\nimpl Cache { pub fn area(&self) -> u32 { 1 } }\npub const Site: Cache = Cache;", "assert_eq!(Site.area(), 1);", false),
+        ("pub struct Site { v: u32 }\nimpl Site { pub fn area(&self) -> u32 { self.v } }\npub struct Cache;\npub const Site: Cache = Cache;", "let s = Site;\n    assert_eq!(s.area(), 1);", false),
+        ("pub struct Site { v: u32 }\nimpl Site { pub fn area(&self) -> u32 { self.v } }\npub enum E { Site }", "use E::Site;\n    assert_eq!(Site.area(), 1);", false),
+        ("pub struct Site;\nimpl Site { pub fn area(&self) -> u32 { 1 } }", "use ext::Other as Site;\n    assert_eq!(Site.area(), 1);", false),
+        // A `use` in the test body can rebind the free-fixture head.
+        (concat!(site!("}"), "\nfn fixture() -> Site { Site { v: 1 } }"), "use ext::fixture;\n    assert_eq!(fixture().area(), 1);", false),
+        (concat!(site!("}"), "\nfn fixture() -> Site { Site { v: 1 } }"), "use ext::*;\n    assert_eq!(fixture().area(), 1);", false),
+    ] {
+        assert_eq!(receiver_resolves(source, call)?, expected, "{call} over {source}");
+    }
+    Ok(())
+}
+
+#[test]
+fn inherent_helper_hop_credits_only_a_sync_helper_that_binds_the_owner_type() -> Result<(), String>
+{
+    let site = site!("pub fn new() -> Self { Site { v: 1 } } }");
+    for (helper, call, expected) in [
+        (
+            "fn helper() -> u32 { let s = Site::new(); s.area() }",
+            "assert_eq!(helper(), 1);",
+            true,
+        ),
+        (
+            "fn helper() -> u32 { let s = Foreign::new(); s.area() }",
+            "assert_eq!(helper(), 1);",
+            false,
+        ),
+        (
+            "async fn helper() -> u32 { let s = Site::new(); s.area() }",
+            "let _ = helper();",
+            false,
+        ),
+        (
+            "fn helper() -> u32 { let s = Site::new(); s.area() }",
+            "assert_eq!(1, 1);",
+            false,
+        ),
+    ] {
+        let (index, _) = receiver_rule_parts(&format!("{site}\n{helper}"), call)?;
+        let find = |name: &str| index.functions().iter().find(|f| f.name == name);
+        let (owner, helper_fn) = (
+            find("area").ok_or("owner")?,
+            find("helper").ok_or("helper")?,
+        );
+        let caller = index.tests().iter().find(|t| t.name == "t").ok_or("test")?;
+        assert_eq!(
+            inherent_helper_path_reaches_owner(
+                caller,
+                owner,
+                &index,
+                HELPER_OWNER_CALL_GRAPH_MAX_HOPS,
+                &mut BTreeSet::new(),
+            ),
+            expected,
+            "{helper} / {call}"
+        );
+        let classify = crate::analysis::classify::function_declaration_is_async;
+        assert_eq!(
+            classify(helper_fn, &index),
+            Some(helper.starts_with("async")),
+            "{helper}"
+        );
+        assert_eq!(
+            crate::analysis::classify::free_helper_call_resolves(caller, helper_fn, &index),
+            call.contains("helper("),
+            "{helper} / {call}"
+        );
+    }
+    Ok(())
+}
+
 /// #10229: file is part of a value fact's identity, so the same line, value
 /// and text from two test files stays two facts while an exact same-file
 /// duplicate still collapses.

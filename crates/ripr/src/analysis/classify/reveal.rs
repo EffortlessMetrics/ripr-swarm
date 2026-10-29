@@ -4567,6 +4567,13 @@ pub(in crate::analysis) struct FileUseStatements {
     macro_defined: crate::analysis::sync_memo::SyncMemo<
         std::collections::BTreeMap<(std::path::PathBuf, String), bool>,
     >,
+    /// Each file's macro sites, parsed once however many names ask.
+    macro_sites: crate::analysis::sync_memo::SyncMemo<
+        std::collections::BTreeMap<
+            std::path::PathBuf,
+            std::sync::Arc<super::macro_item_names::MacroSites>,
+        >,
+    >,
 }
 
 impl FileUseStatements {
@@ -4579,11 +4586,17 @@ impl FileUseStatements {
         source: &str,
         callee: &str,
     ) -> bool {
-        let key = (file.to_path_buf(), callee.to_string());
+        let file = file.to_path_buf();
+        let key = (file.clone(), callee.to_string());
         if let Some(known) = self.macro_defined.borrow().get(&key) {
             return *known;
         }
-        let defined = super::macro_item_names::macro_may_define_item_named(source, callee);
+        // Build the scan outside the memo lock: a full-file parse behind the
+        // guard would serialize workers that first query different files.
+        let sites = self
+            .macro_sites
+            .get_or_build(&file, || super::macro_item_names::MacroSites::scan(source));
+        let defined = sites.may_define(callee);
         self.macro_defined.borrow_mut().insert(key, defined);
         defined
     }

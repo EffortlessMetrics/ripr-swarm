@@ -3186,6 +3186,22 @@ Durable rules:
   wrapper listing and a compile attempt that uses it - before writing that a
   capability is unavailable.
 
+## 2026-10-25: Receiver and helper admission needs execution and declaration identity (#8004)
+
+An assertion operand parsed in a synthetic function must not borrow the outer
+receiver through an operand-local item: `struct value;` introduces a value
+constructor, and aliases, enums and modules can replace nominal type paths.
+Refuse operand items as a class and exempt the synthetic wrapper by syntax
+identity, never its name. This is a refusal boundary, not type resolution.
+
+Direct, helper and repository calls must share one admission boundary; audit
+every consumer when extending it. Descendant syntax is not execution: an
+uncalled nested fn, closure or async body can hold a perfect assertion without
+running the owner. A helper-name graph supplies candidates, not identities, so
+resolve each hop's free call in its own module/import scope and keep boundary
+tests on the candidate route, not a vacuous negative. Repeated parsing is
+performance work under #8005.
+
 ## 2026-10-16: Per-macro full-file `use` scans hang dogfood PR evidence
 
 `cargo xtask ripr-pr` builds this branch's `ripr` and runs `ripr check` on
