@@ -3164,7 +3164,15 @@ fn assertion_verdict_for_test(
 /// line, so the consistent first line must not lend the failing test's
 /// promotion to the seam (#8610 review). Fail-closed toward prior credit:
 /// without a resolved owner nothing is contradicted.
-fn test_has_contradicted_assertion(test: &TestSummary, owner_fn: Option<&FunctionSummary>) -> bool {
+///
+/// This is the one whole-test contradiction rule for every surface that
+/// credits the test: the repo-seam activation authority reads it in
+/// [`activate_evidence`], and the diff-mode classifier reads it for the same
+/// purpose (#10980), so identical evidence reaches one verdict on both.
+pub(in crate::analysis) fn test_has_contradicted_assertion(
+    test: &TestSummary,
+    owner_fn: Option<&FunctionSummary>,
+) -> bool {
     let Some(owner_fn) = owner_fn else {
         return false;
     };
