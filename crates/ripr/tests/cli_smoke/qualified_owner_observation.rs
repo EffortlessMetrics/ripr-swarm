@@ -4,14 +4,15 @@
 //! (a) A member-crate qualifier (`pricing::` for a member-crate owner) has a
 //! CLI-level positive only through the `use`-import route
 //! (`member_crate_import_admission_matches_cargo_resolution`). In a
-//! single-package fixture — where no member manifest binds the name — the
-//! qualified-call spelling keeps the gap open but never fully exposes: the
-//! coarse related-test fallback still relates the test (observation `yes`
-//! with a strong oracle), while the owner-return pin refuses the unbound
-//! qualifier, so the discriminator stays weak and the classification stays
-//! `weakly_exposed`. The own-crate-name spelling (`qual_obs::`) is the
-//! linking control: it pins and exposes, so the refusal below proves the
-//! guard rather than an unrelated setup failure.
+//! single-package fixture — where no member manifest binds the name — both
+//! the qualified-call spelling (`pricing::score(..)`) and the `use`-import
+//! spelling (`use pricing::score;` + `score(..)`) keep the gap open but
+//! never fully expose: the coarse related-test fallback may still relate
+//! the test, while the owner-return pin refuses the unbound qualifier (no
+//! manifest binds it), so the discriminator stays weak and the
+//! classification stays below `exposed`. The own-crate-name spelling
+//! (`qual_obs::`) is the linking control: it pins and exposes, so a
+//! refusal below proves the guard rather than an unrelated setup failure.
 //!
 //! (b) The `layout.class` condition for `crate::` was guarded only by the
 //! unit test `crate_qualified_method_observes_the_owner_only_from_its_own_crate`.
@@ -97,12 +98,12 @@ fn score_test(body: &str) -> String {
     format!("#[test]\nfn observes_score() {{\n{body}\n}}\n")
 }
 
-/// The own-crate-name control links, so the refusal below proves the guard
+/// The own-crate-name control links, so a refusal below proves the guard
 /// rather than an unrelated setup failure. `pricing` names no package of
-/// this single-package fixture: no member manifest binds it, so the
-/// qualified-call spelling keeps the gap open (the coarse fallback still
-/// relates the test) but never fully exposes (the owner-return pin refuses
-/// the unbound qualifier, leaving the discriminator weak).
+/// this single-package fixture: no member manifest binds it, so both the
+/// qualified-call spelling and the `use`-import spelling keep the gap open
+/// but must never fully expose (the owner-return pin refuses the unbound
+/// qualifier, leaving the discriminator weak).
 #[test]
 fn an_unbound_member_crate_qualifier_never_exposes() -> Result<(), String> {
     let root = unique_temp_workspace("qualifier-member-negative");
@@ -139,28 +140,66 @@ fn an_unbound_member_crate_qualifier_never_exposes() -> Result<(), String> {
                 "own-crate control must keep the strong oracle: {credited}"
             ));
         }
+        if credited["miss"].is_string() {
+            return Err(format!(
+                "own-crate control must carry no observation miss: {credited}"
+            ));
+        }
 
-        // `pricing` binds nothing here, so the same-shaped assertion keeps
+        // `pricing` binds nothing here, so each same-shaped spelling keeps
         // the gap open but must not expose: the pin refuses the qualifier.
-        write(
-            &root,
-            "tests/api.rs",
-            score_test("    assert_eq!(pricing::score(7), 21);"),
-        )?;
-        let refused = single_finding(&check(&root)?, "qualified call")?;
-        if refused["classification"] == "exposed" {
+        // The loop's last spelling is the `use`-import route; its miss
+        // field is read below, so a regression that silently drops the
+        // test from the related set fails instead of passing vacuously.
+        let mut last_related: Option<serde_json::Value> = None;
+        for (label, tests) in [
+            (
+                "qualified call",
+                score_test("    assert_eq!(pricing::score(7), 21);"),
+            ),
+            (
+                "foreign use import",
+                format!(
+                    "use pricing::score;\n{}",
+                    score_test("    assert_eq!(score(7), 21);")
+                ),
+            ),
+        ] {
+            write(&root, "tests/api.rs", tests)?;
+            let refused = single_finding(&check(&root)?, label)?;
+            if refused["classification"] == "exposed" {
+                return Err(format!(
+                    "{label}: unbound qualifier must not expose: {refused}"
+                ));
+            }
+            if discriminate_state(&refused)? != "weak" {
+                return Err(format!(
+                    "{label}: unbound qualifier must leave the discriminator weak: {refused}"
+                ));
+            }
+            // The gap stays open: the coarse fallback still relates the test.
+            // A refusal that unrelated the test entirely would hide the
+            // oracle-credit question, so require the relation explicitly.
+            let kept = related(&refused, "observes_score", label)?
+                .cloned()
+                .ok_or_else(|| {
+                    format!("{label}: the gap must stay open (test must stay related): {refused}")
+                })?;
+            if kept["oracle"].as_str().unwrap_or_default().is_empty() {
+                return Err(format!(
+                    "{label}: the related test must keep its oracle visible: {kept}"
+                ));
+            }
+            last_related = Some(kept);
+        }
+        // The import route's oracle must not confirm observation of the
+        // changed expression: the pin refused it.
+        let kept = last_related.ok_or("foreign use import must have run")?;
+        if kept["miss"] != "observation_unconfirmed" {
             return Err(format!(
-                "qualified call: unbound qualifier must not expose: {refused}"
+                "foreign use import: the unbound import must not confirm observation: {kept}"
             ));
         }
-        if discriminate_state(&refused)? != "weak" {
-            return Err(format!(
-                "qualified call: unbound qualifier must leave the discriminator weak: {refused}"
-            ));
-        }
-        // The gap stays open: the coarse fallback still relates the test.
-        related(&refused, "observes_score", "qualified call")?
-            .ok_or_else(|| format!("qualified call: the gap must stay open: {refused}"))?;
         Ok(())
     })();
     ignore_remove_dir_all(&root);
@@ -182,8 +221,10 @@ const DBL_MANIFEST: &str =
 /// `crate_qualified_method_observes_the_owner_only_from_its_own_crate`: the
 /// library's own inline test pins and exposes while it stands alone, but
 /// with the same-`Self`-type rival in the binary crate the paired finding
-/// stays `weakly_exposed`. From the binary crate alone `crate::` never
-/// pins, so that phase stays refused as well.
+/// stays `weakly_exposed`, and the binary crate's own `crate::` spelling
+/// never pins. The paired phase names both tests: the rival must be indexed
+/// and related (otherwise the guard would pass vacuously), while the
+/// library's own test keeps the oracle the binary one must not confirm.
 #[test]
 fn crate_qualified_method_cli_guards_the_layout_class() -> Result<(), String> {
     let root = unique_temp_workspace("qualifier-crate-layout");
@@ -220,6 +261,23 @@ fn crate_qualified_method_cli_guards_the_layout_class() -> Result<(), String> {
         if discriminate_state(&paired)? != "weak" {
             return Err(format!(
                 "paired: the rival must leave the discriminator weak: {paired}"
+            ));
+        }
+        // Both spellings stay related: the rival must be indexed (the guard
+        // is not passing because the binary target vanished), while only
+        // the library's own test keeps a confirmed oracle.
+        let unit = related(&paired, "unit", "paired")?
+            .ok_or_else(|| format!("paired: the own-crate test must relate: {paired}"))?;
+        if unit["oracle"].as_str().unwrap_or_default().is_empty() {
+            return Err(format!(
+                "paired: the own-crate test must keep its oracle visible: {unit}"
+            ));
+        }
+        let bin = related(&paired, "bin", "paired")?
+            .ok_or_else(|| format!("paired: the rival test must stay indexed: {paired}"))?;
+        if bin["miss"] != "observation_unconfirmed" {
+            return Err(format!(
+                "paired: the binary-crate test must not confirm observation: {bin:?}"
             ));
         }
 
