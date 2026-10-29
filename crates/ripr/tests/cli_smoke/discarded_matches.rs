@@ -361,13 +361,18 @@ fn normalize_moved_repair_advisories(bytes: &[u8]) -> (Vec<u8>, usize) {
     // the single-start/single-value-gap shape the bounded screen produces
     // for its selected finding (#10948 item 7): one drill-in block whose
     // route the pipeline bound to the selected finding id
-    // (`repair_route_for`). The capture text carries no start-to-gap
-    // identity — the start names a 16-hex seam hash while the gap line
-    // names a canonical gap id — so counts alone cannot pair one start
-    // with its own gap. Anything else stays byte-exact (fail-closed),
-    // including equal-count multi-gap captures where a start could name
-    // another seam. A wrongly started boundary (or any other) seam is
-    // never masked either.
+    // (`repair_route_for`). The capture text itself carries no start-to-gap
+    // identity — the start names a 16-hex seam hash while the gap line names
+    // a canonical gap id — so this projection cannot detect a producer
+    // misbinding (gap A beside a start for seam B in the 1/1 shape still
+    // masks; see the wrong-gap 1/1 control below). That binding is
+    // established producer-side instead
+    // (`bounded_human_output_prints_repair_only_for_the_routed_top_finding`:
+    // a route for another finding prints no repair line). Every other shape
+    // stays byte-exact (fail-closed): a wrong-kind gap, mixed gaps, extra
+    // starts, or extra gaps (including equal-count multi-gap captures where
+    // a start could name another seam) are never masked. A wrongly started
+    // boundary (or any other) seam is never masked either.
     let text = String::from_utf8_lossy(bytes);
     let gaps: Vec<&str> = text
         .lines()
@@ -383,12 +388,13 @@ fn normalize_moved_repair_advisories(bytes: &[u8]) -> (Vec<u8>, usize) {
         .filter(|gap| gap.contains(":return_value:") || gap.contains(":error_variant:"))
         .count();
     // One start only in the single-start/single-value-gap shape the bounded
-    // screen produces for its selected finding (`repair_route_for` binds the
-    // route to the selected finding id; multi-finding captures stay exact
-    // per the equal-count control below). Count equality alone cannot
-    // establish start-to-gap identity: the start names a 16-hex seam hash
-    // while the gap line names a canonical gap id, so two value gaps with
-    // one start each still stay exact.
+    // screen produces for its selected finding. Shape only: the text cannot
+    // pair the start with its gap (16-hex seam hash vs canonical gap id),
+    // so the 1/1 shape masks even when the producer bound the wrong seam —
+    // the wrong-gap 1/1 control below locks in that documented blind spot
+    // rather than claiming detection. Start-to-gap binding is established
+    // producer-side (`repair_route_for` answers only for its own finding
+    // id); multi-finding captures stay exact per the equal-count control.
     let is_start_line =
         |line: &str| line.starts_with("  ripr repair ") && line.contains(" --root ");
     let value_gaps_only = !gaps.is_empty()
@@ -426,13 +432,16 @@ fn normalize_moved_repair_advisories(bytes: &[u8]) -> (Vec<u8>, usize) {
 
 /// A printed start is projected to the moved return-value slot only in the
 /// single-start/single-value-gap shape the bounded screen produces for its
-/// selected finding; a boundary seam's start stays exact. Masking is one
-/// start beside one value gap (#10948 item 7): a second start, a second gap
-/// (even an equal-count one, where the count cannot pair the start with
-/// its own gap), or a wrong-kind gap beside the value gap all stay exact
-/// so a start for a different seam is never masked.
+/// selected finding; a boundary seam's start stays exact. Masking is shape
+/// only (#10948 item 7): a second start, a second gap (even an equal-count
+/// one), or a wrong-kind gap beside the value gap all stay exact. The 1/1
+/// shape itself cannot detect a producer misbinding — gap A beside a start
+/// for seam B still masks, and the wrong-gap 1/1 control locks in that
+/// documented blind spot instead of claiming detection. Start-to-gap
+/// binding is established producer-side (`repair_route_for` answers only
+/// for its own finding id).
 #[test]
-fn moved_repair_start_projection_never_masks_another_seam_kind() {
+fn moved_repair_start_projection_masks_only_the_single_shape() {
     let start = "  ripr repair 0123456789abcdef --root /x\n";
     let capture = |gap: &str| format!("  <gap-id-label>: {gap}\n{start}");
     let (value, slots) = normalize_moved_repair_advisories(
@@ -456,8 +465,21 @@ fn moved_repair_start_projection_never_masks_another_seam_kind() {
     );
     assert_eq!(slots, 0);
     assert!(String::from_utf8_lossy(&mixed).contains(start));
-    // A start for a different return_value/error_variant seam in the same
-    // capture is never masked: two starts beside one value gap, and one
+    // The 1-gap/1-start blind-spot control: a value gap for seam A beside a
+    // start line still masks, because the text pairs no start with its own
+    // gap (16-hex seam hash vs canonical gap id). This locks in the
+    // documented limitation — misbinding detection belongs producer-side
+    // (`repair_route_for` answers only for its own finding id), not to this
+    // text projection — instead of claiming this test detects it.
+    let wrong_gap = capture("gap:rust:other.rs:g:return_value:r:y");
+    let (masked, slots) = normalize_moved_repair_advisories(wrong_gap.as_bytes());
+    assert_eq!(
+        slots, 1,
+        "the 1/1 shape masks; identity is not checked here"
+    );
+    assert!(!String::from_utf8_lossy(&masked).contains("ripr repair"));
+    // A start for a different return_value/error_variant seam is never
+    // masked by shape: two starts beside one value gap, and one
     // start beside two value gaps, both stay exact. The two-gaps/two-starts
     // equal-count shape stays exact too: the count matches but the capture
     // text pairs no start with its own gap (the start names a 16-hex seam
