@@ -1280,6 +1280,34 @@ trail. `xtask/tests/pr_readiness_workflow_contract.rs` pins the alert-only
 shape (no dispatch command, no `actions: write`), the in-flight check, and
 the `mergeable_state` column.
 
+### Main Health Sentinel
+
+Main's push gate is frequently cancelled before completing (on busy days most
+`Routed Rust Small` main-push runs cancel before any job starts), and the
+Hard-cut watch stays green on broken main by design: it judges the cut packet,
+not the build. A broken main whose push run cancels can therefore sit with no
+completed red signal anywhere for hours (#10991; incidents #8990, #8989, with
+live repeats through 2026-10-29).
+`.github/workflows/main-health-sentinel.yml` runs twice an hour (`9,39 * * * *`)
+and probes main directly: `cargo check --locked -p ripr` plus one focused
+binary smoke selector (`cli_smoke
+version_is_exact_and_precedes_help_or_output_flags`), cached, on a
+GitHub-hosted runner, with its own serialization group and a 30-minute job
+timeout. It is a probe, not a second build lane and not a required check: it
+holds no branch-protection or ruleset authority and dispatches nothing.
+Detection is bounded and honest: probe logs are teed with native `PIPESTATUS`
+statuses, a judge step fails the job on missing or empty evidence (a probe
+that executed zero tests reports red, never success), the summary table is the
+per-fire audit trail, and the `main-red` tracking issue
+(`main-red: scheduled main-health sentinel found a broken main`) is the
+durable findable record — opened once, appended per confirming probe, and
+closed by the first green probe with the recovering run link. Worst-case
+detection latency is roughly forty minutes (interval plus probe). The
+`xtask/tests/main_health_sentinel_contract.rs` contract pins the advisory-only
+shape: scheduled-plus-dispatch triggers, serialization, timeout, repository
+guard, `issues: write` as the only write authority, the exact probe selector,
+zero-executed-test refusal, and the tracker lifecycle.
+
 ### Self-Hosted Runner Placement
 
 The everyday required Rust gate routes through `routed-rust.yml`

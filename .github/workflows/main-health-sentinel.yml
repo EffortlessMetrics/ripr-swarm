@@ -1,0 +1,152 @@
+name: Main health sentinel
+
+# Scheduled advisory main-health probe (#10991). Main's push gate (`Routed
+# Rust Small`) is frequently cancelled before completing — on busy days most
+# main-push runs cancel before any job starts — and the Hard-cut watch stays
+# green on broken main by design: it judges the cut packet, not the build. A
+# broken main whose push run is cancelled therefore has no completed red
+# signal anywhere, and nothing scheduled ever looks again (incidents #8990,
+# #8989; live repeats through 2026-10-29). This sentinel builds main on its
+# own timer: a bounded probe (`cargo check -p ripr` plus one focused binary
+# smoke test) that completes independently of the push lane's cancellation
+# exposure.
+#
+# Detection only: it is not a required check, holds no branch-protection or
+# ruleset authority, dispatches nothing, and gates no PR. A red probe fails
+# the job (a visible red scheduled run), writes the step summary, and
+# opens/updates the `main-red` tracking issue — the durable, findable record.
+# A later green probe comments the recovering run link and closes the tracker.
+# Missing or empty evidence fails the job: a probe that cannot prove main is
+# healthy never reports success (the same evidence rule as macos-advisory).
+#
+# Latency: the twice-hourly cadence bounds worst-case detection at roughly
+# forty minutes (interval plus probe), far inside the multi-hour silent
+# windows #10991 records. It is a probe, not a second build lane: one package
+# check plus one filtered test, cached, no matrix, no shards.
+
+on:
+  schedule:
+    - cron: "9,39 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Serialize overlapping fires. Do not cancel: an in-progress probe must finish
+# writing its summary and tracker state before the next fire reads or heals it.
+concurrency:
+  group: main-health-sentinel-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  sentinel:
+    name: Probe main health
+    if: github.repository == 'EffortlessMetrics/ripr-swarm'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Write scopes live on this job only: the one write is the main-red
+    # tracking issue. No workflow/dispatch authority of any kind.
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      # rust-toolchain.toml pins the toolchain; the action resolves it from
+      # the file, matching macos-advisory.yml.
+      - uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          shared-key: ripr-main-health-sentinel-1.95
+          cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      # Record native exit statuses next to the logs; the judge step decides.
+      # A probe failure must reach the judge as evidence, not vanish in a pipe.
+      - name: Probe main build and one focused binary smoke test
+        timeout-minutes: 20
+        run: |
+          set -euo pipefail
+          d="$RUNNER_TEMP/main-health-sentinel"
+          mkdir -p "$d"
+          { rustc --version; cargo --version; } | tee "$d/host.log"
+          set +e
+          cargo check --locked -p ripr 2>&1 | tee "$d/check.log"
+          echo "${PIPESTATUS[0]}" > "$d/check.status"
+          cargo test --locked -p ripr --test cli_smoke version_is_exact_and_precedes_help_or_output_flags -- --exact 2>&1 | tee "$d/smoke.log"
+          echo "${PIPESTATUS[0]}" > "$d/smoke.status"
+          exit 0
+
+      - name: Judge probe evidence
+        id: judge
+        run: |
+          set -euo pipefail
+          d="$RUNNER_TEMP/main-health-sentinel"
+          missing=0
+          for f in host.log check.log check.status smoke.log smoke.status; do
+            [ -s "$d/$f" ] || { echo "::error::missing probe evidence $f"; missing=1; }
+          done
+          [ "$missing" -eq 0 ] || exit 1
+          check_status="$(cat "$d/check.status")"
+          smoke_status="$(cat "$d/smoke.status")"
+          result_line="$(grep -E '^test result:' "$d/smoke.log" | tail -n 1 || true)"
+          passed="$(printf '%s' "$result_line" | sed -n 's/^test result: [a-zA-Z]*\. \([0-9]*\) passed.*/\1/p')"
+          {
+            echo "## Main health sentinel"
+            echo
+            echo "| Probe | Exit | Detail |"
+            echo "| --- | --- | --- |"
+            echo "| cargo check --locked -p ripr | $check_status | bounded probe, not the push gate |"
+            echo "| smoke: cli_smoke version_is_exact_and_precedes_help_or_output_flags | $smoke_status | ${result_line:-no test result line} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ -z "$passed" ] || [ "$passed" -eq 0 ]; then
+            echo "::error::the smoke selector executed zero tests; a probe that runs nothing proves nothing"
+            passed=0
+          fi
+          verdict=green
+          if [ "$check_status" -ne 0 ] || [ "$smoke_status" -ne 0 ] || [ "$passed" -eq 0 ]; then
+            verdict=red
+            echo "::error title=Main is red::the scheduled main-health probe failed on ${GITHUB_SHA::7}; see the step summary and the main-red tracker"
+          fi
+          echo "verdict=$verdict" >> "$GITHUB_OUTPUT"
+          [ "$verdict" = green ] || exit 1
+
+      # The durable record. Red: open the tracker once, then append one
+      # comment per confirming probe. Green: comment the recovering run and
+      # close. Skipped when the judge produced no verdict (missing evidence
+      # already failed the job loudly).
+      - name: Reconcile the main-red tracker
+        if: always() && steps.judge.outputs.verdict != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          VERDICT: ${{ steps.judge.outputs.verdict }}
+        run: |
+          set -euo pipefail
+          title="main-red: scheduled main-health sentinel found a broken main"
+          marker="<!-- main-health-sentinel-tracker -->"
+          number="$(gh api -X GET search/issues -f q="repo:$REPOSITORY is:issue is:open in:title main-red" --jq "[.items[] | select(.title == \"$title\") | .number][0] // empty")"
+          run_url="${{ github.server_url }}/$REPOSITORY/actions/runs/${{ github.run_id }}"
+          if [ "$VERDICT" = red ]; then
+            check_status="$(cat "$RUNNER_TEMP/main-health-sentinel/check.status")"
+            smoke_status="$(cat "$RUNNER_TEMP/main-health-sentinel/smoke.status")"
+            body="$marker
+          The scheduled main-health sentinel found main red at \`${GITHUB_SHA::7}\`.
+
+          - probe run: $run_url
+          - \`cargo check --locked -p ripr\` exit $check_status; focused smoke exit $smoke_status
+
+          Opened and closed automatically by the sentinel (#10991); the repair
+          travels through the ordinary PR gate, not this issue."
+            if [ -z "$number" ]; then
+              gh api "repos/$REPOSITORY/issues" -f title="$title" -f body="$body" > /dev/null
+            else
+              gh api "repos/$REPOSITORY/issues/$number/comments" -f body="$body" > /dev/null
+            fi
+          elif [ -n "$number" ]; then
+            gh api "repos/$REPOSITORY/issues/$number/comments" -f body="Recovered: the probe passed on main at \`${GITHUB_SHA::7}\` ($run_url). Closing the tracker." > /dev/null
+            gh api -X PATCH "repos/$REPOSITORY/issues/$number" -f state=closed > /dev/null
+          fi
