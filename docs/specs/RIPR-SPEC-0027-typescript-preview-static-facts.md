@@ -124,6 +124,10 @@ Test discovery:
   `node:test` `suite(...)`, as test and describe roots with the same active
   modifiers (`.only`, `.concurrent`, `.sequential`); `.skip`, `xit`, and
   `xcontext` register nothing (#4548)
+- AVA's macro form, a named macro between the title and the callback
+  (`test(name, macro, async (t) => {})`, `test(name, ns.macro, fn)`): the
+  function third argument is the callback (#10964) for a root bound to AVA's `test`, and only an inline function; a macro without a
+  function third argument stays argument 1
 - an options object between the title and the callback
   (`it(name, { timeout }, fn)`, `describe(name, { concurrency }, fn)`); a
   trailing timeout (`test(name, fn, 5000)`) keeps argument 1 as the callback;
