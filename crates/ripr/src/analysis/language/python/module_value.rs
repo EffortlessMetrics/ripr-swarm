@@ -94,6 +94,10 @@ pub(super) struct ForeignWrites {
     /// an import of the module's dotted path may load that file instead
     /// (#9226).
     shares_module_name: bool,
+    /// Some other file spells a name with a non-ASCII character
+    /// ([`spells_non_ascii_name`]), so a byte-exact name match cannot bound
+    /// what it binds (#9226).
+    non_ascii_elsewhere: bool,
     /// A workspace file could not be read or the scan hit its bound, so the
     /// absence of a write is unknown.
     unknown: bool,
@@ -322,6 +326,8 @@ struct IndexedSource<'a> {
     reflective_opaque: bool,
     /// The file reflects, whatever tables the workspace holds.
     reflects: bool,
+    /// The file spells a name with a non-ASCII character ([`spells_non_ascii_name`]).
+    non_ascii_names: bool,
 }
 
 impl<'a> ForeignIndex<'a> {
@@ -422,6 +428,7 @@ impl<'a> ForeignIndex<'a> {
         let mut reflective_opaque = false;
         let mut reflection_elsewhere = false;
         let mut shares_module_name = false;
+        let mut non_ascii_elsewhere = false;
         let mut unparsed = Vec::new();
         for indexed in &self.files {
             if indexed.file == own {
@@ -431,6 +438,7 @@ impl<'a> ForeignIndex<'a> {
             reflective_opaque |= indexed.reflective_opaque;
             reflection_elsewhere |= indexed.reflects;
             shares_module_name |= same_module_name(indexed.file, own);
+            non_ascii_elsewhere |= indexed.non_ascii_names;
             if indexed.assigned.is_none() {
                 unparsed.push(indexed.file);
             }
@@ -472,6 +480,7 @@ impl<'a> ForeignIndex<'a> {
             reflective_opaque,
             reflection_elsewhere,
             shares_module_name,
+            non_ascii_elsewhere,
             unknown,
         }
     }
@@ -512,6 +521,52 @@ impl<'a> ForeignIndex<'a> {
             ..self.excluding(own)
         }
     }
+}
+
+/// Whether `source` spells a name, or an f-string, with a non-ASCII
+/// character, or fails to lex. Python NFKC-normalises identifiers, so
+/// `def _\u{ff50}ad()` rebinds `_pad`, while every name comparison here is
+/// byte-exact (#9226).
+pub(super) fn spells_non_ascii_name(source: &str) -> bool {
+    use rustpython_parser::{Mode, Tok, lexer::lex};
+    !source.is_ascii()
+        && lex(source, Mode::Module).any(|token| match token {
+            Err(_) => true,
+            Ok((Tok::Name { name }, _)) => !name.is_ascii(),
+            Ok((Tok::String { value, kind, .. }, _)) => kind.is_any_fstring() && !value.is_ascii(),
+            Ok(_) => false,
+        })
+}
+
+/// Whether the directory of the module `file` (relative to `root`) holds a
+/// compiled extension module of the same name (`ledger.abi3.so`,
+/// `ledger.cpython-313-x86_64-linux-gnu.so`, `ledger.so`, `ledger.pyd`). The
+/// import system tries extensions before `.py` source, so an import of the
+/// module's dotted path loads that file instead. A package's `__init__.py`
+/// wins over a same-named extension. An unreadable directory counts as one
+/// (#9226).
+pub(super) fn extension_beside(root: &Path, file: &Path) -> bool {
+    if file.file_name().is_some_and(|name| name == "__init__.py") {
+        return false;
+    }
+    let Some(stem) = file.file_stem().and_then(|stem| stem.to_str()) else {
+        return true;
+    };
+    let directory = root.join(file).parent().map(Path::to_path_buf);
+    let Some(Ok(entries)) = directory.map(std::fs::read_dir) else {
+        return true;
+    };
+    let prefix = format!("{stem}.");
+    entries.into_iter().any(|entry| {
+        let Ok(entry) = entry else {
+            return true;
+        };
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            return true;
+        };
+        name.starts_with(&prefix) && (name.ends_with(".so") || name.ends_with(".pyd"))
+    })
 }
 
 /// Whether two files would bind the same last module-name component: a
@@ -587,6 +642,18 @@ impl ForeignWrites {
     /// import of its dotted path may load that file instead.
     pub(super) fn shares_module_name(&self) -> bool {
         self.unknown || self.shares_module_name
+    }
+
+    /// Records that a compiled extension module of the same name sits beside
+    /// the module ([`extension_beside`]), so an import loads it instead.
+    pub(super) fn mark_extension_beside(&mut self) {
+        self.shares_module_name = true;
+    }
+
+    /// Whether some other workspace file spells a name with a non-ASCII
+    /// character, which Python may normalise to one of this module's names.
+    pub(super) fn non_ascii_elsewhere(&self) -> bool {
+        self.unknown || self.non_ascii_elsewhere
     }
 
     /// Whether some workspace file assigns a dunder attribute (`__new__`,
@@ -698,6 +765,7 @@ fn scan_source<'a>(
             import_words(source)
         },
         reflects: mentions_reflection(source),
+        non_ascii_names: spells_non_ascii_name(source),
         reflective_opaque: reflective
             && (source.contains("sys.modules")
                 || MODULE_LOADERS

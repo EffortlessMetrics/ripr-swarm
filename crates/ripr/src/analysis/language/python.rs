@@ -1272,7 +1272,10 @@ impl PythonAdapter {
             &assigned_attributes_by_file,
         );
         for changed in &python_changed_files {
-            let foreign = foreign_index.excluding(&changed.path);
+            let mut foreign = foreign_index.excluding(&changed.path);
+            if module_value::extension_beside(&options.root, &changed.path) {
+                foreign.mark_extension_beside();
+            }
             conditional_defs::retain_workspace_certain(&mut all_owners, &changed.path, &foreign);
             for owner in all_owners
                 .iter_mut()

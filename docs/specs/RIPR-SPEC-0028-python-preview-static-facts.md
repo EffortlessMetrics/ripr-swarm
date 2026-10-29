@@ -635,9 +635,16 @@ any other workspace file: a reflective spelling (`getattr`, `dir`,
 `import_module`, `exec_module`, `reload`). Such code can write a module
 namespace under a name built at runtime, or hand an importer a different
 module, so no name it mentions bounds what it changes. Another workspace file
-with the owner's file name refuses it too: under pytest's default `prepend`
-import mode or an extra import root, the test's import of the owner's dotted
-path may load that file instead. A test whose module has header effects is
+with the owner's module name (its file stem, or its package directory for
+`__init__.py`) refuses it too: under pytest's default `prepend` import mode,
+an extra import root, or a package `name/__init__.py` beside `name.py`, the
+test's import of the owner's dotted path may load that file instead. So does
+a compiled extension module of the owner's name beside it (`ledger.*.so`,
+`ledger.so`, `ledger.pyd`), which the import system loads before the source.
+A non-ASCII character in a name or an f-string, in the owner module or any
+other workspace file, refuses the credit: Python NFKC-normalises identifiers,
+so a fullwidth `_ｐad` rebinds `_pad`, while the credit's name matches are
+byte-exact. A test whose module has header effects is
 refused like one under a conftest with effects. Because these are
 whole-word matches over every workspace file, the credit rarely applies in
 repositories that use reflection anywhere; that is missed credit, not a

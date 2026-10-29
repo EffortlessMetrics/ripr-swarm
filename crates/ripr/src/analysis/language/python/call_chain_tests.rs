@@ -633,6 +633,77 @@ fn owner_module_hooks_and_class_body_code_are_not_credited() -> Check {
         let finding = classify(&files, "reach/ledger.py", 2, "    return 2", "    return 3")?;
         withheld(&finding, "shadowed owner module");
     }
+    // Python NFKC-normalises identifiers: a fullwidth `_\u{ff50}ad` in the
+    // owner, a foreign file or the test module binds `_pad`/`render`, while
+    // name matches here are byte-exact. A compiled extension beside the
+    // owner is loaded before its source.
+    let owner_nfkc = format!("{functions}\n\ndef _\u{ff50}ad():\n    return 2\n");
+    let nfkc_test = "from reach.ledger import render\n\n\n\u{ff52}ender = lambda: \"|  |\"\n\n\ndef test_render():\n    assert render() == \"|  |\"\n";
+    let unicode_string = "from reach.ledger import render\n\n\ndef test_render():\n    assert render() == \"|  |\"\n    assert \"\u{e9}\" == \"\u{e9}\"\n";
+    // (label, owner source, files replaced or added, credited)
+    type Case<'a> = (&'a str, String, Vec<(&'a str, &'a str)>, bool);
+    let cases: Vec<Case> = vec![
+        ("owner nfkc def", owner_nfkc, vec![], false),
+        (
+            "foreign nfkc attribute",
+            functions.to_string(),
+            vec![
+                (
+                    "reach/boot.py",
+                    "from reach import ledger as _m\n\n_m._\u{ff50}ad = lambda: 2\n",
+                ),
+                ("tests/test_ledger.py", test_with_boot),
+            ],
+            false,
+        ),
+        (
+            "test nfkc rebind",
+            functions.to_string(),
+            vec![("tests/test_ledger.py", nfkc_test)],
+            false,
+        ),
+        (
+            "non-ASCII string only",
+            functions.to_string(),
+            vec![("tests/test_ledger.py", unicode_string)],
+            true,
+        ),
+    ];
+    let extensions = [
+        "reach/ledger.cpython-313-x86_64-linux-gnu.so",
+        "reach/ledger.abi3.so",
+        "reach/ledger.so",
+        "reach/ledger.pyd",
+    ];
+    let cases = cases.into_iter().chain(extensions.iter().map(|extension| {
+        (
+            *extension,
+            functions.to_string(),
+            vec![(*extension, "\x7fELF")],
+            false,
+        )
+    }));
+    for (label, source, extra, credited) in cases {
+        let mut files = vec![
+            ("reach/__init__.py", ""),
+            ("reach/ledger.py", source.as_str()),
+            ("tests/test_ledger.py", test),
+        ];
+        for (path, text) in extra {
+            files.retain(|(present, _)| *present != path);
+            files.push((path, text));
+        }
+        let finding = classify(&files, "reach/ledger.py", 2, "    return 2", "    return 3")?;
+        if credited {
+            assert_eq!(
+                finding.class,
+                ExposureClass::Exposed,
+                "{label}: {finding:?}"
+            );
+        } else {
+            withheld(&finding, label);
+        }
+    }
     // A module dict reached through `vars` and written under a built key.
     // `vars` also marks the file a dynamic writer, so the reflection words
     // `vars`/`__dict__` are defense in depth here, not the only refusal.

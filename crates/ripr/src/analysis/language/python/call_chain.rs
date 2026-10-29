@@ -32,7 +32,12 @@
 //! - no other workspace file has the owner's module name (its file stem, or
 //!   its package directory for `__init__.py`), since an import of its dotted
 //!   path may load that file instead (pytest's `prepend` mode, or a package
-//!   beating a same-named module);
+//!   beating a same-named module), and no compiled extension module of that
+//!   name (`ledger.*.so`, `ledger.pyd`) sits beside the owner, since the
+//!   import system loads it before the source;
+//! - no workspace file, the owner module included, spells a name or an
+//!   f-string with a non-ASCII character: Python NFKC-normalises identifiers,
+//!   so `_\u{ff50}ad` binds `_pad`, while name matches here are byte-exact;
 //! - inside a callable, a name is a parameter, a call is a bare call of a model
 //!   function or class of the module, or a method call on an instance of a
 //!   model class (the method's receiver, a parameter holding one, or
@@ -57,7 +62,8 @@ use super::bool_oracle::count_bindings;
 use super::module_constants::ModuleBindingFacts;
 use super::module_value::{
     ModuleEdit, ModuleValueCredit, Value, arithmetic, assertion_expression, comparison,
-    keep_unshadowed, mentions_reflection, straight_line_assertion, with_line_replaced,
+    keep_unshadowed, mentions_reflection, spells_non_ascii_name, straight_line_assertion,
+    with_line_replaced,
 };
 use super::related_tests::import_source_module_matches_owner;
 use super::source_facts::parse_module_result;
@@ -177,13 +183,15 @@ fn credits<'a>(
         || module_owner.foreign_writes.writes_dunder()
         || module_owner.foreign_writes.reflection_elsewhere()
         || module_owner.foreign_writes.shares_module_name()
+        || module_owner.foreign_writes.non_ascii_elsewhere()
     {
         return None;
     }
     let old_source = with_line_replaced(new_source, line, old_line_text)?;
     let mut programs = Vec::new();
     for source in [old_source.as_str(), new_source] {
-        if has_dynamic_word(source) || mentions_reflection(source) {
+        if has_dynamic_word(source) || mentions_reflection(source) || spells_non_ascii_name(source)
+        {
             return None;
         }
         let Mod::Module(module) = parse_module_result(file, source).ok()? else {
