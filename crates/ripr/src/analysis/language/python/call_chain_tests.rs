@@ -1047,6 +1047,34 @@ fn owner_module_hooks_and_class_body_code_are_not_credited() -> Check {
             withheld(&finding, "root extension");
         }
     }
+    // pytest's prepend mode puts `tests/`, the first ancestor of a test in a
+    // `tests/unit` package without `__init__.py`, first on `sys.path`, though
+    // `tests/` holds no source; a sourceless package there is what the test
+    // imports. A top-level owner is shadowed the same way.
+    let unit_test = "from reach.ledger import render\n\n\ndef test_render():\n    assert render() == \"|  |\"\n";
+    for (shadow, credited) in [
+        (None, true),
+        (Some("tests/reach/__init__.pyc"), false),
+        (Some("tests/reach.pyc"), false),
+    ] {
+        let mut files = vec![
+            ("reach/__init__.py", ""),
+            ("reach/ledger.py", functions),
+            ("tests/unit/__init__.py", ""),
+            ("tests/unit/test_ledger.py", unit_test),
+        ];
+        files.extend(shadow.map(|shadow| (shadow, "\x00")));
+        let finding = classify(&files, "reach/ledger.py", 2, "    return 2", "    return 3")?;
+        if credited {
+            assert_eq!(
+                finding.class,
+                ExposureClass::Exposed,
+                "unit test owner: {finding:?}"
+            );
+        } else {
+            withheld(&finding, "sourceless shadow in a source-free test root");
+        }
+    }
     // A workspace file that puts an archive first on `sys.path` hands a
     // top-level owner's import another module; the inert helper keeps it.
     let top_test = "import reach.boot\nfrom ledger import render\n\n\ndef test_render():\n    assert render() == \"|  |\"\n";

@@ -812,8 +812,8 @@ fn own_directory(entry: &str) -> bool {
 
 /// The module names of the compiled extension modules (`name.*.so`,
 /// `name.so`, `name.*.pyd`, `name.pyd`) and sourceless bytecode
-/// (`name.pyc`) in the workspace root and every
-/// directory holding a workspace source, with a compiled `__init__` named by
+/// (`name.pyc`) in every directory holding a workspace source or above one,
+/// since pytest's prepend mode can put any of them on `sys.path`, with a compiled `__init__` named by
 /// its package, or `None` when one cannot be read. With more than one
 /// import root, an extension in another root can shadow a source module or
 /// a package of the same name (#9226).
@@ -821,9 +821,8 @@ pub(super) fn extension_names<'a>(
     root: &Path,
     files: impl Iterator<Item = &'a Path>,
 ) -> Option<std::collections::BTreeSet<String>> {
-    let mut directories: std::collections::BTreeSet<&Path> =
-        files.filter_map(Path::parent).collect();
-    directories.insert(Path::new(""));
+    let directories: std::collections::BTreeSet<&Path> =
+        files.flat_map(|file| file.ancestors().skip(1)).collect();
     let mut names = std::collections::BTreeSet::new();
     for directory in directories {
         for entry in std::fs::read_dir(root.join(directory)).ok()? {
@@ -867,9 +866,9 @@ pub(super) fn shadowed_by_extension(
 /// sourceless `.pyc`) for the next component of that path or for the
 /// package's `__init__`. Under pytest's prepend mode a test directory goes
 /// first on `sys.path`, so `tests/reach/ledger.pyc` in a directory with no
-/// source is what `import reach.ledger` loads. `roots` are the workspace
-/// root and every directory holding a source; their own entries are left
-/// to `extension_names`. An unreadable directory or name counts as one
+/// source is what `import reach.ledger` loads. `roots` are every directory
+/// holding a source or above one; their own entries are left to
+/// `extension_names`. An unreadable directory or name counts as one
 /// (#9226).
 pub(super) fn compiled_package_shadow(
     root: &Path,

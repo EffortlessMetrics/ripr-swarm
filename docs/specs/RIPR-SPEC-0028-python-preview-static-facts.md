@@ -667,8 +667,9 @@ split `-o pythonpath=...` can be quoted past any word match. TOML
 configurations are always parsed, so an escaped key counts, every
 `pythonpath` key at any depth counts and a mention outside such a key
 refuses; an INI value runs on across blank and comment lines, as iniconfig
-reads it. A compiled extension or sourceless `.pyc` in the workspace root
-or any source directory named like the owner or one of its packages (a
+reads it. A compiled extension or sourceless `.pyc` in any directory that
+holds a source or lies above one (pytest's prepend mode can put any of them
+on `sys.path`) named like the owner or one of its packages (a
 compiled `__init__` counts as its package) refuses it, and so does one in a
 package directory below such a root along a dotted path the owner can be
 imported by (`tests/reach/ledger.pyc`, which pytest's prepend mode puts

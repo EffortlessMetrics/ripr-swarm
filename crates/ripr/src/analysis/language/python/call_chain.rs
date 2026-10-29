@@ -45,10 +45,10 @@
 //!   without comparing it with the source, no workspace file names `sys`
 //!   with `path` or `addsitedir`, no pytest or tox configuration sets
 //!   `addopts` or an import path other than its own directory, and neither
-//!   the root, a source directory nor a package directory below one along
-//!   the owner's dotted path holds an extension or sourceless pyc named like
-//!   the owner or one of its packages, since each can put an archive or
-//!   unread code ahead of the owner;
+//!   a directory holding a source or above one nor a package directory
+//!   below one along the owner's dotted path holds an extension or
+//!   sourceless pyc named like the owner or one of its packages, since each
+//!   can put an archive or unread code ahead of the owner;
 //! - inside a callable, a name is a parameter, a call is a bare call of a model
 //!   function or class of the module, or a method call on an instance of a
 //!   model class (the method's receiver, a parameter holding one, or

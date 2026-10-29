@@ -1290,12 +1290,13 @@ impl PythonAdapter {
                 workspace_read.sources.keys().map(|file| file.as_path()),
             )
         };
-        let mut import_roots: BTreeSet<&Path> = workspace_read
+        // pytest's prepend mode can put any ancestor of a test file on
+        // `sys.path`, including one with no source of its own.
+        let import_roots: BTreeSet<&Path> = workspace_read
             .sources
             .keys()
-            .filter_map(|file| file.parent())
+            .flat_map(|file| file.ancestors().skip(1))
             .collect();
-        import_roots.insert(Path::new(""));
         for changed in &python_changed_files {
             let mut foreign = foreign_index.excluding(&changed.path);
             if shadowed_import
