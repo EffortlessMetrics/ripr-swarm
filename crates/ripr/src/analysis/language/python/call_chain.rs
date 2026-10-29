@@ -39,7 +39,8 @@
 //!   f-string with a non-ASCII character (Python NFKC-normalises identifiers,
 //!   so `_\u{ff50}ad` binds `_pad`, while name matches here are byte-exact)
 //!   or declares a source encoding other than UTF-8 (in UTF-7 an ASCII
-//!   comment can hold code);
+//!   comment can hold code), or holds a NUL or a lone `\r` (CPython breaks
+//!   lines there);
 //! - no workspace source has an unchecked-hash pyc, which CPython loads
 //!   without comparing it with the source;
 //! - inside a callable, a name is a parameter, a call is a bare call of a model

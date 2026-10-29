@@ -678,6 +678,10 @@ fn owner_module_hooks_and_class_body_code_are_not_credited() -> Check {
         "# coding: utf-7\nfrom reach import ledger as _m\nNOTE = 0  # +AAo-_m._pad = lambda: 2\n";
     let utf7_test = "# coding: utf-7\nfrom reach.ledger import render\nNOTE = 0  # +AAo-render = lambda: +ACIAfAAgACAAfAAi-\n\n\ndef test_render():\n    assert render() == \"|  |\"\n";
     let utf8_owner = format!("# -*- coding: utf-8 -*-\n{functions}");
+    let cr_owner = format!("\r# coding: utf-7\n{functions}NOTE = 0  # +AAo-_pad = lambda: 2\n");
+    let cr_boot =
+        "\r# coding: utf-7\nfrom reach import ledger as _m\nNOTE = 0  # +AAo-_m._pad = lambda: 2\n";
+    let crlf_owner = functions.replace('\n', "\r\n");
     let pyc = |flags: char| format!("\u{d}\r\r\n{flags}\0\0\0{}", "\0".repeat(8));
     let (unchecked, checked, timestamp) = (pyc('\u{1}'), pyc('\u{3}'), pyc('\0'));
     let cases = cases.into_iter().chain([
@@ -698,6 +702,17 @@ fn owner_module_hooks_and_class_body_code_are_not_credited() -> Check {
             false,
         ),
         ("utf-8 declared", utf8_owner, vec![], true),
+        ("lone carriage return owner", cr_owner, vec![], false),
+        (
+            "lone carriage return foreign",
+            functions.to_string(),
+            vec![
+                ("reach/boot.py", cr_boot),
+                ("tests/test_ledger.py", test_with_boot),
+            ],
+            false,
+        ),
+        ("crlf owner", crlf_owner, vec![], true),
         (
             "unchecked pyc",
             functions.to_string(),
@@ -777,6 +792,39 @@ fn owner_module_hooks_and_class_body_code_are_not_credited() -> Check {
             );
         } else {
             withheld(&finding, label);
+        }
+    }
+    // A package owner: an `__init__` extension beside `__init__.py` is loaded
+    // first.
+    let package_test =
+        "from reach import render\n\n\ndef test_render():\n    assert render() == \"|  |\"\n";
+    for (extension, credited) in [
+        (None, true),
+        (
+            Some("reach/__init__.cpython-313-x86_64-linux-gnu.so"),
+            false,
+        ),
+    ] {
+        let mut files = vec![
+            ("reach/__init__.py", functions),
+            ("tests/test_reach.py", package_test),
+        ];
+        files.extend(extension.map(|extension| (extension, "\x7fELF")));
+        let finding = classify(
+            &files,
+            "reach/__init__.py",
+            2,
+            "    return 2",
+            "    return 3",
+        )?;
+        if credited {
+            assert_eq!(
+                finding.class,
+                ExposureClass::Exposed,
+                "package owner: {finding:?}"
+            );
+        } else {
+            withheld(&finding, "__init__ extension");
         }
     }
     // A module dict reached through `vars` and written under a built key.

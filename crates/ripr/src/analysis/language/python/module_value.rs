@@ -525,11 +525,20 @@ impl<'a> ForeignIndex<'a> {
 
 /// Whether CPython may bind names `source` does not spell byte for byte: it
 /// declares a source encoding other than UTF-8 ([`declares_foreign_encoding`]),
-/// or spells a name or an f-string with a non-ASCII character, or fails to
-/// lex. Python NFKC-normalises identifiers, so `def _\u{ff50}ad()` rebinds
-/// `_pad`, while every name comparison here is byte-exact (#9226).
+/// holds a NUL or a carriage return not followed by a newline (CPython
+/// breaks lines on a lone `\r`, the scan does not, so the two disagree on
+/// what each line is), or spells a name or an f-string with a non-ASCII
+/// character, or fails to lex. Python NFKC-normalises identifiers, so
+/// `def _\u{ff50}ad()` rebinds `_pad`, while every name comparison here is
+/// byte-exact (#9226).
 pub(super) fn names_may_differ(source: &str) -> bool {
-    declares_foreign_encoding(source) || spells_non_ascii_name(source)
+    let bytes = source.as_bytes();
+    bytes
+        .iter()
+        .enumerate()
+        .any(|(at, byte)| *byte == 0 || (*byte == b'\r' && bytes.get(at + 1) != Some(&b'\n')))
+        || declares_foreign_encoding(source)
+        || spells_non_ascii_name(source)
 }
 
 fn spells_non_ascii_name(source: &str) -> bool {
@@ -581,13 +590,10 @@ fn declares_foreign_encoding(source: &str) -> bool {
 /// compiled extension module of the same name (`ledger.abi3.so`,
 /// `ledger.cpython-313-x86_64-linux-gnu.so`, `ledger.so`, `ledger.pyd`). The
 /// import system tries extensions before `.py` source, so an import of the
-/// module's dotted path loads that file instead. A package's `__init__.py`
-/// wins over a same-named extension. An unreadable directory counts as one
-/// (#9226).
+/// module's dotted path loads that file instead; for a package's
+/// `__init__.py`, an `__init__.*.so` beside it wins the same way. An
+/// unreadable directory counts as one (#9226).
 pub(super) fn extension_beside(root: &Path, file: &Path) -> bool {
-    if file.file_name().is_some_and(|name| name == "__init__.py") {
-        return false;
-    }
     let Some(stem) = file.file_stem().and_then(|stem| stem.to_str()) else {
         return true;
     };

@@ -631,7 +631,7 @@ any other workspace file: a reflective spelling (`getattr`, `dir`,
 `get_referrers`, `get_referents`), `gc.get_objects`, `setattr`,
 `__setattr__`, `delattr`, `__dict__` and `vars`, or the import system
 (`sys` with `modules`, however imported, `meta_path`, `path_hooks`,
-`__path__`, `pkgutil`, `extend_path`, `importlib`, `__import__`,
+`path_importer_cache`, `__path__`, `pkgutil`, `extend_path`, `importlib`, `__import__`,
 `import_module`, `exec_module`, `reload`). Such code can write a module
 namespace under a name built at runtime, or hand an importer a different
 module, so no name it mentions bounds what it changes. Another workspace file
@@ -640,15 +640,21 @@ with the owner's module name (its file stem, or its package directory for
 an extra import root, or a package `name/__init__.py` beside `name.py`, the
 test's import of the owner's dotted path may load that file instead. So does
 a compiled extension module of the owner's name beside it (`ledger.*.so`,
-`ledger.so`, `ledger.pyd`), which the import system loads before the source.
+`ledger.so`, `ledger.pyd`, or `__init__.*.so` for a package's `__init__.py`),
+which the import system loads before the source.
 A non-ASCII character in a name or an f-string, in the owner module or any
 other workspace file, refuses the credit: Python NFKC-normalises identifiers,
 so a fullwidth `_ｐad` rebinds `_pad`, while the credit's name matches are
 byte-exact. So does a PEP 263 encoding declaration other than UTF-8 in any of
 those files: in UTF-7 an all-ASCII comment can decode to a second line of
-code. An unchecked-hash pyc (PEP 552) of any workspace source refuses it as
-well, since CPython loads it without comparing it with the source; timestamp
-and checked-hash pycs are trusted the way CPython trusts them. A test whose module has header effects is
+code. A NUL byte or a carriage return not followed by a newline refuses it
+too: CPython breaks lines on a lone `\r`, so it and the scan disagree on
+which line holds a declaration. An unchecked-hash pyc (PEP 552) of any
+workspace source refuses it as well, since CPython loads it without comparing
+it with the source. Timestamp and checked-hash pycs are trusted the way
+CPython trusts them; the residual risk is a stale timestamp pyc after a
+same-size edit whose mtime lands in the compile second or is restored
+(`rsync -t`, `tar`, CI caches), which CPython itself would load. A test whose module has header effects is
 refused like one under a conftest with effects. Because these are
 whole-word matches over every workspace file, the credit rarely applies in
 repositories that use reflection anywhere; that is missed credit, not a
