@@ -204,7 +204,7 @@ machine-readable `check` formats carry their own refusal documents:
 | `gap_ledger_unusable` | `analysis/gap-ledger` | A named `ripr rerun --gap-ledger` file cannot be read or parsed. |
 | `seam_id_unknown` | `analysis/seam-inventory` | A named `ripr agent packet --seam-id` matches no current seam. |
 | `seam_not_actionable` | `analysis/seam-limitation` | A named `ripr agent start --seam-id` matches a seam policy permits but the shared repair-admission gate refuses to start: a static-limitation seam with no repairable gap, or one `ripr repair` reports as not repair-eligible (#10712). |
-| `seam_policy_omitted` | `analysis/seam-policy` | A named `ripr agent packet` or `ripr agent start` `--seam-id` matches a seam agent policy withholds (#10712). |
+| `seam_policy_omitted` | `analysis/seam-policy` | A named `ripr agent packet`, `ripr agent start`, or `ripr agent repair --phase before` `--seam-id` matches a seam that agent policy withholds (configured off, already gripped, or not agent-visible) (#10712). |
 | `diff_input_unsupported` | `analysis/diff-input` | An `agent brief --diff` or `--base` working set carries a shared-parser limitation, admission refusal, or truncated textual section; brief selection did not run. Empty valid patches retain their successful brief behavior. |
 | `analysis_timeout` | `analysis/timeout` | The `ripr check` wall-clock budget (`--timeout SECS`, `RIPR_CHECK_TIMEOUT`) ran out before analysis finished (#5369). No findings are produced and the result is never a clean pass. |
 

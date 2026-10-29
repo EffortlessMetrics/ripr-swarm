@@ -1401,9 +1401,11 @@ fn run_agent_repair_with_identity_ctx(
             artifacts.resolve(false, terminal, refusal.tail_reached);
         }
     }
-    // A deliberate named refusal once the after phase selected its attempt
-    // (typed) is recorded above and maps to the decision exit code 3.
-    // Operational errors after selection stay ordinary failures: exit 2.
+    // A deliberate named refusal (typed) is recorded above and maps to the
+    // decision exit code 3. Operational errors after selection stay ordinary
+    // failures: exit 2. The before phase selects no attempt, so a typed
+    // before-phase refusal (a policy-omitted or unknown seam, #10712) takes
+    // the same decision mapping with nothing recorded.
     if json
         && refusal.typed
         && !refusal.stdout_document_printed
@@ -1419,7 +1421,7 @@ fn run_agent_repair_with_identity_ctx(
         }
     }
     let start_refused = refusal.start_refused;
-    let result = if refusal.selected_attempt.is_some() && refusal.typed {
+    let result = if refusal.typed {
         result.map_err(CommandError::Decision)
     } else {
         result.map_err(CommandError::Failure)
@@ -1840,7 +1842,18 @@ fn run_agent_repair_phase(
                         .map(|_| crate::agent::PYTHON_REPAIR_AUTHORIZATION_SUFFIX),
                 },
             )
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| {
+                // #10712 residual: a seam the inventory has but agent policy
+                // withholds (or an unknown id) is the same typed refusal the
+                // standalone packet/start/card surfaces give (exit 3), not an
+                // operational failure. The error text is unchanged — nothing
+                // was written yet, so there is no attempt to record it on —
+                // and only the exit mapping below honors the flag.
+                if is_seam_refusal(&error) {
+                    refusal.typed = true;
+                }
+                error.to_string()
+            })?;
             // #9033: the selected inline target must be the committed file.
             // Checked on the inventory loaded above, before the cage policy,
             // the lock-protected publication or any workflow artifact, so a
