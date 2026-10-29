@@ -4762,6 +4762,7 @@ mod tests {
             )?,
             repository_head: "b".repeat(40),
             delta_sha256: format!("sha256:{}", "0".repeat(64)),
+            delta_binding: None,
             packet_sha256: format!("sha256:{}", "1".repeat(64)),
             current: false,
             verdict: crate::edit_cage::EditCageVerdict {
@@ -4803,6 +4804,7 @@ mod tests {
             )?,
             repository_head: "b".repeat(40),
             delta_sha256: format!("sha256:{}", "0".repeat(64)),
+            delta_binding: None,
             packet_sha256: format!("sha256:{}", "1".repeat(64)),
             current: true,
             verdict: crate::edit_cage::EditCageVerdict {
@@ -4859,6 +4861,7 @@ mod tests {
             )?,
             repository_head: "b".repeat(40),
             delta_sha256: format!("sha256:{}", "0".repeat(64)),
+            delta_binding: None,
             packet_sha256: format!("sha256:{}", "1".repeat(64)),
             current: true,
             verdict: crate::edit_cage::EditCageVerdict {

@@ -294,6 +294,10 @@ pub(crate) struct RepairAttemptAfter {
     pub(crate) attempt_id: RepairAttemptId,
     pub(crate) repository_head: String,
     pub(crate) delta_sha256: String,
+    /// Version of the delta's post-change identity commitment. Older
+    /// attempts did not bind the bytes of an already changed path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) delta_binding: Option<String>,
     pub(crate) packet_sha256: String,
     pub(crate) current: bool,
     pub(crate) verdict: EditCageVerdict,
@@ -547,6 +551,9 @@ fn recompute_after_verdict_binding(
     manifest: &RepairAttemptManifest,
     after: &RepairAttemptAfter,
 ) -> Result<(crate::edit_cage::EditCageVerdict, bool), String> {
+    if after.delta_binding.as_deref() != Some("path-state-v1") {
+        return Err("repair attempt has no post-change path identity binding; currentness cannot be established".to_string());
+    }
     let baseline_artifact = find_manifest_artifact(manifest, "edit_cage_baseline")?;
     let baseline_bytes = std::fs::read(root.join(&baseline_artifact.path))
         .map_err(|error| format!("read staged edit-cage baseline failed: {error}"))?;
@@ -2612,6 +2619,7 @@ pub(crate) fn finish_repair_attempt_from(
         attempt_id: manifest.repair_attempt_id.clone(),
         repository_head: current_head,
         delta_sha256: sha256_bytes(&delta_bytes),
+        delta_binding: Some("path-state-v1".to_string()),
         packet_sha256,
         current,
         verdict,
@@ -3668,6 +3676,14 @@ fn validate_manifest(manifest: &RepairAttemptManifest) -> Result<(), String> {
         return Err("repair attempt state/after boundary is inconsistent".to_string());
     }
     if manifest
+        .after
+        .as_ref()
+        .and_then(|after| after.delta_binding.as_deref())
+        .is_some_and(|binding| binding != "path-state-v1")
+    {
+        return Err("repair attempt delta binding version is not recognized".to_string());
+    }
+    if manifest
         .last_after_refusal
         .as_ref()
         .is_some_and(|refusal| refusal.reason.trim().is_empty())
@@ -4572,6 +4588,7 @@ mod tests {
             repository_head: manifest.repository_head.clone(),
             delta_sha256: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
                 .to_string(),
+            delta_binding: None,
             packet_sha256:
                 "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
                     .to_string(),
@@ -6337,6 +6354,95 @@ mod tests {
                 ));
             }
 
+            let mut legacy = finished.clone();
+            if let Some(after) = legacy.after.as_mut() {
+                after.delta_binding = None;
+            }
+            let legacy_reading = repair_attempt_head_reading(&root, &legacy, Some(&head));
+            if legacy_reading.head_current.is_some() {
+                return Err(format!(
+                    "legacy path-only binding must be unknown: {legacy_reading:?}"
+                ));
+            }
+            let manifest_bytes =
+                std::fs::read(&prepared.manifest_path).map_err(|error| error.to_string())?;
+            let mut legacy_json: serde_json::Value =
+                serde_json::from_slice(&manifest_bytes).map_err(|error| error.to_string())?;
+            legacy_json["after"]
+                .as_object_mut()
+                .ok_or("missing after")?
+                .remove("delta_binding");
+            std::fs::write(
+                &prepared.manifest_path,
+                serde_json::to_vec(&legacy_json).map_err(|error| error.to_string())?,
+            )
+            .map_err(|error| error.to_string())?;
+            let packet = root.join(&find_manifest_artifact(&finished, "agent_packet")?.path);
+            let attempt = finished.repair_attempt_id.as_str();
+            match receipt_binding_from(&root, None, "seam:sample", &packet, Some(attempt)) {
+                Err(error) if error.contains("no post-change path identity binding") => {}
+                other => return Err(format!("legacy receipt must be unavailable: {other:?}")),
+            }
+            std::fs::write(&prepared.manifest_path, manifest_bytes)
+                .map_err(|error| error.to_string())?;
+
+            // The selected path already appears in the finished delta. A
+            // second edit keeps its kind (Added) but changes its identity.
+            let selected = root.join("tests/target.rs");
+            let original = std::fs::read(&selected).map_err(|error| error.to_string())?;
+            std::fs::write(&selected, b"#[test]\nfn focused() { assert!(false); }\n")
+                .map_err(|error| error.to_string())?;
+            if repair_attempt_head_reading(&root, &finished, Some(&head)).head_current == Some(true)
+            {
+                return Err("second edit to bound selected path remained current".to_string());
+            }
+            match receipt_binding_from(&root, None, "seam:sample", &packet, Some(attempt)) {
+                Err(error) if error.contains("tampered or stale") => {}
+                other => return Err(format!("receipt must refuse changed test bytes: {other:?}")),
+            }
+            std::fs::write(&selected, original).map_err(|error| error.to_string())?;
+            if repair_attempt_head_reading(&root, &finished, Some(&head)).head_current != Some(true)
+            {
+                return Err("restored selected path did not recover currentness".to_string());
+            }
+
+            run_git(&root, &["add", "tests/target.rs"])?;
+            if repair_attempt_head_reading(&root, &finished, Some(&head)).head_current == Some(true)
+            {
+                return Err("staging the selected path remained current".to_string());
+            }
+            run_git(&root, &["reset", "-q", "HEAD", "--", "tests/target.rs"])?;
+            if repair_attempt_head_reading(&root, &finished, Some(&head)).head_current != Some(true)
+            {
+                return Err("restoring the index did not recover currentness".to_string());
+            }
+            let selected_bytes = std::fs::read(&selected).map_err(|error| error.to_string())?;
+            std::fs::remove_file(&selected).map_err(|error| error.to_string())?;
+            if repair_attempt_head_reading(&root, &finished, Some(&head)).head_current == Some(true)
+            {
+                return Err("deleting the selected path remained current".to_string());
+            }
+            #[cfg(unix)]
+            {
+                std::os::unix::fs::symlink("../README.md", &selected)
+                    .map_err(|error| error.to_string())?;
+                if repair_attempt_head_reading(&root, &finished, Some(&head)).head_current
+                    == Some(true)
+                {
+                    return Err(
+                        "replacing the selected path with a symlink remained current".to_string(),
+                    );
+                }
+                std::fs::remove_file(&selected).map_err(|error| error.to_string())?;
+            }
+            std::fs::write(&selected, selected_bytes).map_err(|error| error.to_string())?;
+            if repair_attempt_head_reading(&root, &finished, Some(&head)).head_current != Some(true)
+            {
+                return Err(
+                    "restoring the deleted selected path did not recover currentness".to_string(),
+                );
+            }
+
             // Drift: an uncommitted production edit outside the allowed
             // surface after the verdict was bound. HEAD does not move.
             let production = root.join("src.rs");
@@ -6353,8 +6459,6 @@ mod tests {
             }
             // The authority path refuses the same state, and issues the
             // receipt before the drift.
-            let packet = root.join(&find_manifest_artifact(&finished, "agent_packet")?.path);
-            let attempt = finished.repair_attempt_id.as_str();
             match receipt_binding_from(&root, None, "seam:sample", &packet, Some(attempt)) {
                 Err(error) if error.contains("tampered or stale") => {}
                 other => return Err(format!("receipt must refuse drift: {other:?}")),
@@ -6368,6 +6472,40 @@ mod tests {
                 ));
             }
             receipt_binding_from(&root, None, "seam:sample", &packet, Some(attempt))?;
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        result
+    }
+
+    #[test]
+    fn ignored_selected_test_uses_content_identity_for_currentness() -> Result<(), String> {
+        let root = test_repo_root("ignored-bound-test")?;
+        let result = (|| -> Result<(), String> {
+            std::fs::write(root.join(".gitignore"), "tests/target.rs\n")
+                .map_err(|error| error.to_string())?;
+            run_git(&root, &["add", ".gitignore"])?;
+            run_git(&root, &["commit", "-q", "-m", "ignore selected test"])?;
+            let prepared = prepare_sample_attempt(&root, "seam:sample", "ignored")?;
+            let finished = finish_sample_attempt(&root, &prepared)?;
+            let head = crate::agent::artifact::current_git_head(&root)?;
+            if repair_attempt_head_reading(&root, &finished, Some(&head)).head_current != Some(true)
+            {
+                return Err("ignored selected test was not initially current".to_string());
+            }
+            let selected = root.join("tests/target.rs");
+            let original = std::fs::read(&selected).map_err(|error| error.to_string())?;
+            std::fs::write(&selected, b"#[test]\nfn changed() {}\n")
+                .map_err(|error| error.to_string())?;
+            if repair_attempt_head_reading(&root, &finished, Some(&head)).head_current == Some(true)
+            {
+                return Err("changed ignored selected test remained current".to_string());
+            }
+            std::fs::write(&selected, original).map_err(|error| error.to_string())?;
+            if repair_attempt_head_reading(&root, &finished, Some(&head)).head_current != Some(true)
+            {
+                return Err("restored ignored test did not recover currentness".to_string());
+            }
             Ok(())
         })();
         let _ = std::fs::remove_dir_all(&root);

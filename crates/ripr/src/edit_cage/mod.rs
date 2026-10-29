@@ -102,6 +102,11 @@ pub(crate) struct AttemptPathChange {
     kind: AttemptPathChangeKind,
     #[serde(skip_serializing_if = "Option::is_none")]
     previous_path: Option<PathBuf>,
+    /// The observed post-change index and worktree identity. The verdict is
+    /// path-oriented, but currentness must also notice later byte changes to
+    /// a path already present in the delta.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    after_state: Option<RepositoryPathState>,
 }
 
 #[derive(Deserialize)]
@@ -110,13 +115,16 @@ struct AttemptPathChangeWire {
     path: PathBuf,
     kind: AttemptPathChangeKind,
     previous_path: Option<PathBuf>,
+    #[serde(default)]
+    after_state: Option<RepositoryPathState>,
 }
 
 impl TryFrom<AttemptPathChangeWire> for AttemptPathChange {
     type Error = String;
 
     fn try_from(wire: AttemptPathChangeWire) -> Result<Self, Self::Error> {
-        match (wire.kind, wire.previous_path) {
+        let after_state = wire.after_state;
+        let mut change = match (wire.kind, wire.previous_path) {
             (AttemptPathChangeKind::Renamed, Some(previous_path)) => {
                 Ok(Self::renamed(previous_path, wire.path))
             }
@@ -128,7 +136,9 @@ impl TryFrom<AttemptPathChangeWire> for AttemptPathChange {
                 path_change_kind_name(kind)
             )),
             (kind, None) => Ok(Self::new(wire.path, kind)),
-        }
+        }?;
+        change.after_state = after_state;
+        Ok(change)
     }
 }
 
@@ -150,6 +160,7 @@ impl AttemptPathChange {
             path: to.into(),
             kind: AttemptPathChangeKind::Renamed,
             previous_path: Some(from.into()),
+            after_state: None,
         }
     }
 
@@ -158,6 +169,7 @@ impl AttemptPathChange {
             path: path.into(),
             kind,
             previous_path: None,
+            after_state: None,
         }
     }
 }
@@ -742,6 +754,16 @@ fn capture_repository_state(
                 .allowed_edit_surface
                 .iter()
                 .any(|rule| rule.matches(&path));
+        let exact_ignored = expected_write
+            || policy.selected_target.matches(&path)
+            || policy
+                .allowed_edit_surface
+                .iter()
+                .any(|rule| rule.matches(&path))
+            || policy
+                .forbidden_paths
+                .iter()
+                .any(|rule| rule.matches(&path));
         if writable_surface && !writable_path_components_are_safe(&root, &path)? {
             ambiguous = true;
         }
@@ -786,7 +808,7 @@ fn capture_repository_state(
             &mut remaining_file_bytes,
             &mut remaining_work_bytes,
             ignored_path,
-            ignored_path && expected_write,
+            ignored_path && exact_ignored,
         )?;
         ambiguous |= worktree_identity == WorktreeIdentity::Other;
         #[cfg(windows)]
@@ -839,10 +861,16 @@ fn capture_repository_state(
             &mut remaining_work_bytes,
             ignored_paths.contains(path.as_str()),
             ignored_paths.contains(path.as_str())
-                && policy
+                && (policy
                     .expected_operational_writes
                     .iter()
-                    .any(|rule| rule.matches(path)),
+                    .any(|rule| rule.matches(path))
+                    || policy.selected_target.matches(path)
+                    || policy
+                        .allowed_edit_surface
+                        .iter()
+                        .any(|rule| rule.matches(path))
+                    || policy.forbidden_paths.iter().any(|rule| rule.matches(path))),
         );
         if !matches!(identity, Ok(identity) if identity == state.worktree_identity) {
             stable_worktree = false;
@@ -1323,6 +1351,44 @@ fn delta_from_repository_states(
             .filter(|change| !observed.contains(&change.path))
             .cloned(),
     );
+    for change in &mut changes {
+        // Attempt manifests and other declared operational writes may change
+        // as the finish itself is committed, including the manifest that
+        // stores this delta hash. Do not add their volatile identity to this
+        // commitment. They retain the existing path/kind cage binding; a
+        // tracked, selected, authored or forbidden path is never excluded.
+        if let Ok(path) = normalize_repo_relative_path(&change.path) {
+            let tracked = before
+                .paths
+                .get(&path)
+                .and_then(|s| s.index_entry.as_ref())
+                .is_some()
+                || after
+                    .paths
+                    .get(&path)
+                    .and_then(|s| s.index_entry.as_ref())
+                    .is_some();
+            let operational_only = before
+                .policy
+                .expected_operational_writes
+                .iter()
+                .any(|r| r.matches(&path))
+                && !before.policy.selected_target.matches(&path)
+                && !before
+                    .policy
+                    .allowed_edit_surface
+                    .iter()
+                    .any(|r| r.matches(&path))
+                && !before
+                    .policy
+                    .forbidden_paths
+                    .iter()
+                    .any(|r| r.matches(&path));
+            if tracked || !operational_only {
+                change.after_state = after.paths.get(&path).cloned();
+            }
+        }
+    }
     AttemptDelta {
         comparable: before.root == after.root
             && committed.is_some()
@@ -5021,6 +5087,7 @@ mod tests {
             path: PathBuf::from("tests/other.rs"),
             kind: AttemptPathChangeKind::Modified,
             previous_path: Some(PathBuf::from("tests/pricing.rs")),
+            after_state: None,
         };
 
         let verdict = evaluate_edit_cage(

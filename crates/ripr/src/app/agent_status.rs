@@ -4847,6 +4847,7 @@ mod tests {
             attempt_id: legacy.repair_attempt_id.clone(),
             repository_head: stored.repository_head.clone(),
             delta_sha256: "sha256:fixture-delta".to_string(),
+            delta_binding: None,
             packet_sha256: "sha256:fixture-packet".to_string(),
             current: true,
             verdict: EditCageVerdict {
@@ -5007,6 +5008,7 @@ mod tests {
                 attempt_id,
                 repository_head: head,
                 delta_sha256: "sha256:delta".to_string(),
+                delta_binding: None,
                 packet_sha256: "sha256:packet".to_string(),
                 current: true,
                 verdict: EditCageVerdict {

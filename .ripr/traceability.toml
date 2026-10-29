@@ -1783,6 +1783,9 @@ id = "RIPR-SPEC-0011"
 name = "LLM work loop"
 spec = "docs/specs/RIPR-SPEC-0011-llm-work-loop.md"
 tests = [
+  "crates/ripr/src/app/repair_attempt/mod.rs::tests::finished_attempt_currentness_follows_worktree_drift_like_the_receipt",
+  "crates/ripr/src/app/repair_attempt/mod.rs::tests::ignored_selected_test_uses_content_identity_for_currentness",
+  "crates/ripr/tests/installed_python_typescript_journeys.rs::finished_gap_attempt_detects_changed_bound_test_bytes",
   "crates/ripr/src/cli/agent.rs::tests::agent_repair_phase_values_keep_their_exact_meaning",
   "crates/ripr/tests/cli_help_hierarchy.rs::agent_repair_phase_refusals_render_scoped_recovery_without_writes",
   "crates/ripr/tests/cli_help_hierarchy.rs::agent_help_and_missing_seam_refusal_agree_that_finding_ids_resolve",
