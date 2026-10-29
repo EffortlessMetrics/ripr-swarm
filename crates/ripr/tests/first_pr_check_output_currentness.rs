@@ -3,6 +3,7 @@
 #![cfg(feature = "lang-python")]
 
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -200,6 +201,15 @@ fn no_action_does_not_promote_unbound_or_stale_preview_check() -> Result<(), Str
             "missing" => fs::remove_file(&direct_ledger).map_err(|e| e.to_string())?,
             "malformed" => fs::write(&direct_ledger, "{").map_err(|e| e.to_string())?,
             _ => fs::write(&direct_ledger, "{}").map_err(|e| e.to_string())?,
+        }
+        if kind == "unclassifiable" {
+            historical["inputs"]["gap_ledger_sha256"] =
+                serde_json::json!(format!("sha256:{:x}", Sha256::digest(b"{}")));
+            fs::write(
+                &packet_path,
+                serde_json::to_vec_pretty(&historical).map_err(|e| e.to_string())?,
+            )
+            .map_err(|e| e.to_string())?;
         }
         let checked = Command::new(env!("CARGO_BIN_EXE_ripr"))
             .current_dir(&a)
