@@ -212,7 +212,10 @@ const DBL_LIB_WITHOUT_UNIT: &str =
 /// The binary crate's own `W::dbl` rival: the same `Self` type under another
 /// crate target, exactly as in the unit test. Its presence competes for the
 /// owner-return pin, so `crate::` admits the paired finding only weakly.
-const DBL_MAIN: &str = "struct W;\nimpl W {\n    fn dbl(x: i32) -> i32 { x }\n}\nfn main() {}\n#[test]\nfn bin() { assert_eq!(crate::W::dbl(2), 3); }\n";
+/// The rival keeps the library's arithmetic (`{ x + 1 }`, asserting `3`) so
+/// the only difference between the two crate targets is layout, never the
+/// computed value: a discriminating run of the fixture would pass in both.
+const DBL_MAIN: &str = "struct W;\nimpl W {\n    fn dbl(x: i32) -> i32 { x + 1 }\n}\nfn main() {}\n#[test]\nfn bin() { assert_eq!(crate::W::dbl(2), 3); }\n";
 const DBL_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,4 +1,4 @@\n pub struct W;\n impl W {\n-    pub fn dbl(x: i32) -> i32 { x }\n+    pub fn dbl(x: i32) -> i32 { x + 1 }\n }\n";
 const DBL_MANIFEST: &str =
     "[package]\nname = \"crate_guard\"\nversion = \"0.1.0\"\nedition = \"2021\"\npublish = false\n";
