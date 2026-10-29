@@ -1271,9 +1271,10 @@ impl PythonAdapter {
             workspace_incomplete,
             &assigned_attributes_by_file,
         );
-        // Bytecode CPython never checks against its source, or an import path
-        // a test configuration adds, can run code other than what is read
-        // here (#9226). Read once, only when a file changed.
+        // Bytecode CPython never checks against its source, an import path a
+        // test configuration adds, or a bare archive importable without any
+        // handled config, can run code other than what is read here
+        // (#9226, #10969). Read once, only when a file changed.
         let shadowed_import = !python_changed_files.is_empty()
             && (module_value::unchecked_bytecode(
                 &options.root,
@@ -1281,7 +1282,7 @@ impl PythonAdapter {
             ) || module_value::import_path_configured(
                 &options.root,
                 workspace_read.sources.keys().map(|file| file.as_path()),
-            ));
+            ) || module_value::bare_archive_shadow(&options.root));
         let extension_names = if python_changed_files.is_empty() {
             Some(BTreeSet::new())
         } else {

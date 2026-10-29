@@ -672,6 +672,57 @@ fn pyc_unchecked(pyc: &Path) -> bool {
     flags & 0b11 == 0b01
 }
 
+/// Whether a `*.zip` or `*.egg` file sits anywhere in the workspace, outside
+/// any handled import-path configuration (#10969): a configured `pythonpath`
+/// entry is already refused by [`import_path_configured`] above, so this is
+/// the bare-archive residual (an archive importable without any config the
+/// scan sees, e.g. through `rootdir`/`conftest` path tricks or a `.pth`
+/// file). A symlink to an archive and an unreadable entry or directory both
+/// fail closed; a broken symlink names an archive the scan cannot verify, so
+/// it counts as a shadow. `vendor.zip` at the root is not exempted: `vendor/`
+/// as a directory is excluded source, but an archive of that name is only
+/// loadable through exactly the config this refuses.
+pub(super) fn bare_archive_shadow(root: &Path) -> bool {
+    fn walk(dir: &Path) -> bool {
+        let entries = match std::fs::read_dir(dir) {
+            Ok(entries) => entries,
+            Err(_) => return true,
+        };
+        for entry in entries {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(_) => return true,
+            };
+            let path = entry.path();
+            let entry_type = match entry.file_type() {
+                Ok(entry_type) => entry_type,
+                Err(_) => return true,
+            };
+            if entry_type.is_dir() {
+                if walk(&path) {
+                    return true;
+                }
+            } else if entry_type.is_symlink() {
+                let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                    return true;
+                };
+                if name.ends_with(".zip") || name.ends_with(".egg") {
+                    return true;
+                }
+            } else if entry_type.is_file() {
+                let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                    return true;
+                };
+                if name.ends_with(".zip") || name.ends_with(".egg") {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+    walk(root)
+}
+
 /// Whether a pytest or tox configuration in the workspace sets an import
 /// path (`pythonpath`, `python_paths`, a `PYTHONPATH` environment entry)
 /// that may hold code the scan does not read: an entry that is not a

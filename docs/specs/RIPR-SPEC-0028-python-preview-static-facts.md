@@ -663,11 +663,20 @@ expansion such as `{toxinidir}`, or entries that cannot be read off its
 lines) refuses the credit, since such a path can hold code the scan does not
 read; `pythonpath = ["."]` keeps it. With a second import root, a compiled
 extension named like the owner or one of its packages in any source
-directory refuses it too.
+directory refuses it too. A bare `*.zip` or `*.egg` file anywhere in the
+workspace, outside any handled import-path configuration, refuses it as
+well (#10969): a configured `pythonpath` entry is already refused above,
+so this is the bare-archive residual — an archive importable without any
+config the scan sees (e.g. through `rootdir`/`conftest` path tricks or a
+`.pth` file). A symlink named like an archive, and an unreadable entry or
+directory, fail closed: the scan cannot verify what the link resolves to.
 What the environment supplies is outside the static claim and stays a
 residual risk: a `PYTHONPATH` set by the caller, a `.pth` file in site
 packages, or an installed non-editable copy that wins over the checkout
-(#10969). A test whose module has header effects is
+(#10969). A stale timestamp pyc stays residual risk rather than a refusal:
+the scan cannot tell whether the pyc is actually stale without trusting the
+same mtime it doubts, and a static pass cannot query the live interpreter
+for it (#10969). A test whose module has header effects is
 refused like one under a conftest with effects. Because these are
 whole-word matches over every workspace file, the credit rarely applies in
 repositories that use reflection anywhere; that is missed credit, not a

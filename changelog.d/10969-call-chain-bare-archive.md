@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Python: the one-`return` call-chain credit no longer credits a chain when a bare `*.zip` or `*.egg` file sits anywhere in the workspace outside any handled import-path configuration (including a symlink named like an archive), since it can load code the scan never reads. Configured `pythonpath` entries stay covered by the existing import-path gate; stale timestamp pycs and installed, non-editable copies of the package stay recorded as residual risk rather than refusals (#10969).

@@ -833,6 +833,44 @@ fn owner_module_hooks_and_class_body_code_are_not_credited() -> Check {
             false,
         )
     }));
+    // A bare archive importable without any handled import-path config
+    // refuses the credit (#10969): a configured `pythonpath` entry is
+    // already refused by the parent's `import_path_configured` gate, so
+    // these cases carry no pytest/tox config. A symlink named like an
+    // archive counts the same way, since the scan cannot verify what the
+    // link resolves to.
+    let archives: Vec<(&str, Vec<(&str, &str)>, bool)> = vec![
+        (
+            "bare zip archive in workspace",
+            vec![("vendor.zip", "PK\x03\x04")],
+            false,
+        ),
+        (
+            "bare egg archive in workspace",
+            vec![("vendor.egg", "PK\x03\x04")],
+            false,
+        ),
+        (
+            "nested bare zip archive",
+            vec![("third_party/vendor.zip", "PK\x03\x04")],
+            false,
+        ),
+        (
+            "zip-looking directory keeps the credit",
+            vec![("vendor.zip-mirror/keep.py", "VALUE = 1\n")],
+            true,
+        ),
+        (
+            "unrelated archive suffix keeps the credit",
+            vec![("vendor.zip.bak", "PK\x03\x04")],
+            true,
+        ),
+    ];
+    let cases = cases.into_iter().chain(
+        archives
+            .into_iter()
+            .map(|(label, extra, credited)| (label, functions.to_string(), extra, credited)),
+    );
     for (label, source, extra, credited) in cases {
         let mut files = vec![
             ("reach/__init__.py", ""),
