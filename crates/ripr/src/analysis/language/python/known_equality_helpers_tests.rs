@@ -411,3 +411,29 @@ fn given_a_non_literal_operand_then_it_is_not_read_as_a_string_scalar() {
         );
     }
 }
+
+#[test]
+fn the_workspace_source_fact_parse_answers_each_helper_proof() {
+    // The workspace parse answers `established` so the credit pass need not parse
+    // the test file again (#10914); a plain extraction leaves it unanswered.
+    let credited = "import numpy as np\n\n\ndef test_parse():\n    np.testing.assert_array_equal(parse('1'), [2])\n";
+    let refused = "import numpy as np\n\n\ndef test_parse():\n    np.testing.assert_array_equal(parse('1'), [2])\n\n\nglobals()['np'] = None\n";
+    let answers = |source: &str, workspace: bool| -> Vec<Option<bool>> {
+        let file = std::path::Path::new("tests/test_parse.py");
+        let facts = if workspace {
+            source_facts::extract_workspace_source_facts(file, source)
+        } else {
+            source_facts::extract_source_facts(file, source)
+        };
+        facts
+            .tests
+            .iter()
+            .flat_map(|test| &test.assertions)
+            .filter_map(|assertion| assertion.known_equality_helper.as_ref())
+            .map(|helper| helper.established)
+            .collect()
+    };
+    assert_eq!(answers(credited, true), vec![Some(true)]);
+    assert_eq!(answers(refused, true), vec![Some(false)]);
+    assert_eq!(answers(credited, false), vec![None]);
+}

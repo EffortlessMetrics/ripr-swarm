@@ -58,6 +58,10 @@ pub(super) struct PythonSourceFacts {
     /// [`extract_workspace_source_facts`], so the workspace index reads them
     /// instead of lexing every file again (#10914).
     pub(super) foreign_lexes: Option<super::module_value::ForeignLexes>,
+    /// The file's star-export answers for its public owners, from the
+    /// source-fact parse; set only by [`extract_workspace_source_facts`] on a
+    /// file that parses (#10914).
+    pub(super) star_facts: Option<super::reexports::PrimedStarFacts>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -635,12 +639,19 @@ pub(super) fn source_facts_syntax_parse_error(
 /// [`extract_source_facts`] for a workspace file the foreign index will read:
 /// also lexes the source as written for that index (#10914).
 pub(super) fn extract_workspace_source_facts(file: &Path, source: &str) -> PythonSourceFacts {
-    let mut facts = extract_source_facts(file, source);
+    let mut facts = extract_source_facts_with(file, source, true);
     facts.foreign_lexes = Some(super::module_value::ForeignLexes::of(source));
     facts
 }
 
 pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFacts {
+    extract_source_facts_with(file, source, false)
+}
+
+/// `workspace` also answers the star-export questions of the file's public
+/// owners from this parse, which the workspace re-export pass would otherwise
+/// parse the file again for.
+fn extract_source_facts_with(file: &Path, source: &str, workspace: bool) -> PythonSourceFacts {
     let mut snapshot = PythonSourceFacts {
         file: file.to_path_buf(),
         language: DomainLanguageId::Python.as_str(),
@@ -657,6 +668,7 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
         import_line_ranges: Vec::new(),
         assigned_attributes: None,
         foreign_lexes: None,
+        star_facts: None,
     };
     let module = match parse_module_result(file, source) {
         Ok(Mod::Module(module)) => module,
@@ -693,10 +705,24 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
     {
         let mut rewritten = extract_source_facts(file, &inlined);
         rewritten.assigned_attributes = snapshot.assigned_attributes;
+        // The re-export pass reads the file as written.
+        if workspace {
+            rewritten.star_facts = Some(super::reexports::primed_star_facts_of(
+                source,
+                Some(&module.body),
+                &super::reexports::star_export_names(&rewritten.owners),
+            ));
+            super::known_equality_helpers::prove_known_equality_helpers(
+                source,
+                Some(&module.body),
+                &mut rewritten.tests,
+            );
+        }
         return rewritten;
     }
     // One line-start index per file; every line lookup below is a binary
     // search against it rather than a rescan from byte 0 (#4495).
+    let written = source;
     let source = &SourceText::new(source);
 
     let module_range = TextRange::new(
@@ -793,6 +819,20 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
     );
     collect_docstring_line_ranges(source, &module.body, &mut snapshot.docstring_line_ranges);
     collect_import_line_ranges(source, &module.body, &mut snapshot.import_line_ranges);
+    if workspace {
+        snapshot.star_facts = Some(super::reexports::primed_star_facts_of(
+            written,
+            Some(&module.body),
+            &super::reexports::star_export_names(&snapshot.owners),
+        ));
+        // The credit pass reads helpers from the file as written, and this
+        // parse is of that file.
+        super::known_equality_helpers::prove_known_equality_helpers(
+            written,
+            Some(&module.body),
+            &mut snapshot.tests,
+        );
+    }
     snapshot
 }
 
