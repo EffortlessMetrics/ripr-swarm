@@ -358,8 +358,10 @@ fn normalize_moved_repair_advisories(bytes: &[u8]) -> (Vec<u8>, usize) {
         ))
     };
     // A printed start is the moved return-value or error-variant slot only
-    // when this capture's own canonical gaps are all of those two kinds, so a
-    // wrongly started boundary (or any other) seam is never masked.
+    // when this capture holds one start line per value gap (#10948 item 7),
+    // so a start for a different return_value/error_variant seam in the same
+    // capture is never masked. A wrongly started boundary (or any other)
+    // seam is never masked either.
     let text = String::from_utf8_lossy(bytes);
     let gaps: Vec<&str> = text
         .lines()
@@ -370,20 +372,25 @@ fn normalize_moved_repair_advisories(bytes: &[u8]) -> (Vec<u8>, usize) {
                 .or_else(|| line.strip_prefix("<gap-id-label>: "))
         })
         .collect();
+    let value_gaps = gaps
+        .iter()
+        .filter(|gap| gap.contains(":return_value:") || gap.contains(":error_variant:"))
+        .count();
+    // One start line per value gap: a capture-wide all-value-gaps check would
+    // also mask a start printed for a different return_value/error_variant
+    // seam in the same capture.
+    let is_start_line =
+        |line: &str| line.starts_with("  ripr repair ") && line.contains(" --root ");
     let value_gaps_only = !gaps.is_empty()
-        && gaps
-            .iter()
-            .all(|gap| gap.contains(":return_value:") || gap.contains(":error_variant:"));
+        && value_gaps == gaps.len()
+        && text.lines().filter(|line| is_start_line(line)).count() == value_gaps;
     let mut normalized = 0;
     let projected = text
         .split_inclusive('\n')
         .map(|line| {
             let replacement = if NO_BINDING.iter().any(|prefix| line.starts_with(prefix)) {
                 Some(format!("{NO_BINDING_SLOT}\n"))
-            } else if value_gaps_only
-                && line.starts_with("  ripr repair ")
-                && line.contains(" --root ")
-            {
+            } else if value_gaps_only && is_start_line(line) {
                 Some(MOVED_GAP_SLOT.to_string())
             } else if line.starts_with(EXPOSED_ADVISORY) {
                 Some(format!("{EXPOSED_SLOT}\n"))
@@ -408,6 +415,9 @@ fn normalize_moved_repair_advisories(bytes: &[u8]) -> (Vec<u8>, usize) {
 
 /// A printed start is projected to the moved return-value slot only beside
 /// return-value or error-variant gaps; a boundary seam's start stays exact.
+/// Masking is one start line per value gap (#10948 item 7): a second start
+/// in the same capture, or one start beside a second value gap, stays exact
+/// so a start for a different seam is never masked.
 #[test]
 fn moved_repair_start_projection_never_masks_another_seam_kind() {
     let start = "  ripr repair 0123456789abcdef --root /x\n";
@@ -433,6 +443,20 @@ fn moved_repair_start_projection_never_masks_another_seam_kind() {
     );
     assert_eq!(slots, 0);
     assert!(String::from_utf8_lossy(&mixed).contains(start));
+    // A start for a different return_value/error_variant seam in the same
+    // capture is never masked: two starts beside one value gap, and one
+    // start beside two value gaps, both stay exact.
+    let two_starts =
+        format!("  <gap-id-label>: gap:rust:src/lib.rs:f:return_value:r:x\n{start}{start}");
+    let (kept, slots) = normalize_moved_repair_advisories(two_starts.as_bytes());
+    assert_eq!(slots, 0);
+    assert_eq!(kept.as_slice(), two_starts.as_bytes());
+    let two_gaps = format!(
+        "  <gap-id-label>: gap:rust:a.rs:f:return_value:r:x\n  <gap-id-label>: gap:rust:b.rs:g:error_variant:e:y\n{start}"
+    );
+    let (kept, slots) = normalize_moved_repair_advisories(two_gaps.as_bytes());
+    assert_eq!(slots, 0);
+    assert!(String::from_utf8_lossy(&kept).contains(start));
 }
 
 /// The independent contract is score(1) == 2. Original/wrong sources differ
