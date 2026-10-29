@@ -17556,7 +17556,7 @@ ids: an option token (`--config`, `-p`), an absolute or home path (`/`, `C:`,
 `~`) or a `..` path is refused. Both expose
 verify and receipt copy actions when those commands are safe, expose `Agent handoff: copy Python
 packet` to copy the same GapRecord-backed agent packet as `ripr agent packet
---gap-ledger ... --gap-id ...`, expose `Copy Python repair card` to copy a
+--gap-ledger ... --gap-id ...`, expose `Copy Python repair instructions for an AI agent` to copy a
 current validated GapRecord repair-card brief for safe target-file routes through
 `ripr.copyTargetedTestBrief`, can open `repair_route.target_file` when
 `related_test` is a bare test name, and expose `Write Python test: copy pytest

@@ -2812,7 +2812,7 @@ fn gap_record_diagnostic_message(record: &GapRecord) -> String {
 /// `MissingBoundaryAssertion` -> `Missing boundary assertion`: split a
 /// CamelCase identifier into a sentence-case phrase. A value without an
 /// uppercase boundary comes back unchanged apart from its first letter.
-fn camel_case_words(identifier: &str) -> String {
+pub(super) fn camel_case_words(identifier: &str) -> String {
     let mut words = String::with_capacity(identifier.len());
     for (index, ch) in identifier.chars().enumerate() {
         if index == 0 {
@@ -3067,12 +3067,11 @@ fn diagnostic_for_classified_seam_with_causal(
     })
 }
 
-fn lsp_seam_message(entry: &ClassifiedSeam) -> String {
-    let seam = &entry.seam;
-    // Plain English for the Problems panel (#10695): no "grip", "seam" or
-    // internal kind. The seam kind and grip class stay machine-side in the
-    // diagnostic code and `data`.
-    let head = match entry.class {
+/// Plain-English phrase for a seam's grip class, shared by the Problems-panel
+/// message and the hover. The class token itself stays in the diagnostic code
+/// and `data`.
+pub(super) fn seam_class_phrase(class: SeamGripClass) -> &'static str {
+    match class {
         SeamGripClass::Opaque => "ripr cannot fully determine how tests exercise this",
         SeamGripClass::Ungripped => "No test path detected for this",
         SeamGripClass::WeaklyGripped => "Tests only loosely check this",
@@ -3093,7 +3092,15 @@ fn lsp_seam_message(entry: &ClassifiedSeam) -> String {
         SeamGripClass::StronglyGripped => "Tests check this well",
         SeamGripClass::Intentional => "Intentionally lightly tested",
         SeamGripClass::Suppressed => "Suppressed",
-    };
+    }
+}
+
+fn lsp_seam_message(entry: &ClassifiedSeam) -> String {
+    let seam = &entry.seam;
+    // Plain English for the Problems panel (#10695): no "grip", "seam" or
+    // internal kind. The seam kind and grip class stay machine-side in the
+    // diagnostic code and `data`.
+    let head = seam_class_phrase(entry.class);
     format!(
         "{head}: {}",
         seam.expression()
