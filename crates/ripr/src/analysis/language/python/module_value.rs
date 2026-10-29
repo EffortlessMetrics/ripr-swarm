@@ -33,7 +33,10 @@ use super::related_tests::{
 };
 use super::source_facts::parse_module_result;
 use super::source_utils::{SourceText, is_test_file};
-use super::table_reads::{dict_literal_names, unsafe_table_uses};
+use super::table_reads::{
+    LexedSource, dict_literal_names, dict_literal_names_lexed, unsafe_table_uses,
+    unsafe_table_uses_lexed,
+};
 use super::{PythonAssertion, PythonOwner, PythonTest, expr_full_name};
 use crate::domain::OwnerKind;
 use rayon::prelude::*;
@@ -288,15 +291,22 @@ pub(super) struct ForeignLexes {
     pub(super) dict_literal_names: Vec<String>,
     /// [`import_words`], in source order.
     pub(super) import_words: Vec<String>,
+    /// [`unsafe_table_uses`] of every name, sorted: the uses of the
+    /// workspace's tables are this list filtered to them.
+    pub(super) unsafe_names: Vec<String>,
 }
 
 impl ForeignLexes {
     pub(super) fn of(source: &str) -> Self {
+        let lexed = LexedSource::new(source);
         Self {
-            dict_literal_names: dict_literal_names(source).into_iter().collect(),
-            import_words: import_words(source)
+            dict_literal_names: dict_literal_names_lexed(&lexed).into_iter().collect(),
+            import_words: import_words_lexed(source, &lexed)
                 .into_iter()
                 .map(str::to_string)
+                .collect(),
+            unsafe_names: unsafe_table_uses_lexed(source, &lexed, &|_| true, None)
+                .into_iter()
                 .collect(),
         }
     }
@@ -653,13 +663,31 @@ fn scan_source<'a>(
     let dynamic = assigned.is_none()
         || DYNAMIC_WRITERS.iter().any(|writer| mentions(writer))
         || source.contains("sys.modules");
-    let table_unsafe = if tables.is_empty() || !words.iter().any(|word| tables.contains(*word)) {
-        Vec::new()
-    } else {
-        unsafe_table_uses(source, &|word| tables.contains(word), None)
-            .into_iter()
-            .collect()
-    };
+    let lexes = prior.and_then(|facts| facts.lexes.as_ref());
+    let table_unsafe: Vec<String> =
+        if tables.is_empty() || !words.iter().any(|word| tables.contains(*word)) {
+            Vec::new()
+        } else if let Some(lexes) = lexes {
+            let supplied: Vec<String> = lexes
+                .unsafe_names
+                .iter()
+                .filter(|name| tables.contains(name.as_str()))
+                .cloned()
+                .collect();
+            debug_assert_eq!(
+                supplied,
+                unsafe_table_uses(source, &|word| tables.contains(word), None)
+                    .into_iter()
+                    .collect::<Vec<_>>(),
+                "{}: supplied unsafe table uses differ from the source's",
+                file.display()
+            );
+            supplied
+        } else {
+            unsafe_table_uses(source, &|word| tables.contains(word), None)
+                .into_iter()
+                .collect()
+        };
     // Reflection reaches a module's dict without naming it, or with a name
     // built at runtime (`getattr(module, n)`, `dir(module)`,
     // `inspect.getmembers`, `locals()`, `fn.__globals__`).
@@ -676,7 +704,7 @@ fn scan_source<'a>(
         import_words: if tables.is_empty() {
             Vec::new()
         } else {
-            match prior.and_then(|facts| facts.lexes.as_ref()) {
+            match lexes {
                 Some(lexes) => {
                     debug_assert_eq!(
                         lexes.import_words,
@@ -697,14 +725,18 @@ fn scan_source<'a>(
 }
 
 fn import_words(source: &str) -> Vec<&str> {
-    use rustpython_parser::{Mode, Tok, lexer::lex};
+    import_words_lexed(source, &LexedSource::new(source))
+}
+
+fn import_words_lexed<'s>(source: &'s str, lexed: &LexedSource) -> Vec<&'s str> {
+    use rustpython_parser::Tok;
+    if !lexed.complete() {
+        return source_words(source).collect();
+    }
     let mut words = Vec::new();
     let mut statement: Vec<&str> = Vec::new();
     let mut imports = false;
-    for token in lex(source, Mode::Module) {
-        let Ok((tok, range)) = token else {
-            return source_words(source).collect();
-        };
+    for (tok, start, end) in lexed.tokens() {
         match tok {
             Tok::Newline | Tok::Semi => {
                 if imports {
@@ -715,8 +747,7 @@ fn import_words(source: &str) -> Vec<&str> {
             }
             Tok::Import => imports = true,
             Tok::Name { .. } => {
-                if let Some(text) = source.get(usize::from(range.start())..usize::from(range.end()))
-                {
+                if let Some(text) = source.get(*start..*end) {
                     statement.push(text);
                 }
             }
