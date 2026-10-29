@@ -369,12 +369,24 @@ fn ordinary_nonfree_equal_typed_arguments_keep_existing_boundary_pairing() -> Re
             let [seam] = matching.as_slice() else {
                 return Err(format!("expected one {style} boundary: {result}"));
             };
+            // The bounded inherent-receiver rule (#7415) admits the
+            // associated UFCS spelling and refuses the receiver spelling's
+            // `let price = Price;` binding, because `Price` reaches the test
+            // only through a cross-file import whose identity this bounded
+            // admission cannot resolve; restoring that credit is owned by
+            // #8782. The associated pairing stays pinned; the receiver
+            // spelling pins the disclosed honest refusal until it lands.
+            let (grip_class, activate, discriminate, missing_pairing) = if style == "associated" {
+                ("activation_unknown", "unknown", "yes", missing)
+            } else {
+                ("ungripped", "no", "no", true)
+            };
+            assert_eq!(seam["grip_class"], grip_class, "{label}: {result}");
+            assert_eq!(seam["evidence"]["activate"], activate, "{label}: {result}");
             assert_eq!(
-                seam["grip_class"], "activation_unknown",
+                seam["evidence"]["discriminate"], discriminate,
                 "{label}: {result}"
             );
-            assert_eq!(seam["evidence"]["activate"], "unknown", "{label}: {result}");
-            assert_eq!(seam["evidence"]["discriminate"], "yes", "{label}: {result}");
             assert_eq!(
                 seam["observed_values"].as_array().map(Vec::len),
                 Some(0),
@@ -383,7 +395,11 @@ fn ordinary_nonfree_equal_typed_arguments_keep_existing_boundary_pairing() -> Re
             let missing_values = seam["missing_discriminators"]
                 .as_array()
                 .ok_or("missing discriminator array")?;
-            assert_eq!(!missing_values.is_empty(), missing, "{label}: {result}");
+            assert_eq!(
+                !missing_values.is_empty(),
+                missing_pairing,
+                "{label}: {result}"
+            );
         }
     }
     Ok(())
