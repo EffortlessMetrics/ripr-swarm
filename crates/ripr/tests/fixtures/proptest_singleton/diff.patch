@@ -1,0 +1,9 @@
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,5 +1,5 @@
+ pub fn discounted_total(amount: i32, threshold: i32) -> i32 {
+-    if amount > threshold {
++    if amount >= threshold {
+         amount - 10
+     } else {
+         amount

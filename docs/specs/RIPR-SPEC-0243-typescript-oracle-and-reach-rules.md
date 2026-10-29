@@ -117,7 +117,7 @@ contradicting limitation. The rest is either correct but unstated
 ## Behavior
 
 Paths are relative to `crates/ripr/src/analysis/language/typescript/`.
-Paragraphs headed Rule 1 to Rule 19 mark behavior changes. Rules 1 to 8
+Paragraphs headed Rule 1 to Rule 22 mark behavior changes. Rules 1 to 8
 are numbered in reading order; rules 9 to 11 were added later. Every other statement below is current behavior and is
 normative.
 
@@ -220,6 +220,44 @@ factory's own registrations, still discloses a registration an expansion
 dropped, and names the call's line. A rendered pointer to an expanded test's
 assertion names the call's line; the assertion's own line stays an offset from
 the call, which the classifier indexes.
+
+**Rule 20. A test registered under an unevaluable `if` is reached, never credited (#10438).**
+A `test` / `it` call (or a `describe` holding them) inside an `if` statement
+whose condition is not a constant, such as a platform or environment guard
+(`if (isWindows) { test(...) }`), is indexed for reach, in the consequent and
+in the `else` branch. Whether the branch runs is unknown to static analysis,
+so the test records the guard (`!(cond)` for the `else` branch; nested guards
+join with `&&`), keeps no assertion, and its admission stays unresolved. When
+every oracle-eligible related test of a finding is guarded, the finding reads
+`static_unknown` (reach yes, observation and discrimination unknown), never
+`weakly_exposed` or `exposed`: a guarded test that does run may well pin the
+change. An unguarded related test decides the finding as before. The finding and the
+outcome name `typescript_conditional_registration` with the guard and its line.
+A constant condition keeps its existing reading.
+
+**Rule 21. A test registered in a loop over data static analysis cannot enumerate is reached, never credited (#10501).**
+A `test` / `it` call (or a `describe` holding them) inside a `for...of`,
+`for...in` or `.forEach` callback whose iterable is not a known non-empty
+literal (a file listing, a parameter, a call result) is indexed for reach under
+the loop head as its guard (`for (... of data)`, `data.forEach(...)`; a nesting
+`if` joins with `&&`). The loop may run zero times or many, with titles and
+counts unknown, so the test keeps no assertion, its admission stays unresolved,
+and the finding reads as under Rule 20: `static_unknown` when every
+oracle-eligible related test is guarded, otherwise decided by the unguarded
+tests. A loop over a known non-empty literal keeps its expansion (Rule 13). A
+loop variable or callback parameter named `test`, `it` or `describe` is not
+descended. The dropped-registration disclosure no longer fires for these shapes.
+
+**Rule 22. A test inside `describe.skipIf(cond)` / `describe.runIf(cond)` is reached, never credited (#10629).**
+Vitest's conditional suite factories take a runtime condition static analysis
+does not evaluate. A `describe.skipIf(cond)('name', () => { ... })` or
+`describe.runIf(cond)(...)` is indexed for reach with the
+factory call as its guard (`describe.skipIf(!existsSync(dist))`; nested guards
+join with `&&`). Its tests keep no assertion, their admission stays
+unresolved, and findings read as under Rule 20. A non-literal title is named
+as for any suite; another root (`runner.skipIf`) is not descended. An options
+object that skips the suite (`{ skip: true }`) is honored as for `describe`, and
+strict mode is read from the callback, not the title.
 
 **Rule 12. A named function passed as the callback is the test body
 (2026-10-20).** `test("title", name)` runs the function `name`, so its body
@@ -377,7 +415,10 @@ is bound by an import from `vitest`, `@jest/globals`, `@playwright/test` or
 parameter (Vitest `test("x", ({ expect }) => ...)`). Any other binding of
 `expect` makes step 2 produce no assertion: a file-level or test-body
 declaration (`const`, `let`, `var`, `function`, `class`), another parameter,
-or an import from any other module. A chai-bound `expect` is read only by
+or an import from any other module. Named exports of those declarations and
+named default-exported functions/classes create the same local binding and
+withhold matcher credit. A source re-export (`export { expect } from ...`)
+creates no local binding. A chai-bound `expect` is read only by
 step 1, so a chai chain step 1 does not know yields no assertion instead of
 falling through to the Jest table. A renamed import (`expect as e`) and
 `expect.soft` stay unrecognised.
@@ -566,6 +607,21 @@ strong:
   no repeated wildcard (`.`, a character class, an escaped class such as
   `\S`, or a group followed by `*`, `+` or `{`), or an all-literal object
   whose top-level `message` is a string literal.
+- AVA `t.throws` or `t.throwsAsync` (the test callback's first parameter of
+  a test registered through AVA's own `test` import, `import test from "ava"`
+  or `import { test } from "ava"`; tape and uvu give `t.throws` a different
+  expectation contract) whose second argument is an object holding exactly
+  one property, a plain `message` with a string literal value (a duplicate
+  key keeps the last value in JavaScript, so a second `message` is refused).
+  AVA compares `message` by equality, as `node:assert` does. The first
+  argument must be a plain function for `t.throws` and an async function for
+  `t.throwsAsync`, a `t.throwsAsync` credits only when awaited or returned to
+  the runner (a bare call can outlive the test), and every mention of the receiver in the test body must be
+  a `t.method(...)` call, so a shadowed receiver or a replaced matcher never
+  credits. Any other field (`instanceOf`, `is`, `name`, `code`), a spread, a
+  computed, shorthand or method `message`, a regex or non-literal `message`,
+  a missing expectation, a promise argument and `t.notThrows` /
+  `t.notThrowsAsync` stay `broad_error` / weak. (Amended 2026-10-26, #10400.)
 
 Rule 4's message-only guard applies to all of them: on a message-only
 change, a chai string (also the message of a chai class and message
@@ -642,10 +698,21 @@ Candidates come from the first non-empty tier:
    strings, templates and comments do not count), a name defined twice in the
    class, a name some method assigns, deletes or defines on `this`, a name an
    instance field of the class defines (a computed field defines any name),
-   an arrow body that is not a call argument (`const later = () =>
-   this.helper()` is created, not run), and static methods contribute no
-   edge. An arrow passed to a call is read as invoked; the relation stays weak
-   and never reads `exposed`.
+   an arrow body that is not the first argument of a synchronous array method
+   (`forEach`, `map`, `filter`, `reduce`, `some`, `every`, `find`, `sort` and
+   their kin; `map`'s `thisArg` is a stored value; `const later = () => this.helper()`, an array element, a logical
+   operand, a stored callback, and a deferred callee such as `setTimeout`,
+   an event listener, `subscribe` or `then` are created or run later), the body
+   of a nested `function`, parameter defaults included (a call the method makes
+   outside it still counts; a
+   function whose parameters are followed by a return type annotation, or a
+   nested `class`, drops the method), a generator method (neither caller nor
+   callee), a class name the file declares more than once, and static methods
+   contribute no edge. A test that replaces the changed method or a method on
+   the chain (a fabricating `spyOn`, an assignment on any receiver, `delete` on
+   a prototype, `defineProperty`; the gate does not track which object a
+   receiver names, so an assignment on an unrelated object withholds too) is not related through the chain; a bare
+   call-through spy is. The relation stays weak and never reads `exposed`.
 3. **Heuristic relations** when tiers 1 and 2 are empty, package-filtered,
    for function, arrow and component owners, when the test body
    references the owner name and does not import that name from an
@@ -943,6 +1010,26 @@ asserted input (`Math.min(100, ...)` to `Math.min(200, ...)`, asserted at 40)
 still reads unexercised (#9436). An operator edit changes no number, so it
 keeps the boundary-witness reading.
 
+Rule 18 also reads a changed compound assignment to state the owner returns
+(rule 15's `this.total += amount` then `return this.total`; #10850). When the
+old and new statement write the same target with the same operator, the new
+state is a function of the prior state and the operand alone, so the operands
+(`amount` and `amount * 2`) are compared exactly as the return expressions
+above, at the literal arguments of each observed call, with the same probe-grid
+separation requirement. The call is read through any plain receiver
+(`cart.add(0)`, a test-local `new Cart()`, a file-level instance or a fixture
+receiver). Because the state accumulates across calls, every owner call that can move it
+must be one of the evaluated strong assertions' calls: the test body holds no
+other mention of the owner (a weak assertion's call, a bound, extracted or
+optional call all count), the test file names
+the owner nowhere outside its test bodies (no hook, describe-level binding or
+helper), and every sibling test of the file that names the owner is itself a
+related candidate. State seeded in another module stays unseen; a parameter
+reassigned in the owner, an operand the evaluator cannot read (a loop variable,
+a field, another call) or a different operator keeps the existing verdict. The
+rule only withdraws credit: a separating input such as `add(5)` pinned to `10`
+stays `exposed`.
+
 **Rule 19. A same-file assertion helper called with literals is its asserts
 (2026-10-22, #9636).** Extends decision 19(b) for literal-argument call-site
 rewrites of helpers that decision 19's pass leaves untouched (multi-statement
@@ -1057,7 +1144,8 @@ or `static_unknown`, never `exposed`):
    conditional expression, or a second call keeps the old reading.
 3. The decorator is applied as a bare `@D` (or an import alias of it) on
    an ordinary instance method that is the only decorator on that method,
-   in a class whose methods the owner relation can name. A decorator
+   in a class whose methods the owner relation can name, including
+   `export default class Name` (#10314). A decorator
    factory (`@D(3)`), a stacked decorator, a class, property, accessor or
    parameter decorator, a static method, and a decorator that also assigns
    `descriptor.get`, `descriptor.set` or `descriptor.writable` keep the old
@@ -1070,7 +1158,10 @@ or `static_unknown`, never `exposed`):
    result, so the same exactness rules as a direct return-value owner apply.
    The asserted call must be on a receiver of the decorated class
    (`new Ledger().add(...)`, or `x.add(...)` with `const x = new Ledger(...)`
-   in the test): an assertion on another class's same-named method sees
+   in the test), spelled with any constructor name the test legitimately
+   has for it: the class name in the same file, a named-import alias
+   (`import { Ledger as Book }`), or a default import's local name; a name
+   the test body or an enclosing scope rebinds constructs something else: an assertion on another class's same-named method sees
    nothing of the decorator; a callback parameter that reuses the receiver's
    name (`(l: Other) => ...`, `l => ...`) is a different binding and refuses.
    On the return line only decorated-method tests lend reach: an ordinary
@@ -1092,6 +1183,107 @@ decorators, which can never be `exposed` and so cannot clear a
 discriminated row. A narrow kind with these conditions is reversible
 (deleting the relation restores the old reading) and fails closed on every
 shape it does not match, which the actionability rule requires.
+
+**Rule 22. A member of a literal `require()` is a named import (#9188).**
+`const f = require("<module>").f` (also `var`, a renamed local, and the
+string-key spelling `require("<module>")["f"]`) picks one export out of a
+CommonJS module, so it records the import `const { f } = require("<module>")`
+records: source `<module>`, imported `f`, local `f` (or the rename). A call
+through the local then relates by rules 5 and 7 as the destructured form does.
+Only a plain member of a call to `require` with a string-literal argument is
+read: a call on the member (`require("./lib").make()`), an optional chain, a
+computed key that is not a string literal, a deeper member (`.a.b`), the
+`.default` member (a native CommonJS module has none) and a dynamic
+`require` argument record nothing and keep the old reading. The identity gates
+of rule 5 still apply (the specifier must resolve to the owner module, the
+imported name must be the owner's name, a shadow or a mock blocks it), and a
+member read off a function export (rule 19) is a property of the function, not
+the owner.
+
+A member picked off a `const` namespace binding is the same import (#10447):
+after `const lib = require("<module>")`, `const f = lib.f`, `const f = lib["f"]`
+and `const { f } = lib` record source `<module>`, imported `f`. The namespace
+must be a `const` declared earlier; a `let`/`var` namespace, an alias of the
+namespace (`const again = lib`), a call on the member, an optional chain and a
+deeper member record nothing. A namespace whose members the file may replace
+(`lib.f = stub`, `lib["f"] = stub`, `delete lib.f`, or any use of `lib` beyond
+reading a member or destructuring it, such as `Object.assign(lib, stubs)`,
+`const alias = lib` or `{ lib }`) no longer holds the module's export
+there, so members read off it record nothing.
+
+Two bindings this rule and the destructured form share are refused (#10401).
+A test file that binds its own `require` at top level (`const require = ...`,
+`function require() {}`, also a block-level function, which hoists in sloppy
+CommonJS) is not calling Node's loader, so no `require()` call in it records an
+import; `createRequire(import.meta.url)` keeps its reading wherever its import
+sits. A
+`let` or `var` binding that the file assigns to again
+(`let s = require("./lib").s; s = other;`) may no longer hold the export, so it
+records no import. A `const` binding cannot be reassigned and is unchanged.
+
+A test registration picked off a whole-module `require()` namespace is a named
+runner import too (#10477): `const runner = require("node:test"); const test =
+runner.test;`, `const { test } = runner;` and the single-declaration form
+`const runner = require("node:test"), test = runner.test;` record the import
+`const { test } = require("node:test")` records. Declarations are extracted one
+at a time, so a separate pass carries the namespace across them. It requires
+exactly one top-level declaration of the namespace, a `const` pick declared
+after it, and that every other use of the namespace in the file is one of the
+qualifying picks: `runner.test = stub`, `runner = other`, an escaped `runner`, an
+alias (`const again = runner`), an optional chain, a computed key, a default or
+nested pattern, and a pick whose local the file writes refuse every pick. The
+runner-source and shadowing gates of rule 5 still decide whether the resulting
+import is a known registration, so a non-runner module's `helpers.test` stays
+unrelated.
+
+The pick is conservative on purpose (#10477 review). `.default`, computed,
+nested, defaulted and rest picks are not read, and neither is a member that is
+not an active registration root: `runner.xit` or `{ xdescribe: describe }`
+renamed into an active-looking local would pass the local-spelling extraction
+guards, so inactive members never become a pick. The namespace must be declared
+once and every other use must be a pick declared after it (a forward pick, a
+direct call, an alias, an escape, a tagged or interpolated use, `delete`,
+`Object.assign`/`defineProperty` or a call through it refuses every pick). The
+picked local must be declared before any use, never written (wrapped targets,
+member assignment, update, compound and loop targets included) and only called,
+optionally through a member chain. A file that can reach a name without
+spelling it (`eval`, `with`, an identifier escape) reads nothing.
+
+**Rule 23. A Playwright fixture that constructs a class is that class's
+receiver (2026-10-26, #9619).** `const test = base.extend<{ cart: Cart }>({
+cart: async ({}, use) => { await use(new Cart()); } })` hands every `test("...",
+({ cart }) => ...)` a fresh `Cart`, which reads as `const cart = new Cart()`
+in the registration's scope: a call through `cart` relates to the class's
+methods as rule 5's receivers do. It applies only when all of these hold, and
+otherwise the parameter stays unresolved as before:
+
+- `base` is the local name of `test` imported from `@playwright/test`, and
+  the file has exactly one `.extend` call, no `mergeTests`, and no use of
+  the extended `test` beyond calling it and its registration members
+  (`describe`, hooks, `only`, `skip`, `fixme`, `step`, `slow`): a `use`
+  override in any spelling (`.use (`, `["use"]`, a template key), an alias, a wrapper call, a
+  re-export or a template tag withholds, and so does punctuation directly
+  after the word in a comment or title;
+- the extended `test` is declared once and never reassigned;
+- the `extend` argument is one object literal of plain `key: function`
+  entries (no spread, computed key, method shorthand or `[fixture, options]`
+  tuple) and the fixture's function is `async ({}, use) => { await
+  use(new Cls(<literals>)); }`: an empty first pattern, a plain `use`
+  parameter, one awaited statement, a class named by a plain identifier and
+  string, number, boolean or `null` literal arguments;
+- the registration is a call of the extended `test` itself, not `test.only`
+  or another member (a skipped registration that destructures the fixture
+  withholds the name file-wide), and its callback's first parameter destructures the key
+  with a plain identifier (`{ cart }` or `{ cart: basket }`), with no
+  default and no nested pattern;
+- nothing else in the file writes or redeclares that name (a hook taking
+  the same fixture counts) or rebinds the class, by rule 5's receiver checks.
+
+A fixture that does more than construct (a second statement, a dependency
+on another fixture, a factory call, a statement that seeds the instance), a worker-scoped or
+`auto` tuple, an override with `test.use` (any spelling), and a merged or twice-extended
+test leave the parameter unresolved: the instance the test sees may not be
+the fresh one the constructor builds.
 
 **Rule 8. A mocked dependency on the changed line is `static_unknown`.**
 When the changed line calls a symbol imported (`imported_symbol_call`)
@@ -1330,6 +1522,35 @@ the masker.
     no removed counterpart, which a count sees), or a value that decides
     how many calls run (a count sees both), an aliased or optional-chained count,
     and `mock.calls[0].arguments` pins, which keep their reading.
+
+### Counted removal receiver witness (#10157)
+
+This bounded successor to #9667's removed-call rule 19 adds call-deletion
+credit for a whole `receiver.method(...)` statement replaced by `void local;`.
+The complete file diff must contain exactly one removed line and one added line
+at the same replacement coordinate. Multi-edit files and unavailable full diff
+facts withhold this bounded credit, so multiple old invocations cannot borrow
+a count-of-one witness from a replacement owner with no calls.
+A direct imported owner must run on a straight-line path after a `node:test`
+spy registration and before an exact positive count of one. The receiver is
+either a parsed const object passed in the receiver parameter position, or
+a direct exported const binding with an unshadowed named import resolved to the owner's complete module identity
+through the existing import resolver. Parsed declarations handle legal
+whitespace. Reassignment, enclosing shadows, reset/restore, intervening calls,
+conditional execution and unresolved identity withhold this additional credit.
+The owner module contains only the direct exported function and optional
+receiver object; the test file contains only trusted imports and one direct,
+two-argument `test` registration with a literal title. Extra setup/imports,
+suites and sibling functions/tests are outside this bounded witness.
+Nonreceiver arguments must be primitive literals; owner statements cannot
+replace the receiver or invoke opaque code. Removed-call identifier arguments
+must be initialized parameters or admitted earlier locals at the unique changed
+statement; unknown and later bindings withhold credit. The selected mocked
+method must exist exactly once. A default spy admits only a synchronous,
+nonthrowing no-op original (no default/destructured/rest parameters or opaque
+statements); an explicit admitted no-op replacement can bypass the original
+body check, but cannot supply a missing method. This does not change generic
+call-count oracle projection (#10174).
 
 ## Required Evidence
 
@@ -1655,7 +1876,30 @@ keys); do not take the next number.
     `broad_error` / weak). With `/other/`, or with a second `throw` in the
     owner: `broad_error` / weak.
 
+- example `playwright-fixture-class-receiver`: `src/cart.ts` changes `add`'s
+  `this.cents.push(amount)` to `amount + 1` (corpus case
+  `pw-fixture-add-amount`), and `test/cart.spec.ts` has `const test =
+  base.extend<{ cart: Cart }>({ cart: async ({}, use) => { await use(new
+  Cart()); } })` with `test("lines add up", ({ cart }) => { cart.add(250);
+  cart.add(150); expect(cart.total()).toBe(400); })`: the fixture builds a
+  fresh `Cart`, so `cart.add` relates to the owner and `exact_value` /
+  strong reads `exposed` (rule 23; today `no_static_path`). The same spec
+  with the fixture also calling `seed(cart)` before `use`, or with a
+  `test.use({ cart })` override: `no_static_path` (unchanged).
+- example `playwright-fixture-reducer-seed`: the same `Cart`, with `total`'s
+  `reduce((a, b) => a + b, 0)` changed to start from `1` (corpus case
+  `pw-fixture-empty-total`), and `test("an empty cart totals zero", ({ cart })
+  => { expect(cart.total()).toBe(0); })`: `exact_value` / strong, `exposed`
+  (rule 23).
+
 ## Test Mapping
+
+- #10314 (decorated-method reach, constructor spellings): `crates/ripr/src/analysis/language/typescript/tests/decorated_reach_tests.rs`
+  pins `aliased_constructor_import_credits_the_return_edit` (a named-import alias
+  such as `import { Ledger as Book }`) and
+  `default_exported_class_credits_the_return_edit_under_any_local_name` (an
+  `export default class` imported under any local name), beside the existing
+  shadowed-or-replaced-receiver control that keeps a rebound name uncredited.
 
 - #9683 (rule 11, empty table): `tests/table_loop_tests.rs` pins that an empty
   `const` table holds no assertions and a `let` table does not. Corpus row
@@ -1670,6 +1914,19 @@ keys); do not take the next number.
 - #9684 (decision 22): `tests/mock_call_count_tests.rs` pins the call-count
   reading and its controls. Corpus row `ts-trap-mocked-send` moves from
   credited to gap.
+
+- #10157: `call_removal_tests.rs::counted_removal_receiver_identity_controls`
+  covers the four executable controls from #9667 comment 6371144187 and the
+  passed-parameter and same-module positives. `counted_removal_refuses_unresolved_execution`
+  covers wrong arguments, resets, conditional registration and zero counts.
+  The same module's remaining tests pin early returns/default parameters,
+  opaque reads, export aliases, mock API replacement and registration argument
+  effects; `counted_removal_retained_corpus_shape_is_exposed` reuses the retained
+  corpus source and test without rewriting their spy. The target-method and
+  removed-argument regressions pin throwing/absent/duplicate methods, imported
+  and parameter receivers, valid explicit replacements, and earlier/later local
+  bindings. Four dedicated call-removal fixtures also pin `weakly_exposed` in
+  the cross-language evidence-promotion-honesty corpus.
 
 - #9435 (rule 15): `crates/ripr/src/analysis/language/typescript/tests/returned_dataflow_tests.rs`
   pins each shape's credit and the fallbacks that reach the rule (a weak
@@ -1809,6 +2066,9 @@ keys); do not take the next number.
   `ts-trap-wrapped-swallow` stay `gap`.
 
 ## Implementation Mapping
+
+- #10157: `call_removal_guard.rs` owns parsed receiver/order witnesses;
+  `classifier.rs` admits only its additional call-deletion credit.
 
 - #9685 (decision 20): `oracle.rs` (`catch_only_rethrows_caught_error` in
   the `TryStatement` arm) and `rethrow_wrapper.rs` (`expand_rethrow_wrappers`,

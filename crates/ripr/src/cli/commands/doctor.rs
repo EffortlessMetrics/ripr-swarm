@@ -3396,15 +3396,20 @@ fn mcp_config_problem(text: &str) -> Result<(), (String, &'static str)> {
             MCP_REPAIR_FIX_FILE,
         )
     })?;
-    let servers = document
-        .get("mcpServers")
-        .and_then(serde_json::Value::as_object)
-        .ok_or_else(|| {
-            (
-                "has no `mcpServers` object".to_string(),
-                MCP_REPAIR_FIX_FILE,
-            )
-        })?;
+    if !document.is_object() {
+        return Err(("is not a JSON object".to_string(), MCP_REPAIR_FIX_FILE));
+    }
+    // `ripr init --mcp` adds a missing `mcpServers` key but refuses one that
+    // is not an object.
+    let Some(servers) = document.get("mcpServers") else {
+        return Err(("has no `mcpServers` object".to_string(), MCP_REPAIR_INIT));
+    };
+    let servers = servers.as_object().ok_or_else(|| {
+        (
+            "has an `mcpServers` that is not an object".to_string(),
+            MCP_REPAIR_FIX_FILE,
+        )
+    })?;
     let entry = servers
         .get("ripr")
         .ok_or_else(|| ("has no `ripr` server entry".to_string(), MCP_REPAIR_INIT))?;
@@ -6079,8 +6084,10 @@ mod tests {
             (
                 "mcp-cfg-no-servers",
                 r#"{"mcpServers":[]}"#,
-                "no `mcpServers` object",
+                "`mcpServers` that is not an object",
             ),
+            ("mcp-cfg-root-array", "[]", "is not a JSON object"),
+            ("mcp-cfg-no-key", "{}", "has no `mcpServers` object"),
             (
                 "mcp-cfg-other-server",
                 r#"{"mcpServers":{"other":{"command":"ripr","args":["mcp","--stdio"]}}}"#,
@@ -6134,6 +6141,8 @@ mod tests {
                 r#"{"mcpServers":{}}"#,
                 "run `ripr init --mcp`",
             ),
+            ("mcp-cfg-fix-no-key", "{}", "run `ripr init --mcp`"),
+            ("mcp-cfg-fix-root", "[]", "fix or remove the file"),
             (
                 "mcp-cfg-fix-custom",
                 r#"{"mcpServers":{"ripr":{"command":"x"}}}"#,
@@ -6147,6 +6156,16 @@ mod tests {
                     .is_some_and(|(_, line)| line.contains(advice)),
                 "{name}: {verdict:?}"
             );
+            // Advice that only needs `ripr init --mcp` must not tell the user
+            // to fix the file first (that wording also contains the command).
+            if !advice.contains("fix or remove") {
+                assert!(
+                    verdict
+                        .as_ref()
+                        .is_some_and(|(_, line)| !line.contains("fix or remove")),
+                    "{name}: {verdict:?}"
+                );
+            }
         }
         Ok(())
     }

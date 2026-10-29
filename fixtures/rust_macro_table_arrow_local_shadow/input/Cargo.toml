@@ -1,0 +1,4 @@
+[package]
+name = "rust_macro_table_arrow_local_shadow"
+version = "0.1.0"
+edition = "2024"

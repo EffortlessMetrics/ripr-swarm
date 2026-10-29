@@ -165,7 +165,7 @@ use super::{
     mutation_calibration_report_markdown, next_checkpoints_from_capabilities,
     next_spec_id_from_ids, non_rust_programming_retention_reason, normalize_fixture_human_output,
     normalize_fixture_json_output, normalize_golden_text, normalize_path,
-    parse_actionable_gap_outcomes_args, parse_doc_artifact_ledger_text,
+    parse_actionable_gap_outcomes_args, parse_doc_artifact_ledger, parse_doc_artifact_ledger_text,
     parse_file_policy_allowlist, parse_gh_pr_status_args, parse_gh_pr_status_pull_request,
     parse_inline_array, parse_mutation_calibration_args, parse_mutation_outcomes_json,
     parse_pr_triage_pull_requests, parse_reason, parse_repo_badge_artifact_options,
@@ -176,17 +176,17 @@ use super::{
     pr_actionable_delta_front_panel_from_inputs, pr_body_from_input_text,
     pr_body_template_missing_error, pr_body_template_missing_lines, pr_body_validation_warning,
     pr_checks_summary, pr_ready_json, pr_ready_markdown, pr_ready_next_action, pr_ready_status,
-    pr_ready_status_from_report_status, pr_sensitive_file_reason, pr_shape_report_body,
-    pr_shape_warnings, pr_summary_body, pr_title_family, pr_triage_findings, pr_triage_json,
-    pr_triage_markdown, pr_triage_queue_dispositions, precommit_report_body,
-    public_badge_basis_violations, public_contract_rows, read_badge_artifact_diff_governed,
-    read_json_value, read_lsp_cockpit_json_value, read_mutation_input_json,
-    read_repo_exposure_summary_artifact, receipt_json, receipt_specs, receipt_status_from_reports,
-    repo_badge_artifact_command_args, repo_badge_artifact_jobs,
-    repo_badge_artifact_stdout_from_output, repo_badge_artifact_timeout_ms_from_env,
-    repo_badge_artifacts_summary_markdown, repo_exposure_authenticated_cache_load,
-    repo_exposure_cache_family_store_from_stderr, repo_exposure_file_fact_cache_from_stderr,
-    repo_exposure_latency_json, repo_exposure_latency_markdown, repo_exposure_latency_run,
+    pr_sensitive_file_reason, pr_shape_report_body, pr_shape_warnings, pr_summary_body,
+    pr_title_family, pr_triage_findings, pr_triage_json, pr_triage_markdown,
+    pr_triage_queue_dispositions, precommit_report_body, public_badge_basis_violations,
+    public_contract_rows, read_badge_artifact_diff_governed, read_json_value,
+    read_lsp_cockpit_json_value, read_mutation_input_json, read_repo_exposure_summary_artifact,
+    receipt_json, receipt_specs, receipt_status_from_reports, repo_badge_artifact_command_args,
+    repo_badge_artifact_jobs, repo_badge_artifact_stdout_from_output,
+    repo_badge_artifact_timeout_ms_from_env, repo_badge_artifacts_summary_markdown,
+    repo_exposure_authenticated_cache_load, repo_exposure_cache_family_store_from_stderr,
+    repo_exposure_file_fact_cache_from_stderr, repo_exposure_latency_json,
+    repo_exposure_latency_markdown, repo_exposure_latency_run,
     repo_exposure_latency_run_from_output, repo_exposure_latency_status,
     repo_exposure_latency_status_reasons, repo_exposure_latency_trace,
     repo_exposure_normalized_output, repo_exposure_parity_leg_receipts, repo_exposure_parity_run,
@@ -8564,6 +8564,47 @@ fn release_server_manifest_rejects_prerelease_version_before_descriptor() -> Res
     Ok(())
 }
 
+/// The `ripr` binary this test run was built against, as an absolute path.
+/// Resolve-only: a nested `cargo build` would contend on the build lock the
+/// outer test run holds. Order: the `RIPR_TEST_BINARY` override (a runner that
+/// keeps its binaries outside `target/`, such as an archived run, sets it),
+/// then the active `CARGO_TARGET_DIR`, then the repository `target/`, in the
+/// profile this test build itself uses (`--release` places it under `release`).
+pub(crate) fn ripr_worktree_binary() -> Result<String, String> {
+    let profile = if cfg!(debug_assertions) {
+        "debug"
+    } else {
+        "release"
+    };
+    let file_name = format!("ripr{}", std::env::consts::EXE_SUFFIX);
+    let mut candidates = Vec::new();
+    if let Ok(override_path) = std::env::var("RIPR_TEST_BINARY") {
+        candidates.push(PathBuf::from(override_path));
+    }
+    if let Ok(target_root) = std::env::var("CARGO_TARGET_DIR") {
+        candidates.push(Path::new(&target_root).join(profile).join(&file_name));
+    }
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or("xtask manifest has no repository parent")?;
+    candidates.push(root.join("target").join(profile).join(&file_name));
+    for candidate in &candidates {
+        if candidate.is_file() {
+            return std::path::absolute(candidate)
+                .map(|path| path.to_string_lossy().into_owned())
+                .map_err(|error| format!("resolve worktree ripr binary: {error}"));
+        }
+    }
+    let attempted = candidates
+        .iter()
+        .map(|candidate| candidate.display().to_string())
+        .collect::<Vec<_>>()
+        .join("`, `");
+    Err(format!(
+        "no built ripr binary found (looked at `{attempted}`); run `cargo build -p ripr` first (tests resolve the binary and never spawn a nested build)"
+    ))
+}
+
 pub(crate) fn with_temp_cwd<T>(name: &str, f: impl FnOnce(&Path) -> T) -> T {
     let lock = acquire_test_cwd_write_guard();
     let old = std::env::current_dir().unwrap();
@@ -12197,8 +12238,8 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
         routed_rust_ready_event_contract_violations(&any_label_request)
     );
     let skippable_result = workflow.replace(
-        "    if: always()\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    steps:\n      - name: Summarize routed result",
-        "    if: success()\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    steps:\n      - name: Summarize routed result",
+        "    if: always()\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    steps:\n      - name: Recheck initially admitted eligibility",
+        "    if: success()\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    steps:\n      - name: Recheck initially admitted eligibility",
     );
     assert_ne!(
         skippable_result, workflow,
@@ -12316,6 +12357,78 @@ fn sorted_allowlist_content_preserves_header_and_sorts_entries() {
         sorted,
         "# Header\n# More\n\na|kind|owner|reason\nz|kind|owner|reason\n"
     );
+}
+
+#[test]
+fn count_policy_fragments_merge_rows_and_reject_a_row_declared_in_both_files() -> Result<(), String>
+{
+    with_temp_cwd("count-policy-fragments", |root| {
+        let list = "policy/process_allowlist.txt";
+        write(
+            &root.join(list),
+            "# header\na.rs|ExampleMarker|1|owner|main row\n",
+        );
+        // Without a fragment directory the main list is the whole allowlist.
+        let rows = super::read_count_policy_allowlist(list)?;
+        assert_eq!(rows.len(), 1);
+
+        write(
+            &root.join("policy/process_allowlist.d/b.txt"),
+            "b.rs|ExampleMarker|2|owner|fragment row\n",
+        );
+        let rows = super::read_count_policy_allowlist(list)?;
+        assert_eq!(
+            rows.get(&("b.rs".to_string(), "ExampleMarker".to_string())),
+            Some(&2)
+        );
+        assert_eq!(rows.len(), 2);
+
+        write(
+            &root.join("policy/process_allowlist.d/dup.txt"),
+            "a.rs|ExampleMarker|9|owner|silently wider bound\n",
+        );
+        let error = super::read_count_policy_allowlist(list)
+            .err()
+            .unwrap_or_default();
+        assert!(
+            error.contains("policy/process_allowlist.d/dup.txt")
+                && error.contains("already declared in policy/process_allowlist.txt"),
+            "{error}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn count_policy_fragments_fail_closed_on_a_non_txt_entry_and_a_malformed_row() -> Result<(), String>
+{
+    with_temp_cwd("count-policy-fragments-closed", |root| {
+        let list = "policy/network_allowlist.txt";
+        write(&root.join(list), "# header\n");
+        let dir = root.join("policy/network_allowlist.d");
+
+        write(&dir.join("notes.md"), "not a fragment\n");
+        let error = super::read_count_policy_allowlist(list)
+            .err()
+            .unwrap_or_default();
+        assert!(
+            error.contains("is not a .txt allowlist fragment"),
+            "{error}"
+        );
+        fs::remove_file(dir.join("notes.md")).map_err(|e| e.to_string())?;
+
+        write(&dir.join("bad.txt"), "only|three|fields\n");
+        let error = super::read_count_policy_allowlist(list)
+            .err()
+            .unwrap_or_default();
+        assert!(
+            error.contains(
+                "policy/network_allowlist.d/bad.txt:1 expected path|pattern|max_count|owner|reason"
+            ),
+            "{error}"
+        );
+        Ok(())
+    })
 }
 
 #[test]
@@ -14305,6 +14418,7 @@ fn capability_helpers_validate_ids_and_escape_json() {
         spec: Some("RIPR-SPEC-0003".to_string()),
         evidence: vec!["agent context spec".to_string()],
         fixtures: Vec::new(),
+        cells: None,
         next: Some("agent-context-v2".to_string()),
         metric: Some("context packets with suggested assertions".to_string()),
         line: 1,
@@ -25535,6 +25649,115 @@ owner = "repo-infra"
     })
 }
 
+const DOC_ARTIFACT_FRAGMENT_DIR: &str = "policy/doc-artifacts.d";
+
+fn doc_artifact_main_ledger() -> &'static str {
+    r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0001-alpha.md"
+status = "proposed"
+owner = "repo-infra"
+"#
+}
+
+fn doc_artifact_fragment(id: &str) -> String {
+    format!(
+        "[[artifact]]\nid = \"{id}\"\nkind = \"proposal\"\npath = \"docs/proposals/{id}-beta.md\"\nstatus = \"proposed\"\nowner = \"repo-infra\"\n"
+    )
+}
+
+#[test]
+fn doc_artifact_fragments_register_entries_and_report_their_own_file_and_line() -> Result<(), String>
+{
+    with_temp_cwd("doc-artifacts-fragments", |root| {
+        write_doc_artifact_fixture(
+            root,
+            "docs/proposals/RIPR-PROP-0001-alpha.md",
+            "RIPR-PROP-0001",
+        );
+        write_doc_artifact_fixture(
+            root,
+            "docs/proposals/RIPR-PROP-0002-beta.md",
+            "RIPR-PROP-0002",
+        );
+        write_doc_artifact_ledger_fixture(root, doc_artifact_main_ledger());
+        write(
+            &root.join(DOC_ARTIFACT_FRAGMENT_DIR).join("0002.toml"),
+            &doc_artifact_fragment("RIPR-PROP-0002"),
+        );
+        let ledger = parse_doc_artifact_ledger(&root.join(DOC_ARTIFACT_LEDGER))?;
+        assert_eq!(ledger.artifacts.len(), 2);
+        let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+        assert!(violations.is_empty(), "{violations:#?}");
+
+        // A fragment entry that points at a missing file names the fragment, not the main ledger.
+        write(
+            &root.join(DOC_ARTIFACT_FRAGMENT_DIR).join("0003.toml"),
+            &doc_artifact_fragment("RIPR-PROP-0003"),
+        );
+        let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+        assert!(
+            violations.iter().any(|violation| violation
+                .contains("policy/doc-artifacts.d/0003.toml:1 artifact `RIPR-PROP-0003` points at missing file")),
+            "{violations:#?}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn doc_artifact_fragments_fail_closed_and_catch_cross_file_duplicates() -> Result<(), String> {
+    with_temp_cwd("doc-artifacts-fragments-closed", |root| {
+        write_doc_artifact_fixture(
+            root,
+            "docs/proposals/RIPR-PROP-0001-alpha.md",
+            "RIPR-PROP-0001",
+        );
+        write_doc_artifact_ledger_fixture(root, doc_artifact_main_ledger());
+        let ledger = root.join(DOC_ARTIFACT_LEDGER);
+        let dir = root.join(DOC_ARTIFACT_FRAGMENT_DIR);
+
+        write(&dir.join("notes.md"), "not a fragment\n");
+        let error = parse_doc_artifact_ledger(&ledger).err().unwrap_or_default();
+        assert!(
+            error.contains("is not a .toml artifact fragment"),
+            "{error}"
+        );
+        fs::remove_file(dir.join("notes.md")).map_err(|e| e.to_string())?;
+
+        write(&dir.join("empty.toml"), "# nothing\n");
+        let error = parse_doc_artifact_ledger(&ledger).err().unwrap_or_default();
+        assert!(error.contains("has no [[artifact]] entries"), "{error}");
+
+        write(
+            &dir.join("empty.toml"),
+            &format!(
+                "schema_version = \"1.0\"\n{}",
+                doc_artifact_fragment("RIPR-PROP-0002")
+            ),
+        );
+        let error = parse_doc_artifact_ledger(&ledger).err().unwrap_or_default();
+        assert!(error.contains("must not set schema_version"), "{error}");
+        fs::remove_file(dir.join("empty.toml")).map_err(|e| e.to_string())?;
+
+        write(
+            &dir.join("dup.toml"),
+            &doc_artifact_fragment("RIPR-PROP-0001"),
+        );
+        let violations = doc_artifact_violations(root, &ledger)?;
+        assert!(
+            violations.iter().any(|violation| violation.contains(
+                "policy/doc-artifacts.d/dup.toml:1 duplicate artifact id `RIPR-PROP-0001`; first defined at policy/doc-artifacts.toml:"
+            )),
+            "{violations:#?}"
+        );
+        Ok(())
+    })
+}
+
 #[test]
 fn doc_artifacts_rejects_duplicate_artifact_field() {
     let error = parse_doc_artifact_ledger_text(
@@ -31476,6 +31699,151 @@ fn spec_numbering_detects_missing_index_and_reference_drift() -> Result<(), Stri
 }
 
 #[test]
+fn spec_numbering_accepts_index_rows_from_fragments() -> Result<(), String> {
+    let root = temp_dir("spec-numbering-fragments");
+    write(
+        &root.join("docs/specs/RIPR-SPEC-0001-one.md"),
+        "# RIPR-SPEC-0001: One\n",
+    );
+    write(
+        &root.join("docs/specs/RIPR-SPEC-0002-two.md"),
+        "# RIPR-SPEC-0002: Two\n",
+    );
+    write(
+        &root.join("docs/specs/README.md"),
+        "| Spec | Status | Title |\n| --- | --- | --- |\n| [RIPR-SPEC-0001](RIPR-SPEC-0001-one.md) | proposed | One |\n",
+    );
+
+    let without = spec_numbering_violations(&root)?;
+    assert!(
+        without
+            .iter()
+            .any(|violation| violation.contains("missing index link `[RIPR-SPEC-0002]")),
+        "{without:?}"
+    );
+
+    write(
+        &root.join("docs/spec-index.d/RIPR-SPEC-0002.md"),
+        "| [RIPR-SPEC-0002](../specs/RIPR-SPEC-0002-two.md) | proposed | Two |\n",
+    );
+    let with = spec_numbering_violations(&root)?;
+    assert!(
+        !with
+            .iter()
+            .any(|violation| violation.contains("RIPR-SPEC-0002")),
+        "{with:?}"
+    );
+
+    // A fragment is not a license to reference a spec that does not exist.
+    write(
+        &root.join("docs/spec-index.d/RIPR-SPEC-9999.md"),
+        "| [RIPR-SPEC-9999](../specs/missing.md) | proposed | Missing |\n",
+    );
+    let phantom = spec_numbering_violations(&root)?;
+    assert!(
+        phantom
+            .iter()
+            .any(|violation| violation.contains("references missing spec `RIPR-SPEC-9999`")),
+        "{phantom:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn spec_index_fragments_must_be_named_for_the_one_spec_they_register() -> Result<(), String> {
+    let root = temp_dir("spec-index-fragment-names");
+    for (id, file) in [("0001", "one"), ("0002", "two")] {
+        write(
+            &root.join(format!("docs/specs/RIPR-SPEC-{id}-{file}.md")),
+            &format!("# RIPR-SPEC-{id}: T\n"),
+        );
+    }
+    write(
+        &root.join("docs/specs/README.md"),
+        "| [RIPR-SPEC-0001](RIPR-SPEC-0001-one.md) | proposed | One |\n",
+    );
+    // 0002's row filed under 0001's name must not satisfy 0002.
+    write(
+        &root.join("docs/spec-index.d/RIPR-SPEC-0001.md"),
+        "| [RIPR-SPEC-0002](../specs/RIPR-SPEC-0002-two.md) | proposed | Two |\n",
+    );
+    let violations = spec_numbering_violations(&root)?;
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.contains("names `RIPR-SPEC-0002` but only `RIPR-SPEC-0001`")),
+        "{violations:?}"
+    );
+
+    write(
+        &root.join("docs/spec-index.d/stray.md"),
+        "| [RIPR-SPEC-0002](../specs/RIPR-SPEC-0002-two.md) | proposed | Two |\n",
+    );
+    let violations = spec_numbering_violations(&root)?;
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.contains("stray.md must be named RIPR-SPEC-NNNN.md")),
+        "{violations:?}"
+    );
+
+    // One row per fragment, and not a second copy of a README row.
+    write(
+        &root.join("docs/spec-index.d/RIPR-SPEC-0002.md"),
+        "| [RIPR-SPEC-0002](../specs/RIPR-SPEC-0002-two.md) | proposed | Two |\n| [RIPR-SPEC-0002](../specs/RIPR-SPEC-0002-two.md) | proposed | Again |\n",
+    );
+    write(
+        &root.join("docs/spec-index.d/RIPR-SPEC-0001.md"),
+        "| [RIPR-SPEC-0001](../specs/RIPR-SPEC-0001-one.md) | proposed | One |\n",
+    );
+    let violations = spec_numbering_violations(&root)?;
+    assert!(
+        violations.iter().any(
+            |violation| violation.contains("RIPR-SPEC-0002.md must hold exactly one table row")
+        ),
+        "{violations:?}"
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.contains("RIPR-SPEC-0001.md duplicates the README row")),
+        "{violations:?}"
+    );
+
+    // Equivalent link spellings are still two rows, and a fenced example
+    // renders no index link, so neither earns credit.
+    write(
+        &root.join("docs/spec-index.d/RIPR-SPEC-0002.md"),
+        "| [RIPR-SPEC-0002](../specs/RIPR-SPEC-0002-two.md) | proposed | Two |\n| [RIPR-SPEC-0002](./../specs/RIPR-SPEC-0002-two.md) | proposed | Two |\n",
+    );
+    let violations = spec_numbering_violations(&root)?;
+    assert!(
+        violations.iter().any(
+            |violation| violation.contains("RIPR-SPEC-0002.md must hold exactly one table row")
+        ),
+        "{violations:?}"
+    );
+    write(
+        &root.join("docs/spec-index.d/RIPR-SPEC-0002.md"),
+        "```\n| [RIPR-SPEC-0002](../specs/RIPR-SPEC-0002-two.md) | proposed | Two |\n```\n",
+    );
+    let violations = spec_numbering_violations(&root)?;
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.contains("missing index link `[RIPR-SPEC-0002]")),
+        "a fenced row must not register the spec: {violations:?}"
+    );
+    assert!(
+        violations.iter().any(
+            |violation| violation.contains("RIPR-SPEC-0002.md must hold exactly one table row")
+        ),
+        "{violations:?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn spec_numbering_detects_duplicate_spec_ids() -> Result<(), String> {
     let root = temp_dir("spec-numbering-duplicate");
     write(
@@ -32941,17 +33309,228 @@ fn pr_ready_packet_keeps_nonblocking_items_actionable() {
 }
 
 #[test]
-fn pr_ready_report_status_maps_warnings_to_attention() {
-    assert_eq!(
-        pr_ready_status_from_report_status("warn"),
-        Some("needs_attention")
-    );
-    assert_eq!(
-        pr_ready_status_from_report_status("actionable"),
-        Some("needs_attention")
-    );
-    assert_eq!(pr_ready_status_from_report_status("fail"), Some("fail"));
-    assert_eq!(pr_ready_status_from_report_status("pass"), None);
+fn pr_ready_current_outcome_ignores_quoted_superseded_or_stale_reports() -> Result<(), String> {
+    with_temp_cwd("pr-ready-typed-outcome", |_root| -> Result<(), String> {
+        // These are the prior adapter's counterexample shapes. A current typed
+        // producer result, not prose interpretation, supplies their outcome.
+        let reports = [
+            "Status: pass\n",
+            "Status: fail\n",
+            "Status: warn\n",
+            "Status: not ready\n",
+            "Status: instrument_failure\n",
+            "> Status: pass\nThis was an earlier claim.\n",
+            "```text\nStatus: pass\n```\nStatus: blocked\n",
+            "Status: pass\nSuperseded by the current result.\nStatus: blocked\n",
+            "Status: pass\nSubject: old-head\nObserved: 2026-01-01\n",
+            "",
+            "Status: pass\nThe command later failed.\n",
+            "> Status: pass\nStatus: blocked\n",
+        ];
+        let changes = [changed_path(
+            "crates/ripr/src/analysis/classifier.rs",
+            &["M"],
+        )];
+        let findings = critic_findings(&changes, &[], &[]);
+        assert!(
+            !findings.is_empty(),
+            "fixture must reach actual critic findings"
+        );
+        for body in reports {
+            for (current_findings, expected) in
+                [(findings.as_slice(), "needs_attention"), (&[][..], "pass")]
+            {
+                let step = super::run_readiness_step(
+                    "critic",
+                    "cargo xtask critic",
+                    "target/ripr/reports/critic.md",
+                    false,
+                    || {
+                        let outcome = super::finish_critic_report(current_findings, &[], &[])?;
+                        // Replacing shared report bytes cannot change the invocation's result.
+                        fs::write("target/ripr/reports/critic.md", body)
+                            .map_err(|err| err.to_string())?;
+                        Ok(outcome)
+                    },
+                );
+                assert_eq!(step.status, expected, "{body:?}");
+                let json: Value =
+                    serde_json::from_str(&pr_ready_json(&[step])).map_err(|err| err.to_string())?;
+                assert_eq!(json["schema_version"], "0.1");
+                assert_eq!(json["mode"], "advisory");
+                assert_eq!(json["steps"][0]["status"], expected);
+            }
+        }
+        Ok(())
+    })
+}
+
+#[test]
+fn pr_ready_completion_only_summary_and_missing_report_are_explicit() -> Result<(), String> {
+    with_temp_cwd("pr-ready-completion-only", |_root| -> Result<(), String> {
+        let summary = pr_summary_body(&[]);
+        let header = summary
+            .split("\n## ")
+            .next()
+            .ok_or("summary header missing")?;
+        assert!(!header.lines().any(|line| line.starts_with("Status:")));
+        assert!(summary.contains("Status: advisory static projection"));
+        let step = super::run_readiness_step(
+            "pr_summary",
+            "cargo xtask pr-summary",
+            "summary.md",
+            false,
+            || {
+                fs::write("summary.md", &summary).map_err(|err| err.to_string())?;
+                Ok(super::ReadinessOutcome::Completed)
+            },
+        );
+        assert_eq!(step.status, "pass");
+        assert_eq!(step.summary, "completed");
+
+        for required in [false, true] {
+            let step = super::run_readiness_step(
+                "missing_outcome",
+                "fixture",
+                "not-created.md",
+                required,
+                || Err("\ncurrent producer outcome unavailable\nmore detail".to_string()),
+            );
+            assert_eq!(
+                step.status,
+                if required { "fail" } else { "needs_attention" }
+            );
+            assert_eq!(step.summary, "current producer outcome unavailable");
+        }
+        Ok(())
+    })
+}
+
+#[test]
+fn cockpit_pr_triage_keeps_current_typed_warning_and_clean_outcomes() -> Result<(), String> {
+    with_temp_cwd("cockpit-typed-triage", |_root| -> Result<(), String> {
+        let prs = [
+            triage_pr(41, "devex: duplicate report", &["xtask/src/main.rs"]),
+            triage_pr(42, "devex: duplicate report", &["xtask/src/main.rs"]),
+        ];
+        let today = days_from_civil(2026, 5, 14);
+        let findings = pr_triage_findings(&prs, today);
+        assert!(
+            !findings.is_empty(),
+            "fixture must reach actual triage findings"
+        );
+        for (current_findings, expected, aggregate) in [
+            (findings.as_slice(), "needs_attention", "actionable"),
+            (&[][..], "pass", "pass"),
+        ] {
+            let step = super::run_readiness_step(
+                "pr_triage",
+                "cargo xtask pr-triage-report",
+                "target/ripr/reports/pr-triage.md",
+                false,
+                || {
+                    let outcome =
+                        super::finish_pr_triage_report(&prs, current_findings, today, "fixture")?;
+                    fs::write(
+                        "target/ripr/reports/pr-triage.md",
+                        "Status: pass\nStatus: blocked\n",
+                    )
+                    .map_err(|err| err.to_string())?;
+                    Ok(outcome)
+                },
+            );
+            assert_eq!(step.status, expected);
+            let json: Value =
+                serde_json::from_str(&cockpit_json(&[step])).map_err(|err| err.to_string())?;
+            assert_eq!(json["schema_version"], "0.1");
+            assert_eq!(json["mode"], "advisory");
+            assert_eq!(json["status"], aggregate);
+            assert_eq!(json["steps"][0]["status"], expected);
+        }
+        Ok(())
+    })
+}
+
+#[test]
+fn pr_ready_worktree_doctor_preserves_current_warnings_and_errors() -> Result<(), String> {
+    with_temp_cwd("pr-ready-typed-doctor", |root| -> Result<(), String> {
+        run("git", &["init", "-b", "feature"])?;
+        fs::write(".gitignore", "target/\n").map_err(|err| err.to_string())?;
+        run("git", &["add", ".gitignore"])?;
+        run(
+            "git",
+            &[
+                "-c",
+                "user.name=readiness fixture",
+                "-c",
+                "user.email=readiness-fixture@example.invalid",
+                "commit",
+                "-m",
+                "readiness fixture",
+            ],
+        )?;
+        assert_eq!(
+            super::run_output("git", &["rev-parse", "--abbrev-ref", "HEAD"])?.trim(),
+            "feature",
+            "fixture must have a committed named branch"
+        );
+        let report = "target/ripr/reports/worktree-doctor.md";
+        let clean = super::run_readiness_step(
+            "worktree_doctor",
+            "cargo xtask worktree doctor",
+            report,
+            true,
+            super::worktree_doctor_readiness,
+        );
+        assert_eq!(clean.status, "pass");
+        let clean_report = fs::read_to_string(root.join(report)).map_err(|err| err.to_string())?;
+        assert!(clean_report.contains("Status: pass"));
+
+        // The first invocation creates report residue. The next invocation
+        // must preserve that real warning despite successful command execution.
+        assert!(root.join("target/ripr").exists());
+        let warning = super::run_readiness_step(
+            "worktree_doctor",
+            "cargo xtask worktree doctor",
+            report,
+            true,
+            super::worktree_doctor_readiness,
+        );
+        assert_eq!(warning.status, "needs_attention");
+        assert_eq!(
+            pr_ready_status(std::slice::from_ref(&warning)),
+            "actionable"
+        );
+        let warning_report =
+            fs::read_to_string(root.join(report)).map_err(|err| err.to_string())?;
+        assert!(warning_report.contains("Status: warn"));
+        assert!(warning_report.contains("Warnings:"));
+
+        run("git", &["branch", "-m", "main"])?;
+        assert_eq!(
+            super::run_output("git", &["rev-parse", "--abbrev-ref", "HEAD"])?.trim(),
+            "main"
+        );
+        fs::write("dirty.txt", "uncommitted fixture change\n").map_err(|err| err.to_string())?;
+        assert!(
+            super::collect_worktree_status_changes()?
+                .iter()
+                .any(|change| change.path == "dirty.txt"),
+            "fixture must contain an observed dirty-main change"
+        );
+        let error = super::run_readiness_step(
+            "worktree_doctor",
+            "cargo xtask worktree doctor",
+            report,
+            true,
+            super::worktree_doctor_readiness,
+        );
+        assert_eq!(error.status, "fail");
+        let error_report = fs::read_to_string(root.join(report)).map_err(|err| err.to_string())?;
+        assert!(error_report.contains("Status: fail"));
+        assert!(error_report.contains("Errors:"));
+        Ok(())
+    })
 }
 
 #[test]
@@ -50832,18 +51411,194 @@ fn vscode_verify_vsix_reuses_sealed_archive_license_check() -> Result<(), String
     let mit = String::from_utf8(notices.mit.clone()).map_err(|err| err.to_string())?;
     let apache = String::from_utf8(notices.apache.clone()).map_err(|err| err.to_string())?;
     with_temp_cwd("vscode-verify-vsix-reuse", |root| {
-        let good = root.join("good.vsix");
+        let good = root.join("ripr-0.11.0.vsix");
         let license_txt = packaged_license_txt(&mit, &apache);
-        write_packaging_test_vsix(&good, &[("extension/LICENSE.txt", &license_txt)])?;
+        let versioned = |version: &str| {
+            (
+                format!("{{\"name\":\"ripr\",\"version\":\"{version}\"}}"),
+                format!(
+                    "<PackageManifest><Metadata><Identity Language=\"en-US\" Id=\"ripr\" Version=\"{version}\" Publisher=\"EffortlessMetrics\" /></Metadata></PackageManifest>"
+                ),
+            )
+        };
+        let (package_json, vsixmanifest) = versioned("0.11.0");
+        write_packaging_test_vsix(
+            &good,
+            &[
+                ("extension/LICENSE.txt", &license_txt),
+                ("extension/package.json", &package_json),
+                ("extension.vsixmanifest", &vsixmanifest),
+            ],
+        )?;
         super::vscode_verify_vsix(&[good.to_string_lossy().into_owned()])?;
 
-        let pointer = root.join("pointer.vsix");
+        // #10731: a stale 0.8.0 extension under a 0.10.0 name must fail.
+        let stale = root.join("ripr-0.10.0.vsix");
+        let (package_json, vsixmanifest) = versioned("0.8.0");
+        write_packaging_test_vsix(
+            &stale,
+            &[
+                ("extension/LICENSE.txt", &license_txt),
+                ("extension/package.json", &package_json),
+                ("extension.vsixmanifest", &vsixmanifest),
+            ],
+        )?;
+        let Err(error) = super::vscode_verify_vsix(&[stale.to_string_lossy().into_owned()]) else {
+            return Err("vscode-verify-vsix must reject a stale extension version".to_string());
+        };
+        assert!(
+            error.contains("named for version 0.10.0") && error.contains("0.8.0"),
+            "{error}"
+        );
+
+        // A matching Identity inside a comment or CDATA must not mask the real, stale one.
+        let masked = root.join("ripr-0.11.2.vsix");
+        let masked_manifest = "<PackageManifest><!-- <Identity Version=\"0.11.2\" /> --><Metadata><![CDATA[<Identity Version=\"0.11.2\" />]]><Identity Language=\"en-US\" Id=\"ripr\" Version=\"0.8.0\" Publisher=\"EffortlessMetrics\" /></Metadata></PackageManifest>";
+        write_packaging_test_vsix(
+            &masked,
+            &[
+                ("extension/LICENSE.txt", &license_txt),
+                ("extension/package.json", "{\"version\":\"0.11.2\"}"),
+                ("extension.vsixmanifest", masked_manifest),
+            ],
+        )?;
+        let Err(error) = super::vscode_verify_vsix(&[masked.to_string_lossy().into_owned()]) else {
+            return Err("an Identity-like comment must not mask a stale Identity".to_string());
+        };
+        assert!(error.contains("Identity Version \"0.8.0\""), "{error}");
+        assert_eq!(
+            super::vsixmanifest_identity_version(
+                "<PackageManifest><Metadata><Identity Id='ripr' Version='0.11.2'/></Metadata></PackageManifest>"
+            ),
+            "0.11.2"
+        );
+
+        let pointer = root.join("ripr-0.11.1.vsix");
         write_packaging_test_vsix(&pointer, &[("extension/LICENSE.txt", POINTER_LICENSE)])?;
         let Err(error) = super::vscode_verify_vsix(&[pointer.to_string_lossy().into_owned()])
         else {
             return Err("vscode-verify-vsix must reject a pointer-only LICENSE.txt".to_string());
         };
         assert!(error.contains("extension/LICENSE.txt"), "{error}");
+        Ok(())
+    })
+}
+
+#[test]
+fn verify_packaged_vsix_version_binds_each_member_to_the_file_name() -> Result<(), String> {
+    let manifest = |version: &str| {
+        format!(
+            "<PackageManifest><Metadata><Identity Language=\"en-US\" Id=\"ripr\" Version=\"{version}\" Publisher=\"EffortlessMetrics\" /></Metadata></PackageManifest>"
+        )
+    };
+    let package = |version: &str| format!("{{\"name\":\"ripr\",\"version\":\"{version}\"}}");
+    with_temp_cwd("verify-vsix-version-members", |root| {
+        let write = |name: &str, members: &[(&str, &str)]| -> Result<PathBuf, String> {
+            let path = root.join(name);
+            write_packaging_test_vsix(&path, members)?;
+            Ok(path)
+        };
+        let reject = |path: &Path| -> Result<String, String> {
+            match super::verify_packaged_vsix_version(path) {
+                Ok(()) => Err(format!("{} must be rejected", path.display())),
+                Err(error) => Ok(error),
+            }
+        };
+
+        let aligned = write(
+            "ripr-0.10.0.vsix",
+            &[
+                ("extension/package.json", &package("0.10.0")),
+                ("extension.vsixmanifest", &manifest("0.10.0")),
+            ],
+        )?;
+        super::verify_packaged_vsix_version(&aligned)?;
+
+        // Only extension/package.json is stale.
+        let only_package = write(
+            "ripr-0.10.1.vsix",
+            &[
+                ("extension/package.json", &package("0.8.0")),
+                ("extension.vsixmanifest", &manifest("0.10.1")),
+            ],
+        )?;
+        let error = reject(&only_package)?;
+        assert!(error.contains("package.json version \"0.8.0\""), "{error}");
+        assert!(error.contains("Identity Version \"0.10.1\""), "{error}");
+
+        // Only extension.vsixmanifest is stale.
+        let only_manifest = write(
+            "ripr-0.10.2.vsix",
+            &[
+                ("extension/package.json", &package("0.10.2")),
+                ("extension.vsixmanifest", &manifest("0.8.0")),
+            ],
+        )?;
+        let error = reject(&only_manifest)?;
+        assert!(error.contains("package.json version \"0.10.2\""), "{error}");
+        assert!(error.contains("Identity Version \"0.8.0\""), "{error}");
+
+        // Both stale and different: both observed values are reported.
+        let both = write(
+            "ripr-0.10.3.vsix",
+            &[
+                ("extension/package.json", &package("0.8.0")),
+                ("extension.vsixmanifest", &manifest("0.9.0")),
+            ],
+        )?;
+        let error = reject(&both)?;
+        assert!(error.contains("named for version 0.10.3"), "{error}");
+        assert!(error.contains("package.json version \"0.8.0\""), "{error}");
+        assert!(error.contains("Identity Version \"0.9.0\""), "{error}");
+
+        // Absent or malformed version fields never match the file name.
+        let no_version = write(
+            "ripr-0.10.4.vsix",
+            &[
+                ("extension/package.json", r#"{"name":"ripr"}"#),
+                (
+                    "extension.vsixmanifest",
+                    "<PackageManifest><Identity Id=\"ripr\" /></PackageManifest>",
+                ),
+            ],
+        )?;
+        let error = reject(&no_version)?;
+        assert!(error.contains("package.json version \"\""), "{error}");
+        assert!(error.contains("Identity Version \"\""), "{error}");
+        let non_string = write(
+            "ripr-0.10.5.vsix",
+            &[
+                ("extension/package.json", r#"{"version":10}"#),
+                ("extension.vsixmanifest", &manifest("0.10.5")),
+            ],
+        )?;
+        reject(&non_string)?;
+        let bad_json = write(
+            "ripr-0.10.6.vsix",
+            &[
+                ("extension/package.json", "not json"),
+                ("extension.vsixmanifest", &manifest("0.10.6")),
+            ],
+        )?;
+        let error = reject(&bad_json)?;
+        assert!(error.contains("is not JSON"), "{error}");
+
+        // Missing members and a non-conforming file name fail closed.
+        let no_manifest = write(
+            "ripr-0.10.7.vsix",
+            &[("extension/package.json", &package("0.10.7"))],
+        )?;
+        let error = reject(&no_manifest)?;
+        assert!(error.contains("extension.vsixmanifest"), "{error}");
+        let misnamed = write(
+            "good.vsix",
+            &[
+                ("extension/package.json", &package("0.10.0")),
+                ("extension.vsixmanifest", &manifest("0.10.0")),
+            ],
+        )?;
+        let error = reject(&misnamed)?;
+        assert!(error.contains("ripr-<version>.vsix"), "{error}");
         Ok(())
     })
 }
@@ -55724,6 +56479,30 @@ fn check_pr_bounded_error_lines_are_crlf_normalized_and_capped() {
     assert!(!crlf.contains('\r'), "CRLF input is normalized: {crlf:?}");
 }
 
+/// Remove a test-owned scratch directory, retrying a Windows sharing or lock
+/// violation (os error 32/33) for up to five seconds. A process another test
+/// spawned while this test held the cwd there, or a scanner opening the new
+/// report, can keep a handle briefly; hosted Windows failed this cleanup after
+/// the oracle had passed (#10344). Any other error, or a holder that outlasts
+/// the bound, still fails.
+fn remove_owned_scratch_dir(root: &Path) -> std::io::Result<()> {
+    const SHARING_VIOLATION: i32 = 32;
+    const LOCK_VIOLATION: i32 = 33;
+    let mut attempts = 0;
+    loop {
+        match fs::remove_dir_all(root) {
+            Err(err)
+                if attempts < 50
+                    && matches!(err.raw_os_error(), Some(SHARING_VIOLATION | LOCK_VIOLATION)) =>
+            {
+                attempts += 1;
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            other => return other,
+        }
+    }
+}
+
 #[test]
 fn check_pr_failure_report_replaces_stale_success_report() -> Result<(), String> {
     let guard = acquire_test_cwd_write_guard();
@@ -55781,7 +56560,7 @@ fn check_pr_failure_report_replaces_stale_success_report() -> Result<(), String>
         )
     });
     restore?;
-    let cleanup = fs::remove_dir_all(&root)
+    let cleanup = remove_owned_scratch_dir(&root)
         .map_err(|err| format!("remove report-test scratch {}: {err}", root.display()));
     drop(guard);
     match outcome {
@@ -57227,10 +58006,12 @@ fn routed_rust_docs_gate_runs_capability_registry_checks() -> Result<(), String>
     for needle in [
         "cargo xtask capability-docs --check",
         "cargo xtask check-capability-producers",
-        "docs/status/SUPPORT_TIERS\\.md",
-        "docs/LANGUAGE_ADAPTER_PREVIEW\\.md",
+        "docs/status/SUPPORT_TIERS.md",
+        "docs/LANGUAGE_ADAPTER_PREVIEW.md",
         "core.quotePath=false",
         "docs/specs/",
+        "--name-only -z",
+        "read -r -d '' path",
     ] {
         if !docs_gate.contains(needle) {
             return Err(format!("docs-gate must contain `{needle}`"));

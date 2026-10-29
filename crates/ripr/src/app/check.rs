@@ -65,6 +65,26 @@ pub(crate) fn check_workspace_with_config_typed(
     Ok((output, view))
 }
 
+/// [`check_workspace_worktree_with_config`] keeping the failure typed and
+/// returning the run's mixed-language completeness view, the saved
+/// tracked-worktree counterpart of [`check_workspace_with_config_typed`]
+/// (#7357). Unlike the LSP refresh entry point it keeps the disclosure
+/// probes, so the untracked and ignored working-tree facts are populated.
+pub(crate) fn check_workspace_worktree_with_config_typed(
+    input: CheckInput,
+    config: &RiprConfig,
+) -> Result<
+    (
+        CheckOutput,
+        Option<crate::analysis::language_outcome::LanguageCompletenessView>,
+    ),
+    CoreError,
+> {
+    let (output, _, _, view) =
+        check_with_progress_and_origins(input, config, AnalysisProgressScope::Worktree, None)?;
+    Ok((output, view))
+}
+
 pub fn check_workspace_worktree_with_config(
     input: CheckInput,
     config: &RiprConfig,
@@ -456,6 +476,16 @@ fn check_with_progress_and_origins_run(
             probes = crate::output::count_noun::count_noun(probe_count, "probe", "probes"),
             findings = crate::output::count_noun::count_noun(finding_count, "finding", "findings"),
         );
+        // #10725: persistent per-file fact-cache admissions, one line per
+        // language that did cache work. A zero-work run stays silent — the
+        // renderer returns None instead of borrowing counts.
+        for (language, stats) in &analysis.preview_fact_caches {
+            if let Some(line) =
+                crate::analysis::language::adapter::render_fact_cache_line(language.as_str(), stats)
+            {
+                eprintln!("ripr: {line}");
+            }
+        }
     }
 
     progress.emit(AnalysisProgressStage::BuildingOutput);
@@ -543,6 +573,7 @@ pub fn repo_seam_inventory_input(input: CheckInput) -> CheckOutput {
             rust_diagnostic_origins: Default::default(),
             rust_consumed_sources: Default::default(),
             language_view: None,
+            preview_fact_caches: Vec::new(),
         },
     )
 }
@@ -767,7 +798,7 @@ impl PerlProducerStaging {
                 Err(error) => {
                     return Err(format!(
                         "failed to create Perl exporter staging `{}`: {error}",
-                        directory.display()
+                        crate::output::path::human_path(&directory)
                     ));
                 }
             }
@@ -785,8 +816,8 @@ impl PerlProducerStaging {
             }
             Err(error) => Err(format!(
                 "partial packet cleanup failed at `{}`: {error}; staging retained at `{}`",
-                self.packet.display(),
-                self.directory.display()
+                crate::output::path::human_path(&self.packet),
+                crate::output::path::human_path(&self.directory)
             )),
         };
         match cleanup {
@@ -813,14 +844,14 @@ impl PerlProducerStaging {
             {
                 return Err(format!(
                     "Perl exporter staging cleanup failed at `{}`: {error}; staging retained",
-                    scratch.display()
+                    crate::output::path::human_path(scratch)
                 ));
             }
         }
         std::fs::remove_dir(&self.directory).map_err(|error| {
             format!(
                 "Perl exporter staging cleanup failed at `{}`: {error}; staging retained",
-                self.directory.display()
+                crate::output::path::human_path(&self.directory)
             )
         })
     }
@@ -828,7 +859,7 @@ impl PerlProducerStaging {
     fn retained_failure(&self, reason: impl std::fmt::Display) -> String {
         format!(
             "{reason}; unpublished Perl exporter staging retained at `{}`",
-            self.directory.display()
+            crate::output::path::human_path(&self.directory)
         )
     }
 }
@@ -951,7 +982,7 @@ fn invoke_perl_lsp_producer(
         std::fs::write(&staging.diff, diff_text).map_err(|e| {
             staging.settled_failure(format!(
                 "failed to stage the diff for the Perl exporter at `{}`: {e}",
-                staging.diff.display()
+                crate::output::path::human_path(&staging.diff)
             ))
         })?;
         diff_arg = Some(
@@ -974,7 +1005,7 @@ fn invoke_perl_lsp_producer(
     let stderr_file = std::fs::File::create(&staging.stderr).map_err(|e| {
         staging.settled_failure(format!(
             "failed to create Perl exporter stderr capture `{}`: {e}",
-            staging.stderr.display()
+            crate::output::path::human_path(&staging.stderr)
         ))
     })?;
     let mut command = Command::new(&executable);
@@ -1027,7 +1058,7 @@ fn invoke_perl_lsp_producer(
                 std::fs::rename(tmp_path, &packet_path).map_err(|e| {
                     staging.retained_failure(format!(
                         "failed to finalize Perl facts packet `{}`: {e}",
-                        packet_path.display()
+                        crate::output::path::human_path(&packet_path)
                     ))
                 })?;
                 // Publication already committed. A retained sidecar or a
@@ -1038,7 +1069,7 @@ fn invoke_perl_lsp_producer(
                         "{}",
                         terminal_safe(format!(
                             "warning: Perl facts packet published at `{}`; {cleanup}",
-                            packet_path.display()
+                            crate::output::path::human_path(&packet_path)
                         ))
                     );
                 }
@@ -1046,7 +1077,7 @@ fn invoke_perl_lsp_producer(
             }
             Err(staging.settled_failure(format!(
                 "Perl facts exporter exited successfully but wrote no packet at `{}`",
-                tmp_path.display()
+                crate::output::path::human_path(tmp_path)
             )))
         }
         crate::git::ChildWait::TimedOut(_) => {
@@ -1083,8 +1114,8 @@ fn root_relative_arg(root: &Path, path: &Path) -> Result<String, String> {
     let relative = path.strip_prefix(root).map_err(|error| {
         format!(
             "Perl exporter staging path `{}` is outside the analysis root `{}`: {error}",
-            path.display(),
-            root.display()
+            crate::output::path::human_path(path),
+            crate::output::path::human_path(root)
         )
     })?;
     let text = relative.to_string_lossy().replace('\\', "/");
@@ -1434,6 +1465,7 @@ mod tests {
             rust_diagnostic_origins: Default::default(),
             rust_consumed_sources: Default::default(),
             language_view: None,
+            preview_fact_caches: Vec::new(),
         }
     }
 

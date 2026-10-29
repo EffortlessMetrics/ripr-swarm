@@ -1,0 +1,12 @@
+[package]
+name = "specb_layout"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[dependencies]
+
+[[test]]
+name = "contract"
+path = "src/contract_test.rs"

@@ -2,10 +2,10 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/owner_return_pin_identity_traps/input
 
-Summary: 6 probes (0 exposed, 3 weak, 1 unrevealed, 0 no path, 2 unknown); 6 of 6 findings unsuppressed (2 base-side evidence, not candidate edit targets)
+Summary: 6 changed behaviors checked: 0 appear noticed by tests, 3 partly noticed, 1 reached but not noticed, 0 no test path, 2 unclear. 6 found, 0 suppressed by your settings (2 base-side evidence, not candidate edit targets)
 
 Analysis outcome: findings below (analysis complete)
-  Counts: 1 changed file(s), 8 changed line(s), 4 candidate line(s), 6 probe(s), 6 finding(s)
+  Counts: 1 changed file(s), 8 changed line(s), 4 candidate line(s), 6 changed behavior(s) checked, 6 finding(s)
 
 Start here:
   State: a test gap to inspect or repair
@@ -13,9 +13,9 @@ Start here:
   File: ./src/lib.rs:21
   Static exposure: weak (severity: warning, confidence 0.92)
   Why weak: a related test reaches this change but does not observe the exact changed value
-  Canonical gap: gap:rust:src/lib.rs:next_word:return_value:return_value:self.base*3
+  Gap ID (for scripts): gap:rust:src/lib.rs:next_word:return_value:return_value:self.base*3
   Changed behavior: self.base() * 3
-  Missing discriminator: No strong discriminator was detected
+  Missing check: No strong discriminator was detected
   Related test: tests/trap_tests.rs:9 fixed_reader_overrides_next_word (ripr could not confirm that this assertion observes the changed behavior)
   Next step: The related test `fixed_reader_overrides_next_word` already has an exact assertion;
     this does not establish observation of the returned value. Check whether the change can affect
@@ -27,8 +27,11 @@ Start here:
       discriminator = assertion distinguishes intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
-    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
-      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      no test path = no test path found; unclear = analysis limited, not a verdict;
+      found = listed for review; suppressed by your settings = hidden by your suppression policy;
+      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: Related tests appear to reach next_word: fixed_reader_overrides_next_word
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 6 more detail line(s) in --format human-full

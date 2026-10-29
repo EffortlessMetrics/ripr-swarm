@@ -1,0 +1,448 @@
+//! A hop whose call is spelled through an own-crate module path (#8999).
+//!
+//! `VersionReq::matches` calls `eval::matches_req(..)`: the call is a path
+//! qualified invocation, and name identity alone is not callee identity
+//! (#3296 review B1). The hop binds here only when the spelled path resolves,
+//! from the caller's own module, to the module the unique free-function
+//! callee is defined in. Every other shape declines and keeps the
+//! pre-existing "not statically splittable" stop.
+//!
+//! Fail-closed admit, all of:
+//!
+//! - the callee is the one function of its name, a module-level `fn` with a
+//!   body, and caller and callee are items of the root package's library
+//!   (both compose under `src/lib.rs`, no `#[path]` remap, every module
+//!   segment declared exactly once);
+//! - the caller mentions the callee name exactly once in one call fact, as
+//!   `<qualifier>::<callee>(..)` with a plain-identifier qualifier;
+//! - the qualifier is `crate::..`, `self::..`, `super::..` or a child module
+//!   of the caller's module, and no import, alias, generic parameter or
+//!   local declaration may rebind a bare first segment;
+//! - the resolved module path equals the callee's module path.
+
+use super::{HelperHop, split_call_arguments_at_paren};
+use crate::analysis::classify::{call_identity, related_tests};
+use crate::analysis::facts::{FunctionContainer, FunctionSummary, RustIndex};
+use std::collections::BTreeSet;
+use std::path::Path;
+
+pub(super) fn qualified_free_hop(
+    caller: &FunctionSummary,
+    callee_name: &str,
+    index: &RustIndex,
+) -> Option<HelperHop> {
+    let mut candidates = index
+        .functions()
+        .iter()
+        .filter(|function| function.name == callee_name);
+    let callee = candidates.next()?;
+    if candidates.next().is_some()
+        || callee.item.container != FunctionContainer::Free
+        || !callee.item.has_body
+    {
+        return None;
+    }
+    if !in_root_library(index, caller) || !in_root_library(index, callee) {
+        return None;
+    }
+    let caller_module = call_identity::root_library_member_module_path(index, caller)?;
+    let callee_module = call_identity::root_library_item_module_path(index, callee)?;
+
+    let mut mentions = caller.calls.iter().filter(|call| call.name == callee_name);
+    let call = mentions.next()?;
+    if mentions.next().is_some() {
+        return None;
+    }
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(&call.text);
+    let (qualifier, paren) = sole_qualified_call(&masked, callee_name)?;
+    // A call token inside a macro need not execute, and its arguments may
+    // introduce bindings the ordinary syntax tree cannot resolve.
+    if super::caller_invokes_opaque_macro(&caller.body, true) {
+        return None;
+    }
+    let source = index.files().get(&caller.file)?.source.to_string();
+    let resolved = resolve_qualifier(&qualifier, &caller_module, &source)?;
+    if resolved != callee_module {
+        return None;
+    }
+    let arguments = split_call_arguments_at_paren(&call.text, paren)?;
+    Some(HelperHop {
+        caller: caller.clone(),
+        call_text: call.text.to_string(),
+        arguments,
+        receiver: None,
+        through_macro: false,
+        module_qualified: true,
+        transparent_macros_rebound: super::transparent_macro_name_rebound(&caller.body, index),
+        diverging_handlers: Vec::new(),
+    })
+}
+
+/// Whether `function` is an item of the root package's library: a `src/`
+/// file of the root package composing under `src/lib.rs`.
+fn in_root_library(index: &RustIndex, function: &FunctionSummary) -> bool {
+    !related_tests::path_is_absolute_form(&function.file)
+        && !call_identity::under_tests_dir(&function.file)
+        && related_tests::package_prefix(&function.file).is_none()
+        && super::super::owner_pin::target_root(&function.file, index, &BTreeSet::new())
+            .is_some_and(|root| root == Path::new("src/lib.rs"))
+}
+
+/// The qualifier segments and the byte index of the argument-list paren of
+/// the only mention of `callee` in `masked`, when that mention is a path
+/// qualified call (`a::b::callee(`). `None` for a bare, method, generic or
+/// repeated mention.
+fn sole_qualified_call(masked: &str, callee: &str) -> Option<(Vec<String>, usize)> {
+    let is_word = |ch: char| ch.is_alphanumeric() || ch == '_' || !ch.is_ascii();
+    let mut found = None;
+    for (at, _) in masked.match_indices(callee) {
+        if masked[..at].chars().next_back().is_some_and(is_word)
+            || masked[at + callee.len()..]
+                .chars()
+                .next()
+                .is_some_and(is_word)
+        {
+            continue;
+        }
+        if found.is_some() {
+            return None;
+        }
+        found = Some(at);
+    }
+    let at = found?;
+    let after = &masked[at + callee.len()..];
+    if !after.starts_with('(') {
+        return None;
+    }
+    let paren = at + callee.len();
+    let mut rest = &masked[..at];
+    let mut segments = Vec::new();
+    while let Some(head) = rest.strip_suffix("::") {
+        let start = head
+            .rfind(|ch: char| !is_word(ch))
+            .map_or(0, |index| index + 1);
+        let segment = &head[start..];
+        if segment.is_empty()
+            || !segment.is_ascii()
+            || segment.starts_with(|ch: char| ch.is_ascii_digit())
+        {
+            return None;
+        }
+        segments.push(segment.to_string());
+        rest = &head[..start];
+    }
+    // A leading `::`, a generic argument list or a receiver before the path
+    // is not a plain own-crate module path.
+    if segments.is_empty() || rest.ends_with([':', '.', '>', '<', '#']) {
+        return None;
+    }
+    segments.reverse();
+    Some((segments, paren))
+}
+
+/// The module path `qualifier` names when written in `caller_module`, or
+/// `None` when it cannot be read (fails closed).
+fn resolve_qualifier(
+    qualifier: &[String],
+    caller_module: &[String],
+    caller_source: &str,
+) -> Option<Vec<String>> {
+    let mut segments = qualifier.iter().map(String::as_str).peekable();
+    let mut base: Vec<String> = caller_module.to_vec();
+    match segments.peek().copied()? {
+        "crate" => {
+            segments.next();
+            base.clear();
+        }
+        "self" => {
+            segments.next();
+        }
+        "super" => {
+            while segments.peek() == Some(&"super") {
+                segments.next();
+                base.pop()?;
+            }
+        }
+        first => {
+            // A bare first segment names a child module of this module only
+            // when no import may bind the name to something else.
+            if first.starts_with("r#") || namespace_may_rebind(caller_source, first) {
+                return None;
+            }
+        }
+    }
+    for segment in segments {
+        if matches!(segment, "crate" | "self" | "super") || segment.starts_with("r#") {
+            return None;
+        }
+        base.push(segment.to_string());
+    }
+    Some(base)
+}
+
+/// Conservatively refuse imports, aliases, generic parameters and block-local
+/// declarations that can give a bare module segment a different identity.
+fn namespace_may_rebind(source: &str, name: &str) -> bool {
+    use ra_ap_syntax::{AstNode, SyntaxKind, ast, ast::HasName};
+    if call_identity::source_may_splice_items(source, true) {
+        return true;
+    }
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(source) else {
+        return true;
+    };
+    parse.tree().syntax().descendants().any(|item| {
+        if ast::Use::can_cast(item.kind()) || ast::ExternCrate::can_cast(item.kind()) {
+            return item.descendants_with_tokens().any(|element| {
+                element.kind() == SyntaxKind::STAR
+                    || element.kind() == SyntaxKind::IDENT
+                        && element
+                            .as_token()
+                            .is_some_and(|token| token.text().trim_start_matches("r#") == name)
+            });
+        }
+        if ast::Module::can_cast(item.kind())
+            && !item
+                .ancestors()
+                .any(|node| ast::BlockExpr::can_cast(node.kind()))
+        {
+            return false;
+        }
+        ast::AnyHasName::cast(item)
+            .and_then(|item| item.name())
+            .is_some_and(|ident| {
+                ident.syntax().descendants_with_tokens().any(|element| {
+                    element.kind() == SyntaxKind::IDENT
+                        && element
+                            .as_token()
+                            .is_some_and(|token| token.text().trim_start_matches("r#") == name)
+                })
+            })
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::analysis::rust_index::summarize_file;
+    use std::path::PathBuf;
+
+    fn index_of(files: &[(&str, &str)]) -> RustIndex {
+        let mut index = RustIndex::default();
+        for (path, text) in files {
+            let facts = summarize_file(PathBuf::from(path), (*text).to_string());
+            index.extend_functions(facts.functions.iter().cloned());
+            index.extend_tests(facts.tests.iter().cloned());
+            index.insert_file_only(PathBuf::from(path), facts);
+        }
+        crate::analysis::facts::compose_fixture_source_roles(&mut index, Path::new(""));
+        index
+    }
+
+    const EVAL: &str = "pub(crate) fn matches_req(r: &u64, v: u64) -> bool {\n    v >= *r\n}\n";
+
+    fn hop_names(files: &[(&str, &str)]) -> Option<Vec<String>> {
+        let index = index_of(files);
+        let caller = index
+            .functions()
+            .iter()
+            .find(|function| function.name == "matches")?;
+        let hop = qualified_free_hop(caller, "matches_req", &index)?;
+        Some(hop.arguments)
+    }
+
+    fn lib(call: &str, prelude: &str) -> String {
+        format!(
+            "mod eval;\n{prelude}pub struct Req(u64);\nimpl Req {{\n    pub fn matches(&self, v: u64) -> bool {{\n        {call}\n    }}\n}}\n"
+        )
+    }
+
+    #[test]
+    fn a_child_module_path_to_the_unique_callee_binds_the_hop() {
+        let source = lib("eval::matches_req(&self.0, v)", "");
+        assert_eq!(
+            hop_names(&[("src/lib.rs", &source), ("src/eval.rs", EVAL)]),
+            Some(vec!["&self.0".to_string(), "v".to_string()])
+        );
+        let source = lib("crate::eval::matches_req(&self.0, v)", "");
+        assert!(hop_names(&[("src/lib.rs", &source), ("src/eval.rs", EVAL)]).is_some());
+        let source = lib("self::eval::matches_req(&self.0, v)", "");
+        assert!(hop_names(&[("src/lib.rs", &source), ("src/eval.rs", EVAL)]).is_some());
+    }
+
+    #[test]
+    fn a_path_naming_another_module_declines() {
+        let source = lib("other::matches_req(&self.0, v)", "mod other;\n");
+        assert_eq!(
+            hop_names(&[
+                ("src/lib.rs", &source),
+                ("src/eval.rs", EVAL),
+                ("src/other.rs", "pub fn unrelated() {}\n"),
+            ]),
+            None
+        );
+        // `super::` from the crate root has no parent.
+        let source = lib("super::eval::matches_req(&self.0, v)", "");
+        assert_eq!(
+            hop_names(&[("src/lib.rs", &source), ("src/eval.rs", EVAL)]),
+            None
+        );
+    }
+
+    #[test]
+    fn an_import_of_the_first_segment_declines() {
+        let source = lib("eval::matches_req(&self.0, v)", "use other::eval;\n");
+        assert_eq!(
+            hop_names(&[("src/lib.rs", &source), ("src/eval.rs", EVAL)]),
+            None
+        );
+    }
+
+    #[test]
+    fn a_bare_method_generic_or_repeated_mention_declines() {
+        for call in [
+            "matches_req(&self.0, v)",
+            "self.0.matches_req(v)",
+            "<Req>::matches_req(&self.0, v)",
+            "eval::matches_req(&self.0, v) && eval::matches_req(&self.0, v)",
+            "std::eval::matches_req(&self.0, v)",
+        ] {
+            let source = lib(call, "");
+            assert_eq!(
+                hop_names(&[("src/lib.rs", &source), ("src/eval.rs", EVAL)]),
+                None,
+                "{call}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_same_named_callee_in_a_second_module_declines() {
+        let source = lib("eval::matches_req(&self.0, v)", "mod twin;\n");
+        assert_eq!(
+            hop_names(&[
+                ("src/lib.rs", &source),
+                ("src/eval.rs", EVAL),
+                ("src/twin.rs", EVAL),
+            ]),
+            None
+        );
+    }
+
+    #[test]
+    fn a_grouped_multi_line_or_restricted_import_of_the_first_segment_declines() {
+        for prelude in [
+            "use other::{\n    eval,\n};\n",
+            "pub(crate) use other::eval;\n",
+            "use other::{self as x, eval as y};\n",
+        ] {
+            let source = lib("eval::matches_req(&self.0, v)", prelude);
+            assert_eq!(
+                hop_names(&[("src/lib.rs", &source), ("src/eval.rs", EVAL)]),
+                None,
+                "{prelude}"
+            );
+        }
+        // An unrelated import does not block the hop.
+        let source = lib(
+            "eval::matches_req(&self.0, v)",
+            "use std::fmt::{\n    Debug,\n};\n",
+        );
+        assert!(hop_names(&[("src/lib.rs", &source), ("src/eval.rs", EVAL)]).is_some());
+    }
+
+    #[test]
+    fn a_function_body_import_of_the_first_segment_declines() {
+        let source = lib(
+            "use other::eval;\n        eval::matches_req(&self.0, v)",
+            "",
+        );
+        assert_eq!(
+            hop_names(&[("src/lib.rs", &source), ("src/eval.rs", EVAL)]),
+            None
+        );
+    }
+
+    #[test]
+    fn generic_and_glob_bound_qualifiers_decline() {
+        let generic =
+            lib("eval::matches_req(&self.0, v)", "").replace("fn matches(", "fn matches<eval>(");
+        let glob = lib("use other::*;\n        eval::matches_req(&self.0, v)", "");
+        for source in [generic, glob] {
+            assert_eq!(
+                hop_names(&[("src/lib.rs", &source), ("src/eval.rs", EVAL)]),
+                None
+            );
+        }
+    }
+
+    #[test]
+    fn an_explicit_crate_path_ignores_a_local_alias() {
+        let source = lib(
+            "extern crate other as eval;\n        crate::eval::matches_req(&self.0, v)",
+            "",
+        );
+        assert!(hop_names(&[("src/lib.rs", &source), ("src/eval.rs", EVAL)]).is_some());
+    }
+
+    #[test]
+    fn super_and_nested_qualifiers_resolve_and_odd_segments_decline() {
+        let child = "pub struct Req(u64);\nimpl Req {\n    pub fn matches(&self, v: u64) -> bool {\n        super::eval::matches_req(&self.0, v)\n    }\n}\n";
+        assert!(
+            hop_names(&[
+                ("src/lib.rs", "mod eval;\nmod a;\n"),
+                ("src/a.rs", child),
+                ("src/eval.rs", EVAL),
+            ])
+            .is_some()
+        );
+        let source = lib("a::b::matches_req(&self.0, v)", "mod a;\n");
+        assert!(
+            hop_names(&[
+                ("src/lib.rs", &source),
+                ("src/a.rs", "pub mod b;\n"),
+                ("src/a/b.rs", EVAL),
+            ])
+            .is_some()
+        );
+        for call in [
+            "r#eval::matches_req(&self.0, v)",
+            "eval::self::matches_req(&self.0, v)",
+            "eval::super::eval::matches_req(&self.0, v)",
+            "eval::crate::matches_req(&self.0, v)",
+        ] {
+            let source = lib(call, "");
+            assert_eq!(
+                hop_names(&[("src/lib.rs", &source), ("src/eval.rs", EVAL)]),
+                None,
+                "{call}"
+            );
+        }
+    }
+
+    #[test]
+    fn items_outside_the_root_library_never_bind() {
+        let source = lib("eval::matches_req(&self.0, v)", "");
+        // A workspace member's library.
+        assert_eq!(
+            hop_names(&[
+                ("crates/m/src/lib.rs", &source),
+                ("crates/m/src/eval.rs", EVAL),
+            ]),
+            None
+        );
+        // An integration test crate calling its own module.
+        assert_eq!(
+            hop_names(&[("tests/api.rs", &source), ("tests/eval.rs", EVAL)]),
+            None
+        );
+        // A binary root: the callee is not composed under it.
+        assert_eq!(
+            hop_names(&[
+                ("src/lib.rs", "pub mod eval;\n"),
+                ("src/bin/tool.rs", &source),
+                ("src/eval.rs", EVAL),
+            ]),
+            None
+        );
+    }
+}

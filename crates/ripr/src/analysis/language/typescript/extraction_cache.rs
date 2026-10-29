@@ -124,7 +124,7 @@ pub(crate) fn facts_fingerprint(
 /// All per-file facts derived from one oxc parse (#10071): parse status,
 /// owners, export facts, and phase-2 facts. One parse per (path, content,
 /// root, alias-map) replaces the four separate parses per save.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct FileFacts {
     /// `None` when the source parsed cleanly; otherwise the same
     /// `"N parser error(s): <first message>"` string `parse_error_reason`
@@ -243,13 +243,7 @@ pub(crate) fn file_facts_cached(
     workspace_root: &Path,
     alias_map: Option<&TsAliasMap>,
 ) -> Result<Rc<FileFacts>, String> {
-    let path = normalized_path(relative);
-    let alias_digest = alias_map.map_or((0, 0), TsAliasMap::cache_digest);
-    let key = CacheKey {
-        fingerprint: facts_fingerprint(workspace_root, alias_digest, &path, source),
-        source_len: source.len(),
-        path,
-    };
+    let key = file_facts_key(relative, source, workspace_root, alias_map);
     let cached = FILE_FACTS_CACHE.with(|cache| {
         cache.try_borrow_mut().ok().and_then(|mut cache| {
             cache
@@ -337,21 +331,8 @@ fn strings_bytes(strings: &[String]) -> usize {
         .sum()
 }
 
-/// Approximate heap bytes of a `Vec<(String, String)>`.
-fn string_pairs_bytes(pairs: &[(String, String)]) -> usize {
-    pairs
-        .iter()
-        .map(|(left, right)| {
-            left.len()
-                .saturating_add(right.len())
-                .saturating_add(2 * std::mem::size_of::<String>())
-        })
-        .sum()
-}
-
-/// Approximate retained bytes of one extracted test. File-wide lists
-/// (imports, mocks, helpers) are copied into EVERY test of a file, so they
-/// dominate for files with many tests and must be counted per test.
+/// Approximate retained bytes of one extracted test, without the file-wide
+/// lists its tests share; `shared_bytes` counts each of those once.
 fn test_bytes(test: &super::types::TypeScriptTest) -> usize {
     std::mem::size_of::<super::types::TypeScriptTest>()
         .saturating_add(test.name.len())
@@ -360,25 +341,58 @@ fn test_bytes(test: &super::types::TypeScriptTest) -> usize {
         .saturating_add(test.reach_body_text.as_ref().map_or(0, String::len))
         .saturating_add(test.file.as_os_str().len())
         .saturating_add(strings_bytes(&test.describe_names))
-        .saturating_add(strings_bytes(&test.mocks_in_file))
-        .saturating_add(strings_bytes(&test.unstable_member_roots_in_file))
-        .saturating_add(strings_bytes(&test.identity_helpers_in_file))
-        .saturating_add(strings_bytes(&test.written_locals_in_file))
         .saturating_add(strings_bytes(&test.setup_hook_bodies))
-        .saturating_add(string_pairs_bytes(&test.default_member_only_locals_in_file))
-        .saturating_add(string_pairs_bytes(&test.mock_factories_in_file))
-        .saturating_add(string_pairs_bytes(&test.mock_spread_sources_in_file))
-        // Elements own further strings; a flat 96 bytes each keeps the estimate
-        // on the safe (large) side without walking their fields.
-        .saturating_add(test.imports_in_file.len().saturating_mul(
-            std::mem::size_of::<super::types::TypeScriptImport>().saturating_add(96),
-        ))
-        .saturating_add(test.scope_bindings.len().saturating_mul(
-            std::mem::size_of::<super::types::TypeScriptScopeBinding>().saturating_add(96),
-        ))
         .saturating_add(test.assertions.len().saturating_mul(
             std::mem::size_of::<super::types::TypeScriptAssertion>().saturating_add(96),
         ))
+}
+
+/// Approximate retained bytes of the file-wide lists (imports, mocks,
+/// helpers, scope bindings) the tests of one file share. Each distinct list is
+/// counted once however many tests hold it.
+fn shared_bytes(tests: &[super::types::TypeScriptTest]) -> usize {
+    use super::types::{Shared, TypeScriptImport, TypeScriptScopeBinding};
+    use std::collections::HashSet;
+
+    // Elements own further strings; a flat 96 bytes each keeps the estimate
+    // on the safe (large) side without walking their fields.
+    fn elements<T: Clone>(list: &Shared<T>, seen: &mut HashSet<usize>, each: usize) -> usize {
+        if list.is_empty() || !seen.insert(list.identity() as usize) {
+            return 0;
+        }
+        list.len().saturating_mul(each.saturating_add(96))
+    }
+    let mut seen = HashSet::new();
+    let mut total = 0usize;
+    for test in tests {
+        for list in [
+            &test.mocks_in_file,
+            &test.unstable_member_roots_in_file,
+            &test.identity_helpers_in_file,
+            &test.written_locals_in_file,
+        ] {
+            total = total.saturating_add(elements(list, &mut seen, std::mem::size_of::<String>()));
+        }
+        for list in [
+            &test.default_member_only_locals_in_file,
+            &test.mock_factories_in_file,
+            &test.mock_spread_sources_in_file,
+        ] {
+            total =
+                total.saturating_add(elements(list, &mut seen, 2 * std::mem::size_of::<String>()));
+        }
+        total = total.saturating_add(elements(
+            &test.imports_in_file,
+            &mut seen,
+            std::mem::size_of::<TypeScriptImport>(),
+        ));
+        total = total.saturating_add(elements(
+            &test.scope_bindings,
+            &mut seen,
+            std::mem::size_of::<TypeScriptScopeBinding>(),
+        ));
+    }
+    total
 }
 
 impl TestExtractionCache {
@@ -392,7 +406,12 @@ impl TestExtractionCache {
     }
 
     fn entry_bytes(key: &CacheKey, extraction: &TestExtraction) -> usize {
-        let tests_bytes: usize = extraction.0.iter().map(test_bytes).sum();
+        let tests_bytes: usize = extraction
+            .0
+            .iter()
+            .map(test_bytes)
+            .sum::<usize>()
+            .saturating_add(shared_bytes(&extraction.0));
         let expansion_bytes = extraction
             .2
             .as_ref()
@@ -448,15 +467,7 @@ fn test_extraction_cached_with(
     source: &str,
     extract: impl FnOnce() -> Result<TestExtraction, String>,
 ) -> Rc<TestExtraction> {
-    // Lossless path identity, not `normalized_path`: the extracted tests store
-    // `relative` as their `file`, and a Unix filename may contain a literal
-    // backslash that normalization would fold into a directory separator.
-    let path = relative.to_string_lossy().into_owned();
-    let key = CacheKey {
-        fingerprint: facts_fingerprint(Path::new(""), (0, 0), &path, source),
-        source_len: source.len(),
-        path,
-    };
+    let key = test_extraction_key(relative, source);
     let cached = TEST_EXTRACTION_CACHE.with(|cache| {
         cache.try_borrow_mut().ok().and_then(|cache| {
             cache
@@ -484,6 +495,115 @@ fn test_extraction_cached_with(
     extraction
 }
 
+/// Seed the process-lifetime facts cache with `facts` for
+/// `(relative, source)` under `(workspace_root, alias_map)` without parsing.
+/// The persistent per-file fact store (#10725) calls this after a disk hit so
+/// the unchanged loop body below serves memory; the key is computed exactly
+/// as `file_facts_cached` computes it, so a later in-process lookup for the
+/// same inputs is a hit.
+pub(crate) fn seed_file_facts(
+    relative: &Path,
+    source: &str,
+    workspace_root: &Path,
+    alias_map: Option<&TsAliasMap>,
+    facts: Rc<FileFacts>,
+) {
+    let key = file_facts_key(relative, source, workspace_root, alias_map);
+    FILE_FACTS_CACHE.with(|cache| {
+        if let Ok(mut cache) = cache.try_borrow_mut() {
+            let cache = cache.get_or_insert_with(FileFactsCache::default);
+            cache.insert(key, facts);
+        }
+    });
+}
+
+/// Seed the test-extraction cache with `extraction` for `(relative, source)`
+/// without extracting. The persistent per-file fact store (#10725) calls this
+/// after a disk hit; the key is computed exactly as
+/// `test_extraction_cached_with` computes it.
+pub(crate) fn seed_test_extraction(relative: &Path, source: &str, extraction: Rc<TestExtraction>) {
+    let key = test_extraction_key(relative, source);
+    TEST_EXTRACTION_CACHE.with(|cache| {
+        if let Ok(mut cache) = cache.try_borrow_mut() {
+            let cache = cache.get_or_insert_with(|| {
+                TestExtractionCache::with_bounds(MAX_ENTRIES, MAX_APPROX_BYTES)
+            });
+            cache.insert(key, extraction);
+        }
+    });
+}
+
+/// The one key `file_facts_cached`, `seed_file_facts` and
+/// `file_facts_in_memory` share, so a seed always matches a later lookup.
+fn file_facts_key(
+    relative: &Path,
+    source: &str,
+    workspace_root: &Path,
+    alias_map: Option<&TsAliasMap>,
+) -> CacheKey {
+    let path = normalized_path(relative);
+    let alias_digest = alias_map.map_or((0, 0), TsAliasMap::cache_digest);
+    CacheKey {
+        fingerprint: facts_fingerprint(workspace_root, alias_digest, &path, source),
+        source_len: source.len(),
+        path,
+    }
+}
+
+/// The one key the test-extraction lookup, seed and probe share.
+fn test_extraction_key(relative: &Path, source: &str) -> CacheKey {
+    // Lossless path identity, not `normalized_path`: the extracted tests store
+    // `relative` as their `file`, and a Unix filename may contain a literal
+    // backslash that normalization would fold into a directory separator.
+    let path = relative.to_string_lossy().into_owned();
+    CacheKey {
+        fingerprint: facts_fingerprint(Path::new(""), (0, 0), &path, source),
+        source_len: source.len(),
+        path,
+    }
+}
+
+/// Whether the process-lifetime facts cache already holds `(relative,
+/// source)`, so the persistent store need not be read (an LSP refresh).
+pub(crate) fn file_facts_in_memory(
+    relative: &Path,
+    source: &str,
+    workspace_root: &Path,
+    alias_map: Option<&TsAliasMap>,
+) -> bool {
+    let key = file_facts_key(relative, source, workspace_root, alias_map);
+    FILE_FACTS_CACHE.with(|cache| {
+        cache.try_borrow().ok().is_some_and(|cache| {
+            cache
+                .as_ref()
+                .is_some_and(|cache| cache.entries.contains_key(&key))
+        })
+    })
+}
+
+/// Whether the test-extraction cache holds `(relative, source)`. A worker
+/// failure is served empty but never cached, so this is also how the
+/// persistent store tells a real extraction from an environmental empty one.
+pub(crate) fn test_extraction_in_memory(relative: &Path, source: &str) -> bool {
+    let key = test_extraction_key(relative, source);
+    TEST_EXTRACTION_CACHE.with(|cache| {
+        cache.try_borrow().ok().is_some_and(|cache| {
+            cache
+                .as_ref()
+                .is_some_and(|cache| cache.entries.contains_key(&key))
+        })
+    })
+}
+
+/// Drop both process-lifetime extraction caches (tests only). The persistent
+/// store (#10725) tests exercise the disk layer between runs, so every
+/// scenario starts without in-memory facts.
+#[cfg(test)]
+pub(crate) fn reset_caches_for_test() {
+    FILE_FACTS_CACHE.with(|cache| *cache.borrow_mut() = None);
+    TEST_EXTRACTION_CACHE.with(|cache| *cache.borrow_mut() = None);
+}
+
 /// Number of entries in the test-extraction cache (tests only).
 #[cfg(test)]
 fn test_extraction_cache_len() -> usize {
@@ -497,8 +617,8 @@ fn test_extraction_cache_len() -> usize {
 
 /// Export facts for `(path, source)` under `(workspace_root, alias_map)`,
 /// served from the combined process-lifetime facts cache (#10071, replacing
-/// the #10063 export-facts cache). Worker refusal or failure degrades to
-/// `None` (uncached, skipped by the caller exactly as before).
+/// the #10063 export-facts cache). Worker refusal, failure, or a parser error
+/// returns `None`: unavailable facts are not evidence of an empty export set.
 pub(crate) fn export_facts_cached(
     relative: &Path,
     source: &str,
@@ -506,8 +626,9 @@ pub(crate) fn export_facts_cached(
     alias_map: Option<&TsAliasMap>,
 ) -> Option<ModuleExportFacts> {
     file_facts_cached(relative, source, workspace_root, alias_map)
-        .map(|facts| facts.export_facts.clone())
         .ok()
+        .filter(|facts| facts.parse_error.is_none())
+        .map(|facts| facts.export_facts.clone())
 }
 
 /// Phase-2 facts for `(path, source)` under `(workspace_root, alias_map)`,
@@ -950,7 +1071,7 @@ mod tests {
     }
 
     #[test]
-    fn test_extraction_cache_counts_file_wide_lists_once_per_test() {
+    fn test_extraction_cache_counts_a_shared_file_wide_list_once() {
         let many_imports: String = (0..40)
             .map(|n| format!("import {{ f{n} }} from '../src/f{n}';\n"))
             .collect();
@@ -970,9 +1091,12 @@ mod tests {
             * std::mem::size_of::<super::super::types::TypeScriptImport>();
         assert!(one_test_imports > 0);
         assert!(
-            bytes >= 50 * one_test_imports,
-            "the per-test copies of the file's imports must be counted: {bytes} < {}",
-            50 * one_test_imports
+            bytes >= one_test_imports,
+            "the file's imports must be counted: {bytes} < {one_test_imports}"
+        );
+        assert!(
+            bytes < 50 * one_test_imports,
+            "the tests share one import list, so it is not charged per test: {bytes}"
         );
     }
 
@@ -1014,11 +1138,15 @@ mod tests {
             before,
             "the failure must not be stored"
         );
+        // The persistent store (#10725) persists an extraction only when this
+        // probe finds it, so the empty failure result never reaches disk.
+        assert!(!test_extraction_in_memory(path, TEST_FILE));
         let recovered = test_extraction_cached(path, TEST_FILE);
         assert_eq!(
             recovered.0.len(),
             1,
             "after the worker recovers, the same bytes must extract their test"
         );
+        assert!(test_extraction_in_memory(path, TEST_FILE));
     }
 }

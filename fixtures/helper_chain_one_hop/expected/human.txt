@@ -2,23 +2,23 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/helper_chain_one_hop/input
 
-Summary: 1 probe (0 exposed, 0 weak, 0 unrevealed, 0 no path, 1 unknown); 1 of 1 finding unsuppressed
+Summary: 1 changed behavior checked: 0 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 0 no test path, 1 unclear. 1 found, 0 suppressed by your settings
 
 Analysis outcome: findings below (analysis complete)
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
 
 Start here:
-  State: limited by static analysis
-  Safe next action: inspect the named static limitation before treating this as repair-ready
+  State: ripr cannot tell from reading the code whether tests would notice this
+  Safe next action: look at the reason below before adding a test
   File: ./src/lib.rs:2
   Static exposure: unknown (severity: warning, confidence 0.66)
-  Why unknown: infection could not be determined statically, and no sink the change reaches was established
-  Canonical gap: gap:rust:src/lib.rs:is_word_start:predicate_boundary:predicate:c==lit20
+  Why unknown: ripr could not tell which inputs would trigger the change, and could not follow it to something a test can check
+  Gap ID (for scripts): gap:rust:src/lib.rs:is_word_start:predicate_boundary:predicate:c==lit20
   Changed behavior: c == ' '
-  Missing discriminator (1 of 2): Changed boundary input is unresolved: boundary operand `c` is a
-    local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which
-    side of the boundary a test reaches; activation/infection is unknown; a related test that passes
-    literal inputs on each side of the boundary would let ripr decide
+  Missing check (1 of 2): Changed boundary input is unresolved: boundary operand `c` is a local or
+    computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the
+    boundary a test reaches; activation/infection is unknown; a related test that passes literal
+    inputs on each side of the boundary would let ripr decide
   Related test (1 of 2 matched rows): tests/classify.rs:4 leading_space_classifies_other
   Next step: Open the related test and trace its input through the local or computed operand
     (including default and empty cases) to see which side of the changed condition it exercises,
@@ -33,8 +33,11 @@ Start here:
       discriminator = assertion distinguishes intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
-    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
-      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      no test path = no test path found; unclear = analysis limited, not a verdict;
+      found = listed for review; suppressed by your settings = hidden by your suppression policy;
+      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: Related tests appear to reach is_word_start: leading_space_classifies_other, letter_classifies_word
     - infection unknown: Changed boundary input is unresolved: boundary operand `c` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which…
     - 9 more detail line(s) in --format human-full
@@ -42,7 +45,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/helper_chain_one_hop/input --diff <cwd>/fixtures/helper_chain_one_hop/diff.patch --mode fast probe:src_lib.rs:predicate:ac178c7f
   ripr context --root <cwd>/fixtures/helper_chain_one_hop/input --diff <cwd>/fixtures/helper_chain_one_hop/diff.patch --mode fast --at probe:src_lib.rs:predicate:ac178c7f
-  no repair start offered: repair route not ready (missing evidence: producer-owned missing discriminator fact: boundary_value; incomplete evidence stage: activation); run `ripr repair probe:src_lib.rs:predicate:ac178c7f --root <cwd>/fixtures/helper_chain_one_hop/input` for the full gate's answer
+  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: a test assertion that pins the changed boundary value exactly; incomplete evidence stage: activation; follow the Next step above, then rerun `ripr check`
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/helper_chain_one_hop/input --at src/lib.rs:2 --kind predicate
 

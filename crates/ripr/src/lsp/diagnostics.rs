@@ -2782,29 +2782,49 @@ fn gap_record_diagnostic_severity(record: &GapRecord) -> DiagnosticSeverity {
 }
 
 fn gap_record_diagnostic_message(record: &GapRecord) -> String {
-    let kind = non_empty(&record.kind).unwrap_or("Unknown");
-    let route = record
-        .repair_route
-        .as_ref()
-        .and_then(|route| non_empty(&route.route_kind))
-        .unwrap_or("InspectGap");
-    let mut message = if route == "InspectGap" {
-        format!("ripr gap: {kind}; Hover the highlighted code to inspect the static evidence.")
-    } else {
-        format!("ripr gap: {kind}; repair route: {route}")
+    // The Problems panel reads plain words: the CamelCase gap kind is spoken
+    // as a phrase, and the repair route stays machine-side in the diagnostic
+    // `data` payload (#10695).
+    let kind = camel_case_words(non_empty(&record.kind).unwrap_or("Unknown"));
+    let route = record.repair_route.as_ref();
+    let changed = route
+        .and_then(|route| route.changed_behavior.as_deref())
+        .and_then(non_empty);
+    let assertion = route
+        .and_then(|route| route.assertion_shape.as_deref())
+        .and_then(non_empty);
+    let mut message = match changed {
+        Some(changed) => format!("{kind}: {changed}."),
+        None => format!("{kind}."),
     };
-    if let Some(route) = &record.repair_route {
-        if let Some(changed) = route.changed_behavior.as_deref().and_then(non_empty) {
-            message.push_str(&format!("; changed behavior: {changed}"));
-        }
-        if let Some(assertion) = route.assertion_shape.as_deref().and_then(non_empty) {
-            message.push_str(&format!("; suggested check: {assertion}"));
-        }
+    if let Some(assertion) = assertion {
+        message.push_str(&format!(" Suggested check: {assertion}."));
+    }
+    if changed.is_none() && assertion.is_none() {
+        message.push_str(" Hover for details.");
     }
     if record.language_status == "preview" {
-        message.push_str("; preview advisory evidence");
+        message.push_str(" (Preview language: advisory.)");
     }
     message
+}
+
+/// `MissingBoundaryAssertion` -> `Missing boundary assertion`: split a
+/// CamelCase identifier into a sentence-case phrase. A value without an
+/// uppercase boundary comes back unchanged apart from its first letter.
+fn camel_case_words(identifier: &str) -> String {
+    let mut words = String::with_capacity(identifier.len());
+    for (index, ch) in identifier.chars().enumerate() {
+        if index == 0 {
+            words.extend(ch.to_uppercase());
+        } else if ch.is_uppercase() {
+            words.push(' ');
+            words.extend(ch.to_lowercase());
+        } else {
+            words.push(ch);
+        }
+    }
+    words
 }
 
 /// FIX (round-2 review): a serialization failure must not collapse into an
@@ -3049,24 +3069,33 @@ fn diagnostic_for_classified_seam_with_causal(
 
 fn lsp_seam_message(entry: &ClassifiedSeam) -> String {
     let seam = &entry.seam;
+    // Plain English for the Problems panel (#10695): no "grip", "seam" or
+    // internal kind. The seam kind and grip class stay machine-side in the
+    // diagnostic code and `data`.
     let head = match entry.class {
-        SeamGripClass::Opaque => "Opaque static evidence",
-        SeamGripClass::Ungripped => "No detected test grip",
-        SeamGripClass::WeaklyGripped => "Weakly gripped behavioral seam",
-        SeamGripClass::ReachableUnrevealed => "Test reaches seam but does not reveal it",
-        SeamGripClass::ActivationUnknown => "Activation evidence is unclear",
-        SeamGripClass::PropagationUnknown => "Propagation to sink is unclear",
-        SeamGripClass::ObservationUnknown => "Sink observation is unclear",
-        SeamGripClass::DiscriminationUnknown => "Oracle specificity is unclear",
+        SeamGripClass::Opaque => "ripr cannot fully determine how tests exercise this",
+        SeamGripClass::Ungripped => "No test path detected for this",
+        SeamGripClass::WeaklyGripped => "Tests only loosely check this",
+        SeamGripClass::ReachableUnrevealed => "Tests run this code but would not notice a change",
+        SeamGripClass::ActivationUnknown => {
+            "ripr cannot tell whether a test runs this with a changed value"
+        }
+        SeamGripClass::PropagationUnknown => {
+            "ripr cannot tell whether a change here reaches anything a test checks"
+        }
+        SeamGripClass::ObservationUnknown => {
+            "ripr cannot tell whether a test observes the changed result"
+        }
+        SeamGripClass::DiscriminationUnknown => {
+            "ripr cannot tell whether the test's check notices the change"
+        }
         // Filtered earlier; included for exhaustiveness.
-        SeamGripClass::StronglyGripped => "Strongly gripped",
-        SeamGripClass::Intentional => "Intentional low-grip",
+        SeamGripClass::StronglyGripped => "Tests check this well",
+        SeamGripClass::Intentional => "Intentionally lightly tested",
         SeamGripClass::Suppressed => "Suppressed",
     };
     format!(
-        "{} ({}): {}",
-        head,
-        seam.kind().as_str(),
+        "{head}: {}",
         seam.expression()
             .lines()
             .next()
@@ -3985,10 +4014,14 @@ mod seam_diagnostic_tests {
             Some(NumberOrString::String(code)) if code == "ripr-gap-MissingBoundaryAssertion" => {}
             other => return Err(format!("unexpected diagnostic code: {other:?}")),
         }
+        // #10695: plain words in the Problems panel; the CamelCase kind and
+        // route stay in the code and `data` payload asserted below.
         if !diagnostic
             .message
-            .contains("repair route: AddBoundaryAssertion")
-            || !diagnostic.message.contains("amount >= threshold")
+            .starts_with("Missing boundary assertion: amount >= threshold.")
+            || !diagnostic.message.contains("Suggested check:")
+            || diagnostic.message.contains("AddBoundaryAssertion")
+            || diagnostic.message.contains("MissingBoundaryAssertion")
             || diagnostic.message.contains("confidence")
         {
             return Err(format!(
@@ -4294,10 +4327,10 @@ mod seam_diagnostic_tests {
                 diagnostic.severity
             ));
         }
-        if !diagnostic.message.contains("Hover the highlighted code")
+        if !diagnostic.message.contains("Hover for details.")
             || diagnostic.message.contains("code action")
-            || diagnostic.message.contains("repair route: InspectGap")
-            || !diagnostic.message.contains("preview advisory evidence")
+            || diagnostic.message.contains("InspectGap")
+            || !diagnostic.message.contains("(Preview language: advisory.)")
         {
             return Err(format!(
                 "unexpected preview gap diagnostic message: {}",
@@ -4695,15 +4728,59 @@ mod seam_diagnostic_tests {
     }
 
     #[test]
-    fn diagnostic_message_names_seam_kind_and_expression() -> Result<(), String> {
+    fn diagnostic_message_is_plain_words_for_every_class() -> Result<(), String> {
+        // #10695: every class reads as plain words, with conservative static
+        // wording (an absent detected path is not "no test checks this").
+        let expected = [
+            (
+                SeamGripClass::Opaque,
+                "ripr cannot fully determine how tests exercise this",
+            ),
+            (SeamGripClass::Ungripped, "No test path detected for this"),
+            (
+                SeamGripClass::WeaklyGripped,
+                "Tests only loosely check this",
+            ),
+            (
+                SeamGripClass::ReachableUnrevealed,
+                "Tests run this code but would not notice a change",
+            ),
+            (
+                SeamGripClass::ActivationUnknown,
+                "ripr cannot tell whether a test runs this with a changed value",
+            ),
+            (
+                SeamGripClass::PropagationUnknown,
+                "ripr cannot tell whether a change here reaches anything a test checks",
+            ),
+            (
+                SeamGripClass::ObservationUnknown,
+                "ripr cannot tell whether a test observes the changed result",
+            ),
+            (
+                SeamGripClass::DiscriminationUnknown,
+                "ripr cannot tell whether the test's check notices the change",
+            ),
+        ];
+        for (class, phrase) in expected {
+            let message = lsp_seam_message(&classified(class));
+            if message != format!("{phrase}: amount >= discount_threshold") {
+                return Err(format!("unexpected message for {class:?}: {message}"));
+            }
+            let lowered = message.to_lowercase();
+            if lowered.contains("predicate_boundary")
+                || lowered.contains("grip")
+                || lowered.contains("seam")
+            {
+                return Err(format!("jargon in seam message: {message}"));
+            }
+        }
         let entry = classified(SeamGripClass::WeaklyGripped);
         let diag = diagnostic_for_classified_seam(Path::new("/repo"), &entry)
             .ok_or_else(|| "expected diagnostic".to_string())?;
-        if !diag.message.contains("predicate_boundary") {
-            return Err(format!("message missing kind: {}", diag.message));
-        }
-        if !diag.message.contains("amount >= discount_threshold") {
-            return Err(format!("message missing expression: {}", diag.message));
+        let data = diag.data.as_ref().ok_or("missing diagnostic data")?;
+        if data["seam_kind"] != "predicate_boundary" {
+            return Err(format!("seam kind left the data payload: {data}"));
         }
         Ok(())
     }
@@ -6630,7 +6707,7 @@ mod lsp_next_step_parity_tests {
         let finding = complete_ts_finding();
         let message = lsp_message(&finding);
         assert!(
-            message.contains("the repair packet is complete and delegatable (advisory)"),
+            message.contains("the repair packet is complete (advisory: `ripr context --at <finding-id>` prints it; the seam-based `ripr repair` covers Rust files only)"),
             "LSP diagnostic must contain reconciled next-step for complete packet; got: {message}"
         );
         assert!(
@@ -6650,7 +6727,7 @@ mod lsp_next_step_parity_tests {
             "LSP diagnostic must preserve blocked-case disclosure for incomplete packet; got: {message}"
         );
         assert!(
-            !message.contains("the repair packet is complete and delegatable"),
+            !message.contains("the repair packet is complete (advisory"),
             "LSP diagnostic must NOT say actionable for blocked packet; got: {message}"
         );
     }

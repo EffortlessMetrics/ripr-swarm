@@ -3,12 +3,12 @@ mode: fast
 root: fixtures/ts_boundary_named_constant_test/input
 config: <cwd>/fixtures/ts_boundary_named_constant_test/input/ripr.toml
 
-Summary: 2 probes (2 exposed, 0 weak, 0 unrevealed, 0 no path); 2 of 2 findings unsuppressed
+Summary: 2 changed behaviors checked: 2 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 0 no test path. 2 found, 0 suppressed by your settings
 
 Changed file(s) by language: typescript = 1
 
 Analysis outcome: findings below (analysis complete)
-  Counts: 1 changed file(s), 4 changed line(s), 2 candidate line(s), 2 probe(s), 2 finding(s)
+  Counts: 1 changed file(s), 4 changed line(s), 2 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
 
 Start here:
   State: preview language, advisory only
@@ -29,8 +29,11 @@ Start here:
       discriminator = assertion distinguishes intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
-    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
-      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      no test path = no test path found; unclear = analysis limited, not a verdict;
+      found = listed for review; suppressed by your settings = hidden by your suppression policy;
+      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: 1 related test(s) found for owner `applyDiscount`
     - infection unknown: TypeScript preview adapter does not yet model infection
     - 4 more detail line(s) in --format human-full
@@ -38,7 +41,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/ts_boundary_named_constant_test/input --diff <cwd>/fixtures/ts_boundary_named_constant_test/diff.patch --mode fast probe:src_pricing.ts:typescript_preview:129143e0
   ripr context --root <cwd>/fixtures/ts_boundary_named_constant_test/input --diff <cwd>/fixtures/ts_boundary_named_constant_test/diff.patch --mode fast --at probe:src_pricing.ts:typescript_preview:129143e0
-  no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
+  no repair start offered: this finding has no gap ID, so there is no seam to start a repair from; follow the Next step above
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output (TypeScript preview: 1).

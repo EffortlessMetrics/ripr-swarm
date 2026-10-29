@@ -1,0 +1,26 @@
+use spec0048_const_flow_shapes::{Small, charge, ceiling_or_zero, floored, in_window};
+
+#[test]
+fn floored_uses_the_passed_floor() {
+    assert_eq!(floored(1, 9), 9);
+}
+
+#[test]
+fn some_binds_its_own_ceiling() {
+    assert_eq!(ceiling_or_zero(Some(7)), 7);
+}
+
+#[test]
+fn small_caps_at_four() {
+    assert_eq!(Small::capped(9), 4);
+}
+
+#[test]
+fn charge_uses_the_local_rate() {
+    assert_eq!(charge(3), 6);
+}
+
+#[test]
+fn early_value_is_in_the_window() {
+    assert!(!in_window(31));
+}

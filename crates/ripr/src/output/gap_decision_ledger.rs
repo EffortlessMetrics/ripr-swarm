@@ -692,8 +692,7 @@ pub(crate) fn check_output_subject_paths(
     contents: &str,
     root: &Path,
 ) -> Result<BTreeSet<String>, String> {
-    let mut records = gap_records_from_check_output_json(contents)?;
-    attach_check_output_preview_receipt_routes(&mut records, &root.to_string_lossy());
+    let records = check_output_gap_records(contents, &root.to_string_lossy())?;
     let mut paths = BTreeSet::new();
     for record in &records {
         paths.extend(gap_source_subject::gap_record_subject_paths(
@@ -702,6 +701,18 @@ pub(crate) fn check_output_subject_paths(
         ));
     }
     Ok(paths)
+}
+
+/// The gap records a `ripr check` JSON document projects, with the preview
+/// receipt and regeneration routes attached for `root`: the records
+/// `ripr reports gap-ledger --check-output` would write for that document.
+pub(crate) fn check_output_gap_records(
+    contents: &str,
+    root: &str,
+) -> Result<Vec<GapRecord>, String> {
+    let mut records = gap_records_from_check_output_json(contents)?;
+    attach_check_output_preview_receipt_routes(&mut records, root);
+    Ok(records)
 }
 
 fn gap_record_json_value(record: &GapRecord) -> Result<Value, String> {
@@ -4918,7 +4929,19 @@ mod tests {
         // #10151: `python_caplog_alias_in_literal` keeps a captured-log alias
         // spelled inside the asserted literal a weak gap (RIPR-SPEC-0238 rule
         // 22), which carries one no-strong-oracle card.
-        if (direct, no_strong, orthogonal, family_selection) != (10, 27, 28, 1) {
+        // #10178: both pre-call effect observations stay orthogonal and
+        // packet-ineligible; native fixture output adds two weak cards.
+        // #10832: `python_parametrize_tuple_unpack` reads a tuple argname's
+        // off-boundary rows through its leading unpack, so the boundary is
+        // `weakly_exposed` and carries one direct-aligned card.
+        // #10842: `python_rewrite_shifted_bound` names the row its shifted
+        // bound needs, one more direct-aligned `weakly_exposed` card.
+        // #9815: `python_factor_reorder` adds four direct-aligned weak cards
+        // for area, float_area, boxed_area and hashed_area. Their numeric rows
+        // observe the owners but need operands that distinguish product order.
+        // `python_factor_reorder_rebound` adds one direct-aligned weak card:
+        // its rebound table operand leaves multiplication order unresolved.
+        if (direct, no_strong, orthogonal, family_selection) != (17, 27, 30, 1) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));

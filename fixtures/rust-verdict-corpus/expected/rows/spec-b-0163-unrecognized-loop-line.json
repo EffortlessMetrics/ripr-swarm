@@ -1,0 +1,22 @@
+{
+  "case_id": "spec-b-0163-unrecognized-loop-line",
+  "subject_id": "authored-spec-b-scan",
+  "origin": "authored",
+  "anchor": "src/s_body.rs:23",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "scanner_unrecognized_loop_body_line",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "infection_unknown"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

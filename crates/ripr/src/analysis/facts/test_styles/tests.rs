@@ -571,6 +571,9 @@ fn tokio_lookalike() {}
 
 #[cfg_attr(test, test)]
 fn conditional_test_attribute() {}
+
+#[cfg_attr(feature = "extra", test)]
+fn unevaluated_conditional_test_attribute() {}
 "#,
     )?;
 
@@ -584,6 +587,9 @@ fn conditional_test_attribute() {}
             "qualified_quickcheck",
             "parameterized_case",
             "wasm_case",
+            "conditional_test_attribute",
+            // `cfg_attr(test, test)` is a test in a test build; a predicate
+            // the evaluator cannot read does not make one.
         ]
     );
     assert!(
@@ -595,7 +601,7 @@ fn conditional_test_attribute() {}
         &[
             "rstest_lookalike",
             "tokio_lookalike",
-            "conditional_test_attribute",
+            "unevaluated_conditional_test_attribute",
         ],
     );
     Ok(())
@@ -752,6 +758,8 @@ mod any_gate {
 
 #[cfg_attr(test, test)]
 fn cfg_attr_lookalike() {}
+#[cfg_attr(feature = "extra", test)]
+fn cfg_attr_unevaluated_lookalike() {}
 
 #[quickcheck]
 fn normalizer_credits_explicit_attribute(value: u8) -> bool { value == value }
@@ -850,8 +858,14 @@ fn integration_test() {
         (
             "src/lib.rs",
             "cfg_attr_lookalike",
+            FunctionSourceRole::TestAttribute,
+            "parser: cfg_attr(test, test) introduces test under a predicate known true",
+        ),
+        (
+            "src/lib.rs",
+            "cfg_attr_unevaluated_lookalike",
             FunctionSourceRole::Production,
-            "parser: cfg_attr introductions never promote",
+            "parser: a cfg_attr predicate the evaluator cannot read never promotes",
         ),
         (
             "src/lib.rs",
@@ -1401,17 +1415,51 @@ const WRAPPER_MACRO: &str = "#[proc_macro_attribute]\npub fn wrapped_test(attr: 
 const USER: &str = "#[crate::test]\nasync fn aliased() { assert_eq!(crate::value(), 3); }\n#[crate::tests]\nfn lookalike() {}\n#[other::test]\nfn arbitrary() {}\n";
 
 fn alias_test_names(files: &[(&str, &str)]) -> Result<Vec<String>, String> {
+    alias_test_names_with_manifest(
+        files,
+        Some(
+            "[package]\nname='app'\nversion='0.1.0'\n[dependencies]\nmy_macros={path='../macros'}\n",
+        ),
+    )
+}
+
+fn alias_test_names_with_manifest(
+    files: &[(&str, &str)],
+    manifest: Option<&str>,
+) -> Result<Vec<String>, String> {
+    let root = manifest
+        .map(|manifest| {
+            super::super::drop_in::temp_workspace(
+                "binary-test-alias",
+                &[
+                    ("app/Cargo.toml", manifest),
+                    (
+                        "macros/Cargo.toml",
+                        "[package]\nname='my_macros'\nversion='0.1.0'\n[lib]\nproc-macro=true\n",
+                    ),
+                ],
+            )
+        })
+        .transpose()?;
     let mut index = RustIndex::default();
+    if let Some(root) = &root {
+        index.member_crates = super::super::member_crates::MemberCrates::new(root);
+    }
     index.package_names.insert("my_macros".to_string());
     for (file, source) in files {
         let facts = RaRustSyntaxAdapter.summarize_file(Path::new(file), source)?;
         index.insert_file(PathBuf::from(file), facts, true);
     }
-    normalize_index_test_styles(&mut index)?;
-    Ok(index_test_names(&index)
-        .into_iter()
-        .map(str::to_string)
-        .collect())
+    let result = normalize_index_test_styles(&mut index).map(|()| {
+        index_test_names(&index)
+            .into_iter()
+            .map(str::to_string)
+            .collect()
+    });
+    if let Some(root) = root {
+        let _ = fs::remove_dir_all(root);
+    }
+    result
 }
 
 #[test]
@@ -1578,5 +1626,242 @@ fn crate_test_stays_a_non_test_without_a_resolvable_wrapper() -> Result<(), Stri
             "{label}: crate::test must not be credited, got {names:?}"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn binary_root_alias_uses_its_own_import() -> Result<(), String> {
+    let binary = format!("{ALIAS_ROOT}{USER}");
+    let names = alias_test_names(&[
+        ("app/src/lib.rs", "pub fn library() {}"),
+        ("app/src/main.rs", "fn main() {}"),
+        ("app/src/bin/worker.rs", &binary),
+        ("macros/src/lib.rs", WRAPPER_MACRO),
+    ])?;
+    assert_eq!(names, ["aliased"]);
+    Ok(())
+}
+
+#[test]
+fn binary_root_alias_refuses_a_namesake_registry_dependency() -> Result<(), String> {
+    let binary = format!("{ALIAS_ROOT}{USER}");
+    for dependency in ["my_macros='1'", "my_macros={path='../foreign'}", ""] {
+        let manifest = format!(
+            "[package]\nname='app'\nversion='0.1.0'\nedition='2021'\n[dependencies]\n{dependency}\n"
+        );
+        let names = alias_test_names_with_manifest(
+            &[
+                ("app/src/bin/worker.rs", &binary),
+                ("macros/src/lib.rs", WRAPPER_MACRO),
+            ],
+            Some(&manifest),
+        )?;
+        assert!(
+            names.is_empty(),
+            "foreign dependency {dependency} credited: {names:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn binary_root_alias_refuses_unresolved_intermediate_paths() -> Result<(), String> {
+    for import in [
+        "use my_macros::missing::wrapped_test as test;\n",
+        "use my_macros::{missing::wrapped_test as test};\n",
+    ] {
+        let binary = format!("{import}{USER}");
+        let names = alias_test_names(&[
+            ("app/src/bin/worker.rs", &binary),
+            ("macros/src/lib.rs", WRAPPER_MACRO),
+        ])?;
+        assert!(
+            names.is_empty(),
+            "unresolved path {import} credited: {names:?}"
+        );
+    }
+    let binary = format!("use my_macros::{{wrapped_test as test}};\n{USER}");
+    let names = alias_test_names(&[
+        ("app/src/bin/worker.rs", &binary),
+        ("macros/src/lib.rs", WRAPPER_MACRO),
+    ])?;
+    assert_eq!(
+        names,
+        ["aliased"],
+        "direct grouped import remains supported"
+    );
+    Ok(())
+}
+
+#[test]
+fn binary_root_alias_never_borrows_a_library_or_sibling_binding() -> Result<(), String> {
+    for import in ["", "use external_macros::wrapped_test as test;\n"] {
+        let binary = format!("{import}{USER}");
+        let names = alias_test_names(&[
+            ("app/src/lib.rs", ALIAS_ROOT),
+            ("app/src/bin/sibling.rs", ALIAS_ROOT),
+            ("app/src/bin/worker.rs", &binary),
+            ("macros/src/lib.rs", WRAPPER_MACRO),
+        ])?;
+        assert!(names.is_empty(), "unrelated binding credited: {names:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn binary_root_alias_preserves_cfg_and_ambiguity_refusals() -> Result<(), String> {
+    for (import, expected) in [
+        ("#[cfg(test)]\nuse my_macros::wrapped_test as test;\n", true),
+        (
+            "#[cfg(not(test))]\nuse my_macros::wrapped_test as test;\n",
+            false,
+        ),
+        (
+            "#[cfg(feature = \"x\")]\nuse my_macros::wrapped_test as test;\n",
+            false,
+        ),
+        (
+            "use my_macros::{wrapped_test as test, other as test};\n",
+            false,
+        ),
+    ] {
+        let binary = format!("{import}{USER}");
+        let names = alias_test_names(&[
+            ("app/src/bin/worker.rs", &binary),
+            ("macros/src/lib.rs", WRAPPER_MACRO),
+        ])?;
+        assert_eq!(names == ["aliased"], expected, "import {import}: {names:?}");
+        if !expected {
+            assert!(names.is_empty());
+        }
+    }
+    let binary = format!("{ALIAS_ROOT}{USER}");
+    let names = alias_test_names(&[
+        ("app/src/bin/worker.rs", &binary),
+        ("macros/src/lib.rs", WRAPPER_MACRO),
+        ("other/src/lib.rs", WRAPPER_MACRO),
+    ])?;
+    assert!(names.is_empty(), "ambiguous macro credited: {names:?}");
+    Ok(())
+}
+
+#[test]
+fn binary_root_alias_does_not_guess_a_nested_binary_helpers_root() -> Result<(), String> {
+    let names = alias_test_names(&[
+        ("app/src/lib.rs", ALIAS_ROOT),
+        ("app/src/bin/worker/helper.rs", USER),
+        ("macros/src/lib.rs", WRAPPER_MACRO),
+    ])?;
+    assert!(names.is_empty(), "unresolved root credited: {names:?}");
+    Ok(())
+}
+
+#[test]
+fn binary_root_alias_requires_manifest_authority_and_automatic_targets() -> Result<(), String> {
+    let binary = format!("{ALIAS_ROOT}{USER}");
+    for manifest in [
+        None,
+        Some("[package]\nname='app'\nversion='0.1.0'\nautobins=false\n"),
+        Some("[package]\nname='app'\nversion='0.1.0'\nedition='2015'\n[[bin]]\nname='app'\n"),
+        Some("[package]\nname='app'\nversion='0.1.0'\n[lib]\nname='app'\n"),
+        Some("[package]\nname='app'\nversion='0.1.0'\nedition.workspace=true\n"),
+    ] {
+        // Keep dependency binding valid so each negative case exercises
+        // target authority rather than failing earlier on dependency lookup.
+        let manifest = manifest
+            .map(|text| format!("{text}\n[dependencies]\nmy_macros={{path='../macros'}}\n"));
+        let names = alias_test_names_with_manifest(
+            &[
+                ("app/src/bin/worker.rs", &binary),
+                ("macros/src/lib.rs", WRAPPER_MACRO),
+            ],
+            manifest.as_deref(),
+        )?;
+        assert!(
+            names.is_empty(),
+            "unconfirmed binary root credited: {names:?}"
+        );
+    }
+    for manifest in [
+        "[package]\nname='app'\nversion='0.1.0'\nedition='2018'\n[[bin]]\nname='app'\n[dependencies]\nmy_macros={path='../macros'}\n",
+        "[package]\nname='app'\nversion='0.1.0'\nedition='2015'\nautobins=true\n[[bin]]\nname='app'\n[dependencies]\nmy_macros={path='../macros'}\n",
+    ] {
+        let names = alias_test_names_with_manifest(
+            &[
+                ("app/src/bin/worker.rs", &binary),
+                ("macros/src/lib.rs", WRAPPER_MACRO),
+            ],
+            Some(manifest),
+        )?;
+        assert_eq!(names, ["aliased"], "manifest {manifest}");
+    }
+    Ok(())
+}
+
+#[test]
+fn binary_root_alias_refuses_shadowed_prefixes_and_alternate_module_readings() -> Result<(), String>
+{
+    for extra in [
+        "mod my_macros {}",
+        "mod r#my_macros {}",
+        "use external_macros as my_macros;",
+        "use external_macros as r#my_macros;",
+        "use external_macros::*;",
+        "extern crate external_macros as my_macros;",
+        "extern crate external_macros as r#my_macros;",
+        "make_bindings!();",
+    ] {
+        let binary = format!("{extra}\n{ALIAS_ROOT}{USER}");
+        let names = alias_test_names(&[
+            ("app/src/bin/worker.rs", &binary),
+            ("macros/src/lib.rs", WRAPPER_MACRO),
+        ])?;
+        assert!(names.is_empty(), "shadow {extra} credited: {names:?}");
+    }
+    let binary = format!("{ALIAS_ROOT}{USER}");
+    for library in [
+        "#[path=\"bin/worker.rs\"] mod worker;",
+        "mod nested { #[path=\"../bin/worker.rs\"] mod worker; }",
+        "include!(\"bin/worker.rs\");",
+        "include!(concat!(env!(\"OUT_DIR\"), \"/generated.rs\"));",
+    ] {
+        let names = alias_test_names(&[
+            ("app/src/lib.rs", library),
+            ("app/src/bin/worker.rs", &binary),
+            ("macros/src/lib.rs", WRAPPER_MACRO),
+        ])?;
+        assert!(
+            names.is_empty(),
+            "alternate reading {library} credited: {names:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn cfg_attr_test_beside_ignore_or_should_panic_does_not_define_a_test() {
+    // `gap_admission` reads only literal `#[ignore]` / `#[should_panic]`, so a
+    // sibling introduced by `cfg_attr` must not turn the function into a live
+    // test fact that counts as a discriminator.
+    assert!(attributes_define_test(["#[cfg_attr(all(), test)]"]));
+    for attribute in [
+        "#[cfg_attr(all(), test, ignore)]",
+        "#[cfg_attr(all(), ignore, test)]",
+        "#[cfg_attr(all(), test, should_panic)]",
+        "#[cfg_attr(all(), should_panic, test)]",
+    ] {
+        assert!(!attributes_define_test([attribute]), "{attribute}");
+    }
+}
+
+#[test]
+fn syntax_adapter_does_not_make_cfg_attr_test_beside_ignore_a_test_fact() -> Result<(), String> {
+    let source = "#[cfg_attr(all(), test, ignore)]\nfn ignored() { assert!(true); }\n\n\
+                  #[cfg_attr(all(), test, should_panic)]\nfn panics() { assert!(true); }\n\n\
+                  #[cfg_attr(all(), test)]\nfn plain() { assert!(true); }\n";
+    let adapter = RaRustSyntaxAdapter;
+    let mut facts = adapter.summarize_file(Path::new("src/lib.rs"), source)?;
+    normalize_file_test_styles(&mut facts)?;
+    assert_eq!(test_names(&facts), ["plain"]);
     Ok(())
 }

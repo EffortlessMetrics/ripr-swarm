@@ -1,5 +1,46 @@
 mod json_construction;
 mod retention_parity;
+#[test]
+fn module_shadow_exempts_only_the_owners_nearest_module() -> Result<(), String> {
+    // The owner's nearest enclosing module is the production declaration's
+    // scope and never a shadow; every other module still counts.
+    for (source, expected) in [
+        // Owner and the same-name type share `a`: exempt.
+        (
+            "mod a { struct Widget; fn read() {} #[test] fn subject() {} }",
+            false,
+        ),
+        // The owner sits in `b`; the type declared in the test's own `a` shadows.
+        (
+            "mod a { struct Widget; #[test] fn subject() {} } mod b { fn read() {} }",
+            true,
+        ),
+        // Nested: the owner's nearest module is `inner`, so `outer`'s type counts.
+        (
+            "mod outer { struct Widget; mod inner { fn read() {} #[test] fn subject() {} } }",
+            true,
+        ),
+        // Same-name owner `fn` in two modules on the owner's line: ambiguous, no exemption.
+        (
+            "mod a { struct Widget; fn read() {} #[test] fn subject() {} } mod b { fn read() {} }",
+            true,
+        ),
+    ] {
+        let index = index(&[(LIB, source)]);
+        let source = &index.files().get(Path::new(LIB)).ok_or("file")?.source;
+        let owner = OwnerScope::new("read", 1, Path::new(LIB));
+        assert!(!index.tests().is_empty());
+        for test in index.tests().iter() {
+            assert_eq!(
+                test_module_shadows_type(test, source, "Widget", Some(owner), &index),
+                expected,
+                "{source}"
+            );
+        }
+    }
+    Ok(())
+}
+
 mod shared_target_context;
 #[test]
 fn module_shadow_snapshot_shares_facts_and_complete_answers() -> Result<(), String> {
@@ -2366,6 +2407,24 @@ fn weight_admitted(tests: &str) -> Vec<String> {
     admitted_texts(&index, &pin)
 }
 
+/// [`weight_admitted`] after the parameterized-test promotion that gives a
+/// `#[test_case]` function its test fact, as ordinary indexing runs it.
+fn test_case_admitted(tests: &str) -> Vec<String> {
+    let mut index = index(&[(LIB, WEIGHT_LIB), (TESTS, tests)]);
+    let promoted = crate::analysis::facts::normalize_reconstructed_source_roles(
+        &mut index,
+        Path::new(""),
+        &[],
+    );
+    assert!(promoted.is_ok(), "{promoted:?}");
+    let pin = establish(&index, "weight", "x * 3");
+    assert!(pin.is_some(), "the free owner must establish a pin");
+    let Some(pin) = pin else {
+        return Vec::new();
+    };
+    admitted_texts(&index, &pin)
+}
+
 #[test]
 fn only_a_plain_assert_eq_against_an_owner_free_value_pins() {
     let tests = "use demo::weight;\n\n#[test]\nfn weighs() {\n    assert_eq!(weight(4), weight(2) + weight(2));\n    assert_eq!(weight(2), 2 * weight(1));\n    debug_assert_eq!(weight(4), 12);\n    assert_eq!(weight(4), 12);\n}\n";
@@ -3435,6 +3494,168 @@ fn an_rstest_case_table_with_literal_rows_runs_the_body_once_per_row() {
     ] {
         let tests = case_test(prelude, attributes, parameters, name);
         assert!(weight_admitted(&tests).is_empty(), "{tests}");
+    }
+}
+
+#[test]
+fn a_test_case_table_with_literal_rows_runs_the_body_once_per_row() {
+    let case_test = |prelude: &str, attributes: &str, parameters: &str, name: &str| {
+        format!(
+            "use demo::weight;\n{prelude}\n{attributes}\nfn {name}({parameters}) {{\n    assert_eq!(weight(x), expected);\n}}\n"
+        )
+    };
+    let params = "x: u32, expected: u32";
+    for (prelude, attributes) in [
+        (
+            "use test_case::test_case;",
+            "#[test_case(4, 12)]\n#[test_case(5, 15)]",
+        ),
+        ("", "#[test_case::test_case(4, 12)]"),
+        (
+            "use test_case::test_case;",
+            "#[test_case(4, 12)]\n#[serial_test::serial]",
+        ),
+        ("extern crate test_case;", "#[test_case::test_case(4, 12)]"),
+    ] {
+        let tests = case_test(prelude, attributes, params, "weighs");
+        assert_eq!(test_case_admitted(&tests).len(), 1, "{tests}");
+    }
+    for (prelude, attributes, parameters, name) in [
+        // The `=> expected` form generates its own comparison; `matches`,
+        // `with`, descriptions and the other `test_case` attributes change
+        // what runs.
+        (
+            "use test_case::test_case;",
+            "#[test_case(4 => 12)]",
+            params,
+            "weighs",
+        ),
+        (
+            "use test_case::test_case;",
+            "#[test_case(4, 12 ; \"four\")]",
+            params,
+            "weighs",
+        ),
+        (
+            "use test_case::test_case;",
+            "#[test_case(4, 12)]\n#[test_case(5 => 15)]",
+            params,
+            "weighs",
+        ),
+        (
+            "use test_case::test_case;",
+            "#[test_case(4, 12)]\n#[ignore]",
+            params,
+            "weighs",
+        ),
+        (
+            "use test_case::test_case;",
+            "#[test_case(4, 12)]\n#[should_panic]",
+            params,
+            "weighs",
+        ),
+        // A row value that is not one scalar literal per parameter: a string
+        // or computed value may call the owner, a count mismatch does not
+        // bind the parameters.
+        (
+            "use test_case::test_case;",
+            "#[test_case(4, weight(4))]",
+            params,
+            "weighs",
+        ),
+        (
+            "use test_case::test_case;",
+            "#[test_case(4, \"12\")]",
+            params,
+            "weighs",
+        ),
+        (
+            "use test_case::test_case;",
+            "#[test_case(4, 3 * 4)]",
+            params,
+            "weighs",
+        ),
+        (
+            "use test_case::test_case;",
+            "#[test_case(4)]",
+            params,
+            "weighs",
+        ),
+        (
+            "use test_case::test_case;",
+            "#[test_case(4, 12, 1)]",
+            params,
+            "weighs",
+        ),
+        // Parameters other than plain immutable bindings.
+        (
+            "use test_case::test_case;",
+            "#[test_case(4, 12)]",
+            "mut x: u32, expected: u32",
+            "weighs",
+        ),
+        (
+            "use test_case::test_case;",
+            "#[test_case(4, 12)]",
+            "x: u32, mut expected: u32",
+            "weighs",
+        ),
+        (
+            "use test_case::test_case;",
+            "#[test_case(4, 12)]",
+            "ref x: u32, expected: u32",
+            "weighs",
+        ),
+        (
+            "use test_case::test_case;",
+            "#[test_case(4, 12)]",
+            "x: impl Into<u32>, expected: u32",
+            "weighs",
+        ),
+        (
+            "use test_case::test_case;",
+            "#[test_case(4, 12)]",
+            "#[allow(unused)] x: u32, expected: u32",
+            "weighs",
+        ),
+        // `test_case` is not the crate, or the bare name is another macro.
+        (
+            "use other::test_case;",
+            "#[test_case(4, 12)]",
+            params,
+            "weighs",
+        ),
+        ("use test_case::*;", "#[test_case(4, 12)]", params, "weighs"),
+        ("", "#[test_case(4, 12)]", params, "weighs"),
+        (
+            "mod test_case { pub use other::test_case; }\nuse test_case::test_case;",
+            "#[test_case(4, 12)]",
+            params,
+            "weighs",
+        ),
+        (
+            "use other as test_case;\nuse test_case::test_case;",
+            "#[test_case(4, 12)]",
+            params,
+            "weighs",
+        ),
+        // A test named after a checked crate expands to a module that
+        // shadows it.
+        (
+            "use test_case::test_case;",
+            "#[test_case(4, 12)]",
+            params,
+            "test_case",
+        ),
+        (
+            "use test_case::test_case;\nuse serial_test::serial;",
+            "#[test_case(4, 12)]\n#[serial]",
+            params,
+            "serial_test",
+        ),
+    ] {
+        let tests = case_test(prelude, attributes, parameters, name);
+        assert!(test_case_admitted(&tests).is_empty(), "{tests}");
     }
 }
 
@@ -7452,6 +7673,71 @@ fn an_out_of_line_parent_module_shadow_of_the_receiver_refuses_the_pin() {
     );
 }
 
+/// #10809: every related test of every probe asks about the same few parent
+/// files, so the owner-independent answer for one (file, name) is computed
+/// once, and a different name is its own entry.
+#[test]
+fn a_parent_root_answer_is_computed_once_per_file_and_name() -> Result<(), String> {
+    let index = index_with_provenance(
+        &[
+            (LIB, LIB_OUT_OF_LINE),
+            (HELPERS, HELPERS_SHADOW),
+            (CHILD, CHILD_TEST),
+        ],
+        &[
+            (
+                HELPERS,
+                SourceRoleProvenance {
+                    edges: vec![module_edge(LIB, HELPERS, "helpers", 12, true)],
+                    earliest_unresolved_reason: None,
+                    ..Default::default()
+                },
+            ),
+            (
+                CHILD,
+                SourceRoleProvenance {
+                    edges: vec![
+                        module_edge(LIB, HELPERS, "helpers", 12, true),
+                        module_edge(HELPERS, CHILD, "stack_tests", 5, false),
+                    ],
+                    earliest_unresolved_reason: None,
+                    ..Default::default()
+                },
+            ),
+        ],
+    );
+    let test = index
+        .tests()
+        .iter()
+        .find(|t| t.file == Path::new(CHILD))
+        .ok_or("child test")?;
+    let owner = OwnerScope::new("depth", 6, Path::new(LIB));
+    for _ in 0..20 {
+        assert!(parent_chain_shadows_type(test, "Stack", owner, &index));
+    }
+    let helpers = index
+        .source_syntax
+        .get(&index, Path::new(HELPERS))
+        .ok_or("helpers snapshot")?;
+    assert_eq!(helpers.root_shadow_computations(), 1);
+    // A name the parent never mentions is answered from the text and creates
+    // no memo entry; a name it mentions without declaring is its own entry.
+    for _ in 0..20 {
+        assert!(!parent_chain_shadows_type(test, "Gauge", owner, &index));
+    }
+    assert_eq!(helpers.root_shadow_computations(), 1);
+    for _ in 0..20 {
+        assert!(!parent_chain_shadows_type(
+            test,
+            "stack_tests",
+            owner,
+            &index
+        ));
+    }
+    assert_eq!(helpers.root_shadow_computations(), 2);
+    Ok(())
+}
+
 /// #6950 precision: the same nested layout without the parent shadow
 /// keeps its pin. The walk skips `helpers` (no declaration) and the
 /// production root stays exempt as the owner's own scope.
@@ -10925,6 +11211,7 @@ fn test_crate_bindings_of_the_root_are_read_from_that_crate_only() {
     }
 }
 
+mod claims_direction;
 mod expect_test_pins;
 mod helper_pins;
 
@@ -12702,4 +12989,47 @@ fn scalar_names_rebound_sees_type_struct_and_import_rebinding() {
     ] {
         assert!(scalar_names_rebound("u32", source), "{source}");
     }
+}
+
+/// The classify side proves each nested comparison macro's import by name;
+/// the syntax side reads the same names as plain expansions (#10389). The
+/// two lists must name the same macros.
+#[test]
+fn known_comparison_macros_match_the_syntax_plain_nested_list() {
+    let mut classify: Vec<&str> = KNOWN_COMPARISON_MACROS
+        .iter()
+        .map(|(name, _)| *name)
+        .collect();
+    let mut syntax: Vec<&str> = crate::analysis::syntax::COMPARISON_NESTED_MACROS.to_vec();
+    classify.sort_unstable();
+    syntax.sort_unstable();
+    assert_eq!(classify, syntax);
+}
+
+#[test]
+fn comparison_macro_imports_are_gated_only_by_their_own_attributes() {
+    let imported = |source: &str| imported_comparison_macros(source).contains("approx_eq");
+    // First statement of an attributed module, and after an attributed item.
+    assert!(imported(
+        "#[cfg(test)]\nmod tests {\nuse float_cmp::approx_eq;\n}\n"
+    ));
+    assert!(imported(
+        "#[derive(Debug)]\nstruct X {}\nuse float_cmp::approx_eq;\n"
+    ));
+    // An attribute on the `use` itself, or another binding of the name.
+    assert!(!imported("#[cfg(any())]\nuse float_cmp::approx_eq;\n"));
+    assert!(!imported(
+        "use float_cmp::approx_eq;\nfn f() {\nuse other::approx_eq;\n}\n"
+    ));
+}
+
+#[test]
+fn comparison_macro_imports_must_name_the_macro_as_a_direct_item_of_its_crate() {
+    let imported = |source: &str| imported_comparison_macros(source).contains("approx_eq");
+    assert!(imported("use float_cmp::approx_eq;\n"));
+    assert!(imported("use float_cmp::{ApproxEq, approx_eq};\n"));
+    assert!(!imported("use float_cmp::other::approx_eq;\n"));
+    assert!(!imported("use float_cmp::approx_eq::other;\n"));
+    assert!(!imported("use float_cmp::{inner::approx_eq};\n"));
+    assert!(!imported("use float_cmp::{inner::{x, approx_eq, y}};\n"));
 }

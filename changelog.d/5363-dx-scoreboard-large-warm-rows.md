@@ -1,4 +1,4 @@
-<!-- section: Changed -->
+<!-- section: Internal / CI -->
 - The dx scoreboard's heavy corpus gains `cargo` (its shared-corpus pin) and
   `ripr-swarm-2026-10` (this repository at its current size, pinned at a
   commit that edits product Rust), so the warm-check row also tracks the large

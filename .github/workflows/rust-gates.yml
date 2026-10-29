@@ -46,6 +46,13 @@ on:
         required: false
         default: ''
         type: string
+      test-shards:
+        description: >-
+          1 runs the required nextest step in this job. 4 leaves it to
+          rust-test-shards.yml, which the caller must run after this job passes (#10507).
+        required: false
+        default: 1
+        type: number
     outputs:
       scratch_status:
         value: ${{ jobs.rust-gates.outputs.scratch_status }}
@@ -157,7 +164,7 @@ jobs:
         run: cargo fmt --check
 
       - name: Install CI tools
-        uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2
+        uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2
         with:
           tool: ${{ inputs.use-scratch && 'sccache,nextest' || 'nextest' }}
 
@@ -185,6 +192,7 @@ jobs:
         run: |
           cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml
           cargo fetch --locked --manifest-path fixtures/owner_return_pin_json_real_literal/input/Cargo.toml
+          cargo fetch --locked --manifest-path crates/ripr/tests/fixtures/proptest_singleton/input/Cargo.toml
 
       - name: Repository policy preflight
         id: precommit
@@ -207,10 +215,6 @@ jobs:
       - name: Network policy
         id: network_policy
         run: cargo xtask check-network-policy
-
-      - name: Workspace and all-target check
-        id: workspace_check
-        run: cargo check --workspace --all-targets
 
       # Feature-gated test modules (lang-perl and other previews) compile only
       # under their features; without this step two green PRs can break main
@@ -312,8 +316,12 @@ jobs:
           echo "::error title=Base moved and now conflicts::$BASE_REF moved after this run was admitted and now conflicts with PR head $(git rev-parse --short HEAD^2). Merge $BASE_REF into the branch, resolve, then remove and re-apply merge-ready."
           exit 1
 
+      # Skipped only when the caller passes `test-shards: 4`; it then owns running
+      # the same tests as four partitions in rust-test-shards.yml and must fail
+      # the required result unless that workflow passes (routed-rust.yml `result`).
       - name: Required Rust tests
         id: rust-tests
+        if: inputs.test-shards == 1
         run: |
           mkdir -p target/nextest/ci
           rm -f target/nextest/ci/junit.xml target/nextest/ci/run-context.txt
@@ -469,7 +477,6 @@ jobs:
           DEPENDENCIES_RESULT: ${{ steps.dependencies.outcome }}
           PROCESS_POLICY_RESULT: ${{ steps.process_policy.outcome }}
           NETWORK_POLICY_RESULT: ${{ steps.network_policy.outcome }}
-          WORKSPACE_CHECK_RESULT: ${{ steps.workspace_check.outcome }}
           ALL_FEATURES_CHECK_RESULT: ${{ steps.all_features_check.outcome }}
           CLIPPY_RESULT: ${{ steps.clippy.outcome }}
           RUST_TESTS_RESULT: ${{ steps.rust-tests.outcome }}
@@ -496,7 +503,6 @@ jobs:
             printf '| dependencies | %s |\n' "${DEPENDENCIES_RESULT:-not_reported}"
             printf '| process_policy | %s |\n' "${PROCESS_POLICY_RESULT:-not_reported}"
             printf '| network_policy | %s |\n' "${NETWORK_POLICY_RESULT:-not_reported}"
-            printf '| workspace_check | %s |\n' "${WORKSPACE_CHECK_RESULT:-not_reported}"
             printf '| all_features_check | %s |\n' "${ALL_FEATURES_CHECK_RESULT:-not_reported}"
             printf '| clippy | %s |\n' "${CLIPPY_RESULT:-not_reported}"
             printf '| rust-tests | %s |\n' "${RUST_TESTS_RESULT:-not_reported}"

@@ -30,6 +30,62 @@ fn awaited_unwalked_root_keeps_the_partial_extraction_disclosure() {
 }
 
 #[test]
+fn a_parameter_named_like_the_runner_is_not_a_dropped_registration() {
+    let file = Path::new("test/helpers/with-performance.test.ts");
+    for (params, call) in [
+        ("{ test }", "await test();"),
+        ("test", "test('id', () => { expect(1).toBe(1); });"),
+        ("[test]", "await test('id', () => { expect(1).toBe(1); });"),
+        ("...test", "await test('id', () => { expect(1).toBe(1); });"),
+        ("...[test]", "test('id', () => { expect(1).toBe(1); });"),
+    ] {
+        let shadowed = format!(
+            "import {{ test }} from 'node:test';\nasync function run({params}) {{\n  {call}\n}}\n"
+        );
+        let tests = extract_tests(file, &shadowed);
+        assert!(
+            detect_partial_test_extraction(file, &shadowed, &tests).is_none(),
+            "a call through a parameter registers nothing: {shadowed}"
+        );
+        // Same body without the parameter is the dropped registration the
+        // disclosure exists for, so the exemption is the binding, not the shape.
+        let unshadowed =
+            format!("import {{ test }} from 'node:test';\nasync function run() {{\n  {call}\n}}\n");
+        let tests = extract_tests(file, &unshadowed);
+        assert!(
+            detect_partial_test_extraction(file, &unshadowed, &tests).is_some(),
+            "an unshadowed registration in a helper must stay disclosed: {unshadowed}"
+        );
+    }
+}
+
+#[test]
+fn callback_parameters_shadow_the_runner_and_inner_rebinds_do_not() {
+    let file = Path::new("test/helpers/register.test.ts");
+    let head = "import { test, test as runner } from 'node:test';\n";
+    // A callback parameter is not the runner.
+    let callback = format!("{head}register((test) => {{ test('case', () => {{}}); }});\n");
+    let tests = extract_tests(file, &callback);
+    assert!(detect_partial_test_extraction(file, &callback, &tests).is_none());
+    // An inner declaration that rebinds the name can be the runner again, so
+    // the unindexed registration stays disclosed.
+    for rebound in [
+        "const test = runner;",
+        "function test() {}",
+        "class test {}",
+    ] {
+        let source = format!(
+            "{head}function build(test) {{ {{ {rebound} test('actual', () => {{}}); }} }}\n"
+        );
+        let tests = extract_tests(file, &source);
+        assert!(
+            detect_partial_test_extraction(file, &source, &tests).is_some(),
+            "{source}"
+        );
+    }
+}
+
+#[test]
 fn awaited_mismatched_runner_kinds_keep_partial_extraction_disclosure() {
     let file = Path::new("test/nanoid.test.js");
     for source in [
@@ -547,6 +603,57 @@ test("adds", () => {
     );
 }
 
+/// AVA's macro form puts a named macro between the title and the callback
+/// (`test('x', withServer, async (t, server) => {})`, #10964); the callback
+/// is argument 2 and its assertions are read. A macro-looking second argument
+/// without a function third argument is not a callback shape and stays
+/// argument 1 (here an identifier body, nothing to read).
+#[test]
+fn reads_callback_after_a_named_macro() {
+    let source = r#"
+import test from "ava";
+test("adds", withServer, async (t, server) => {
+    t.is(add(1, 2), 3);
+});
+test("subtracts", macros.withServer, async (t) => {
+    t.is(subtract(3, 1), 2);
+});
+test("multiplies", runMultiply, 5000);
+"#;
+    let tests = extract_tests(Path::new("test/math.test.ts"), source);
+
+    let names: Vec<&str> = tests.iter().map(|test| test.name.as_str()).collect();
+    assert_eq!(names, vec!["adds", "subtracts", "multiplies"], "{tests:?}");
+    assert_eq!(tests[0].assertions.len(), 1, "{:?}", tests[0].assertions);
+    assert_eq!(tests[0].assertions[0].matcher, "is");
+    assert_eq!(tests[1].assertions.len(), 1, "{:?}", tests[1].assertions);
+    assert_eq!(tests[2].assertions.len(), 0, "{:?}", tests[2].assertions);
+    assert!(
+        detect_partial_test_extraction(Path::new("test/math.test.ts"), source, &tests).is_none(),
+        "macro-form registrations are extracted, not dropped"
+    );
+}
+
+/// Without AVA provenance a named second argument is not a macro: a
+/// `node:test` options object held in a variable may carry `skip`, so its
+/// callback is not credited as running (Devin review on #10966).
+#[test]
+fn a_named_options_object_is_not_read_as_an_ava_macro() {
+    let source = r#"
+import { test } from "node:test";
+const options = { skip: true };
+test("adds", options, (t) => {
+    t.assert.strictEqual(add(1, 2), 3);
+});
+"#;
+    let tests = extract_tests(Path::new("test/math.test.ts"), source);
+
+    assert!(
+        tests.iter().all(|test| test.assertions.is_empty()),
+        "{tests:?}"
+    );
+}
+
 /// A `describe` whose title is not a string literal still has its body
 /// walked (#4548); it is named by the computed-title placeholder (#4593).
 #[test]
@@ -1016,7 +1123,7 @@ fn skipped_describe_registrations_are_not_a_partial_extraction() {
         "{ todo: true }",
     ] {
         let source = format!(
-            "import {{ medal }} from \"../src/rank\";\ndescribe(\"medal\", {options}, () => {{\n  const rows = load();\n  for (const row of rows) {{\n    it(\"awards\", () => {{ expect(medal(row)).toBe(\"bronze\"); }});\n  }}\n}});\n"
+            "import {{ medal }} from \"../src/rank\";\ndescribe(\"medal\", {options}, () => {{\n  for (let i = 0; i < n; i++) {{\n    it(\"awards\", () => {{ expect(medal(i)).toBe(\"bronze\"); }});\n  }}\n}});\n"
         );
         let tests = extract_tests(file, &source);
         assert!(

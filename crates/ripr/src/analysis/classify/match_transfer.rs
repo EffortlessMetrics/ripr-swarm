@@ -21,8 +21,12 @@
 //! nested call resolves through the shared bounded context (the
 //! #3296 recursive row): distinct `(helper, bound inputs)` states
 //! unroll within the explicit hop bound, while a repeated state (a
-//! true cycle) or the bound itself refuses. Anything else — a guard,
-//! a computed value, a bare-identifier pattern, a range or path
+//! true cycle) or the bound itself refuses. An arm may carry a `if
+//! <expr>` guard: exactly resolvable guards (one comparison over the
+//! shared #3295 operands) are evaluated over the exact inputs and the
+//! arm is selected only when the comparison holds. Anything else — an
+//! unevaluable guard (chained, method-call or otherwise non-comparison
+//! shape), a computed value, a bare-identifier pattern, a range or path
 //! pattern, a pattern whose type differs from the scrutinee's, any
 //! statement after the closing brace — refuses the whole shape and
 //! returns `None`; the caller's
@@ -52,6 +56,15 @@ struct MatchArm {
     /// pattern or the `|`-joined alternatives, each an exact string or
     /// char. A wildcard still respects source order.
     pattern: Option<Vec<TypedValue>>,
+    /// A `if <expr>` guard: the arm is selected only when the pattern
+    /// matches AND the guard evaluates to `true` over the exact inputs.
+    /// `None` is an unguarded arm.
+    guard: Option<String>,
+    /// A bare lowercase binding pattern (`other => ..`), read as a
+    /// catch-all only when the file shows the name is not a constant, a
+    /// static or another item (#10680, RIPR-SPEC-0164#4). `pattern` is
+    /// `None` for it.
+    binding: Option<String>,
     value: MatchValue,
 }
 
@@ -72,7 +85,18 @@ pub(crate) fn match_return_value(
     };
     for arm in &shape.arms {
         let selected = match &arm.pattern {
-            None => true,
+            None => {
+                // A binding that may be a constant or another item could
+                // select only some scrutinees: refuse the whole match.
+                if arm
+                    .binding
+                    .as_deref()
+                    .is_some_and(|name| binding_may_name_item(name, helper, eval))
+                {
+                    return None;
+                }
+                true
+            }
             Some(literals) => {
                 // A literal of the other type would not compile against
                 // this scrutinee; refuse rather than guess a mismatch.
@@ -84,14 +108,23 @@ pub(crate) fn match_return_value(
                 literals.contains(&subject)
             }
         };
-        if selected {
-            return match &arm.value {
-                MatchValue::Literal(value) => Some(TypedValue::Str(value.clone())),
-                MatchValue::Call(call) => {
-                    super::helper_transfer::nested_call_value(call, inputs, eval)
-                }
-            };
+        if !selected {
+            continue;
         }
+        // A guard must evaluate exactly: an unresolvable guard could
+        // select a different arm, so the whole match refuses rather
+        // than guess (the all-or-nothing Required shape).
+        if let Some(guard) = &arm.guard {
+            match evaluate_guard(guard, inputs) {
+                Some(true) => {}
+                Some(false) => continue,
+                None => return None,
+            }
+        }
+        return match &arm.value {
+            MatchValue::Literal(value) => Some(TypedValue::Str(value.clone())),
+            MatchValue::Call(call) => super::helper_transfer::nested_call_value(call, inputs, eval),
+        };
     }
     // No arm matched and no wildcard was reached.
     None
@@ -168,27 +201,400 @@ impl MatchShape {
 }
 
 /// `"literal" => "value",` — the pattern is `_` or `|`-joined string or
-/// char literals; the value is a plain string literal or one nested
-/// direct call (`label_of("a")`) to a unique helper with literal or
-/// bound-parameter arguments. Guards, bindings, ranges and paths refuse
-/// the arm (and with it the whole helper): an unresolved pattern could
-/// match anything, and any other value shape is not an exact return the
-/// shared authorities can evaluate.
+/// char literals, optionally with an `if <expr>` guard; the value is a
+/// plain string literal or one nested direct call (`label_of("a")`) to
+/// a unique helper with literal or bound-parameter arguments. Guards,
+/// bindings, ranges and paths refuse the arm (and with it the whole
+/// helper) unless the guard evaluates exactly over the bound inputs: an
+/// unresolved pattern could match anything, and any other value shape
+/// is not an exact return the shared authorities can evaluate.
 fn parse_arm(line: &str) -> Option<MatchArm> {
     let trimmed = line.trim().trim_end_matches(',').trim();
     let (pattern, value) = trimmed.split_once(" => ")?;
-    let pattern = if pattern == "_" {
+    let (pattern, guard) = split_guard(pattern)?;
+    let binding = bare_binding(pattern);
+    let pattern = if pattern == "_" || binding.is_some() {
         None
     } else {
         Some(literal_alternatives(pattern)?)
     };
+    // The binding holds the scrutinee, so a guard or a value that names it
+    // would need that value: only an unguarded arm whose value never
+    // mentions the name is read.
+    if let Some(name) = &binding
+        && (guard.is_some() || mentions_word(value, name))
+    {
+        return None;
+    }
     let value = if let Some(literal) = literal_string(value) {
         MatchValue::Literal(literal)
     } else {
         direct_call(value)?;
         MatchValue::Call(value.to_string())
     };
-    Some(MatchArm { pattern, value })
+    Some(MatchArm {
+        pattern,
+        guard,
+        binding,
+        value,
+    })
+}
+
+/// A lone lowercase identifier pattern: `other`, `_rest`. Not `_`, a
+/// keyword literal, a path, a `ref`/`mut` binding or a capitalized name
+/// (a unit variant or constant by convention).
+fn bare_binding(pattern: &str) -> Option<String> {
+    let name = pattern.trim();
+    let mut characters = name.chars();
+    let first = characters.next()?;
+    (name != "_"
+        && (first.is_ascii_lowercase() || first == '_')
+        && name
+            .chars()
+            .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_')
+        && !matches!(
+            name,
+            "true" | "false" | "self" | "ref" | "mut" | "box" | "r#"
+        ))
+    .then(|| name.to_string())
+}
+
+fn mentions_word(text: &str, word: &str) -> bool {
+    let masked = mask_rust_comments_and_strings(text);
+    masked.match_indices(word).any(|(at, _)| {
+        let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+        !masked[..at].chars().next_back().is_some_and(is_word)
+            && !masked[at + word.len()..]
+                .chars()
+                .next()
+                .is_some_and(is_word)
+    })
+}
+
+/// `source` with every inline `#[cfg(test)] mod name { .. }` body blanked
+/// (newlines and byte offsets kept), so its imports and items are not read as the helper's
+/// scope. Unparseable source is returned as it is.
+fn without_test_modules(source: &str) -> String {
+    use ra_ap_syntax::AstNode;
+    use ra_ap_syntax::ast::{self, HasAttrs};
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(source) else {
+        return source.to_string();
+    };
+    let mut blanked = source.to_string();
+    for module in parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Module::cast)
+    {
+        let gated = module.attrs().any(|attr| {
+            crate::analysis::facts::cfg_predicates::attribute_is_plain_test_gate(
+                &attr.syntax().text().to_string(),
+            )
+        });
+        let Some(body) = module.item_list().filter(|_| gated) else {
+            continue;
+        };
+        let range = body.syntax().text_range();
+        let (start, end) = (usize::from(range.start()), usize::from(range.end()));
+        if let Some(text) = source.get(start..end) {
+            let spaces: String = text
+                .chars()
+                .flat_map(|ch| {
+                    // Keep every byte offset: later ranges index the original.
+                    let fill = if ch == '\n' { '\n' } else { ' ' };
+                    std::iter::repeat_n(fill, ch.len_utf8())
+                })
+                .collect();
+            blanked.replace_range(start..end, &spaces);
+        }
+    }
+    blanked
+}
+
+/// Whether a bare pattern name may be something other than a fresh
+/// binding where `helper` is defined: a `const`/`static` of that name or an
+/// import that brings it in (including a module glob) in the file or in the
+/// helper's own body, a unit struct, enum, function, type or module of that
+/// name, or no file text to read. Fails closed.
+fn binding_may_name_item(
+    name: &str,
+    helper: &crate::analysis::facts::FunctionSummary,
+    eval: &HelperEval<'_>,
+) -> bool {
+    use super::arm_selection::may_name_constant;
+    let Some(source) = eval.source_of(helper) else {
+        return true;
+    };
+    // A `#[cfg(test)] mod tests { use super::*; }` glob imports into the
+    // test module only, never into the helper's scope.
+    let source = without_test_modules(&source);
+    if may_name_constant(&source, name) || may_name_constant(&helper.body, name) {
+        return true;
+    }
+    let masked = mask_rust_comments_and_strings(&source);
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    // `include!` and item-level macro invocations (a line starting at
+    // column 0 with `name!`) can declare a constant this text never shows.
+    let item_macro = masked.lines().any(|line| {
+        let head = line
+            .split(['(', '{', '['])
+            .next()
+            .unwrap_or_default()
+            .trim_end();
+        head.ends_with('!')
+            && !head.starts_with(char::is_whitespace)
+            && head[..head.len() - 1]
+                .chars()
+                .all(|ch| is_word(ch) || ch == ':')
+    });
+    if item_macro || masked.contains("include!") || masked.contains("macro_rules!") {
+        return true;
+    }
+    masked.match_indices(name).any(|(at, _)| {
+        if masked[..at].chars().next_back().is_some_and(is_word)
+            || masked[at + name.len()..]
+                .chars()
+                .next()
+                .is_some_and(is_word)
+        {
+            return false;
+        }
+        let before = masked[..at].trim_end();
+        [
+            "struct",
+            "enum",
+            "fn",
+            "type",
+            "mod",
+            "union",
+            "trait",
+            "macro_rules!",
+        ]
+        .iter()
+        .any(|keyword| {
+            before.ends_with(keyword)
+                && !before[..before.len() - keyword.len()]
+                    .chars()
+                    .next_back()
+                    .is_some_and(is_word)
+        })
+    })
+}
+
+/// Split an arm's pattern section into the pattern and an optional
+/// `if <expr>` guard, honoring quotes: ` if ` inside a string or char
+/// literal is content, not a guard introducer. An unterminated literal
+/// refuses the arm.
+fn split_guard(pattern: &str) -> Option<(&str, Option<String>)> {
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for (index, character) in pattern.char_indices() {
+        match quote {
+            Some(open) => {
+                if escaped {
+                    escaped = false;
+                } else if character == '\\' {
+                    escaped = true;
+                } else if character == open {
+                    quote = None;
+                }
+            }
+            None => match character {
+                '"' | '\'' => quote = Some(character),
+                // An ` if ` at this space, outside any literal,
+                // introduces the guard.
+                ' ' if pattern[index..].starts_with(" if ") => {
+                    let guard = pattern[index + 4..].trim();
+                    if guard.is_empty() {
+                        return None;
+                    }
+                    return Some((pattern[..index].trim(), Some(guard.to_string())));
+                }
+                ' ' => {}
+                _ => {}
+            },
+        }
+    }
+    if quote.is_some() {
+        return None;
+    }
+    Some((pattern.trim(), None))
+}
+
+/// A guard comparison operator.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum GuardCmp {
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+}
+
+/// Evaluate a match guard over the exact bound inputs. Fail-closed: a
+/// single comparison whose operands each evaluate exactly — through
+/// the shared #3295 evaluator, or `str::len()` (bytes, as Rust defines
+/// it) on an exact string — against a same-typed operand. Anything
+/// else (boolean combinators, method calls beyond `len()`, ordering
+/// comparisons on strings or chars, mixed types) refuses the whole
+/// match rather than guessing.
+fn evaluate_guard(guard: &str, inputs: &ExactInputs) -> Option<bool> {
+    let guard = strip_outer_parens(guard);
+    let (operator, lhs, rhs) = split_comparison(guard)?;
+    let lhs = guard_operand(lhs, inputs)?;
+    let rhs = guard_operand(rhs, inputs)?;
+    compare_guard_operands(&lhs, operator, &rhs)
+}
+
+/// Strip balanced parentheses that wrap the whole expression, repeatedly
+/// (Rust permits `if (kind.len() > 2)` and doubly wrapped forms). Quotes
+/// are honored so a literal `(` stays content. Input whose outer parens
+/// do not balance around the whole expression, or whose quotes never
+/// close, is returned unchanged so the evaluators refuse it fail-closed.
+fn strip_outer_parens(text: &str) -> &str {
+    let mut text = text.trim();
+    loop {
+        if !text.starts_with('(') || !text.ends_with(')') {
+            return text;
+        }
+        let mut depth = 0usize;
+        let mut quote: Option<char> = None;
+        let mut escaped = false;
+        let mut wraps_whole = false;
+        for (index, character) in text.char_indices() {
+            match quote {
+                Some(open) => {
+                    if escaped {
+                        escaped = false;
+                    } else if character == '\\' {
+                        escaped = true;
+                    } else if character == open {
+                        quote = None;
+                    }
+                }
+                None => match character {
+                    '"' | '\'' => quote = Some(character),
+                    '(' => depth += 1,
+                    ')' => {
+                        depth = depth.saturating_sub(1);
+                        if depth == 0 {
+                            wraps_whole = index == text.len() - 1;
+                            break;
+                        }
+                    }
+                    _ => {}
+                },
+            }
+        }
+        if !wraps_whole || quote.is_some() {
+            return text;
+        }
+        text = text[1..text.len() - 1].trim();
+    }
+}
+
+/// Split `<lhs> <op> <rhs>` outside quotes, two-character operators
+/// first. Anything but exactly one comparison refuses.
+fn split_comparison(guard: &str) -> Option<(GuardCmp, &str, &str)> {
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    let characters: Vec<(usize, char)> = guard.char_indices().collect();
+    let mut position = 0;
+    while position < characters.len() {
+        let (index, character) = characters[position];
+        match quote {
+            Some(open) => {
+                if escaped {
+                    escaped = false;
+                } else if character == '\\' {
+                    escaped = true;
+                } else if character == open {
+                    quote = None;
+                }
+            }
+            None => match character {
+                '"' | '\'' => quote = Some(character),
+                '=' if guard[index..].starts_with("==") => {
+                    return Some((GuardCmp::Eq, &guard[..index], &guard[index + 2..]));
+                }
+                '!' if guard[index..].starts_with("!=") => {
+                    return Some((GuardCmp::Ne, &guard[..index], &guard[index + 2..]));
+                }
+                '<' => {
+                    if guard[index..].starts_with("<=") {
+                        return Some((GuardCmp::Le, &guard[..index], &guard[index + 2..]));
+                    }
+                    return Some((GuardCmp::Lt, &guard[..index], &guard[index + 1..]));
+                }
+                '>' => {
+                    if guard[index..].starts_with(">=") {
+                        return Some((GuardCmp::Ge, &guard[..index], &guard[index + 2..]));
+                    }
+                    return Some((GuardCmp::Gt, &guard[..index], &guard[index + 1..]));
+                }
+                _ => {}
+            },
+        }
+        position += 1;
+    }
+    None
+}
+
+/// Evaluate one guard operand: the shared #3295 evaluator over strings,
+/// chars, booleans and plain decimals, plus `str::len()` (Rust's byte
+/// length) on an exact string. Every other shape refuses.
+fn guard_operand(text: &str, inputs: &ExactInputs) -> Option<TypedValue> {
+    let text = strip_outer_parens(text);
+    if let Some(receiver) = text.strip_suffix(".len()") {
+        return match evaluate_initializer(receiver.trim(), inputs) {
+            EvalOutcome::Exact {
+                value: TypedValue::Str(string),
+                ..
+            } => Some(TypedValue::Index(string.len())),
+            _ => None,
+        };
+    }
+    match evaluate_initializer(text, inputs) {
+        EvalOutcome::Exact {
+            value:
+                value @ (TypedValue::Str(_)
+                | TypedValue::Char(_)
+                | TypedValue::Bool(_)
+                | TypedValue::Index(_)),
+            ..
+        } => Some(value),
+        _ => None,
+    }
+}
+
+/// Compare two exactly-evaluated guard operands. Ordering comparisons
+/// are exact only for indices; equality is exact for every scalar the
+/// operands evaluate to. Mixed or wider types refuse.
+fn compare_guard_operands(lhs: &TypedValue, operator: GuardCmp, rhs: &TypedValue) -> Option<bool> {
+    use TypedValue::{Bool, Char, Index, Str};
+    let equality_only = |equal: bool| -> Option<bool> {
+        match operator {
+            GuardCmp::Eq => Some(equal),
+            GuardCmp::Ne => Some(!equal),
+            _ => None,
+        }
+    };
+    match (lhs, rhs) {
+        (Index(a), Index(b)) => Some(match operator {
+            GuardCmp::Eq => a == b,
+            GuardCmp::Ne => a != b,
+            GuardCmp::Lt => a < b,
+            GuardCmp::Le => a <= b,
+            GuardCmp::Gt => a > b,
+            GuardCmp::Ge => a >= b,
+        }),
+        (Str(a), Str(b)) => equality_only(a == b),
+        (Char(a), Char(b)) => equality_only(a == b),
+        (Bool(a), Bool(b)) => equality_only(a == b),
+        _ => None,
+    }
 }
 
 /// A single direct-call shape: `name(args)` with an identifier callee
@@ -412,12 +818,12 @@ mod tests {
     fn guard_binding_range_and_computed_shapes_fail_closed() -> Result<(), String> {
         let cases: [(&str, &str); 9] = [
             (
-                "guard arm",
-                "        \"word\" if kind.len() > 2 => \"alpha\",",
+                "guard with an unresolvable operand",
+                "        \"word\" if kind.len() > other => \"alpha\",",
             ),
             (
-                "guard on an alternative",
-                "        \"word\" | \"text\" if kind.len() > 2 => \"alpha\",",
+                "guard with an unsupported method call",
+                "        \"word\" if kind.starts_with(\"w\") => \"alpha\",",
             ),
             ("bare binding pattern", "        word => \"alpha\","),
             (
@@ -450,6 +856,232 @@ mod tests {
                 "a {name} arm must refuse the match"
             );
         }
+        Ok(())
+    }
+
+    fn index_with_source(source: &str) -> RustIndex {
+        let mut index = RustIndex::default();
+        index.insert_file_only(
+            PathBuf::from("src/lib.rs"),
+            crate::analysis::facts::FileFacts {
+                source: source.into(),
+                ..Default::default()
+            },
+        );
+        index
+    }
+
+    const BINDING_BODY: &str = "pub fn label(kind: &str) -> &'static str {
+    match kind {
+        \"word\" => \"alpha\",
+        other => \"beta\",
+    }
+}";
+
+    #[test]
+    fn a_fresh_lowercase_binding_is_a_catch_all_in_source_order() -> Result<(), String> {
+        let helper = match_fn("label", BINDING_BODY);
+        let index = index_with_source(BINDING_BODY);
+        let eval = root_eval(&index);
+        let value = |kind: &str| {
+            match_return_value(&helper, &inputs(&[("kind", kind)]), &eval)
+                .map(|value| value.render())
+        };
+        assert_eq!(value("\"word\"").as_deref(), Some("\"alpha\""));
+        assert_eq!(value("\"anything\"").as_deref(), Some("\"beta\""));
+        // A glob inside `#[cfg(test)] mod tests` is not the helper's scope.
+        let index = index_with_source(&format!(
+            "{BINDING_BODY}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n}}\n"
+        ));
+        let eval = root_eval(&index);
+        assert_eq!(
+            match_return_value(&helper, &inputs(&[("kind", "\"anything\"")]), &eval)
+                .map(|value| value.render())
+                .as_deref(),
+            Some("\"beta\"")
+        );
+        // A binding placed first wins everything, like `_`.
+        let first = BINDING_BODY.replace(
+            "        \"word\" => \"alpha\",\n        other => \"beta\",",
+            "        other => \"beta\",\n        \"word\" => \"alpha\",",
+        );
+        assert_ne!(first, BINDING_BODY, "the reorder substitution must apply");
+        let helper = match_fn("label", &first);
+        let eval_first = root_eval(&index);
+        assert_eq!(
+            match_return_value(&helper, &inputs(&[("kind", "\"word\"")]), &eval_first)
+                .map(|value| value.render())
+                .as_deref(),
+            Some("\"beta\"")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn blanking_test_modules_keeps_byte_offsets_with_non_ascii_text() {
+        let source = "#[cfg(test)]\nmod a { const s: &str = \"é—ü\"; }\n#[cfg(test)]\nmod b { const word: u8 = 1; }\nfn keep() {}\n";
+        let blanked = without_test_modules(source);
+        assert_eq!(blanked.len(), source.len());
+        assert!(!blanked.contains("word") && !blanked.contains('é'));
+        assert!(blanked.contains("fn keep()"));
+    }
+
+    #[test]
+    fn a_bare_name_that_may_be_an_item_or_is_not_a_plain_binding_refuses() {
+        let helper = match_fn("label", BINDING_BODY);
+        for (name, source) in [
+            ("a constant", "const other: &str = \"x\";\n"),
+            ("a static", "static other: &str = \"x\";\n"),
+            ("a module glob", "use consts::*;\n"),
+            ("an import", "use consts::other;\n"),
+            ("a renamed import", "use consts::Other as other;\n"),
+            ("a unit struct", "struct other;\n"),
+            ("a function", "fn other() {}\n"),
+            ("a type alias", "type other = u8;\n"),
+            ("an include", "include!(\"consts.rs\");\n"),
+            ("an item macro", "generate_consts!();\n"),
+            ("a path item macro", "mac::generate! { }\n"),
+            ("a macro definition", "macro_rules! m { () => {}; }\n"),
+            (
+                "a module-level glob beside a test glob",
+                "use consts::*;\n#[cfg(test)]\nmod tests {\n    use super::*;\n}\n",
+            ),
+        ] {
+            let index = index_with_source(&format!("{source}{BINDING_BODY}"));
+            let eval = root_eval(&index);
+            // A scrutinee an earlier literal arm names never reaches the
+            // name; one it does not name would, so it refuses.
+            assert!(
+                match_return_value(&helper, &inputs(&[("kind", "\"anything\"")]), &eval).is_none(),
+                "{name} must refuse a scrutinee that reaches the bare name"
+            );
+        }
+        // No file text to read: fail closed.
+        let empty = RustIndex::default();
+        let eval = root_eval(&empty);
+        assert!(match_return_value(&helper, &inputs(&[("kind", "\"x\"")]), &eval).is_none());
+        // A guard or a value that needs the bound scrutinee, a capitalized
+        // name and a `ref`/`mut` binding are not read.
+        for arm in [
+            "        other if other.len() > 1 => \"beta\",",
+            "        other => pick(other),",
+            "        Other => \"beta\",",
+            "        ref other => \"beta\",",
+            "        mut other => \"beta\",",
+        ] {
+            let body = BINDING_BODY.replace("        other => \"beta\",", arm);
+            assert_ne!(body, BINDING_BODY, "the {arm} substitution must apply");
+            let helper = match_fn("label", &body);
+            let index = index_with_source(&body);
+            let eval = root_eval(&index);
+            assert!(
+                match_return_value(&helper, &inputs(&[("kind", "\"x\"")]), &eval).is_none(),
+                "{arm} must refuse the match"
+            );
+        }
+    }
+
+    #[test]
+    fn guarded_arms_evaluate_over_exact_inputs() -> Result<(), String> {
+        // RIPR-SPEC-0164 (spec-b-0164-guard-arm): a guard the shared
+        // authorities can evaluate selects the arm exactly, like the
+        // Rust match; a guard that evaluates false falls through in
+        // source order.
+        let guarded = BODY.replace(
+            "        \"word\" => \"alpha\",",
+            "        \"word\" if kind.len() > 2 => \"alpha\",",
+        );
+        assert_ne!(guarded, BODY, "the guarded-arm substitution must apply");
+        let helper = match_fn("label", &guarded);
+        assert_eq!(returned(&helper, "\"word\"")?, "alpha");
+
+        // The same guard shape against a scrutinee that fails it falls
+        // through to the later literal arm instead.
+        let len_guarded = BODY.replace(
+            "        \"word\" => \"alpha\",",
+            "        \"word\" if kind.len() > 5 => \"alpha\",\n        \"word\" => \"second\",",
+        );
+        let helper_len = match_fn("label", &len_guarded);
+        assert_eq!(returned(&helper_len, "\"word\"")?, "second");
+
+        // A guard applies to a whole alternative.
+        let alt_guarded = BODY.replace(
+            "        \"word\" => \"alpha\",",
+            "        \"word\" | \"text\" if kind.len() > 2 => \"alpha\",",
+        );
+        let helper_alt = match_fn("label", &alt_guarded);
+        assert_eq!(returned(&helper_alt, "\"word\"")?, "alpha");
+        assert_eq!(returned(&helper_alt, "\"text\"")?, "alpha");
+
+        // A wildcard guard decides between two wildcard arms: with no
+        // literal arms left, the guarded wildcard takes the scrutinee
+        // that passes its guard and the plain wildcard takes the rest.
+        let wildcard_guarded = BODY.replace(
+            "        \"word\" => \"alpha\",\n        \"text\" => \"beta\",\n        _ => \"other\",",
+            "        _ if kind.len() > 2 => \"other\",\n        _ => \"short\",",
+        );
+        assert_ne!(
+            wildcard_guarded, BODY,
+            "the wildcard-guard substitution must apply"
+        );
+        let helper_wild = match_fn("label", &wildcard_guarded);
+        assert_eq!(returned(&helper_wild, "\"word\"")?, "other");
+        assert_eq!(returned(&helper_wild, "\"hi\"")?, "short");
+
+        // String equality is exact too.
+        let eq_guarded = BODY.replace(
+            "        \"word\" => \"alpha\",",
+            "        \"word\" if kind == \"word\" => \"alpha\",",
+        );
+        let helper_eq = match_fn("label", &eq_guarded);
+        assert_eq!(returned(&helper_eq, "\"word\"")?, "alpha");
+        Ok(())
+    }
+
+    #[test]
+    fn parenthesized_guards_evaluate_like_bare_ones() -> Result<(), String> {
+        // Rust permits parentheses around the whole comparison, doubled
+        // too; stripping balanced outer parens keeps the guard exactly
+        // resolvable instead of downgrading the match to unknown.
+        for guard in [
+            "\"word\" if (kind.len() > 2) => \"alpha\",",
+            "\"word\" if ((kind.len() > 2)) => \"alpha\",",
+            "\"word\" if (kind.len()) > 2 => \"alpha\",",
+        ] {
+            let body = BODY.replace(
+                "        \"word\" => \"alpha\",",
+                &format!("        {guard}"),
+            );
+            assert_ne!(body, BODY, "the {guard} substitution must apply");
+            let helper = match_fn("label", &body);
+            assert_eq!(
+                returned(&helper, "\"word\"")?,
+                "alpha",
+                "{guard} must select the arm"
+            );
+        }
+
+        // An unbalanced paren is not rescued: the guard stays unevaluable
+        // and the whole match refuses fail-closed.
+        let unbalanced = BODY.replace(
+            "        \"word\" => \"alpha\",",
+            "        \"word\" if (kind.len() > 2 => \"alpha\",",
+        );
+        let index = RustIndex::default();
+        let eval = root_eval(&index);
+        let helper = match_fn("label", &unbalanced);
+        assert!(
+            match_return_value(&helper, &inputs(&[("kind", "\"word\"")]), &eval).is_none(),
+            "an unbalanced guard paren must refuse the match"
+        );
+
+        // A literal paren is content inside quotes, never structure.
+        let quoted = BODY.replace(
+            "        \"word\" => \"alpha\",",
+            "        \"w(ord\" if kind == \"w(ord\" => \"alpha\",",
+        );
+        let helper_quoted = match_fn("label", &quoted);
+        assert_eq!(returned(&helper_quoted, "\"w(ord\"")?, "alpha");
         Ok(())
     }
 
@@ -711,6 +1343,49 @@ mod tests {
     }
 
     #[test]
+    fn a_literal_ending_in_r_or_a_raw_identifier_is_still_a_literal_tail() -> Result<(), String> {
+        let label = match_fn(
+            "label_of",
+            "pub fn label_of(kind: &str) -> &'static str {\n    match kind {\n        \"word\" => pick(kind),\n        _ => \"other\",\n    }\n}",
+        );
+        // `r` ending a literal or an identifier is not a raw-string opener.
+        for (body, expected) in [
+            (
+                "fn pick(_k: &str) -> &'static str {\n    \"other\"\n}",
+                "other",
+            ),
+            (
+                "fn pick(_k: &str) -> &'static str {\n    \"user\"\n}",
+                "user",
+            ),
+            (
+                "fn pick(_k: &str) -> &'static str {\n    \"color\"\n}",
+                "color",
+            ),
+            ("fn pick(_k: &str) -> &'static str {\n    \"#\"\n}", "#"),
+            (
+                "fn pick(_k: &str) -> &'static str {\n    // a raw ident r#type\n    \"alpha\"\n}",
+                "alpha",
+            ),
+        ] {
+            let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+                functions: vec![label.clone(), match_fn("pick", body)],
+                ..Default::default()
+            });
+            let eval = root_eval(&index);
+            match super::super::helper_transfer::helper_return_value(
+                &label,
+                &inputs(&[("kind", "\"word\"")]),
+                &eval,
+            ) {
+                Some(TypedValue::Str(text)) => assert_eq!(text, expected, "{body}"),
+                other => return Err(format!("{body}: expected Str({expected:?}), got {other:?}")),
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn raw_string_interiors_async_bodies_and_early_returns_are_not_literal_tails() {
         let label = match_fn(
             "label_of",
@@ -718,6 +1393,8 @@ mod tests {
         );
         let bodies = [
             "fn pick(_k: &str) -> &'static str {\n    r#\"\n\"x\"\n\"#\n}",
+            "fn pick(_k: &str) -> &'static [u8] {\n    br#\"\n\"x\"\n\"#\n}",
+            "fn pick(_k: &str) -> &'static str {\n    r##\"\n\"x\"\n\"##\n}",
             "async fn pick(_k: &str) -> &'static str {\n    \"x\"\n}",
             "fn pick(k: &str) -> &'static str {\n    \"x\";\n    return k;\n}",
             // A quoted line inside a block comment is comment text, not a tail.

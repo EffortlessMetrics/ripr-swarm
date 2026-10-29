@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
-pub(crate) const GAP_LIST_SCHEMA_VERSION: &str = "ripr-mcp-gap-list-v3";
+pub(crate) const GAP_LIST_SCHEMA_VERSION: &str = "ripr-mcp-gap-list-v4";
 pub(crate) const GAP_SCHEMA_VERSION: &str = "ripr-mcp-gap-v1";
 
 /// `ripr_get_gap` / `ripr://gap/{canonical_id}` never authorizes an
@@ -240,7 +240,8 @@ impl RepairReadiness {
                 | crate::mcp::repair_admission::SEAM_GATE_REFUSED
                 | crate::mcp::repair_admission::SEAM_AMBIGUOUS
                 | crate::mcp::repair_admission::SEAM_NOT_FOUND
-                | crate::mcp::repair_admission::SEAM_INVENTORY_TRUNCATED,
+                | crate::mcp::repair_admission::SEAM_INVENTORY_TRUNCATED
+                | crate::mcp::repair_admission::SEAM_WORKTREE_SOURCE,
             ) => {
                 "the shared seam-level repair validator behind `ripr repair` does not admit this item"
             }

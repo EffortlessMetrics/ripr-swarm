@@ -3,12 +3,12 @@ mode: fast
 root: fixtures/typescript_probe_facts/input
 config: <cwd>/fixtures/typescript_probe_facts/input/ripr.toml
 
-Summary: 10 probes (0 exposed, 10 weak, 0 unrevealed, 0 no path); 10 of 10 findings unsuppressed
+Summary: 10 changed behaviors checked: 0 appear noticed by tests, 10 partly noticed, 0 reached but not noticed, 0 no test path. 10 found, 0 suppressed by your settings
 
 Changed file(s) by language: javascript = 2, typescript = 5
 
 Analysis outcome: findings below (analysis complete)
-  Counts: 7 changed file(s), 20 changed line(s), 10 candidate line(s), 10 probe(s), 10 finding(s)
+  Counts: 7 changed file(s), 20 changed line(s), 10 candidate line(s), 10 changed behavior(s) checked, 10 finding(s)
 
 Start here:
   State: preview language, advisory only
@@ -19,7 +19,7 @@ Start here:
   Static exposure: weak (severity: warning, confidence 0.40)
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: const total = applyDiscount(amount, threshold);
-  Missing discriminator: Only heuristic TypeScript test links were found for `summarize`; verify the
+  Missing check: Only heuristic TypeScript test links were found for `summarize`; verify the
     suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion
   Related test: tests/ambiguous.test.ts:1 summarize smoke
   Next step — TypeScript preview advisory: related-test proximity is heuristic only; add a direct owner call before treating this as an actionable repair target
@@ -29,8 +29,11 @@ Start here:
       discriminator = assertion distinguishes intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
-    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
-      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
+    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      no test path = no test path found; unclear = analysis limited, not a verdict;
+      found = listed for review; suppressed by your settings = hidden by your suppression policy;
+      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach weak: 1 related test(s) found for owner `summarize`
     - infection unknown: TypeScript preview adapter does not yet model infection
     - 4 more detail line(s) in --format human-full
@@ -38,7 +41,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/typescript_probe_facts/input --diff <cwd>/fixtures/typescript_probe_facts/diff.patch --mode fast probe:src_ambiguous.ts:typescript_preview:ba5968cd
   ripr context --root <cwd>/fixtures/typescript_probe_facts/input --diff <cwd>/fixtures/typescript_probe_facts/diff.patch --mode fast --at probe:src_ambiguous.ts:typescript_preview:ba5968cd
-  no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
+  no repair start offered: this finding has no gap ID, so there is no seam to start a repair from; follow the Next step above
 
 Hidden:
   9 lower-priority finding(s) omitted from default human output (TypeScript preview: 7, JavaScript preview: 2).

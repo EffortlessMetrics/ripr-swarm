@@ -24,6 +24,9 @@ use std::time::{Duration, Instant};
 #[path = "common/mod.rs"]
 mod common;
 
+#[path = "common/printed_words.rs"]
+mod printed_words;
+
 use common::fixture_git::{fixture_git_ok, fixture_git_output};
 
 static NEXT_BASE: AtomicU64 = AtomicU64::new(0);
@@ -211,9 +214,11 @@ fn summary_line(ran: &Ran) -> &str {
 
 fn assert_found_change(ran: &Ran, what: &str) -> Result<(), String> {
     assert_sane(ran, what)?;
-    if ran.code != Some(0) || !summary_line(ran).starts_with("Summary: 1 probe (") {
+    if ran.code != Some(0)
+        || !summary_line(ran).starts_with("Summary: 1 changed behavior checked: ")
+    {
         return Err(format!(
-            "{what}: expected one probe, got {:?}\n{}\n{}",
+            "{what}: expected one changed behavior, got {:?}\n{}\n{}",
             ran.code, ran.stdout, ran.stderr
         ));
     }
@@ -267,6 +272,56 @@ fn shell_metacharacter_root_name_does_not_execute() -> Result<(), String> {
         if dir.join(marker).exists() {
             return Err(format!("{} was created by command injection", marker));
         }
+    }
+    Ok(())
+}
+
+/// A summary alone cannot detect a printed command selecting an encoded
+/// sibling: both repositories deliberately contain the same one-probe change.
+#[test]
+fn printed_drill_in_round_trips_a_percent_root_from_another_cwd() -> Result<(), String> {
+    let scratch = Scratch::new("percent-root")?;
+    let root = plain(&scratch, "repo 100% %25")?;
+    let encoded_sibling = plain(&scratch, "repo 100%25 %2525")?;
+    let canonical = fs::canonicalize(&root).map_err(|e| e.to_string())?;
+    assert_ne!(
+        canonical,
+        fs::canonicalize(&encoded_sibling).map_err(|e| e.to_string())?
+    );
+    // On Windows canonicalize supplies the verbatim prefix; the printed
+    // command must fold it while preserving the literal percent characters.
+    let root_arg = canonical.to_str().ok_or("root is not UTF-8")?;
+    let report = ripr(&scratch.path, &["check", "--root", root_arg], &[])?;
+    assert_found_change(&report, "percent root from another cwd")?;
+    let command = report
+        .stdout
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("ripr explain "))
+        .ok_or_else(|| format!("no drill-in command in\n{}", report.stdout))?;
+    let words = printed_words::printed_words(command)?;
+    let printed_root = words
+        .windows(2)
+        .find(|pair| pair[0] == "--root")
+        .map(|pair| pair[1].as_str())
+        .ok_or_else(|| format!("no --root operand in {command}"))?;
+    assert_eq!(
+        fs::canonicalize(printed_root).map_err(|e| e.to_string())?,
+        canonical,
+        "the printed root must select the literal directory, not its encoded sibling"
+    );
+    if cfg!(windows) {
+        assert!(!printed_root.contains('\\'), "{command}");
+        assert!(!printed_root.starts_with("//?/"), "{command}");
+    }
+    let replay_args: Vec<&str> = words.iter().skip(1).map(String::as_str).collect();
+    let replay = ripr(&scratch.path, &replay_args, &[])?;
+    assert_sane(&replay, "replayed percent-root drill-in")?;
+    if replay.code != Some(0) || !replay.stdout.contains("probe:") {
+        return Err(format!(
+            "drill-in replay failed: {:?}\n{}\n{}",
+            replay.code, replay.stdout, replay.stderr
+        ));
     }
     Ok(())
 }
@@ -520,6 +575,38 @@ fn detached_head_worktree_and_submodule_roots_work() -> Result<(), String> {
 }
 
 #[test]
+fn dirty_submodule_is_a_skipped_pointer_not_a_non_source_file() -> Result<(), String> {
+    // A submodule with uncommitted edits diffs as `Subproject commit <sha>-dirty`
+    // with no mode header; it was reported as a non-source file whose empty
+    // result "is correct" (#10648).
+    let scratch = Scratch::new("submodule-dirty")?;
+    let inner = plain(&scratch, "inner")?;
+    let outer = plain(&scratch, "outer")?;
+    let inner_arg = inner.to_string_lossy().into_owned();
+    git(
+        &outer,
+        &["submodule", "add", "-q", &inner_arg, "vendor/dep"],
+    )?;
+    git(&outer, &["commit", "-q", "-m", "add submodule"])?;
+    git(&outer, &["branch", "-f", "main", "HEAD"])?;
+    let inner_lib = outer.join("vendor/dep/src/lib.rs");
+    let mut text = fs::read_to_string(&inner_lib).map_err(|e| e.to_string())?;
+    text.push_str("// edited\n");
+    fs::write(&inner_lib, text).map_err(|e| e.to_string())?;
+
+    let ran = ripr(&outer, &["check"], &[])?;
+    assert_sane(&ran, "dirty submodule")?;
+    let notice = "skipped 1 submodule pointer change(s); ripr does not analyze submodule contents.";
+    if ran.code != Some(0) || !ran.stderr.contains(notice) || ran.stderr.contains("non-source") {
+        return Err(format!(
+            "expected the submodule notice and no non-source claim; got {:?}\n{}\n{}",
+            ran.code, ran.stdout, ran.stderr
+        ));
+    }
+    Ok(())
+}
+
+#[test]
 fn submodule_ignore_settings_cannot_hide_pointer_changes() -> Result<(), String> {
     let scratch = Scratch::new("submodule-ignore")?;
     let inner = plain(&scratch, "inner")?;
@@ -586,7 +673,9 @@ fn submodule_ignore_settings_cannot_hide_pointer_changes() -> Result<(), String>
                     return Err(format!("wrong changed behavior: {finding}"));
                 }
             }
-        } else if !summary_line(&ran).starts_with(&format!("Summary: {expected_count} probe")) {
+        } else if !summary_line(&ran)
+            .starts_with(&format!("Summary: {expected_count} changed behavior"))
+        {
             return Err(format!("unexpected human summary: {}", ran.stdout));
         }
         Ok(())
