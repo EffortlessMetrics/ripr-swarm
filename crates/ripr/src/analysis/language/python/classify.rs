@@ -35,6 +35,7 @@ use super::sink_alignment::{
 use super::static_limits::{
     LAMBDA_LIMIT_EVIDENCE, heuristic_only_relation_limit, implicit_dunder_dispatch_limit,
     module_object_rebind_limit, static_limit_for_focused_change, unpinned_equality_dunder_limit,
+    unresolved_pytest_fixture_names,
 };
 use super::table_rows::python_unvaried_table_operand;
 use super::term_activation::python_inactive_term_evidence;
@@ -1543,6 +1544,27 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
         }
         if test.parametrized {
             evidence.push(format!("test_parametrized: pytest ({})", test.name));
+        }
+        if candidate.relation.uses_oracle()
+            && static_limit
+                .as_ref()
+                .is_some_and(|limit| limit.kind == StaticLimitKind::UnresolvedPytestFixture)
+        {
+            // An argname whose `indirect=` the read cannot settle is a
+            // parametrize value that may or may not pass through a fixture;
+            // only the rest are fixtures ripr knows the test takes.
+            let (routed, fixtures): (Vec<&str>, Vec<&str>) =
+                unresolved_pytest_fixture_names(test, owner)
+                    .into_iter()
+                    .partition(|name| test.unsettled_indirect.iter().any(|n| n == name));
+            for (prefix, names) in [
+                ("unresolved_fixtures", fixtures),
+                ("unsettled_indirect_params", routed),
+            ] {
+                if !names.is_empty() {
+                    evidence.push(format!("{prefix}: {} ({})", names.join(", "), test.name));
+                }
+            }
         }
         if let Some(command) = verify_command_for_test(test) {
             evidence.push(format!("test_verify_command: {command} ({})", test.name));

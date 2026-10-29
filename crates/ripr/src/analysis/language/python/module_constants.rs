@@ -33,6 +33,7 @@ use super::boundary::literal_value;
 use super::source_facts::parse_module_result;
 use super::source_utils::{SourceText, line_for_range_start, text_for_range};
 use rustpython_parser::ast::{self, Expr, Ranged, Stmt};
+use rustpython_parser::{Mode, Tok, lexer::lex};
 use std::sync::Arc;
 
 /// A module-scope name bound once to a scalar literal and never rebound.
@@ -505,24 +506,73 @@ fn contains_nested_scope(statements: &[Stmt]) -> bool {
 /// Whether `source` names a writer that can bind module names at runtime
 /// without an assignment statement, including `unittest.mock` patching
 /// (`patch("pkg.LIMIT", 5)`, `patch.object(pkg, "LIMIT", 5)`), and
-/// `importlib.reload`, which re-executes the module. Textual on
-/// purpose: a false match only leaves constants unresolved.
+/// `importlib.reload`, which re-executes the module. Reads code tokens, so a
+/// word in a comment or an ordinary string (a docstring saying "env vars",
+/// a comment about `--reload`) is not a writer (#10979); an f-string can run
+/// code, so its text still counts, and a module the lexer rejects falls back
+/// to the whole-text scan. A false match only leaves constants unresolved.
 fn writes_namespace_dynamically(source: &str) -> bool {
-    [
-        "exec",
-        "globals",
-        "vars",
-        "locals",
-        "setattr",
-        "__setattr__",
-        "delattr",
-        "reload",
-        "__dict__",
-        "patch",
-    ]
-    .into_iter()
-    .any(|identifier| mentions_identifier(source, identifier))
-        || source.contains("sys.modules")
+    // 0: nothing pending, 1: just read `sys`, 2: just read `sys.`.
+    let mut after_sys = 0;
+    for result in lex(source, Mode::Module) {
+        let Ok((token, range)) = result else {
+            return writes_namespace_in_text(source);
+        };
+        match &token {
+            Tok::Name { name } => {
+                if DYNAMIC_NAMESPACE_WRITERS.contains(&name.as_str())
+                    || (after_sys == 2 && name == "modules")
+                {
+                    return true;
+                }
+                after_sys = usize::from(name == "sys");
+            }
+            Tok::Dot if after_sys == 1 => after_sys = 2,
+            // `getattr(importlib, "reload")(m)` and `locate("importlib.reload")`
+            // name the writer only as a string, so a whitespace-free string
+            // with a writer name among its dotted parts still counts. Prose
+            // (a docstring saying "env vars") has whitespace and does not.
+            Tok::String { value, kind, .. }
+                if !kind.is_any_fstring()
+                    && !value.trim().contains(char::is_whitespace)
+                    && value
+                        .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                        .any(|part| DYNAMIC_NAMESPACE_WRITERS.contains(&part)) =>
+            {
+                return true;
+            }
+            Tok::String { kind, .. } if kind.is_any_fstring() => {
+                let text = &source[usize::from(range.start())..usize::from(range.end())];
+                if writes_namespace_in_text(text) {
+                    return true;
+                }
+                after_sys = 0;
+            }
+            _ => after_sys = 0,
+        }
+    }
+    false
+}
+
+const DYNAMIC_NAMESPACE_WRITERS: [&str; 11] = [
+    "exec",
+    "eval",
+    "globals",
+    "vars",
+    "locals",
+    "setattr",
+    "__setattr__",
+    "delattr",
+    "reload",
+    "__dict__",
+    "patch",
+];
+
+fn writes_namespace_in_text(text: &str) -> bool {
+    DYNAMIC_NAMESPACE_WRITERS
+        .into_iter()
+        .any(|identifier| mentions_identifier(text, identifier))
+        || text.contains("sys.modules")
 }
 
 /// Attribute assignment/deletion targets, including unpacking, annotations,
