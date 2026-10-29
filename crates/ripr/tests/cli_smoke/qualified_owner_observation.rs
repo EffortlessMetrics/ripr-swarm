@@ -237,7 +237,7 @@ const DBL_MANIFEST: &str =
 /// The paired phase names both tests: the rival must be indexed and related
 /// (otherwise a pin would pass vacuously because the binary target vanished).
 #[test]
-fn crate_qualified_method_cli_guards_the_layout_class() -> Result<(), String> {
+fn crate_qualified_method_cli_stays_weakly_exposed_on_these_shapes() -> Result<(), String> {
     let root = unique_temp_workspace("qualifier-crate-layout");
     let result = (|| {
         std::fs::create_dir_all(root.join("src"))
