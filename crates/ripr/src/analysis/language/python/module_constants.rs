@@ -548,8 +548,9 @@ fn writes_namespace_dynamically(source: &str) -> bool {
     false
 }
 
-const DYNAMIC_NAMESPACE_WRITERS: [&str; 10] = [
+const DYNAMIC_NAMESPACE_WRITERS: [&str; 11] = [
     "exec",
+    "eval",
     "globals",
     "vars",
     "locals",

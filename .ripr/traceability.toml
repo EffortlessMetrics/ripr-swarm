@@ -17196,6 +17196,9 @@ id = "RIPR-SPEC-0238"
 name = "Python oracle and reach rules"
 spec = "docs/specs/RIPR-SPEC-0238-python-oracle-and-reach-rules.md"
 tests = [
+  "crates/ripr/src/analysis/language/python/tests.rs::classify_change_parametrize_argnames_survive_prose_that_names_dynamic_writers",
+  "crates/ripr/src/analysis/language/python/tests.rs::classify_change_names_unsettled_indirect_values_apart_from_known_fixtures",
+  "crates/ripr/src/analysis/language/python/tests.rs::classify_change_parametrize_argnames_stay_unsettled_when_code_writes_the_namespace",
   "crates/ripr/src/app/check_artifact/tests.rs::live_truthiness_admission_cannot_be_reused_from_an_artifact",
   "crates/ripr/src/analysis/language/python/dunder_truthiness_tests.rs::integer_truthiness_credits_only_a_changed_truth_value",
   "crates/ripr/src/analysis/language/python/dunder_truthiness_tests.rs::integer_truthiness_refuses_assertion_messages",

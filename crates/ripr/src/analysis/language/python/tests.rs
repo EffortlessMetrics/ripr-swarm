@@ -6061,6 +6061,7 @@ fn classify_change_parametrize_argnames_stay_unsettled_when_code_writes_the_name
         "label = f\"{globals()}\"\n",
         "import sys\nsys . modules[\"pytest\"] = object()\n",
         "setattr(object(), \"x\", 1)\n",
+        "eval(\"globals().update(x=1)\")\n",
         "getattr(object(), \"__setattr__\")(\"x\", 1)\n",
     ] {
         let module_text = format!(
@@ -6071,6 +6072,45 @@ fn classify_change_parametrize_argnames_stay_unsettled_when_code_writes_the_name
             finding.static_limit_kind,
             Some(StaticLimitKind::UnresolvedPytestFixture),
             "writer {writer:?} must keep the limit: {:?}",
+            finding.evidence
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn classify_change_names_unsettled_indirect_values_apart_from_known_fixtures() -> Result<(), String>
+{
+    let owners = extract_owners(
+        Path::new("src/pricing.py"),
+        "def apply_discount(amount, threshold):\n    if amount >= threshold:\n        return amount - 10\n    return amount\n",
+    );
+    // `indirect=` is a call ripr cannot read: `amount` is a parametrize value
+    // that may or may not pass through a fixture, while `rate` is a plain
+    // fixture the test takes (#10979).
+    let tests = extract_tests(
+        Path::new("tests/test_pricing.py"),
+        "import pytest\nfrom src.pricing import apply_discount\n\n@pytest.mark.parametrize(\"amount\", [5], indirect=flag())\ndef test_apply_discount(amount, rate):\n    assert apply_discount(amount, rate) == 5\n",
+    );
+    let finding = classify_change(
+        Path::new("src/pricing.py"),
+        2,
+        "    if amount >= threshold:",
+        &owners,
+        &tests,
+    )
+    .ok_or_else(|| "changed predicate inside owner should classify".to_string())?;
+    assert_eq!(
+        finding.static_limit_kind,
+        Some(StaticLimitKind::UnresolvedPytestFixture)
+    );
+    for expected in [
+        "unresolved_fixtures: rate (test_apply_discount)",
+        "unsettled_indirect_params: amount (test_apply_discount)",
+    ] {
+        assert!(
+            finding.evidence.iter().any(|entry| entry == expected),
+            "{expected} missing from {:?}",
             finding.evidence
         );
     }

@@ -1538,13 +1538,20 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
                 .as_ref()
                 .is_some_and(|limit| limit.kind == StaticLimitKind::UnresolvedPytestFixture)
         {
-            let blockers = unresolved_pytest_fixture_names(test, owner);
-            if !blockers.is_empty() {
-                evidence.push(format!(
-                    "unresolved_fixtures: {} ({})",
-                    blockers.join(", "),
-                    test.name
-                ));
+            // An argname whose `indirect=` the read cannot settle is a
+            // parametrize value that may or may not pass through a fixture;
+            // only the rest are fixtures ripr knows the test takes.
+            let (routed, fixtures): (Vec<&str>, Vec<&str>) =
+                unresolved_pytest_fixture_names(test, owner)
+                    .into_iter()
+                    .partition(|name| test.unsettled_indirect.iter().any(|n| n == name));
+            for (prefix, names) in [
+                ("unresolved_fixtures", fixtures),
+                ("unsettled_indirect_params", routed),
+            ] {
+                if !names.is_empty() {
+                    evidence.push(format!("{prefix}: {} ({})", names.join(", "), test.name));
+                }
             }
         }
         if let Some(command) = verify_command_for_test(test) {

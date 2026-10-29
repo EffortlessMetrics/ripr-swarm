@@ -1386,20 +1386,33 @@ fn unresolved_fixture_hint(finding: &Finding) -> Option<String> {
     if finding.class != ExposureClass::StaticUnknown {
         return None;
     }
-    let entry = evidence_value(finding, "unresolved_fixtures: ")?;
-    let (fixtures, test) = entry.rsplit_once(" (")?;
-    let test = test.strip_suffix(')')?;
-    let names: Vec<String> = fixtures
-        .split(", ")
-        .map(|name| format!("`{name}`"))
-        .collect();
-    let (noun, pronoun) = if names.len() == 1 {
-        ("fixture", "it supplies")
+    let quoted = |prefix: &str| {
+        let entry = evidence_value(finding, prefix)?;
+        let (names, test) = entry.rsplit_once(" (")?;
+        let names: Vec<String> = names.split(", ").map(|name| format!("`{name}`")).collect();
+        Some((names, test.strip_suffix(')')?.to_string()))
+    };
+    if let Some((names, test)) = quoted("unresolved_fixtures: ") {
+        let (noun, pronoun, verb) = if names.len() == 1 {
+            ("fixture", "it supplies", "it passes")
+        } else {
+            ("fixtures", "they supply", "they pass")
+        };
+        return Some(format!(
+            "test `{test}` takes pytest {noun} {} that ripr does not read, so it cannot tell what {pronoun}; open the {noun} to see whether {verb} the changed input",
+            names.join(", ")
+        ));
+    }
+    // Not a known fixture: a parametrized value whose `indirect=` ripr cannot
+    // settle, which may still reach the test through a fixture of that name.
+    let (names, test) = quoted("unsettled_indirect_params: ")?;
+    let noun = if names.len() == 1 {
+        "argument"
     } else {
-        ("fixtures", "they supply")
+        "arguments"
     };
     Some(format!(
-        "test `{test}` takes pytest {noun} {} that ripr does not read, so it cannot tell what {pronoun}; open the {noun} to see whether it passes the changed input",
+        "test `{test}` parametrizes {noun} {} with an `indirect=` ripr cannot settle, so it cannot tell whether a fixture changes the value; check `indirect=` and any fixture of that name",
         names.join(", ")
     ))
 }
