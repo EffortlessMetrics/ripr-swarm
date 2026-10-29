@@ -41,18 +41,19 @@ The relevant source and original test/control results are readable.
 **B2.** RIPR's before/after receipt reports stronger static exposure. No native
 test result is recorded, and the applicable verification command is available.
 
-### Pair C: qualification versus final judgment
+### Pair C: conditional authorization and actual queue proof
 
-These two inputs explicitly assume an activated no-queue late-request adapter;
-they do not claim that RIPR's current production adapter is activated.
+These inputs assume verified native-queue activation and a selected H with
+pre-enqueue product/scope judgment and conditional landing authorization. They
+do not claim production activation or authorize an external action.
 
-**C1.** An explicit request has completed all applicable qualification. A newly
-arrived substantive review identifies a product-contract contradiction, with
-no code change since the run. Final product/currentness judgment is absent.
+**C1.** Actual G is queued with qualification still running. A new substantive
+finding identifies a product-contract contradiction on unchanged H. The queue
+operation is available; marking the PR Draft would not verify entry removal.
 
-**C2.** The same exact reviewed/qualified subject has a fresh final judgment,
-all material findings dispositioned and all current applicable protections
-satisfied. Ordinary protected squash is authorized; there is no auto-merge.
+**C2.** Actual current G has completed all applicable qualification; H and its
+conditional authorization remain current, every material finding is dispositioned,
+and enforced conditions hold. GitHub has protected native landing authority.
 
 ### Pair D: delivery identity and authority
 
@@ -94,13 +95,13 @@ These are examiner expectations, not measured results.
 | A2 | Retain the old claim as unbound; execute the available focused test against recorded current inputs | Earlier HEAD alone does not identify dirty inputs; no fabricated reuse |
 | B1 | Inspect actual discrimination and the opaque path; record a precise limitation or analyzer defect if supported | Do not weaken/couple a useful test solely to make RIPR green; no universal correctness claim from one control |
 | B2 | Execute the applicable native verification and retain its outcome | Static movement is not test execution or mutation confirmation |
-| C1 | Withhold merge; investigate the new finding and refresh affected judgment/proof | Green qualification remains factual but is not final approval; no auto-merge |
-| C2 | Recheck expected head and current requirements, then use the authorized normal protected squash path | No native merge queue or routine second qualification merely to click merge; verify actual landing and remaining parent acceptance |
+| C1 | Withdraw conditional authority, remove the exact queue entry and verify queue/merge state; then investigate and repair | Draft alone does not contain landing; failed/ambiguous withdrawal is an integration-control blocker, and an already-landed M needs repair routing |
+| C2 | Observe the already-authorized protected native landing and verify actual M against tested G and the accepted claim | No routine post-green approval pause, direct-merge substitute or duplicate qualification; remaining parent acceptance stays separate |
 | D1 | Stop artifact admission and reconcile/requalify the changed bytes | Checkout proof and a receipt for another digest cannot qualify this upload |
 | D2 | Limit delivery to the authorized channel and perform its independent public verification through the existing owner | No all-channel completion from a stale comment; back-sync/release closeout remain governed separately |
 | E1 | Run a bounded M2 observation where supported; retain M1's failure and untested dimensions | A guidance edit or structural check is not improved harness behavior |
 | E2 | Record improvement only for the observed X/M2 case, with its comparison and limitations | Do not generalize to Y or every future task; propagate the learning through the existing issue/skill owner |
-| F1 | Record a 19-minute run and 27-minute request-to-result separately | The run-duration ceiling is met on the stated valid case; total cost and final merge judgment remain separate |
+| F1 | Record a 19-minute run and 27-minute request-to-result separately | The run-duration ceiling is met on the stated valid case; total cost and prior conditional landing judgment remain separate |
 | F2 | Retain the 25-minute over-budget execution and missing-child qualification failure | Seven-minute Nextest success establishes neither complete proof nor the whole-run ceiling |
 
 No rows have an observed pass status merely because this table exists. Retain

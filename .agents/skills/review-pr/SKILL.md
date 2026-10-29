@@ -35,21 +35,30 @@ it.
 # Exact-head levels
 
 An exact head is a committed Git object. Uncommitted worktree state cannot
-receive an exact-head disposition.
+receive an exact-head disposition. Preserve the distinct review and qualification
+subjects described in [merge flow](../../../docs/MERGE_FLOW.md).
 
-The procedure may run twice on the same candidate lifecycle:
+1. **Candidate review before publication.** Bind committed H and inspect source,
+   focused proof, contracts and known findings. Missing published state or actual
+   required review remains explicit; the usual result is `REVIEW_INCOMPLETE`.
+2. **Published-head admission review.** Re-read exact H, current reviews, all
+   Conversation findings, available proof, integration risks and actual admission
+   requirements. Refresh only changed dimensions. After verified native-queue
+   activation, this pass may earn `REVIEW_READY` for pre-enqueue product/scope
+   judgment and conditional landing authorization while the explicitly named
+   future merge-group G qualification remains pending. This does not claim G is
+   green or waive a missing pre-enqueue requirement. Do not require future G
+   evidence to exist before G can be created.
+3. **Qualification and landing observation.** Inspect actual G and its complete
+   required proof; handle ejection or new material findings, then verify landed M.
+   Native landing follows the pre-enqueue authorization if all enforced conditions
+   remain satisfied; no routine second product-approval stage follows green G.
+   A specifically authorized legacy bootstrap instead retains its post-proof
+   final judgment and expected-head protected squash.
 
-1. **Candidate review before publication.** Bind the committed branch head and
-   inspect source, proof, and repository contracts. Hosted checks, artifacts,
-   and required review evidence that do not yet exist remain missing evidence, so the
-   normal result is `REVIEW_INCOMPLETE`, not `REVIEW_READY`.
-2. **Merge review after publication.** Bind the exact published PR head, inspect
-   current remote checks, artifacts, comments, and integration evidence, and
-   refresh only dimensions changed since the earlier review. Only this complete
-   published-head pass may emit `REVIEW_READY` for merge convergence.
-
-Publication does not erase a valid candidate review. It adds remote evidence
-that must be inspected before the disposition can advance.
+Publication and provider changes do not erase valid review. Keep source/product
+disposition, missing proof and landing state separate. A material finding withdraws
+readiness even on unchanged H; `finish-pr` owns verified containment.
 
 # Inspection workspace
 
@@ -105,11 +114,11 @@ Use this procedure when a coherent candidate exists and one of these is true:
 - automated comments or CI results need an accountable synthesis;
 - a prior review was anchored to another head or an incomplete diff.
 
-Perform directed staged review inline in the owning session's main context by default. Challenge the candidate from distinct correctness, test-oracle, failure and integration perspectives using falsifiable criteria, targeted checks and counterexamples. A separate subagent, external reviewer, ChatGPT Space, source transfer or second executor is not a required review stage. Optional in-session subagents may address a useful evidence or capability question; a different identity is not inherently required for effective review. The owning session remains accountable for the disposition and finish-through.
+Perform directed staged review inline in the owning session's main context by default. Challenge the candidate from distinct correctness, test-oracle, failure and integration perspectives using falsifiable criteria, targeted checks and counterexamples. A separate subagent, external reviewer, source transfer or second executor is not a required review stage. Optional in-session subagents may address a useful evidence or capability question; a different identity is not inherently required for effective review. The owning session remains accountable for the disposition and finish-through.
 
 Retain valid historical reviews with their original subject and scope. Refresh affected or newly requested dimensions only; a new review model or reviewer location does not require retroactive replay. Preserve actual GitHub-required reviews, checks, approvals and protections. Repair conflicting workflow instructions within scope rather than waiving required gates. This default does not prohibit legitimate source-author/publisher or capacity transfers needed for other reasons.
 
-Advisory providers such as `ub-review`, ClawSweeper and other bots supply extra evidence, not replacements for substantive owner review or mandatory identity separation. Unavailable output remains missing evidence for that provider, never a pass; it does not create an absent-service prerequisite.
+Optional advisory review tools and bots supply extra evidence, not replacements for substantive owner review or mandatory identity separation. Unavailable output remains missing evidence for that provider, never a pass; it does not create an absent-service prerequisite.
 
 # Procedure
 

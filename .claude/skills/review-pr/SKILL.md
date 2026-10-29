@@ -34,27 +34,38 @@ procedure and actual behavior earn those declarations.
 
 # Exact-head levels
 
-An exact head is a committed Git object. Uncommitted edits cannot receive an
-exact-head review disposition.
+An exact head is a committed Git object. Uncommitted worktree state cannot
+receive an exact-head disposition. Preserve the distinct review and qualification
+subjects described in [merge flow](../../../docs/MERGE_FLOW.md).
 
-The same candidate may receive two deliberate passes:
+1. **Candidate review before publication.** Bind committed H and inspect source,
+   focused proof, contracts and known findings. Missing published state or actual
+   required review remains explicit; the usual result is `REVIEW_INCOMPLETE`.
+2. **Published-head admission review.** Re-read exact H, current reviews, all
+   Conversation findings, available proof, integration risks and actual admission
+   requirements. Refresh only changed dimensions. After verified native-queue
+   activation, this pass may earn `REVIEW_READY` for pre-enqueue product/scope
+   judgment and conditional landing authorization while the explicitly named
+   future merge-group G qualification remains pending. This does not claim G is
+   green or waive a missing pre-enqueue requirement. Do not require future G
+   evidence to exist before G can be created.
+3. **Qualification and landing observation.** Inspect actual G and its complete
+   required proof; handle ejection or new material findings, then verify landed M.
+   Native landing follows the pre-enqueue authorization if all enforced conditions
+   remain satisfied; no routine second product-approval stage follows green G.
+   A specifically authorized legacy bootstrap instead retains its post-proof
+   final judgment and expected-head protected squash.
 
-1. **Pre-publication candidate review.** Bind the committed branch head and
-   inspect source, proof, and repository contracts. Remote checks, artifacts,
-   and external review that do not exist yet remain missing, so this normally
-   exits `REVIEW_INCOMPLETE` rather than `REVIEW_READY`.
-2. **Published merge review.** Bind the exact PR head, inspect current hosted
-   jobs, artifacts, comments, and integration evidence, and refresh only the
-   dimensions changed since the candidate pass. Only this published-head pass
-   may emit `REVIEW_READY` for merge convergence.
-
-Publication adds remote evidence; it does not erase an earlier valid source and
-oracle inspection.
+Publication and provider changes do not erase valid review. Keep source/product
+disposition, missing proof and landing state separate. A material finding withdraws
+readiness even on unchanged H; `finish-pr` owns verified containment.
 
 # Inspection workspace
 
 Review is a read of a committed Git object. Binding an exact head must not mutate
-a checkout the reviewer does not own.
+a checkout the reviewer does not own. The owning session can inspect committed
+objects in its existing candidate checkout; directed review does not require
+a new worktree or another identity.
 
 Prefer routes that materialize nothing:
 
@@ -102,7 +113,7 @@ Use `review-pr` when:
 - automated review and CI results need an accountable synthesis;
 - a prior inspection covered another head or only part of the diff.
 
-The lead Claude context may perform the pass directly. Delegate only when another context changes the available evidence, oracle, tools, threat model, platform access, or failure perspective. The lead verifies the returned evidence and owns the final disposition.
+The owning Claude session performs directed staged review inline in its main context by default, with explicit criteria, targeted checks and counterexamples. Optional subagents or advisory providers may change the evidence, oracle, tools, platform access or failure perspective; identity separation is not itself independence. Preserve valid historical review and refresh affected or newly requested dimensions only. Missing provider output is missing evidence for that provider, not a clean pass or a new absent-service prerequisite. Preserve actual required reviews and protections. The owning session verifies evidence, owns the disposition and continues the selected delivery outcome.
 
 # Workflow
 

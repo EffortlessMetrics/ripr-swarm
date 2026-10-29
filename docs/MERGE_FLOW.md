@@ -21,11 +21,18 @@ readback is still required before changing settings, and whether the repository'
 merge queue is enabled for `main` is a live setting this document does not
 establish. A file or issue edit does not install new protection.
 
-Until the replacement is qualified and activated, use the installed label route
-below. Do not treat a proposed enqueue command, Ready state, or this target as
-permission to skip its checks. Current user rulings and controller decisions
-supersede older no-queue target prose; source, rehearsed, active and accepted
-remain separate states.
+Ordinary commit, push, Draft, Ready and metadata changes must start zero development
+CI workflows, including cheap wrappers. Installed triggers are a description of
+machinery, not authorization to exercise them. Inspect the current event perimeter
+before a write. If no compliant publication route is available, preserve the
+exact source contribution and name the existing cutover owner and next event;
+do not start legacy CI merely to publish a repair.
+
+The label route below describes only a specifically authorized bounded bootstrap.
+Recover the current authority and its exact scope before using it; old source,
+this document or a label's existence cannot grant an exception. Preserve real
+checks and protection throughout the transition. Current user rulings supersede
+older target prose; source, rehearsed, active and accepted remain separate states.
 
 ## Who owns the change
 
@@ -33,7 +40,7 @@ The PR's owning lead carries review, repair, qualification and landing through
 the applicable protected route without asking for routine repo permission again.
 One writer owns each candidate through its authorized issue-to-merge outcome,
 with evolving directed review stages inline in the main context. Optional
-in-session subagents and Claw/UB/bots add evidence; they are not mandatory
+in-session subagents and advisory review tools add evidence; they are not mandatory
 reviewer identities or substitutes for owner review. Preserve actual required
 reviews and checks. Routine repairs, evidence comments and finish-through do
 not require parent payload approval; coordinate actual overlapping writers and
@@ -60,6 +67,9 @@ exists. Missing future CI must not make requesting CI circular. Conversely,
 source review is not a claim that required execution already passed.
 
 ## Installed label-request procedure
+
+Use this procedure only within a specifically authorized bounded bootstrap as
+described above. It is not the default development or selected target route.
 
 `Ripr Rust Small Result` is requested by applying `merge-ready`. Ready is review
 state, not the request. Other labels produce `Merge-ready Nonrequest`, not the
@@ -95,7 +105,21 @@ cheap development / Draft publication
 Enqueue authorizes automatic landing if proof succeeds; it is not a neutral
 request for tests. All expected source changes and material review dispositions
 belong before it. The owner still handles ejection, new findings and final
-readback. No resident polling worker is needed while native CI owns the wait.
+readback. Exact-H source/product review may be `REVIEW_READY` for this conditional
+admission with future G proof explicitly pending; that does not claim G has run.
+Requiring G before enqueue would make admission circular. No routine post-green
+product-approval pause or resident polling worker is needed. Keep the useful
+owning session for the normal in-window result; a real interruption gets an exact,
+acknowledged continuation through the existing owner.
+
+A new material finding withdraws conditional authority even if H is unchanged.
+Remove the exact current queue entry and verify its absence plus current merge
+state. Draft state or a comment alone does not contain landing. If withdrawal is
+failed, unavailable or ambiguous, retain an integration-control blocker. Distinguish
+an ejected or superseded G from a race in which M already landed; the latter
+requires landed-state inspection and repair/incident routing. Restore affected
+proof, review and authorization before re-enqueue, without replaying unaffected
+dimensions or attributing an old G result to its replacement.
 
 Keep H (reviewed head), P (historical PR synthetic merge), G (native queue
 composition) and M (actual landed commit/tree) distinct. A green P does not prove
@@ -138,7 +162,10 @@ Sequence the rollout:
    PR fields; an added event alone cannot adapt them. Group scope is the union
    of applicable constituent and integration risks, not one guessed PR number.
 3. Prove every required G result, negative controls and frozen-source review.
-   Keep full legacy PR qualification during the bounded queue bootstrap.
+   A specifically authorized bounded queue bootstrap retains full legacy PR
+   qualification until queue-only enforcement is verified. This safety ordering
+   grants no ordinary-development CI exception; record the applicable authority
+   and cutover boundary before the bootstrap is exercised.
 4. Apply/read back queue enforcement through #4838. Demonstrate an actual native
    queue transaction before changing protected PR success to cheap admission.
 5. Retire duplicate expensive label/main-push and child routes coherently. Keep

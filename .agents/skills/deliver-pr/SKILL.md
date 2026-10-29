@@ -49,35 +49,49 @@ from active machinery; it does not replace current checks or authorize a cutover
 6. If proof is absent or self-confirming, use `prepare-proof` and continue.
 7. Build or repair the one current candidate with `build-candidate` and materialize an exact committed head.
 8. Perform `review-pr` on that exact head inline in the owning session's main context, with distinct directed challenges; subagents and bot input are optional evidence. Before publication, retain unavailable remote checks, artifacts, and required review evidence as `REVIEW_INCOMPLETE`; do not convert them to pass.
-9. Use `finish-pr` to publish or resume the exact candidate when no equivalent PR already exists. Committing, pushing an ordinary branch, opening or updating the PR, and repairing it are routine delivery inside the selected claim; do not pause for owner permission. Immediately before pushing to a candidate branch, re-read the PR head (`gh pr view --json headRefOid` or equivalent) and compare it with the expected candidate SHA; see Candidate law for an externally advanced head. An agent-authored PR body must include the `.github/pull_request_template.md` Source-of-truth Links and Candidate Relationships lines verbatim, with real values, before first Ready (see `finish-pr` step 2); validate it offline with `cargo xtask check-pr-shape --body-file <path>` or `--body-env <var>` fed from `gh pr view --json body`, and fix every missing or placeholder line it names before the Ready transition.
+9. Inspect live event triggers before branch or PR writes: ordinary publication must start zero development CI workflows, including wrappers. Use only a route consistent with current authority as described in [merge flow](../../../docs/MERGE_FLOW.md); if unavailable, preserve the exact contribution and record its cutover owner rather than dispatching legacy CI. Use `finish-pr` to publish or resume the exact candidate when no equivalent PR already exists. Committing, pushing an ordinary branch, opening or updating the PR, and repairing it are routine delivery inside the selected claim; do not pause for owner permission. Immediately before pushing to a candidate branch, re-read the PR head (`gh pr view --json headRefOid` or equivalent) and compare it with the expected candidate SHA; see Candidate law for an externally advanced head. An agent-authored PR body must include the `.github/pull_request_template.md` Source-of-truth Links and Candidate Relationships lines verbatim, with real values, before first Ready (see `finish-pr` step 2); validate it offline with `cargo xtask check-pr-shape --body-file <path>` or `--body-env <var>` fed from `gh pr view --json body`, and fix every missing or placeholder line it names before the Ready transition.
 10. Immediately before publication, before resolving a conflict, and before replacing a supposedly stale candidate, repeat the claim-identity search against current `main`, open PRs, and recently merged PRs. If equivalent work landed, stop conflict repair, preserve any unique residual, and close or disposition the duplicate instead of manufacturing a rival PR.
 11. Re-enter `review-pr` on the exact published PR head after remote evidence is available. A green check set, empty thread list, or unavailable reviewer does not establish substantive review.
 12. Route `REPAIR_REQUIRED` back through the same candidate, then refresh only the affected proof and review dimensions. Before repairing a PR gate failure, reproduce the failing signal on current `origin/main` and record the classification (`inherited`, `candidate`, or `not established`) in the PR body or owned comment; do not repair before that classification exists, and run `cargo xtask ci-policy` locally for gate-relevant repairs instead of spending a hosted cycle. Local `precommit` is not equivalent to `ci-policy` coverage.
-13. Immediately before entering `finish-pr` merge convergence, re-read the PR head (`gh pr view --json headRefOid` or equivalent) and compare it with the reviewed candidate SHA. Only a current `REVIEW_READY` PR head may enter `finish-pr` merge convergence; a head that differs from the reviewed SHA does not enter merge convergence without re-verification. Explicit incomplete or blocking review states remain draft or durably in flight.
+13. Immediately before entering `finish-pr` merge convergence, re-read the PR head (`gh pr view --json headRefOid` or equivalent) and compare it with the reviewed candidate SHA. Only a current `REVIEW_READY` PR head may enter `finish-pr` conditional admission or merge convergence; a changed head needs affected-dimension re-verification. For native queue admission, name future G qualification as pending rather than circularly requiring it before enqueue. Explicit incomplete or blocking review states remain draft or durably in flight.
 14. After merge or deliberate closure, verify current `main`, update delivered versus remaining acceptance, update parents, and release the candidate worktree.
 
 # Continuation handoff
 
-At a phase change or bounded worker return, confirm the current user scope and
-surviving limits before selecting the next transition. Keep the authorized
-issue-through-merge outcome with the owning session as stages evolve. Retire
-obsolete assistant-imposed phase restrictions, preserving explicit user limits
-and actual resource denials. A routine phase boundary is not a parent approval
-lease; continue authorized repairs, factual comments and finish-through. Tracking
-updates support that work without becoming a new engineering gate.
+At a phase change or bounded worker return, recover the current user scope and
+surviving limits from their authoritative sources. Before retiring a phase-only
+restriction, compare the instruction that imposed it with the current user
+instruction or accepted delegation authorizing the next action. Retain that
+source and scope in the existing continuation record. A prior lane label,
+third-party encouragement, summary or elapsed time is not new authority. Retire
+only obsolete task-local restrictions; actual user limits and tool, service or
+security denials remain binding. Routine authorized repairs, factual comments and
+finish-through need no parent payload approval or renewed phase lease.
 
-A bounded worker finishing its phase returns an obligation, not parent
-completion. The delivery owner verifies its evidence and takes the next useful
-authorized transition, or assigns it through an available worker. At handback
-or a remote-owned wait, update the existing issue/PR using the shared
+A bounded worker's phase completion returns evidence and the next obligation,
+not parent completion. The delivery owner verifies the handback and takes the
+next useful authorized transition. Preserve that useful owning session through
+an ordinary in-window CI wait; record exact native request/run/attempt and the
+decision-changing event without tight polling or a separate resident watcher.
+
+At real interruption, update the existing
 [PR-native continuation record](../../../docs/PR_AUTOMATION.md#pr-native-continuation-record).
-Keep the exact candidate, evidence, dependency, owner and resume condition there;
-a fresh worker enters the earliest missing judgment without a long briefing or
-another tracker. If no executable transition remains, name who/what can resume;
-do not imply an unarranged worker or background watch will do it.
+Verify the original owner/task, current candidate and run state before resuming.
+A sent message is not an acknowledgment or evidence that work restarted. If the
+owner is unavailable, reconcile its actual task/run/branch activity and active
+writers, preserve its context and proof, and arrange one explicit transfer through
+the existing delivery owner. Elapsed silence alone does not prove inactivity,
+and an unacknowledged handoff must not become an indefinite wait. A capacity
+restart retains the same authorized claim and evidence; it is not a new rival
+candidate or automatic model/provider switch.
+
+If no executable transition remains, name the exact blocker, capable next actor
+and observed acknowledgment or missing acknowledgment. Do not imply an unarranged
+worker or background watch will continue. Tracking supports delivery and creates
+no additional engineering gate or state database.
 
 Use the [paired continuation scenarios](../../../docs/agent-context/delivery-continuation-scenarios.md)
-for changes to these boundaries; scenario decisions do not establish real delivery.
+for these boundaries. Scenario decisions do not establish real delivery.
 
 # Candidate law
 
@@ -121,13 +135,12 @@ Refresh only the dimensions changed by the latest edit. Unrelated movement on `m
 
 # Useful fan-out
 
-The owner normally inspects authority, tests, correctness, security, compatibility, product behavior and platform semantics through directed review in its main context. Optional in-session subagents may inspect a bounded question; an observational step does not assign a permanently read-only cloud-owner identity. One writer integrates accepted repairs. A delegated writer receives the candidate-owned worktree and is the only mutator until handback. Conflicting reports must be resolved against canonical source and actual behavior before publication.
+The owner normally inspects authority, tests, correctness, security, compatibility, product behavior and platform semantics through directed review in its main context. Optional in-session subagents may inspect a bounded question; an observational step does not assign a permanently read-only owner identity. One writer integrates accepted repairs. A delegated writer receives the candidate-owned worktree and is the only mutator until handback. Conflicting reports must be resolved against canonical source and actual behavior before publication.
 
 # Valid exits
 
 - `PR_MERGED`
 - `PR_IN_FLIGHT`
-- `AUTO_MERGE_ARMED`
 - `WAITING_REQUIRED_CHECKS`
 - `WAITING_EXTERNAL_REVIEW`
 - `WAITING_INTEGRATION_PROOF`

@@ -1,4 +1,5 @@
 <!-- section: Docs -->
-- Clarify directed review in the owning session and preserve historical review
-  evidence; align qualification instructions with the selected merge-queue
-  direction while retaining installed checks until verified cutover (#4984, #10575).
+- Align both provider instruction routes and lifecycle scenarios with directed
+  owner review, verified continuation authority and native queue qualification;
+  distinguish zero development CI, bounded authorized bootstrap, actual queue
+  withdrawal and historical proof from current readiness (#4984, #10575).

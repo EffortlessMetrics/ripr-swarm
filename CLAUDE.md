@@ -27,6 +27,16 @@ then read the controlling issue, current source and all-state PRs for the claim.
 Preserve pre-existing work. State the phase, missing acceptance, one ready claim,
 proof route and next transition without creating a global state file.
 
+Keep the authorized issue-through-merge outcome with its owning session as stages
+evolve. Before retiring an earlier phase limit, recover the instruction that set
+it and the current user instruction or accepted delegation that changes scope.
+Retain the authority source and surviving limits in the existing continuation
+record. A summary, lane label, third-party encouragement or elapsed time cannot
+authorize implementation. Retire only contradicted task-local restrictions;
+explicit investigation-only limits and actual tool, service or security denials
+remain binding. If material authority cannot be recovered, name that gap and
+continue available work within the verified scope.
+
 A runtime goal or local checklist cannot replace the parent. If stale objective
 text cannot be edited, create a successor preserving the real end state and
 continue. Do not ask the user to dictate recoverable context. Missing runtime
@@ -64,14 +74,20 @@ pre-merge CI. Do not run full qualification on every alternative. Independent
 objectives may proceed concurrently; selection is not a repository-wide max-one
 queue. Complete each focused objective's code, tests and documentation together.
 
-Use the actual installed request interface. The intended #4984/#4985/#4986 flow is
-explicit late qualification, normally at most 20 minutes of complete CI execution,
-then a separate current-repository/product/integration judgment and protected
-expected-head squash. Queue time is separate. No routine auto-merge or merge queue.
-`merge-ready` is a request spelling under discussion; `premerge-ci-request` and
-`request-premerge-ci` are proposals, not installed commands. #8082 owns the staged
-caller/skills integration. Preserve live required enforcement until its qualified
-cutover; this root update does not change triggers, settings or result producers.
+Follow [merge flow](docs/MERGE_FLOW.md). The selected #4984/#4985/#4986 destination
+is native queue qualification of the actual merge composition, normally at most
+20 minutes of complete active CI; queue delay and retries are separate measures.
+Ordinary commit, push, Draft, Ready and metadata changes must start zero development
+CI workflows, including cheap wrappers. Inspect live event definitions before
+publication. Installed triggers are observed machinery, not authorization to use
+them. If no compliant publication route exists, preserve the exact contribution
+and name the cutover owner and event needed to publish it without unauthorized CI.
+Workflow support alone does not prove live queue activation. The legacy
+`merge-ready` route is available only for a specifically authorized bounded
+bootstrap retaining real qualification and final judgment; Ready alone requests
+nothing. After verified activation, exact-H product/scope judgment conditionally
+authorizes native landing on actual-G proof. #8082 retains its staged caller
+ownership. Preserve actual checks and approvals; this instruction changes no settings.
 
 Source review and focused proof can be complete while hosted qualification is
 still missing. Publish their actual scope and exact source; do not require future
@@ -81,8 +97,12 @@ word, sibling's green result or completed agent session cannot authorize another
 head. Reconcile existing native request/run/attempt state before creating more work.
 
 The same useful lead normally stays with its candidate through an ordinary CI wait,
-inspects complete results and current review/Conversation findings, makes the final
-judgment, performs the authorized protected merge and reads back the landing.
+inspects complete results and current review/Conversation findings, handles any
+ejection or repair, and reads back the protected landing. Native-queue final
+product/scope judgment precedes enqueue; successful current-G proof and the
+remaining enforced conditions permit native landing without another routine
+post-green approval pause. A specifically authorized legacy bootstrap retains
+its post-proof judgment and expected-head protected squash.
 Separate decisions do not require separate agents or a new routine human approval.
 Use supported waits/events or bounded checks without tight polling. Retain context
 and ownership; a real interruption or exhausted window gets an exact continuation,
@@ -95,11 +115,12 @@ partial reads and zero visible threads are not clean review. A valid later findi
 can block merge despite an earlier clean pass. Preserve unaffected evidence while
 refreshing materially changed review/proof dimensions.
 
-After landing, reconcile the actual issue/parent acceptance. No routine full
-post-merge CI replay; the intended independent main-health cadence requires both
-at least one hour and ten merges. Incident, deep and release proof retain their
-own purposes and authority. Do not skip the currently enforced path or weaken
-proof to claim the timing/cost target.
+After landing, reconcile the actual issue/parent acceptance. The selected
+merge-queue-only direction supersedes the former one-hour-and-ten-merges main
+health cadence and permits no routine full post-merge CI replay. Keep historical
+proof bound to its original subject. Incident, deep and release proof retain
+their named purposes and authority. Preserve actual required enforcement until
+verified cutover; do not weaken proof to claim the timing/cost target.
 
 ## Product contract
 
@@ -226,8 +247,10 @@ instead of defending them through narrow wording. Put changing PR pointers and
 worker state in progress fields, not in the durable objective.
 
 A waiting PR blocks only its dependent transition. Keep its useful owning lead
-through a normal in-window review/CI wait and finish the authorized merge after
-actual result inspection and final judgment. Independent workers may advance other
+through a normal in-window review/CI wait. Native product/scope judgment and
+conditional landing authority precede enqueue; inspect actual G and read back M
+without a routine post-green approval pause. A specifically authorized legacy
+bootstrap retains post-proof final judgment. Independent workers may advance other
 ready claims without abandoning that owner. If every useful transition is genuinely
 waiting, retain `GOAL_IN_FLIGHT` with exact run/attempt, owner and resume condition.
 Do not turn unavailable review providers or an exhausted local queue into completion.
@@ -360,12 +383,13 @@ the author's PR; GitHub's inability to request changes from the author is not
 approval.
 
 Review binds only to committed Git objects. Record completed source/oracle review
-separately from missing hosted proof or provider evidence. A final-merge review can
-remain `REVIEW_INCOMPLETE` without making a finished source review incomplete or
-preventing the selected candidate from requesting CI. After the PR exists, inspect
-its current evidence on the exact published head. Only the complete final pass may
-emit `REVIEW_READY` for merge; preserve unaffected earlier review instead of repeating
-the whole pass merely to change its status name.
+separately from missing hosted proof or provider evidence. After publication,
+inspect exact H and all actual pre-enqueue requirements. Current product/scope
+review may earn `REVIEW_READY` for conditional native admission while explicitly
+retaining future G qualification as pending; it cannot claim execution passed.
+Missing G before enqueue is expected, not a circular review blocker. A specifically
+authorized legacy bootstrap retains its post-proof final judgment. Preserve
+unaffected earlier review instead of repeating it merely to change a status name.
 
 ## Local validation
 
@@ -440,11 +464,20 @@ subjects.
 
 Use `.claude/skills/finish-pr/SKILL.md` for publication, review repair, CI,
 integration, merge, and reconciliation. A committed candidate with
-`REVIEW_INCOMPLETE` may be published so missing remote evidence can run. The
-selected candidate's owning lead inspects current results, then merges only after
-the exact published head has the final `REVIEW_READY` disposition and all enforced
-conditions hold. A later material change refreshes affected review/proof dimensions.
-Do not arm auto-merge or substitute a queue for the final judgment.
+`REVIEW_INCOMPLETE` may be published through a route that starts no development CI.
+The owning session performs directed exact-head review with explicit criteria,
+targeted checks and counterexamples; optional subagents and advisory providers
+add evidence without mandatory identity separation. Preserve valid historical
+review and refresh affected dimensions, actual required reviews and protections.
+
+After verified native-queue activation, current-H source/product review and all
+pre-enqueue requirements may earn `REVIEW_READY` for conditional admission while
+the named future G qualification remains pending. This is no claim that G passed.
+The final product/scope judgment and conditional landing authorization precede
+enqueue; valid current-G proof and all enforced conditions govern native protected
+squash. New material findings withdraw readiness and the exact queue entry as
+specified by `finish-pr`. A specifically authorized legacy bootstrap retains its
+post-proof final judgment. Do not substitute generic auto-merge for either route.
 
 Useful remote-owned outcomes:
 

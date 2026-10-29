@@ -43,95 +43,106 @@ reading raw logs.
 
 ## Draft to Ready handoff
 
-Publish a coherent candidate as Draft. The review, repair and evidence boundaries
-below apply to candidate preparation. The label-request sequence describes the
-installed legacy route until verified migration; after verified queue activation,
-use [the native-queue procedure](MERGE_FLOW.md#selected-native-queue-procedure-after-verified-activation)
-for qualification and conditional landing authorization instead. For the legacy
-route, the delivery owner completes this order before spending the
-`merge-ready`-requested `Ripr Rust Small Result` qualification:
+Ready is a review state, not a CI request. The selected destination is the
+[native-queue procedure](MERGE_FLOW.md#selected-native-queue-procedure-after-verified-activation):
+current-H product/scope judgment and conditional landing authorization, actual-G
+qualification, protected native landing and M readback. Verify live activation;
+source support alone does not install enforcement.
 
-1. Bind the exact candidate head and integration basis. Complete directed
-   substantive review through `review-pr` inline in the owning session's main
-   context, using distinct criteria and counterexamples. Subagents and bot input
-   are optional additional evidence; preserve actual required reviews and checks.
-   Disposition every known finding and
-   compose accepted repairs into that candidate while Draft.
-2. Run applicable, available local proof on the composed head and refresh affected review.
-   Follow changed expectations into their consumers: corpus rows can change a
-   scoreboard's literal tuple; shared rendering can have a Rust-only mock beyond
-   passing Python/card tests. Check the relevant test placement, private imports,
-   targets and feature selection. Preserve independent literal oracles and
-   meaningful negative controls; derive expected values from the contract, not
-   from the implementation being tested. This selects focused proof, not every
-   possible test or a duplicate of the hosted matrix.
+Before branch or PR writes, inspect the live event perimeter. Ordinary push,
+Draft, Ready and metadata changes must start zero development CI workflows,
+including cheap wrappers. An installed legacy trigger is observed machinery,
+not permission to use it. If no compliant publication route exists, preserve
+the exact source contribution and name the existing cutover owner and next event.
+
+The delivery owner prepares the selected candidate in this order:
+
+1. Bind exact H, the reviewed basis and material prerequisites. Complete directed
+   substantive `review-pr` in the owning session with distinct criteria and
+   counterexamples. Optional subagents and advisory tools add evidence; actual
+   required reviews still apply. Compose accepted repairs into the same candidate.
+2. Run applicable, available focused proof and refresh affected review. Follow
+   changed expectations into actual consumers and feature selections. Preserve
+   independent literal oracles and meaningful wrong-result controls. This does
+   not require every possible test or a duplicate of the hosted matrix.
 3. Reconcile actual conflicts, changed prerequisites and affected combined-tree
-   proof. Unrelated main movement alone needs no branch update or repeated proof.
-   If an applicable required gate has a known deterministic failure on this
-   basis, keep Draft, link the existing repair and its owner, and name the event
-   that permits resumption. Do not repeat that failure on each dependent PR,
-   duplicate its repair, or bless baseline failures. After the prerequisite lands,
-   verify the resulting basis and refresh only affected proof and review.
-   Before Ready, inspect GitHub's PR merge ref through an available permitted
-   Git/API read. Record its commit, parents and tree against the reviewed head,
-   basis and material prerequisites; local `merge-tree` proof does not establish
-   that remote subject. Judge differences for applicability, without behind-only
-   restacking. A stale subject missing a material prerequisite keeps Draft until
-   its owner corrects the source ancestry or remote ref state and the changed
-   subject is verified. A landing notification alone is not that verification.
-   If the ref cannot be queried, retain the exact read limit and leave the hosted
-   subject unestablished. An existing authorized, credibly expected-green route
-   may obtain that evidence; do not spend known-red qualification to discover
-   whether its prerequisite reached the hosted subject.
-4. Read back the live PR head, reviews, threads and workflow runs. Mark Ready
-   only for the unchanged, reviewed and composed candidate when green is
-   reasonably expected, with no unresolved material finding or known applicable
-   gate blocker. If local execution is genuinely unavailable, follow the existing
-   [local and hosted proof route](agent-context/validation.md#local-and-hosted-proof):
-   record the unavailable dimension and reason, completed available checks, and
-   existing authorized narrow hosted qualification that will establish it.
-   `REVIEW_INCOMPLETE` may retain that evidence gap and merge-ready-requested proof;
-   unavailable proof is not a pass. It cannot excuse an executable but unrun
-   applicable local check, unfinished review or repair, a known-red test, or
-   missing claim-essential native proof. After Ready, the `merge-ready` label (applied last, or removed and re-added for a new head) requests
-   qualification for the exact head; Ready alone requests nothing;
-   `REVIEW_READY` and required proof still govern merge under `finish-pr`.
+   proof. Unrelated main movement does not require branch churn. A known
+   applicable deterministic failure stays with its existing repair owner and
+   concrete resume event; do not repeat known-red qualification. Inspect available
+   remote composition evidence without treating historical PR merge P or local
+   `merge-tree` output as future G. If a read is unavailable, retain that dimension
+   explicitly. Missing a material prerequisite cannot be relabeled a harmless
+   read limitation or fixed by a Ready toggle.
+4. Re-read live H, findings, required reviews, queue/run state and the verified
+   admission route. Current source/product review and all pre-enqueue requirements
+   may earn `REVIEW_READY` for conditional queue admission while explicitly naming
+   future G proof as pending. Do not require G to exist before enqueue or claim
+   pending execution passed. If local execution is genuinely unavailable, follow
+   the existing [local and hosted proof route](agent-context/validation.md#local-and-hosted-proof):
+   record its reason, completed available checks and the authorized route that
+   exercises the missing dimension. This does not excuse an available unrun
+   applicable check, unfinished repair/review, a known-red test or claim-essential
+   native behavior that the selected route cannot exercise.
+5. Make the final product/scope/current-repository judgment and record conditional
+   landing authority before native enqueue. Inspect actual G's checkout, tree,
+   constituents, selected proof and run/attempt. Native protected landing follows
+   valid current-G proof and remaining enforced conditions; no routine second
+   product-approval pause follows green. Read back actual M and acceptance.
 
-After Ready, inspect the actual job checkout commit, parents and tree against
-the reviewed candidate and basis. A run's head SHA or a pre-Ready ref observation
-does not guarantee the checkout. If a material mismatch appears, retain the
-actual run/subject, return to Draft and resume only after the changed prerequisite
-or subject is verified; do not relabel that run as proof for the local tree or
-re-apply `merge-ready` merely to refresh it.
+Only a specifically authorized bounded bootstrap may use the installed legacy
+label route in [merge flow](MERGE_FLOW.md#installed-label-request-procedure).
+Record its current authority and scope; old triggers or this document do not grant
+an exception. Within that scope, select applicable lanes before applying
+`merge-ready`; Ready alone requests nothing. Inspect the actual hosted checkout
+and all required proof, then make the legacy final judgment and protected
+expected-head squash. Preserve an unchanged-head in-flight request; reapplying
+its label cancels it. Do not dispatch `routed-rust.yml` on a PR branch.
 
-A new head or material finding returns the candidate to Draft for one joined
-repair/proof/review wave before the next `merge-ready` request (remove and re-add the label on the exact new
-head). Preserve unaffected evidence. Do not re-apply the label on an unchanged
-head with a queued or running required run: it cancels it. Retain its run link and yield the remote wait.
+A new head or material finding withdraws readiness. Native queue work also
+requires removal of the exact current entry and readback of queue/merge state
+before claiming containment; a Draft flip alone is insufficient. Failed or
+ambiguous withdrawal remains an integration-control blocker. If M already landed,
+inspect that state and route repair instead of claiming the entry was withdrawn.
+Batch related repairs, preserve unaffected proof, and refresh affected review and
+conditional authority before a new request. An old G result cannot qualify a
+replacement G. Keep the useful warm owner through an ordinary in-window wait;
+real interruption uses the continuation below without tight polling.
 
 ### PR-native continuation record
 
 Keep one current block in the existing PR body or owned issue/PR comment. Edit
-it at a meaningful transition; link the underlying reviews and reports instead of
-repeating their prose. Tracking is support work, not an additional delivery gate
-or a parent payload approval requirement. Live GitHub metadata remains authoritative
-over a stale block; an unavailable read is an evidence limit, not invented state.
+it at meaningful transitions and link original reviews and reports. Tracking
+supports delivery; it is neither an additional gate nor parent payload approval.
+Live objects supersede a stale block, and unavailable reads remain explicit.
 
 ```text
-Owner / governing claim:
-Candidate: PR / exact head / reviewed basis and tree / observed GitHub merge subject
-Review: exact-head record / remaining findings or evidence
-Validation: command + result links / unrun applicable dimensions
-Dependency: canonical issue or PR / owner / blocking reason, or none
-Next: action / owner / exact resume condition
+Observed at / current objective and acceptance:
+Authority: current user instruction or accepted delegation / surviving limits
+Owner: candidate writer / next actor / acknowledgment or actual activity evidence
+Candidate: PR / H / reviewed basis and tree / observed P, G or M as applicable
+Review: exact subject and disposition / remaining findings
+Validation: original command and result / reusable dimensions / missing dimensions
+Dependency: canonical issue or PR / exact blocking reason / owner, or none
+Next: executable action or decision-changing event / exact request-run-attempt
 ```
 
-For pending local work include its original task/driver and log paths; a missing
-terminal exit is not a pass. When native writes are unavailable, return this
-record to the capable delivery owner. A fresh worker reads the native objects
-and takes the earliest missing judgment; no separate tracker or idle polling
-worker is needed. [Continuation scenarios](agent-context/delivery-continuation-scenarios.md)
-exercise both proceed and hold decisions without claiming actual CI or merge.
+Before retiring an inherited read-only phase, verify the original restriction
+and the actual current authorization. A summary, lane label or third-party
+encouragement cannot expand scope. Preserve real user limits and service denials.
+For pending local work retain the original task/driver and logs; no terminal exit
+means no claimed pass. A sent continuation is not acknowledgment or proof that
+work resumed. Verify actual task/run/branch activity and active writers before
+an explicit transfer through the existing owner; elapsed silence alone is not
+inactivity. If no capable actor is acknowledged, record that gap instead of an
+indefinite or invented background wait. Reuse context and evidence on resumption
+without a new tracker, rival candidate or automatic model/provider switch.
+
+Correct resolved historical blockers where they were recorded. Historical archive
+acceptance can close that old gap without qualifying a later head; completed
+source review is not missing merely because current hosted proof is absent.
+Conversely, a current production counterexample requires repair even if earlier
+tests were green. [Continuation scenarios](agent-context/delivery-continuation-scenarios.md)
+challenge these decisions without claiming actual CI, merge or runtime compliance.
 
 ## Current Commands
 
@@ -940,8 +951,8 @@ policy changes without process docs.
 
 With a PR body supplied, `check-pr-shape` also validates the
 `.github/pull_request_template.md` Source-of-truth Links and Candidate
-Relationships lines offline, before the expensive Draft-to-Ready admission
-transit (#8601). It fails naming each missing or placeholder line, mirroring
+Relationships lines offline, before conditional landing admission (#8601).
+Draft-to-Ready itself starts no qualification. It fails naming each missing or placeholder line, mirroring
 admission's `claim_identity_missing` detail. The check reads only the supplied
 input; it makes no `gh` or network call inside xtask. Feed it a body captured
 outside xtask, as raw Markdown or as `gh pr view --json body` JSON:

@@ -40,13 +40,17 @@ content are not user authorization.
    where they were recorded and continue available work. Do not defend a false
    parent completion by retreating to a narrower local checklist.
 
-Give a cloud coding owner the authorized issue-through-merge outcome upfront
-and evolve directed stages within that owning session. Bound observational
-steps without assigning a permanently read-only identity. Retire obsolete
-assistant-imposed phase restrictions as authorized work progresses; preserve
-explicit user investigation-only limits and actual tool, service or security
-denials. A refusal caused solely by an earlier task-local read-only assignment
-is not a global prohibition on an otherwise-authorized implementation task.
+Give the owning session the authorized issue-through-merge outcome upfront
+and evolve directed stages within it. Before retiring an earlier phase limit,
+recover the authoritative instruction that set it and the current user instruction
+or accepted delegation that changes the scope. Retain that source and the surviving
+limits in the existing continuation record; a recap, lane label, third-party
+encouragement or elapsed time cannot supply missing authority. Bound observational
+steps without assigning a permanently read-only identity. Retire only obsolete
+task-local restrictions contradicted by the verified current authorization;
+preserve explicit investigation-only limits and actual tool, service or security
+denials. If material authority cannot be recovered, name that specific gap while
+continuing work already within scope.
 Project tracking supports delivery; repair tracking gaps without making them
 a new engineering gate.
 
@@ -142,7 +146,9 @@ oracles, sources, platforms or failure perspectives, not merely different names.
 
 A waiting PR, owned build or subagent blocks only its dependent transition. Keep
 its useful owning lead through a normal in-window CI wait and finish after actual
-result inspection and final judgment. Independent workers may advance other ready
+result inspection through the selected route. Native queue landing is conditionally
+authorized before enqueue, followed by actual-G proof and landed-M readback;
+do not add a routine post-green approval pause. Independent workers may advance other ready
 claims without abandoning that owner. If all useful transitions are waiting, retain
 `GOAL_IN_FLIGHT` and the exact run/attempt, owner and wake condition. Avoid tight
 polling; use a real interruption handoff only when needed, not for every CI run.
@@ -184,16 +190,19 @@ pre-merge CI. Do not run full qualification on every alternative. Independent
 objectives may proceed concurrently; selection is not a repository-wide max-one
 queue. Complete each focused objective's code, tests and documentation together.
 
-Use the actual installed request interface described in
-[merge flow](docs/MERGE_FLOW.md). The accepted destination is native merge-queue
-qualification of the actual merge composition. Workflow support does not establish
-live queue activation: until verified migration, the installed `merge-ready` label
-requests late PR qualification, followed by current product/integration judgment
-and protected expected-head squash. Ready alone requests nothing. Do not arm
-generic auto-merge as a substitute for that legacy final judgment. After verified
-activation, follow the native-queue procedure and its conditional landing
-authorization. Preserve actual required checks and approvals; this guidance does
-not change triggers, settings or result producers.
+Follow [merge flow](docs/MERGE_FLOW.md): the selected destination is native
+merge-queue qualification of the actual merge composition. Ordinary commit,
+push, Draft, Ready and metadata changes must start zero development CI workflows,
+including cheap wrappers. Inspect the event perimeter before publication; an
+installed trigger is observed machinery, not authorization to use it. If no
+compliant write route is available, preserve the exact source contribution and
+name the cutover owner and event needed to publish it without unauthorized CI.
+Workflow support alone does not establish live queue activation. A legacy
+`merge-ready` request is available only under a specifically authorized bounded
+bootstrap, retaining its real qualification and final judgment; Ready alone
+never requests qualification. After verified activation, use pre-enqueue judgment
+and conditional landing authorization, actual-G proof and protected native
+landing. Preserve required checks and approvals; this guidance changes no settings.
 
 Source review and focused proof can be complete while hosted qualification is
 still missing. Publish their actual scope and exact source; do not require future
@@ -203,8 +212,11 @@ word, sibling's green result or completed agent session cannot authorize another
 head. Reconcile existing native request/run/attempt state before creating more work.
 
 The same useful lead normally stays with its candidate through an ordinary CI wait,
-inspects complete results and current review/Conversation findings, makes the final
-judgment, performs the authorized protected merge and reads back the landing.
+inspects complete results and current review/Conversation findings, handles any
+ejection or repair, and reads back the authorized protected landing. For native
+queue delivery, its final product/scope judgment precedes enqueue and conditionally
+authorizes landing on valid G proof. A specifically authorized legacy bootstrap
+retains its post-qualification judgment and expected-head protected squash.
 Separate decisions do not require separate agents or a new routine human approval.
 Use supported waits/events or bounded checks without tight polling. Retain context
 and ownership; a real interruption or exhausted window gets an exact continuation,
@@ -344,9 +356,11 @@ lock or memory bottleneck. Do not kill unrelated processes or mutate a tree
 while its verification consumes it. Use an absolute binary from the candidate's
 actual Cargo target directory, not a relative path escaping to a stale checkout.
 Terminate/reap lane-created LSP/process trees; orphaned servers can hold Windows
-file locks. Missing local tools may be recorded and replaced with the available
-hosted proof route; never invent local passes or keep coherent work unpublished
-merely because its full hosted matrix cannot run locally.
+file locks. Record missing local tools and use only the verified actual-G proof
+route or a specifically authorized bounded bootstrap that exercises the missing
+dimension. Never invent local passes. Publish coherent work through a route that
+starts no development CI; if unavailable, retain the exact source contribution
+with the cutover owner rather than treating tool absence as a blanket source hold.
 
 ### Local proof versus hosted merge proof
 
@@ -357,8 +371,9 @@ a selector failure is not pass. Establish an inherited baseline before changing
 code and reproduce an apparent base failure on the exact base before attributing
 it. Follow `build-candidate` for the bounded sequence.
 
-Hosted PR CI owns the required merge-gate matrix. Do not serially duplicate the
-whole matrix locally before publishing. Use `cargo xtask ci-full` for an
+Hosted actual-G qualification owns the required merge-gate matrix after verified
+activation; a specifically authorized bounded bootstrap retains its legacy proof.
+Do not serially duplicate the whole matrix locally before publishing. Use `cargo xtask ci-full` for an
 explicit complete local review/evidence/package pass, or reproduce a named gate.
 `precommit` alone does not claim CI-equivalent completeness. Hosted Rust policy
 uses `cargo xtask ci-policy`, the same policy/change-set/whitespace owner without
@@ -478,24 +493,25 @@ not merely the intended resolution order.
 
 ## Review and protected merge
 
-Installed legacy label-route delivery (see [merge flow](docs/MERGE_FLOW.md) for
-the accepted queue destination and procedure after verified activation):
+Selected native-queue delivery after verified activation (see
+[merge flow](docs/MERGE_FLOW.md) for the cutover boundary):
 
 ```text
 build/improve -> focused proof and source review -> select candidate to land
--> publish current source-review/proof -> actual pre-merge CI request
--> owning lead waits and inspects complete results/current findings
--> separate final published-head/integration judgment
--> normal protected expected-head squash -> landing/acceptance reconciliation
+-> publish current source-review/proof without development CI
+-> exact-H product/scope judgment + conditional landing authorization
+-> enqueue -> actual-G qualification -> protected native squash
+-> landed-M and acceptance reconciliation
 ```
 
-Source review and focused proof may be complete while final-merge review remains
-`REVIEW_INCOMPLETE` for missing hosted evidence. Missing future CI cannot circularly
-block the selected candidate's CI request. A ready merge requires the final current
-published-head `REVIEW_READY`, actual required checks, addressed material findings,
-scope agreement and applicable repository policy. The same authorized lead makes
-that judgment and uses the applicable route in `docs/MERGE_FLOW.md`; queue
-activation must be verified before using its native-queue procedure.
+Source/product review may be `REVIEW_READY` for conditional native admission while
+the explicitly named future G qualification remains pending. Missing G does not
+make enqueue circular, and the review disposition does not claim that G passed.
+All pre-enqueue requirements, material findings and scope decisions must be
+satisfied before enqueue; native landing still requires valid current-G proof and
+all enforced conditions. A new material finding withdraws that authorization.
+The separately authorized legacy bootstrap retains its final post-proof judgment;
+do not infer permission for it from old triggers or substitute generic auto-merge.
 
 Read `.factory/skills/review-guidelines/SKILL.md`, `.factory/rules/rust.md`,
 `.factory/rules/github-actions.md`, `.factory/rules/security.md`, and
@@ -506,9 +522,9 @@ platform branches, actual check steps, denominators and artifact identity.
 
 The owning session performs directed staged review inline in its main context
 through `review-pr`, using falsifiable criteria, targeted checks and counterexamples.
-Keep useful context hot; no Space handoff, source transfer, second executor or
-separate reviewer identity is a routine review stage. In-session subagents and
-Claw/UB/bot input are optional additional evidence, not replacements for effective
+Keep useful context hot; a source transfer, second executor or separate reviewer
+identity is not a routine review stage. In-session subagents and advisory review
+tools are optional additional evidence, not replacements for effective
 owner review. Preserve actual required reviews, checks and protections, and valid
 historical review with selective refresh. Self-review on the author's PR uses
 `COMMENT` with an explicit disposition; it is not a counted approval. Unavailable

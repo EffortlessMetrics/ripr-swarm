@@ -137,19 +137,24 @@ The intended SDLC flow under
 
 ```text
 Warm draft work and repeated focused review/repair
-  -> Ready for final review, not a CI launch
-  -> explicit merge-ready qualification request
-  -> applicable mandatory proof plus justified additional investigation
-  -> separate final product/vision/current-repository judgment
-  -> normal expected-head protected squash
-  -> landed-state reconciliation
+  -> publish selected candidate without development CI
+  -> exact-H product/vision/current-repository judgment
+  -> conditional landing authorization and native enqueue
+  -> applicable mandatory proof on actual merge-group G
+  -> native protected squash if current required conditions remain satisfied
+  -> actual landed-M readback and acceptance reconciliation
 ```
 
-No native merge queue or automatic merge belongs to that target. One late run
-is the normal path, not a ban on justified repair/rerun. Available checks,
-mandatory obligations and selected additional checks are different sets.
-Evidence reuse needs a reviewed applicability decision; static output cannot
-silently waive a required check.
+The October 21/23 native-queue selection supersedes the earlier no-queue target.
+Ready is a review state; ordinary push, Draft, Ready and metadata changes start
+zero development CI workflows, including wrappers. The owning session makes the
+final product/scope judgment before enqueue and conditionally authorizes native
+landing on valid current-G proof; no routine post-green judgment stage is added.
+A new material finding withdraws that authority and requires verified removal of
+the exact queue entry. One expensive run on current G is the normal path, not a
+ban on justified repair/rerun. Available checks, mandatory obligations and selected
+additional checks remain different sets. Reuse requires a reviewed applicability
+decision; static output cannot waive required proof.
 
 The ceiling is **CI run duration <=20 minutes**. Queue/request latency,
 request-to-result latency, total local/hosted compute and cost per accepted PR
@@ -161,18 +166,21 @@ See [#4841](https://github.com/EffortlessMetrics/ripr-swarm/issues/4841).
 This is a migration target, not an assertion that current workflows are live
 in this form. Consult [CI](CI.md), [merge flow](MERGE_FLOW.md), current source
 and [#1029](https://github.com/EffortlessMetrics/ripr-swarm/issues/1029) for the
-actual cutover state. Do not use this overview to bypass current protections,
-retire a cache writer, toggle Ready to obtain early CI, or modify another
-owner's staged workflow. Source implementation, native rehearsal and authorized
-activation are separate acceptance steps; a source-only repair need not wait
-for unrelated deployment.
+actual cutover state. Installed triggers do not authorize development CI. A
+specifically authorized bounded bootstrap preserves full legacy proof until the
+replacement's enforcement is verified; this overview grants no such exception.
+Do not bypass current protections, retire a cache writer, toggle Ready to obtain
+early CI, or modify another owner's staged workflow. Source implementation,
+native rehearsal and authorized activation are separate acceptance steps; retain
+useful source contributions while the publication/cutover boundary is resolved.
 
-Independent main health is a different loop: the intended controller admits it
-only after BOTH an hour and ten merges since the checked snapshot. No routine
-full replay on every merge. A genuine failure gets priority repair and contains
-affected work; demonstrably independent work can continue. Unknown impact may
-require broader temporary containment. This reference does not install a
-scheduler or change the health policy.
+The selected merge-queue-only direction also supersedes the former independent
+main-health cadence of both an hour and ten merges. Use cheap landed-state
+reconciliation without routine full main replay. Historical observations keep
+their original scope; incident, deep and release proof retain named purposes
+and authority. A real failure gets priority repair and contains affected work;
+unknown impact may require broader temporary containment. This reference neither
+installs a scheduler nor changes live enforcement.
 
 ## Promotion, distribution and the return path
 
