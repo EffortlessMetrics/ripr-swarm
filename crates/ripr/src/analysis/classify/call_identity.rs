@@ -2065,11 +2065,14 @@ fn file_module_segments(file: &Path) -> Option<Vec<String>> {
 /// Method calls (`x.name(..)`) and the `fn name` definition are skipped.
 fn call_qualifiers(body: &str, name: &str) -> Vec<Option<Vec<String>>> {
     call_sites(body, name, false)
+        .into_iter()
+        .map(|(qualifier, _)| qualifier)
+        .collect()
 }
 
-/// [`call_qualifiers`], optionally counting method calls (`x.name(..)`) as
-/// bare sites.
-fn call_sites(body: &str, name: &str, with_methods: bool) -> Vec<Option<Vec<String>>> {
+/// [`call_qualifiers`] with each site's method-call flag, optionally counting
+/// method calls (`x.name(..)`, an empty qualifier) as sites.
+fn call_sites(body: &str, name: &str, with_methods: bool) -> Vec<(Option<Vec<String>>, bool)> {
     let masked = mask_comments_and_strings(body);
     let mut calls = Vec::new();
     for (start, _) in masked.match_indices(name) {
@@ -2087,24 +2090,23 @@ fn call_sites(body: &str, name: &str, with_methods: bool) -> Vec<Option<Vec<Stri
         let head = masked[..start].trim_end();
         if head.ends_with('.') {
             if with_methods {
-                calls.push(Some(Vec::new()));
+                calls.push((Some(Vec::new()), true));
             }
             continue;
         }
         if head_word(head) == "fn" {
             continue;
         }
-        calls.push(qualifier_before(head));
+        calls.push((qualifier_before(head), false));
     }
     calls
 }
 
-/// Whether `text` holds a call that can be the owner's: a bare or method
-/// call (name-only, as the other readers), or a path-qualified call whose
+/// Whether `text` holds a call that can be the owner's: a bare call of a free
+/// function, a method call of a method, or a path-qualified call whose
 /// qualifier settles on the owner (a method's own self type, or a free
-/// function's path through the shared identity). A qualifier
-/// naming another module, or one this scan cannot read, does not count, so
-/// a same-named function elsewhere is not an observation of the owner.
+/// function's path through the shared identity). Anything else, or a
+/// qualifier this scan cannot read, does not count.
 pub(in crate::analysis) fn text_calls_owner(
     index: &RustIndex,
     owner: &FunctionSummary,
@@ -2113,14 +2115,43 @@ pub(in crate::analysis) fn text_calls_owner(
 ) -> bool {
     call_sites(text, &owner.name, true)
         .into_iter()
-        .any(|qualifier| match qualifier {
+        .any(|(qualifier, is_method)| match qualifier {
             None => false,
-            Some(segments) if segments.is_empty() => true,
+            // A method call reaches only a method and a bare call only a free
+            // function; an unestablished container counts neither.
+            Some(segments) if segments.is_empty() => match owner.item.container {
+                FunctionContainer::Inherent { .. }
+                | FunctionContainer::TraitImpl { .. }
+                | FunctionContainer::Trait { .. } => is_method,
+                FunctionContainer::Free | FunctionContainer::Local => !is_method,
+                FunctionContainer::Unknown => false,
+            },
             // A method is reached as `Type::name(..)` only through its own
-            // self type; any other qualifier is another function.
+            // self type; when another type of that name defines a method of
+            // that name, the module path must also resolve to the owner.
             Some(segments) if owner.item.container != FunctionContainer::Free => {
                 match (&owner.impl_context, segments.last()) {
-                    (FunctionImplContext::Impl { self_type }, Some(last)) => self_type == last,
+                    (FunctionImplContext::Impl { self_type }, Some(last)) if self_type == last => {
+                        let rival = index.functions().iter().any(|other| {
+                            other.name == owner.name
+                                && other.id != owner.id
+                                && matches!(&other.impl_context,
+                                    FunctionImplContext::Impl { self_type: own } if own == self_type)
+                        });
+                        let module = &segments[..segments.len() - 1];
+                        !rival
+                            || module_path_of(owner, true).is_some_and(|path| {
+                                let rest = match module.split_first() {
+                                    Some((first, rest))
+                                        if first == "crate" || index.package_names.contains(first) =>
+                                    {
+                                        rest
+                                    }
+                                    _ => module,
+                                };
+                                !module.is_empty() && rest == path
+                            })
+                    }
                     _ => false,
                 }
             }

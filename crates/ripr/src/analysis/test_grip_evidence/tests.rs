@@ -19815,6 +19815,10 @@ fn may_name_non_plain_drop(source: &str, owner: &str, expression: &str) -> Resul
     Ok(names_non_plain_drop_type(function, expression, &index))
 }
 
+fn mk_make(source: &str) -> Result<bool, String> {
+    may_name_non_plain_drop(source, "mk", "make(x)")
+}
+
 #[test]
 fn drop_type_gate_masks_the_corpus_once_across_many_seams() -> Result<(), String> {
     let index = index_from_files(&[(
@@ -19901,12 +19905,8 @@ fn a_type_alias_is_not_resolved_so_it_withholds() -> Result<(), String> {
             "pub struct Loud(pub u32);\n{PLAIN_DROP}{alias}pub fn mk(x: u32) -> {ret} {{\n    Loud(x)\n}}\n"
         )
     };
-    assert!(may_name_non_plain_drop(
-        &lib("pub type Out = Loud;\n", "Out"),
-        "mk",
-        "make(x)"
-    )?);
-    assert!(!may_name_non_plain_drop(&lib("", "Loud"), "mk", "make(x)")?);
+    assert!(mk_make(&lib("pub type Out = Loud;\n", "Out"))?);
+    assert!(!mk_make(&lib("", "Loud"))?);
     Ok(())
 }
 
@@ -19917,17 +19917,9 @@ fn an_open_workspace_calls_no_type_plain() -> Result<(), String> {
             "{extra}pub struct Loud(pub u32);\n{PLAIN_DROP}pub fn mk(x: u32) -> Loud {{\n    Loud(x)\n}}\n"
         )
     };
-    assert!(!may_name_non_plain_drop(&lib(""), "mk", "make(x)")?);
-    assert!(may_name_non_plain_drop(
-        &lib("use rand::Rng;\n"),
-        "mk",
-        "make(x)"
-    )?);
-    assert!(may_name_non_plain_drop(
-        &lib("extern crate rand;\n"),
-        "mk",
-        "make(x)"
-    )?);
+    assert!(!mk_make(&lib(""))?);
+    assert!(mk_make(&lib("use rand::Rng;\n"))?);
+    assert!(mk_make(&lib("extern crate rand;\n"))?);
     Ok(())
 }
 
@@ -19938,21 +19930,9 @@ fn a_use_rename_is_followed_to_the_original_type() -> Result<(), String> {
             "pub struct Loud(pub u32);\n{drop}use crate::Loud as Quiet;\npub fn mk(x: u32) -> {ret} {{\n    make(x)\n}}\n"
         )
     };
-    assert!(may_name_non_plain_drop(
-        &lib(EXIT_DROP, "Quiet"),
-        "mk",
-        "make(x)"
-    )?);
-    assert!(!may_name_non_plain_drop(
-        &lib(PLAIN_DROP, "Quiet"),
-        "mk",
-        "make(x)"
-    )?);
-    assert!(!may_name_non_plain_drop(
-        &lib(EXIT_DROP, "u32"),
-        "mk",
-        "make(x)"
-    )?);
+    assert!(mk_make(&lib(EXIT_DROP, "Quiet"))?);
+    assert!(!mk_make(&lib(PLAIN_DROP, "Quiet"))?);
+    assert!(!mk_make(&lib(EXIT_DROP, "u32"))?);
     Ok(())
 }
 
@@ -19969,21 +19949,9 @@ fn a_wrapper_of_a_non_plain_type_withholds() -> Result<(), String> {
         )
     };
     for shape in ["tuple", "record", "enum"] {
-        assert!(may_name_non_plain_drop(
-            &lib(EXIT_DROP, "Loud", shape),
-            "mk",
-            "make(x)"
-        )?);
-        assert!(!may_name_non_plain_drop(
-            &lib(PLAIN_DROP, "Loud", shape),
-            "mk",
-            "make(x)"
-        )?);
-        assert!(!may_name_non_plain_drop(
-            &lib(EXIT_DROP, "u32", shape),
-            "mk",
-            "make(x)"
-        )?);
+        assert!(mk_make(&lib(EXIT_DROP, "Loud", shape))?);
+        assert!(!mk_make(&lib(PLAIN_DROP, "Loud", shape))?);
+        assert!(!mk_make(&lib(EXIT_DROP, "u32", shape))?);
     }
     Ok(())
 }
@@ -20086,21 +20054,9 @@ fn same_named_types_in_other_modules_are_all_read() -> Result<(), String> {
             "pub struct Loud(pub u32);\n{drop}pub mod a {{\n    pub struct W(pub u8);\n}}\npub mod b {{\n    pub struct W(pub {second});\n}}\npub fn mk(x: u32) -> b::W {{\n    make(x)\n}}\n"
         )
     };
-    assert!(may_name_non_plain_drop(
-        &lib(EXIT_DROP, "super::Loud"),
-        "mk",
-        "make(x)"
-    )?);
-    assert!(!may_name_non_plain_drop(
-        &lib(PLAIN_DROP, "super::Loud"),
-        "mk",
-        "make(x)"
-    )?);
-    assert!(!may_name_non_plain_drop(
-        &lib(EXIT_DROP, "u8"),
-        "mk",
-        "make(x)"
-    )?);
+    assert!(mk_make(&lib(EXIT_DROP, "super::Loud"))?);
+    assert!(!mk_make(&lib(PLAIN_DROP, "super::Loud"))?);
+    assert!(!mk_make(&lib(EXIT_DROP, "u8"))?);
     Ok(())
 }
 

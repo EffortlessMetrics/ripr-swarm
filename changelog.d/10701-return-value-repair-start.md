@@ -29,6 +29,6 @@
   `use`-bound path, its module path). A same-name call through another module
   (`other::dbl(2)`), another type or primitive (`X::dbl(2)`, `u32::dbl(2)`), an
   uppercase module, or a qualifier that cannot be read, does not observe it; a
-  method is observed only through a method call or its own self type (by
-  type name, so same-named types in different modules are not told apart;
-  #10948), and a later `let` rebinding of a bound name drops it.
+  method is observed only through a method call or its own self type (when another type of
+  that name has a same-named method, its module path must also resolve to the
+  owner), and a later `let` rebinding of a bound name drops it.

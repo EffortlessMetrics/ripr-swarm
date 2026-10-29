@@ -486,22 +486,11 @@ fn evidence_for_seam_with_context(
     evidence
 }
 
-/// The producer-owned `return_value` missing-discriminator fact (#10701).
-///
-/// A changed plain return expression is a repairable gap only when all of the
-/// following hold, so the fact never turns an unsound or unobserved case into
-/// a repair start:
-///
-/// - the seam is a `ReturnValue` seam with a non-empty changed expression;
-/// - a related test calls the owner directly and carries an edit target in a
-///   test file (the repair route also demands this target separately);
-/// - reach, activation and propagation are all established, and the
-///   discrimination stage found a weak or absent oracle on the result, so no
-///   related test already pins the exact returned value;
-/// - no related test's assertion is statically contradicted by the owner.
-///
-/// Anything else (no direct call, unknown/opaque discrimination, a strong
-/// oracle) emits nothing and the route stays fail-closed.
+/// The producer-owned `return_value` missing-discriminator fact (#10701): a
+/// changed plain return expression is repairable only when a related test
+/// calls the owner directly with an edit target, reach, activation and
+/// propagation hold, the oracle is weak or absent, and no assertion is
+/// statically contradicted. Anything else emits nothing (fail-closed).
 const RETURN_VALUE_START_REASON: &str = "no related test asserts the exact changed return value";
 const ERROR_VARIANT_START_REASON: &str = "no related test asserts the exact changed error variant";
 
@@ -642,20 +631,13 @@ thread_local! {
 }
 
 /// Whether the owner's signature or the changed expression may name a type
-/// with a non-plain `Drop` impl. Fails closed:
-/// - `Self` is read as the impl's self type (withheld when the impl is not
-///   established);
-/// - a type alias is not resolved, so it withholds;
-/// - a `use .. as Name` rename is followed to the original type;
-/// - a workspace struct, enum or union is followed into the types its
-///   definition names, so a wrapper of a non-plain type withholds;
-/// - a return type that is one of the owner's own generic parameters withholds,
-///   since the caller picks the type and the start cannot prove it plain;
-/// - a workspace whose sources hold a macro or an outside-crate item (which
-///   may generate a `Drop` impl) calls no type plain.
-///
-/// A name no workspace source declares is a standard-library type, whose
-/// `Drop` cannot exit the process.
+/// with a non-plain `Drop` impl. Fails closed: `Self` is read as the impl's
+/// self type (withheld when not established); a type alias withholds; a
+/// `use .. as Name` rename is followed; a workspace struct, enum or union is
+/// followed into the types it names; a return type that is one of the owner's
+/// generic parameters withholds; a workspace holding a macro or outside-crate
+/// item calls no type plain. A name no workspace source declares is a
+/// standard-library type, whose `Drop` cannot exit the process.
 fn names_non_plain_drop_type(owner: &FunctionSummary, expression: &str, index: &RustIndex) -> bool {
     let body: &str = &owner.body;
     let signature = body.find('{').map_or(body, |open| &body[..open]);
@@ -1076,23 +1058,19 @@ fn test_assertion_observes_owner(
 }
 
 /// Names bound by a `let` whose initializer calls `owner_name`
-/// (`let v = f(2);`, `let mut v: T = f(2).await;`, `let (a, b) = f(2);`) or
-/// mentions a name already bound that way (`let w = v;`), taken to a fixed
-/// point, so a comparison of such a local pins the owner's value as one of the
-/// call does. Reads the masked body; a rebinding of a name is not tracked,
-/// which only withholds. Not followed: a value moved through a field write,
-/// a mutation (`v += 1`), a closure, a loop variable or a function parameter.
+/// (`let v = f(2);`, `let (a, b) = f(2);`) or mentions a bound name
+/// (`let w = v;`), so a comparison of such a local pins the owner's value as a
+/// call does. Reads the masked body. Not followed: a field write, a mutation,
+/// a closure, a loop variable or a function parameter.
 fn owner_result_locals(body: &str, owner_name: &str) -> Vec<String> {
     owner_result_locals_with(body, &|text| mentions_owner_call(text, owner_name), false)
 }
 
 /// [`owner_result_locals`] with the caller's reading of "this initializer
-/// calls the owner".
-///
-/// With `rebinding_drops`, the `let`s are read in order and a later `let` (or
-/// bare `let v;`) that rebinds a name to a non-owner expression drops it, so a
-/// shadowed name no longer grants observation. The pin reader keeps the
-/// additive reading, whose over-approximation only withholds.
+/// calls the owner". With `rebinding_drops` the `let`s are read in order and a
+/// later `let` (or bare `let v;`) rebinding a name to a non-owner expression
+/// drops it, so a shadowed name grants no observation; the pin reader keeps
+/// the additive reading, whose over-approximation only withholds.
 fn owner_result_locals_with(
     body: &str,
     calls_owner: &dyn Fn(&str) -> bool,

@@ -926,12 +926,32 @@ fn calls_that_are_not_the_owner_do_not_observe_it() -> Result<(), String> {
     ] {
         refuses_unless_genuine(bad, DBL_OLD, DBL_NEW, frame, bad, good)?;
     }
+    // Another type of the same name with a same-named method is not the owner.
+    let test = "mod other { pub struct W; impl W { pub fn dbl(x: i32) -> i32 { x } } }\n#[test]\nfn t() {\n    let _ = ar::W::dbl(2);\n    assert!(@ > 0);\n}\n";
+    refuses_unless_genuine(
+        "other-W",
+        W_OLD,
+        W_NEW,
+        test,
+        "other::W::dbl(2)",
+        "ar::W::dbl(2)",
+    )?;
+    // A method call reaches only a method; a bare call only a free function.
+    let frame = format!(
+        "{RIVALS}fn dbl(x: i32) -> i32 {{ x }}\n#[test]\nfn t() {{\n    let _ = @R;\n    assert!(@ > 0);\n}}\n"
+    );
+    for (old, new, real, bad) in [
+        (DBL_OLD, DBL_NEW, "ar::dbl(2)", "2u32.dbl()"),
+        (W_OLD, W_NEW, "ar::W::dbl(2)", "dbl(2)"),
+    ] {
+        refuses_unless_genuine(bad, old, new, &frame.replace("@R", real), bad, real)?;
+    }
     let (old, new) = (
         "pub fn f(x: i32) -> i32 {\n    x * 2\n}\n",
         "pub fn f(x: i32) -> i32 {\n    x * 3\n}\n",
     );
     let test =
-        format!("{RIVALS}\n#[test]\nfn t() {{\n    let _ = ar::f(2);\n    assert!(@ > 0);\n}}\n");
+        format!("{RIVALS}#[test]\nfn t() {{\n    let _ = ar::f(2);\n    assert!(@ > 0);\n}}\n");
     refuses_unless_genuine("one-letter", old, new, &test, "of(2)", "ar::f(2)")
 }
 

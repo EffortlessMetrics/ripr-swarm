@@ -268,20 +268,12 @@ fn neutralize_plain_language_wording(bytes: &[u8]) -> Vec<u8> {
 ///   `still missing: LIST; follow ...` form both become
 ///   `<not-ready missing=LIST>`, so the list is still compared byte-exact and
 ///   a wrong list fails.
-/// - #10701: a changed return value or error variant with a weak or
-///   discarded-only test now starts a repair. The one historical shape that
-///   moved is a not-ready list that is exactly that single discriminator
-///   (old spelling `producer-owned missing discriminator fact: return_value`
-///   or `error_variant`, or its plain-language phrase); it and a printed
-///   `ripr repair <id> --root ...` start both project to
-///   `<return-value-or-error-gap>`. The projection is deliberately blind to
-///   which of the two (refusal or start) a side printed, so this comparison
-///   proves nothing about whether the slot is present; the repair-start
-///   contract lives in `return_value_repair_start.rs`. Any other
-///   missing-evidence list (including that item beside another) stays
-///   byte-exact, and a printed start is projected only when it carries
-///   `--root`, and only in a capture whose canonical gaps are all
-///   `return_value` or `error_variant` gaps.
+/// - #10701: a changed return value or error variant now starts a repair. A
+///   not-ready list that is exactly that single discriminator, and a printed
+///   `ripr repair <id> --root ...` start (only in a capture whose canonical
+///   gaps are all `return_value` or `error_variant`), both project to
+///   `<return-value-or-error-gap>`; any other list stays byte-exact. The
+///   start contract lives in `return_value_repair_start.rs`.
 ///
 /// Every other advisory line stays byte-exact. Returns the projected bytes and
 /// how many lines were normalized.
