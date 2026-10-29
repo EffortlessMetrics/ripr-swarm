@@ -179,7 +179,7 @@ fn sentinel_probe_is_bounded_and_executes_something() -> Result<(), String> {
     require(
         &lines,
         "2>/dev/null || echo 124",
-        "a probe killed at its step timeout has no status file and must read as red (124), not as success",
+        "a probe terminated at its step timeout has no status file and must read as red (124), not as success",
     )?;
     require(
         &lines,
