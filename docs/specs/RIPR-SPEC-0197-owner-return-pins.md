@@ -1618,6 +1618,30 @@ not pair either. An owner call or binding spelled only inside a comment or
 string literal is not a call or a reference. These rules hold for
 `assert_eq!` as well.
 
+#### Repo repair boundary evidence (#8610)
+
+The repo-seam producer also consumes this pin for a `predicate_boundary`
+that is the boolean owner's whole tail. Both full and compact evidence,
+related-test ranking and repair receipts use the same admitted strength;
+the extracted `relational_check` / weak fact remains unchanged.
+
+This first repo slice admits direct bare owner calls with literal integer
+arguments. The owner must declare `-> bool`, its parameters must be known
+fixed-width primitive integers, and its statement-free tail must compare
+only those parameters and integer literals. The existing evaluator must
+complete and agree with the assertion's true or false expectation. An
+unknown or contradicted fold supplies no new credit. Arithmetic, casts,
+overloaded operands, pointer-sized types, earlier statements, qualified
+calls and let-bound results retain their prior reading in this slice.
+
+Owner and assertion execution admission still run through `OwnerReturnPin`.
+The existing boundary-pairing authority must pair the selected assertion
+with the same test's exact boundary call, using that test's actual
+activation facts and preserving its complete assertion set. An unasserted
+`is_adult(18)` beside `assert!(is_adult(30))`, an early-return mask, a
+deciding disjunction or an assertion on another owner cannot borrow this
+credit. Static movement remains independent of focused test execution.
+
 ### Lone-equality pins
 
 `assert!(owner(..) == v)` fails exactly when `assert_eq!(owner(..), v)`

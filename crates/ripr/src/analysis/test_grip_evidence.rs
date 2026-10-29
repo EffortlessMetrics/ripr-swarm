@@ -11,6 +11,7 @@
 //! confidence, relation reason, oracle strength, activation overlap,
 //! then stable file/name/line tie-breakers.
 
+mod boolean_boundary_pin;
 mod call_budget;
 mod owner_result_binding;
 mod reach_limit;
@@ -20,9 +21,11 @@ mod snapshot_owner_binding;
 pub(crate) use snapshot_owner_binding::{BindingReach, local_is_owner_result_before, text_calls};
 mod value_contradiction;
 
+use boolean_boundary_pin::BooleanBoundaryPin;
 pub(crate) use value_contradiction::CONTRADICTION_DISCLOSURE;
 use value_contradiction::{
-    ExactValueVerdict, contradiction_summary, exact_value_assertion_verdict_for_test,
+    ExactValueVerdict, boolean_assertion_verdict_for_test, contradiction_summary,
+    exact_value_assertion_verdict_for_test,
 };
 pub(in crate::analysis) use value_contradiction::{
     PointerReturnChange, change_is_invisible_to_every_assertion,
@@ -3037,6 +3040,7 @@ fn discriminate_evidence(
             "No related tests; oracle cannot discriminate",
         );
     }
+    let boolean_pin = BooleanBoundaryPin::establish(seam, owner_fn, index);
     let mut best = OracleStrength::None;
     let mut best_matching = OracleStrength::None;
     let mut contradictions: Vec<String> = Vec::new();
@@ -3048,7 +3052,14 @@ fn discriminate_evidence(
             // A statically contradicted exact-value assertion keeps at most
             // Weak credit: it pins the mutant's value and fails at baseline,
             // so it must not grade the seam's discrimination up (#6026).
-            let (strength, contradiction) = effective_oracle_strength(owner_fn, oracle, test);
+            let (strength, contradiction) = effective_oracle_strength(
+                owner_fn,
+                oracle,
+                test,
+                boolean_pin.as_ref(),
+                index,
+                pin_syntax,
+            );
             if let Some(contradiction) = contradiction {
                 contradictions.push(contradiction);
             }
@@ -3096,16 +3107,20 @@ fn discriminate_evidence(
     StageEvidence::new(state, Confidence::Medium, summary)
 }
 
-/// The strength an oracle may still claim, with its static-contradiction
-/// disclosure when the assertion is an equality over literals that the
-/// owner's fold contradicts. A consistent or not-evaluable verdict keeps the
-/// oracle's extracted strength and this module's prior behavior.
+/// Owner-relative oracle strength and any static-contradiction disclosure.
+/// An equality contradicted by the owner's literal fold loses credit. A
+/// separately admitted boolean boundary pin gains credit only when its exact
+/// call is statically consistent and paired with this assertion. Other
+/// consistent or not-evaluable assertions keep their extracted strength.
 fn effective_oracle_strength(
     owner_fn: Option<&FunctionSummary>,
     oracle: &OracleFact,
     test: &TestSummary,
+    boolean_pin: Option<&BooleanBoundaryPin<'_>>,
+    index: &RustIndex,
+    pin_syntax: &crate::analysis::classify::OwnerPinSyntax,
 ) -> (OracleStrength, Option<String>) {
-    match exact_value_assertion_verdict_for_test(owner_fn, &oracle.text, test) {
+    match assertion_verdict_for_test(owner_fn, &oracle.text, test) {
         ExactValueVerdict::Contradicted {
             expected,
             evaluated,
@@ -3113,22 +3128,49 @@ fn effective_oracle_strength(
             OracleStrength::Weak,
             Some(contradiction_summary(&expected, evaluated)),
         ),
+        _ if boolean_pin.is_some_and(|pin| pin.admits(test, oracle, index, pin_syntax)) => {
+            (OracleStrength::Strong, None)
+        }
         _ => (oracle.strength.clone(), None),
     }
 }
 
-/// Whether any of `test`'s equality assertions statically contradicts the
-/// owner's folded behavior (#6026). Such a test fails at baseline and its
-/// call-site values pin the mutant's value, so its activation credit is
-/// withheld beside its oracle credit (#7007). Fail-closed toward prior
-/// credit: without a resolved owner nothing is contradicted.
+/// The equality fold's verdict, extended by #8610's admitted direct boolean
+/// shape. Each entry point stays fail-closed, and the boolean fold is only
+/// consulted where the equality reading was not evaluable, so the extension
+/// can withhold credit or state a contradiction the equality fold could not
+/// see — it never upgrades an oracle the equality fold already graded.
+fn assertion_verdict_for_test(
+    owner: Option<&FunctionSummary>,
+    oracle_text: &str,
+    test: &TestSummary,
+) -> ExactValueVerdict {
+    let Some(owner) = owner else {
+        return ExactValueVerdict::NotEvaluable;
+    };
+    match exact_value_assertion_verdict_for_test(Some(owner), oracle_text, test) {
+        ExactValueVerdict::NotEvaluable => {
+            boolean_assertion_verdict_for_test(owner, oracle_text, test)
+        }
+        verdict => verdict,
+    }
+}
+
+/// Whether any of `test`'s assertions statically contradicts the owner's
+/// folded behavior (#6026). Such a test fails at baseline and its call-site
+/// values pin the mutant's value, so its activation credit is withheld beside
+/// its oracle credit (#7007). A supported direct boolean assertion counts the
+/// same way: `assert!(owner(18)); assert!(!owner(18));` fails on its second
+/// line, so the consistent first line must not lend the failing test's
+/// promotion to the seam (#8610 review). Fail-closed toward prior credit:
+/// without a resolved owner nothing is contradicted.
 fn test_has_contradicted_assertion(test: &TestSummary, owner_fn: Option<&FunctionSummary>) -> bool {
     let Some(owner_fn) = owner_fn else {
         return false;
     };
     test.assertions.iter().any(|oracle| {
         matches!(
-            exact_value_assertion_verdict_for_test(Some(owner_fn), &oracle.text, test),
+            assertion_verdict_for_test(Some(owner_fn), &oracle.text, test),
             ExactValueVerdict::Contradicted { .. }
         )
     })
@@ -3963,6 +4005,7 @@ fn best_oracle(
     owner_fn: Option<&FunctionSummary>,
     index: &RustIndex,
     pin_syntax: &crate::analysis::classify::OwnerPinSyntax,
+    boolean_pin: Option<&BooleanBoundaryPin<'_>>,
 ) -> (OracleKind, OracleStrength, Option<String>) {
     let mut best_kind = OracleKind::Unknown;
     let mut best_strength = OracleStrength::None;
@@ -3974,7 +4017,8 @@ fn best_oracle(
         if !collection_assertion_admitted(seam, oracle, test, index, pin_syntax) {
             continue;
         }
-        let (strength, contradiction) = effective_oracle_strength(owner_fn, oracle, test);
+        let (strength, contradiction) =
+            effective_oracle_strength(owner_fn, oracle, test, boolean_pin, index, pin_syntax);
         if strength.rank() > best_strength.rank() {
             best_strength = strength.clone();
             best_kind = oracle.kind.clone();

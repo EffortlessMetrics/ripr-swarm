@@ -708,6 +708,7 @@ pub(super) fn sort_related_tests_for_seam<'a>(
     related: &mut [(&'a CompactTest<'a>, RelationReason)],
 ) -> Vec<BestOracle> {
     let owner = seam_owner_activation(seam, context);
+    let boolean_pin = BooleanBoundaryPin::establish(seam, owner_fn, context.index);
     let mut ranked: Vec<_> = related
         .iter()
         .map(|&entry| {
@@ -721,6 +722,7 @@ pub(super) fn sort_related_tests_for_seam<'a>(
                 // stage; a per-key fresh instance re-paid the whole-index
                 // lazily computed facts once per (seam, related test) rank.
                 context.pin_syntax(),
+                boolean_pin.as_ref(),
             );
             let key =
                 related_test_rank_key(seam, context, indexed, reason, owner.as_ref(), &oracle);
