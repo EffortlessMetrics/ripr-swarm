@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 
 const PREFIX: &str = "ripr_probe_read_trace ";
 const STREAM_CAP: u64 = 1024 * 1024;
-const SOURCE: &str = "pub fn price(qty: u32) -> u32 {\n    if qty > 10 { 90 } else { 100 }\n}\npub fn op(bytes: &[u8]) -> bool {\n    bytes.contains(&b'=')\n}\npub mod alpha {\n    use super::op;\n    pub fn parse(bytes: &[u8]) -> bool {\n        op(bytes)\n    }\n}\npub mod beta {\n    pub fn parse(bytes: &[u8]) -> bool {\n        !bytes.is_empty()\n    }\n}\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn boundary() {\n        assert_eq!(price(10), 90);\n    }\n    #[test]\n    fn calls_ambiguous_entry() {\n        assert!(parse(b\"=1.0\"));\n    }\n}\n";
+const SOURCE: &str = "pub fn price(qty: u32) -> u32 {\n    if qty > 10 { 90 } else { 100 }\n}\npub fn op(bytes: &[u8]) -> bool {\n    bytes.contains(&b'=')\n}\npub mod alpha {\n    use super::op;\n    pub fn parse(bytes: &[u8]) -> bool {\n        op(bytes)\n    }\n}\npub mod beta {\n    pub fn parse(bytes: &[u8]) -> bool {\n        !bytes.is_empty()\n    }\n}\n#[cfg(test)]\nmod tests {\n    use super::alpha::parse;\n    use super::*;\n    #[test]\n    fn boundary() {\n        assert_eq!(price(10), 90);\n    }\n    #[test]\n    fn calls_ambiguous_entry() {\n        assert!(parse(b\"=1.0\"));\n    }\n}\n";
 
 struct Fixture(PathBuf);
 impl Fixture {
