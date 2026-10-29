@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 
 const PREFIX: &str = "ripr_probe_read_trace ";
 const STREAM_CAP: u64 = 1024 * 1024;
-const SOURCE: &str = "pub fn price(qty: u32) -> u32 {\n    if qty > 10 { 90 } else { 100 }\n}\npub fn op(bytes: &[u8]) -> bool {\n    bytes.contains(&b'=')\n}\npub mod alpha {\n    use super::op;\n    pub fn parse(bytes: &[u8]) -> bool {\n        op(bytes)\n    }\n}\npub mod beta {\n    pub fn parse(bytes: &[u8]) -> bool {\n        !bytes.is_empty()\n    }\n}\n#[cfg(test)]\nmod tests {\n    use super::alpha::parse;\n    use super::*;\n    #[test]\n    fn boundary() {\n        assert_eq!(price(10), 90);\n    }\n    #[test]\n    fn calls_ambiguous_entry() {\n        assert!(parse(b\"=1.0\"));\n    }\n}\n";
+const SOURCE: &str = "pub fn price(qty: u32) -> u32 {\n    if qty > 10 { 90 } else { 100 }\n}\npub fn op(bytes: &[u8]) -> bool {\n    bytes.contains(&b'=')\n}\npub mod alpha {\n    use super::op;\n    pub fn parse(bytes: &[u8]) -> bool {\n        op(bytes)\n    }\n}\npub mod beta {\n    pub fn parse(bytes: &[u8]) -> bool {\n        !bytes.is_empty()\n    }\n}\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn boundary() {\n        assert_eq!(price(10), 90);\n    }\n}\n";
 
 struct Fixture(PathBuf);
 impl Fixture {
@@ -35,11 +35,20 @@ impl Fixture {
         std::fs::create_dir(&root).map_err(|error| error.to_string())?;
         let fixture = Self(root);
         std::fs::create_dir(fixture.0.join("src")).map_err(|error| error.to_string())?;
+        std::fs::create_dir(fixture.0.join("tests")).map_err(|error| error.to_string())?;
         std::fs::create_dir_all(fixture.0.join(".scratch")).map_err(|error| error.to_string())?;
         std::fs::write(fixture.0.join("Cargo.toml"), "[package]\nname=\"probe_trace_fixture\"\nversion=\"0.0.0\"\nedition=\"2024\"\n[workspace]\n").map_err(|error| error.to_string())?;
         std::fs::write(fixture.0.join(".gitignore"), "/target/\n/.scratch/\n")
             .map_err(|error| error.to_string())?;
         std::fs::write(fixture.0.join("src/lib.rs"), SOURCE).map_err(|error| error.to_string())?;
+        // #10933: the ambiguous entry's caller lives in an integration test
+        // whose import binds the twin, so the `op` probe keeps no related
+        // test while the uniqueness stop is still entered by a bare call.
+        std::fs::write(
+            fixture.0.join("tests/ambiguous_entry.rs"),
+            "use probe_trace_fixture::beta::parse;\n#[test]\nfn ambiguous_entry_is_called() {\n    assert!(parse(b\"=1.0\"));\n}\n",
+        )
+        .map_err(|error| error.to_string())?;
         fixture_git_ok(&fixture.0, &["init", "-q", "-b", "main"])?;
         fixture_git_ok(&fixture.0, &["add", "."])?;
         fixture_git_ok(
@@ -210,11 +219,13 @@ fn real_check_trace_is_opt_in_and_preserves_nonempty_json() -> Result<(), String
         "fixture must reach a real whole-set view"
     );
     // #10933: the `op` probe's uniqueness-stop chain is entered by the
-    // test's bare `parse(` call, so `source_imports_foreign_entry` runs
-    // inside that probe's classification scope; at least one traced row
+    // integration test's bare `parse(` call, so `source_imports_foreign_entry`
+    // runs inside that probe's classification scope; at least one traced row
     // carries a `memo`-kind read for the `foreign_entry_import` product.
-    // (A renamed `use .. as parse` import would shadow the entry and veto
-    // it instead — see `tests_call_matching`'s `free_shadowed` guard.)
+    // (The caller lives in `tests/` with a twin-binding import, so the probe
+    // keeps no related test and classifies `no_static_path` instead of
+    // reaching the owner unseen — see `tests_call_matching` and the
+    // uniqueness-stop withhold.)
     assert!(
         rows.iter().any(|row| row["reads"]
             .as_array()
