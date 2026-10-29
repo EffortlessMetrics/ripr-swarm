@@ -3112,7 +3112,13 @@ unmet condition keeps today's reading:
 3. At least one related test names the owner, and every such test is a plain
    test (no case table, no local shadow of the owner's name) whose
    assertions are all equality assertions whose first operand is one bare
-   owner call with literal arguments that fold.
+   owner call with literal arguments that fold, or relational assertions
+   (`assert!(left > right)` with `<`, `<=`, `>`, `>=` or `!=`, no `&&`/`||`)
+   whose sides are each a literal expression or one bare owner call with
+   literal arguments that fold, and whose comparison has the same truth value
+   under the current and the baseline body (`backoff_ms(3, 100) >
+   backoff_ms(1, 100)` is true for `2^n` and `3^n`; `backoff_ms(3, 100) >
+   1000` is not, so that test keeps the credit).
 4. At every such call the owner folds to the same value under the current and
    the baseline body, while a grid of integer arguments (each parameter over
    `0, 1, 2, 3, 5, 6, 7, 10`, at most three parameters; a single-parameter
@@ -3121,6 +3127,21 @@ unmet condition keeps today's reading:
    which the two bodies fold to different values. An equivalent rewrite
    (`x * 3` to `3 * x`) has no such call and keeps today's reading: asking for
    a test that tells the versions apart would name one that cannot exist.
+5. The workspace does not rebind `assert`, `debug_assert`, `assert_eq` or
+   `assert_ne` (the #10386 parser-backed binding scan): both reasons read
+   assertion macros and comparison tokens by name, and a rebound `assert!`
+   may expand to an exact-value check its written relational tokens never
+   show (`assert!(owner(3) > owner(1))` expanding to
+   `assert_eq!(owner(3), 9)` distinguishes `2 * n` from `3 * n`), so a
+   workspace that may rebind any of them keeps today's reading.
+
+The summary names the reason instead of one blanket wording (#10916): an
+equality-only reading says every related test calls the owner with literal
+inputs at which the changed expression and its baseline evaluate to the same
+value; a reading that admitted a relational assertion says every related
+test's assertions hold with the same truth value on the baseline and the
+change, because the asserted inputs may still evaluate differently
+(`backoff_ms(3, 100)` is 800 before and 2700 after).
 
 A related test that never names the owner is ignored: a helper that calls the
 owner would already make condition 2 fail. The reading only downgrades; a

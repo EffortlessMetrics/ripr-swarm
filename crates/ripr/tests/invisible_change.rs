@@ -191,3 +191,83 @@ fn a_computed_argument_keeps_the_credit() -> Result<(), String> {
     );
     Ok(())
 }
+
+#[test]
+fn a_relational_sibling_that_holds_on_both_versions_does_not_expose_the_change()
+-> Result<(), String> {
+    // `backoff_ms(3, 100) > backoff_ms(1, 100)` is true before (800 > 200) and after (2700 > 300).
+    let findings = findings(
+        POW,
+        POW_OLD,
+        "use invisible::backoff_ms;\n\n#[test]\nfn first() {\n    assert_eq!(backoff_ms(0, 100), 100);\n}\n\n#[test]\nfn grows() {\n    assert!(backoff_ms(3, 100) > backoff_ms(1, 100));\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    // The asserted inputs do evaluate differently (800 vs 2700), so the
+    // summary names the unchanged comparison truth, not a missing input
+    // difference (#10916).
+    assert!(
+        finding.ripr.infect.summary.contains("same truth value"),
+        "{finding:?}"
+    );
+    assert!(
+        !finding
+            .ripr
+            .infect
+            .summary
+            .contains("evaluate to the same value"),
+        "{finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_rebound_assert_macro_keeps_the_credit() -> Result<(), String> {
+    // Control: the written relational tokens fold the same on both versions,
+    // but the file rebinds `assert!` to an exact-value check the baseline
+    // fails (`2700` after vs `800` before). Ripr reads macro names, not
+    // expansions, so both invisible readings must decline and today's
+    // non-relational reading keeps the finding (#10920 review).
+    let test = "use invisible::backoff_ms;\n\nmacro_rules! assert {\n    ($f:ident($($a:tt)*) > $g:ident($($b:tt)*)) => {\n        std::assert_eq!($f($($a)*), 2700)\n    };\n}\n\n#[test]\nfn first() {\n    assert_eq!(backoff_ms(0, 100), 100);\n}\n\n#[test]\nfn grows() {\n    assert!(backoff_ms(3, 100) > backoff_ms(1, 100));\n}\n";
+    let findings = findings(POW, POW_OLD, test)?;
+    let finding = return_value(&findings)?;
+    assert!(
+        !finding
+            .ripr
+            .infect
+            .summary
+            .contains("evaluate to the same value"),
+        "{finding:?}"
+    );
+    assert!(
+        !finding.ripr.infect.summary.contains("same truth value"),
+        "{finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_relational_assertion_that_flips_between_versions_keeps_the_credit() -> Result<(), String> {
+    // Control: `backoff_ms(3, 100) > 1000` is true after (2700) and false before (800).
+    let findings = findings(
+        POW,
+        POW_OLD,
+        "use invisible::backoff_ms;\n\n#[test]\nfn first() {\n    assert_eq!(backoff_ms(0, 100), 100);\n}\n\n#[test]\nfn big() {\n    assert!(backoff_ms(3, 100) > 1000);\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert!(
+        !finding
+            .ripr
+            .infect
+            .summary
+            .contains("evaluate to the same value"),
+        "{finding:?}"
+    );
+    // The flip is a discriminator for the relational reading too, so the
+    // truth-value summary must not appear either (#10920 review).
+    assert!(
+        !finding.ripr.infect.summary.contains("same truth value"),
+        "{finding:?}"
+    );
+    Ok(())
+}

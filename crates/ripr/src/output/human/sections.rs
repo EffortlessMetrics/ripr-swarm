@@ -1338,7 +1338,14 @@ fn partial_path_hint(ripr: &RiprEvidence) -> &'static str {
         if ripr.infect.state == StageState::Unknown {
             "a related test reaches this change, but static evidence cannot tell whether any test input tells the old and new behavior apart"
         } else {
-            "a related test reaches this change, but no test input tells the old and new behavior apart"
+            // Assertion-level on purpose (#10920 review): every
+            // infection-weak producer establishes that the tests'
+            // assertions cannot distinguish the versions, whether the
+            // inputs fold equal (#8659), no input selects the changed
+            // arm, or a relational sibling's comparison holds on both
+            // versions (#10916) while the asserted values differ. An
+            // input-level claim would misstate that last case.
+            "a related test reaches this change, but no assertion tells the old and new behavior apart"
         }
     } else if incomplete(&ripr.propagate) {
         "a related test reaches this change, but the path from it to what the test checks is only partly traced"
@@ -1591,7 +1598,10 @@ mod classification_hint_tests {
         assert_eq!(
             hint.as_deref(),
             Some(
-                "a related test reaches this change, but no test input tells the old and new behavior apart"
+                // Assertion-level: the admitted relational case (#10916) has
+                // asserted inputs that evaluate differently, so an
+                // input-level claim would misstate the gap.
+                "a related test reaches this change, but no assertion tells the old and new behavior apart"
             )
         );
 
