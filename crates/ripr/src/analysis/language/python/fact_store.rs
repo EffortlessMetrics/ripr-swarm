@@ -370,20 +370,14 @@ impl PythonFileFactStore {
         let bytes =
             seam_cache::encode_integrity_body_compact(&envelope, envelope.expected_digest()?)?;
         let approx_bytes = bytes.len();
-        let mut remaining = self.remaining_store_bytes.load(Ordering::Relaxed);
-        loop {
-            if remaining < approx_bytes {
-                return Ok(false);
-            }
-            match self.remaining_store_bytes.compare_exchange_weak(
-                remaining,
-                remaining - approx_bytes,
-                Ordering::Relaxed,
-                Ordering::Relaxed,
-            ) {
-                Ok(_) => break,
-                Err(current) => remaining = current,
-            }
+        if self
+            .remaining_store_bytes
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |remaining| {
+                remaining.checked_sub(approx_bytes)
+            })
+            .is_err()
+        {
+            return Ok(false);
         }
         std::fs::create_dir_all(&self.dir)
             .map_err(|err| format!("create python file fact cache dir failed: {err}"))?;

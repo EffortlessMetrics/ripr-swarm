@@ -5026,14 +5026,15 @@ mod tests {
                     .ok_or_else(|| "layer is not UTF-8".to_string())
             })
             .collect::<Result<_, _>>()?;
-        // The TypeScript layer stays registered without the feature (the
-        // `cache clear` leftover convention, same as `SeamCounts`), but no
-        // producer runs to produce it, so the rust-only build cannot claim
-        // it was produced.
+        // The TypeScript and Python layers stay registered without their
+        // features (the `cache clear` leftover convention, same as
+        // `SeamCounts`), but no producer runs to produce them, so a build
+        // without the feature cannot claim they were produced.
         let expected: BTreeSet<_> = cache_layer_names()
             .iter()
             .copied()
             .filter(|name| cfg!(feature = "lang-typescript") || *name != "typescript-file-facts")
+            .filter(|name| cfg!(feature = "lang-python") || *name != "python-file-facts")
             .collect();
         assert_eq!(
             actual, expected,

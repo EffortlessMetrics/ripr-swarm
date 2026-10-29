@@ -124,6 +124,8 @@ The fact-store tests:
 - A cold run stores every file. A warm run serves every file and produces
   findings identical to the cold run. An edit to one file recomputes only that
   file.
+- A Unix path holding a backslash is extracted but neither read from nor
+  written to the store.
 
 ## Known Limits
 
@@ -158,7 +160,8 @@ The fact-store tests:
   `stored_facts_restore_every_interned_field`,
   `a_table_that_does_not_cover_its_items_is_refused`,
   `store_serves_by_content_and_never_a_damaged_entry`,
-  `a_warm_run_serves_every_file_and_an_edit_recomputes_only_that_file`.
+  `a_warm_run_serves_every_file_and_an_edit_recomputes_only_that_file`,
+  `a_path_holding_a_backslash_is_neither_read_nor_persisted`.
 
 ## Implementation Mapping
 

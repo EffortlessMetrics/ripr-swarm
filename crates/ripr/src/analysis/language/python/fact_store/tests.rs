@@ -4,8 +4,8 @@
 //! a damaged entry is never served.
 
 use super::super::{
-    AnalysisOptions, ChangedFile, LanguageAdapter, LanguageDiffResult, OraclePolicy, PythonAdapter,
-    extract_source_facts,
+    AnalysisOptions, ChangedFile, FactLookup, LanguageAdapter, LanguageDiffResult, OraclePolicy,
+    PythonAdapter, extract_source_facts, stored_or_extracted_facts,
 };
 use super::*;
 use crate::analysis::diff::ChangedLine;
@@ -62,6 +62,11 @@ fn stored_facts_restore_every_interned_field() -> Result<(), String> {
         stored.test_imports.values.len(),
         2,
         "a body import gives the second test its own imports"
+    );
+    assert_eq!(
+        stored.test_rebindings.values.len(),
+        2,
+        "a fixture parameter and a body import give the second test its own rebinding facts"
     );
     let production = StoredFacts::from_facts(&extract_source_facts(
         Path::new("src/geometry.py"),
@@ -190,6 +195,41 @@ fn a_warm_run_serves_every_file_and_an_edit_recomputes_only_that_file() -> Resul
         );
         Ok(())
     })();
+    let cleanup = std::fs::remove_dir_all(&root);
+    checks?;
+    cleanup.map_err(|err| err.to_string())
+}
+
+#[cfg(unix)]
+#[test]
+fn a_path_holding_a_backslash_is_neither_read_nor_persisted() -> Result<(), String> {
+    let root = unique_tempdir("backslash")?;
+    let store = PythonFileFactStore::at(&root);
+    let checks: Result<(), String> = {
+        let (facts, lookup) = stored_or_extracted_facts(
+            Some(&store),
+            &root,
+            Path::new("src/odd\\name.py"),
+            PRODUCTION,
+        );
+        assert!(matches!(lookup, FactLookup::Skipped));
+        assert!(!facts.owners.is_empty(), "the file is still extracted");
+        assert!(
+            !store.dir_path().exists(),
+            "nothing is written for a path the normalized key would fold"
+        );
+        let (_, lookup) = stored_or_extracted_facts(
+            Some(&store),
+            &root,
+            Path::new("src/geometry.py"),
+            PRODUCTION,
+        );
+        assert!(
+            matches!(lookup, FactLookup::Miss { stored: Ok(true) }),
+            "a lossless path in the same store is persisted"
+        );
+        Ok(())
+    };
     let cleanup = std::fs::remove_dir_all(&root);
     checks?;
     cleanup.map_err(|err| err.to_string())

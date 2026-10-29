@@ -10,6 +10,7 @@ tests = [
   "crates/ripr/src/analysis/language/python/fact_store/tests.rs::a_table_that_does_not_cover_its_items_is_refused",
   "crates/ripr/src/analysis/language/python/fact_store/tests.rs::store_serves_by_content_and_never_a_damaged_entry",
   "crates/ripr/src/analysis/language/python/fact_store/tests.rs::a_warm_run_serves_every_file_and_an_edit_recomputes_only_that_file",
+  "crates/ripr/src/analysis/language/python/fact_store/tests.rs::a_path_holding_a_backslash_is_neither_read_nor_persisted",
 ]
 code = [
   "crates/ripr/src/analysis/language/python/fact_store.rs",
