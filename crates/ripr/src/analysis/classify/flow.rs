@@ -1785,6 +1785,24 @@ mod tests {
         assert_eq!(sinks[0].text, "first");
     }
 
+    /// The inline body range is computed on the masked line and applied to the
+    /// raw line. Masking keeps every byte offset (comments and string bytes
+    /// become spaces, one per byte), so non-ASCII text and a trailing comment
+    /// do not shift the extracted branch text.
+    #[test]
+    fn tail_if_on_the_signature_line_keeps_branch_text_with_non_ascii_and_comments() {
+        let owner = tail_owner(
+            "pub fn label(x: i32) -> &'static str { if x > 1 { \"h\u{e9}llo \u{2713}\" } else { \"low\" } } // \u{fc}n\u{ef} } {",
+        );
+
+        let sinks = local_flow_sinks(&probe(ProbeFamily::Predicate, "x > 1", 1), Some(&owner));
+
+        assert_eq!(sinks.len(), 1);
+        assert_eq!(sinks[0].text, "\"h\u{e9}llo \u{2713}\"");
+        let masked = crate::analysis::language::mask_rust_comments_and_strings(&owner.body);
+        assert_eq!(masked.len(), owner.body.len());
+    }
+
     #[test]
     fn tail_if_on_the_signature_line_fails_closed_for_a_unit_owner() {
         let owner = tail_owner("pub fn bump(score: u32) -> () { if score > 50 { 1 } else { 0 } }");
