@@ -1533,9 +1533,10 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
         if test.parametrized {
             evidence.push(format!("test_parametrized: pytest ({})", test.name));
         }
-        if static_limit
-            .as_ref()
-            .is_some_and(|limit| limit.kind == StaticLimitKind::UnresolvedPytestFixture)
+        if candidate.relation.uses_oracle()
+            && static_limit
+                .as_ref()
+                .is_some_and(|limit| limit.kind == StaticLimitKind::UnresolvedPytestFixture)
         {
             let blockers = unresolved_pytest_fixture_names(test, owner);
             if !blockers.is_empty() {

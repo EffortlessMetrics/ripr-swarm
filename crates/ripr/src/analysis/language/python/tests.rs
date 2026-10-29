@@ -6061,6 +6061,7 @@ fn classify_change_parametrize_argnames_stay_unsettled_when_code_writes_the_name
         "label = f\"{globals()}\"\n",
         "import sys\nsys . modules[\"pytest\"] = object()\n",
         "setattr(object(), \"x\", 1)\n",
+        "getattr(object(), \"__setattr__\")(\"x\", 1)\n",
     ] {
         let module_text = format!(
             "import pytest\nfrom src.pricing import apply_discount\n\n{writer}\n{PARAMETRIZED_TEST}"

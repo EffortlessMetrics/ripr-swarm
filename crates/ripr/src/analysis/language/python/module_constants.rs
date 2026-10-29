@@ -528,6 +528,13 @@ fn writes_namespace_dynamically(source: &str) -> bool {
                 after_sys = usize::from(name == "sys");
             }
             Tok::Dot if after_sys == 1 => after_sys = 2,
+            // `getattr(importlib, "reload")(m)` names the writer only as a
+            // string, so a string that is exactly a writer name still counts.
+            Tok::String { value, kind, .. }
+                if !kind.is_any_fstring() && DYNAMIC_NAMESPACE_WRITERS.contains(&value.trim()) =>
+            {
+                return true;
+            }
             Tok::String { kind, .. } if kind.is_any_fstring() => {
                 let text = &source[usize::from(range.start())..usize::from(range.end())];
                 if writes_namespace_in_text(text) {
