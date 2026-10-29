@@ -182,15 +182,17 @@ One seam per owner per round (cap 1).
    order.
 4. The terminal shows the first seam only (`top_actionable_seams` with
    N = 1). When more than one actionable seam exists, the terminal
-   `actionable seams:` line also discloses the actionable total and
-   points to the written Markdown brief for the full ranked list,
-   naming `--max-seams` as the control that lengthens that list (the
-   terminal itself always shows 1). The total reads `at least N` when a
-   seam limit cut the classified seams or Rust files were declined by
-   parse limits — the same lower-bound predicate as
-   `actionable_seams_total_is_lower_bound` in the JSON summary — and
-   `N total` otherwise. With exactly one actionable seam the line
-   prints no pointer.
+   gap-count line (`N gaps to fix; showing the top 1 (...)`) also
+   discloses the actionable total and points to the written Markdown
+   brief for the full ranked list, naming `--max-seams` as the control
+   that lengthens that list (the terminal itself always shows 1). The
+   total reads `at least N` when a seam limit cut the classified seams
+   or Rust files were declined by parse limits — the same lower-bound
+   predicate as `actionable_seams_total_is_lower_bound` in the JSON
+   summary — and plain `N` otherwise. With exactly one actionable seam
+   the line prints no pointer. The terminal uses plain words (gap,
+   "tests only loosely check this") where the Markdown and JSON keep
+   the seam and grip-class vocabulary (#10694).
 5. The first seam of the final order is always the first seam of the
    rank-key order: it has the lowest class rank and round 0. The owner
    spread therefore never changes the Top Recommendation, the terminal

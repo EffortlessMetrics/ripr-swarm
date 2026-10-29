@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- `ripr pilot` terminal output now uses plain wording instead of seam, grip class and discriminator vocabulary: "3 gaps to fix; showing the top 1", "tests only loosely check this", a one-sentence "Picked first because it is on a line you changed ..." note in place of the ranking-order sentence, "Full report (Markdown)" and "Machine-readable (JSON)" file labels, and a plain hint to write command output outside the repo. The Markdown summary and JSON artifacts are unchanged (#10694).

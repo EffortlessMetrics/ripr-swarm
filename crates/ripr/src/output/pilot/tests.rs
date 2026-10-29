@@ -844,7 +844,7 @@ fn pilot_summary_with_only_limitations_is_not_a_clean_result() {
     assert!(
         !terminal.contains("Run after adding the focused test")
             && !terminal.contains("ripr outcome")
-            && terminal.contains("No seam was ranked"),
+            && terminal.contains("No gap was found"),
         "{terminal}"
     );
 
@@ -869,7 +869,7 @@ fn pilot_summary_with_only_limitations_is_not_a_clean_result() {
     assert!(!md.contains("No gap to test:"), "{md}");
     let terminal = render_pilot_terminal(&entries, limited);
     assert!(
-        terminal.contains("  seam limit: ranked 2 of 9 seams\n"),
+        terminal.contains("  limit reached: checked 2 of 9 spots in the code\n"),
         "{terminal}"
     );
     assert!(
@@ -895,14 +895,11 @@ fn pilot_terminal_discloses_actionable_total_and_max_seams_escape() {
     ];
     let artifacts = pilot_artifacts();
     let context = pilot_context(&artifacts);
-    let ranked =
-        "more ranked in target/ripr/pilot/pilot-summary.md; pass --max-seams N to rank more";
+    let ranked = "the rest are in target/ripr/pilot/pilot-summary.md; --max-seams N shows more";
 
     let terminal = render_pilot_terminal(&entries, context);
     assert!(
-        terminal.contains(&format!(
-            "  actionable seams: 3 total, showing 1 ({ranked})\n"
-        )),
+        terminal.contains(&format!("  3 gaps to fix; showing the top 1 ({ranked})\n")),
         "{terminal}"
     );
 
@@ -920,7 +917,7 @@ fn pilot_terminal_discloses_actionable_total_and_max_seams_escape() {
     let terminal = render_pilot_terminal(&entries, limited);
     assert!(
         terminal.contains(&format!(
-            "  actionable seams: at least 3, showing 1 ({ranked})\n"
+            "  at least 3 gaps to fix; showing the top 1 ({ranked})\n"
         )),
         "{terminal}"
     );
@@ -940,7 +937,7 @@ fn pilot_terminal_discloses_actionable_total_and_max_seams_escape() {
     };
     let terminal = render_pilot_terminal(&entries, declined_context);
     assert!(
-        terminal.contains("  actionable seams: at least 3, showing 1"),
+        terminal.contains("  at least 3 gaps to fix; showing the top 1"),
         "{terminal}"
     );
 
@@ -953,13 +950,10 @@ fn pilot_terminal_discloses_actionable_total_and_max_seams_escape() {
     )];
     let terminal = render_pilot_terminal(&single, context);
     assert!(
-        terminal.contains("  actionable seams: 1 total, showing 1\n"),
+        terminal.contains("  1 gap to fix; showing it\n"),
         "{terminal}"
     );
-    assert!(
-        !terminal.contains("--max-seams N to rank more"),
-        "{terminal}"
-    );
+    assert!(!terminal.contains("--max-seams N shows more"), "{terminal}");
 }
 
 #[test]
@@ -1088,15 +1082,22 @@ fn pilot_human_output_labels_seams_exploratory_not_ranked_by_mutant_yield() {
         "{md}"
     );
 
+    // The screen states the same limit in plain words (#10694).
     let terminal = render_pilot_terminal(&entries, pilot_context(&artifacts));
+    assert!(terminal.contains("Picked first because "), "{terminal}");
     assert!(
-        terminal.contains("Order: change-touched seams first, then grip class"),
+        terminal.contains("This is a reading of the code, not a measured result"),
         "{terminal}"
     );
-    assert!(
-        terminal.contains("Static evidence, not measured fault yield"),
-        "{terminal}"
-    );
+    for jargon in [
+        "Order: change-touched",
+        "grip class",
+        "fault yield",
+        "actionable seams",
+        "inspected seam",
+    ] {
+        assert!(!terminal.contains(jargon), "{jargon}: {terminal}");
+    }
 
     // Ordering is unchanged (label-only): the existing static-evidence
     // order still puts the weakly gripped seam first, in every surface.
@@ -1219,13 +1220,13 @@ fn pilot_terminal_prints_top_test_and_follow_up_commands() {
         "mode: draft",
         "config: loaded ripr.toml",
         "Top recommendation:",
-        "inspected seam:",
-        "why it matters: missing discriminator: input that hits the boundary: amount >= discount_threshold",
-        "focused test: none: this seam has no test target that `ripr agent repair` can use (for example, the only tests are inline `#[cfg(test)]` in a file outside the test-surface paths, the only tests are in another crate, or static evidence names no exact discriminator), so it will not start a repair attempt here",
+        "gap ",
+        "why it matters: no test covers input that hits the boundary: amount >= discount_threshold",
+        "test to add: none: `ripr agent repair` has no test file to use for this gap (for example, the only tests are inline `#[cfg(test)]` in a file outside the test paths, or live in another crate), so it will not start a repair here",
         "assertion: not_applicable",
-        "Detailed brief:",
+        "Full report (Markdown):",
         "target/ripr/pilot/pilot-summary.md",
-        "Structured packet:",
+        "Machine-readable (JSON):",
         "target/ripr/pilot/agent-seam-packets.json",
         "Next, by hand: add a test for `pricing::discounted_total` in the crate that owns src/pricing.rs, then compare against this run:",
         "ripr outcome --before <cwd>/target/ripr/pilot/repo-exposure.json",
@@ -1259,7 +1260,7 @@ fn pilot_terminal_prints_top_test_and_follow_up_commands() {
     // (`ripr agent repair --seam-id <id>`) is reachable from the screen alone.
     assert!(
         terminal.contains(&format!(
-            "inspected seam: {seam_id} src/pricing.rs:88 predicate_boundary in pricing::discounted_total (weak, weakly_gripped)"
+            "gap {seam_id}: src/pricing.rs:88 pricing::discounted_total (comparison; tests only loosely check this)"
         )),
         "the terminal seam line must lead with the seam id:\n{terminal}"
     );
@@ -1270,7 +1271,7 @@ fn pilot_terminal_prints_top_test_and_follow_up_commands() {
     // this contract is proved end to end by
     // `pilot_writes_default_packet_outputs_for_boundary_gap_fixture`.
     assert!(
-        !terminal.contains("repair this seam:"),
+        !terminal.contains("repair this gap:"),
         "a route-limited seam must not be offered a repair transaction:\n{terminal}"
     );
 }
@@ -2020,14 +2021,11 @@ fn pilot_offers_agent_repair_only_past_the_repair_packet_flip() -> Result<(), St
         let md = render_pilot_summary_md(&entries, pilot_context(&artifacts));
 
         // Both must be the ranked top seam, or the negative half is vacuous.
-        if !terminal.contains(&format!(
-            "inspected seam: {} ",
-            entries[0].seam.id().as_str()
-        )) {
+        if !terminal.contains(&format!("gap {}: ", entries[0].seam.id().as_str())) {
             return Err(format!("{test_file}: must be the top seam\n{terminal}"));
         }
         let offered = [
-            terminal.contains(&format!("  repair this seam: {command}\n")),
+            terminal.contains(&format!("  repair this gap: {command}\n")),
             terminal.contains(&format!("  1. {command}\n")),
             summary
                 .pointer("/next/repair_command")
@@ -2091,7 +2089,7 @@ fn pilot_repair_line_follows_the_canonical_pilot_decision() -> Result<(), String
     );
     let entries = [eligible];
     let terminal = render_pilot_terminal(&entries, pilot_context(&artifacts));
-    assert!(terminal.contains(&format!("  repair this seam: {route}\n")));
+    assert!(terminal.contains(&format!("  repair this gap: {route}\n")));
     assert!(terminal.contains(&format!("  1. {route}\n")));
 
     // Negative control: past the flip no delegation is bound, so the decision
@@ -2658,14 +2656,14 @@ fn pilot_names_rust_exclusion_instead_of_silently_ranking_nothing() -> Result<()
     };
     let terminal = render_pilot_terminal(&[], context);
     assert!(
-        terminal.contains("Excluded from pilot's Rust seam scan:"),
+        terminal.contains("Not scanned by pilot:\n  rust:"),
         "{terminal}"
     );
     assert!(
-        terminal.contains("rust: 3 files (not enabled in ripr.toml [languages])"),
+        terminal.contains("rust: 3 files (turned off in ripr.toml [languages])"),
         "{terminal}"
     );
-    assert!(terminal.contains("Next, to rank Rust seams:"), "{terminal}");
+    assert!(terminal.contains("Next, to scan Rust code:"), "{terminal}");
     assert!(!terminal.contains("ripr outcome --before"), "{terminal}");
     let md = render_pilot_summary_md(&[], context);
     assert!(
@@ -2852,12 +2850,12 @@ fn pilot_renderers_show_language_routes_only_without_rust_seams() -> Result<(), 
         // check route, but `ripr check` skips it until `[languages] enabled`
         // includes it, so the headline stays none (#7665).
         assert!(
-            terminal.contains(&format!("typescript: 1 file (preview, diff-first; not enabled in ripr.toml [languages])\n    route: {}\n", route_command())),
+            terminal.contains(&format!("typescript: 1 file (preview; turn it on in ripr.toml [languages] to check it)\n    route: {}\n", route_command())),
             "{terminal}"
         );
         assert!(
             terminal.contains(
-                "none: pilot ranks Rust seams and found none here; see the languages below"
+                "none: pilot scans Rust and found no gaps here; see the other languages below"
             ),
             "{terminal}"
         );
@@ -2905,7 +2903,7 @@ fn pilot_renderers_show_language_routes_only_without_rust_seams() -> Result<(), 
         );
         assert!(
             !enabled_terminal.contains(
-                "none: pilot ranks Rust seams and found none here; see the languages below"
+                "none: pilot scans Rust and found no gaps here; see the other languages below"
             ),
             "{enabled_terminal}"
         );
@@ -2948,7 +2946,7 @@ fn pilot_renderers_show_language_routes_only_without_rust_seams() -> Result<(), 
         let terminal = render_pilot_terminal(&[], context);
         assert!(
             terminal.contains(
-                "none: pilot ranks Rust seams and found none here; see the languages below"
+                "none: pilot scans Rust and found no gaps here; see the other languages below"
             ),
             "unavailable-only languages keep the none headline:\n{terminal}"
         );
@@ -2998,12 +2996,14 @@ fn pilot_headline_names_supported_language_check_route_when_no_rust_seams() -> R
         "supported-language headline must lead with the check route, not none:\n{terminal}"
     );
     assert!(
-        !terminal
-            .contains("none: pilot ranks Rust seams and found none here; see the languages below"),
+        !terminal.contains(
+            "none: pilot scans Rust and found no gaps here; see the other languages below"
+        ),
         "headline must not read as an empty recommendation:\n{terminal}"
     );
     assert!(
-        terminal.contains("(pilot ranks Rust seams and found none here; see the languages below)"),
+        terminal
+            .contains("(pilot scans Rust and found no gaps here; see the other languages below)"),
         "Rust-scan explanation stays secondary:\n{terminal}"
     );
     assert!(
@@ -3012,7 +3012,7 @@ fn pilot_headline_names_supported_language_check_route_when_no_rust_seams() -> R
     );
     assert!(
         terminal.contains(&format!(
-            "python: 1 file (preview, diff-first)\n    route: {command}\n"
+            "python: 1 file (preview; checked from the diff only)\n    route: {command}\n"
         )),
         "{terminal}"
     );
@@ -3079,7 +3079,7 @@ fn pilot_headline_names_supported_language_check_route_when_no_rust_seams() -> R
         let disabled_terminal = render_pilot_terminal(&[], disabled_context);
         assert!(
             disabled_terminal.contains(
-                "none: pilot ranks Rust seams and found none here; see the languages below"
+                "none: pilot scans Rust and found no gaps here; see the other languages below"
             ),
             "{disabled_terminal}"
         );
@@ -3211,7 +3211,7 @@ fn pilot_scope_line_names_the_language_actually_ranked() {
     let terminal = render_pilot_terminal(&[], context);
     assert!(
         terminal.contains(
-            "  scope: change-first (python (preview) seams on lines changed since origin/main rank first)\n"
+            "  scope: change-first (gaps in python (preview) code on lines changed since origin/main rank first)\n"
         ),
         "Python-only scope must name python, not Rust:\n{terminal}"
     );
@@ -3239,7 +3239,7 @@ fn pilot_scope_line_names_the_language_actually_ranked() {
     let terminal = render_pilot_terminal(&entries, context);
     assert!(
         terminal.contains(
-            "  scope: change-first (Rust seams on lines changed since origin/main rank first)\n"
+            "  scope: change-first (gaps in Rust code on lines changed since origin/main rank first)\n"
         ),
         "a ranked Rust seam keeps the Rust scope label:\n{terminal}"
     );
@@ -3268,7 +3268,7 @@ fn pilot_scope_line_names_the_language_actually_ranked() {
     let terminal = render_pilot_terminal(&[], context);
     assert!(
         terminal.contains(
-            "  scope: change-first (Rust seams on lines changed since origin/main rank first)\n"
+            "  scope: change-first (gaps in Rust code on lines changed since origin/main rank first)\n"
         ),
         "no Python card keeps the Rust scope label:\n{terminal}"
     );
@@ -4255,13 +4255,14 @@ fn pilot_renderers_say_whether_the_top_recommendation_is_in_the_current_change()
     // The change touches the top seam.
     let (terminal, md, json) = render(Some(&changed("src/pricing.rs", 88)))?;
     assert!(
-        terminal
-            .contains("Top recommendation:\n  Order: change-touched seams first, then grip class"),
+        terminal.contains(
+            "Top recommendation:\n  Picked first because it is on a line you changed and "
+        ),
         "{terminal}"
     );
     assert!(
         terminal.contains(
-            "  current change: part of it (this seam is on a line changed since origin/main)\n  inspected seam: "
+            "  current change: part of it (this gap is on a line changed since origin/main)\n  gap "
         ),
         "{terminal}"
     );
@@ -4331,7 +4332,7 @@ fn pilot_renderers_say_whether_the_top_recommendation_is_in_the_current_change()
     // The Inspected block names the change-first scope when there is a change.
     assert!(
         terminal.contains(
-            "  timeout: 30000 ms\n  scope: change-first (Rust seams on lines changed since origin/main rank first)\n  actionable seams: 1 total, showing 1\n\n"
+            "  timeout: 30000 ms\n  scope: change-first (gaps in Rust code on lines changed since origin/main rank first)\n  1 gap to fix; showing it\n\n"
         ),
         "{terminal}"
     );
