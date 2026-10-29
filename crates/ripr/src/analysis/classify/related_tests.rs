@@ -4990,8 +4990,20 @@ pub(in crate::analysis) fn inherent_receiver_call_resolves(
             }
         })
     };
+    // The test fragment omits its file's imports, so a parameter's type name
+    // is the owner only when no `use` or `type` in that file rebinds it.
+    let owner_unrebound =
+        || index.is_some_and(|index| !file_rebinds_type(index, &test.file, impl_type));
     executable_call_resolves(test, index, pin_syntax, &|node, scope| {
-        inherent_call_node_resolves(node, scope, method, impl_type, &unit_struct, &factory)
+        inherent_call_node_resolves(
+            node,
+            scope,
+            method,
+            impl_type,
+            &unit_struct,
+            &factory,
+            &owner_unrebound,
+        )
     })
 }
 
@@ -5115,6 +5127,7 @@ fn inherent_call_node_resolves(
     impl_type: &str,
     unit_struct: &dyn Fn(&str) -> bool,
     factory: &dyn Fn(&str, &str) -> bool,
+    owner_unrebound: &dyn Fn() -> bool,
 ) -> bool {
     if !ast::MethodCallExpr::can_cast(node.kind()) && !ast::CallExpr::can_cast(node.kind()) {
         return false;
@@ -5140,6 +5153,7 @@ fn inherent_call_node_resolves(
                     impl_type,
                     unit_struct,
                     factory,
+                    owner_unrebound,
                 )
             });
     }
@@ -5163,6 +5177,7 @@ fn inherent_call_node_resolves(
                     impl_type,
                     unit_struct,
                     factory,
+                    owner_unrebound,
                 )
             })
 }
@@ -5246,6 +5261,7 @@ fn scoped_receiver_names_type(
     impl_type: &str,
     unit_struct: &dyn Fn(&str) -> bool,
     factory: &dyn Fn(&str, &str) -> bool,
+    owner_unrebound: &dyn Fn() -> bool,
 ) -> bool {
     // Parentheses and borrows preserve this bounded receiver identity.
     for _ in 0..32 {
@@ -5275,6 +5291,7 @@ fn scoped_receiver_names_type(
                     impl_type,
                     unit_struct,
                     factory,
+                    owner_unrebound,
                 );
             }
         }
@@ -5323,6 +5340,7 @@ fn visible_receiver_binding_names_type(
     impl_type: &str,
     unit_struct: &dyn Fn(&str) -> bool,
     factory: &dyn Fn(&str, &str) -> bool,
+    owner_unrebound: &dyn Fn() -> bool,
 ) -> bool {
     for ancestor in call.ancestors().skip(1) {
         // These patterns may bind the receiver. This small admission does not
@@ -5404,7 +5422,7 @@ fn visible_receiver_binding_names_type(
             }
         }
         if let Some(function) = ast::Fn::cast(ancestor) {
-            return fn_param_names_type(&function, name, impl_type);
+            return owner_unrebound() && fn_param_names_type(&function, name, impl_type);
         }
     }
     false
@@ -5412,7 +5430,8 @@ fn visible_receiver_binding_names_type(
 
 /// Whether `function` declares a plain parameter `name` whose whole type is
 /// the unqualified `impl_type`, optionally behind `&`/`&mut`. An rstest
-/// fixture is injected through exactly such a parameter. A qualified path,
+/// fixture is injected through such a parameter, and any enclosing fn's
+/// declared parameter type is its nominal type. A qualified path,
 /// generic argument list or `impl`/`dyn` type is not the nominal owner.
 fn fn_param_names_type(function: &ast::Fn, name: &str, impl_type: &str) -> bool {
     function.param_list().is_some_and(|list| {
@@ -5436,10 +5455,55 @@ fn fn_param_names_type(function: &ast::Fn, name: &str, impl_type: &str) -> bool 
     })
 }
 
-/// A struct/enum/union `ty` declared exactly once in `test_file`, carrying
-/// `#[derive(.. Default ..)]`, with no import in that file binding `ty`. The
-/// workspace-wide uniqueness of [`type_derives_default`] is too strong for a
-/// file-local fixture type that sibling modules also spell.
+/// Whether `file` has a `use` that names `ty` or a glob other than `self::*` /
+/// `super::*`, or a `type` alias called `ty`: any of which can make a bare
+/// `ty` mean a type declared elsewhere.
+fn file_rebinds_type(index: &RustIndex, file: &Path, ty: &str) -> bool {
+    let Some(tree) = index.source_syntax.get(index, file).and_then(|s| s.tree()) else {
+        return true;
+    };
+    let syntax = tree.syntax();
+    let mentions = |node: &SyntaxNode| {
+        node.descendants().any(|node| {
+            ast::Name::cast(node.clone()).is_some_and(|bound| bound.text() == ty)
+                || ast::NameRef::cast(node).is_some_and(|bound| bound.text() == ty)
+        })
+    };
+    for item in syntax.descendants().filter_map(ast::Use::cast) {
+        let compact: String = item
+            .syntax()
+            .text()
+            .to_string()
+            .split_whitespace()
+            .collect();
+        let glob = item
+            .syntax()
+            .descendants()
+            .filter_map(ast::UseTree::cast)
+            .any(|tree| tree.star_token().is_some());
+        if mentions(item.syntax())
+            || (glob && !matches!(compact.as_str(), "usesuper::*;" | "useself::*;"))
+        {
+            return true;
+        }
+    }
+    if syntax
+        .descendants()
+        .filter_map(ast::TypeAlias::cast)
+        .any(|alias| alias.name().is_some_and(|name| name.text() == ty))
+    {
+        return true;
+    }
+    false
+}
+
+/// A struct/enum/union `ty` declared exactly once in `test_file`, as a direct
+/// item of the file root, carrying `#[derive(.. Default ..)]`. The file may not
+/// bind `ty` by `use` or `type`, and its only glob imports are `self::*` and
+/// `super::*` (a `mod tests` reaching the root), so no outside module can
+/// supply a same-named type. The workspace-wide uniqueness of
+/// [`type_derives_default`] is too strong for a file-local fixture type that
+/// sibling files also spell.
 fn type_derives_default_in_file(index: &RustIndex, ty: &str, test_file: &Path) -> bool {
     let Some(tree) = index
         .source_syntax
@@ -5449,12 +5513,7 @@ fn type_derives_default_in_file(index: &RustIndex, ty: &str, test_file: &Path) -
         return false;
     };
     let syntax = tree.syntax();
-    if syntax.descendants().filter_map(ast::Use::cast).any(|item| {
-        item.syntax().descendants().any(|node| {
-            ast::Name::cast(node.clone()).is_some_and(|bound| bound.text() == ty)
-                || ast::NameRef::cast(node).is_some_and(|bound| bound.text() == ty)
-        })
-    }) {
+    if file_rebinds_type(index, test_file, ty) {
         return false;
     }
     let mut found = Vec::new();
@@ -5462,13 +5521,20 @@ fn type_derives_default_in_file(index: &RustIndex, ty: &str, test_file: &Path) -
         if adt.name().is_none_or(|name| name.text() != ty) {
             continue;
         }
-        found.push(ast::HasAttrs::attrs(&adt).any(|attr| {
-            let text = attr.syntax().text().to_string();
-            text.trim_start().starts_with("#[derive(")
-                && text
-                    .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
-                    .any(|word| word == "Default")
-        }));
+        let at_root = adt
+            .syntax()
+            .parent()
+            .is_some_and(|parent| ast::SourceFile::can_cast(parent.kind()));
+        found.push(
+            at_root
+                && ast::HasAttrs::attrs(&adt).any(|attr| {
+                    let text = attr.syntax().text().to_string();
+                    text.trim_start().starts_with("#[derive(")
+                        && text
+                            .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                            .any(|word| word == "Default")
+                }),
+        );
     }
     matches!(found.as_slice(), [true])
 }
@@ -12633,8 +12699,10 @@ let r = try_parse_summary(\"x\");",
 
     /// #7415: keep the conservative corpus boundary separate from runtime
     /// truth. Arbitrary factories and imported bare variants do not gain
-    /// receiver proof merely because the method name is unique. A plain typed
-    /// parameter (an injected rstest fixture) names its declared type.
+    /// receiver proof merely because the method name is unique. A typed
+    /// parameter names its declared type only with an index that can read the
+    /// file's imports (see the index-backed parameter test), so this
+    /// index-less probe still refuses it.
     #[test]
     fn inherent_receiver_corpus_boundary_and_live_scope() {
         for (body, method, ty, expected) in [
@@ -12675,7 +12743,7 @@ let r = try_parse_summary(\"x\");",
                 "fn t(account: Account) { assert_eq!(account.monthly_fee(), 5); }",
                 "monthly_fee",
                 "Account",
-                true,
+                false,
             ),
             (
                 "fn t() { let account: Account = make(); assert_eq!(account.monthly_fee(), 5); }",

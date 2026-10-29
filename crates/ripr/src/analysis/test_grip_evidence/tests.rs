@@ -19877,9 +19877,20 @@ fn inherent_receiver_typed_parameter_names_the_owner_only_for_a_plain_type() -> 
             "let f = |s: Cache| s.area();\n    f(Cache);",
             false,
         ),
+        // `prefix|params`: a type parameter named like the owner, or an
+        // import that rebinds the owner name, is not the nominal owner.
+        ("<Site: Tr>|s: Site", used, false),
+        ("use ext::Site;|s: Site", used, false),
+        ("use ext::Other as Site;|s: Site", used, false),
     ] {
+        let (prefix, params) = params.split_once('|').unwrap_or(("", params));
+        let (imports, generics) = if prefix.starts_with("use ") {
+            (prefix, "")
+        } else {
+            ("", prefix)
+        };
         let source = format!(
-            "{}\n#[test]\nfn t({params}) {{\n    {call}\n}}\n",
+            "{}\n{imports}\n#[test]\nfn t{generics}({params}) {{\n    {call}\n}}\n",
             site!("}")
         );
         let index = index_from_files(&[(PathBuf::from("src/lib.rs"), &source)])?;
@@ -19896,7 +19907,7 @@ fn inherent_receiver_typed_parameter_names_the_owner_only_for_a_plain_type() -> 
         assert_eq!(
             crate::analysis::classify::inherent_owner_call_resolves(caller, owner, &index),
             expected,
-            "{params} / {call}"
+            "{prefix} {params} / {call}"
         );
     }
     Ok(())
@@ -19925,6 +19936,23 @@ fn inherent_receiver_default_derive_is_read_from_the_test_file() -> Result<(), S
         ),
         (
             owner_file(&format!("use ext::Site;\n{derived}")),
+            derived,
+            false,
+        ),
+        (
+            owner_file(&format!("use ext::*;\n{derived}")),
+            derived,
+            false,
+        ),
+        (
+            owner_file(&format!(
+                "type Site = ext::Real;\nmod inner {{ {derived} }}"
+            )),
+            derived,
+            false,
+        ),
+        (
+            owner_file(&format!("mod fixtures {{ {derived} }}")),
             derived,
             false,
         ),
