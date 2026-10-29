@@ -522,6 +522,8 @@ impl ClassifiedProbeEvidence {
             context.probe.family,
             ProbeFamily::SideEffect | ProbeFamily::CallDeletion
         );
+        // The free-call chain's identity is one answer per probe.
+        let free_chain_identity = std::cell::OnceCell::new();
         let propagate = match (context.owner_fn, context.helper_chain.as_ref()) {
             // An already-unknown stage keeps its own reason.
             (Some(owner), Some(chain))
@@ -545,12 +547,23 @@ impl ClassifiedProbeEvidence {
                             &context.related_tests,
                         )
                     } else {
-                        !chain_forwards_to_observed_hops(
-                            &owner.name,
-                            chain,
-                            &context.related_tests,
-                            context.index,
-                        )
+                        let forwards = if matches!(context.probe.family, ProbeFamily::ReturnValue) {
+                            crate::analysis::classify::chain_forwards_return_to_observed_hops(
+                                &owner.name,
+                                chain,
+                                &context.related_tests,
+                                context.index,
+                                &free_chain_identity,
+                            )
+                        } else {
+                            chain_forwards_to_observed_hops(
+                                &owner.name,
+                                chain,
+                                &context.related_tests,
+                                context.index,
+                            )
+                        };
+                        !forwards
                             && field_projection.is_none()
                     } =>
             {
@@ -820,8 +833,8 @@ impl ClassifiedProbeEvidence {
                             chain,
                             &context.related_tests,
                             context.index,
-                            test,
-                            assertion,
+                            (test, assertion),
+                            &free_chain_identity,
                         )
                     })
                 });
@@ -843,6 +856,14 @@ impl ClassifiedProbeEvidence {
                 })
                 || direct_owner_pin_admits(test, assertion)
         };
+        let recording_double = context.owner_fn.and_then(|owner| {
+            EffectStateCarrier::recording_double(
+                context.probe,
+                owner,
+                context.index,
+                context.workspace_complete,
+            )
+        });
         let fallback_expansion = crate::analysis::classify::ImplicitExpansionMemo::default();
         let expansion = crate::analysis::classify::ImplicitExpansionContext::new(
             context.index,
@@ -873,6 +894,11 @@ impl ClassifiedProbeEvidence {
             &import_defeats,
             &cross_package_defeats,
             &ReturnOracleAdmission {
+                recording_double_observed: &|test, assertion| {
+                    recording_double.as_ref().is_some_and(|carrier| {
+                        carrier.admits(test, assertion, context.index, pin_syntax)
+                    })
+                },
                 returned_closure_pin_required: context.owner_fn.is_some_and(|owner| {
                     crate::analysis::classify::returned_closure_pin_required(context.probe, owner)
                 }),

@@ -157,6 +157,17 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
+## Pending — macro_site_scoped_rest_limit (8)
+
+Reason:
+RIPR-SPEC-0118 / docs/OUTPUT_SCHEMA.md: #10192 displays hidden finding kind/reason, exact ambiguous seam choices, and evidence-specific unresolved-edge guidance; verdict, stage, identity and oracle fields stay unchanged (independently compared against actual JSON).
+
+Command:
+`cargo xtask goldens bless macro_site_scoped_rest_limit --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
 ## Pending — macro_site_scoped_rest_limit (13)
 
 Reason:

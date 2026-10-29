@@ -1,0 +1,12 @@
+diff --git a/src/extra.py b/src/extra.py
+--- a/src/extra.py
++++ b/src/extra.py
+@@ -15,7 +15,7 @@
+ 
+ 
+ def narrow(text):
+-    return [int(text) + 1]
++    return [int(text) + 2]
+ 
+ 
+ def patched(text):

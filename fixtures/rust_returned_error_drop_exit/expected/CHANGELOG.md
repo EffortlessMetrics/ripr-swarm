@@ -223,7 +223,42 @@ Updated:
 ## Pending — rust_returned_error_drop_exit (18)
 
 Reason:
+RIPR-SPEC-0118 / docs/OUTPUT_SCHEMA.md: #10192 displays hidden finding kind/reason, exact ambiguous seam choices, and evidence-specific unresolved-edge guidance; verdict, stage, identity and oracle fields stay unchanged (independently compared against actual JSON).
+
+Command:
+`cargo xtask goldens bless rust_returned_error_drop_exit --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — rust_returned_error_drop_exit (18)
+
+Reason:
 RIPR-SPEC-0122: plain-language wording for the default and human-full check views (#10691); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless rust_returned_error_drop_exit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_returned_error_drop_exit (19)
+
+Reason:
+RIPR-SPEC-0122: #10701 a weak assertion on a changed return value or error with a direct caller test now reaches a repair start
+
+Command:
+`cargo xtask goldens bless rust_returned_error_drop_exit --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — rust_returned_error_drop_exit (20)
+
+Reason:
+RIPR-SPEC-0122: #10859 a changed value whose returned type has a non-plain Drop no longer starts a repair, since an added assertion cannot fix a failure the Drop swallows
 
 Command:
 `cargo xtask goldens bless rust_returned_error_drop_exit --reason "..."`

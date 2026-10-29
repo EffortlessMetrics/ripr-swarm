@@ -130,6 +130,17 @@ pub(crate) fn selected_triage_finding<'a>(
     triage::select_human_triage(output, config).selected
 }
 
+/// The selected subject and only the eligible rows inside the displayed
+/// Hidden window. The app resolves these before rendering, without inventing
+/// a second selection/currentness policy.
+pub(crate) fn stub_route_subjects<'a>(
+    output: &'a CheckOutput,
+    config: &RiprConfig,
+) -> (Option<&'a Finding>, Vec<&'a Finding>) {
+    let triage = triage::select_human_triage(output, config);
+    (triage.selected, triage::hidden_stub_route_findings(&triage))
+}
+
 /// Project the check producer's canonical next action for a navigation-aware
 /// render. `None` when the producer cannot bind a subject; JSON callers omit
 /// the member rather than inventing a committed-source default or executable
@@ -2992,11 +3003,15 @@ mod tests {
         let rendered = render(&bounded_output_with_findings(findings));
 
         assert!(
-            rendered.contains("    - src/f1.rs:1 (weak)\n"),
+            rendered.contains(
+                "    - src/f1.rs:1 (weak); kind: predicate; reason: missing strong oracle\n"
+            ),
             "{rendered}"
         );
         assert!(
-            rendered.contains("    - src/f2.rs:1 (weak)\n"),
+            rendered.contains(
+                "    - src/f2.rs:1 (weak); kind: predicate; reason: missing strong oracle\n"
+            ),
             "{rendered}"
         );
     }
@@ -3038,11 +3053,15 @@ mod tests {
             "{rendered}"
         );
         assert!(
-            rendered.contains("    - src/base_0.rs:1 (weak)\n"),
+            rendered.contains(
+                "    - src/base_0.rs:1 (weak); kind: predicate; reason: missing strong oracle\n"
+            ),
             "{rendered}"
         );
         assert!(
-            rendered.contains("    - src/base_1.rs:1 (weak)\n"),
+            rendered.contains(
+                "    - src/base_1.rs:1 (weak); kind: predicate; reason: missing strong oracle\n"
+            ),
             "{rendered}"
         );
         assert!(
@@ -3185,7 +3204,9 @@ mod tests {
             "base-side evidence must not read as lower-priority:\n{rendered}"
         );
         assert!(
-            rendered.contains("    - src/base.rs:1 (weak)\n"),
+            rendered.contains(
+                "    - src/base.rs:1 (weak); kind: predicate; reason: missing strong oracle\n"
+            ),
             "{rendered}"
         );
     }
@@ -3219,11 +3240,11 @@ mod tests {
             "{rendered}"
         );
         assert!(
-            rendered.contains("    - src/base.rs:1 (weak, base-side)\n"),
+            rendered.contains("    - src/base.rs:1 (weak, base-side); kind: predicate; reason: missing strong oracle\n"),
             "{rendered}"
         );
         assert!(
-            rendered.contains("    - src/lower.rs:1 (weak, lower-priority candidate)\n"),
+            rendered.contains("    - src/lower.rs:1 (weak, lower-priority candidate); kind: predicate; reason: missing strong oracle\n"),
             "{rendered}"
         );
     }
@@ -4661,12 +4682,14 @@ mod tests {
 
     // #4216 review: an unknown-class closed packet (for example a Bun-bridge
     // cross-language visibility limit: StaticUnknown, no static_limit_kind,
-    // missing fields present) is not a known weak test, so the manual step is
-    // the Python static-limit check, not a test edit. A long validator reason
-    // is bounded; the routing and manual-step parts stay whole.
+    // missing fields present), or a missing static path, is not a known weak
+    // test. The manual step is the Python static-limit check, not a test edit.
+    // A long validator reason is bounded; the routing and manual-step parts
+    // stay whole.
     #[test]
-    fn preview_limited_closed_packet_unknown_class_asks_for_manual_check() {
+    fn preview_limited_closed_packet_missing_path_or_unknown_class_asks_for_manual_check() {
         for class in [
+            ExposureClass::NoStaticPath,
             ExposureClass::StaticUnknown,
             ExposureClass::InfectionUnknown,
             ExposureClass::PropagationUnknown,

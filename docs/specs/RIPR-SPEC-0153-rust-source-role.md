@@ -154,6 +154,28 @@ not establish test-only role.
 Attribute-driven membership is authoritative; filenames, imports,
 and macro suffixes never classify.
 
+For the existing workspace wrapper-macro alias rule, a direct automatic
+`src/bin/<name>.rs` target uses its own root alias for `#[crate::test]`
+(#10141). Manifest authority must confirm automatic binary discovery and
+the existing default-target constraints, including Cargo's edition-specific
+automatic-discovery default. The new route refuses missing
+manifest authority, local reexport prefixes, shadowed macro-crate prefixes,
+globs, and packages with indexed module/include edges or an incomplete
+module scan. Nested binary helpers and explicit targets with automatic
+discovery disabled remain unresolved. Library and sibling-binary aliases
+cannot supply the binary's binding. Existing unique proc-macro and cfg
+checks still apply; this does not trace a macro expansion or resolve an
+unchanged dependency outside the index.
+
+For a binary-root alias, manifest dependency authority must bind the imported
+crate name to the indexed proc-macro library; a registry, wrong-path, missing,
+or ambiguous dependency does not gain credit from a workspace namesake. In a
+committed-history analysis, Cargo manifest authority comes from the committed
+snapshot. A changed Cargo configuration that cannot be resolved against that
+snapshot, including a symlinked manifest or Cargo configuration, refuses the
+new binary route. The alias must directly name the macro in the dependency;
+intermediate paths remain unresolved rather than assuming a reexport.
+
 Diff lines without a function owner consume the composer's existing
 `SourceRoleProvenance` (#3695). They are evidence-only when the provenance
 has no unresolved edge and contains a test-required edge, and the child

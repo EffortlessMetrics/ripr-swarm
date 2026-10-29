@@ -1,5 +1,55 @@
 # Golden Output Changes
 
+## Pending — integration composition to cache generation 1.119 (#8610, #10792)
+
+Integration update:
+The `#8610` entry below was generated at the candidate's own `1.114`
+generation. Merging `main` composed that semantic transition onto main's
+classified line (`1.114` #9478, `1.115` #10797, `1.116` #10819, `1.117`
+#10839, `1.118` #10814), so the admitted generation for this candidate is
+`1.119` (sharded/compact `0.126`). The two `unchanged-after-attempt`
+snapshots adopt `"cache_schema_version": "1.119"` with their content commitments
+recomputed through the same raw-JSON placeholder procedure, and
+`agent-verify.json` / `agent-receipt.json` adopt the derived commitments
+and artifact byte hashes. No boundary-gap evidence, movement class or
+envelope field changed; only the corpus generation and the commitments
+that cover it moved. The snapshots still carry producer facts frozen at
+the original run; a head-qualified regeneration remains hosted-proof
+work for the qualification lane.
+
+## Pending — direct boolean boundary grip (#8610)
+
+Reason:
+RIPR-SPEC-0197 advances the classified corpus cache from 1.113 to 1.114 for
+direct boolean boundary owner grip. Refresh the live portable
+`first-useful-action/unchanged-after-attempt/{before,after}.repo-exposure.json`
+goldens and their dependent `agent-verify.json` and `agent-receipt.json`
+commitments. The boundary-gap fixture still has one weakly gripped seam;
+its evidence, corpus content hash and unchanged movement are preserved.
+
+Generation:
+The frozen native producer at `874bc60ae9fb78c101de7bc54a07dbfa6b07fd6c`
+(binary SHA-256 `3bf8329d41f624b0a017a9867a21bd2cc87b56f0f3ad2127a7131867ffb9cdae`)
+ran `ripr check --root fixtures/boundary_gap/input --format repo-exposure-json`.
+Applied the existing `normalize_unchanged_repo_exposure_producer_fixture`
+normalization and raw-JSON placeholder commitment, then ran native
+`ripr agent verify` and `ripr agent receipt` on the normalized artifact chain.
+The snapshots differ only in corpus generation and content commitment; verify
+differs only in the two snapshot commitments. The portable receipt retains
+its established envelope and adopts only the three native-produced artifact
+byte hashes. Its eight literal envelope differences from this native receipt
+remain explicit fixture data; full envelope equivalence is not claimed.
+
+Validation:
+Native check, verify, receipt and first-action commands exited 0. Verify remains
+`historical_noncurrent`, weak-to-weak and unchanged with an empty evidence delta;
+the receipt remains incomplete with a missing analysis outcome. First-action
+JSON and Markdown match their existing goldens after the existing cwd/time
+normalization and retain `missing_required_artifact`. Removing the evidence
+record, changing its gap state or replacing its commitment each exited 2 at
+the mutated after artifact's content-commitment check. These are results from
+the named frozen producer; the current-head CLI-smoke test was not executed
+during this bounded regeneration.
 ## Pending — suffixed integer activation cache generation (#10839)
 
 The portable unchanged-attempt snapshots follow corpus cache generation 1.116

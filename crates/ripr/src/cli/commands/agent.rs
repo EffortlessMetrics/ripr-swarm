@@ -279,10 +279,50 @@ pub(in crate::cli) fn agent(args: &[String]) -> Result<(), CommandError> {
     }
 }
 
+/// The refusal for a known seam that `agent start` selection excluded: a
+/// policy omission names the policy reason and its inspection hint; a seam
+/// policy permits (a static limitation: opaque or `*_unknown`) has no
+/// repairable gap, so no workflow starts, and the recovery is its inspection
+/// packet (#10712).
+fn known_seam_start_refusal(
+    root: &Path,
+    seam_id: &str,
+    class: crate::analysis::seams::SeamGripClass,
+    policy: AgentBriefPolicy<'_>,
+) -> CoreError {
+    match policy.omission_reason_for_class(class) {
+        Some(reason) => CoreError::seam_policy_omitted(format!(
+            "agent start seam_id {seam_id} {reason}. {}",
+            policy_omitted_seam_hint(root, seam_id)
+        )),
+        None => CoreError::seam_not_actionable(format!(
+            "agent start seam_id {seam_id} is {}, a static limitation with no repairable gap, so no workflow starts. Inspect it with `ripr agent packet --root {} --seam-id {} --json`.",
+            class.as_str(),
+            crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(
+                &root.to_string_lossy()
+            )),
+            crate::agent::loop_commands::shell_arg(seam_id)
+        )),
+    }
+}
+
+/// A seam-selection typed refusal (exit 3): the id is unknown, or the seam is
+/// known but agent policy withholds it (#10712).
+fn is_seam_refusal(error: &CoreError) -> bool {
+    matches!(
+        error.check_failure_kind(),
+        Some(
+            crate::core_error::CheckFailureKind::SeamIdUnknown
+                | crate::core_error::CheckFailureKind::SeamPolicyOmitted
+                | crate::core_error::CheckFailureKind::SeamNotActionable
+        )
+    )
+}
+
 fn run_agent_start(options: AgentStartOptions) -> Result<(), CommandError> {
     let json = options.json;
     let written = write_agent_start(options).map_err(|error| {
-        if error.check_failure_kind() == Some(crate::core_error::CheckFailureKind::SeamIdUnknown) {
+        if is_seam_refusal(&error) {
             CommandError::Decision(String::from(error))
         } else {
             CommandError::Failure(String::from(error))
@@ -382,23 +422,50 @@ fn write_agent_start_with_report(
         AgentBriefPolicy::from_config(config),
     );
     if selection.top_seams.is_empty() {
-        let message = format!(
-            "agent start seam_id {} was not found or is hidden by config. {}",
-            options.seam_id,
-            unknown_seam_id_hint(&options.root, &options.seam_id)
-        );
-        // Like `agent packet`: only an id absent from the inventory is the
-        // typed unknown-seam refusal (exit 3). A known seam withheld by agent
-        // policy keeps the plain failure (exit 2).
-        let in_inventory = report
+        // Like `agent packet`: an id absent from the inventory is the unknown
+        // refusal, and a known seam that agent policy withholds is the
+        // policy-omitted refusal naming the policy reason. Both are typed
+        // refusals (exit 3), never a "not found" for a seam the inventory has.
+        let entry = report
             .classified
             .iter()
-            .any(|entry| entry.seam.id().as_str() == options.seam_id);
-        return Err(if in_inventory {
-            CoreError::from(message)
-        } else {
-            CoreError::seam_id_unknown(message)
-        });
+            .find(|entry| entry.seam.id().as_str() == options.seam_id);
+        let Some(entry) = entry else {
+            return Err(CoreError::seam_id_unknown(format!(
+                "agent start seam_id {} was not found. {}",
+                options.seam_id,
+                unknown_seam_id_hint(&options.root, &options.seam_id)
+            )));
+        };
+        return Err(known_seam_start_refusal(
+            &options.root,
+            &options.seam_id,
+            entry.class,
+            AgentBriefPolicy::from_config(config),
+        ));
+    }
+    // The shared repair-admission gate decides every other start: a seam
+    // `ripr repair` and `agent card` report as not repair-ready must not
+    // write a workflow either (#10712).
+    if let Some(entry) = report
+        .classified
+        .iter()
+        .find(|entry| entry.seam.id().as_str() == options.seam_id)
+        && let Some(refusal) = app::task_first::repair_start_refusal_for_entry(
+            &options.root,
+            entry,
+            AgentBriefPolicy::from_config(config),
+        )
+    {
+        let reason = refusal.reason;
+        return Err(CoreError::seam_not_actionable(format!(
+            "agent start seam_id {} is not repair-eligible: {reason}; no workflow starts. Inspect it with `ripr agent packet --root {} --seam-id {} --json`.",
+            options.seam_id,
+            crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(
+                &options.root.to_string_lossy()
+            )),
+            crate::agent::loop_commands::shell_arg(&options.seam_id)
+        )));
     }
     add_agent_brief_provenance_warning(&input.root, &mut selection);
 
@@ -540,8 +607,7 @@ fn run_agent_packet(options: AgentPacketOptions) -> Result<(), CommandError> {
         // failure: exit 3, like `agent card` and `agent stub` for the same
         // cause. Every other packet failure stays exit 2.
         Err(error) => {
-            let unknown_seam = error.check_failure_kind()
-                == Some(crate::core_error::CheckFailureKind::SeamIdUnknown);
+            let unknown_seam = is_seam_refusal(&error);
             match refuse_agent_packet(&options, error, json) {
                 Ok(message) if unknown_seam => Err(CommandError::Decision(message)),
                 Ok(message) | Err(message) => Err(CommandError::Failure(message)),
@@ -772,7 +838,7 @@ fn render_agent_packet_for_seam_with_report(
 
     let policy = AgentBriefPolicy::from_config(config);
     if let Some(reason) = policy.omission_reason_for_class(entry.class) {
-        return Err(CoreError::from(format!(
+        return Err(CoreError::seam_policy_omitted(format!(
             "agent packet seam_id {seam_id} {reason}. {}",
             policy_omitted_seam_hint(root, seam_id)
         )));
@@ -1335,9 +1401,11 @@ fn run_agent_repair_with_identity_ctx(
             artifacts.resolve(false, terminal, refusal.tail_reached);
         }
     }
-    // A deliberate named refusal once the after phase selected its attempt
-    // (typed) is recorded above and maps to the decision exit code 3.
-    // Operational errors after selection stay ordinary failures: exit 2.
+    // A deliberate named refusal (typed) is recorded above and maps to the
+    // decision exit code 3. Operational errors after selection stay ordinary
+    // failures: exit 2. The before phase selects no attempt, so a typed
+    // before-phase refusal (a policy-omitted or unknown seam, #10712) takes
+    // the same decision mapping with nothing recorded.
     if json
         && refusal.typed
         && !refusal.stdout_document_printed
@@ -1353,7 +1421,7 @@ fn run_agent_repair_with_identity_ctx(
         }
     }
     let start_refused = refusal.start_refused;
-    let result = if refusal.selected_attempt.is_some() && refusal.typed {
+    let result = if refusal.typed {
         result.map_err(CommandError::Decision)
     } else {
         result.map_err(CommandError::Failure)
@@ -1774,7 +1842,18 @@ fn run_agent_repair_phase(
                         .map(|_| crate::agent::PYTHON_REPAIR_AUTHORIZATION_SUFFIX),
                 },
             )
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| {
+                // #10712 residual: a seam the inventory has but agent policy
+                // withholds (or an unknown id) is the same typed refusal the
+                // standalone packet/start/card surfaces give (exit 3), not an
+                // operational failure. The error text is unchanged — nothing
+                // was written yet, so there is no attempt to record it on —
+                // and only the exit mapping below honors the flag.
+                if is_seam_refusal(&error) {
+                    refusal.typed = true;
+                }
+                error.to_string()
+            })?;
             // #9033: the selected inline target must be the committed file.
             // Checked on the inventory loaded above, before the cage policy,
             // the lock-protected publication or any workflow artifact, so a
@@ -3570,6 +3649,46 @@ mod tests {
         unique_repo_relative_test_dir,
     };
     use super::*;
+
+    /// #10712 review: a static-limitation seam that policy permits is not a
+    /// policy omission, so `agent start` must not send the caller to policy
+    /// inspection; a configured-off gap still is one.
+    #[test]
+    fn start_refusal_distinguishes_static_limitations_from_policy_omission() {
+        use crate::analysis::seams::SeamGripClass;
+        let config = RiprConfig::default();
+        let policy = AgentBriefPolicy::from_config(&config);
+        let root = Path::new(".");
+
+        let limit = known_seam_start_refusal(root, "abc", SeamGripClass::Opaque, policy);
+        assert_eq!(
+            limit.check_failure_kind(),
+            Some(crate::core_error::CheckFailureKind::SeamNotActionable)
+        );
+        let message = String::from(limit);
+        assert!(message.contains("static limitation"), "{message}");
+        assert!(message.contains("ripr agent packet"), "{message}");
+        assert!(!message.contains("agent policy"), "{message}");
+        assert!(!message.contains("configured off"), "{message}");
+
+        let mut off = RiprConfig::default();
+        off.severity.seams.weakly_gripped = crate::config::ConfigSeverity::Off;
+        let omitted = known_seam_start_refusal(
+            root,
+            "abc",
+            SeamGripClass::WeaklyGripped,
+            AgentBriefPolicy::from_config(&off),
+        );
+        assert_eq!(
+            omitted.check_failure_kind(),
+            Some(crate::core_error::CheckFailureKind::SeamPolicyOmitted)
+        );
+        let message = String::from(omitted);
+        assert!(
+            message.contains("configured off for weakly_gripped seams"),
+            "{message}"
+        );
+    }
     use crate::app::agent_brief::AgentBriefLine;
     use crate::cli::agent::AgentBriefWorkingSet;
 

@@ -74,10 +74,12 @@ mod dataclass_default;
 mod deleted_lines;
 mod doctest_eval;
 mod doctest_tests;
+mod dunder_truthiness;
 mod guard_activation;
 mod guard_credit;
 mod helper_inline;
 mod imported_call_operator;
+mod known_equality_helpers;
 mod message_pin;
 mod module_value;
 mod type_guard;
@@ -431,6 +433,8 @@ struct PythonTest {
     /// pass (`fixtures.rs`); empty until then.
     fixture_defs: Vec<PythonFixtureDef>,
     parametrized: bool,
+    /// The original single parametrization is a plain two-argument literal call.
+    simple_literal_parametrize: bool,
     /// Argnames a pytest parametrize decorator supplies directly (not routed
     /// to a fixture by `indirect=`); never resolved as fixtures (#4563).
     direct_parametrized: Vec<String>,
@@ -438,6 +442,9 @@ struct PythonTest {
     /// cannot settle: not resolved as fixtures, but still counted toward the
     /// fixture limit (#10685).
     unsettled_indirect: Vec<String>,
+    /// Every argname the test's and its classes' pytest parametrize marks
+    /// name, repeats kept: a repeat is a collection error (#10867).
+    parametrize_argnames: Vec<String>,
     /// Literal `@pytest.mark.parametrize` cases, when statically certain (#4559).
     parametrize: Option<parametrize::PythonParametrizeCases>,
     /// Parameters Hypothesis `@given(...)` supplies (#6601); never fixtures.
@@ -537,6 +544,30 @@ struct PythonAssertion {
     /// it as a smoke truthiness check; `bool_oracle` re-reads it as an exact
     /// boolean pin once the callee is known to return `bool`.
     bare_bool_call: Option<PythonBareBoolCall>,
+    /// Set for a call shaped like a numpy.testing or assertpy equality
+    /// helper (#10936). Extraction cannot tell whether the name is the
+    /// library's; `known_equality_helpers` re-reads the assertion as
+    /// `assert left == right` once the file's imports prove it.
+    known_equality_helper: Option<PythonKnownEqualityHelper>,
+}
+
+/// The call under a candidate numpy.testing or assertpy equality helper
+/// (`known_equality_helpers.rs`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PythonKnownEqualityHelper {
+    library: KnownEqualityLibrary,
+    /// The callable as written: `np.testing.assert_array_equal`, or for
+    /// assertpy the `assert_that` it chains from.
+    callee: String,
+    /// The two compared operands, parenthesized where `==` would regroup.
+    left: String,
+    right: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum KnownEqualityLibrary {
+    NumpyTesting,
+    Assertpy,
 }
 
 /// The call under a bare boolean assertion (`bool_oracle.rs`).
@@ -978,6 +1009,8 @@ impl PythonAdapter {
             BTreeMap::new();
         let mut docstring_ranges_by_file: BTreeMap<PathBuf, Vec<RangeInclusive<usize>>> =
             BTreeMap::new();
+        let mut assigned_attributes_by_file: BTreeMap<PathBuf, Option<Vec<String>>> =
+            BTreeMap::new();
         let mut import_ranges_by_file: BTreeMap<PathBuf, Vec<RangeInclusive<usize>>> =
             BTreeMap::new();
         let mut limitations = Vec::new();
@@ -1024,6 +1057,8 @@ impl PythonAdapter {
                 {
                     limitations.push(limitation);
                 }
+                assigned_attributes_by_file
+                    .insert(relative.clone(), facts.assigned_attributes.clone());
                 docstring_ranges_by_file
                     .insert(relative.clone(), facts.docstring_line_ranges.clone());
                 import_ranges_by_file.insert(relative.clone(), facts.import_line_ranges.clone());
@@ -1092,6 +1127,9 @@ impl PythonAdapter {
             workspace_read.sources.get(file).map(String::as_str)
         });
         bool_oracle::credit_bare_bool_asserts(&mut all_tests, &all_owners, |file| {
+            workspace_read.sources.get(file).map(String::as_str)
+        });
+        known_equality_helpers::credit_known_equality_helpers(&mut all_tests, |file| {
             workspace_read.sources.get(file).map(String::as_str)
         });
         // Rival src-layout modules are found by path, so an over-cap run still
@@ -1227,12 +1265,31 @@ impl PythonAdapter {
         let workspace_incomplete = refused_files > 0
             || !workspace_read.limits.is_empty()
             || !workspace_read.io_failures.is_empty();
-        let foreign_index = module_value::ForeignIndex::build(
+        // This physical-only capability cannot establish the complete HEAD
+        // import environment for committed-history or materialized subjects.
+        // Explicit diff input is the pipeline's live-source view.
+        if options.diff_file.is_some()
+            && all_owners.iter().any(|owner| {
+                owner.name == "__bool__"
+                    && python_changed_files
+                        .iter()
+                        .any(|changed| changed.path == owner.file)
+            })
+        {
+            dunder_truthiness::bind_workspace_observer(
+                &options.root,
+                &mut all_owners,
+                &workspace_read.sources,
+                workspace_incomplete,
+            );
+        }
+        let foreign_index = module_value::ForeignIndex::build_with_assigned(
             workspace_read
                 .sources
                 .iter()
                 .map(|(file, source)| (file.as_path(), source.as_str())),
             workspace_incomplete,
+            &assigned_attributes_by_file,
         );
         for changed in &python_changed_files {
             let foreign = foreign_index.excluding(&changed.path);
@@ -1472,6 +1529,7 @@ impl PythonAdapter {
             limitations,
             rust_diagnostic_origins: Default::default(),
             rust_consumed_sources: Default::default(),
+            preview_fact_cache: Default::default(),
         })
     }
 
@@ -1526,6 +1584,8 @@ mod assertion_selection_tests;
 
 #[cfg(test)]
 mod bool_oracle_tests;
+#[cfg(test)]
+mod known_equality_helpers_tests;
 
 #[cfg(test)]
 mod conftest_admission_tests;
@@ -1547,6 +1607,8 @@ mod param_fixture_tests;
 
 #[cfg(test)]
 mod dunder_entry_tests;
+#[cfg(test)]
+mod dunder_truthiness_tests;
 
 #[cfg(test)]
 mod module_field_tests;

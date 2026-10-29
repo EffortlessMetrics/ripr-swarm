@@ -332,6 +332,9 @@ pub(super) struct PythonTestRebinding {
     /// A module `def`/`class` header (decorator, default, annotation, base) or
     /// a conditional import can run code at import (#10040 `no_call_path`).
     pub(super) header_reach: bool,
+    /// One import and one argument-free test with no definition-time
+    /// expressions; only bounded dunder truthiness consumes this fact.
+    pub(super) plain_test_module: bool,
 }
 
 impl PythonTestRebinding {
@@ -373,6 +376,7 @@ pub(super) fn python_test_rebinding(
         edited_in_diff: false,
         implicit_reach: false,
         header_reach: false,
+        plain_test_module: false,
     }
 }
 
@@ -384,6 +388,7 @@ pub(super) fn with_module_rebinding(source: &str, statements: &[Stmt], tests: &m
     let mut module = ScopeBindings::default();
     collect_scope_bindings(statements, &mut module);
     let dynamic = writes_namespace_dynamically(source);
+    let plain_test_module = super::dunder_truthiness::plain_test_module(statements);
     // A `global NAME` in any function (an autouse fixture, a helper) can
     // rebind an imported name before another test in the module runs.
     let mut globals = Vec::new();
@@ -417,6 +422,7 @@ pub(super) fn with_module_rebinding(source: &str, statements: &[Stmt], tests: &m
         rebinding.names.dedup();
         rebinding.module_names = Arc::clone(&module_names);
         rebinding.module_opaque = module.opaque || dynamic;
+        rebinding.plain_test_module = plain_test_module;
         rebinding.module_bound = Arc::clone(&module_bound);
         rebinding.attributes = Arc::clone(&attributes);
     }
@@ -529,7 +535,7 @@ pub(super) fn assigned_attributes(source: &str) -> Option<Vec<String>> {
     }
 }
 
-fn assigned_attribute_names(statements: &[Stmt]) -> Vec<String> {
+pub(super) fn assigned_attribute_names(statements: &[Stmt]) -> Vec<String> {
     let mut attributes = Vec::new();
     visit_statements(statements, &mut |stmt| match stmt {
         Stmt::Assign(assign) => {

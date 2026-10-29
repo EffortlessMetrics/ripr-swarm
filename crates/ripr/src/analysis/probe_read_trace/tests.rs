@@ -160,6 +160,184 @@ fn abandonment_and_saturation_never_hide_whole_set_reads_or_claim_closure() -> R
 }
 
 #[test]
+fn site_tallies_keep_distinct_reads_visible_past_the_detail_cap() -> Result<(), String> {
+    let (_, rows) = capture(true, || {
+        let scope = Scope::begin(&probe("many"));
+        for index in 0..MAX_READS + 36 {
+            // Same subject twice: events double, distinct subjects do not.
+            for _ in 0..2 {
+                file(Path::new(&format!("distinct-{index}.rs")), true);
+            }
+        }
+        scope.finish();
+    })?;
+    let row = rows.first().ok_or("missing row")?;
+    assert_eq!(row.reads.len(), MAX_READS);
+    assert_eq!(row.sites.len(), 1);
+    let site = &row.sites[0];
+    assert_eq!(site.kind, Kind::File);
+    assert_eq!(site.events, 2 * (MAX_READS as u64 + 36));
+    assert_eq!(site.distinct_subjects, MAX_READS as u64 + 36);
+    assert!(!site.distinct_is_lower_bound);
+    assert_eq!(row.dropped_site_events, 0);
+    Ok(())
+}
+
+/// One call per line: each line is its own `Location`, so this reads from
+/// 65 distinct calling sites.
+fn read_from_sixty_five_sites() {
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+    file(Path::new("site.rs"), true);
+}
+
+fn read_from_known_site() {
+    file(Path::new("known.rs"), true);
+}
+
+#[test]
+fn site_cap_drops_new_sites_but_keeps_counting_known_ones() -> Result<(), String> {
+    let (_, rows) = capture(true, || {
+        let scope = Scope::begin(&probe("sites"));
+        read_from_known_site();
+        read_from_known_site();
+        read_from_sixty_five_sites();
+        read_from_known_site();
+        scope.finish();
+    })?;
+    let row = rows.first().ok_or("missing row")?;
+    assert_eq!(MAX_READS, 64);
+    // The known site plus 63 of the 65 helper sites fill the map; the last two
+    // helper sites are new after it is full, so their events are dropped.
+    assert_eq!(row.sites.len(), MAX_READS);
+    assert_eq!(row.dropped_site_events, 2);
+    assert_eq!(row.observed_read_events, 2 + 65 + 1);
+    // The known site keeps counting after the cap is reached.
+    assert!(row.sites.iter().any(|site| site.events == 3));
+    Ok(())
+}
+
+#[test]
+fn distinct_count_is_a_lower_bound_once_its_memory_bound_is_reached() -> Result<(), String> {
+    let (_, rows) = capture(true, || {
+        let scope = Scope::begin(&probe("saturated"));
+        for index in 0..MAX_DISTINCT + 5 {
+            file(Path::new(&format!("s-{index}.rs")), true);
+        }
+        scope.finish();
+    })?;
+    let site = rows
+        .first()
+        .and_then(|row| row.sites.first())
+        .ok_or("missing site")?;
+    assert_eq!(site.events, MAX_DISTINCT as u64 + 5);
+    assert_eq!(site.distinct_subjects, MAX_DISTINCT as u64);
+    assert!(site.distinct_is_lower_bound);
+    Ok(())
+}
+
+#[test]
+fn memo_reads_are_recorded_on_hit_and_miss_and_attributed_to_the_caller() -> Result<(), String> {
+    use crate::analysis::syntax::run_memo::{self, Product};
+    let (_, rows) = capture(true, || {
+        let scope = Scope::begin(&probe("memo"));
+        // Outside a memo scope nothing is consulted, so nothing is read.
+        run_memo::memoize(Product::ExternalDocs, 0, "src", || 1usize);
+        let _memo = run_memo::enter();
+        for _ in 0..2 {
+            // First call computes, second is a warm hit; both consult the entry.
+            run_memo::memoize(Product::ExternalDocs, 0, "src", || 1usize);
+        }
+        run_memo::memoize_many(Product::LocalTestMacros, &["a", "b"], |source| source.len());
+        scope.finish();
+    })?;
+    let row = rows.first().ok_or("missing row")?;
+    let memo: Vec<_> = row
+        .reads
+        .iter()
+        .filter(|entry| entry.read.kind == Kind::Memo)
+        .collect();
+    // One entry read twice, plus two distinct batch entries.
+    assert_eq!(memo.len(), 3);
+    assert_eq!(memo.iter().map(|entry| entry.count).sum::<u64>(), 4);
+    let first = &memo
+        .iter()
+        .find(|entry| entry.count == 2)
+        .ok_or("no repeat")?;
+    assert!(first.read.subject.starts_with("external_docs:"));
+    assert_eq!(first.read.subject.len(), "external_docs:".len() + 64);
+    // The site is the consumer's call, not run_memo's own body.
+    assert!(
+        memo.iter()
+            .all(|entry| Path::new(entry.read.site.file).ends_with("probe_read_trace/tests.rs"))
+    );
+    assert!(!row.universe_observed);
+    Ok(())
+}
+
+#[test]
 fn wire_bound_omits_whole_details_instead_of_truncating_and_writer_failure_is_fallible()
 -> Result<(), String> {
     let (_, rows) = capture(true, || {
@@ -177,6 +355,8 @@ fn wire_bound_omits_whole_details_instead_of_truncating_and_writer_failure_is_fa
         serde_json::from_slice(&wire[PREFIX.len()..]).map_err(|error| error.to_string())?;
     assert_eq!(value["read_detail_omitted"], true);
     assert_eq!(value["reads"], serde_json::json!([]));
+    // Site totals are not read detail and survive the omission.
+    assert_eq!(value["sites"][0]["distinct_subjects"], MAX_READS);
     assert_eq!(value["coverage"], "unknown");
     struct Closed;
     impl Write for Closed {

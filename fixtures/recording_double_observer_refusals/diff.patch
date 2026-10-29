@@ -1,0 +1,48 @@
+diff --git a/src/owned_clone.rs b/src/owned_clone.rs
+--- a/src/owned_clone.rs
++++ b/src/owned_clone.rs
+@@ -13 +13 @@
+-    sink.send(format!("n={}", n));
++    sink.send(format!("n={n}"));
+diff --git a/src/raw_binding.rs b/src/raw_binding.rs
+--- a/src/raw_binding.rs
++++ b/src/raw_binding.rs
+@@ -13 +13 @@
+-    sink.send(format!("n={}", n));
++    sink.send(format!("n={n}"));
+diff --git a/src/unicode_binding.rs b/src/unicode_binding.rs
+--- a/src/unicode_binding.rs
++++ b/src/unicode_binding.rs
+@@ -13 +13 @@
+-    sink.send(format!("n={}", n));
++    sink.send(format!("n={n}"));
+diff --git a/src/raw_receiver.rs b/src/raw_receiver.rs
+--- a/src/raw_receiver.rs
++++ b/src/raw_receiver.rs
+@@ -13 +13 @@
+-    sink.send(format!("n={}", n));
++    sink.send(format!("n={n}"));
+diff --git a/src/let_else.rs b/src/let_else.rs
+--- a/src/let_else.rs
++++ b/src/let_else.rs
+@@ -13 +13 @@
+-    sink.send(format!("n={}", n));
++    sink.send(format!("n={n}"));
+diff --git a/src/push_dispatch.rs b/src/push_dispatch.rs
+--- a/src/push_dispatch.rs
++++ b/src/push_dispatch.rs
+@@ -13 +13 @@
+-    sink.send(format!("n={}", n));
++    sink.send(format!("n={n}"));
+diff --git a/src/assertion_message.rs b/src/assertion_message.rs
+--- a/src/assertion_message.rs
++++ b/src/assertion_message.rs
+@@ -13 +13 @@
+-    sink.send(format!("n={}", n));
++    sink.send(format!("n={n}"));
+diff --git a/src/dyn_inherent.rs b/src/dyn_inherent.rs
+--- a/src/dyn_inherent.rs
++++ b/src/dyn_inherent.rs
+@@ -13 +13 @@
+-    sink.send(format!("n={}", n));
++    sink.send(format!("n={n}"));

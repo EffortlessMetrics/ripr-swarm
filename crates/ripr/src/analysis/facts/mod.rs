@@ -55,6 +55,8 @@ pub(crate) mod member_crates;
 mod model;
 mod parameterized_tests;
 mod proptest;
+#[cfg(test)]
+mod proptest_tests;
 mod role_composition;
 mod stray_files;
 

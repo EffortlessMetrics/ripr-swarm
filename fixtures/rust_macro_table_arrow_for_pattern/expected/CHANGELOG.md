@@ -24,3 +24,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_macro_table_arrow_for_pattern (3)
+
+Reason:
+RIPR-SPEC-0118: compose landed main fixture rows with hidden-row kind/reason naming; JSON unchanged
+
+Command:
+`cargo xtask goldens bless rust_macro_table_arrow_for_pattern --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

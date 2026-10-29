@@ -12,6 +12,7 @@
   "findings": [
     {
       "id": "probe:src_guards.ts:typescript_preview:7098c2ff",
+      "canonical_gap_id": "gap:typescript:typescript_preview:7098c2ff",
       "classification": "exposed",
       "severity": "info",
       "confidence": 0.60,
@@ -130,6 +131,7 @@
     },
     {
       "id": "probe:src_guards.ts:typescript_preview:0d3ee5b2",
+      "canonical_gap_id": "gap:typescript:typescript_preview:0d3ee5b2",
       "classification": "exposed",
       "severity": "info",
       "confidence": 0.60,
@@ -248,6 +250,7 @@
     },
     {
       "id": "probe:src_guards.ts:typescript_preview:31d04e16",
+      "canonical_gap_id": "gap:typescript:typescript_preview:31d04e16",
       "classification": "exposed",
       "severity": "info",
       "confidence": 0.60,

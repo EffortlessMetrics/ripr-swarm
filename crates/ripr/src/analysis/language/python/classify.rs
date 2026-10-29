@@ -8,6 +8,7 @@ use super::boundary::{BoundaryActivation, python_boundary_evidence};
 use super::caplog_text::{PythonLogVerdict, python_log_evidence};
 use super::dataclass_default::dataclass_default_credits;
 use super::discriminators::python_missing_discriminators;
+use super::dunder_truthiness;
 use super::guard_activation;
 use super::imported_call_operator::{IMPORTED_CALL_LIMIT_EVIDENCE, imported_call_credits};
 use super::message_pin;
@@ -423,6 +424,39 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
     } else {
         Vec::new()
     };
+    let bool_credit = if no_behavior.sole_line_replacement {
+        owner_source.and_then(|source| {
+            let module_owner = owners
+                .iter()
+                .find(|candidate| candidate.is_module_owner() && candidate.file == owner.file)?;
+            dunder_truthiness::credit(
+                &ModuleEdit {
+                    file,
+                    line,
+                    line_text,
+                    old_line_text,
+                    new_source: source,
+                },
+                owner,
+                module_owner,
+                all_tests,
+            )
+        })
+    } else {
+        None
+    };
+    if let Some(credit) = &bool_credit {
+        match related_candidates
+            .iter_mut()
+            .find(|candidate| std::ptr::eq(candidate.test, credit.test))
+        {
+            Some(candidate) => candidate.relation = PythonRelationKind::ProtocolEntryCall,
+            None => related_candidates.push(PythonRelatedCandidate {
+                test: credit.test,
+                relation: PythonRelationKind::ProtocolEntryCall,
+            }),
+        }
+    }
     for credit in &module_value {
         match related_candidates
             .iter_mut()
@@ -435,10 +469,21 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
             }),
         }
     }
-    if !module_value.is_empty() {
+    if !module_value.is_empty() || bool_credit.is_some() {
         sort_related_candidates(&mut related_candidates);
     }
     let mut related = related_tests_for_candidates(&related_candidates, Some(&focus));
+    if let Some(credit) = &bool_credit
+        && let Some(row) = related.iter_mut().find(|row| {
+            row.file == credit.test.file
+                && row.line == credit.test.line
+                && row.name == credit.test.name
+        })
+    {
+        row.oracle = Some(credit.assertion.text.clone());
+        row.oracle_kind = OracleKind::ExactValue;
+        row.oracle_strength = OracleStrength::Strong;
+    }
     // A write under an `if` guard counts as run only when every strong related
     // call provably enters the guard (#9833); otherwise it reads no effect.
     let guard_entered = owner_source.is_some_and(|source| {
@@ -474,7 +519,21 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
                 kind: OracleKind::ExactValue,
             }),
         },
-        None => alignment,
+        None => match &bool_credit {
+            Some(credit) => SinkAlignment {
+                changed_sink: alignment.changed_sink,
+                observed_sink: Some(credit.assertion.text.clone()),
+                oracle_alignment: "direct".to_string(),
+                alignment_reason: crate::domain::LIVE_PYTHON_TRUTHINESS_ALIGNMENT.to_string(),
+                credited: Some(CreditedAssertion {
+                    test_name: credit.test.name.clone(),
+                    test_file: credit.test.file.clone(),
+                    text: credit.assertion.text.clone(),
+                    kind: OracleKind::ExactValue,
+                }),
+            },
+            None => alignment,
+        },
     };
     // A removed `isinstance` operand guard on `__eq__`, observed by a test that
     // compares an instance with a foreign literal (#9619).
@@ -768,7 +827,14 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
         && inactive_term.is_none()
         && guarded_arm_gap.is_none())
     .then(|| {
-        python_unvaried_table_operand(line_text, old_line_text, owner, &related_candidates, &focus)
+        python_unvaried_table_operand(
+            line_text,
+            old_line_text,
+            owner,
+            &related_candidates,
+            &focus,
+            no_behavior.sole_line_replacement,
+        )
     })
     .flatten();
     let mut table_downgraded = false;
@@ -1012,8 +1078,8 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
             StageState::Yes,
             StageState::Weak,
             vec![format!(
-                "A strong Python oracle reaches `{}`, but {}; static evidence cannot confirm the changed operand is discriminated. Add a table row that varies `{}`.",
-                owner.name, gap.reason, gap.operand,
+                "A strong Python oracle reaches `{}`, but {}; static evidence cannot confirm the changed operand is discriminated. {}",
+                owner.name, gap.reason, gap.action,
             )],
         )
     } else if strongest_strength >= OracleStrength::Strong.rank()
@@ -1268,7 +1334,7 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
             unvaried_table
                 .as_ref()
                 .map(|gap| MissingDiscriminatorFact {
-                    value: format!("a table row that varies {}", gap.operand),
+                    value: gap.discriminator.clone(),
                     reason: gap.reason.clone(),
                     flow_sink: flow_sink.clone(),
                 })
@@ -1512,7 +1578,13 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
             .relation
             .uses_oracle()
             .then(|| select_relevant_assertion(&test.assertions, Some(&focus)));
-        if let Some(PythonAssertionSelection::Selected(assertion)) = selection {
+        if let Some(credit) = bool_credit
+            .as_ref()
+            .filter(|credit| std::ptr::eq(credit.test, test))
+        {
+            evidence.push(format!("dunder_truthiness_read: integer construction passes before and fails after `{}` ({})", credit.assertion.text, test.name));
+            evidence.push(format!("test_oracle: exact_value strong ({})", test.name));
+        } else if let Some(PythonAssertionSelection::Selected(assertion)) = selection {
             evidence.push(format!(
                 "test_oracle: {} {} ({})",
                 assertion.oracle_kind.as_str(),

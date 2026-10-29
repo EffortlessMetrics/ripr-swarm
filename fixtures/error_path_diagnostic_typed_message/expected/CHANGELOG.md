@@ -393,6 +393,17 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
+## Pending — error_path_diagnostic_typed_message (28)
+
+Reason:
+RIPR-SPEC-0118 / docs/OUTPUT_SCHEMA.md: #10192 displays hidden finding kind/reason, exact ambiguous seam choices, and evidence-specific unresolved-edge guidance; verdict, stage, identity and oracle fields stay unchanged (independently compared against actual JSON).
+
+Command:
+`cargo xtask goldens bless error_path_diagnostic_typed_message --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
 ## Pending — error_path_diagnostic_typed_message (30)
 
 Reason:
