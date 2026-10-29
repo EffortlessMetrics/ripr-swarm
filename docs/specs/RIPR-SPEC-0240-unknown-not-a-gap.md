@@ -418,8 +418,52 @@ non-ignored related test matches one of these shapes:
   call, compares `rec.field` (a field, not a method call and not only its `.len()`, `.is_empty()` or `.count()`) in an `assert_eq!`.
   A concrete `&mut` parameter, a std collection, a constructor call, a method
   read or a comparison before the call keep the finding. The recorded value
-  reaches the assertion through the double's own method, which ripr does not
-  follow.
+  reaches the assertion through the double's own method. Outside the bounded
+  recording rule below, ripr does not follow that method.
+
+  **Bounded recording credit (#9766):** a same-file free owner sends one
+  `String` argument through a local root trait. The asserted double has a
+  unique same-file struct definition and trait implementation (possibly in an
+  inline test module), whose method consists only of
+  `self.field.push(argument);`; `field` is a standard `Vec<String>`.
+  The test begins with its empty struct-literal double, an unqualified owner
+  call, and an immediately following exact comparison of that field (or its
+  standard `clone()`) to a nonempty vector of independent string literals.
+  The equality has exactly two arguments, with an optional trailing comma
+  followed by ordinary line or block comments.
+  Diagnostic arguments refuse this bounded credit: they execute on comparison
+  failure and may prevent the test harness from reporting that failure.
+  The existing free-call binding authority must resolve the actual call to
+  this owner; a module constant, static or constructor twin cannot borrow it.
+  This supplies assertion-local observation, without changing reach or strength.
+
+  Owner execution is bounded to primitive integer inputs, literal setup or an
+  explicitly typed primitive slice `iter().sum()`, and direct sends. A scalar
+  binding that shadows a slice removes that slice provenance. Raw parameter or
+  setup binding names refuse credit. Declaration names in the recording file must
+  be unescaped ASCII identifiers, so raw type shadows and Unicode normalization
+  cannot borrow another declaration or retain aliased provenance.
+  A later
+  primitive comparison may guard further append-only sends. Format arguments
+  are parsed out of their token tree: only primitive names or numeric literals
+  and plain named/positional placeholders are admitted. Hidden calls, operators
+  on unknown values, let-else, other setup/effects, type aliases, ambiguous imports,
+  item expansion/attributes, and user-defined `clone`/`to_string` methods
+  (including raw spellings) refuse
+  this credit. A competing `push` declaration without the exact `&mut self`
+  receiver also refuses credit: a borrowed trait method can run before the
+  inherent vector mutation. A competing mutable-receiver method does not
+  displace the inherent vector mutation. This guard does not broaden the
+  existing refusal for an owner calling a push-named sink method.
+  An inherent method on the target dyn trait with the sink method's name also
+  refuses credit: Rust reports an ambiguous call, so the recorder's trait writer
+  does not establish its binding. Raw trait references, qualified paths,
+  parentheses, lifetimes and ordinary comments do not bypass this check.
+  Other methods, other dyn traits and wrapper types retain their existing scope.
+  Concrete mutable parameters, standard collection receivers,
+  count-only observations, before-call assertions, no-op/constant writers and
+  comparisons of another field retain their prior refusals. This rule grants
+  no fixture-builder receiver credit.
 - **local executor** (#9443): a `return_value` probe on an `async fn` owner,
   and a `direct_owner_call` test with a strong assertion: an `assert_eq!` with
   a literal on one side and `helper(owner(..))` on the other, where `helper`
@@ -444,7 +488,13 @@ method name, not the receiver, and only related tests (the first eight per
 finding) are judged; either can withhold a gap, which only costs an advisory.
 
 It runs after the should-panic rule and before `withhold_unsupported_gap`,
-and writes the finding the same way. Nothing is credited. Corpus effect:
+and writes the finding the same way. This withholding route credits nothing.
+The isolated recording-double receipt (#10286) reads
+`idiom-hand-mock-exact-line` as `credited`; `idiom-fixture-builder-total`
+remains `limited` and `spec0231-oracle-events-sent-len-eq` remains `gap`.
+This receipt does not measure the separately owned fixture-builder candidate
+(#10297) or a combined tree.
+Historical corpus effect before bounded recording credit (#9766):
 `lib-serial-test-retries-default-arm`, `lib-mockall-recipient-predicate`,
 `lib-expect-test-assert-debug-eq-variant-payload` and
 `lib-insta-json-unredacted-sibling-field` move from `false_actionable` to
@@ -942,6 +992,26 @@ a credited weak oracle) and semver `op()` (reach with no retained test, #5344).
 
 - `crates/ripr/tests/refused_assertion_beside_weak_oracle.rs::an_analyzer_limit_refusal_beside_a_weak_oracle_is_not_a_gap` (#5431)
 
+Recording credit is exercised by `crates/ripr/tests/recording_double_credit.rs`:
+`exact_recorded_argument_is_credited`,
+`assertion_diagnostic_arguments_cannot_supply_recording_credit`,
+`a_double_declared_in_the_test_module_is_credited`,
+`primitive_slice_setup_and_later_append_keep_the_exact_pin`,
+`missing_argument_transfer_is_never_credited`,
+`recording_credit_preserves_observer_and_receiver_refusals`,
+`user_read_methods_do_not_supply_recording_credit`,
+`user_push_dispatch_cannot_supply_recording_credit`,
+`hidden_execution_and_module_value_twins_cannot_supply_credit`,
+`a_scalar_shadow_drops_slice_provenance`,
+`the_changed_call_cannot_hide_execution_in_format_arguments`,
+`fixture_setup_owns_only_exclusively_acquired_roots`, and
+`plain_test_cfg_uses_the_shared_predicate_authority`.
+The framework recorder positive is now
+`a_hand_written_recorder_compared_by_field_is_credited`. The
+`a_hand_written_recorder_compared_by_field_is_withheld` catalog entry below is
+its historical name. The framework suite retains the concrete/collection/count/order
+controls.
+
 Tests in `crates/ripr/src/analysis/classify/gap_admission.rs`:
 
 - `analyzer_limit_refusals_withhold_the_gap_and_name_the_test`
@@ -1054,6 +1124,12 @@ Wire strings are pinned by
 and `crates/ripr/src/domain/probe.rs::tests::stop_reason_glosses_are_clean_prose`.
 
 ## Implementation Mapping
+
+- `crates/ripr/src/analysis/classify/effect_carrier/recording.rs` establishes
+  the bounded transfer; `classifier/evidence.rs` and `classify/reveal.rs` carry
+  its assertion-local admission through the existing reveal decision.
+  Plain test-gate recognition uses `facts::cfg_predicates`, preserving the
+  shared source-role predicate authority.
 
 - `crates/ripr/src/analysis/classify/owner_pin.rs`:
   `AssertionRefusal::is_analyzer_limit`.

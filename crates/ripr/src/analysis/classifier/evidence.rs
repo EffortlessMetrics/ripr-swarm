@@ -855,6 +855,14 @@ impl ClassifiedProbeEvidence {
                 })
                 || direct_owner_pin_admits(test, assertion)
         };
+        let recording_double = context.owner_fn.and_then(|owner| {
+            EffectStateCarrier::recording_double(
+                context.probe,
+                owner,
+                context.index,
+                context.workspace_complete,
+            )
+        });
         let fallback_expansion = crate::analysis::classify::ImplicitExpansionMemo::default();
         let expansion = crate::analysis::classify::ImplicitExpansionContext::new(
             context.index,
@@ -885,6 +893,11 @@ impl ClassifiedProbeEvidence {
             &import_defeats,
             &cross_package_defeats,
             &ReturnOracleAdmission {
+                recording_double_observed: &|test, assertion| {
+                    recording_double.as_ref().is_some_and(|carrier| {
+                        carrier.admits(test, assertion, context.index, pin_syntax)
+                    })
+                },
                 returned_closure_pin_required: context.owner_fn.is_some_and(|owner| {
                     crate::analysis::classify::returned_closure_pin_required(context.probe, owner)
                 }),
