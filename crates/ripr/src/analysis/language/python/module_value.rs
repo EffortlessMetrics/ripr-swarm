@@ -163,12 +163,14 @@ pub(super) fn mentions_reflection(source: &str) -> bool {
             "vars",
         ])
         .any(|spelling| mentions_identifier(source, spelling))
-        || (mentions_identifier(source, "sys") && mentions_identifier(source, "modules"))
+        || (mentions_identifier(source, "sys")
+            && (mentions_identifier(source, "modules") || mentions_identifier(source, "path")))
 }
 
 /// Words that replace what an `import` binds (#9226).
-const IMPORT_SYSTEM: [&str; 11] = [
+const IMPORT_SYSTEM: [&str; 12] = [
     "__path__",
+    "addsitedir",
     "pkgutil",
     "extend_path",
     "meta_path",
@@ -668,6 +670,136 @@ fn pyc_unchecked(pyc: &Path) -> bool {
     }
     let flags = u32::from_le_bytes([header[4], header[5], header[6], header[7]]);
     flags & 0b11 == 0b01
+}
+
+/// Whether a pytest or tox configuration in the workspace sets an import
+/// path (`pythonpath`, `python_paths`, a `PYTHONPATH` environment entry)
+/// that may hold code the scan does not read: an entry that is not a
+/// relative directory inside the workspace (an archive, an absolute or
+/// parent path, an expansion such as `{toxinidir}` or `$HOME`), or a setting
+/// whose entries cannot be read off its lines. Every directory holding a
+/// source, and each of its ancestors, is checked, since pytest reads the
+/// first configuration above its arguments. An unreadable configuration
+/// counts as such a setting (#9226).
+pub(super) fn import_path_configured<'a>(
+    root: &Path,
+    files: impl Iterator<Item = &'a Path>,
+) -> bool {
+    let mut directories = std::collections::BTreeSet::new();
+    directories.insert(Path::new(""));
+    for file in files {
+        directories.extend(file.ancestors().skip(1));
+    }
+    directories.iter().any(|directory| {
+        let base = root.join(directory);
+        [
+            "pytest.ini",
+            ".pytest.ini",
+            "pytest.toml",
+            "pyproject.toml",
+            "setup.cfg",
+            "tox.ini",
+        ]
+        .iter()
+        .any(|name| match std::fs::read_to_string(base.join(name)) {
+            Ok(text) => sets_unread_import_path(&base, &text),
+            Err(error) => error.kind() != std::io::ErrorKind::NotFound,
+        })
+    })
+}
+
+/// Whether `text` (a configuration in `base`) sets an import path holding
+/// anything but workspace directories. The entries are the words after the
+/// setting's `=` on its line, through a TOML array's closing `]` or an INI
+/// value's indented continuation lines.
+fn sets_unread_import_path(base: &Path, text: &str) -> bool {
+    let lines: Vec<&str> = text.lines().collect();
+    lines.iter().enumerate().any(|(at, line)| {
+        let lowered = line.to_ascii_lowercase();
+        if !(lowered.contains("pythonpath") || lowered.contains("python_paths")) {
+            return false;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            return true;
+        };
+        let key = key.trim().to_ascii_lowercase();
+        if key != "pythonpath" && key != "python_paths" {
+            return true;
+        }
+        let mut entries = vec![value.to_string()];
+        let array = value.trim_start().starts_with('[');
+        let mut next = at + 1;
+        while (array && !entries.concat().contains(']'))
+            || (!array
+                && lines
+                    .get(next)
+                    .is_some_and(|line| line.starts_with([' ', '\t']) && !line.trim().is_empty()))
+        {
+            let Some(line) = lines.get(next) else {
+                return true;
+            };
+            entries.push((*line).to_string());
+            next += 1;
+        }
+        let words: Vec<String> = entries
+            .concat()
+            .split(|ch: char| ch.is_whitespace() || matches!(ch, ',' | '[' | ']' | '"' | '\''))
+            .filter(|word| !word.is_empty())
+            .map(str::to_string)
+            .collect();
+        words.is_empty()
+            || words.iter().any(|word| {
+                let entry = Path::new(word);
+                word.contains(['$', '%', '{', '}', '~', '=', '\\'])
+                    || entry.is_absolute()
+                    || entry
+                        .components()
+                        .any(|part| matches!(part, std::path::Component::ParentDir))
+                    || !base.join(entry).is_dir()
+            })
+    })
+}
+
+/// The module names of the compiled extension modules (`name.*.so`,
+/// `name.so`, `name.*.pyd`, `name.pyd`) in every directory holding a
+/// workspace source, or `None` when one cannot be read. With more than one
+/// import root, an extension in another root can shadow a source module or
+/// a package of the same name (#9226).
+pub(super) fn extension_names<'a>(
+    root: &Path,
+    files: impl Iterator<Item = &'a Path>,
+) -> Option<std::collections::BTreeSet<String>> {
+    let directories: std::collections::BTreeSet<&Path> = files.filter_map(Path::parent).collect();
+    let mut names = std::collections::BTreeSet::new();
+    for directory in directories {
+        for entry in std::fs::read_dir(root.join(directory)).ok()? {
+            let name = entry.ok()?.file_name();
+            let name = name.to_str()?;
+            if name.ends_with(".so") || name.ends_with(".pyd") {
+                names.insert(name.split('.').next().unwrap_or_default().to_string());
+            }
+        }
+    }
+    Some(names)
+}
+
+/// Whether one of `names` (from [`extension_names`]) is the module name of
+/// `file` or of a package above it.
+pub(super) fn shadowed_by_extension(
+    names: &std::collections::BTreeSet<String>,
+    file: &Path,
+) -> bool {
+    let stem = file.file_stem().and_then(|stem| stem.to_str());
+    stem.is_none_or(|stem| stem != "__init__" && names.contains(stem))
+        || file
+            .parent()
+            .into_iter()
+            .flat_map(Path::components)
+            .any(|part| {
+                part.as_os_str()
+                    .to_str()
+                    .is_none_or(|part| names.contains(part))
+            })
 }
 
 /// Whether two files would bind the same last module-name component: a

@@ -42,7 +42,11 @@
 //!   comment can hold code), or holds a NUL or a lone `\r` (CPython breaks
 //!   lines there);
 //! - no workspace source has an unchecked-hash pyc, which CPython loads
-//!   without comparing it with the source;
+//!   without comparing it with the source, no workspace file names `sys`
+//!   with `path` or `addsitedir`, no pytest or tox configuration sets an
+//!   import path other than workspace directories, and no source directory
+//!   holds an extension named like the owner or one of its packages, since
+//!   each can put an archive or unread code ahead of the owner;
 //! - inside a callable, a name is a parameter, a call is a bare call of a model
 //!   function or class of the module, or a method call on an instance of a
 //!   model class (the method's receiver, a parameter holding one, or

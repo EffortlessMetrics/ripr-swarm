@@ -1271,16 +1271,33 @@ impl PythonAdapter {
             workspace_incomplete,
             &assigned_attributes_by_file,
         );
-        // Bytecode CPython never checks against its source runs instead of
-        // the code read here (#9226). Read once, only when a file changed.
-        let unchecked_bytecode = !python_changed_files.is_empty()
-            && module_value::unchecked_bytecode(
+        // Bytecode CPython never checks against its source, or an import path
+        // a test configuration adds, can run code other than what is read
+        // here (#9226). Read once, only when a file changed.
+        let shadowed_import = !python_changed_files.is_empty()
+            && (module_value::unchecked_bytecode(
                 &options.root,
                 workspace_read.sources.keys().map(|file| file.as_path()),
-            );
+            ) || module_value::import_path_configured(
+                &options.root,
+                workspace_read.sources.keys().map(|file| file.as_path()),
+            ));
+        let extension_names = if python_changed_files.is_empty() {
+            Some(BTreeSet::new())
+        } else {
+            module_value::extension_names(
+                &options.root,
+                workspace_read.sources.keys().map(|file| file.as_path()),
+            )
+        };
         for changed in &python_changed_files {
             let mut foreign = foreign_index.excluding(&changed.path);
-            if unchecked_bytecode || module_value::extension_beside(&options.root, &changed.path) {
+            if shadowed_import
+                || module_value::extension_beside(&options.root, &changed.path)
+                || extension_names
+                    .as_ref()
+                    .is_none_or(|names| module_value::shadowed_by_extension(names, &changed.path))
+            {
                 foreign.mark_compiled_shadow();
             }
             conditional_defs::retain_workspace_certain(&mut all_owners, &changed.path, &foreign);

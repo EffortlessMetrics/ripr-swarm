@@ -702,6 +702,77 @@ fn owner_module_hooks_and_class_body_code_are_not_credited() -> Check {
             false,
         ),
         ("utf-8 declared", utf8_owner, vec![], true),
+        (
+            "pytest pythonpath",
+            functions.to_string(),
+            vec![
+                ("pytest.ini", "[pytest]\npythonpath = vendor.zip\n"),
+                ("vendor.zip", "PK"),
+            ],
+            false,
+        ),
+        (
+            "pyproject pythonpath of the workspace root",
+            functions.to_string(),
+            vec![(
+                "pyproject.toml",
+                "[tool.pytest.ini_options]\npythonpath = [\n    \".\",\n    \"reach\",\n]\n",
+            )],
+            true,
+        ),
+        (
+            "pyproject pythonpath of an archive",
+            functions.to_string(),
+            vec![
+                (
+                    "pyproject.toml",
+                    "[tool.pytest.ini_options]\npythonpath = [\".\", \"vendor.zip\"]\n",
+                ),
+                ("vendor.zip", "PK"),
+            ],
+            false,
+        ),
+        (
+            "tox PYTHONPATH expansion",
+            functions.to_string(),
+            // A directory literally spelled like the expansion exists, so
+            // only the expansion marks the entry as unread.
+            vec![
+                (
+                    "tox.ini",
+                    "[testenv]\nsetenv =\n    PYTHONPATH = {toxinidir}/vendor\n",
+                ),
+                ("{toxinidir}/vendor/keep.py", "VALUE = 1\n"),
+            ],
+            false,
+        ),
+        (
+            "extension in a second root",
+            functions.to_string(),
+            vec![
+                ("src/reach/__init__.py", ""),
+                (
+                    "src/reach/ledger.cpython-313-x86_64-linux-gnu.so",
+                    "\x7fELF",
+                ),
+            ],
+            false,
+        ),
+        (
+            "package extension in a second root",
+            functions.to_string(),
+            vec![
+                ("src/tool.py", "VALUE = 1\n"),
+                ("src/reach.abi3.so", "\x7fELF"),
+            ],
+            false,
+        ),
+        (
+            "pytest config without an import path",
+            functions.to_string(),
+            vec![("pytest.ini", "[pytest]\ntestpaths = tests\n")],
+            true,
+        ),
         ("lone carriage return owner", cr_owner, vec![], false),
         (
             "lone carriage return foreign",
@@ -825,6 +896,35 @@ fn owner_module_hooks_and_class_body_code_are_not_credited() -> Check {
             );
         } else {
             withheld(&finding, "__init__ extension");
+        }
+    }
+    // A workspace file that puts an archive first on `sys.path` hands a
+    // top-level owner's import another module; the inert helper keeps it.
+    let top_test = "import reach.boot\nfrom ledger import render\n\n\ndef test_render():\n    assert render() == \"|  |\"\n";
+    for (boot, credited) in [
+        ("VALUE = 1\n", true),
+        ("import sys\n\nsys.path.insert(0, \"vendor.zip\")\n", false),
+        (
+            "from site import addsitedir\n\naddsitedir(\"vendor\")\n",
+            false,
+        ),
+    ] {
+        let files = [
+            ("ledger.py", functions),
+            ("reach/__init__.py", ""),
+            ("reach/boot.py", boot),
+            ("vendor.zip", "PK"),
+            ("tests/test_ledger.py", top_test),
+        ];
+        let finding = classify(&files, "ledger.py", 2, "    return 2", "    return 3")?;
+        if credited {
+            assert_eq!(
+                finding.class,
+                ExposureClass::Exposed,
+                "top-level owner: {finding:?}"
+            );
+        } else {
+            withheld(&finding, boot);
         }
     }
     // A module dict reached through `vars` and written under a built key.

@@ -630,7 +630,8 @@ any other workspace file: a reflective spelling (`getattr`, `dir`,
 `f_locals`, `_getframe`, `currentframe`, `f_back`, `tb_frame`,
 `get_referrers`, `get_referents`), `gc.get_objects`, `setattr`,
 `__setattr__`, `delattr`, `__dict__` and `vars`, or the import system
-(`sys` with `modules`, however imported, `meta_path`, `path_hooks`,
+(`sys` with `modules` or `path`, however imported, `addsitedir`,
+`meta_path`, `path_hooks`,
 `path_importer_cache`, `__path__`, `pkgutil`, `extend_path`, `importlib`, `__import__`,
 `import_module`, `exec_module`, `reload`). Such code can write a module
 namespace under a name built at runtime, or hand an importer a different
@@ -654,7 +655,19 @@ workspace source refuses it as well, since CPython loads it without comparing
 it with the source. Timestamp and checked-hash pycs are trusted the way
 CPython trusts them; the residual risk is a stale timestamp pyc after a
 same-size edit whose mtime lands in the compile second or is restored
-(`rsync -t`, `tar`, CI caches), which CPython itself would load. A test whose module has header effects is
+(`rsync -t`, `tar`, CI caches), which CPython itself would load. A pytest or
+tox configuration beside any workspace source, or above one, whose
+`pythonpath`, `python_paths` or `PYTHONPATH` setting holds anything but
+relative workspace directories (an archive, an absolute or parent path, an
+expansion such as `{toxinidir}`, or entries that cannot be read off its
+lines) refuses the credit, since such a path can hold code the scan does not
+read; `pythonpath = ["."]` keeps it. With a second import root, a compiled
+extension named like the owner or one of its packages in any source
+directory refuses it too.
+What the environment supplies is outside the static claim and stays a
+residual risk: a `PYTHONPATH` set by the caller, a `.pth` file in site
+packages, or an installed non-editable copy that wins over the checkout
+(#10969). A test whose module has header effects is
 refused like one under a conftest with effects. Because these are
 whole-word matches over every workspace file, the credit rarely applies in
 repositories that use reflection anywhere; that is missed credit, not a
