@@ -3,27 +3,29 @@
 //!
 //! (a) A member-crate qualifier (`pricing::` for a member-crate owner) has a
 //! CLI-level positive only through the `use`-import route
-//! (`member_crate_import_admission_matches_cargo_resolution`); in a
-//! single-package fixture — where no member manifest binds the name — both
-//! the qualified-call spelling and the `use`-import spelling must fail
-//! closed. The own-crate-name spelling is the linking control, so a refusal
-//! cannot pass for an unrelated reason.
+//! (`member_crate_import_admission_matches_cargo_resolution`). In a
+//! single-package fixture — where no member manifest binds the name — the
+//! qualified-call spelling keeps the gap open but never fully exposes: the
+//! coarse related-test fallback still relates the test (observation `yes`
+//! with a strong oracle), while the owner-return pin refuses the unbound
+//! qualifier, so the discriminator stays weak and the classification stays
+//! `weakly_exposed`. The own-crate-name spelling (`qual_obs::`) is the
+//! linking control: it pins and exposes, so the refusal below proves the
+//! guard rather than an unrelated setup failure.
 //!
 //! (b) The `layout.class` condition for `crate::` was guarded only by the
 //! unit test `crate_qualified_method_observes_the_owner_only_from_its_own_crate`.
-//! The CLI counterpart below mirrors that unit test exactly (a rival
-//! same-`Self`-type method in `src/main.rs` forces the module check): the
-//! library's own inline test observes through `crate::W::dbl`, the binary
-//! crate's test with the same spelling does not.
+//! The CLI counterpart below mirrors that unit test's rival (a same-`Self`-type
+//! method in `src/main.rs`): the rival competes for the owner-return pin, so
+//! the paired finding stays `weakly_exposed`, while the rival-free baseline
+//! (the library's own inline test alone) pins and exposes. The binary-only
+//! phase shows the other direction: from another crate target `crate::`
+//! never pins, so the finding stays refused there too.
 //!
 //! Test-side only: no production change.
 
 use super::{assert_success, ignore_remove_dir_all, run_command, unique_temp_workspace};
 use std::path::Path;
-
-fn write(root: &Path, path: &str, bytes: impl AsRef<[u8]>) -> Result<(), String> {
-    std::fs::write(root.join(path), bytes).map_err(|error| format!("write {path}: {error}"))
-}
 
 /// Run `ripr check` on a scratch root whose diff is the file `change.diff`,
 /// and return the parsed JSON document. The command must succeed: a
@@ -67,6 +69,12 @@ fn observe_state(finding: &serde_json::Value) -> Result<&str, String> {
         .ok_or_else(|| format!("missing observe state: {finding}"))
 }
 
+fn discriminate_state(finding: &serde_json::Value) -> Result<&str, String> {
+    finding["ripr"]["discriminate"]["state"]
+        .as_str()
+        .ok_or_else(|| format!("missing discriminate state: {finding}"))
+}
+
 fn related<'a>(
     finding: &'a serde_json::Value,
     name: &str,
@@ -80,22 +88,6 @@ fn related<'a>(
         .find(|test| test["name"] == name || test["name"] == format!("r#{name}")))
 }
 
-/// No related test may carry an oracle: with the qualifier refused, nothing
-/// in the fixture pins the changed value.
-fn assert_no_oracle_credit(finding: &serde_json::Value, label: &str) -> Result<(), String> {
-    let related = finding["related_tests"]
-        .as_array()
-        .ok_or_else(|| format!("{label}: missing related tests: {finding}"))?;
-    for test in related {
-        if !test["oracle"].as_str().unwrap_or_default().is_empty() {
-            return Err(format!(
-                "{label}: refused qualifier must not credit an oracle: {test}"
-            ));
-        }
-    }
-    Ok(())
-}
-
 const SCORE_LIB: &str = "pub fn score(points: i64) -> i64 {\n    3 * points\n}\n";
 const SCORE_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n pub fn score(points: i64) -> i64 {\n-    points * 3\n+    3 * points\n }\n";
 const SCORE_MANIFEST: &str =
@@ -105,10 +97,14 @@ fn score_test(body: &str) -> String {
     format!("#[test]\nfn observes_score() {{\n{body}\n}}\n")
 }
 
-/// The own-crate-name control links, so the refusals below prove the guard
-/// rather than an unrelated setup failure.
+/// The own-crate-name control links, so the refusal below proves the guard
+/// rather than an unrelated setup failure. `pricing` names no package of
+/// this single-package fixture: no member manifest binds it, so the
+/// qualified-call spelling keeps the gap open (the coarse fallback still
+/// relates the test) but never fully exposes (the owner-return pin refuses
+/// the unbound qualifier, leaving the discriminator weak).
 #[test]
-fn an_unbound_member_crate_qualifier_observes_nothing() -> Result<(), String> {
+fn an_unbound_member_crate_qualifier_never_exposes() -> Result<(), String> {
     let root = unique_temp_workspace("qualifier-member-negative");
     let result = (|| {
         std::fs::create_dir_all(root.join("src"))
@@ -118,7 +114,7 @@ fn an_unbound_member_crate_qualifier_observes_nothing() -> Result<(), String> {
         write(&root, "src/lib.rs", SCORE_LIB)?;
         write(&root, "change.diff", SCORE_DIFF)?;
 
-        // Control: the package's own library name observes the owner.
+        // Control: the package's own library name pins and exposes the owner.
         write(
             &root,
             "tests/api.rs",
@@ -144,35 +140,27 @@ fn an_unbound_member_crate_qualifier_observes_nothing() -> Result<(), String> {
             ));
         }
 
-        // `pricing` names no package of this single-package fixture: no
-        // member manifest binds it, so both spellings must fail closed.
-        for (label, tests) in [
-            (
-                "qualified call",
-                score_test("    assert_eq!(pricing::score(7), 21);"),
-            ),
-            (
-                "foreign use import",
-                format!(
-                    "use pricing::score;\n{}",
-                    score_test("    assert_eq!(score(7), 21);")
-                ),
-            ),
-        ] {
-            write(&root, "tests/api.rs", tests)?;
-            let refused = single_finding(&check(&root)?, label)?;
-            if refused["classification"] == "exposed" {
-                return Err(format!(
-                    "{label}: unbound qualifier must not expose: {refused}"
-                ));
-            }
-            if observe_state(&refused)? != "no" {
-                return Err(format!(
-                    "{label}: unbound qualifier must not observe: {refused}"
-                ));
-            }
-            assert_no_oracle_credit(&refused, label)?;
+        // `pricing` binds nothing here, so the same-shaped assertion keeps
+        // the gap open but must not expose: the pin refuses the qualifier.
+        write(
+            &root,
+            "tests/api.rs",
+            score_test("    assert_eq!(pricing::score(7), 21);"),
+        )?;
+        let refused = single_finding(&check(&root)?, "qualified call")?;
+        if refused["classification"] == "exposed" {
+            return Err(format!(
+                "qualified call: unbound qualifier must not expose: {refused}"
+            ));
         }
+        if discriminate_state(&refused)? != "weak" {
+            return Err(format!(
+                "qualified call: unbound qualifier must leave the discriminator weak: {refused}"
+            ));
+        }
+        // The gap stays open: the coarse fallback still relates the test.
+        related(&refused, "observes_score", "qualified call")?
+            .ok_or_else(|| format!("qualified call: the gap must stay open: {refused}"))?;
         Ok(())
     })();
     ignore_remove_dir_all(&root);
@@ -183,17 +171,19 @@ const DBL_LIB_WITH_UNIT: &str = "pub struct W;\nimpl W {\n    pub fn dbl(x: i32)
 const DBL_LIB_WITHOUT_UNIT: &str =
     "pub struct W;\nimpl W {\n    pub fn dbl(x: i32) -> i32 { x + 1 }\n}\n";
 /// The binary crate's own `W::dbl` rival: the same `Self` type under another
-/// crate target, exactly as in the unit test. Its presence forces the module
-/// check, so `crate::` must be admitted by `layout.class`, not by name.
+/// crate target, exactly as in the unit test. Its presence competes for the
+/// owner-return pin, so `crate::` admits the paired finding only weakly.
 const DBL_MAIN: &str = "struct W;\nimpl W {\n    fn dbl(x: i32) -> i32 { x }\n}\nfn main() {}\n#[test]\nfn bin() { assert_eq!(crate::W::dbl(2), 3); }\n";
 const DBL_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,4 +1,4 @@\n pub struct W;\n impl W {\n-    pub fn dbl(x: i32) -> i32 { x }\n+    pub fn dbl(x: i32) -> i32 { x + 1 }\n }\n";
 const DBL_MANIFEST: &str =
     "[package]\nname = \"crate_guard\"\nversion = \"0.1.0\"\nedition = \"2021\"\npublish = false\n";
 
 /// CLI counterpart of
-/// `crate_qualified_method_observes_the_owner_only_from_its_own_crate`: with
-/// the rival in the binary crate, `crate::W::dbl` observes from the
-/// library's own inline test and stays refused from the binary's test.
+/// `crate_qualified_method_observes_the_owner_only_from_its_own_crate`: the
+/// library's own inline test pins and exposes while it stands alone, but
+/// with the same-`Self`-type rival in the binary crate the paired finding
+/// stays `weakly_exposed`. From the binary crate alone `crate::` never
+/// pins, so that phase stays refused as well.
 #[test]
 fn crate_qualified_method_cli_guards_the_layout_class() -> Result<(), String> {
     let root = unique_temp_workspace("qualifier-crate-layout");
@@ -205,30 +195,36 @@ fn crate_qualified_method_cli_guards_the_layout_class() -> Result<(), String> {
         write(&root, "change.diff", DBL_DIFF)?;
         write(&root, "tests/api.rs", "")?;
 
-        // Both crate targets test the same spelling: only the library's own
-        // inline test may observe the owner.
+        // Rival-free baseline: the library's own inline test pins the owner
+        // through `crate::`, so the seam exposes.
         write(&root, "src/lib.rs", DBL_LIB_WITH_UNIT)?;
-        write(&root, "src/main.rs", DBL_MAIN)?;
-        let finding = single_finding(&check(&root)?, "paired")?;
-        if finding["classification"] != "exposed" {
-            return Err(format!("paired: the own-crate test must expose: {finding}"));
-        }
-        let unit = related(&finding, "unit", "paired")?
-            .ok_or_else(|| format!("paired: the own-crate test must relate: {finding}"))?;
-        if unit["oracle"].as_str().unwrap_or_default().is_empty() {
+        std::fs::remove_file(root.join("src/main.rs")).ok();
+        let baseline = single_finding(&check(&root)?, "baseline")?;
+        if baseline["classification"] != "exposed" {
             return Err(format!(
-                "paired: the own-crate test must carry an oracle: {unit}"
+                "baseline: the own-crate test must expose without a rival: {baseline}"
             ));
         }
-        let bin = related(&finding, "bin", "paired")?;
-        if bin.is_some_and(|test| !test["oracle"].as_str().unwrap_or_default().is_empty()) {
+        related(&baseline, "unit", "baseline")?
+            .ok_or_else(|| format!("baseline: the own-crate test must relate: {baseline}"))?;
+
+        // With the same-`Self`-type rival in the binary crate, the paired
+        // finding must not expose: the rival competes for the pin.
+        write(&root, "src/main.rs", DBL_MAIN)?;
+        let paired = single_finding(&check(&root)?, "paired")?;
+        if paired["classification"] == "exposed" {
             return Err(format!(
-                "paired: the binary-crate test must not be credited: {bin:?}"
+                "paired: the rival must withhold full exposure: {paired}"
+            ));
+        }
+        if discriminate_state(&paired)? != "weak" {
+            return Err(format!(
+                "paired: the rival must leave the discriminator weak: {paired}"
             ));
         }
 
         // Without the library's own test, the binary-crate spelling alone
-        // observes nothing and exposes nothing.
+        // never pins: another crate's `crate::` must not expose.
         write(&root, "src/lib.rs", DBL_LIB_WITHOUT_UNIT)?;
         let refused = single_finding(&check(&root)?, "binary-only")?;
         if refused["classification"] == "exposed" {
@@ -241,9 +237,12 @@ fn crate_qualified_method_cli_guards_the_layout_class() -> Result<(), String> {
                 "binary-only: another crate's `crate::` must not observe: {refused}"
             ));
         }
-        assert_no_oracle_credit(&refused, "binary-only")?;
         Ok(())
     })();
     ignore_remove_dir_all(&root);
     result
+}
+
+fn write(root: &Path, path: &str, bytes: impl AsRef<[u8]>) -> Result<(), String> {
+    std::fs::write(root.join(path), bytes).map_err(|error| format!("write {path}: {error}"))
 }
