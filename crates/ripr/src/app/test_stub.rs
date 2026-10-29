@@ -405,6 +405,7 @@ const AMBIGUOUS_VALIDATION_LIMIT: usize = 8;
 fn validated_ambiguity(
     root: &Path,
     config: &RiprConfig,
+    file: &str,
     reason: String,
     seam_ids: Vec<String>,
 ) -> StubRouteDecision {
@@ -413,10 +414,20 @@ fn validated_ambiguity(
     if seam_ids.len() > AMBIGUOUS_VALIDATION_LIMIT {
         return unvalidated(reason, seam_ids);
     }
-    let Ok((classified, _)) = analysis::inventory_classified_seams_at_with_config(root, config)
-    else {
+    // The finding's own file, classified the way the class disclosure of a
+    // `--at` stub is (`inventory_entry_facts`), not a repo-wide scan.
+    let Some(relative) = scoped_file(root, file) else {
         return unvalidated(reason, seam_ids);
     };
+    let Ok(scoped) = analysis::inventory_diff_scoped_classified_seams_at_with_config(
+        root,
+        config,
+        &[relative],
+        &[],
+    ) else {
+        return unvalidated(reason, seam_ids);
+    };
+    let classified = scoped.classified;
     let mut stubbable = Vec::new();
     let mut first_refusal = None;
     for seam_id in &seam_ids {
@@ -508,7 +519,7 @@ pub(crate) fn stub_route_for_finding(
             Err(TestStubError::Ambiguous { message, seam_ids }) if !seam_ids.is_empty() => {
                 return Some(StubRoute {
                     finding_id: finding.id.clone(),
-                    decision: validated_ambiguity(root, config, message, seam_ids),
+                    decision: validated_ambiguity(root, config, &file, message, seam_ids),
                 });
             }
             Err(_) => return None,
@@ -900,7 +911,7 @@ fn hidden_stub_ambiguity(
         Err(TestStubError::Ambiguous { message, seam_ids }) if !seam_ids.is_empty() => {
             // #10710: a hidden row prints only choices that produce a stub; a
             // row whose every choice refuses prints nothing.
-            match validated_ambiguity(root, config, message, seam_ids) {
+            match validated_ambiguity(root, config, &file, message, seam_ids) {
                 StubRouteDecision::Refused { .. } => None,
                 decision => Some(StubRoute {
                     finding_id: finding.id.clone(),
