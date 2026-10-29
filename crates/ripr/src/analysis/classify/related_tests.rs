@@ -4205,7 +4205,7 @@ fn associated_constructor_names_own_type(
     index: &RustIndex,
     ty: &str,
     name: &str,
-    test_file: &Path,
+    test_file: Option<&Path>,
 ) -> bool {
     let inherent = index.functions().iter().any(|function| {
         function.name == name
@@ -4229,7 +4229,7 @@ fn associated_constructor_names_own_type(
         "default" => {
             trait_impl("Default")
                 || type_derives_default(index, ty)
-                || type_derives_default_in_file(index, ty, test_file)
+                || test_file.is_some_and(|file| type_derives_default_in_file(index, ty, file))
         }
         "from" => trait_impl("From"),
         _ => false,
@@ -4954,6 +4954,7 @@ pub(in crate::analysis) fn inherent_receiver_call_resolves(
     method: &str,
     impl_type: &str,
     index: Option<&RustIndex>,
+    owner: Option<&FunctionSummary>,
 ) -> bool {
     // The legacy text scan cannot be a deny gate: its last `let` can live in
     // an expired sibling block, and it cannot read a qualified unit variant.
@@ -4980,20 +4981,32 @@ pub(in crate::analysis) fn inherent_receiver_call_resolves(
             super::owner_pin::unit_struct_value(name, &test.file, index, pin_syntax)
         })
     };
+    // The file-local claims below speak of the test file's own root `ty`, so
+    // they bind the probed owner only when its `impl` is a root item of that
+    // same file (a sibling module's same-named type is another owner).
+    let owner_local = index
+        .zip(owner)
+        .is_some_and(|(index, owner)| owner_impl_is_root_item_of(index, owner, &test.file));
     let factory = |ty: &str, name: &str| {
         index.is_some_and(|index| {
             if ty.is_empty() {
                 // A free-function receiver head: `fixture().method()`.
                 free_fn_returns_type(index, name, impl_type)
             } else {
-                associated_constructor_names_own_type(index, ty, name, &test.file)
+                associated_constructor_names_own_type(
+                    index,
+                    ty,
+                    name,
+                    owner_local.then_some(test.file.as_path()),
+                )
             }
         })
     };
     // The test fragment omits its file's imports, so a parameter's type name
     // is the owner only when no `use` or `type` in that file rebinds it.
-    let owner_unrebound =
-        || index.is_some_and(|index| !file_rebinds_type(index, &test.file, impl_type));
+    let owner_unrebound = || {
+        owner_local && index.is_some_and(|index| !file_rebinds_type(index, &test.file, impl_type))
+    };
     executable_call_resolves(test, index, pin_syntax, &|node, scope| {
         inherent_call_node_resolves(
             node,
@@ -5453,6 +5466,41 @@ fn fn_param_names_type(function: &ast::Fn, name: &str, impl_type: &str) -> bool 
             text == impl_type
         })
     })
+}
+
+/// Whether `owner` is declared in `file` inside an `impl` that is a direct item
+/// of the file root.
+fn owner_impl_is_root_item_of(index: &RustIndex, owner: &FunctionSummary, file: &Path) -> bool {
+    if owner.file != file {
+        return false;
+    }
+    let Some(tree) = index.source_syntax.get(index, file).and_then(|s| s.tree()) else {
+        return false;
+    };
+    let syntax = tree.syntax();
+    let source = syntax.text().to_string();
+    let line_of = |offset: usize| {
+        1 + source.as_bytes()[..offset.min(source.len())]
+            .iter()
+            .filter(|byte| **byte == b'\n')
+            .count()
+    };
+    syntax
+        .descendants()
+        .filter_map(ast::Impl::cast)
+        .any(|item| {
+            let range = item.syntax().text_range();
+            let (start, end) = (
+                line_of(u32::from(range.start()) as usize),
+                line_of(u32::from(range.end()) as usize),
+            );
+            start <= owner.start_line
+                && owner.start_line <= end
+                && item
+                    .syntax()
+                    .parent()
+                    .is_some_and(|parent| ast::SourceFile::can_cast(parent.kind()))
+        })
 }
 
 /// Whether `file` has a `use` that names `ty` or a glob other than `self::*` /
@@ -5929,7 +5977,13 @@ fn owner_call_relation_reason(
         return RelationReason::WeakTokenSubstring;
     }
     if requires_inherent_receiver_identity(owner) {
-        return if inherent_receiver_call_resolves(test, owner_name, &impl_type, Some(index)) {
+        return if inherent_receiver_call_resolves(
+            test,
+            owner_name,
+            &impl_type,
+            Some(index),
+            Some(owner),
+        ) {
             RelationReason::DirectOwnerCall
         } else {
             RelationReason::WeakTokenSubstring
@@ -12827,7 +12881,7 @@ let r = try_parse_summary(\"x\");",
         ] {
             let summary = test("src/lib.rs", "t", body);
             assert_eq!(
-                inherent_receiver_call_resolves(&summary, method, ty, None),
+                inherent_receiver_call_resolves(&summary, method, ty, None, None),
                 expected,
                 "{body}"
             );

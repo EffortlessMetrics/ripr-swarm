@@ -19985,6 +19985,55 @@ fn inherent_receiver_default_derive_is_read_from_the_test_file() -> Result<(), S
     Ok(())
 }
 
+/// The file-local claims speak of the test file's root type, so they bind the
+/// probed owner only when its `impl` is a root item of that file (#11000).
+#[test]
+fn inherent_receiver_file_local_credit_needs_a_root_owner_impl() -> Result<(), String> {
+    let nested_owner = "mod other { impl super::Site { pub fn area(&self) -> u32 { 1 } } }";
+    for (source, expected) in [
+        (
+            "#[derive(Default)]\npub struct Site { v: u32 }\n\
+             mod other { #[derive(Default)] pub struct Site { v: u32 }\n\
+             impl Site { pub fn area(&self) -> u32 { 1 } } }\n\
+             #[test]\nfn t() {\n    assert_eq!(Site::default().area(), 1);\n}\n"
+                .to_string(),
+            false,
+        ),
+        (
+            format!(
+                "pub struct Site {{ v: u32 }}\n{nested_owner}\n\
+                 #[test]\nfn t(s: Site) {{\n    assert_eq!(s.area(), 1);\n}}\n"
+            ),
+            false,
+        ),
+        (
+            "#[derive(Default)]\npub struct Site { v: u32 }\n\
+             impl Site { pub fn area(&self) -> u32 { 1 } }\n\
+             #[test]\nfn t() {\n    assert_eq!(Site::default().area(), 1);\n}\n"
+                .to_string(),
+            true,
+        ),
+    ] {
+        let index = index_from_files(&[(PathBuf::from("src/lib.rs"), &source)])?;
+        let owner = index
+            .functions()
+            .iter()
+            .find(|f| f.name == "area" && f.item.has_self_param)
+            .ok_or("missing owner")?;
+        let caller = index
+            .tests()
+            .iter()
+            .find(|t| t.name == "t")
+            .ok_or("missing test")?;
+        assert_eq!(
+            crate::analysis::classify::inherent_owner_call_resolves(caller, owner, &index),
+            expected,
+            "{source}"
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn inherent_helper_hop_credits_only_a_sync_helper_that_binds_the_owner_type() -> Result<(), String>
 {
