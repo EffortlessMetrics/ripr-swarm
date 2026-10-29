@@ -1,6 +1,7 @@
 use super::PythonFramework;
 use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion};
 use super::fixtures::literal_owner_instance_fixture;
+use super::sink_alignment::AlignmentPrep;
 use super::source_utils::normalized_path;
 use super::{
     PythonImport, PythonOwner, PythonTest, first_python_string_literal, line_prefix_before,
@@ -136,6 +137,7 @@ pub(super) struct PythonRepairPlacement {
 pub(super) struct RelatedCandidateMemo<'a> {
     by_owner: HashMap<OwnerKey, Vec<PythonRelatedCandidate<'a>>>,
     helpers: HashMap<OwnerKey, Vec<HelperOwnerCallCandidate<'a>>>,
+    alignment_preps: HashMap<OwnerKey, AlignmentPrep<'a>>,
 }
 
 type OwnerKey = (PathBuf, usize, usize, String);
@@ -174,6 +176,20 @@ impl<'a> RelatedCandidateMemo<'a> {
             .entry(owner_key(owner))
             .or_insert_with(|| helper_owner_call_candidates(owner, owners, all_tests))
             .clone()
+    }
+
+    /// The owner's sink-alignment index, once per run (#10914): it indexes
+    /// every test by name and collects the owner's import aliases across
+    /// every test, which repeated per changed line was most of a large
+    /// workspace's per-line cost.
+    pub(super) fn alignment_prep(
+        &mut self,
+        owner: &PythonOwner,
+        all_tests: &'a [PythonTest],
+    ) -> &AlignmentPrep<'a> {
+        self.alignment_preps
+            .entry(owner_key(owner))
+            .or_insert_with(|| AlignmentPrep::new(owner, all_tests))
     }
 }
 

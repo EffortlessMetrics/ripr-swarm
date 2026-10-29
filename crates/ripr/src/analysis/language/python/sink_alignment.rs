@@ -694,8 +694,17 @@ pub(super) struct AlignmentPrep<'a> {
     alias_tokens: Vec<String>,
 }
 
+// Alignment indexes built on this thread, so a test can pin one per owner
+// rather than one per changed line (#10914).
+#[cfg(test)]
+thread_local! {
+    pub(super) static ALIGNMENT_PREPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 impl<'a> AlignmentPrep<'a> {
     pub(super) fn new(owner: &PythonOwner, all_tests: &'a [PythonTest]) -> Self {
+        #[cfg(test)]
+        ALIGNMENT_PREPS.with(|preps| preps.set(preps.get() + 1));
         let mut alias_tokens: Vec<String> = all_tests
             .iter()
             .flat_map(|test| owner_import_aliases(owner, test))

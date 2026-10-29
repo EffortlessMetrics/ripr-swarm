@@ -2201,7 +2201,7 @@ fn analyze_diff_parses_the_workspace_once_however_many_files_changed() -> Result
 /// (pandas: ~23k tests times every changed line).
 #[test]
 fn analyze_diff_scans_related_tests_once_per_owner() -> Result<(), String> {
-    fn scans_for(changed_lines: usize) -> Result<(usize, usize), String> {
+    fn scans_for(changed_lines: usize) -> Result<(usize, usize, usize), String> {
         let root = unique_tempdir("analyze-diff-related-once")?;
         let module = PathBuf::from("pricing.py");
         write_file(
@@ -2253,22 +2253,30 @@ fn analyze_diff_scans_related_tests_once_per_owner() -> Result<(), String> {
             open_rust_index_paths: Default::default(),
         };
         super::related_tests::RELATED_SCANS.with(|scans| scans.set(0));
+        super::sink_alignment::ALIGNMENT_PREPS.with(|preps| preps.set(0));
         let result = PythonAdapter.analyze_diff(&options, &OraclePolicy::default(), &changed_files);
         let scans = super::related_tests::RELATED_SCANS.with(std::cell::Cell::get);
+        let preps = super::sink_alignment::ALIGNMENT_PREPS.with(std::cell::Cell::get);
         let cleanup = std::fs::remove_dir_all(&root);
         let result = result?;
         cleanup.map_err(|err| format!("remove_dir_all({}): {err}", root.display()))?;
-        Ok((scans, result.findings.len()))
+        Ok((scans, preps, result.findings.len()))
     }
 
-    let (one_scans, one_findings) = scans_for(1)?;
-    let (three_scans, three_findings) = scans_for(3)?;
+    let (one_scans, one_preps, one_findings) = scans_for(1)?;
+    let (three_scans, three_preps, three_findings) = scans_for(3)?;
     assert_eq!(one_findings, 1, "one changed line is one finding");
     assert_eq!(three_findings, 3, "three changed lines are three findings");
     assert_eq!(one_scans, 1, "one owner is scanned once");
     assert_eq!(
         three_scans, one_scans,
         "more changed lines of the same owner must not rescan the tests"
+    );
+    // #10914: the owner's sink-alignment index is built once per run too.
+    assert_eq!(one_preps, 1, "one owner builds one alignment index");
+    assert_eq!(
+        three_preps, one_preps,
+        "more changed lines of the same owner must not rebuild the alignment index"
     );
     Ok(())
 }
