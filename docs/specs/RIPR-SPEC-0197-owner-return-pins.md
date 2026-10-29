@@ -3103,6 +3103,21 @@ unmet condition keeps today's reading:
    which the two bodies fold to different values. An equivalent rewrite
    (`x * 3` to `3 * x`) has no such call and keeps today's reading: asking for
    a test that tells the versions apart would name one that cannot exist.
+5. The workspace does not rebind `assert`, `debug_assert`, `assert_eq` or
+   `assert_ne` (the #10386 parser-backed binding scan): both reasons read
+   assertion macros and comparison tokens by name, and a rebound `assert!`
+   may expand to an exact-value check its written relational tokens never
+   show (`assert!(owner(3) > owner(1))` expanding to
+   `assert_eq!(owner(3), 9)` distinguishes `2 * n` from `3 * n`), so a
+   workspace that may rebind any of them keeps today's reading.
+
+The summary names the reason instead of one blanket wording (#10916): an
+equality-only reading says every related test calls the owner with literal
+inputs at which the changed expression and its baseline evaluate to the same
+value; a reading that admitted a relational assertion says every related
+test's assertions hold with the same truth value on the baseline and the
+change, because the asserted inputs may still evaluate differently
+(`backoff_ms(3, 100)` is 800 before and 2700 after).
 
 A related test that never names the owner is ignored: a helper that calls the
 owner would already make condition 2 fail. The reading only downgrades; a

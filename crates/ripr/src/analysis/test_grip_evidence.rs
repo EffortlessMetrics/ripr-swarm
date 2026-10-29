@@ -25,7 +25,7 @@ use value_contradiction::{
     ExactValueVerdict, contradiction_summary, exact_value_assertion_verdict_for_test,
 };
 pub(in crate::analysis) use value_contradiction::{
-    PointerReturnChange, change_is_invisible_to_every_assertion,
+    InvisibilityReason, PointerReturnChange, change_is_invisible_to_every_assertion,
 };
 
 pub(crate) use related_tests::CompactGripContext;

@@ -287,16 +287,31 @@ impl PointerReturnChange {
 /// and on the change, so it cannot reveal the difference even though its
 /// exact assertion shares the owner. Every other shape (a call outside an
 /// assertion, a case table, a value that does not fold, a body where `after`
-/// is not found exactly once) is `false` and keeps today's credit.
+/// is not found exactly once) is `None` and keeps today's credit.
+/// Why every related test failed to tell the changed expression from its
+/// baseline. The honest gap statement differs between the two, so the caller
+/// turns the reason into the matching infection summary (#8659, #10916).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::analysis) enum InvisibilityReason {
+    /// Every equality assertion folds the owner to the same value at its
+    /// asserted input on both versions: no asserted input reaches a
+    /// difference.
+    SameValueAtEveryAssertedInput,
+    /// A relational assertion's comparison folds to the same truth value on
+    /// both versions: the asserted inputs may evaluate differently, yet no
+    /// assertion's outcome distinguishes them.
+    RelationalTruthUnchanged,
+}
+
 pub(in crate::analysis) fn change_is_invisible_to_every_assertion(
     owner: &FunctionSummary,
     before: &str,
     after: &str,
     tests: &[&TestSummary],
-) -> bool {
+) -> Option<InvisibilityReason> {
     let current = owner.body.as_str();
     if tests.is_empty() || before == after || current.matches(after).count() != 1 {
-        return false;
+        return None;
     }
     let baseline = current.replacen(after, before, 1);
     // An equivalent rewrite (`x * 3` to `3 * x`) is invisible to every test
@@ -304,24 +319,27 @@ pub(in crate::analysis) fn change_is_invisible_to_every_assertion(
     // test that cannot exist. The change must differ somewhere: a small input
     // grid has to find a call at which the two bodies fold to different values.
     if !versions_differ_on_small_inputs(current, &baseline) {
-        return false;
+        return None;
     }
     // A related test that never names the owner exercises it through no call
     // the fold could miss (a helper that calls it makes the owner have other
     // callers, which the caller checks), so it neither blocks nor supports
     // the reading; at least one test must name the owner.
-    let mut naming_tests = tests
+    let naming_tests = tests
         .iter()
         .filter(|test| count_name_tokens(test.body.as_str(), &owner.name) > 0);
-    if naming_tests.clone().next().is_none() {
-        return false;
-    }
-    naming_tests.all(|test| {
+    naming_tests.clone().next()?;
+    // A mixture of equality and relational assertions reads as relational:
+    // "the same truth value on both versions" holds for every member, while
+    // "no input reaches a difference" does not survive a relational
+    // assertion that calls the owner at two different inputs.
+    let mut relational_seen = false;
+    for test in naming_tests {
         if case_row_bindings(test).is_some()
             || bare_owner_call_is_shadowed(test, &owner.name)
             || test.assertions.is_empty()
         {
-            return false;
+            return None;
         }
         // Every mention of the owner must be the one call an assertion folds:
         // a second call in the expected operand, or one outside an
@@ -337,8 +355,9 @@ pub(in crate::analysis) fn change_is_invisible_to_every_assertion(
             match relational_assertion(&oracle.text, &owner.name) {
                 Some(relational) => {
                     if !relational.truth_unchanged(current, &baseline) {
-                        return false;
+                        return None;
                     }
+                    relational_seen = true;
                     relational_mentions += relational.owner_calls;
                 }
                 None => equality_assertions.push(oracle),
@@ -363,9 +382,9 @@ pub(in crate::analysis) fn change_is_invisible_to_every_assertion(
         if count_name_tokens(test.body.as_str(), &owner.name)
             != resolved_mentions + relational_mentions
         {
-            return false;
+            return None;
         }
-        resolved.iter().all(|operands| {
+        let all_fold_equal = resolved.iter().all(|operands| {
             let mut holding = operands
                 .iter()
                 .map(|operand| operand.text.as_str())
@@ -400,7 +419,15 @@ pub(in crate::analysis) fn change_is_invisible_to_every_assertion(
                 (Some(changed), Some(unchanged)) => changed == unchanged,
                 _ => false,
             }
-        })
+        });
+        if !all_fold_equal {
+            return None;
+        }
+    }
+    Some(if relational_seen {
+        InvisibilityReason::RelationalTruthUnchanged
+    } else {
+        InvisibilityReason::SameValueAtEveryAssertedInput
     })
 }
 
@@ -2205,7 +2232,12 @@ mod tests {
         );
     }
 
-    fn invisible(owner: &str, before: &str, after: &str, test: &str) -> Result<bool, String> {
+    fn invisible_reason(
+        owner: &str,
+        before: &str,
+        after: &str,
+        test: &str,
+    ) -> Result<Option<InvisibilityReason>, String> {
         let adapter = RaRustSyntaxAdapter;
         let source = format!("{owner}\n\n{test}\n");
         let facts = adapter
@@ -2220,6 +2252,10 @@ mod tests {
         Ok(change_is_invisible_to_every_assertion(
             owner, before, after, &tests,
         ))
+    }
+
+    fn invisible(owner: &str, before: &str, after: &str, test: &str) -> Result<bool, String> {
+        Ok(invisible_reason(owner, before, after, test)?.is_some())
     }
 
     const CAP: &str = "pub fn owner(n: u32) -> u32 {\n    n.min(6)\n}";
@@ -2244,6 +2280,29 @@ mod tests {
             "base * 3u64.pow(attempt)",
             test
         )?);
+        // The relational member names the reason: the asserted inputs may
+        // evaluate differently, so the caller owes the truth-value summary,
+        // not "no input reaches a difference" (#10916).
+        assert_eq!(
+            invisible_reason(
+                POWER,
+                "base * 2u64.pow(attempt)",
+                "base * 3u64.pow(attempt)",
+                test
+            )?,
+            Some(InvisibilityReason::RelationalTruthUnchanged)
+        );
+        // The equality-only shape keeps the value-equality reason.
+        let equality_only = "#[test]\nfn a() {\n    assert_eq!(owner(0, 100), 100);\n}";
+        assert_eq!(
+            invisible_reason(
+                POWER,
+                "base * 2u64.pow(attempt)",
+                "base * 3u64.pow(attempt)",
+                equality_only
+            )?,
+            Some(InvisibilityReason::SameValueAtEveryAssertedInput)
+        );
         Ok(())
     }
 

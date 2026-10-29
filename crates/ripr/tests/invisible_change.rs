@@ -203,6 +203,46 @@ fn a_relational_sibling_that_holds_on_both_versions_does_not_expose_the_change()
     )?;
     let finding = return_value(&findings)?;
     assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    // The asserted inputs do evaluate differently (800 vs 2700), so the
+    // summary names the unchanged comparison truth, not a missing input
+    // difference (#10916).
+    assert!(
+        finding.ripr.infect.summary.contains("same truth value"),
+        "{finding:?}"
+    );
+    assert!(
+        !finding
+            .ripr
+            .infect
+            .summary
+            .contains("evaluate to the same value"),
+        "{finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_rebound_assert_macro_keeps_the_credit() -> Result<(), String> {
+    // Control: the written relational tokens fold the same on both versions,
+    // but the file rebinds `assert!` to an exact-value check the baseline
+    // fails (`2700` after vs `800` before). Ripr reads macro names, not
+    // expansions, so both invisible readings must decline and today's
+    // non-relational reading keeps the finding (#10920 review).
+    let test = "use invisible::backoff_ms;\n\nmacro_rules! assert {\n    ($f:ident($($a:tt)*) > $g:ident($($b:tt)*)) => {\n        std::assert_eq!($f($($a)*), 2700)\n    };\n}\n\n#[test]\nfn first() {\n    assert_eq!(backoff_ms(0, 100), 100);\n}\n\n#[test]\nfn grows() {\n    assert!(backoff_ms(3, 100) > backoff_ms(1, 100));\n}\n";
+    let findings = findings(POW, POW_OLD, test)?;
+    let finding = return_value(&findings)?;
+    assert!(
+        !finding
+            .ripr
+            .infect
+            .summary
+            .contains("evaluate to the same value"),
+        "{finding:?}"
+    );
+    assert!(
+        !finding.ripr.infect.summary.contains("same truth value"),
+        "{finding:?}"
+    );
     Ok(())
 }
 

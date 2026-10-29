@@ -947,6 +947,26 @@
       ]
     },
     {
+      "id": "rust_relational_sibling_truth_unchanged",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/invisible_change_relational_sibling",
+      "vector": "relational_sibling_assertion_holds_on_both_versions_keeps_the_change_invisible",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
       "id": "rust_json_unrelated_equality",
       "language": "rust",
       "tier": "pure",
