@@ -2567,6 +2567,24 @@ pub(crate) fn finish_repair_attempt_from(
     packet_path: &Path,
     movement: HeadMovement,
 ) -> Result<RepairAttemptAfter, String> {
+    finish_repair_attempt_with_workflow_backups_from(
+        root,
+        store,
+        attempt_id,
+        packet_path,
+        movement,
+        &[],
+    )
+}
+
+pub(crate) fn finish_repair_attempt_with_workflow_backups_from(
+    root: &Path,
+    store: Option<&Path>,
+    attempt_id: &RepairAttemptId,
+    packet_path: &Path,
+    movement: HeadMovement,
+    backups: &[(PathBuf, String, bool)],
+) -> Result<RepairAttemptAfter, String> {
     let root_argument = root;
     let (store, manifest_path, base_bytes, mut manifest) =
         open_attempt_with_bytes(root, store, attempt_id)?;
@@ -2622,13 +2640,14 @@ pub(crate) fn finish_repair_attempt_from(
     // swap inside the window is undetectable by commit comparison alone,
     // so the reflog fingerprint makes `current` robust to it (#5930).
     let before = crate::agent::artifact::current_git_head_identity(&root)?;
-    let (mut delta, mut verdict) =
-        evaluate_repository_edit_cage_with_head_movement(&baseline, movement)?;
+    let (mut delta, _) = evaluate_repository_edit_cage_with_head_movement(&baseline, movement)?;
     crate::edit_cage::omit_attempt_manifest_identity(
         &mut delta,
         &baseline,
         &manifest_relative_path(&manifest),
     )?;
+    crate::edit_cage::omit_owned_workflow_backups(&mut delta, &baseline, backups)?;
+    let mut verdict = crate::edit_cage::evaluate_edit_cage(baseline.policy(), &delta);
     let (current, current_head) =
         after_phase_window_is_current(&root, &before, &manifest.repository_head, movement)?;
     if !current {

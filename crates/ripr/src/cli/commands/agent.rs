@@ -1368,9 +1368,49 @@ fn run_agent_repair_with_identity_ctx(
     options: AgentRepairOptions,
     identity: Option<&crate::app::repair_attempt::BeforeRepairAttemptIdentity>,
 ) -> (Result<(), CommandError>, bool) {
+    // Keep the repository-wide lock until after the shared projections have
+    // been resolved, not merely until the attempt manifest is committed.
+    let _workflow_lock = if options.phase == AgentRepairPhase::After {
+        match crate::cli::lock_repair_workflow(&options.root) {
+            Ok(lock) => Some(lock),
+            Err(error) => return (Err(CommandError::Failure(error)), false),
+        }
+    } else {
+        None
+    };
     let json = options.json;
     let mut refusal = AfterPhaseRefusalContext::default();
-    let result = run_agent_repair_phase(options, &mut refusal, identity);
+    let mut result = run_agent_repair_phase(options, &mut refusal, identity);
+    // One outcome resolution for the after phase's shared workflow
+    // artifacts (#6033): whatever the exit path, the pre-attempt backups are
+    // either restored or discarded exactly once.
+    if let Some(artifacts) = refusal.workflow_artifacts.take() {
+        let terminal = refusal.terminal_finish.is_some();
+        if let Err(error) = artifacts.resolve(result.is_ok(), terminal, refusal.tail_reached) {
+            let previous = result
+                .err()
+                .map(|message| format!("; prior phase failure: {message}"))
+                .unwrap_or_default();
+            result = Err(format!(
+                "resolve shared workflow artifacts failed: {error}{previous}"
+            ));
+            refusal.typed = false;
+            refusal.pending_stdout = if json {
+                match (&result, &refusal.selected_attempt) {
+                    (Err(error), Some((_, _, attempt_id))) => render_repair_after_refusal_json(
+                        attempt_id.as_str(),
+                        error,
+                        &refusal.narration,
+                    )
+                    .ok(),
+                    _ => None,
+                }
+            } else {
+                None
+            };
+            refusal.stdout_document_printed = refusal.pending_stdout.is_some();
+        }
+    }
     if let (Err(error), Some((root, store, attempt_id))) = (&result, &refusal.selected_attempt)
         && !refusal.stop_unrecorded
         && let Err(record_error) = record_after_phase_refusal(
@@ -1382,23 +1422,23 @@ fn run_agent_repair_with_identity_ctx(
             refusal.terminal_finish.is_some(),
         )
     {
-        // A persistence miss here is a note, not a second failure: the
-        // refusal itself already printed with its cause and recovery, and a
-        // terminal attempt's verdict is unaffected (#7378).
         eprintln!(
             "ripr: note: after-phase refusal narration was not persisted on attempt `{}` for `ripr agent status`: {record_error}",
             attempt_id.as_str()
         );
     }
-    // One outcome resolution for the after phase's shared workflow
-    // artifacts (#6033): whatever the exit path, the pre-attempt backups are
-    // either restored or discarded exactly once.
-    if let Some(artifacts) = refusal.workflow_artifacts.take() {
-        let terminal = refusal.terminal_finish.is_some();
-        if result.is_ok() {
-            artifacts.resolve(true, terminal, refusal.tail_reached);
-        } else {
-            artifacts.resolve(false, terminal, refusal.tail_reached);
+    if let Some(document) = refusal.pending_stdout.take() {
+        print!("{document}");
+    }
+    if result.is_ok() {
+        for line in &refusal.pending_success_lines {
+            eprintln!("ripr: {line}");
+        }
+        if let Some(path) = &refusal.success_receipt_path {
+            eprintln!(
+                "ripr: after phase complete. Receipt: {}",
+                crate::output::path::human_path(path)
+            );
         }
     }
     // A deliberate named refusal (typed) is recorded above and maps to the
@@ -1518,6 +1558,10 @@ struct AfterPhaseRefusalContext {
     /// document on a post-verify refusal), so a refusal never prints a
     /// second document.
     stdout_document_printed: bool,
+    /// Hold after-phase output until shared artifact resolution succeeds.
+    pending_stdout: Option<String>,
+    pending_success_lines: Vec<String>,
+    success_receipt_path: Option<PathBuf>,
     /// Set when the tail reached the durable finish and the attempt ended
     /// non-receipt-ready (violated, incomparable, or stale): the phase then
     /// prints the typed `repair_after_failure` envelope instead of the bare
@@ -1556,16 +1600,102 @@ struct TerminalAttemptFinish {
 struct SharedWorkflowArtifacts {
     paths: Vec<PathBuf>,
     /// For a path that already existed when the phase began: the backup the
-    /// original bytes were renamed to. `None` when the path was absent, so
+    /// original bytes were copied to. `None` when the path was absent, so
     /// the phase's own artifact is fresh and is withdrawn on a terminal
     /// refusal.
     backups: Vec<Option<PathBuf>>,
+    original_identities: Vec<Option<WorkflowFileIdentity>>,
+    written_identities: Vec<Option<WorkflowFileIdentity>>,
 }
 
 const WORKFLOW_ARTIFACT_BACKUP_SUFFIX: &str = ".ripr-preattempt-backup";
 
+fn workflow_digest(bytes: &[u8]) -> String {
+    use sha2::{Digest as _, Sha256};
+    format!("{:x}", Sha256::digest(bytes))
+}
+
+#[derive(Clone, Eq, PartialEq)]
+struct WorkflowFileIdentity {
+    digest: String,
+    mode: u32,
+}
+
+#[cfg(unix)]
+fn workflow_mode(metadata: &std::fs::Metadata) -> u32 {
+    use std::os::unix::fs::PermissionsExt as _;
+    metadata.permissions().mode()
+}
+
+#[cfg(not(unix))]
+fn workflow_mode(metadata: &std::fs::Metadata) -> u32 {
+    u32::from(metadata.permissions().readonly())
+}
+
+#[cfg(unix)]
+fn workflow_change_time(metadata: &std::fs::Metadata) -> (i64, i64) {
+    use std::os::unix::fs::MetadataExt as _;
+    (metadata.ctime(), metadata.ctime_nsec())
+}
+
+#[cfg(not(unix))]
+fn workflow_change_time(_metadata: &std::fs::Metadata) -> (i64, i64) {
+    (0, 0)
+}
+
+fn read_workflow_file(path: &Path) -> Result<Option<(Vec<u8>, WorkflowFileIdentity)>, String> {
+    use std::io::Read as _;
+    let mut file = match output::file_write::open_regular_read(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("open {} failed: {error}", path.display())),
+    };
+    let before = file
+        .metadata()
+        .map_err(|error| format!("inspect {} failed: {error}", path.display()))?;
+    if before.len() > crate::edit_cage::MAX_CAPTURE_FILE_BYTES {
+        return Err(format!(
+            "workflow artifact {} exceeds the edit-cage capture limit; leave it in place and inspect it before retrying",
+            path.display()
+        ));
+    }
+    let mut bytes = Vec::new();
+    (&mut file)
+        .take(crate::edit_cage::MAX_CAPTURE_FILE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("read {} failed: {error}", path.display()))?;
+    if bytes.len() as u64 > crate::edit_cage::MAX_CAPTURE_FILE_BYTES {
+        return Err(format!(
+            "workflow artifact {} exceeds the edit-cage capture limit",
+            path.display()
+        ));
+    }
+    let after = file
+        .metadata()
+        .map_err(|error| format!("reinspect {} failed: {error}", path.display()))?;
+    let leaf = std::fs::symlink_metadata(path)
+        .map_err(|error| format!("reinspect {} failed: {error}", path.display()))?;
+    if !leaf.file_type().is_file()
+        || !crate::edit_cage::same_file_object(&after, &leaf)
+        || before.len() != after.len()
+        || before.modified().ok() != after.modified().ok()
+        || workflow_change_time(&before) != workflow_change_time(&after)
+        || workflow_mode(&before) != workflow_mode(&after)
+    {
+        return Err(format!(
+            "workflow artifact {} changed while read",
+            path.display()
+        ));
+    }
+    let identity = WorkflowFileIdentity {
+        digest: workflow_digest(&bytes),
+        mode: workflow_mode(&after),
+    };
+    Ok(Some((bytes, identity)))
+}
+
 impl SharedWorkflowArtifacts {
-    fn track(root: &Path, gap_bound: bool) -> Self {
+    fn track(root: &Path, gap_bound: bool) -> Result<Self, String> {
         // A gap-bound attempt (#9103) writes the check-findings after
         // snapshot instead of the repo-exposure one.
         let after_snapshot = if gap_bound {
@@ -1578,66 +1708,151 @@ impl SharedWorkflowArtifacts {
             root.join("target/ripr/workflow/agent-verify.json"),
             root.join(crate::agent::loop_commands::WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT),
         ];
-        let mut backups = Vec::with_capacity(paths.len());
-        for path in &paths {
-            let mut backup_name = path
-                .extension()
-                .map(|extension| extension.to_os_string())
-                .unwrap_or_default();
-            backup_name.push(WORKFLOW_ARTIFACT_BACKUP_SUFFIX);
-            let backup = path.with_extension(backup_name);
-            if backup.exists() {
-                // Crash recovery: a previous run renamed its pre-attempt
-                // bytes aside and died before resolving them. When it died
-                // before writing, the original is absent; when it died after
-                // writing its fresh projection, the visible file is that
-                // dead run's unresolved projection (on Windows a rename
-                // cannot replace the existing backup). Either way the backup
-                // holds the true pre-attempt state: drop the unresolved
-                // projection and restore, then re-decide below.
-                let _ = std::fs::remove_file(path);
-                let _ = std::fs::rename(&backup, path);
+        let backup_paths = paths
+            .iter()
+            .map(|path| {
+                let mut backup_name = path
+                    .extension()
+                    .map(|extension| extension.to_os_string())
+                    .unwrap_or_default();
+                backup_name.push(WORKFLOW_ARTIFACT_BACKUP_SUFFIX);
+                path.with_extension(backup_name)
+            })
+            .collect::<Vec<_>>();
+        // A suffix is not proof of an abandoned transaction. In particular,
+        // never delete or restore an unknown file merely because it has that
+        // name. Check all destinations before preserving any original.
+        for (path, backup) in paths.iter().zip(&backup_paths) {
+            for candidate in [path, backup] {
+                let relative = candidate.strip_prefix(root).map_err(|error| format!("workflow path {} is outside the root: {error}", candidate.display()))?;
+                if !crate::edit_cage::workflow_path_components_are_safe(root, relative)? {
+                    return Err(format!("workflow path {} has a symlink, reparse point or hard-linked component", candidate.display()));
+                }
             }
-            if path.exists() && std::fs::rename(path, &backup).is_ok() {
-                // Preserve the previous projection's bytes: the phase is
-                // about to overwrite the path, and a terminal refusal must
-                // leave the pre-attempt state standing, not a success-shaped
-                // projection of the refused attempt (#6701 review).
-                backups.push(Some(backup));
-                continue;
+            match std::fs::symlink_metadata(backup) {
+                Ok(_) => {
+                    return Err(format!(
+                        "unresolved workflow backup {} exists; inspect it before retrying",
+                        backup.display()
+                    ));
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(format!("inspect {} failed: {error}", backup.display())),
             }
-            backups.push(None);
+            match std::fs::symlink_metadata(path) {
+                Ok(metadata) if !metadata.file_type().is_file() => {
+                    return Err(format!(
+                        "workflow artifact {} is not a regular file",
+                        path.display()
+                    ));
+                }
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(format!("inspect {} failed: {error}", path.display())),
+            }
         }
-        Self { paths, backups }
+        let copy_result = (|| -> Result<_, String> {
+            let mut backups = Vec::with_capacity(paths.len());
+            let mut original_identities = Vec::with_capacity(paths.len());
+            for (path, backup) in paths.iter().zip(&backup_paths) {
+                if let Some((bytes, identity)) = read_workflow_file(path)? {
+                    // An exclusive create, rather than rename-over-destination,
+                    // ensures an intervening unknown suffix is never clobbered.
+                    // Keep the visible original in place until its producer
+                    // publishes the replacement. Failed copies are retained for
+                    // inspection instead of deleting uncertain evidence.
+                    let source = output::file_write::open_regular_read(path)
+                        .map_err(|error| format!("open {} failed: {error}", path.display()))?;
+                    let source_metadata = source
+                        .metadata()
+                        .map_err(|error| format!("inspect {} failed: {error}", path.display()))?;
+                    if workflow_mode(&source_metadata) != identity.mode {
+                        return Err(format!(
+                            "workflow artifact {} changed while preserved",
+                            path.display()
+                        ));
+                    }
+                    let mut destination =
+                        output::file_write::create_exclusive(&backup).map_err(|error| {
+                            format!("create backup {} failed: {error}", backup.display())
+                        })?;
+                    destination.write_all(&bytes)
+                    .and_then(|_| destination.set_permissions(source_metadata.permissions()))
+                    .and_then(|_| destination.sync_all())
+                    .map_err(|error| format!("preserve workflow artifact {} failed: {error}; inspect {} before retrying", path.display(), backup.display()))?;
+                    drop(destination);
+                    if read_workflow_file(&backup)?.map(|(_, observed)| observed)
+                        != Some(identity.clone())
+                        || read_workflow_file(path)?.map(|(_, observed)| observed)
+                            != Some(identity.clone())
+                    {
+                        return Err(format!(
+                            "workflow artifact {} changed while copied; backups retained for inspection",
+                            path.display()
+                        ));
+                    }
+                    original_identities.push(Some(identity));
+                    backups.push(Some(backup.clone()));
+                } else {
+                    backups.push(None);
+                    original_identities.push(None);
+                }
+            }
+            Ok((backups, original_identities))
+        })();
+        let (backups, original_identities) = copy_result.map_err(|error| {
+            let names = backup_paths
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{error}; inspect any retained workflow backups before retrying: {names}")
+        })?;
+        let written_identities = vec![None; paths.len()];
+        Ok(Self {
+            paths,
+            backups,
+            original_identities,
+            written_identities,
+        })
     }
 
-    /// Removes exactly the artifacts this phase created (a terminal refusal
-    /// leaves no loop projection beside the terminal attempt). Best-effort:
-    /// a failed removal leaves the artifact and the status projection with
-    /// it, which is never a worse state than the pre-#6033 behavior.
-    fn withdraw_fresh_artifacts(&self) {
-        for (path, backup) in self.paths.iter().zip(&self.backups) {
-            if backup.is_none() {
-                let _ = std::fs::remove_file(path);
-            }
+    fn note_write(&mut self, path: &Path, bytes: &[u8]) -> Result<(), String> {
+        let index = self
+            .paths
+            .iter()
+            .position(|candidate| candidate == path)
+            .ok_or_else(|| format!("untracked workflow output {}", path.display()))?;
+        let identity = read_workflow_file(path)?
+            .map(|(_, identity)| identity)
+            .ok_or_else(|| format!("workflow output {} disappeared", path.display()))?;
+        if identity.digest != workflow_digest(bytes) {
+            return Err(format!(
+                "workflow output {} changed after publication",
+                path.display()
+            ));
         }
+        self.written_identities[index] = Some(identity);
+        Ok(())
     }
 
-    /// Puts the pre-attempt projections back in place.
-    fn restore_backups(&self) {
-        for (path, backup) in self.paths.iter().zip(&self.backups) {
-            if let Some(backup) = backup {
-                let _ = std::fs::rename(backup, path);
-            }
-        }
-    }
-
-    /// The phase's own artifacts are the current state; the backups are
-    /// stale copies of what they replaced.
-    fn discard_backups(&self) {
-        for backup in self.backups.iter().flatten() {
-            let _ = std::fs::remove_file(backup);
-        }
+    fn owned_backups(&self, root: &Path) -> Result<Vec<(PathBuf, String, bool)>, String> {
+        self.backups
+            .iter()
+            .zip(&self.original_identities)
+            .filter_map(|(path, identity)| path.as_ref().zip(identity.as_ref()))
+            .map(|(path, identity)| {
+                Ok((
+                    path.strip_prefix(root)
+                        .map_err(|error| {
+                            format!("backup {} is outside the root: {error}", path.display())
+                        })?
+                        .to_path_buf(),
+                    identity.digest.clone(),
+                    cfg!(unix) && identity.mode & 0o111 != 0,
+                ))
+            })
+            .collect()
     }
 
     /// One resolution for the phase result: on success the fresh artifacts
@@ -1645,17 +1860,82 @@ impl SharedWorkflowArtifacts {
     /// the pre-attempt state restored; on a retryable failure after the
     /// tail the fresh artifacts stand for the retry; and any earlier
     /// failure restores the pre-attempt state.
-    fn resolve(self, phase_ok: bool, terminal: bool, tail_reached: bool) {
-        if phase_ok {
-            self.discard_backups();
-        } else if terminal {
-            self.withdraw_fresh_artifacts();
-            self.restore_backups();
-        } else if tail_reached {
-            self.discard_backups();
-        } else {
-            self.restore_backups();
+    fn resolve(self, phase_ok: bool, terminal: bool, tail_reached: bool) -> Result<(), String> {
+        let restore = !phase_ok && (terminal || !tail_reached);
+        for (((path, backup), original), written) in self
+            .paths
+            .iter()
+            .zip(&self.backups)
+            .zip(&self.original_identities)
+            .zip(&self.written_identities)
+        {
+            let current = read_workflow_file(path)?.map(|(_, identity)| identity);
+            let backup_bytes = if let Some(backup) = backup {
+                let (bytes, identity) = read_workflow_file(backup)?
+                    .ok_or_else(|| format!("workflow backup {} disappeared", backup.display()))?;
+                if Some(identity) != *original {
+                    return Err(format!(
+                        "workflow backup {} changed; it was retained",
+                        backup.display()
+                    ));
+                }
+                Some(bytes)
+            } else {
+                None
+            };
+            if !restore && current != written.clone().or_else(|| original.clone()) {
+                return Err(format!(
+                    "workflow artifact {} changed outside this phase; backups retained",
+                    path.display()
+                ));
+            }
+            if restore && current != *original {
+                if current != *written || written.is_none() {
+                    return Err(format!(
+                        "workflow artifact {} changed outside this phase; backups retained",
+                        path.display()
+                    ));
+                }
+                if let Some(bytes) = &backup_bytes {
+                    let permissions = output::file_write::open_regular_read(
+                        backup.as_ref().ok_or("backup missing")?,
+                    )
+                    .and_then(|file| file.metadata())
+                    .map_err(|error| format!("inspect backup permissions failed: {error}"))?
+                    .permissions();
+                    crate::app::repair_attempt::replace_file_atomically(path, bytes)?;
+                    std::fs::set_permissions(path, permissions).map_err(|error| {
+                        format!(
+                            "restore permissions on {} failed: {error}; backup retained",
+                            path.display()
+                        )
+                    })?;
+                } else {
+                    std::fs::remove_file(path)
+                        .map_err(|error| format!("remove {} failed: {error}", path.display()))?;
+                }
+            }
+            if let Some(backup) = backup {
+                #[cfg(windows)]
+                {
+                    let mut permissions = std::fs::metadata(backup)
+                        .map_err(|error| {
+                            format!("inspect backup {} failed: {error}", backup.display())
+                        })?
+                        .permissions();
+                    if permissions.readonly() {
+                        permissions.set_readonly(false);
+                        std::fs::set_permissions(backup, permissions).map_err(|error| {
+                            format!("make backup {} removable failed: {error}", backup.display())
+                        })?;
+                    }
+                }
+                std::fs::remove_file(backup).map_err(|error| {
+                    format!("remove backup {} failed: {error}", backup.display())
+                })?;
+            }
         }
+        Ok(())
     }
 }
 
@@ -2044,7 +2324,7 @@ fn run_agent_repair_phase(
             refusal.workflow_artifacts = Some(SharedWorkflowArtifacts::track(
                 &root,
                 attempt.gap_base.is_some(),
-            ));
+            )?);
 
             // The retained before snapshot and packet are the transaction's
             // authority. The repository-global after, verify, receipt, and
@@ -2067,11 +2347,21 @@ fn run_agent_repair_phase(
                     .join(crate::app::gap_bound_repair::GAP_BOUND_AFTER_SNAPSHOT_FILE);
                 let snapshot = super::check::gap_check_findings_snapshot(&root, base_commit)?;
                 write_text_file(&after, &snapshot.rendered)?;
+                refusal
+                    .workflow_artifacts
+                    .as_mut()
+                    .ok_or("workflow tracking missing")?
+                    .note_write(&after, snapshot.rendered.as_bytes())?;
                 gap_analysis_outcome = Some(snapshot.rendered);
                 after
             } else {
                 let after = root.join("target/ripr/workflow/after.repo-exposure.json");
-                write_agent_repo_exposure_snapshot(&root, &after)?;
+                let bytes = write_agent_repo_exposure_snapshot(&root, &after)?;
+                refusal
+                    .workflow_artifacts
+                    .as_mut()
+                    .ok_or("workflow tracking missing")?
+                    .note_write(&after, &bytes)?;
                 after
             };
 
@@ -2171,13 +2461,20 @@ fn run_agent_repair_phase(
             // outcome. Generate it from the same current root before issuing
             // the receipt so the built-in repair route cannot report a clean
             // review packet without completeness evidence.
-            match &gap_analysis_outcome {
-                Some(rendered) => write_text_file(
-                    &root.join(crate::agent::loop_commands::WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT),
-                    rendered,
-                )?,
+            let outcome_path =
+                root.join(crate::agent::loop_commands::WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT);
+            let outcome_bytes = match &gap_analysis_outcome {
+                Some(rendered) => {
+                    write_text_file(&outcome_path, rendered)?;
+                    rendered.as_bytes().to_vec()
+                }
                 None => write_agent_analysis_outcome(&root)?,
-            }
+            };
+            refusal
+                .workflow_artifacts
+                .as_mut()
+                .ok_or("workflow tracking missing")?
+                .note_write(&outcome_path, &outcome_bytes)?;
 
             let verify_options = AgentVerifyOptions {
                 root: root.clone(),
@@ -2237,6 +2534,11 @@ fn run_agent_repair_phase(
                 }
             };
             write_text_file(&verify_json, &rendered_verify)?;
+            refusal
+                .workflow_artifacts
+                .as_mut()
+                .ok_or("workflow tracking missing")?
+                .note_write(&verify_json, rendered_verify.as_bytes())?;
 
             // With --json, stdout carries exactly one JSON document on every
             // path, like every other agent command. The verify outcome is held until the
@@ -2260,7 +2562,8 @@ fn run_agent_repair_phase(
                     ManifestConfirmationError, confirm_manifest_unchanged, write_apply_record_from,
                 };
                 use crate::app::repair_attempt::{
-                    finish_repair_attempt_from, restore_repair_attempt_to_awaiting_edit_from,
+                    finish_repair_attempt_with_workflow_backups_from,
+                    restore_repair_attempt_to_awaiting_edit_from,
                 };
 
                 // The retained binding's manifest bytes are confirmed again
@@ -2286,12 +2589,18 @@ fn run_agent_repair_phase(
                 // This makes the durable delta the exact delta the receipt
                 // binds, while the receipt itself remains outside the measured
                 // edit window.
-                let cage_after = match finish_repair_attempt_from(
+                let owned_backups = refusal
+                    .workflow_artifacts
+                    .as_ref()
+                    .ok_or("workflow tracking missing")?
+                    .owned_backups(&root)?;
+                let cage_after = match finish_repair_attempt_with_workflow_backups_from(
                     &root,
                     store_ref,
                     &attempt.attempt_id,
                     &packet_path,
                     head_movement,
+                    &owned_backups,
                 ) {
                     Ok(after) => after,
                     Err(error) => {
@@ -2518,22 +2827,23 @@ fn run_agent_repair_phase(
                     // the cage verdict; any other post-verify failure keeps
                     // the bare verify document this phase always printed.
                     if json {
-                        match refusal.terminal_finish.as_ref() {
+                        let rendered = match refusal.terminal_finish.as_ref() {
                             Some(finish) => {
                                 match render_repair_after_failure_json(
                                     finish,
                                     &error,
                                     &refusal.narration,
                                 ) {
-                                    Ok(rendered) => print!("{rendered}"),
+                                    Ok(rendered) => rendered,
                                     Err(render_error) => {
                                         eprintln!("ripr: {render_error}");
-                                        print!("{rendered_verify}");
+                                        rendered_verify.clone()
                                     }
                                 }
                             }
-                            None => print!("{rendered_verify}"),
-                        }
+                            None => rendered_verify.clone(),
+                        };
+                        refusal.pending_stdout = Some(rendered);
                         refusal.stdout_document_printed = true;
                     }
                     return Err(error);
@@ -2570,24 +2880,16 @@ fn run_agent_repair_phase(
             // channel, and to stderr as narration beside the `--json`
             // document; never both, so a terminal shows it once.
             if json {
-                println!("{combined}");
-                for line in &summary_lines {
-                    eprintln!("ripr: {line}");
-                }
+                refusal.pending_stdout = Some(format!("{combined}\n"));
+                refusal.pending_success_lines = summary_lines;
             } else {
-                print!(
-                    "{}",
-                    after_phase_human_stdout(
-                        &summary_lines,
-                        &root.join("target/ripr/reports/agent-receipt.json"),
-                        &verify_json,
-                    )
-                );
+                refusal.pending_stdout = Some(after_phase_human_stdout(
+                    &summary_lines,
+                    &root.join("target/ripr/reports/agent-receipt.json"),
+                    &verify_json,
+                ));
             }
-            eprintln!(
-                "ripr: after phase complete. Receipt: {}",
-                crate::output::path::human_path(&receipt_path)
-            );
+            refusal.success_receipt_path = Some(receipt_path);
             Ok(())
         }
         AgentRepairPhase::Verify => {
@@ -2634,7 +2936,7 @@ fn run_agent_repair_phase(
     }
 }
 
-fn write_agent_analysis_outcome(root: &Path) -> Result<(), String> {
+fn write_agent_analysis_outcome(root: &Path) -> Result<Vec<u8>, String> {
     let (mut input, config) = load_root_input_and_config(root)?;
     // Match the bare `ripr check --root <root> --format json` route used by
     // generated workflows: default-base resolution remains owned by the
@@ -2647,10 +2949,11 @@ fn write_agent_analysis_outcome(root: &Path) -> Result<(), String> {
     write_text_file(
         &root.join(crate::agent::loop_commands::WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT),
         &rendered,
-    )
+    )?;
+    Ok(rendered.into_bytes())
 }
 
-fn write_agent_repo_exposure_snapshot(root: &Path, path: &Path) -> Result<(), String> {
+fn write_agent_repo_exposure_snapshot(root: &Path, path: &Path) -> Result<Vec<u8>, String> {
     let config = load_for_root(root)?;
     let report = analysis::inventory_classified_seams_report_at_with_config(root, &config)?;
     write_agent_repo_exposure_snapshot_with_report(root, &config, report, path)
@@ -2668,7 +2971,7 @@ fn write_agent_repo_exposure_snapshot_with_report(
     config: &RiprConfig,
     report: analysis::ClassifiedSeamsReport,
     path: &Path,
-) -> Result<(), String> {
+) -> Result<Vec<u8>, String> {
     let ts_guidance = output::render::detect_ts_full_repo_guidance_pub(root, &report.classified);
     let python_guidance =
         output::render::detect_python_repo_exposure_guidance_pub(root, &report.classified);
@@ -2718,20 +3021,26 @@ fn write_agent_repo_exposure_snapshot_with_report(
         return Err(err);
     }
 
-    // Publish only a complete snapshot. Unix rename replaces atomically; on
-    // Windows the existing command-owned target must be unlinked first.
-    #[cfg(windows)]
-    if path.exists()
-        && let Err(err) = std::fs::remove_file(path)
-    {
-        let _ = std::fs::remove_file(&temporary_path);
-        return Err(format!("remove {} failed: {err}", path.display()));
-    }
-    if let Err(err) = std::fs::rename(&temporary_path, path) {
-        let _ = std::fs::remove_file(&temporary_path);
-        return Err(format!("publish {} failed: {err}", path.display()));
-    }
-    Ok(())
+    let rendered = match read_workflow_file(&temporary_path) {
+        Ok(Some((bytes, _))) => bytes,
+        Ok(None) => {
+            return Err(format!(
+                "snapshot {} disappeared before publication",
+                temporary_path.display()
+            ));
+        }
+        Err(error) => {
+            let _ = std::fs::remove_file(&temporary_path);
+            return Err(error);
+        }
+    };
+    // Atomic replacement preserves the prior destination if publication
+    // fails, including on Windows; never unlink it before the replacement.
+    let published = output::file_write::write(path, &rendered)
+        .map_err(|error| format!("publish {} failed: {error}", path.display()));
+    let _ = std::fs::remove_file(&temporary_path);
+    published?;
+    Ok(rendered)
 }
 
 /// Narration for the repair after phase: the receipt's summary, or a line
@@ -5012,9 +5321,10 @@ mod repair_summary_tests {
             let parent = outcome.parent().ok_or("outcome has no parent")?;
             std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
             std::fs::write(&outcome, b"prior-outcome").map_err(|error| error.to_string())?;
-            let tracked = SharedWorkflowArtifacts::track(&root, true);
+            let mut tracked = SharedWorkflowArtifacts::track(&root, true)?;
             std::fs::write(&outcome, b"fresh-outcome").map_err(|error| error.to_string())?;
-            tracked.resolve(phase_ok, terminal, true);
+            tracked.note_write(&outcome, b"fresh-outcome")?;
+            tracked.resolve(phase_ok, terminal, true)?;
             let kept = std::fs::read(&outcome).map_err(|error| error.to_string());
             let leftovers = parent
                 .read_dir()
@@ -5033,6 +5343,144 @@ mod repair_summary_tests {
                 ));
             }
         }
+        Ok(())
+    }
+
+    #[test]
+    fn tracking_refuses_unknown_backup_without_touching_either_file() -> Result<(), String> {
+        let root = temp_root("collision")?;
+        let workflow = root.join("target/ripr/workflow");
+        std::fs::create_dir_all(&workflow).map_err(|error| error.to_string())?;
+        let current = workflow.join("after.check-findings.json");
+        let backup = workflow.join("after.check-findings.json.ripr-preattempt-backup");
+        std::fs::write(&current, b"current").map_err(|error| error.to_string())?;
+        std::fs::write(&backup, b"unknown").map_err(|error| error.to_string())?;
+        let result = SharedWorkflowArtifacts::track(&root, true);
+        let preserved = std::fs::read(&current).map_err(|error| error.to_string())? == b"current"
+            && std::fs::read(&backup).map_err(|error| error.to_string())? == b"unknown";
+        let _ = std::fs::remove_dir_all(&root);
+        if result.is_ok() || !preserved {
+            return Err("unknown backup was accepted or changed".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn tracking_preserves_backup_when_another_writer_changes_projection() -> Result<(), String> {
+        let root = temp_root("outside-write")?;
+        let path = root.join("target/ripr/workflow/after.check-findings.json");
+        std::fs::create_dir_all(path.parent().ok_or("missing parent")?)
+            .map_err(|error| error.to_string())?;
+        std::fs::write(&path, b"prior").map_err(|error| error.to_string())?;
+        let mut tracked = SharedWorkflowArtifacts::track(&root, true)?;
+        std::fs::write(&path, b"phase").map_err(|error| error.to_string())?;
+        tracked.note_write(&path, b"phase")?;
+        std::fs::write(&path, b"outside").map_err(|error| error.to_string())?;
+        let backup = path.with_extension("json.ripr-preattempt-backup");
+        let refused = tracked.resolve(false, true, true).is_err();
+        let preserved = std::fs::read(&path).map_err(|error| error.to_string())? == b"outside"
+            && std::fs::read(&backup).map_err(|error| error.to_string())? == b"prior";
+        let _ = std::fs::remove_dir_all(&root);
+        if !refused || !preserved {
+            return Err("outside writer or backup was overwritten".to_string());
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn tracking_restores_original_mode_on_refusal() -> Result<(), String> {
+        use std::os::unix::fs::PermissionsExt as _;
+        let root = temp_root("restore-mode")?;
+        let path = root.join("target/ripr/workflow/after.check-findings.json");
+        std::fs::create_dir_all(path.parent().ok_or("missing parent")?)
+            .map_err(|error| error.to_string())?;
+        std::fs::write(&path, b"prior").map_err(|error| error.to_string())?;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o751))
+            .map_err(|error| error.to_string())?;
+        let mut tracked = SharedWorkflowArtifacts::track(&root, true)?;
+        std::fs::write(&path, b"phase").map_err(|error| error.to_string())?;
+        tracked.note_write(&path, b"phase")?;
+        tracked.resolve(false, true, true)?;
+        let restored = std::fs::read(&path).map_err(|error| error.to_string())? == b"prior"
+            && std::fs::metadata(&path)
+                .map_err(|error| error.to_string())?
+                .permissions()
+                .mode()
+                & 0o777
+                == 0o751;
+        let _ = std::fs::remove_dir_all(&root);
+        if !restored {
+            return Err("prior bytes or mode not restored".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn tracking_refuses_an_oversized_projection_without_mutating_it() -> Result<(), String> {
+        let root = temp_root("oversized")?;
+        let path = root.join("target/ripr/workflow/after.check-findings.json");
+        std::fs::create_dir_all(path.parent().ok_or("missing parent")?)
+            .map_err(|error| error.to_string())?;
+        let file = std::fs::File::create(&path).map_err(|error| error.to_string())?;
+        file.set_len(crate::edit_cage::MAX_CAPTURE_FILE_BYTES + 1)
+            .map_err(|error| error.to_string())?;
+        drop(file);
+        let result = SharedWorkflowArtifacts::track(&root, true);
+        let unchanged = std::fs::metadata(&path)
+            .map_err(|error| error.to_string())?
+            .len()
+            == crate::edit_cage::MAX_CAPTURE_FILE_BYTES + 1;
+        let _ = std::fs::remove_dir_all(&root);
+        if result.is_ok() || !unchanged {
+            return Err("oversized projection was accepted or changed".to_string());
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn tracking_refuses_a_symlinked_workflow_ancestor() -> Result<(), String> {
+        let root = temp_root("symlink-parent")?;
+        let outside = temp_root("symlink-outside")?;
+        std::fs::create_dir_all(root.join("target/ripr")).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(&outside).map_err(|error| error.to_string())?;
+        let sentinel = outside.join("after.check-findings.json");
+        std::fs::write(&sentinel, b"outside").map_err(|error| error.to_string())?;
+        std::os::unix::fs::symlink(&outside, root.join("target/ripr/workflow")).map_err(|error| error.to_string())?;
+        let result = SharedWorkflowArtifacts::track(&root, true);
+        let intact = std::fs::read(&sentinel).map_err(|error| error.to_string())? == b"outside";
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&outside);
+        if result.is_ok() || !intact { return Err("symlinked workflow was accepted or changed".to_string()); }
+        Ok(())
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn tracking_removes_readonly_backup_after_unchanged_phase() -> Result<(), String> {
+        let root = temp_root("readonly")?;
+        let path = root.join("target/ripr/workflow/after.check-findings.json");
+        std::fs::create_dir_all(path.parent().ok_or("missing parent")?)
+            .map_err(|error| error.to_string())?;
+        std::fs::write(&path, b"prior").map_err(|error| error.to_string())?;
+        let mut permissions = std::fs::metadata(&path)
+            .map_err(|error| error.to_string())?
+            .permissions();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(&path, permissions).map_err(|error| error.to_string())?;
+        let tracked = SharedWorkflowArtifacts::track(&root, true)?;
+        tracked.resolve(true, false, false)?;
+        let backup = path.with_extension("json.ripr-preattempt-backup");
+        if backup.exists() {
+            return Err("readonly backup remained".to_string());
+        }
+        let mut permissions = std::fs::metadata(&path)
+            .map_err(|error| error.to_string())?
+            .permissions();
+        permissions.set_readonly(false);
+        std::fs::set_permissions(&path, permissions).map_err(|error| error.to_string())?;
+        std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
         Ok(())
     }
 
