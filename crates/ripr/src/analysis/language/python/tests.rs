@@ -10825,3 +10825,59 @@ fn match_case_capture_of_the_receiver_counts_as_a_binding_target() {
         assert!(!binds_in_target_list(body, "r"), "{body:?}");
     }
 }
+
+const ORDER_SOURCE: &str = "def make_order(qty):\n    return {\"qty\": qty, \"total\": qty * 3}\n";
+
+#[test]
+fn name_prefilter_skips_a_test_that_never_spells_the_owner() {
+    // The name prefilter returns None without scanning a test that spells the
+    // owner nowhere; the debug cross-check runs the full scan to confirm it.
+    let owners = extract_owners(Path::new("src/orders.py"), ORDER_SOURCE);
+    let tests = extract_tests(
+        Path::new("tests/test_orders.py"),
+        "from src.orders import cancel_order\n\n\ndef test_cancel():\n    assert cancel_order(1) is None\n",
+    );
+    assert_eq!(owners[0].name, "make_order");
+    assert_eq!(tests.len(), 1);
+    assert_eq!(related_test_relation(&tests[0], &owners[0]), None);
+}
+
+#[test]
+fn name_prefilter_keeps_a_fixture_only_mention() {
+    // Only the conftest fixture the test requests spells `make_order`; the
+    // prefilter must read fixture bodies and imports and still relate it.
+    let owners = extract_owners(Path::new("src/orders.py"), ORDER_SOURCE);
+    let conftest_imports = extract_tests(
+        Path::new("tests/conftest.py"),
+        "from src.orders import make_order\n\n\ndef test_probe():\n    pass\n",
+    )
+    .first()
+    .map(|test| test.imports.clone())
+    .unwrap_or_default();
+    let mut tests = extract_tests(
+        Path::new("tests/test_orders.py"),
+        "def test_total(order):\n    assert order[\"total\"] == 3\n",
+    );
+    for test in &mut tests {
+        test.fixture_defs.push(PythonFixtureDef {
+            name: "order".to_string(),
+            binding: "order".to_string(),
+            file: PathBuf::from("tests/conftest.py"),
+            body_text: "def order():\n    return make_order(1)\n".to_string(),
+            imports: conftest_imports.clone(),
+            literal_construction: None,
+            literal_params: None,
+            isolated: false,
+            scope_imports: Vec::new(),
+        });
+    }
+    assert_eq!(owners[0].name, "make_order");
+    assert!(!conftest_imports.is_empty());
+    assert_eq!(tests.len(), 1);
+    assert!(!tests[0].body_text.contains("make_order"));
+    assert!(tests[0].imports.is_empty());
+    assert_eq!(
+        related_test_relation(&tests[0], &owners[0]),
+        Some(PythonRelationKind::FixtureOwnerCall)
+    );
+}
