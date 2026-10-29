@@ -49,6 +49,8 @@
 //! v0.5 entry is impossible.
 
 use super::facts::FileFacts;
+#[cfg(feature = "lang-python")]
+use super::language::PythonFileFactStore;
 #[cfg(feature = "lang-typescript")]
 use super::language::TypeScriptFileFactStore;
 use super::seam_classification::ClassifiedSeam;
@@ -96,6 +98,9 @@ cache_layers! {
     // TypeScript preview per-file facts (#10725): content-keyed envelopes the
     // diff-mode adapter reuses across runs, same conventions as FileFacts.
     TypeScriptFileFacts => "typescript-file-facts",
+    // Python diff-mode per-file facts (#10914): the TypeScript store's
+    // conventions, one content-keyed envelope per workspace file.
+    PythonFileFacts => "python-file-facts",
     ModuleTreeScans => "repo-module-tree-scans",
     ScopedClassifiedSeams => "repo-scoped-classified-seams",
     // Test-only producer: `RepoSeamCountCache` is constructed only under
@@ -163,6 +168,8 @@ pub(crate) fn production_entry_dirs(base: &Path) -> Vec<(PathBuf, bool)> {
     dirs.push(RepoFileFactCache::at_base(base).entry_dir());
     #[cfg(feature = "lang-typescript")]
     dirs.push(TypeScriptFileFactStore::at_base(base).entry_dir());
+    #[cfg(feature = "lang-python")]
+    dirs.push(PythonFileFactStore::at_base(base).entry_dir());
     dirs.push(RepoModuleTreeScanCache::at_base(base).entry_dir());
     dirs.push(RepoScopedInventoryCache::at_base(base).entry_dir());
     dirs
@@ -3596,6 +3603,22 @@ pub(crate) fn encode_integrity_body<T: serde::Serialize>(
     record_integrity_vec_len(bytes.len());
     Ok(bytes)
 }
+/// [`encode_integrity_body`] without pretty-printing, for envelopes large
+/// enough that indentation would dominate their size (the Python per-file
+/// fact store, #10914). Decoding and the digest are unchanged.
+pub(crate) fn encode_integrity_body_compact<T: serde::Serialize>(
+    body: &T,
+    payload_digest: String,
+) -> Result<Vec<u8>, String> {
+    note_integrity_envelope();
+    let bytes = serde_json::to_vec(&ChecksummedBody {
+        body,
+        payload_digest,
+    })
+    .map_err(|err| format!("encode checksummed cache body failed: {err}"))?;
+    record_integrity_vec_len(bytes.len());
+    Ok(bytes)
+}
 impl CacheEnvelope {
     /// Unsigned typed body binds identity and all serialized served fields in fixed order.
     /// Nested serde-skipped derived state is excluded by the existing serialization contract.
@@ -4972,6 +4995,8 @@ mod tests {
         let files = RepoFileFactCache::at(root);
         #[cfg(feature = "lang-typescript")]
         let ts_facts = TypeScriptFileFactStore::at(root);
+        #[cfg(feature = "lang-python")]
+        let py_facts = PythonFileFactStore::at(root);
         let scans = RepoModuleTreeScanCache::at(root);
         let counts = RepoSeamCountCache::at(root);
         let scoped = RepoScopedInventoryCache::at(root);
@@ -4985,6 +5010,8 @@ mod tests {
         ];
         #[cfg(feature = "lang-typescript")]
         produced.push(ts_facts.dir_path());
+        #[cfg(feature = "lang-python")]
+        produced.push(py_facts.dir_path());
         produced.extend([&scans.dir, &counts.dir, &scoped.dir].map(PathBuf::as_path));
         let actual: BTreeSet<_> = produced
             .into_iter()
@@ -4999,14 +5026,15 @@ mod tests {
                     .ok_or_else(|| "layer is not UTF-8".to_string())
             })
             .collect::<Result<_, _>>()?;
-        // The TypeScript layer stays registered without the feature (the
-        // `cache clear` leftover convention, same as `SeamCounts`), but no
-        // producer runs to produce it, so the rust-only build cannot claim
-        // it was produced.
+        // The TypeScript and Python layers stay registered without their
+        // features (the `cache clear` leftover convention, same as
+        // `SeamCounts`), but no producer runs to produce them, so a build
+        // without the feature cannot claim they were produced.
         let expected: BTreeSet<_> = cache_layer_names()
             .iter()
             .copied()
             .filter(|name| cfg!(feature = "lang-typescript") || *name != "typescript-file-facts")
+            .filter(|name| cfg!(feature = "lang-python") || *name != "python-file-facts")
             .collect();
         assert_eq!(
             actual, expected,
@@ -10654,6 +10682,11 @@ mod generation_transition_tests {
             TypeScriptFileFactStore::at(root).dir_path().to_path_buf(),
             false,
         ));
+        #[cfg(feature = "lang-python")]
+        expected.push((
+            PythonFileFactStore::at(root).dir_path().to_path_buf(),
+            false,
+        ));
         expected.extend([
             (RepoModuleTreeScanCache::at(root).dir, false),
             (RepoScopedInventoryCache::at(root).dir, false),
@@ -10669,6 +10702,8 @@ mod generation_transition_tests {
         constructed.push(RepoFileFactCache::at(root).entry_dir());
         #[cfg(feature = "lang-typescript")]
         constructed.push(TypeScriptFileFactStore::at(root).entry_dir());
+        #[cfg(feature = "lang-python")]
+        constructed.push(PythonFileFactStore::at(root).entry_dir());
         constructed.push(RepoModuleTreeScanCache::at(root).entry_dir());
         constructed.push(RepoScopedInventoryCache::at(root).entry_dir());
         assert_eq!(constructed, expected);

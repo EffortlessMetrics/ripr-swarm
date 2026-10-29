@@ -2157,7 +2157,7 @@ pub(super) fn owner_module_paths(file: &Path) -> Vec<String> {
 /// A src-layout short module name of an owner file that another workspace
 /// source file also produces (#4566): `a/src/shared/calc.py` and
 /// `b/src/shared/calc.py` are both importable as `shared.calc`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct AmbiguousSrcModule {
     /// The shared dotted name.
     module: String,

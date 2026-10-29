@@ -23,10 +23,16 @@ use super::super::{
     AnalysisOptions, diff::ChangedFile, fingerprint_probe_id, normalize_expression,
 };
 use super::read_limit_disclosure::bounded_read_limit_limitations;
-use super::{LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, route};
+use super::{
+    LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, PreviewFactCacheStats,
+    route,
+};
 mod admission;
 mod assertion_selection;
 mod bounded_read;
+mod fact_serde;
+mod fact_store;
+pub(crate) use fact_store::PythonFileFactStore;
 mod workspace_reach;
 use crate::analysis::workspace::{
     changed_source_files_absent_from_worktree, limitations_for_absent_changed_files,
@@ -251,7 +257,7 @@ fn opens_added_definition(
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct PythonOwner {
     name: String,
     qualified_name: String,
@@ -337,7 +343,7 @@ struct PythonOwner {
 }
 
 /// One declared parameter of a Python function owner.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct PythonParameter {
     name: String,
     /// Source text of the default value, when one is declared.
@@ -398,7 +404,7 @@ impl PythonOwner {
 /// error until each verify-command, placement and activation site decides it.
 /// `capability_disposition_tests` additionally binds each variant to its
 /// `python/<framework>/diff/repair_routing` capability cell.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) enum PythonFramework {
     Pytest,
     Unittest,
@@ -413,7 +419,7 @@ impl PythonFramework {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct PythonTest {
     name: String,
     qualified_name: String,
@@ -480,7 +486,7 @@ impl PythonTest {
 
 /// A module-level `@pytest.fixture` function: its body is read with the same
 /// relation rules as a test body when a test names it as a parameter (#4563).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct PythonFixtureDef {
     /// The public name a test requests; differs from `binding` when the
     /// decorator renames the fixture (`name=`).
@@ -505,7 +511,7 @@ struct PythonFixtureDef {
     scope_imports: Vec<(PathBuf, PythonImport)>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct PythonImport {
     imported: String,
     alias: String,
@@ -516,7 +522,7 @@ struct PythonImport {
     source_module: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct PythonAssertion {
     text: String,
     /// The text every alignment gate reads (RIPR-SPEC-0238 rule 4): an
@@ -532,8 +538,10 @@ struct PythonAssertion {
     /// comparison alone does not establish a deferred owner's execution.
     helper_derived: bool,
     /// Native assertion/call span, relative to the containing test body.
+    #[serde(with = "fact_serde::option_range")]
     source_range: Option<rustpython_parser::text_size::TextRange>,
     /// Only the native operands retained by the oracle gate, never its message.
+    #[serde(with = "fact_serde::named_ranges")]
     observed_operands: Vec<(String, rustpython_parser::text_size::TextRange)>,
     line: usize,
     oracle_kind: OracleKind,
@@ -553,7 +561,7 @@ struct PythonAssertion {
 
 /// The call under a candidate numpy.testing or assertpy equality helper
 /// (`known_equality_helpers.rs`).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct PythonKnownEqualityHelper {
     library: KnownEqualityLibrary,
     /// The callable as written: `np.testing.assert_array_equal`, or for
@@ -564,14 +572,14 @@ struct PythonKnownEqualityHelper {
     right: String,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 enum KnownEqualityLibrary {
     NumpyTesting,
     Assertpy,
 }
 
 /// The call under a bare boolean assertion (`bool_oracle.rs`).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct PythonBareBoolCall {
     /// The bare callee name; dotted callees are never resolved.
     callee: String,
@@ -583,7 +591,9 @@ struct PythonBareBoolCall {
     negated: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 enum PythonOracleShape {
     ExactAssertion,
     BoundaryAssertion,
@@ -794,6 +804,83 @@ fn push_identifier(out: &mut Vec<String>, current: &mut String, stop: &[&str]) {
         out.push(current.clone());
     }
     current.clear();
+}
+
+/// How one file's facts were obtained, for the `-v` fact-cache counters.
+enum FactLookup {
+    /// The store was not consulted (unusable base or a lossy path).
+    Skipped,
+    Hit,
+    Miss {
+        stored: Result<bool, String>,
+    },
+    Corrupt {
+        stored: Result<bool, String>,
+    },
+}
+
+impl FactLookup {
+    fn count(&self, stats: &mut PreviewFactCacheStats) {
+        let stored = match self {
+            Self::Skipped => return,
+            Self::Hit => {
+                stats.hits += 1;
+                return;
+            }
+            Self::Miss { stored } => stored,
+            Self::Corrupt { stored } => {
+                stats.corrupt_ignored += 1;
+                stored
+            }
+        };
+        stats.misses += 1;
+        match stored {
+            Ok(true) => stats.stores += 1,
+            Ok(false) => {}
+            Err(_) => stats.store_errors += 1,
+        }
+    }
+}
+
+/// `relative`'s facts from the store when a content-keyed envelope admits
+/// them, else a fresh extraction that is then persisted (#10914).
+fn stored_or_extracted_facts(
+    store: Option<&PythonFileFactStore>,
+    root: &Path,
+    relative: &Path,
+    source: &str,
+) -> (source_facts::PythonSourceFacts, FactLookup) {
+    // An envelope is named by the normalized path; a Unix filename holding a
+    // literal backslash (or a non-UTF-8 name) would share one with its folded
+    // twin, so such a file is neither read nor persisted (as in #10725).
+    let lossless = relative
+        .to_str()
+        .is_some_and(|path| cfg!(windows) || !path.contains('\\'));
+    let Some(store) = store.filter(|_| lossless) else {
+        return (extract_source_facts(relative, source), FactLookup::Skipped);
+    };
+    let key = fact_store::PythonFileFactKey::new(relative, source, root);
+    let corrupt = match store.load(&key) {
+        crate::analysis::seam_cache::CacheLoad::Hit(facts) => {
+            debug_assert_eq!(
+                facts,
+                fact_store::served_view(extract_source_facts(relative, source)),
+                "a stored envelope served facts a fresh extraction of {} does not produce",
+                relative.display()
+            );
+            return (facts, FactLookup::Hit);
+        }
+        crate::analysis::seam_cache::CacheLoad::Miss => false,
+        crate::analysis::seam_cache::CacheLoad::CorruptIgnored { .. } => true,
+    };
+    let facts = extract_source_facts(relative, source);
+    let stored = store.store(&key, &facts);
+    let lookup = if corrupt {
+        FactLookup::Corrupt { stored }
+    } else {
+        FactLookup::Miss { stored }
+    };
+    (facts, lookup)
 }
 
 fn parse_budget_limitation(
@@ -1027,20 +1114,33 @@ impl PythonAdapter {
         // keeps workspace order, so the fold sees exactly the sequential
         // order, and at most one batch of unfolded facts is held at a time.
         let token = crate::analysis::cancellation::current_token();
+        // #10914: persistent per-file fact store. A content-keyed hit serves
+        // the file's facts without parsing it; a miss or a corrupt entry
+        // extracts and persists. An unusable base is reported once and
+        // nothing is read or stored.
+        let fact_store = PythonFileFactStore::at(&options.root);
+        let mut fact_cache_stats = PreviewFactCacheStats::zero_work();
+        fact_cache_stats.unusable_base = fact_store.unusable_base_reason().map(str::to_owned);
+        let fact_store_usable = fact_cache_stats.unusable_base.is_none();
         for batch in workspace_files.chunks(FACT_EXTRACTION_BATCH_FILES) {
-            let extracted: Vec<(&PathBuf, _)> = batch
+            let extracted: Vec<(&PathBuf, _, FactLookup)> = batch
                 .par_iter()
                 .filter_map(|relative| {
                     let source = workspace_read.sources.get(relative)?;
-                    Some((
-                        relative,
+                    let (facts, lookup) =
                         crate::analysis::cancellation::with_optional_token(token.as_ref(), || {
-                            extract_source_facts(relative, source)
-                        }),
-                    ))
+                            stored_or_extracted_facts(
+                                fact_store_usable.then_some(&fact_store),
+                                &options.root,
+                                relative,
+                                source,
+                            )
+                        });
+                    Some((relative, facts, lookup))
                 })
                 .collect();
-            for (relative, facts) in extracted {
+            for (relative, facts, lookup) in extracted {
+                lookup.count(&mut fact_cache_stats);
                 debug_assert!(source_fact_snapshot_observation(&facts) > 0);
                 if let Some(limitation) = parse_budget_limitation(relative, &facts)? {
                     limitations.push(limitation);
@@ -1529,7 +1629,7 @@ impl PythonAdapter {
             limitations,
             rust_diagnostic_origins: Default::default(),
             rust_consumed_sources: Default::default(),
-            preview_fact_cache: Default::default(),
+            preview_fact_cache: fact_cache_stats,
         })
     }
 

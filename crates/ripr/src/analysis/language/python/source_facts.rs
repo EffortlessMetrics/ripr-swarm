@@ -23,9 +23,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct PythonSourceFacts {
     pub(super) file: PathBuf,
+    #[serde(skip, default = "super::fact_serde::python_language")]
     pub(super) language: &'static str,
     pub(super) owners: Vec<PythonOwner>,
     pub(super) tests: Vec<PythonTest>,
@@ -55,7 +56,7 @@ pub(super) struct PythonSourceFacts {
     pub(super) assigned_attributes: Option<Vec<String>>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct PythonSourceFact {
     pub(super) kind: PythonSourceFactKind,
     pub(super) file: PathBuf,
@@ -67,7 +68,9 @@ pub(super) struct PythonSourceFact {
     pub(super) text: String,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub(super) enum PythonSourceFactKind {
     Module,
     Class,
@@ -118,7 +121,7 @@ impl PythonSourceFactKind {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct PythonSourceLimitation {
     pub(super) kind: StaticLimitKind,
     pub(super) evidence: String,

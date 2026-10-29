@@ -36,7 +36,7 @@ use rustpython_parser::ast::{self, Expr, Ranged, Stmt};
 use std::sync::Arc;
 
 /// A module-scope name bound once to a scalar literal and never rebound.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct PythonModuleConstant {
     pub(super) name: String,
     /// Canonical literal text (`10_000` becomes `10000`).
@@ -292,7 +292,7 @@ pub(super) fn function_bound_names(
 }
 
 /// What a test file can do to a module constant's value, for one test.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct PythonTestRebinding {
     /// Names the test cannot be trusted to hold at their imported value: its
     /// own parameters and locals. Names its module binds more than once are in
