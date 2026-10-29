@@ -525,19 +525,15 @@ fn return_value_missing_discriminator(
         return None;
     }
     // `discriminate` is `None` unless reach, activation and propagation are
-    // all established: when `check` would call the change statically limited
-    // (for example no clear path to an observable sink), repair must not
-    // start on it either.
+    // established; a statically limited change must not start a repair.
     if !matches!(
         discriminate.map(|stage| &stage.state),
         Some(StageState::Weak | StageState::No)
     ) {
         return None;
     }
-    // A changed struct-literal value is judged by `check` per changed field:
-    // an assertion on a sibling field leaves the finding statically limited
-    // ("propagation unknown"). The seam does not know which field changed, so
-    // the start is withheld and `ripr repair` agrees with `ripr check`.
+    // `check` judges a struct literal per changed field and the seam does not
+    // know which changed, so the start is withheld.
     if seam.kind() == SeamKind::ReturnValue && is_struct_literal_expression(seam.expression()) {
         return None;
     }
@@ -566,39 +562,32 @@ fn return_value_missing_discriminator(
     {
         return None;
     }
-    // `check` credits a lone equality between an owner call and an owner-free
-    // expected value (`assert!(f(x) == lit)`, or the terminal Err-return guard
-    // twin `if f(x) != lit { return Err(..) }`) through the owner-return pin,
-    // while the seam-level oracle grade stays weak. Such a test already pins
-    // the changed value, so repair must not start on it either; the check is
-    // syntactic and errs toward withholding.
+    // A lone equality between an owner call and an owner-free value
+    // (`assert!(f(x) == lit)`, or the terminal Err-return guard twin) already
+    // pins the changed value, so repair must not start; syntactic, errs
+    // toward withholding.
     if related_summaries
         .iter()
         .any(|test| test_pins_owner_call_by_equality(test, &owner_fn.name, index))
     {
         return None;
     }
-    // A strengthened `#[ignore]` or `#[should_panic]` test is not an effective
-    // repair: a default run never executes the first and the second passes by
-    // panicking. Any such related test that calls the owner withholds the start.
+    // `#[ignore]` never runs and `#[should_panic]` passes by panicking, so a
+    // strengthened one is no repair: such a related owner caller withholds.
     if related_summaries
         .iter()
         .any(|test| is_ignored(test) || is_should_panic(test))
     {
         return None;
     }
-    // Adding an assertion cannot fix a test whose failure is swallowed: when
-    // the returned type has a non-plain `Drop` (it may exit the process while
-    // unwinding from the failed assertion), `check` already demotes an exact
-    // assertion and no new one would grip. Types are read from the owner's
-    // signature and the changed expression; an unreadable workspace withholds.
+    // An assertion cannot fix a test whose failure is swallowed: a non-plain
+    // `Drop` type may exit the process while unwinding, so `check` already
+    // demotes an exact assertion. An unreadable workspace withholds.
     if names_non_plain_drop_type(owner_fn, seam.expression(), index) {
         return None;
     }
-    // A start needs a test assertion that observes the owner's result: one
-    // that mentions the call or a local bound from it. `let _ = f(2);
-    // assert!(1 > 0);` calls the owner but never reads its value, so adding a
-    // discriminator is not a repair of that test's gap and `check` agrees.
+    // A start needs an assertion that observes the owner's result (the call or
+    // a local bound from it); `let _ = f(2); assert!(1 > 0);` never reads it.
     if !related_summaries
         .iter()
         .any(|test| test_assertion_observes_owner(test, owner_fn, index))
@@ -644,8 +633,7 @@ fn names_non_plain_drop_type(owner: &FunctionSummary, expression: &str, index: &
     if returns_generic_or_opaque_type(owner, signature, index) {
         return true;
     }
-    // Masked once per index and read once per type name: a run with many
-    // qualifying seams does no per-seam whole-corpus work.
+    // Masked once per index, read once per type name.
     let masked = index.call_identity_memos.masked_sources(|| {
         #[cfg(test)]
         MASK_BUILD_COUNT.with(|count| count.set(count.get() + 1));
@@ -721,8 +709,7 @@ fn returns_generic_or_opaque_type(
     } else {
         rest
     };
-    // The return type starts at the first `->` after the parameter list's
-    // closing parenthesis, so an arrow inside the list or the type is not it.
+    // The return type starts at the first `->` after the parameter list.
     let Some(open) = rest.find('(') else {
         return false;
     };
@@ -772,8 +759,7 @@ fn enclosing_header_generics(owner: &FunctionSummary, index: &RustIndex) -> Opti
         return Some(Vec::new());
     };
     let masked = crate::analysis::extract::mask_comments_and_strings(&facts.source);
-    // Every earlier line, plus the owner's own line up to its `fn` keyword: a
-    // header opened on the same line (`impl<T> S<T> { fn f(..) .. }`) counts.
+    // Earlier lines plus the owner's line up to its `fn` (same-line header).
     let lines: Vec<&str> = masked.lines().collect();
     let mut before = lines
         .iter()
@@ -888,9 +874,8 @@ fn renamed_from(masked: &str, target: &str) -> Vec<String> {
             .map_or(0, |found| found + 1);
         let mut original = &before[start..];
         if original == "self" {
-            // `use Type::{Other, self as Name}`: the original is the path
-            // segment before the `::{` of the group holding `self`, wherever
-            // `self` sits in it.
+            // `use Type::{Other, self as Name}`: the original is the segment
+            // before the group holding `self`.
             let mut depth = 0usize;
             let mut open = None;
             for (offset, ch) in before[..start].char_indices().rev() {

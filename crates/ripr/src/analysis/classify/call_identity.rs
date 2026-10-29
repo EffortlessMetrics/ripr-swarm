@@ -2102,6 +2102,40 @@ fn call_sites(body: &str, name: &str, with_methods: bool) -> Vec<(Option<Vec<Str
     calls
 }
 
+/// `module` without its leading crate segment when that segment names the
+/// owner's crate from `test` (mirrors `qualified_call_names_owner`): `crate`
+/// only from a non-`tests`, same-package, same-crate-target file, else one of
+/// the owner crate's import names. `None` when it does not (fail closed).
+fn anchored_rest<'a>(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+    test: &TestSummary,
+    module: &'a [String],
+) -> Option<&'a [String]> {
+    let owner_package = package_key(&owner.file);
+    let layout = CrateLayout::new(index, owner_package.as_deref());
+    let CrateClass::Crate(owner_crate) = layout.classify(&owner.file) else {
+        return None;
+    };
+    let (first, rest) = module.split_first()?;
+    let anchored = if first == "crate" {
+        package_key(&test.file) == owner_package
+            && !under_tests_dir(&test.file)
+            && !under_tests_dir(&owner.file)
+            && layout.class(&test.file).as_deref() == Some(owner_crate.as_str())
+    } else {
+        own_crate_names_of(
+            &owner.file,
+            owner_package.as_deref(),
+            Some(&owner_crate),
+            test,
+            index,
+        )
+        .contains(first)
+    };
+    anchored.then_some(rest)
+}
+
 /// Whether the test's file defines a rival `fn <owner name>` (any scope).
 fn test_file_defines_fn(index: &RustIndex, test: &TestSummary, owner: &FunctionSummary) -> bool {
     index.files().get(&test.file).is_none_or(|facts| {
@@ -2156,20 +2190,10 @@ pub(in crate::analysis) fn text_calls_owner(
                         });
                         let module = &segments[..segments.len() - 1];
                         !rival
-                            || module_path_of(owner, true).is_some_and(|path| {
-                                let rest = match module.split_first() {
-                                    Some((first, rest))
-                                        if (first == "crate"
-                                            && !under_tests_dir(&test.file)
-                                            && package_key(&test.file) == package_key(&owner.file))
-                                            || index.package_names.contains(first) =>
-                                    {
-                                        rest
-                                    }
-                                    _ => module,
-                                };
-                                !module.is_empty() && rest == path
-                            })
+                            || (!module.is_empty()
+                                && module_path_of(owner, true).is_some_and(|path| {
+                                    anchored_rest(index, owner, test, module) == Some(&path[..])
+                                }))
                     }
                     _ => false,
                 }
@@ -4016,6 +4040,31 @@ mod tests {
     fn a_mixed_path_form_index_has_no_identity() {
         let index = index(&[("src/lib.rs", RENDER_LIB), ("/w/x/src/lib.rs", BIN_UTIL)]);
         assert_eq!(settle(&index, "src/lib.rs::a::render", "doubles_two"), None);
+    }
+
+    /// `crate::W::dbl` names the test's own crate: it observes a library
+    /// owner from a unit test of that crate, never from a `main.rs` test.
+    #[test]
+    fn crate_qualified_method_observes_the_owner_only_from_its_own_crate() {
+        let w = "pub struct W;\nimpl W {\n    pub fn dbl(x: i32) -> i32 { x }\n}\n";
+        let lib = format!("{w}#[cfg(test)]\nmod tests {{\n    #[test]\n    fn unit() {{}}\n}}\n");
+        let main = "struct W;\nimpl W {\n    fn dbl(x: i32) -> i32 { x }\n}\nfn main() {}\n#[test]\nfn bin() {}\n";
+        let index = index(&[("src/lib.rs", &lib), ("src/main.rs", main)]);
+        let owner = index
+            .functions()
+            .iter()
+            .find(|f| f.file.ends_with("lib.rs") && f.name == "dbl");
+        let unit = index.tests().iter().find(|t| t.name == "unit");
+        let bin = index.tests().iter().find(|t| t.name == "bin");
+        assert!(
+            owner.is_some() && unit.is_some() && bin.is_some(),
+            "fixture items must be indexed"
+        );
+        let (Some(owner), Some(unit), Some(bin)) = (owner, unit, bin) else {
+            return;
+        };
+        assert!(text_calls_owner(&index, owner, unit, "crate::W::dbl(2)"));
+        assert!(!text_calls_owner(&index, owner, bin, "crate::W::dbl(2)"));
     }
 
     /// #9218: a qualified call feeds the owner's inputs only when its

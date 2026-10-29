@@ -289,8 +289,7 @@ fn strong_exact_assert_is_not_a_repair_start() -> Result<(), String> {
         DBL_NEW,
         "use ar::dbl;\n\n#[test]\nfn exact() {\n    assert_eq!(dbl(2), 6);\n}\n",
     )?;
-    // Address the very seam the weak case started: the refusal must come from
-    // the seam being pinned, not from nothing being selected.
+    // Address the seam the weak case started, so the refusal is the pin's.
     let (ok, repair) = repo.repair_text(&[&seam])?;
     assert!(!ok, "{repair}");
     assert!(
@@ -361,9 +360,8 @@ fn indirect_call_without_a_direct_owner_call_is_not_a_repair_start() -> Result<(
 const ASYNC_OLD: &str = "pub async fn dbl(x: i32) -> i32 {\n    x * 2\n}\n";
 const ASYNC_NEW: &str = "pub async fn dbl(x: i32) -> i32 {\n    x * 3\n}\n";
 
-/// The executor-helper control differs from the awaited positive in exactly
-/// one respect (`block_on(dbl(2))` versus `dbl(2).await`), so only the
-/// indirect-reach check can explain the different outcomes.
+/// Differs from the awaited positive only by `block_on(dbl(2))` versus
+/// `dbl(2).await`, so only the indirect-reach check explains the outcome.
 #[test]
 fn executor_helper_differs_from_the_awaited_call_only_by_indirect_reach() -> Result<(), String> {
     assert_repair_ready(
@@ -383,20 +381,16 @@ fn executor_helper_differs_from_the_awaited_call_only_by_indirect_reach() -> Res
 const GUARD_TEST: &str = "use ar::dbl;\n\n#[test]\nfn guarded() -> Result<(), String> {\n    if dbl(2) != 6 {\n        return Err(\"mismatch\".to_string());\n    }\n    Ok(())\n}\n";
 const SHADOWED_GUARD_TEST: &str = "use ar::dbl;\n\nfn Err(_: String) -> Result<(), String> {\n    Ok(())\n}\n\n#[test]\nfn guarded() -> Result<(), String> {\n    if dbl(2) != 6 {\n        return Err(\"mismatch\".to_string());\n    }\n    Ok(())\n}\n";
 
-/// The two tests differ only by a value-namespace `Err` that makes the guard
-/// an ordinary statement: the prelude guard pins the owner (no start), the
-/// shadowed one does not (RIPR-SPEC-0197), so only the shadow rule explains
-/// the different outcomes.
+/// Differs only by a value-namespace `Err` that makes the guard an ordinary
+/// statement (RIPR-SPEC-0197): the prelude guard pins the owner, the shadow not.
 #[test]
 fn shadowed_err_guard_differs_from_the_prelude_guard_only_by_the_shadow() -> Result<(), String> {
     assert_no_start("prelude-guard", DBL_OLD, DBL_NEW, GUARD_TEST)?;
     assert_repair_ready("shadowed-guard", DBL_OLD, DBL_NEW, SHADOWED_GUARD_TEST)
 }
 
-/// A finding the check screen calls statically limited ("propagation
-/// unknown") must not start a repair even though the seam-level evidence has
-/// a weak oracle: it keeps its refusal with the manual route (#10701 review).
-/// Runs the real fixture, whose finding-level and seam-level evidence differ.
+/// A statically limited ("propagation unknown") finding must not start a
+/// repair even with a weak seam-level oracle; runs the real fixture.
 #[test]
 fn statically_limited_finding_keeps_its_refusal_and_manual_route() -> Result<(), String> {
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -425,9 +419,8 @@ fn statically_limited_finding_keeps_its_refusal_and_manual_route() -> Result<(),
     Ok(())
 }
 
-/// Function-value reach beside a direct call: the direct call alone would
-/// start a repair, so only the function-value (indirect reach) rule can
-/// explain the refusal.
+/// Function-value reach beside a direct call: only the indirect-reach rule
+/// explains the refusal.
 #[test]
 fn function_value_reach_beside_a_direct_call_is_not_a_repair_start() -> Result<(), String> {
     assert_repair_ready(
@@ -445,9 +438,8 @@ fn function_value_reach_beside_a_direct_call_is_not_a_repair_start() -> Result<(
     Ok(())
 }
 
-/// A weak test beside a statically contradicted exact assertion: the weak
-/// test alone starts a repair, so only the contradiction rule explains the
-/// refusal.
+/// A weak test beside a contradicted exact assertion: only the contradiction
+/// rule explains the refusal.
 #[test]
 fn contradicted_assertion_beside_a_weak_test_is_not_a_repair_start() -> Result<(), String> {
     let weak = "#[test]\nfn weak() {\n    assert!(dbl(2) > 0);\n}\n";
@@ -471,13 +463,10 @@ fn contradicted_assertion_beside_a_weak_test_is_not_a_repair_start() -> Result<(
 const CONFIG_OLD: &str = "pub struct Config {\n    pub timeout_secs: u32,\n    pub retries: u32,\n}\n\npub fn default_config() -> Config {\n    let retries = 3;\n    Config {\n        timeout_secs: 30,\n        retries: 1,\n    }\n}\n";
 const CONFIG_NEW: &str = "pub struct Config {\n    pub timeout_secs: u32,\n    pub retries: u32,\n}\n\npub fn default_config() -> Config {\n    let retries = 3;\n    Config {\n        timeout_secs: 30,\n        retries,\n    }\n}\n";
 
-/// `ripr repair` must agree with `ripr check` on the struct-field change of
-/// `observation_unverified_field_construction` (the check run on the fixture
-/// itself is `statically_limited_finding_keeps_its_refusal_and_manual_route`):
-/// a weak assertion on a sibling field is not a repair start, bare or
-/// addressed by location, and the manual stub route stays
-/// named. Bare `ripr repair` on the fixture started before the struct-literal
-/// withhold, so this binds the repair path, not only the check screen.
+/// `ripr repair` agrees with `ripr check` on the struct-field change of
+/// `observation_unverified_field_construction`: a weak assertion on a sibling
+/// field is not a repair start, bare or by location, and the manual stub route
+/// stays named.
 #[test]
 fn repair_agrees_with_check_on_a_statically_limited_struct_field_finding() -> Result<(), String> {
     let repo = assert_no_start(
@@ -519,9 +508,8 @@ fn dbl_test(body: &str) -> String {
     format!("use ar::dbl;\n\n#[test]\nfn t() {{\n{body}}}\n")
 }
 
-/// Adding an assertion to a test that never runs (`#[ignore]`) or that passes
-/// by panicking (`#[should_panic]`) is not an effective repair; each differs
-/// from the repairable twin only by its attribute.
+/// A test that never runs (`#[ignore]`) or passes by panicking
+/// (`#[should_panic]`) is not repairable; each differs only by its attribute.
 #[test]
 fn ignored_and_should_panic_tests_are_not_a_repair_start() -> Result<(), String> {
     let body = "    assert!(dbl(2) > 0);\n";
@@ -537,9 +525,8 @@ fn ignored_and_should_panic_tests_are_not_a_repair_start() -> Result<(), String>
     Ok(())
 }
 
-/// `let v = dbl(2); assert!(v == 6)` pins the value through a local exactly as
-/// `assert!(dbl(2) == 6)` does, so repair withholds; a weak assertion on the
-/// same local still starts.
+/// `let v = dbl(2); assert!(v == 6)` pins the value as `assert!(dbl(2) == 6)`
+/// does, so repair withholds; a weak assertion on the same local still starts.
 #[test]
 fn equality_through_a_local_binding_is_not_a_repair_start() -> Result<(), String> {
     assert_repair_ready(
@@ -851,6 +838,8 @@ fn discarded_owner_result_with_unrelated_assertion_is_not_a_repair_start() -> Re
     Ok(())
 }
 
+const DBL: (&str, &str) = (DBL_OLD, DBL_NEW);
+const W: (&str, &str) = (W_OLD, W_NEW);
 const W_OLD: &str =
     "pub struct W;\nimpl W {\n    pub fn dbl(x: i32) -> i32 {\n        x * 2\n    }\n}\n";
 const W_NEW: &str =
@@ -860,15 +849,13 @@ const RIVALS: &str = "mod other { pub fn dbl(x: i32) -> i32 { x } }\nmod Other {
 
 /// `bad` must not start; the same fixture with `good` made genuine must.
 fn refuses_unless_genuine(
-    case: &str,
-    old: &str,
-    new: &str,
+    fx: (&str, &str),
     test: &str,
     bad: &str,
     good: &str,
 ) -> Result<(), String> {
-    assert_no_start(case, old, new, &test.replace("@", bad))?;
-    assert_repair_ready(case, old, new, &test.replace("@", good))
+    assert_no_start(bad, fx.0, fx.1, &test.replace("@", bad))?;
+    assert_repair_ready(bad, fx.0, fx.1, &test.replace("@", good))
 }
 
 /// A non-owner call (collision, comment or string, shadowed local, other
@@ -886,13 +873,10 @@ fn calls_that_are_not_the_owner_do_not_observe_it() -> Result<(), String> {
     ];
     for call in calls {
         for shape in ["assert!(@ > 0);", "let r = @;\n    assert!(r > 0);"] {
-            for (old, new, real) in [
-                (DBL_OLD, DBL_NEW, "ar::dbl(2)"),
-                (W_OLD, W_NEW, "ar::W::dbl(2)"),
-            ] {
+            for (fx, real) in [(DBL, "ar::dbl(2)"), (W, "ar::W::dbl(2)")] {
                 let test =
                     format!("{RIVALS}\n#[test]\nfn t() {{\n    let _ = {real};\n    {shape}\n}}\n");
-                refuses_unless_genuine(&format!("{call}: {shape}"), old, new, &test, call, real)?;
+                refuses_unless_genuine(fx, &test, call, real)?;
             }
         }
     }
@@ -924,7 +908,7 @@ fn calls_that_are_not_the_owner_do_not_observe_it() -> Result<(), String> {
         ),
         ("assert!(1 > 0);", "assert!(ar::dbl(2) > 0);"),
     ] {
-        refuses_unless_genuine(bad, DBL_OLD, DBL_NEW, frame, bad, good)?;
+        refuses_unless_genuine(DBL, frame, bad, good)?;
     }
     // A bare call of a name the test file defines itself may not be the owner.
     for local in [
@@ -934,46 +918,25 @@ fn calls_that_are_not_the_owner_do_not_observe_it() -> Result<(), String> {
         let test = format!(
             "{local}#[test]\nfn t() {{\n    let _ = ar::dbl(2);\n    assert!(@ > 0);\n}}\n"
         );
-        refuses_unless_genuine(local, DBL_OLD, DBL_NEW, &test, "dbl(2)", "ar::dbl(2)")?;
+        refuses_unless_genuine(DBL, &test, "dbl(2)", "ar::dbl(2)")?;
     }
     // In an integration test `crate::` names the test crate, not the library.
     let test = "pub struct W;\nimpl W { pub fn dbl(x: i32) -> i32 { x } }\nfn dbl(x: i32) -> i32 { x }\n#[test]\nfn t() {\n    let _ = ar::W::dbl(2);\n    assert!(@ > 0);\n}\n";
-    refuses_unless_genuine(
-        "crate-W",
-        W_OLD,
-        W_NEW,
-        test,
-        "crate::W::dbl(2)",
-        "ar::W::dbl(2)",
-    )?;
+    refuses_unless_genuine(W, test, "crate::W::dbl(2)", "ar::W::dbl(2)")?;
     let test = "fn dbl(x: i32) -> i32 { x }\n#[test]\nfn t() {\n    let _ = ar::dbl(2);\n    assert!(@ > 0);\n}\n";
-    refuses_unless_genuine(
-        "crate-dbl",
-        DBL_OLD,
-        DBL_NEW,
-        test,
-        "crate::dbl(2)",
-        "ar::dbl(2)",
-    )?;
+    refuses_unless_genuine(DBL, test, "crate::dbl(2)", "ar::dbl(2)")?;
     // Another type of the same name with a same-named method is not the owner.
     let test = "mod other { pub struct W; impl W { pub fn dbl(x: i32) -> i32 { x } } }\n#[test]\nfn t() {\n    let _ = ar::W::dbl(2);\n    assert!(@ > 0);\n}\n";
-    refuses_unless_genuine(
-        "other-W",
-        W_OLD,
-        W_NEW,
-        test,
-        "other::W::dbl(2)",
-        "ar::W::dbl(2)",
-    )?;
+    refuses_unless_genuine(W, test, "other::W::dbl(2)", "ar::W::dbl(2)")?;
     // A method call reaches only a method; a bare call only a free function.
     let frame = format!(
         "{RIVALS}fn dbl(x: i32) -> i32 {{ x }}\n#[test]\nfn t() {{\n    let _ = @R;\n    assert!(@ > 0);\n}}\n"
     );
-    for (old, new, real, bad) in [
-        (DBL_OLD, DBL_NEW, "ar::dbl(2)", "2u32.dbl()"),
-        (W_OLD, W_NEW, "ar::W::dbl(2)", "dbl(2)"),
+    for (fx, real, bad) in [
+        (DBL, "ar::dbl(2)", "2u32.dbl()"),
+        (W, "ar::W::dbl(2)", "dbl(2)"),
     ] {
-        refuses_unless_genuine(bad, old, new, &frame.replace("@R", real), bad, real)?;
+        refuses_unless_genuine(fx, &frame.replace("@R", real), bad, real)?;
     }
     let (old, new) = (
         "pub fn f(x: i32) -> i32 {\n    x * 2\n}\n",
@@ -981,7 +944,7 @@ fn calls_that_are_not_the_owner_do_not_observe_it() -> Result<(), String> {
     );
     let test =
         format!("{RIVALS}#[test]\nfn t() {{\n    let _ = ar::f(2);\n    assert!(@ > 0);\n}}\n");
-    refuses_unless_genuine("one-letter", old, new, &test, "of(2)", "ar::f(2)")
+    refuses_unless_genuine((old, new), &test, "of(2)", "ar::f(2)")
 }
 
 /// The owner's own spellings still start, with the rivals present.
