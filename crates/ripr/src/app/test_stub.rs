@@ -381,6 +381,75 @@ pub(crate) enum StubRouteDecision {
         reason: String,
         seam_ids: Vec<String>,
     },
+    /// Several seams share the finding's line, but exactly one of them
+    /// produces a stub (#10710): print `ripr agent stub --seam-id ID`, the
+    /// command that was just resolved to a stub.
+    SeamStub { seam_id: String },
+}
+
+/// The most ambiguous seams checked for a stub before the choices are left
+/// unvalidated.
+const AMBIGUOUS_VALIDATION_LIMIT: usize = 8;
+
+/// #10710: an ambiguous `--at` line names several seams, but only some of them
+/// are reported gaps a stub can be written for (`P { x: 1, y: 3 }` holds one
+/// seam per field and the unchanged field is not a gap). Resolve each seam ID
+/// with the same resolver `ripr agent stub --seam-id` runs, so `check` prints
+/// only commands that produce a stub. One survivor becomes that command, several
+/// stay a choice among survivors, and none becomes the first refusal. If the
+/// seams cannot be resolved at all the original unvalidated choices stand.
+fn validated_ambiguity(
+    root: &Path,
+    config: &RiprConfig,
+    reason: String,
+    seam_ids: Vec<String>,
+) -> StubRouteDecision {
+    let unvalidated = |reason: String, seam_ids: Vec<String>| StubRouteDecision::Ambiguous {
+        reason,
+        seam_ids,
+    };
+    if seam_ids.len() > AMBIGUOUS_VALIDATION_LIMIT {
+        return unvalidated(reason, seam_ids);
+    }
+    let Ok((classified, _)) = analysis::inventory_classified_seams_at_with_config(root, config)
+    else {
+        return unvalidated(reason, seam_ids);
+    };
+    let mut stubbable = Vec::new();
+    let mut first_refusal = None;
+    for seam_id in &seam_ids {
+        let Some(entry) = classified
+            .iter()
+            .find(|entry| entry.seam.id().as_str() == seam_id)
+        else {
+            // The seam is outside the classified inventory: it is not a
+            // reported gap, and `agent stub --seam-id` would not find it.
+            first_refusal.get_or_insert_with(|| TestStubRefusal::NotAGap.reason().to_string());
+            continue;
+        };
+        let Ok(source) = read_owner_source(root, &entry.seam) else {
+            return unvalidated(reason, seam_ids);
+        };
+        let resolution = resolution_for(root, config, entry, source);
+        match (&resolution.outcome, resolution.weak_oracle_guidance) {
+            (Ok(_), None) => stubbable.push(seam_id.clone()),
+            (Ok(_), Some(guidance)) => {
+                first_refusal.get_or_insert(guidance);
+            }
+            (Err(refusal), _) => {
+                first_refusal.get_or_insert_with(|| refusal.reason().to_string());
+            }
+        }
+    }
+    match stubbable.len() {
+        0 => StubRouteDecision::Refused {
+            reason: first_refusal.unwrap_or(reason),
+        },
+        1 => StubRouteDecision::SeamStub {
+            seam_id: stubbable.swap_remove(0),
+        },
+        _ => unvalidated(reason, stubbable),
+    }
 }
 
 /// A route decision bound to the finding it was computed for.
@@ -437,10 +506,7 @@ pub(crate) fn stub_route_for_finding(
             Err(TestStubError::Ambiguous { message, seam_ids }) if !seam_ids.is_empty() => {
                 return Some(StubRoute {
                     finding_id: finding.id.clone(),
-                    decision: StubRouteDecision::Ambiguous {
-                        reason: message,
-                        seam_ids,
-                    },
+                    decision: validated_ambiguity(root, config, message, seam_ids),
                 });
             }
             Err(_) => return None,
@@ -830,13 +896,15 @@ fn hidden_stub_ambiguity(
     scoped_file(root, &file)?;
     match resolve_at_location(root, config, &file, line, Some(kind), seam_index) {
         Err(TestStubError::Ambiguous { message, seam_ids }) if !seam_ids.is_empty() => {
-            Some(StubRoute {
-                finding_id: finding.id.clone(),
-                decision: StubRouteDecision::Ambiguous {
-                    reason: message,
-                    seam_ids,
-                },
-            })
+            // #10710: a hidden row prints only choices that produce a stub; a
+            // row whose every choice refuses prints nothing.
+            match validated_ambiguity(root, config, message, seam_ids) {
+                StubRouteDecision::Refused { .. } => None,
+                decision => Some(StubRoute {
+                    finding_id: finding.id.clone(),
+                    decision,
+                }),
+            }
         }
         _ => None,
     }

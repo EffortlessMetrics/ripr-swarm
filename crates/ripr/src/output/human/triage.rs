@@ -339,8 +339,12 @@ pub(crate) fn render_human_triage(
             let stub_rendered = stub_eligible
                 && matches!(
                     navigation.stub_route_for(&finding.id),
-                    Some(StubRouteDecision::Stub { .. })
+                    Some(StubRouteDecision::Stub { .. } | StubRouteDecision::SeamStub { .. })
                 );
+            // #10710: whether this finding printed a runnable repair start; a
+            // finding with neither a repair start nor a stub gets the
+            // hand-written test step below instead of a dead end.
+            let mut repair_printed = false;
             // #8166 Slice C: an eligible top finding also gets the repair
             // start, naming the seam identity the check pipeline's
             // producer-owned gate established. No route, no line: an
@@ -371,11 +375,13 @@ pub(crate) fn render_human_triage(
                     }
                     out.push_str(&format!("  {command}\n"));
                     super::push_powershell_variant(out, "  ", &command);
+                    repair_printed = true;
                 }
             } else {
                 match navigation.repair_route_for(&finding.id) {
                     Some(route) => {
                         if !is_static_limited(finding) {
+                            repair_printed = true;
                             let command = navigation.repair_command(&route.seam_id);
                             if let Some(file) = route.uncommitted_target.as_deref() {
                                 // `ripr repair` would refuse this start: its
@@ -421,6 +427,12 @@ pub(crate) fn render_human_triage(
                         out.push_str(&format!("  {command}\n"));
                         super::push_powershell_variant(out, "  ", &command);
                     }
+                    Some(StubRouteDecision::SeamStub { seam_id }) => {
+                        let command = navigation.stub_seam_command(seam_id);
+                        out.push_str("Write a test for it:\n");
+                        out.push_str(&format!("  {command}\n"));
+                        super::push_powershell_variant(out, "  ", &command);
+                    }
                     Some(StubRouteDecision::Ambiguous { reason, seam_ids }) => {
                         push_ambiguous_stub_choices(
                             out,
@@ -433,6 +445,9 @@ pub(crate) fn render_human_triage(
                     }
                     Some(StubRouteDecision::Refused { reason }) => {
                         out.push_str(&format!("No test stub here: {reason}\n"));
+                        if !repair_printed {
+                            out.push_str(&hand_written_test_step(finding));
+                        }
                     }
                     None => {}
                 }
@@ -497,17 +512,26 @@ pub(crate) fn render_human_triage(
             ));
             if offers_test_stub(finding)
                 && let Some(FindingDrillIn::Commands(navigation)) = drill_in
-                && let Some(StubRouteDecision::Ambiguous { reason, seam_ids }) =
-                    navigation.stub_route_for(&finding.id)
             {
-                push_ambiguous_stub_choices(
-                    out,
-                    navigation,
-                    &finding.id,
-                    reason,
-                    seam_ids,
-                    "      ",
-                );
+                match navigation.stub_route_for(&finding.id) {
+                    Some(StubRouteDecision::Ambiguous { reason, seam_ids }) => {
+                        push_ambiguous_stub_choices(
+                            out,
+                            navigation,
+                            &finding.id,
+                            reason,
+                            seam_ids,
+                            "      ",
+                        );
+                    }
+                    Some(StubRouteDecision::SeamStub { seam_id }) => {
+                        let command = navigation.stub_seam_command(seam_id);
+                        out.push_str("      Write a test for it:\n");
+                        out.push_str(&format!("        {command}\n"));
+                        super::push_powershell_variant(out, "        ", &command);
+                    }
+                    _ => {}
+                }
             }
         }
         let remaining = triage.omitted.len() - listed;
@@ -552,6 +576,30 @@ pub(super) fn hidden_stub_route_findings<'a>(triage: &HumanTriage<'a>) -> Vec<&'
         .copied()
         .filter(|finding| offers_test_stub(finding))
         .collect()
+}
+
+/// #10710: the one plain next step for a finding that has neither a repair
+/// start nor a test stub. It names the test to write by hand and says no ripr
+/// repair route exists for this kind of change yet, so the reader is never
+/// pointed at a command that would refuse.
+fn hand_written_test_step(finding: &Finding) -> String {
+    let shape = match finding.probe.family {
+        ProbeFamily::Predicate => {
+            "call the function with an input just below, exactly on, and just above the changed limit, and assert the exact result each time"
+        }
+        ProbeFamily::FieldConstruction => {
+            "call the function and assert the exact value of the changed field on what it returns"
+        }
+        ProbeFamily::SideEffect | ProbeFamily::CallDeletion => {
+            "call the function, then assert the visible change the changed call makes (a changed value, state, or output)"
+        }
+        _ => {
+            "call the function with an input that reaches the changed line and assert the exact value it returns"
+        }
+    };
+    format!(
+        "Write this test by hand: {shape}. ripr has no repair route for this kind of change yet, so there is no command to run; add the test, then rerun `ripr check`.\n"
+    )
 }
 
 fn push_ambiguous_stub_choices(
