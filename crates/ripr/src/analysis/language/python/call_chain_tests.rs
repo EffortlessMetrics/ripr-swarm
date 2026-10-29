@@ -573,6 +573,44 @@ fn owner_module_hooks_and_class_body_code_are_not_credited() -> Check {
         format!("{functions}\n\ngetattr(render, \"__glob\" + \"als__\")[\"_pad\"] = lambda: 2\n");
     withheld(&run(&built, &[])?, "built getattr name");
 
+    // A file the test imports replaces the owner module in `sys.modules`,
+    // plainly or with a built name.
+    let test_with_boot = "import reach.boot\nfrom reach.ledger import render\n\n\ndef test_render():\n    assert render() == \"|  |\"\n";
+    for boot in [
+        "import types\nfrom sys import modules\n\nmodules[\"reach.ledger\"] = types.SimpleNamespace(render=lambda: \"|  |\")\n",
+        "import sys, types\n\nsys.modules[\"reach.\" + \"led\" + \"ger\"] = types.SimpleNamespace(**{\"ren\" + \"der\": lambda: \"|  |\"})\n",
+    ] {
+        let files = [
+            ("reach/__init__.py", ""),
+            ("reach/ledger.py", functions),
+            ("reach/boot.py", boot),
+            ("tests/test_ledger.py", test_with_boot),
+        ];
+        let finding = classify(&files, "reach/ledger.py", 2, "    return 2", "    return 3")?;
+        withheld(&finding, boot);
+    }
+    // An import hook hands the test a different owner module.
+    let hook = "import sys\nimport types\n\n\nclass _Finder:\n    def find_spec(self, name, path, target=None):\n        if name != \"reach.ledger\":\n            return None\n        return types.SimpleNamespace(\n            name=name, loader=self, origin=None, submodule_search_locations=None,\n            loader_state=None, cached=None, parent=\"reach\", has_location=False,\n        )\n\n    def create_module(self, spec):\n        return types.SimpleNamespace(render=lambda: \"|  |\")\n\n    def exec_module(self, module):\n        pass\n\n\nsys.meta_path.insert(0, _Finder())\n";
+    let files = [
+        ("reach/__init__.py", ""),
+        ("reach/ledger.py", functions),
+        ("reach/boot.py", hook),
+        ("tests/test_ledger.py", test_with_boot),
+    ];
+    withheld(
+        &classify(&files, "reach/ledger.py", 2, "    return 2", "    return 3")?,
+        "meta_path hook",
+    );
+    // An inert imported helper keeps the credit.
+    let files = [
+        ("reach/__init__.py", ""),
+        ("reach/ledger.py", functions),
+        ("reach/boot.py", "VALUE = 1\n"),
+        ("tests/test_ledger.py", test_with_boot),
+    ];
+    let finding = classify(&files, "reach/ledger.py", 2, "    return 2", "    return 3")?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+
     // Many locals and many earlier assertions: the scan stays fast and the
     // pinned assertion still credits.
     let mut test = String::from("from reach.ledger import Ledger\n\n\ndef test_render_ledger():\n");

@@ -25,8 +25,10 @@
 //!   while the class body does; it is built as `Class()` with no arguments;
 //! - no workspace file, the owner module included, writes a dunder attribute
 //!   or reflects (`getattr`, `inspect`, `gc`, frames, a function's
-//!   `__globals__`, `setattr`, ...), which can write the module namespace under
-//!   a name built at runtime;
+//!   `__globals__`, `setattr`, ...) or touches the import system
+//!   (`sys.modules`, `meta_path`, `importlib`, ...), which can write the module
+//!   namespace under a name built at runtime or hand an importer another
+//!   module;
 //! - inside a callable, a name is a parameter, a call is a bare call of a model
 //!   function or class of the module, or a method call on an instance of a
 //!   model class (the method's receiver, a parameter holding one, or

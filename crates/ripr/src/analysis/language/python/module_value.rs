@@ -135,13 +135,30 @@ const FRAME_WALKERS: [&str; 9] = [
 /// takes the name at runtime (`getattr`, `dir`, `inspect`, ...). Such code can
 /// write a module namespace under a name built at runtime, so no name it
 /// mentions bounds what it changes (#9226).
+/// The import system counts too: a file that may replace a module in
+/// `sys.modules` (however spelled: `from sys import modules`) or install an
+/// import hook hands every importer a different module.
 pub(super) fn mentions_reflection(source: &str) -> bool {
     REFLECTIVE_SPELLINGS
         .iter()
         .chain(&FRAME_WALKERS)
+        .chain(&IMPORT_SYSTEM)
         .chain(&["get_objects", "setattr", "__setattr__", "delattr"])
         .any(|spelling| mentions_identifier(source, spelling))
+        || (mentions_identifier(source, "sys") && mentions_identifier(source, "modules"))
 }
+
+/// Words that replace what an `import` binds (#9226).
+const IMPORT_SYSTEM: [&str; 8] = [
+    "meta_path",
+    "path_hooks",
+    "path_importer_cache",
+    "importlib",
+    "__import__",
+    "import_module",
+    "exec_module",
+    "reload",
+];
 
 /// Spellings that reach a module's objects without writing their names.
 const REFLECTIVE_SPELLINGS: [&str; 16] = [
