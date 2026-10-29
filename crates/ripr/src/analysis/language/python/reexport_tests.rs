@@ -388,6 +388,40 @@ fn all_mentioned_only_in_a_docstring_does_not_filter_star_exports() -> Result<()
 }
 
 #[test]
+fn package_star_export_is_not_credited_when_the_module_rebinds_the_name() -> Result<(), String> {
+    let dynamic = "globals()['one'] = lambda items: 0\n";
+    let star = "from other import *\n";
+    for (extra, why) in [
+        (dynamic, "globals() write"),
+        (star, "module-side star import"),
+    ] {
+        let more = format!(
+            "def one(items):\n    if len(items) != 1:\n        raise ValueError('one')\n    return items[0]\n\n\n{extra}"
+        );
+        let finding = analyze_one_line(
+            "rebound-by-module",
+            &[
+                ("pkg/more.py", more.as_str()),
+                ("pkg/__init__.py", "from .more import *\n"),
+                (
+                    "tests/test_more.py",
+                    "import pkg\n\n\ndef test_one():\n    assert pkg.one([7]) == 7\n",
+                ),
+            ],
+            "pkg/more.py",
+            3,
+        )?;
+        if finding.class != ExposureClass::NoStaticPath {
+            return Err(format!(
+                "`pkg.one` may be rebound by a {why}; got {:?}",
+                finding.class
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn quoted_name_outside_all_does_not_satisfy_all() -> Result<(), String> {
     let finding = analyze_one_line(
         "quoted-elsewhere",

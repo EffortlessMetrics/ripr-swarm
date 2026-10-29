@@ -431,3 +431,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — propagate_stdout_macro (24)
+
+Reason:
+RIPR-SPEC-0122: plain-language wording for the default and human-full check views (#10691); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless propagate_stdout_macro --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

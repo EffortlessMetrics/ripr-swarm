@@ -26,6 +26,16 @@ impl TestDeclarationRoot {
 /// (`it(name, { timeout }, fn)`); otherwise the callback is argument 1, which
 /// keeps `test(name, fn, timeout)` working (#4548).
 pub(super) fn declaration_callback_index(call: &oxc_ast::ast::CallExpression<'_>) -> usize {
+    callback_index(call, false)
+}
+
+/// [`declaration_callback_index`] for a root bound to AVA's `test`
+/// (`ava_macro`), where a named macro may precede the callback
+/// (`test(title, macro, async (t) => {})`, #10964). Without that provenance a
+/// named second argument is not a macro: `node:test` and Vitest accept an
+/// options object by name, and treating its callback as running would credit a
+/// skipped test.
+fn callback_index(call: &oxc_ast::ast::CallExpression<'_>, ava_macro: bool) -> usize {
     let is_function = |argument: Option<&oxc_ast::ast::Argument<'_>>| {
         matches!(
             argument,
@@ -39,6 +49,10 @@ pub(super) fn declaration_callback_index(call: &oxc_ast::ast::CallExpression<'_>
         Some(oxc_ast::ast::Argument::ObjectExpression(_)) if is_function(call.arguments.get(2)) => {
             2
         }
+        Some(
+            oxc_ast::ast::Argument::Identifier(_)
+            | oxc_ast::ast::Argument::StaticMemberExpression(_),
+        ) if ava_macro && is_function(call.arguments.get(2)) => 2,
         _ => 1,
     }
 }
@@ -3584,7 +3598,8 @@ fn test_name_and_assertions_from_registration(
     }
 
     let name = title_argument(call.arguments.first()?, source, call.span.start as usize)?;
-    let callback = call.arguments.get(declaration_callback_index(call))?;
+    let ava_macro = bindings.registration_is_ava(callee_root_name(&call.callee));
+    let callback = call.arguments.get(callback_index(call, ava_macro))?;
     // `node:test` / AVA-style contexts end a running test as skipped or todo
     // when the body calls `t.skip()` / `t.todo()` (RIPR-SPEC-0243 rule 17):
     // the run passes however the later assertions would have gone, so the

@@ -17,8 +17,11 @@
 //! Fail closed toward not-`exposed` only when static evidence sees the table
 //! and either (1) the expected column is the same unvaried literal as a
 //! changed returned parameter and that literal matches the replacement
-//! return, or (2) every row's bound integer literals make the old and new
-//! arithmetic evaluate equal. An unreadable table, a non-literal cell, a
+//! return, (2) every row's bound integer literals make the old and new
+//! arithmetic evaluate equal, or (3) an exact binary factor swap has bounded
+//! primitive numeric rows with finite products. That last reading never
+//! infers the production operands' runtime types or changes grouping.
+//! An unreadable table, a non-literal cell, a
 //! non-table strong test, a row that distinguishes the change, or an
 //! unvaried value that would still fail after the replacement keeps today's
 //! verdict.
@@ -39,17 +42,19 @@ use std::path::Path;
 /// Rows beyond this bound leave the table unread.
 const MAX_TABLE_ROWS: usize = 64;
 
-/// A changed operand that no readable table row varies.
+/// A changed operand expression that the readable table rows do not discriminate.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct UnvariedTableOperand {
-    pub(super) operand: String,
     pub(super) reason: String,
+    pub(super) discriminator: String,
+    pub(super) action: String,
 }
 
 /// When every strong related table-driven oracle takes its expected value from
 /// a row column and no row varies the changed returned operand, name that
 /// operand. Also names a bound arithmetic operand when every row's integer
-/// literals make the old and new expressions agree. None when a non-table
+/// literals make the old and new expressions agree, including the bounded
+/// primitive numeric reading for exact factor swaps. None when a non-table
 /// strong test exists, a table varies or distinguishes the operand, or the
 /// table cannot be read.
 pub(super) fn python_unvaried_table_operand(
@@ -58,10 +63,18 @@ pub(super) fn python_unvaried_table_operand(
     owner: &PythonOwner,
     related_candidates: &[PythonRelatedCandidate<'_>],
     focus: &PythonAssertionFocus,
+    sole_line_replacement: bool,
 ) -> Option<UnvariedTableOperand> {
     unvaried_returned_parameter_operand(line_text, old_line_text, owner, related_candidates, focus)
         .or_else(|| {
-            unvaried_arithmetic_operand(line_text, old_line_text, owner, related_candidates, focus)
+            unvaried_arithmetic_operand(
+                line_text,
+                old_line_text,
+                owner,
+                related_candidates,
+                focus,
+                sole_line_replacement,
+            )
         })
 }
 
@@ -117,8 +130,9 @@ fn unvaried_returned_parameter_operand(
         saw_table = true;
     }
     saw_table.then(|| UnvariedTableOperand {
-        operand: operand.clone(),
         reason: format!("table rows do not vary {operand}"),
+        discriminator: format!("a table row that varies {operand}"),
+        action: format!("Add a table row that varies `{operand}`."),
     })
 }
 
@@ -128,21 +142,25 @@ fn unvaried_arithmetic_operand(
     owner: &PythonOwner,
     related_candidates: &[PythonRelatedCandidate<'_>],
     focus: &PythonAssertionFocus,
+    sole_line_replacement: bool,
 ) -> Option<UnvariedTableOperand> {
     let old_line = old_line_text?;
     let (old_arith, new_arith) = changed_simple_arithmetic(old_line, line_text)?;
-    // Reordering the factors of a product changes no value, so rows that
-    // agree on both sides say nothing about an unvaried operand.
-    // Only when the whole returned value is the product: a reorder beside a
-    // sibling edit (`a * b, c` -> `b * a, d`) still needs the row reading.
-    let whole = |line: &str| line_value_expr(line).and_then(|text| parse_expr(&text));
-    if let (Some(old_whole), Some(new_whole)) = (whole(old_line), whole(line_text))
-        && is_factor_reorder(&old_whole, &new_whole)
-    {
-        return None;
-    }
-    let operand = arithmetic_operand_name(&old_arith)?;
+    // Keep the ordinary table reading for factor swaps. Even int/float
+    // annotations do not establish Python runtime operand types, and a name
+    // can hold a noncommutative __mul__/__rmul__ object. Literal-only products
+    // already fall through below because they have no named operand.
+    let factor_swap = swaps_factors(&old_arith, &new_arith);
+    let operand = if factor_swap {
+        let Expr::BinOp(product) = &old_arith else {
+            return None;
+        };
+        expr_plain_name(&product.left).or_else(|| expr_plain_name(&product.right))?
+    } else {
+        arithmetic_operand_name(&old_arith)?
+    };
     let mut saw_table = false;
+    let mut saw_rebound_factor = false;
     for candidate in related_candidates {
         if !candidate.relation.uses_oracle() {
             continue;
@@ -160,24 +178,291 @@ fn unvaried_arithmetic_operand(
             continue;
         }
         let table = table_cases(candidate.test)?;
-        if strong_assertions.iter().any(|assertion| {
-            !arithmetic_rows_agree(
+        if factor_swap
+            && sole_line_replacement
+            && observed_literal_sibling_change(old_line, line_text, owner, candidate.test, &table)
+        {
+            return None;
+        }
+        let only_strong_assertion = strong_assertions.len() == 1;
+        for assertion in strong_assertions {
+            if factor_swap
+                && only_strong_assertion
+                && factor_input_rebound(candidate.test, owner, &old_arith, &table, assertion)
+            {
+                saw_rebound_factor = true;
+                continue;
+            }
+            if !arithmetic_rows_agree(
                 candidate.test,
                 owner,
                 &old_arith,
                 &new_arith,
                 &table,
                 assertion,
-            )
-        }) {
-            return None;
+            ) {
+                return None;
+            }
         }
         saw_table = true;
     }
-    saw_table.then(|| UnvariedTableOperand {
-        operand: operand.clone(),
-        reason: format!("table rows do not vary {operand}"),
+    saw_table.then(|| {
+        if factor_swap {
+            UnvariedTableOperand {
+                reason: if saw_rebound_factor {
+                    "a test rebinds a table operand, so its call value is not established"
+                        .to_string()
+                } else {
+                    "numeric table rows agree under factor reordering".to_string()
+                },
+                discriminator: "a table row whose operands distinguish multiplication order"
+                    .to_string(),
+                action: "Add a table row whose operands distinguish multiplication order."
+                    .to_string(),
+            }
+        } else {
+            UnvariedTableOperand {
+                reason: format!("table rows do not vary {operand}"),
+                discriminator: format!("a table row that varies {operand}"),
+                action: format!("Add a table row that varies `{operand}`."),
+            }
+        }
     })
+}
+
+/// A whole-result row can observe a changed literal beside the swap. This
+/// intentionally admits only a direct, undecorated two-line function and a
+/// direct single-assert parametrized test; uncertain bindings retain the gap.
+fn observed_literal_sibling_change(
+    old_line: &str,
+    new_line: &str,
+    owner: &PythonOwner,
+    test: &PythonTest,
+    table: &PythonParametrizeCases,
+) -> bool {
+    if owner.owner_kind != Some(OwnerKind::Function)
+        || !owner.decorators.is_empty()
+        || owner.end_line != owner.start_line + 1
+        || owner.term_facts.may_yield()
+        || !old_line.trim().starts_with("return ")
+        || !new_line.trim().starts_with("return ")
+        || test.parametrize.is_none()
+        || !test.simple_literal_parametrize
+        || test.decorators.len() != 1
+        || !test
+            .fixtures
+            .iter()
+            .all(|name| test.takes_parametrize_value(name))
+        || !table
+            .argnames()
+            .iter()
+            .all(|name| test.takes_parametrize_value(name))
+    {
+        return false;
+    }
+    let Ok(Mod::Module(module)) = parse_module_result(Path::new("t.py"), &test.body_text) else {
+        return false;
+    };
+    let [Stmt::FunctionDef(function)] = module.body.as_slice() else {
+        return false;
+    };
+    let [actual_assertion @ Stmt::Assert(_)] = function.body.as_slice() else {
+        return false;
+    };
+    let args = &function.args;
+    let columns = table.argnames();
+    let signature: BTreeSet<String> = args
+        .args
+        .iter()
+        .map(|arg| arg.def.arg.to_string())
+        .collect();
+    if !args.posonlyargs.is_empty()
+        || !args.kwonlyargs.is_empty()
+        || args.vararg.is_some()
+        || args.kwarg.is_some()
+        || args.args.iter().any(|arg| arg.default.is_some())
+        || args.args.len() != columns.len()
+        || signature != columns
+    {
+        return false;
+    }
+    let Some(old) = line_value_expr(old_line).and_then(|text| parse_expr(&text)) else {
+        return false;
+    };
+    let Some(new) = line_value_expr(new_line).and_then(|text| parse_expr(&text)) else {
+        return false;
+    };
+    let (old_items, new_items) = match (&old, &new) {
+        (Expr::Tuple(a), Expr::Tuple(b)) => (&a.elts, &b.elts),
+        (Expr::List(a), Expr::List(b)) => (&a.elts, &b.elts),
+        _ => return false,
+    };
+    if old_items.len() != 2 || new_items.len() != 2 {
+        return false;
+    }
+    let Some(index) = (0..2).find(|&i| swaps_factors(&old_items[i], &new_items[i])) else {
+        return false;
+    };
+    let Expr::BinOp(product) = &old_items[index] else {
+        return false;
+    };
+    let (Expr::Name(left), Expr::Name(right)) = (product.left.as_ref(), product.right.as_ref())
+    else {
+        return false;
+    };
+    if !owner.term_facts.is_stable_parameter(left.id.as_str())
+        || !owner.term_facts.is_stable_parameter(right.id.as_str())
+    {
+        return false;
+    }
+    let names = owner_names(owner, test);
+    let Some((owner_call, expected)) = owner_call_and_expected_from_stmt(actual_assertion, &names)
+    else {
+        return false;
+    };
+    let Expr::Call(call) = owner_call else {
+        return false;
+    };
+    if !call.keywords.is_empty()
+        || call.args.len() != owner.parameters.len()
+        || owner.parameters.iter().any(|p| p.keyword_only)
+    {
+        return false;
+    }
+    let Some(expected_name) = expr_plain_name(expected).filter(|name| columns.contains(name))
+    else {
+        return false;
+    };
+    let Some(bindings) = row_argument_env(owner_call, owner, |arg| {
+        expr_plain_name(arg).filter(|name| columns.contains(name))
+    }) else {
+        return false;
+    };
+    let (Some(left_column), Some(right_column)) = (
+        bindings.get(left.id.as_str()),
+        bindings.get(right.id.as_str()),
+    ) else {
+        return false;
+    };
+    let sibling = 1 - index;
+    let (Some(NumericFactor::Integer(old_sibling)), Some(NumericFactor::Integer(new_sibling))) = (
+        numeric_factor_literal(&old_items[sibling]),
+        numeric_factor_literal(&new_items[sibling]),
+    ) else {
+        return false;
+    };
+    if old_sibling == new_sibling {
+        return false;
+    }
+    table.cases.iter().any(|row| {
+        let Some(expected) = row.get(&expected_name).and_then(|text| parse_expr(text)) else { return false; };
+        let expected_items = match (&old, &expected) {
+            (Expr::Tuple(_), Expr::Tuple(value)) => &value.elts,
+            (Expr::List(_), Expr::List(value)) => &value.elts,
+            _ => return false,
+        };
+        if expected_items.len() != 2 || !matches!(numeric_factor_literal(&expected_items[sibling]), Some(NumericFactor::Integer(value)) if value == old_sibling) { return false; }
+        let Some(left) = row.get(left_column).and_then(|text| parse_expr(text)).and_then(|expr| numeric_factor_literal(&expr)) else { return false; };
+        let Some(right) = row.get(right_column).and_then(|text| parse_expr(text)).and_then(|expr| numeric_factor_literal(&expr)) else { return false; };
+        let Some(expected_product) = numeric_factor_literal(&expected_items[index]) else { return false; };
+        match (left, right, expected_product) {
+            (NumericFactor::Integer(a), NumericFactor::Integer(b), NumericFactor::Integer(want)) => a.checked_mul(b) == Some(want),
+            (NumericFactor::Float(a), NumericFactor::Float(b), NumericFactor::Float(want)) => {
+                let product = a * b;
+                product.is_finite() && product.partial_cmp(&want) == Some(std::cmp::Ordering::Equal)
+            }
+            _ => false,
+        }
+    })
+}
+
+/// Syntactic factor swapping selects order-sensitive guidance. It never grants
+/// equivalence or exposure: names can hold overloaded multiplication operands.
+fn swaps_factors(old: &Expr, new: &Expr) -> bool {
+    let (Expr::BinOp(old), Expr::BinOp(new)) = (old, new) else {
+        return false;
+    };
+    if !matches!(old.op, ast::Operator::Mult) || !matches!(new.op, ast::Operator::Mult) {
+        return false;
+    }
+    let (Some(old_left), Some(old_right), Some(new_left), Some(new_right)) = (
+        factor_spelling(&old.left),
+        factor_spelling(&old.right),
+        factor_spelling(&new.left),
+        factor_spelling(&new.right),
+    ) else {
+        return false;
+    };
+    old_left != old_right && old_left == new_right && old_right == new_left
+}
+
+fn factor_spelling(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::Name(name) => Some(format!("name:{}", name.id)),
+        _ => match numeric_factor_literal(expr)? {
+            NumericFactor::Integer(value) => Some(format!("int:{value}")),
+            NumericFactor::Float(value) => Some(format!("float:{}", value.to_bits())),
+        },
+    }
+}
+
+/// Bounded primitive values only. This is a row discriminator, not a type
+/// inference for the production function or a floating-point algebra engine.
+#[derive(Clone, Copy)]
+enum NumericFactor {
+    Integer(i128),
+    Float(f64),
+}
+
+fn numeric_factor_literal(expr: &Expr) -> Option<NumericFactor> {
+    match expr {
+        Expr::Constant(constant) => match &constant.value {
+            ast::Constant::Float(value) if value.is_finite() => Some(NumericFactor::Float(*value)),
+            value => constant_i128(value).map(NumericFactor::Integer),
+        },
+        Expr::UnaryOp(unary) if matches!(unary.op, ast::UnaryOp::UAdd) => {
+            numeric_factor_literal(&unary.operand)
+        }
+        Expr::UnaryOp(unary) if matches!(unary.op, ast::UnaryOp::USub) => {
+            // The positive magnitude of i128::MIN is outside i128. Apply the
+            // source sign before range checking, matching the integer reader.
+            if let Expr::Constant(constant) = unary.operand.as_ref()
+                && let ast::Constant::Int(value) = &constant.value
+            {
+                return parse_decimal_i128(&format!("-{}", value.to_str_radix(10)))
+                    .map(NumericFactor::Integer);
+            }
+            match numeric_factor_literal(&unary.operand)? {
+                NumericFactor::Integer(value) => value.checked_neg().map(NumericFactor::Integer),
+                NumericFactor::Float(value) => Some(NumericFactor::Float(-value)),
+            }
+        }
+        _ => None,
+    }
+}
+
+fn bounded_float(value: NumericFactor) -> Option<f64> {
+    match value {
+        // Check in the integer domain before conversion. This deliberately
+        // narrows mixed rows; no rounding can admit an out-of-bound integer.
+        NumericFactor::Integer(value) => i32::try_from(value).ok().map(f64::from),
+        NumericFactor::Float(value) => Some(value),
+    }
+}
+
+fn primitive_product_is_finite(left: NumericFactor, right: NumericFactor) -> bool {
+    if matches!(
+        (left, right),
+        (NumericFactor::Integer(_), NumericFactor::Integer(_))
+    ) {
+        // Python integer multiplication has arbitrary precision. The bounded
+        // input literals are genuine integers, never user objects or booleans.
+        return true;
+    }
+    match (bounded_float(left), bounded_float(right)) {
+        (Some(left), Some(right)) => (left * right).is_finite(),
+        _ => false,
+    }
 }
 
 fn changed_returned_parameter(
@@ -292,6 +577,9 @@ fn arithmetic_rows_agree(
         return false;
     };
     table.cases.iter().all(|row| {
+        if swaps_factors(old_arith, new_arith) {
+            return numeric_swap_row_agrees(old_arith, owner_call, owner, row, &columns);
+        }
         let Some(env) = row_integer_env(owner_call, owner, row, &columns) else {
             return false;
         };
@@ -305,34 +593,69 @@ fn arithmetic_rows_agree(
     })
 }
 
-/// `a * b` -> `b * a` over plain names and integer literals. Multiplication
-/// commutes for every builtin operand type (`3 * "ab"` equals `"ab" * 3`), which
-/// is why `+` is not accepted here: `a + b` -> `b + a` reorders strings.
-fn is_factor_reorder(old: &Expr, new: &Expr) -> bool {
-    let (Expr::BinOp(old), Expr::BinOp(new)) = (old, new) else {
+fn factor_input_rebound(
+    test: &PythonTest,
+    owner: &PythonOwner,
+    product: &Expr,
+    table: &PythonParametrizeCases,
+    assertion: &PythonAssertion,
+) -> bool {
+    let Expr::BinOp(product) = product else {
         return false;
     };
-    if !matches!(old.op, ast::Operator::Mult) || !matches!(new.op, ast::Operator::Mult) {
-        return false;
-    }
-    let (Some(old_left), Some(old_right), Some(new_left), Some(new_right)) = (
-        factor_key(&old.left),
-        factor_key(&old.right),
-        factor_key(&new.left),
-        factor_key(&new.right),
-    ) else {
+    let Some(stmts) = assertion_stmts(&assertion.gate_text) else {
         return false;
     };
-    old_left == new_right && old_right == new_left
+    let Some(call) = owner_call_from_equality(&stmts, &owner_names(owner, test)) else {
+        return false;
+    };
+    let Some(bindings) = row_argument_env(call, owner, |argument| Some(argument.clone())) else {
+        return false;
+    };
+    let columns = table.argnames();
+    [product.left.as_ref(), product.right.as_ref()]
+        .into_iter()
+        .filter_map(expr_plain_name)
+        .any(|name| {
+            bindings
+                .get(&name)
+                .and_then(expr_plain_name)
+                .is_some_and(|column| {
+                    test.takes_parametrize_value(&column)
+                        && test.parametrize_argnames.contains(&column)
+                        && !columns.contains(&column)
+                })
+        })
 }
 
-fn factor_key(expr: &Expr) -> Option<String> {
-    match expr {
-        Expr::Name(name) => Some(format!("name:{}", name.id)),
-        Expr::Constant(constant) => {
-            constant_i128(&constant.value).map(|value| format!("int:{value}"))
+fn numeric_swap_row_agrees(
+    product: &Expr,
+    owner_call: &Expr,
+    owner: &PythonOwner,
+    row: &BTreeMap<String, String>,
+    columns: &BTreeSet<String>,
+) -> bool {
+    let Expr::BinOp(product) = product else {
+        return false;
+    };
+    let Some(env) = row_argument_env(owner_call, owner, |argument| Some(argument.clone())) else {
+        return false;
+    };
+    let factor = |expr: &Expr| match expr {
+        Expr::Name(name) => {
+            let argument = env.get(name.id.as_str())?;
+            match argument {
+                Expr::Name(column) if columns.contains(column.id.as_str()) => {
+                    numeric_factor_literal(&parse_expr(row.get(column.id.as_str())?)?)
+                }
+                literal => numeric_factor_literal(literal),
+            }
         }
-        _ => None,
+        expr => numeric_factor_literal(expr),
+    };
+    match (factor(&product.left), factor(&product.right)) {
+        (Some(left), Some(right)) => primitive_product_is_finite(left, right),
+        _ => false,
     }
 }
 
@@ -348,15 +671,16 @@ fn changed_simple_arithmetic(old_line: &str, new_line: &str) -> Option<(Expr, Ex
 fn line_value_expr(line: &str) -> Option<String> {
     let trimmed = line.trim().trim_end_matches(',').trim();
     let expr = if let Some(rest) = trimmed.strip_prefix("return ") {
-        rest.split('#').next().unwrap_or(rest).trim()
+        rest.trim()
     } else if let Some(value) = dict_field_value(trimmed) {
         value
     } else if let Some(value) = assignment_rhs(trimmed) {
         value
     } else {
-        trimmed.split('#').next().unwrap_or(trimmed).trim()
+        trimmed
     };
-    let expr = expr.split('#').next().unwrap_or(expr).trim();
+    // Let Python's parser distinguish comments from quoted hashes. Splitting
+    // source text at '#' can erase an actual changed arithmetic expression.
     (!expr.is_empty()).then(|| expr.to_string())
 }
 
@@ -386,7 +710,7 @@ fn assignment_rhs(line: &str) -> Option<&str> {
     }
     let (lhs, rhs) = trimmed.split_once('=')?;
     is_simple_python_identifier(lhs.trim())
-        .then(|| rhs.split('#').next().unwrap_or(rhs).trim())
+        .then(|| rhs.trim())
         .filter(|value| !value.is_empty())
 }
 
@@ -457,6 +781,7 @@ fn differing_simple_arithmetic<'a>(old: &'a Expr, new: &'a Expr) -> Option<(&'a 
                 });
             unique_differing_pair(arg_diff.chain(kw_diff))
         }
+        _ if swaps_factors(old, new) => Some((old, new)),
         _ if is_simple_arithmetic(old)
             && is_simple_arithmetic(new)
             && contains_binop(old)
@@ -608,6 +933,16 @@ fn row_integer_env(
     row: &BTreeMap<String, String>,
     columns: &BTreeSet<String>,
 ) -> Option<BTreeMap<String, i128>> {
+    row_argument_env(owner_call, owner, |argument| {
+        integer_from_table_arg(argument, row, columns)
+    })
+}
+
+fn row_argument_env<T>(
+    owner_call: &Expr,
+    owner: &PythonOwner,
+    read_argument: impl Fn(&Expr) -> Option<T>,
+) -> Option<BTreeMap<String, T>> {
     let Expr::Call(call) = owner_call else {
         return None;
     };
@@ -625,7 +960,7 @@ fn row_integer_env(
         let Some(name) = keyword.arg.as_ref() else {
             continue;
         };
-        let value = integer_from_table_arg(&keyword.value, row, columns)?;
+        let value = read_argument(&keyword.value)?;
         env.insert(name.to_string(), value);
     }
     let positional: Vec<&str> = owner
@@ -636,7 +971,7 @@ fn row_integer_env(
         .map(|parameter| parameter.name.as_str())
         .collect();
     for (parameter, argument) in positional.iter().zip(call.args.iter()) {
-        let value = integer_from_table_arg(argument, row, columns)?;
+        let value = read_argument(argument)?;
         env.insert((*parameter).to_string(), value);
     }
     (!env.is_empty()).then_some(env)
@@ -1129,6 +1464,38 @@ fn row_cells(row: &Expr, arity: usize, bare_single: bool) -> Option<Vec<&Expr>> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn factor_swap_numeric_reader_preserves_primitive_boundaries() -> Result<(), String> {
+        for source in ["True", "'3'", "float('nan')", "1e999", "int(3)", "custom"] {
+            let expr = parse_expr(source).ok_or_else(|| format!("parse {source}"))?;
+            assert!(numeric_factor_literal(&expr).is_none(), "{source}");
+        }
+        let minimum =
+            parse_expr("-170141183460469231731687303715884105728").ok_or("signed minimum")?;
+        assert!(matches!(
+            numeric_factor_literal(&minimum),
+            Some(NumericFactor::Integer(i128::MIN))
+        ));
+        assert!(!primitive_product_is_finite(
+            NumericFactor::Float(1e308),
+            NumericFactor::Float(1e308)
+        ));
+        assert!(!primitive_product_is_finite(
+            NumericFactor::Integer(i128::from(i32::MAX) + 1),
+            NumericFactor::Float(1.0)
+        ));
+        for (old, new) in [
+            ("a * -0.0", "0.0 * a"),
+            ("a * 3", "3.0 * a"),
+            ("(a * b) * c", "a * (b * c)"),
+        ] {
+            let old = parse_expr(old).ok_or("old expression")?;
+            let new = parse_expr(new).ok_or("new expression")?;
+            assert!(!swaps_factors(&old, &new));
+        }
+        Ok(())
+    }
 
     fn cases(source: &str) -> Option<Vec<BTreeMap<String, String>>> {
         loop_table_cases(source).map(|table| table.cases)

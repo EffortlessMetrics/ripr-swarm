@@ -141,6 +141,133 @@ pub(super) struct ForeignIndex<'a> {
     reflective_reach: Vec<(&'a Path, std::collections::BTreeSet<String>)>,
     /// The reference index passed its bound or a file went unread.
     unknown: bool,
+    /// Per-write source counts over `files` and `reflective_reach`.
+    totals: ForeignTotals,
+}
+
+/// How many indexed sources hold each write, so the writes of every source
+/// but one are a subtraction instead of a rebuild over the whole workspace
+/// for each changed file (#10857).
+#[derive(Default)]
+struct ForeignTotals {
+    attributes: std::collections::BTreeMap<String, usize>,
+    dynamic_words: std::collections::BTreeMap<String, usize>,
+    table_unsafe: std::collections::BTreeMap<String, usize>,
+    reflective_words: std::collections::BTreeMap<String, usize>,
+    reflective_reach: std::collections::BTreeMap<String, usize>,
+}
+
+impl ForeignTotals {
+    fn build(
+        files: &[IndexedSource<'_>],
+        reflective_reach: &[(&Path, std::collections::BTreeSet<String>)],
+    ) -> Self {
+        // Each source's distinct writes are counted in parallel and the
+        // additive counts merged, so the totals match a sequential pass.
+        let mut counts = files
+            .par_iter()
+            .map(SourceCounts::of)
+            .reduce(SourceCounts::default, SourceCounts::merge);
+        for (_, reach) in reflective_reach {
+            count_distinct(
+                &mut counts.reflective_reach,
+                reach.iter().map(String::as_str),
+            );
+        }
+        counts.into_totals()
+    }
+}
+
+/// [`ForeignTotals`] keyed by borrowed words while the counts are built.
+#[derive(Default)]
+struct SourceCounts<'w> {
+    attributes: std::collections::BTreeMap<&'w str, usize>,
+    dynamic_words: std::collections::BTreeMap<&'w str, usize>,
+    table_unsafe: std::collections::BTreeMap<&'w str, usize>,
+    reflective_words: std::collections::BTreeMap<&'w str, usize>,
+    reflective_reach: std::collections::BTreeMap<&'w str, usize>,
+}
+
+impl<'w> SourceCounts<'w> {
+    /// The writes one source contributes to each [`ForeignWrites`] set:
+    /// assigned attributes, dynamic words, unsafe tables, reflective words.
+    fn of(source: &'w IndexedSource<'_>) -> Self {
+        let mut counts = Self::default();
+        count_distinct(
+            &mut counts.attributes,
+            source.assigned.iter().flatten().map(String::as_str),
+        );
+        count_distinct(
+            &mut counts.dynamic_words,
+            source.dynamic_words.iter().flatten().copied(),
+        );
+        count_distinct(
+            &mut counts.table_unsafe,
+            source.table_unsafe.iter().map(String::as_str),
+        );
+        count_distinct(
+            &mut counts.reflective_words,
+            source.reflective_words.iter().flatten().copied(),
+        );
+        counts
+    }
+
+    fn merge(mut self, other: Self) -> Self {
+        fn add<'w>(
+            into: &mut std::collections::BTreeMap<&'w str, usize>,
+            from: std::collections::BTreeMap<&'w str, usize>,
+        ) {
+            for (word, count) in from {
+                *into.entry(word).or_default() += count;
+            }
+        }
+        add(&mut self.attributes, other.attributes);
+        add(&mut self.dynamic_words, other.dynamic_words);
+        add(&mut self.table_unsafe, other.table_unsafe);
+        add(&mut self.reflective_words, other.reflective_words);
+        add(&mut self.reflective_reach, other.reflective_reach);
+        self
+    }
+
+    fn into_totals(self) -> ForeignTotals {
+        let owned = |counts: std::collections::BTreeMap<&str, usize>| {
+            counts
+                .into_iter()
+                .map(|(word, count)| (word.to_string(), count))
+                .collect()
+        };
+        ForeignTotals {
+            attributes: owned(self.attributes),
+            dynamic_words: owned(self.dynamic_words),
+            table_unsafe: owned(self.table_unsafe),
+            reflective_words: owned(self.reflective_words),
+            reflective_reach: owned(self.reflective_reach),
+        }
+    }
+}
+
+/// Add one source's distinct `words` to borrowed-key `counts`.
+fn count_distinct<'w>(
+    counts: &mut std::collections::BTreeMap<&'w str, usize>,
+    words: impl Iterator<Item = &'w str>,
+) {
+    let distinct: std::collections::BTreeSet<&str> = words.collect();
+    for word in distinct {
+        *counts.entry(word).or_default() += 1;
+    }
+}
+
+/// The words of `counts` that some source other than the excluded ones holds,
+/// in order. `excluded` counts how many excluded sources hold each word.
+fn held_by_others(
+    counts: &std::collections::BTreeMap<String, usize>,
+    excluded: &std::collections::BTreeMap<&str, usize>,
+) -> Vec<String> {
+    counts
+        .iter()
+        .filter(|(word, count)| **count > excluded.get(word.as_str()).copied().unwrap_or_default())
+        .map(|(word, _)| word.clone())
+        .collect()
 }
 
 // Parses the foreign index has done on this thread, so a test can pin that
@@ -170,9 +297,22 @@ struct IndexedSource<'a> {
 }
 
 impl<'a> ForeignIndex<'a> {
+    /// The index parsing every file's assigned attributes itself.
+    #[cfg(test)]
     pub(super) fn build(
         sources: impl Iterator<Item = (&'a Path, &'a str)>,
         unread_files: bool,
+    ) -> Self {
+        Self::build_with_assigned(sources, unread_files, &std::collections::BTreeMap::new())
+    }
+
+    /// [`Self::build`], reading each file's assigned attributes from
+    /// `assigned` (the source-fact pass already parsed it) and parsing only
+    /// the files it does not hold (#10914).
+    pub(super) fn build_with_assigned(
+        sources: impl Iterator<Item = (&'a Path, &'a str)>,
+        unread_files: bool,
+        assigned: &std::collections::BTreeMap<std::path::PathBuf, Option<Vec<String>>>,
     ) -> Self {
         let mut files = Vec::new();
         let mut references = std::collections::BTreeMap::new();
@@ -185,7 +325,10 @@ impl<'a> ForeignIndex<'a> {
         let token = crate::analysis::cancellation::current_token();
         // Every per-file scan below lexes or parses the whole source, so all
         // of them run inside the parallel stage; only word ownership and the
-        // word cap stay in the sequential fold (#10441, #10735).
+        // word cap stay in the sequential fold (#10441, #10735). The stage
+        // also sorts each source's distinct words: the fold then visits each
+        // word once per file, which leaves ownership and the cap unchanged
+        // because a repeat changes neither (#10914).
         let tables: std::collections::BTreeSet<String> = sources
             .par_iter()
             .map(|(_, source)| {
@@ -198,17 +341,22 @@ impl<'a> ForeignIndex<'a> {
                 all
             });
         for batch in sources.chunks(FOREIGN_PARSE_BATCH_FILES) {
-            let scanned: Vec<(bool, IndexedSource<'a>)> = batch
+            let scanned: Vec<((bool, IndexedSource<'a>), Vec<&'a str>)> = batch
                 .par_iter()
                 .map(|&(file, source)| {
                     crate::analysis::cancellation::with_optional_token(token.as_ref(), || {
-                        scan_source(file, source, &tables)
+                        let mut words: Vec<&'a str> = source_words(source).collect();
+                        words.sort_unstable();
+                        words.dedup();
+                        let indexed =
+                            scan_source(file, source, &words, &tables, assigned.get(file));
+                        (indexed, words)
                     })
                 })
                 .collect();
-            for (&(file, source), (hides_import, indexed)) in batch.iter().zip(scanned) {
+            for (&(file, _), ((hides_import, indexed), words)) in batch.iter().zip(scanned) {
                 hidden_import |= hides_import;
-                for word in source_words(source) {
+                for word in words {
                     let first = references.entry(word).or_insert(Some(file));
                     if first.is_some_and(|first| first != file) {
                         *first = None;
@@ -220,6 +368,7 @@ impl<'a> ForeignIndex<'a> {
                             hidden_import,
                             unknown: true,
                             reflective_reach: Vec::new(),
+                            totals: ForeignTotals::default(),
                         };
                     }
                 }
@@ -229,12 +378,14 @@ impl<'a> ForeignIndex<'a> {
             }
         }
         let reflective_reach = reflective_reaches(&files);
+        let totals = ForeignTotals::build(&files, &reflective_reach);
         Self {
             files,
             references,
             hidden_import,
             unknown: unread_files,
             reflective_reach,
+            totals,
         }
     }
 
@@ -247,24 +398,25 @@ impl<'a> ForeignIndex<'a> {
                 ..ForeignWrites::default()
             };
         }
-        let mut attributes = std::collections::BTreeSet::new();
-        let mut words = std::collections::BTreeSet::new();
-        let mut table_unsafe = std::collections::BTreeSet::new();
-        let mut reflective_words = std::collections::BTreeSet::new();
+        let mut excluded = SourceCounts::default();
         let mut reflective_opaque = false;
         let mut unparsed = Vec::new();
-        for indexed in self.files.iter().filter(|indexed| indexed.file != own) {
-            table_unsafe.extend(indexed.table_unsafe.iter().cloned());
+        for indexed in &self.files {
+            if indexed.file == own {
+                excluded = excluded.merge(SourceCounts::of(indexed));
+                continue;
+            }
             reflective_opaque |= indexed.reflective_opaque;
-            if let Some(reflective) = &indexed.reflective_words {
-                reflective_words.extend(reflective.iter().map(|word| word.to_string()));
+            if indexed.assigned.is_none() {
+                unparsed.push(indexed.file);
             }
-            match &indexed.assigned {
-                Some(assigned) => attributes.extend(assigned.iter().cloned()),
-                None => unparsed.push(indexed.file),
-            }
-            if let Some(dynamic) = &indexed.dynamic_words {
-                words.extend(dynamic.iter().map(|word| word.to_string()));
+        }
+        for (file, reach) in &self.reflective_reach {
+            if *file == own {
+                count_distinct(
+                    &mut excluded.reflective_reach,
+                    reach.iter().map(String::as_str),
+                );
             }
         }
         // An unreferenced malformed production module cannot poison every
@@ -286,6 +438,38 @@ impl<'a> ForeignIndex<'a> {
                                 .is_some_and(|first| first.is_none_or(|first| first != *file))
                         })
             });
+        let totals = &self.totals;
+        ForeignWrites {
+            attributes: held_by_others(&totals.attributes, &excluded.attributes),
+            dynamic_words: held_by_others(&totals.dynamic_words, &excluded.dynamic_words),
+            table_unsafe: held_by_others(&totals.table_unsafe, &excluded.table_unsafe),
+            reflective_words: held_by_others(&totals.reflective_words, &excluded.reflective_words),
+            reflective_reach: held_by_others(&totals.reflective_reach, &excluded.reflective_reach),
+            reflective_opaque,
+            unknown,
+        }
+    }
+
+    /// The per-file rebuild [`Self::excluding`] replaced: the union of every
+    /// other source's writes. An independent oracle for the subtraction.
+    #[cfg(test)]
+    pub(super) fn rebuilt_excluding(&self, own: &Path) -> ForeignWrites {
+        let mut attributes = std::collections::BTreeSet::new();
+        let mut words = std::collections::BTreeSet::new();
+        let mut table_unsafe = std::collections::BTreeSet::new();
+        let mut reflective_words = std::collections::BTreeSet::new();
+        for indexed in self.files.iter().filter(|indexed| indexed.file != own) {
+            table_unsafe.extend(indexed.table_unsafe.iter().cloned());
+            if let Some(reflective) = &indexed.reflective_words {
+                reflective_words.extend(reflective.iter().map(|word| word.to_string()));
+            }
+            if let Some(assigned) = &indexed.assigned {
+                attributes.extend(assigned.iter().cloned());
+            }
+            if let Some(dynamic) = &indexed.dynamic_words {
+                words.extend(dynamic.iter().map(|word| word.to_string()));
+            }
+        }
         ForeignWrites {
             attributes: attributes.into_iter().collect(),
             dynamic_words: words.into_iter().collect(),
@@ -299,13 +483,25 @@ impl<'a> ForeignIndex<'a> {
                 .collect::<std::collections::BTreeSet<_>>()
                 .into_iter()
                 .collect(),
-            reflective_opaque,
-            unknown,
+            ..self.excluding(own)
         }
     }
 }
 
 impl ForeignWrites {
+    /// Which write sets hold anything: attributes, dynamic words, unsafe
+    /// tables, reflective words, reflective reach.
+    #[cfg(test)]
+    pub(super) fn written_sets(&self) -> [bool; 5] {
+        [
+            !self.attributes.is_empty(),
+            !self.dynamic_words.is_empty(),
+            !self.table_unsafe.is_empty(),
+            !self.reflective_words.is_empty(),
+            !self.reflective_reach.is_empty(),
+        ]
+    }
+
     /// The writes in every source but `own`; one-shot form of
     /// [`ForeignIndex`] for callers that scan a single file.
     #[cfg(test)]
@@ -394,41 +590,46 @@ const MODULE_LOADERS: [&str; 11] = [
 fn scan_source<'a>(
     file: &'a Path,
     source: &'a str,
+    words: &[&'a str],
     tables: &std::collections::BTreeSet<String>,
+    parsed_assigned: Option<&Option<Vec<String>>>,
 ) -> (bool, IndexedSource<'a>) {
-    let hides_import = DYNAMIC_LOADERS
-        .iter()
-        .any(|loader| mentions_identifier(source, loader))
+    // `words` is the source's sorted distinct words, so a whole-word mention
+    // is a lookup instead of one scan of the source per spelling.
+    let mentions = |identifier: &str| {
+        let found = words.binary_search(&identifier).is_ok();
+        debug_assert_eq!(found, mentions_identifier(source, identifier));
+        found
+    };
+    let hides_import = DYNAMIC_LOADERS.iter().any(|loader| mentions(loader))
         || source.contains("sys.modules")
-        || (file.file_name().is_some_and(|name| name == "__init__.py")
-            && mentions_identifier(source, "__all__"));
-    let assigned = assigned_attributes(source);
+        || (file.file_name().is_some_and(|name| name == "__init__.py") && mentions("__all__"));
+    let assigned = parsed_assigned
+        .cloned()
+        .unwrap_or_else(|| assigned_attributes(source));
     let dynamic = assigned.is_none()
-        || DYNAMIC_WRITERS
-            .iter()
-            .any(|writer| mentions_identifier(source, writer))
+        || DYNAMIC_WRITERS.iter().any(|writer| mentions(writer))
         || source.contains("sys.modules");
-    let table_unsafe =
-        if tables.is_empty() || !source_words(source).any(|word| tables.contains(word)) {
-            Vec::new()
-        } else {
-            unsafe_table_uses(source, &|word| tables.contains(word), None)
-                .into_iter()
-                .collect()
-        };
+    let table_unsafe = if tables.is_empty() || !words.iter().any(|word| tables.contains(*word)) {
+        Vec::new()
+    } else {
+        unsafe_table_uses(source, &|word| tables.contains(word), None)
+            .into_iter()
+            .collect()
+    };
     // Reflection reaches a module's dict without naming it, or with a name
     // built at runtime (`getattr(module, n)`, `dir(module)`,
     // `inspect.getmembers`, `locals()`, `fn.__globals__`).
     let reflective = !tables.is_empty()
         && REFLECTIVE_SPELLINGS
             .iter()
-            .any(|spelling| mentions_identifier(source, spelling));
+            .any(|spelling| mentions(spelling));
     let indexed = IndexedSource {
         file,
         assigned,
-        dynamic_words: dynamic.then(|| source_words(source).collect()),
+        dynamic_words: dynamic.then(|| words.to_vec()),
         table_unsafe,
-        reflective_words: reflective.then(|| source_words(source).collect()),
+        reflective_words: reflective.then(|| words.to_vec()),
         import_words: if tables.is_empty() {
             Vec::new()
         } else {
@@ -436,9 +637,7 @@ fn scan_source<'a>(
         },
         reflective_opaque: reflective
             && (source.contains("sys.modules")
-                || MODULE_LOADERS
-                    .iter()
-                    .any(|loader| mentions_identifier(source, loader))),
+                || MODULE_LOADERS.iter().any(|loader| mentions(loader))),
     };
     (hides_import, indexed)
 }

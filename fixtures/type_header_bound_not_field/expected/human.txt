@@ -2,14 +2,14 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/type_header_bound_not_field/input
 
-Summary: 3 probes (0 exposed, 0 weak, 0 unrevealed, 0 no path, 3 unknown); 3 of 3 findings unsuppressed
+Summary: 3 changed behaviors checked: 0 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 0 no test path, 3 unclear. 3 found, 0 suppressed by your settings
 
 Analysis outcome: findings below (analysis complete)
-  Counts: 1 changed file(s), 5 changed line(s), 3 candidate line(s), 3 probe(s), 3 finding(s)
+  Counts: 1 changed file(s), 5 changed line(s), 3 candidate line(s), 3 changed behavior(s) checked, 3 finding(s)
 
 Start here:
-  State: limited by static analysis
-  Safe next action: inspect the named static limitation before treating this as repair-ready
+  State: ripr cannot tell from reading the code whether tests would notice this
+  Safe next action: look at the reason below before adding a test
   File: ./src/lib.rs:5
   Static exposure: unknown (severity: note, confidence 0.50)
   Why unknown: the analysis could not determine a static exposure state
@@ -28,19 +28,19 @@ Start here:
       discriminator = assertion distinguishes intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
-    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
-      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
-      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;
-      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;
-      candidate line = changed line ripr considers for probes
+    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      no test path = no test path found; unclear = analysis limited, not a verdict;
+      found = listed for review; suppressed by your settings = hidden by your suppression policy;
+      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach weak: No test is seen calling changed owner; tests share only its file or a name token: a_is_one
-    - infection unknown: Changed syntax is not mapped to a high-confidence probe family
+    - infection unknown: Changed syntax is not mapped to a high-confidence change type
     - 6 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/type_header_bound_not_field/input --diff <cwd>/fixtures/type_header_bound_not_field/diff.patch --mode fast probe:src_lib.rs:static_unknown:7b804000
   ripr context --root <cwd>/fixtures/type_header_bound_not_field/input --diff <cwd>/fixtures/type_header_bound_not_field/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:7b804000
-  no repair start offered: this finding has no canonical gap, so there is no seam to start a repair from; follow the Next step above
+  no repair start offered: this finding has no gap ID, so there is no seam to start a repair from; follow the Next step above
 
 Hidden:
   2 lower-priority finding(s) omitted from default human output.

@@ -280,3 +280,16 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — whole_value_string_from_shadow (21)
+
+Reason:
+RIPR-SPEC-0122: plain-language wording for the default and human-full check views (#10691); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless whole_value_string_from_shadow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

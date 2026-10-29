@@ -550,3 +550,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — observation_unverified_field_construction (46)
+
+Reason:
+RIPR-SPEC-0122: plain-language wording for the default and human-full check views (#10691); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless observation_unverified_field_construction --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

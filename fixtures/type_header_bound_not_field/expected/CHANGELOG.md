@@ -96,3 +96,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — type_header_bound_not_field (8)
+
+Reason:
+RIPR-SPEC-0122: plain-language wording for the default and human-full check views (#10691); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless type_header_bound_not_field --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

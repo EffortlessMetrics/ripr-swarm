@@ -1276,6 +1276,83 @@ fn parametrize_cases_off_boundary_are_weakly_exposed() -> Result<(), String> {
     Ok(())
 }
 
+/// #10842: a rewrite that keeps the predicate on every integer
+/// (`amount >= 100` -> `amount > 99`) changes no behavior, so its truth is
+/// a wrong version of the new line. One row on the equality point catches
+/// the operator flip but not mutmut's `n + 1` shift of the bound
+/// (`amount > 100`), so `exposed` also needs the row where the shifted bound
+/// differs. A behavior change keeps the equality rule, and a shift that lands
+/// on the equality point (`amount < 100`) needs no further row.
+#[test]
+fn an_integer_equivalent_rewrite_needs_the_row_its_shifted_bound_moves_to() -> Result<(), String> {
+    let finding = |new: &str, old: &str, rows: &str| {
+        let source = format!("def fee(amount):\n    if {new}:\n        return 0\n    return 5\n");
+        let tests = format!(
+            "import pytest\nfrom src.subject import fee\n\n@pytest.mark.parametrize(\"amount, expected\", [{rows}])\ndef test_fee(amount, expected):\n    assert fee(amount) == expected\n"
+        );
+        classify_case(
+            &source,
+            &tests,
+            2,
+            &format!("    if {old}:"),
+            &format!("    if {new}:"),
+        )
+    };
+    for (new, old) in [
+        ("amount > 99", "amount >= 100"),
+        ("99 < amount", "amount >= 100"),
+        ("amount <= 99", "amount < 100"),
+        ("99 >= amount", "100 > amount"),
+    ] {
+        let one_row = finding(new, old, "(99, 5)")?;
+        assert_eq!(
+            one_row.class,
+            ExposureClass::WeaklyExposed,
+            "{new}: {one_row:?}"
+        );
+        assert!(
+            missing_boundary(&one_row, "amount == 100").is_some(),
+            "{new}: {one_row:?}"
+        );
+        let both = finding(new, old, "(99, 5), (100, 0)")?;
+        assert_eq!(both.class, ExposureClass::Exposed, "{new}: {both:?}");
+    }
+    // Controls: a behavior change, and a shift onto the equality point.
+    for (new, old, row) in [
+        ("amount > 99", "amount >= 99", "(99, 5)"),
+        (
+            "amount > 99 or amount == 7",
+            "amount >= 100 and amount == 7",
+            "(99, 5)",
+        ),
+        ("amount < 100", "amount <= 99", "(100, 5)"),
+        ("amount >= 100", "amount > 99", "(100, 0)"),
+    ] {
+        let control = finding(new, old, row)?;
+        assert_eq!(control.class, ExposureClass::Exposed, "{new}: {control:?}");
+    }
+    // A conditional return: the same rewrite needs the shifted row, but one
+    // that also changes a branch value is a behavior change.
+    let conditional = |old_else: &str| {
+        classify_case(
+            "def fee(amount):\n    return 0 if amount > 99 else 5\n",
+            "import pytest\nfrom src.subject import fee\n\n@pytest.mark.parametrize(\"amount, expected\", [(99, 5)])\ndef test_fee(amount, expected):\n    assert fee(amount) == expected\n",
+            2,
+            &format!("    return 0 if amount >= 100 else {old_else}"),
+            "    return 0 if amount > 99 else 5",
+        )
+    };
+    let rewrite = conditional("5")?;
+    assert_eq!(rewrite.class, ExposureClass::WeaklyExposed, "{rewrite:?}");
+    assert!(
+        missing_boundary(&rewrite, "amount == 100").is_some(),
+        "{rewrite:?}"
+    );
+    let changed = conditional("6")?;
+    assert_eq!(changed.class, ExposureClass::Exposed, "{changed:?}");
+    Ok(())
+}
+
 /// Positive control for #4559: one case on the boundary keeps `exposed`, also
 /// through a stacked decorator (the cases are the product).
 #[test]
@@ -1477,12 +1554,36 @@ fn an_indirect_parametrize_argname_is_an_unresolved_fixture() -> Result<(), Stri
             );
         }
     }
+    // Marks pytest refuses at collection (#10867): the test never runs, so
+    // it carries the collection-error activation control and lends nothing.
+    for mark in [
+        ", indirect=None",
+        ", indirect=[\"other\"]",
+        ", indirect=(\"quantity\", \"other\")",
+    ] {
+        for (shape, tests) in [("module", module(mark)), ("class", class(mark))] {
+            assert_eq!(
+                limit(&tests)?,
+                Some(crate::domain::StaticLimitKind::DecoratorIndirection),
+                "{shape}{mark}"
+            );
+        }
+    }
+    // A mark the read cannot pin to pytest (`import mylib as pytest`) is not
+    // a pytest collection error: its argname stays an unsettled fixture.
+    for mark in [", indirect=None", ", indirect=[\"other\"]"] {
+        let tests = module(mark).replace("import pytest\n", "import mylib as pytest\n");
+        assert_eq!(
+            limit(&tests)?,
+            Some(crate::domain::StaticLimitKind::UnresolvedPytestFixture),
+            "mylib{mark}"
+        );
+    }
     // Control: values that leave the name direct keep it a pytest value.
     for mark in [
         ", indirect=False",
-        ", indirect=None",
-        ", indirect=[\"other\"]",
         ", indirect=()",
+        ", indirect=[]",
         ", False",
     ] {
         for (shape, tests) in [("module", module(mark)), ("class", class(mark))] {

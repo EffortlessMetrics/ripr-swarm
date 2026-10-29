@@ -49,6 +49,10 @@ pub(super) struct PythonSourceFacts {
     /// Physical lines of every `import` / `from ... import` statement, at any
     /// nesting depth (a multi-line parenthesized import spans several lines).
     pub(super) import_line_ranges: Vec<RangeInclusive<usize>>,
+    /// Attribute names the file's statements assign, from this parse of the
+    /// original source; None when it does not parse. The workspace foreign
+    /// index reads it instead of parsing every file again (#10914).
+    pub(super) assigned_attributes: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -636,6 +640,7 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
         limitations: Vec::new(),
         docstring_line_ranges: Vec::new(),
         import_line_ranges: Vec::new(),
+        assigned_attributes: None,
     };
     let module = match parse_module_result(file, source) {
         Ok(Mod::Module(module)) => module,
@@ -657,16 +662,22 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
             return snapshot;
         }
     };
+    snapshot.assigned_attributes = Some(super::module_constants::assigned_attribute_names(
+        &module.body,
+    ));
     // A plain test's calls to a same-file assertion helper read as the
     // helper's asserts (#9636); extract from the rewritten source, which keeps
-    // every line number.
+    // every line number. The foreign index reads the file as written, so the
+    // assigned attributes stay those of the original source.
     if is_test_file(file)
         && let Some(inlined) = super::helper_inline::inline_test_helpers(source, &module.body)
         // Defence in depth: a rewrite that fails to parse degrades to the
         // original source (unknown), never to a file with no tests.
         && matches!(parse_module_result(file, &inlined), Ok(Mod::Module(_)))
     {
-        return extract_source_facts(file, &inlined);
+        let mut rewritten = extract_source_facts(file, &inlined);
+        rewritten.assigned_attributes = snapshot.assigned_attributes;
+        return rewritten;
     }
     // One line-start index per file; every line lookup below is a binary
     // search against it rather than a rescan from byte 0 (#4495).

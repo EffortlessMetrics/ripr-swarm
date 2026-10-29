@@ -2,17 +2,17 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/error_path_oracle_execution_called/input
 
-Summary: 2 probes (1 exposed, 0 weak, 0 unrevealed, 0 no path, 1 unknown); 2 of 2 findings unsuppressed (1 base-side evidence, not candidate edit targets)
+Summary: 2 changed behaviors checked: 1 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 0 no test path, 1 unclear. 2 found, 0 suppressed by your settings (1 base-side evidence, not candidate edit targets)
 
 Analysis outcome: findings below (analysis complete)
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
 
 Start here:
   State: no gap selected for repair
   Safe next action: no non-exposed diff finding was selected. This is not runtime proof, coverage adequacy, or mutation confirmation
   File: ./src/lib.rs:5
   Static exposure: exposed (severity: info, confidence 1.00)
-  Canonical gap: gap:rust:src/lib.rs:read_all:error_variant:error_path:let_n=rdr.read_mut_buf
+  Gap ID (for scripts): gap:rust:src/lib.rs:read_all:error_variant:error_path:let_n=rdr.read_mut_buf
   Changed behavior: let n = rdr.read(&mut buf)?;
   Related test: src/lib.rs:21 reports_read_failure
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator yes
@@ -21,11 +21,11 @@ Start here:
       discriminator = assertion distinguishes intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
-    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
-      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
-      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;
-      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;
-      candidate line = changed line ripr considers for probes
+    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      no test path = no test path found; unclear = analysis limited, not a verdict;
+      found = listed for review; suppressed by your settings = hidden by your suppression policy;
+      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: Related tests appear to reach read_all: reports_read_failure
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 6 more detail line(s) in --format human-full

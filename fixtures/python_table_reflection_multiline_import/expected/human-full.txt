@@ -3,12 +3,17 @@ mode: fast
 root: fixtures/python_table_reflection_multiline_import/input
 config: <cwd>/fixtures/python_table_reflection_multiline_import/input/ripr.toml
 
-Summary: 1 probe(s), 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 1 static_unknown; 1 of 1 finding(s) unsuppressed
+Summary: 1 changed behavior(s) checked: 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 1 static_unknown; 1 of 1 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
 
 Changed file(s) by language: python = 1
 
 Analysis outcome: findings below (analysis complete; complete_with_findings)
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
 
 NOTE hostile/settings.py:1
   id: probe:hostile_settings.py:python_preview:f6277be6
@@ -16,9 +21,10 @@ NOTE hostile/settings.py:1
 Changed
   after:  RATES = {"silver": 6}
 
-Probe
+Change type
+  a condition or comparison changed
   family: predicate
-  delta:  control
+  delta:  control (changes which code path runs)
   owner:  python:hostile/settings.py::<module>
 
 Language
@@ -41,7 +47,7 @@ Weakness
   - Static limit `missing_import_graph`: the changed line is a module-level statement (a constant, decorator argument or conditional definition) that runs when a test imports the module; related tests are linked only by a name heuristic and the preview adapter does not follow top-level values into their use sites, so it does not grade this edit as a gap
 
 Stop reasons:
-  - static_probe_unknown — ripr could not model this change well enough to classify it
+  - ripr could not model this change well enough to classify it (static_probe_unknown)
     Next: Add a test that calls the changed code and asserts an exact result.
 
 Static limitation

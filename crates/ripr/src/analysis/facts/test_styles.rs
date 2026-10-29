@@ -47,6 +47,7 @@ pub(super) fn normalize_index_test_styles(index: &mut RustIndex) -> Result<(), S
         &index.files,
         &index.function_facts,
         index.workspace_member_crates(),
+        &index.member_crates,
     );
     for facts in index.files.values_mut() {
         cancellation::checkpoint()?;

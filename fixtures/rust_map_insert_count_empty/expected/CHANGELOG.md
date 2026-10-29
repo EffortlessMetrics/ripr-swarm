@@ -179,3 +179,16 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_map_insert_count_empty (14)
+
+Reason:
+RIPR-SPEC-0122: plain-language wording for the default and human-full check views (#10691); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless rust_map_insert_count_empty --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

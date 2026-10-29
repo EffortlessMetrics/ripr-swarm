@@ -18,7 +18,10 @@ mod framework_oracle;
 mod gap_admission;
 mod helper_transfer;
 mod implicit_effect;
-pub(in crate::analysis) use implicit_effect::{ImplicitExpansionContext, ImplicitExpansionMemo};
+pub(in crate::analysis) use implicit_effect::{
+    ImplicitExpansionContext, ImplicitExpansionMemo, assertion_observes_scope_end,
+    destructor_credit_established,
+};
 mod facade_reach;
 mod implicit_call;
 mod indirect_owner;
@@ -62,7 +65,8 @@ pub(in crate::analysis) use builder_override::{
     setter_plainly_writes,
 };
 pub(in crate::analysis) use call_identity::{
-    CallIdentityMemos, CallTarget, OwnerCallIdentity, shared_owner_call_identity,
+    CallIdentityMemos, CallTarget, OwnerCallIdentity, bound_free_owner_calls,
+    shared_owner_call_identity, text_calls_owner,
 };
 pub(in crate::analysis) use caller_loop_selector::withhold_caller_loop_selector_gap;
 pub(in crate::analysis) use const_readers::same_file_const_readers;
@@ -73,7 +77,9 @@ pub(in crate::analysis) use decision::{
 };
 pub(in crate::analysis) use diff_touched::DiffTouchedTests;
 pub(in crate::analysis) use effect_carrier::EffectStateCarrier;
-pub(in crate::analysis) use element_field_pin::observes_returned_element_field;
+pub(in crate::analysis) use element_field_pin::{
+    drop_is_plain_in_closed_sources, observes_returned_element_field,
+};
 pub(in crate::analysis) use facade_reach::{
     FacadeReachWitness, RUST_FACADE_REACH_MESSAGE, facade_reach_limitation_detail_lines,
     facade_reach_witness, facade_reach_witness_pointer,
@@ -90,14 +96,17 @@ pub(in crate::analysis) use helper_transfer::{FieldProjectionReceipt, field_proj
 pub(in crate::analysis) use helper_transfer::{
     HELPER_RESULT_NOT_FORWARDED, HelperChain, ReturnedLedger,
     ambiguous_helper_entry_called_by_tests, callee_is_unique, chain_entry_pin_admits,
-    chain_forwards_to_observed_hops, chain_passes_effect_target_to_observed_hops,
-    helper_only_reach, hop_reach_keeps_weak_oracle_gap, resolve_chain, returned_ledger,
+    chain_forwards_return_to_observed_hops, chain_forwards_to_observed_hops,
+    chain_passes_effect_target_to_observed_hops, helper_only_reach,
+    hop_reach_keeps_weak_oracle_gap, resolve_chain, returned_ledger,
     returned_ledger_caller_is_observed, selected_inherent_calls,
 };
 pub(in crate::analysis) use implicit_call::{
     withhold_destructor_credit, withhold_implicit_call_gap,
 };
-pub(in crate::analysis) use indirect_owner::withhold_indirect_owner_gap;
+pub(in crate::analysis) use indirect_owner::{
+    related_tests_reach_owner_indirectly, withhold_indirect_owner_gap,
+};
 pub(in crate::analysis) use infection::{
     OwnerInputs, exercised_bool_chain_return_sink, infection_evidence_for_owner,
 };

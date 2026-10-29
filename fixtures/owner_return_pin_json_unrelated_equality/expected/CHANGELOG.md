@@ -144,3 +144,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — owner_return_pin_json_unrelated_equality (12)
+
+Reason:
+RIPR-SPEC-0122: plain-language wording for the default and human-full check views (#10691); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless owner_return_pin_json_unrelated_equality --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -140,3 +140,16 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — effect_assertion_in_false_block (11)
+
+Reason:
+RIPR-SPEC-0122: plain-language wording for the default and human-full check views (#10691); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless effect_assertion_in_false_block --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

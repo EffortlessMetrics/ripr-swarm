@@ -3,12 +3,12 @@ mode: fast
 root: fixtures/python_same_stem_sibling_owner_not_related/input
 config: <cwd>/fixtures/python_same_stem_sibling_owner_not_related/input/ripr.toml
 
-Summary: 4 probes (0 exposed, 1 weak, 0 unrevealed, 3 no path); 4 of 4 findings unsuppressed
+Summary: 4 changed behaviors checked: 0 appear noticed by tests, 1 partly noticed, 0 reached but not noticed, 3 no test path. 4 found, 0 suppressed by your settings
 
 Changed file(s) by language: python = 1
 
 Analysis outcome: findings below (analysis complete)
-  Counts: 1 changed file(s), 8 changed line(s), 4 candidate line(s), 4 probe(s), 4 finding(s)
+  Counts: 1 changed file(s), 8 changed line(s), 4 candidate line(s), 4 changed behavior(s) checked, 4 finding(s)
 
 Start here:
   State: preview language, advisory only
@@ -18,10 +18,10 @@ Start here:
   Language status: preview
   Static exposure: weak (severity: warning, confidence 0.40)
   Why weak: a related test reaches this change but does not observe the exact changed value
-  Canonical gap: gap:python:pricing.py:discounted_total:predicate_boundary:predicate:amount>=discount_threshold
+  Gap ID (for scripts): gap:python:pricing.py:discounted_total:predicate_boundary:predicate:amount>=discount_threshold
   Changed behavior: if amount >= DISCOUNT_THRESHOLD:
-  Missing discriminator (1 of 2): A strong Python oracle reaches `discounted_total`, but static
-    evidence does not place a related test input at the changed predicate boundary `amount ==
+  Missing check (1 of 2): A strong Python oracle reaches `discounted_total`, but static evidence
+    does not place a related test input at the changed predicate boundary `amount ==
     DISCOUNT_THRESHOLD`. No strong related test call places amount equal to DISCOUNT_THRESHOLD
     (module constant DISCOUNT_THRESHOLD = 10000 at line 1); observed amount values: 20000, 5000
   Related test (1 of 2 matched rows): tests/test_pricing.py:8 test_discounts_far_above_threshold (no test input reaches `amount == DISCOUNT_THRESHOLD`)
@@ -36,11 +36,11 @@ Start here:
       discriminator = assertion distinguishes intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
-    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
-      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
-      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;
-      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;
-      candidate line = changed line ripr considers for probes
+    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      no test path = no test path found; unclear = analysis limited, not a verdict;
+      found = listed for review; suppressed by your settings = hidden by your suppression policy;
+      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: 2 related Python test(s) found for owner `discounted_total`
     - infection weak: Related tests reach the changed predicate, but no strong related test call places an input at the changed boundary
     - 8 more detail line(s) in --format human-full

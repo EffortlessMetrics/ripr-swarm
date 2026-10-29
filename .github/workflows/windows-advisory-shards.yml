@@ -58,6 +58,9 @@ jobs:
       - name: Prepare locked JSON owner-return fixture dependencies
         run: cargo fetch --locked --manifest-path fixtures/owner_return_pin_json_real_literal/input/Cargo.toml
 
+      - name: Prepare locked proptest profile dependencies
+        run: cargo fetch --locked --manifest-path crates/ripr/tests/fixtures/proptest_singleton/input/Cargo.toml
+
       # The policy tests spawn `cargo test --no-run -p xtask` themselves. That
       # invocation unifies features differently from `nextest --workspace`, so on a
       # cold runner it rebuilds about six minutes of dependencies inside a test
