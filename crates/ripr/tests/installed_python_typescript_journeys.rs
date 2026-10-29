@@ -1342,11 +1342,16 @@ struct GapAttempt {
     decoy: PathBuf,
     gap: String,
     attempt_id: String,
+    store: Option<String>,
 }
 
 #[cfg(feature = "lang-typescript")]
 impl GapAttempt {
     fn start(label: &str) -> Result<Self, String> {
+        Self::start_in_store(label, None)
+    }
+
+    fn start_in_store(label: &str, store: Option<&str>) -> Result<Self, String> {
         let toml = "[languages]\nenabled = [\"typescript\"]\n";
         let (guard, root, decoy) = materialize(
             "blind_journey_installed_typescript",
@@ -1364,13 +1369,14 @@ impl GapAttempt {
             .and_then(|line| line.split_whitespace().nth(4))
             .ok_or_else(|| format!("check printed no gap-bound start:\n{check}"))?
             .to_string();
-        let (ok, started) = ripr(
-            &decoy,
-            &[
-                "agent", "repair", "--gap-id", &gap, "--base", "HEAD~1", "--root", &root_arg,
-                "--phase", "before",
-            ],
-        )?;
+        let mut args = vec![
+            "agent", "repair", "--gap-id", &gap, "--base", "HEAD~1", "--root", &root_arg,
+            "--phase", "before",
+        ];
+        if let Some(store) = store {
+            args.extend(["--store", store]);
+        }
+        let (ok, started) = ripr(&decoy, &args)?;
         expect_exit(ok, true, &format!("gap-bound before phase: {started}"))?;
         let attempt = Self {
             _guard: guard,
@@ -1379,6 +1385,7 @@ impl GapAttempt {
             decoy,
             gap,
             attempt_id: String::new(),
+            store: store.map(str::to_string),
         };
         let manifest = attempt.manifest_for_only_attempt()?;
         let attempt_id = attempt_id_of(&manifest)?;
@@ -1389,7 +1396,11 @@ impl GapAttempt {
     }
 
     fn manifest_for_only_attempt(&self) -> Result<serde_json::Value, String> {
-        let attempts = self.root.join("target/ripr/repair-attempts");
+        let attempts = self.root.join(
+            self.store
+                .as_deref()
+                .unwrap_or("target/ripr/repair-attempts"),
+        );
         let mut found = Vec::new();
         for entry in
             std::fs::read_dir(&attempts).map_err(|error| format!("attempts dir: {error}"))?
@@ -1420,6 +1431,9 @@ impl GapAttempt {
         ];
         if json {
             args.push("--json");
+        }
+        if let Some(store) = self.store.as_deref() {
+            args.extend(["--store", store]);
         }
         ripr_output(&self.decoy, &args)
     }
@@ -1647,7 +1661,10 @@ fn gap_bound_after_phase_closes_the_gap_on_positive_evidence() -> Result<(), Str
                 .collect()
         })
         .unwrap_or_default();
-    if !roles.contains(&"agent_receipt") || !roles.contains(&"agent_verify") {
+    if !roles.contains(&"agent_receipt")
+        || !roles.contains(&"agent_verify")
+        || !roles.contains(&"after_check_findings")
+    {
         return Err(format!("terminal evidence not retained: {roles:?}"));
     }
     // Status reads the retained receipt as showing this gap closed and offers
@@ -1677,6 +1694,226 @@ fn gap_bound_after_phase_closes_the_gap_on_positive_evidence() -> Result<(), Str
     expect_exit(again.status.success(), false, "second after phase")?;
     need(&again_err, "--gap-id", "restart names the gap start")?;
     decoy_untouched(&attempt.decoy)
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn gap_currentness_survives_only_proven_workflow_projection_cleanup() -> Result<(), String> {
+    let attempt = GapAttempt::start("gap-projection-cleanup")?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let baseline = attempt
+            .root
+            .join("target/ripr/workflow/attempt-baseline.json");
+        std::fs::set_permissions(&baseline, std::fs::Permissions::from_mode(0o751))
+            .map_err(|error| format!("make baseline executable: {error}"))?;
+    }
+    attempt.commit_closing_test()?;
+    let output = attempt.after(true)?;
+    expect_exit(output.status.success(), true, "finish gap attempt")?;
+    let current = || -> Result<bool, String> {
+        let (ok, status) = ripr(
+            &attempt.decoy,
+            &["agent", "status", "--root", &attempt.root_arg, "--json"],
+        )?;
+        expect_exit(ok, true, "status")?;
+        let document: serde_json::Value =
+            serde_json::from_str(&status).map_err(|error| error.to_string())?;
+        document["repair_attempts"][0]["head_current"]
+            .as_bool()
+            .ok_or_else(|| format!("no currentness in {status}"))
+    };
+    if !current()? {
+        return Err("newly finished attempt was not current".to_string());
+    }
+    let workflow = attempt.root.join("target/ripr/workflow");
+    let saved = attempt.root.join("target/ripr/workflow-saved-for-test");
+    std::fs::rename(&workflow, &saved).map_err(|error| error.to_string())?;
+    let absent_current = current();
+    std::fs::rename(&saved, &workflow).map_err(|error| error.to_string())?;
+    if !absent_current? || !current()? {
+        return Err("proven projection cleanup or restoration made the attempt stale".to_string());
+    }
+    let after = workflow.join("after.check-findings.json");
+    let bytes = std::fs::read(&after).map_err(|error| error.to_string())?;
+    std::fs::write(&after, b"unrelated replacement").map_err(|error| error.to_string())?;
+    let drift = current();
+    std::fs::write(&after, &bytes).map_err(|error| error.to_string())?;
+    if drift? || !current()? {
+        return Err(
+            "present projection drift was hidden or restoration did not recover".to_string(),
+        );
+    }
+    let manifest = attempt.manifest_for_only_attempt()?;
+    let retained = manifest["terminal_artifacts"]
+        .as_array()
+        .ok_or("no terminal artifacts")?
+        .iter()
+        .find(|artifact| artifact["role"] == "after_check_findings")
+        .and_then(|artifact| artifact["path"].as_str())
+        .ok_or("no retained after snapshot")?;
+    let retained_path = attempt.root.join(retained);
+    let retained_bytes = std::fs::read(&retained_path).map_err(|error| error.to_string())?;
+    std::fs::write(&retained_path, b"forged").map_err(|error| error.to_string())?;
+    std::fs::rename(&workflow, &saved).map_err(|error| error.to_string())?;
+    let forged = current();
+    std::fs::rename(&saved, &workflow).map_err(|error| error.to_string())?;
+    std::fs::write(&retained_path, retained_bytes).map_err(|error| error.to_string())?;
+    if forged? {
+        return Err("forged retained evidence established custody".to_string());
+    }
+    Ok(())
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn gap_cleanup_does_not_hide_unrelated_bound_neighbor() -> Result<(), String> {
+    let attempt = GapAttempt::start("gap-unrelated-neighbor")?;
+    let neighbor = attempt.root.join("target/ripr/workflow/user-note.json");
+    std::fs::write(&neighbor, b"user data").map_err(|error| error.to_string())?;
+    attempt.commit_closing_test()?;
+    let output = attempt.after(true)?;
+    expect_exit(
+        output.status.success(),
+        true,
+        "finish with unrelated operational neighbor",
+    )?;
+    let workflow = attempt.root.join("target/ripr/workflow");
+    let saved = attempt.root.join("target/ripr/workflow-saved-for-test");
+    std::fs::rename(&workflow, &saved).map_err(|error| error.to_string())?;
+    let (ok, status) = ripr(
+        &attempt.decoy,
+        &["agent", "status", "--root", &attempt.root_arg, "--json"],
+    )?;
+    std::fs::rename(&saved, &workflow).map_err(|error| error.to_string())?;
+    expect_exit(ok, true, "status after cleanup")?;
+    let document: serde_json::Value =
+        serde_json::from_str(&status).map_err(|error| error.to_string())?;
+    if document["repair_attempts"][0]["head_current"] != false {
+        return Err(format!("unrelated bound neighbor was hidden: {status}"));
+    }
+    Ok(())
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn gap_retention_accepts_default_and_relative_root_spellings() -> Result<(), String> {
+    for relative in [false, true] {
+        let attempt = GapAttempt::start(if relative {
+            "gap-relative-root"
+        } else {
+            "gap-default-root"
+        })?;
+        attempt.commit_closing_test()?;
+        let parent = attempt.root.parent().ok_or("root has no parent")?;
+        let name = attempt
+            .root
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or("root name is not UTF-8")?;
+        let output = if relative {
+            ripr_output(
+                parent,
+                &[
+                    "agent",
+                    "repair",
+                    "--root",
+                    name,
+                    "--phase",
+                    "after",
+                    "--attempt",
+                    &attempt.attempt_id,
+                    "--json",
+                ],
+            )?
+        } else {
+            ripr_output(
+                &attempt.root,
+                &[
+                    "agent",
+                    "repair",
+                    "--phase",
+                    "after",
+                    "--attempt",
+                    &attempt.attempt_id,
+                    "--json",
+                ],
+            )?
+        };
+        let (stdout, stderr) = text_of(&output);
+        expect_exit(
+            output.status.success(),
+            true,
+            &format!("relative-root finish: {stdout}\n{stderr}"),
+        )?;
+        let manifest = attempt.manifest_for_only_attempt()?;
+        if !manifest["terminal_artifacts"]
+            .as_array()
+            .is_some_and(|roles| {
+                roles
+                    .iter()
+                    .any(|role| role["role"] == "after_check_findings")
+            })
+        {
+            return Err(format!(
+                "relative-root snapshot was not retained: {manifest}"
+            ));
+        }
+        let workflow = attempt.root.join("target/ripr/workflow");
+        let saved = attempt.root.join("target/ripr/workflow-saved-for-test");
+        std::fs::rename(&workflow, &saved).map_err(|error| error.to_string())?;
+        let (ok, status) = ripr(
+            &attempt.decoy,
+            &["agent", "status", "--root", &attempt.root_arg, "--json"],
+        )?;
+        std::fs::rename(&saved, &workflow).map_err(|error| error.to_string())?;
+        expect_exit(ok, true, "relative-root retained status")?;
+        let document: serde_json::Value =
+            serde_json::from_str(&status).map_err(|error| error.to_string())?;
+        if document["repair_attempts"][0]["head_current"] != true {
+            return Err(format!("relative-root custody failed: {status}"));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn gap_projection_custody_uses_the_explicit_attempt_store() -> Result<(), String> {
+    let store = "target/ripr-explicit-attempts";
+    let attempt = GapAttempt::start_in_store("gap-explicit-store", Some(store))?;
+    attempt.commit_closing_test()?;
+    let output = attempt.after(true)?;
+    let (stdout, stderr) = text_of(&output);
+    expect_exit(
+        output.status.success(),
+        true,
+        &format!("explicit-store finish: {stdout}\n{stderr}"),
+    )?;
+    let workflow = attempt.root.join("target/ripr/workflow");
+    let saved = attempt.root.join("target/ripr/workflow-saved-for-test");
+    std::fs::rename(&workflow, &saved).map_err(|error| error.to_string())?;
+    let (ok, status) = ripr(
+        &attempt.decoy,
+        &[
+            "agent",
+            "status",
+            "--root",
+            &attempt.root_arg,
+            "--store",
+            store,
+            "--json",
+        ],
+    )?;
+    std::fs::rename(&saved, &workflow).map_err(|error| error.to_string())?;
+    expect_exit(ok, true, "explicit-store status")?;
+    let document: serde_json::Value =
+        serde_json::from_str(&status).map_err(|error| error.to_string())?;
+    if document["repair_attempts"][0]["head_current"] != true {
+        return Err(format!("explicit-store custody failed: {status}"));
+    }
+    Ok(())
 }
 
 /// Human (non `--json`) gap-bound after output names the closure and this

@@ -2756,20 +2756,31 @@ fn run_agent_repair_phase(
                 // projection above can be replaced by a later finish; this
                 // retain is the surviving authority for this attempt.
                 if receipt_result.is_ok() {
+                    let receipt_path = root.join("target/ripr/reports/agent-receipt.json");
+                    let gap_after_path = root
+                        .join("target/ripr/workflow")
+                        .join(crate::app::gap_bound_repair::GAP_BOUND_AFTER_SNAPSHOT_FILE);
+                    let mut sources = vec![
+                        crate::app::repair_attempt::BeforeArtifactSource {
+                            role: crate::app::repair_attempt::TERMINAL_RECEIPT_ROLE,
+                            path: &receipt_path,
+                        },
+                        crate::app::repair_attempt::BeforeArtifactSource {
+                            role: crate::app::repair_attempt::TERMINAL_VERIFY_ROLE,
+                            path: &verify_json,
+                        },
+                    ];
+                    if gap_bound {
+                        sources.push(crate::app::repair_attempt::BeforeArtifactSource {
+                            role: crate::app::repair_attempt::TERMINAL_GAP_AFTER_ROLE,
+                            path: &gap_after_path,
+                        });
+                    }
                     crate::app::repair_attempt::retain_terminal_evidence_from(
                         &root,
                         store_ref,
                         &attempt.attempt_id,
-                        &[
-                            crate::app::repair_attempt::BeforeArtifactSource {
-                                role: crate::app::repair_attempt::TERMINAL_RECEIPT_ROLE,
-                                path: &root.join("target/ripr/reports/agent-receipt.json"),
-                            },
-                            crate::app::repair_attempt::BeforeArtifactSource {
-                                role: crate::app::repair_attempt::TERMINAL_VERIFY_ROLE,
-                                path: &verify_json,
-                            },
-                        ],
+                        &sources,
                     )?;
                 }
 

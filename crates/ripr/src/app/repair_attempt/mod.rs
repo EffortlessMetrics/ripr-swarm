@@ -36,6 +36,8 @@ const REPAIR_ATTEMPT_ID_HEX_LEN: usize = 24;
 pub(crate) const TERMINAL_RECEIPT_ROLE: &str = "agent_receipt";
 /// Role of the verify document the after phase used to produce that receipt.
 pub(crate) const TERMINAL_VERIFY_ROLE: &str = "agent_verify";
+/// The exact gap producer snapshot used by the retained verify/receipt pair.
+pub(crate) const TERMINAL_GAP_AFTER_ROLE: &str = "after_check_findings";
 /// Cargo's default build directory, relative to the workspace root.
 const CARGO_DEFAULT_BUILD_OUTPUT_DIR: &str = "target";
 /// The lockfile Cargo writes at the workspace root when it resolves
@@ -578,16 +580,153 @@ fn recompute_after_verdict_binding(
     // status` write command-owned files under `target/ripr` after the finish
     // bound its verdict. Those later operational writes are not part of the
     // attempt; any other movement still breaks the binding.
-    let delta = crate::edit_cage::without_later_operational_writes(
-        baseline.policy(),
-        &delta,
-        &after.verdict.changed_paths,
-    );
-    let verdict = crate::edit_cage::evaluate_edit_cage(baseline.policy(), &delta);
-    let delta_bytes = serde_json::to_vec(&delta)
-        .map_err(|error| format!("serialize repair delta failed: {error}"))?;
-    let holds = sha256_bytes(&delta_bytes) == after.delta_sha256 && verdict == after.verdict;
-    Ok((verdict, holds))
+    let protected = if manifest.gap_binding.is_some() {
+        GAP_WORKFLOW_PROJECTIONS.as_slice()
+    } else {
+        &[]
+    };
+    let normalize = |delta: &crate::edit_cage::AttemptDelta| {
+        crate::edit_cage::without_later_operational_writes_protecting(
+            baseline.policy(),
+            delta,
+            &after.verdict.changed_paths,
+            protected,
+        )
+    };
+    let matches = |delta: &crate::edit_cage::AttemptDelta| -> Result<_, String> {
+        let verdict = crate::edit_cage::evaluate_edit_cage(baseline.policy(), delta);
+        let delta_bytes = serde_json::to_vec(delta)
+            .map_err(|error| format!("serialize repair delta failed: {error}"))?;
+        Ok((
+            verdict.clone(),
+            sha256_bytes(&delta_bytes) == after.delta_sha256 && verdict == after.verdict,
+        ))
+    };
+    let delta = normalize(&delta);
+    let (verdict, holds) = matches(&delta)?;
+    if holds {
+        return Ok((verdict, true));
+    }
+    let projections = match retained_missing_gap_projections(root, manifest) {
+        Ok(projections) if !projections.is_empty() => projections,
+        _ => return Ok((verdict, false)),
+    };
+    let mut matching = None;
+    let mut count = 0u32;
+    crate::edit_cage::visit_reconstructed_workflow_deltas(
+        &baseline,
+        HeadMovement::AdmitDescendantCommits,
+        &projections,
+        |mut candidate| {
+            crate::edit_cage::omit_attempt_manifest_identity(
+                &mut candidate,
+                &baseline,
+                &manifest_relative_path(manifest),
+            )?;
+            let candidate = normalize(&candidate);
+            let (candidate_verdict, holds) = matches(&candidate)?;
+            if holds {
+                count += 1;
+                matching = Some(candidate_verdict);
+            }
+            Ok(())
+        },
+    )?;
+    if count == 1 {
+        return Ok((
+            matching.ok_or("matching projection candidate disappeared")?,
+            true,
+        ));
+    }
+    Ok((verdict, false))
+}
+
+const GAP_WORKFLOW_PROJECTIONS: [&str; 6] = [
+    "target/ripr/workflow/before.check-findings.json",
+    "target/ripr/workflow/gap-repair-packet.json",
+    "target/ripr/workflow/attempt-baseline.json",
+    "target/ripr/workflow/after.check-findings.json",
+    "target/ripr/workflow/agent-verify.json",
+    "target/ripr/workflow/analysis-outcome.json",
+];
+
+/// Return only absent projections whose exact producer bytes are anchored in
+/// this attempt. A legacy pair or incomplete retention supplies no custody.
+fn retained_missing_gap_projections(
+    root: &Path,
+    manifest: &RepairAttemptManifest,
+) -> Result<Vec<crate::edit_cage::MissingWorkflowProjection>, String> {
+    if manifest.gap_binding.is_none() {
+        return Ok(Vec::new());
+    }
+    let receipt = match load_attempt_terminal_receipt(root, manifest) {
+        AttemptTerminalReceipt::Issued { value, .. } => value,
+        _ => return Ok(Vec::new()),
+    };
+    let read_role = |role: &str, terminal: bool| -> Result<Vec<u8>, String> {
+        let artifact = if terminal {
+            find_terminal_artifact_by_role(manifest, role)
+                .ok_or_else(|| format!("missing terminal role {role}"))?
+        } else {
+            find_manifest_artifact(manifest, role)?
+        };
+        if artifact.bytes > crate::edit_cage::MAX_CAPTURE_FILE_BYTES {
+            return Err(format!("retained role {role} is too large"));
+        }
+        read_attempt_artifact_bytes_with_limit(
+            root,
+            manifest,
+            artifact,
+            crate::edit_cage::MAX_CAPTURE_FILE_BYTES,
+        )
+    };
+    let verify = read_role(TERMINAL_VERIFY_ROLE, true)?;
+    let after = read_role(TERMINAL_GAP_AFTER_ROLE, true)?;
+    validate_retained_gap_after(root, manifest, &receipt, &verify, &after)?;
+    let recorded_root = receipt
+        .pointer("/provenance/repo_root")
+        .and_then(serde_json::Value::as_str)
+        .ok_or("retained receipt has no root")?;
+    if !recorded_workflow_path_matches(
+        root,
+        recorded_root,
+        receipt
+            .pointer("/provenance/verify_artifact/path")
+            .and_then(serde_json::Value::as_str),
+        GAP_WORKFLOW_PROJECTIONS[4],
+    )? {
+        return Err("retained verify path is not the workflow projection".to_string());
+    }
+    let before = read_role(
+        crate::app::gap_bound_repair::GAP_BOUND_BEFORE_SNAPSHOT_ROLE,
+        false,
+    )?;
+    let packet = read_role("agent_packet", false)?;
+    let baseline = read_role("edit_cage_baseline", false)?;
+    let sources = [before, packet, baseline, after.clone(), verify, after];
+    let mut missing = Vec::new();
+    let mut total = 0u64;
+    for (path, bytes) in GAP_WORKFLOW_PROJECTIONS.iter().zip(sources) {
+        match std::fs::symlink_metadata(root.join(path)) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                total += bytes.len() as u64;
+                if total > 64 * 1024 * 1024 {
+                    return Err("missing projection custody exceeds the capture budget".to_string());
+                }
+                missing.push(crate::edit_cage::MissingWorkflowProjection {
+                    path: PathBuf::from(*path),
+                    bytes,
+                });
+            }
+            Ok(_) => {}
+            Err(error) => {
+                return Err(format!(
+                    "inspect workflow projection {path} failed: {error}"
+                ));
+            }
+        }
+    }
+    Ok(missing)
 }
 
 fn manifest_relative_path(manifest: &RepairAttemptManifest) -> PathBuf {
@@ -859,6 +998,185 @@ pub(crate) fn validate_issued_receipt_evidence(
         ));
     }
     Ok(())
+}
+
+/// Bind a retained gap snapshot to the same attempt-local verify and receipt.
+/// This establishes origin at the recorded after head, not applicability at
+/// the live HEAD. A later currentness check still evaluates the whole delta.
+fn validate_retained_gap_after(
+    root: &Path,
+    manifest: &RepairAttemptManifest,
+    receipt: &serde_json::Value,
+    verify_bytes: &[u8],
+    after_bytes: &[u8],
+) -> Result<(), String> {
+    let gap = manifest
+        .gap_binding
+        .as_ref()
+        .ok_or("gap snapshot retained by a seam attempt")?;
+    let base_commit = gap
+        .base_commit
+        .as_deref()
+        .ok_or("gap snapshot has no immutable base commit")?;
+    let after = manifest
+        .after
+        .as_ref()
+        .ok_or("gap snapshot has no after verdict")?;
+    validate_issued_receipt_evidence(root, manifest, receipt, verify_bytes)?;
+    fn field<'a>(value: &'a serde_json::Value, pointer: &str) -> Option<&'a str> {
+        value.pointer(pointer).and_then(serde_json::Value::as_str)
+    }
+    for (pointer, expected) in [
+        ("/repair_attempt/attempt_id", after.attempt_id.as_str()),
+        ("/repair_attempt/after_head", after.repository_head.as_str()),
+        ("/repair_attempt/delta_sha256", after.delta_sha256.as_str()),
+        (
+            "/repair_attempt/packet_sha256",
+            after.packet_sha256.as_str(),
+        ),
+        ("/repair_attempt/gap_binding/base", gap.base.as_str()),
+        ("/repair_attempt/gap_binding/base_commit", base_commit),
+    ] {
+        if field(receipt, pointer) != Some(expected) {
+            return Err(format!("retained gap receipt does not bind {pointer}"));
+        }
+    }
+    let verify: serde_json::Value = serde_json::from_slice(verify_bytes)
+        .map_err(|error| format!("decode retained verify failed: {error}"))?;
+    let recorded_root =
+        field(receipt, "/provenance/repo_root").ok_or("retained receipt has no root")?;
+    if !recorded_workflow_path_matches(
+        root,
+        recorded_root,
+        field(&verify, "/inputs/after"),
+        GAP_WORKFLOW_PROJECTIONS[3],
+    )? || !recorded_workflow_path_matches(
+        root,
+        recorded_root,
+        field(receipt, "/provenance/after_artifact/path"),
+        GAP_WORKFLOW_PROJECTIONS[3],
+    )? || field(receipt, "/provenance/after_artifact/sha256")
+        != Some(sha256_bytes(after_bytes).as_str())
+    {
+        return Err(
+            "retained gap snapshot path, root or raw digest is not bound to the receipt"
+                .to_string(),
+        );
+    }
+    let raw = std::str::from_utf8(after_bytes)
+        .map_err(|error| format!("retained gap snapshot is not UTF-8: {error}"))?;
+    let snapshot =
+        crate::agent::artifact::validate_check_findings_artifact(root, raw, "retained after")?
+            .artifact;
+    if snapshot.repository_head != after.repository_head
+        || snapshot.base_revision.as_deref() != Some(base_commit)
+        || field(&verify, "/inputs/after_content_sha256") != Some(snapshot.content_sha256.as_str())
+        || crate::agent::artifact::recompute_content_commitment(raw)? != snapshot.content_sha256
+    {
+        return Err(
+            "retained gap snapshot does not match the verify, base or after head".to_string(),
+        );
+    }
+    Ok(())
+}
+
+/// Compare a producer-recorded path using the root spelling that producer
+/// recorded. Relative roots are meaningful at the producer's invocation, not
+/// necessarily at this reader's cwd; the independently validated snapshot
+/// binds the canonical repository root. No missing projection is canonicalized.
+fn recorded_workflow_path_matches(
+    root: &Path,
+    recorded_root: &str,
+    actual: Option<&str>,
+    relative: &str,
+) -> Result<bool, String> {
+    fn lexical(path: &Path) -> Option<PathBuf> {
+        use std::path::Component;
+        let mut normalized = PathBuf::new();
+        for component in path.components() {
+            match component {
+                Component::CurDir => {}
+                Component::ParentDir => match normalized.components().next_back() {
+                    Some(Component::Normal(_)) => {
+                        normalized.pop();
+                    }
+                    Some(Component::RootDir | Component::Prefix(_)) => return None,
+                    _ => normalized.push(".."),
+                },
+                other => normalized.push(other.as_os_str()),
+            }
+        }
+        Some(normalized)
+    }
+    if recorded_root.is_empty() {
+        return Ok(false);
+    }
+    let recorded_root = Path::new(recorded_root);
+    if recorded_root.is_absolute() {
+        let canonical = match recorded_root.canonicalize() {
+            Ok(path) => path,
+            Err(_) => return Ok(false),
+        };
+        if canonical != root {
+            return Ok(false);
+        }
+    }
+    let expected = lexical(&recorded_root.join(relative));
+    let observed = actual.and_then(|path| lexical(Path::new(path)));
+    Ok(expected.is_some() && expected == observed)
+}
+
+#[cfg(test)]
+mod recorded_workflow_path_tests {
+    use super::recorded_workflow_path_matches;
+
+    #[test]
+    fn producer_root_spellings_and_escape_decoys_are_distinct() -> Result<(), String> {
+        let root = std::env::current_dir()
+            .and_then(|path| path.canonicalize())
+            .map_err(|error| error.to_string())?;
+        let relative = "target/ripr/workflow/after.check-findings.json";
+        for (recorded, actual) in [
+            (".", relative),
+            (
+                "./project",
+                "project/target/ripr/workflow/after.check-findings.json",
+            ),
+            (
+                "../project",
+                "../project/target/ripr/workflow/after.check-findings.json",
+            ),
+        ] {
+            if !recorded_workflow_path_matches(&root, recorded, Some(actual), relative)? {
+                return Err(format!("valid spelling {recorded} was refused"));
+            }
+        }
+        let absolute = root.join(relative);
+        let root_text = root.to_str().ok_or("root is not UTF-8")?;
+        let actual = absolute.to_str().ok_or("path is not UTF-8")?;
+        let other_root = root.parent().ok_or("root has no parent")?;
+        let other_text = other_root.to_str().ok_or("other root is not UTF-8")?;
+        let other_path = other_root.join(relative);
+        let other_path = other_path.to_str().ok_or("other path is not UTF-8")?;
+        if !recorded_workflow_path_matches(&root, root_text, Some(actual), relative)?
+            || recorded_workflow_path_matches(
+                &root,
+                ".",
+                Some("../target/ripr/workflow/after.check-findings.json"),
+                relative,
+            )?
+            || recorded_workflow_path_matches(
+                &root,
+                ".",
+                Some("target/ripr/workflow/other.json"),
+                relative,
+            )?
+            || recorded_workflow_path_matches(&root, other_text, Some(other_path), relative)?
+        {
+            return Err("root or escape decoy compared incorrectly".to_string());
+        }
+        Ok(())
+    }
 }
 
 /// The closure half of a gap-bound attempt's receipt binding (#9103): the
@@ -1661,6 +1979,20 @@ fn read_terminal_artifact_bytes(
     manifest: &RepairAttemptManifest,
     artifact: &RepairAttemptArtifact,
 ) -> Result<Vec<u8>, String> {
+    read_attempt_artifact_bytes_with_limit(
+        root,
+        manifest,
+        artifact,
+        crate::bounded_input::MAX_CLI_INPUT_BYTES,
+    )
+}
+
+fn read_attempt_artifact_bytes_with_limit(
+    root: &Path,
+    manifest: &RepairAttemptManifest,
+    artifact: &RepairAttemptArtifact,
+    limit: u64,
+) -> Result<Vec<u8>, String> {
     if artifact.path.is_empty() || Path::new(&artifact.path).is_absolute() {
         return Err(format!(
             "repair attempt terminal artifact path is not a relative attempt path: {}",
@@ -1695,7 +2027,9 @@ fn read_terminal_artifact_bytes(
             artifact.path
         ));
     }
-    let bytes = std::fs::read(&canonical)
+    let file = crate::output::file_write::open_regular_read(&canonical)
+        .map_err(|error| format!("open terminal artifact {} failed: {error}", artifact.path))?;
+    let bytes = crate::bounded_input::read_reader_with_limit(file, limit)
         .map_err(|error| format!("read terminal artifact {} failed: {error}", artifact.path))?;
     if u64::try_from(bytes.len()).map_err(|error| error.to_string())? != artifact.bytes
         || sha256_bytes(&bytes) != artifact.sha256
@@ -1759,7 +2093,10 @@ pub(crate) fn retain_terminal_evidence_from(
                 source.role
             ));
         }
-        if source.role != TERMINAL_RECEIPT_ROLE && source.role != TERMINAL_VERIFY_ROLE {
+        if source.role != TERMINAL_RECEIPT_ROLE
+            && source.role != TERMINAL_VERIFY_ROLE
+            && source.role != TERMINAL_GAP_AFTER_ROLE
+        {
             return Err(format!(
                 "repair attempt terminal artifact role `{}` is not a retained after-phase result",
                 source.role
@@ -1792,19 +2129,34 @@ pub(crate) fn retain_terminal_evidence_from(
                 file_name.to_string_lossy()
             ));
         }
-        let bytes = std::fs::read(&source_path).map_err(|error| {
-            format!(
-                "read {} failed: {error}",
-                crate::output::path::human_path(&source_path)
-            )
-        })?;
+        let limit = if source.role == TERMINAL_GAP_AFTER_ROLE {
+            crate::edit_cage::MAX_CAPTURE_FILE_BYTES
+        } else {
+            crate::bounded_input::MAX_CLI_INPUT_BYTES
+        };
+        let source_file =
+            crate::output::file_write::open_regular_read(&source_path).map_err(|error| {
+                format!(
+                    "open {} failed: {error}",
+                    crate::output::path::human_path(&source_path)
+                )
+            })?;
+        let bytes =
+            crate::bounded_input::read_reader_with_limit(source_file, limit).map_err(|error| {
+                format!(
+                    "read {} failed: {error}",
+                    crate::output::path::human_path(&source_path)
+                )
+            })?;
         let digest = sha256_bytes(&bytes);
         let size = u64::try_from(bytes.len()).map_err(|error| {
             format!("repair attempt terminal artifact size does not fit u64: {error}")
         })?;
         let destination = destination_directory.join(&file_name);
         if destination.exists() {
-            let existing = std::fs::read(&destination)
+            let file = crate::output::file_write::open_regular_read(&destination)
+                .map_err(|error| format!("open {} failed: {error}", destination.display()))?;
+            let existing = crate::bounded_input::read_reader_with_limit(file, limit)
                 .map_err(|error| format!("read {} failed: {error}", destination.display()))?;
             if sha256_bytes(&existing) != digest {
                 if !manifest.terminal_artifacts.is_empty() {
@@ -1835,6 +2187,30 @@ pub(crate) fn retain_terminal_evidence_from(
         });
     }
     retained.sort_by(|left, right| left.role.cmp(&right.role));
+    if retained
+        .iter()
+        .any(|artifact| artifact.role == TERMINAL_GAP_AFTER_ROLE)
+    {
+        let role = |name: &str| {
+            retained
+                .iter()
+                .find(|artifact| artifact.role == name)
+                .ok_or_else(|| format!("retained gap snapshot requires terminal role `{name}`"))
+        };
+        let receipt_bytes =
+            read_terminal_artifact_bytes(&root, &manifest, role(TERMINAL_RECEIPT_ROLE)?)?;
+        let verify_bytes =
+            read_terminal_artifact_bytes(&root, &manifest, role(TERMINAL_VERIFY_ROLE)?)?;
+        let after_bytes = read_attempt_artifact_bytes_with_limit(
+            &root,
+            &manifest,
+            role(TERMINAL_GAP_AFTER_ROLE)?,
+            crate::edit_cage::MAX_CAPTURE_FILE_BYTES,
+        )?;
+        let receipt: serde_json::Value = serde_json::from_slice(&receipt_bytes)
+            .map_err(|error| format!("decode retained receipt failed: {error}"))?;
+        validate_retained_gap_after(&root, &manifest, &receipt, &verify_bytes, &after_bytes)?;
+    }
     if !manifest.terminal_artifacts.is_empty() && manifest.terminal_artifacts != retained {
         return Err(format!(
             "repair attempt {} already retained different terminal evidence; committed results are not replaced",
@@ -1955,21 +2331,26 @@ pub(crate) fn complete_pending_terminal_retention_from(
     if validate_issued_receipt_evidence(&root, &manifest, &receipt, &verify_bytes).is_err() {
         return Ok(false);
     }
-    retain_terminal_evidence_from(
-        &root,
-        locator,
-        &attempt_id,
-        &[
-            BeforeArtifactSource {
-                role: TERMINAL_RECEIPT_ROLE,
-                path: &receipt_path,
-            },
-            BeforeArtifactSource {
-                role: TERMINAL_VERIFY_ROLE,
-                path: &verify_path,
-            },
-        ],
-    )?;
+    let gap_after_path = root
+        .join("target/ripr/workflow")
+        .join(crate::app::gap_bound_repair::GAP_BOUND_AFTER_SNAPSHOT_FILE);
+    let mut sources = vec![
+        BeforeArtifactSource {
+            role: TERMINAL_RECEIPT_ROLE,
+            path: &receipt_path,
+        },
+        BeforeArtifactSource {
+            role: TERMINAL_VERIFY_ROLE,
+            path: &verify_path,
+        },
+    ];
+    if manifest.gap_binding.is_some() {
+        sources.push(BeforeArtifactSource {
+            role: TERMINAL_GAP_AFTER_ROLE,
+            path: &gap_after_path,
+        });
+    }
+    retain_terminal_evidence_from(&root, locator, &attempt_id, &sources)?;
     Ok(true)
 }
 
@@ -3767,6 +4148,23 @@ fn validate_manifest(manifest: &RepairAttemptManifest) -> Result<(), String> {
     }) {
         return Err(
             "repair attempt manifest contains duplicate or colliding terminal artifact identity"
+                .to_string(),
+        );
+    }
+    let has_terminal_role = |role: &str| {
+        manifest
+            .terminal_artifacts
+            .iter()
+            .any(|artifact| artifact.role == role)
+    };
+    if has_terminal_role(TERMINAL_GAP_AFTER_ROLE)
+        && (manifest.gap_binding.is_none()
+            || terminal_roles.len() != 3
+            || !has_terminal_role(TERMINAL_RECEIPT_ROLE)
+            || !has_terminal_role(TERMINAL_VERIFY_ROLE))
+    {
+        return Err(
+            "gap after retention requires exactly the gap snapshot, receipt and verify roles"
                 .to_string(),
         );
     }
