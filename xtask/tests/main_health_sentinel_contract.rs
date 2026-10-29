@@ -104,8 +104,9 @@ fn sentinel_is_bounded_and_repository_scoped() -> Result<(), String> {
     let lines = executable_lines(&source);
     require(
         &lines,
-        "if: github.repository == 'EffortlessMetrics/ripr-swarm'",
-        "a fork running the workflow must not open issues on the upstream tracker",
+        "if: github.repository == 'EffortlessMetrics/ripr-swarm' && github.ref == 'refs/heads/main'",
+        "a fork running the workflow must not open issues on the upstream tracker, \
+         and a dispatch from a non-main ref must not judge that ref as main health",
     )?;
     require(
         &lines,
@@ -154,17 +155,31 @@ fn sentinel_probe_is_bounded_and_executes_something() -> Result<(), String> {
         "cargo check --locked -p ripr",
         "the compile-health half of the probe",
     )?;
+    // The full test command is pinned, not just the selector name: the name
+    // also appears in the summary row, so a name-only check would pass even
+    // if the cargo test invocation were removed.
     require(
         &lines,
-        SMOKE_SELECTOR,
-        "the smoke half runs the built binary through one focused test",
+        "cargo test --locked -p ripr --test cli_smoke",
+        "the smoke half actually invokes cargo test on the built binary",
+    )?;
+    require(
+        &lines,
+        &format!("{SMOKE_SELECTOR} -- --exact"),
+        "the smoke half runs exactly one focused test, nothing broader",
     )?;
     // Evidence discipline: native exit statuses are captured next to the logs
-    // so a failure inside a pipe cannot vanish, and a zero-subject run fails.
+    // so a failure inside a pipe cannot vanish, a hung step classifies as the
+    // timeout status instead of skipping, and a zero-subject run fails.
     require(
         &lines,
         "PIPESTATUS",
         "a failure inside a tee pipe must survive",
+    )?;
+    require(
+        &lines,
+        "2>/dev/null || echo 124",
+        "a probe killed at its step timeout has no status file and must read as red (124), not as success",
     )?;
     require(
         &lines,
@@ -190,7 +205,12 @@ fn sentinel_tracker_is_durable_and_self_healing() -> Result<(), String> {
     require(
         &lines,
         TRACKER_MARKER,
-        "the marker deduplicates the tracker across fires",
+        "the marker marks sentinel provenance in the tracker body and comments",
+    )?;
+    require(
+        &lines,
+        "select(.title == \\\"$title\\\")",
+        "tracker creation deduplicates by exact title among open issues, not by the body marker",
     )?;
     require(
         &lines,
@@ -200,7 +220,8 @@ fn sentinel_tracker_is_durable_and_self_healing() -> Result<(), String> {
     require(
         &lines,
         "steps.judge.outputs.verdict != ''",
-        "missing evidence fails the job loudly and is not reported as a main-red verdict",
+        "only a judge that actually classified main may touch the tracker: a failure \
+         before the judge (checkout, toolchain) is a visible red run, not a main verdict",
     )
 }
 

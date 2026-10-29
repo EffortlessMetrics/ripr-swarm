@@ -1297,7 +1297,9 @@ timeout. It is a probe, not a second build lane and not a required check: it
 holds no branch-protection or ruleset authority and dispatches nothing.
 Detection is bounded and honest: probe logs are teed with native `PIPESTATUS`
 statuses, a judge step fails the job on missing or empty evidence (a probe
-that executed zero tests reports red, never success), the summary table is the
+killed at its step timeout reads as the timeout status 124 and classifies red
+with a tracker record; a probe that executed zero tests reports red, never
+success), the summary table is the
 per-fire audit trail, and the `main-red` tracking issue
 (`main-red: scheduled main-health sentinel found a broken main`) is the
 durable findable record — opened once, appended per confirming probe, and

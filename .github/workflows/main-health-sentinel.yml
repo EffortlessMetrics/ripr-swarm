@@ -16,8 +16,14 @@ name: Main health sentinel
 # the job (a visible red scheduled run), writes the step summary, and
 # opens/updates the `main-red` tracking issue — the durable, findable record.
 # A later green probe comments the recovering run link and closes the tracker.
-# Missing or empty evidence fails the job: a probe that cannot prove main is
-# healthy never reports success (the same evidence rule as macos-advisory).
+# Missing, empty, or timed-out evidence fails the job and classifies red
+# (a step killed at its timeout leaves status 124, the timeout convention):
+# a probe that cannot prove main is healthy never reports success and never
+# skips the tracker record (the same evidence rule as macos-advisory).
+#
+# The sentinel judges main and nothing else: scheduled fires always run on
+# main, and a manual dispatch from any other ref skips without probing or
+# touching the tracker (main-red is a repository-wide record).
 #
 # Latency: the twice-hourly cadence bounds worst-case detection at roughly
 # forty minutes (interval plus probe), far inside the multi-hour silent
@@ -41,7 +47,10 @@ concurrency:
 jobs:
   sentinel:
     name: Probe main health
-    if: github.repository == 'EffortlessMetrics/ripr-swarm'
+    # Main only: scheduled fires run on main, and a manual dispatch from
+    # another ref must not judge that ref as "main health" or touch the
+    # repository-wide tracker.
+    if: github.repository == 'EffortlessMetrics/ripr-swarm' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     # Write scopes live on this job only: the one write is the main-red
@@ -80,6 +89,12 @@ jobs:
           echo "${PIPESTATUS[0]}" > "$d/smoke.status"
           exit 0
 
+      # Missing evidence is a verdict, not a skip: a step killed at its
+      # timeout (a hanging build or test is a plausible broken-main mode)
+      # leaves no status file, so it reads as 124 and classifies red with a
+      # tracker record. Only a failure before this step (checkout, toolchain,
+      # cache) leaves no verdict: the job is red and visible, but no main
+      # verdict is claimed.
       - name: Judge probe evidence
         id: judge
         run: |
@@ -89,25 +104,24 @@ jobs:
           for f in host.log check.log check.status smoke.log smoke.status; do
             [ -s "$d/$f" ] || { echo "::error::missing probe evidence $f"; missing=1; }
           done
-          [ "$missing" -eq 0 ] || exit 1
-          check_status="$(cat "$d/check.status")"
-          smoke_status="$(cat "$d/smoke.status")"
-          result_line="$(grep -E '^test result:' "$d/smoke.log" | tail -n 1 || true)"
+          check_status="$(cat "$d/check.status" 2>/dev/null || echo 124)"
+          smoke_status="$(cat "$d/smoke.status" 2>/dev/null || echo 124)"
+          result_line="$(grep -E '^test result:' "$d/smoke.log" 2>/dev/null | tail -n 1 || true)"
           passed="$(printf '%s' "$result_line" | sed -n 's/^test result: [a-zA-Z]*\. \([0-9]*\) passed.*/\1/p')"
           {
             echo "## Main health sentinel"
             echo
             echo "| Probe | Exit | Detail |"
             echo "| --- | --- | --- |"
-            echo "| cargo check --locked -p ripr | $check_status | bounded probe, not the push gate |"
+            echo "| cargo check --locked -p ripr | $check_status | bounded probe, not the push gate; 124 = timed out |"
             echo "| smoke: cli_smoke version_is_exact_and_precedes_help_or_output_flags | $smoke_status | ${result_line:-no test result line} |"
           } >> "$GITHUB_STEP_SUMMARY"
-          if [ -z "$passed" ] || [ "$passed" -eq 0 ]; then
+          passed="${passed:-0}"
+          if [ "$smoke_status" -eq 0 ] && [ "$passed" -eq 0 ]; then
             echo "::error::the smoke selector executed zero tests; a probe that runs nothing proves nothing"
-            passed=0
           fi
           verdict=green
-          if [ "$check_status" -ne 0 ] || [ "$smoke_status" -ne 0 ] || [ "$passed" -eq 0 ]; then
+          if [ "$missing" -ne 0 ] || [ "$check_status" -ne 0 ] || [ "$smoke_status" -ne 0 ] || [ "$passed" -eq 0 ]; then
             verdict=red
             echo "::error title=Main is red::the scheduled main-health probe failed on ${GITHUB_SHA::7}; see the step summary and the main-red tracker"
           fi
