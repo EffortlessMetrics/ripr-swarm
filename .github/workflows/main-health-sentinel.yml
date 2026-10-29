@@ -130,8 +130,10 @@ jobs:
 
       # The durable record. Red: open the tracker once, then append one
       # comment per confirming probe. Green: comment the recovering run and
-      # close. Skipped when the judge produced no verdict (missing evidence
-      # already failed the job loudly).
+      # close. Status files are read with the same 124 fallback as the judge,
+      # so a timed-out probe still lands its tracker record. Skipped only
+      # when the judge never ran (checkout, toolchain, cache): that failure
+      # is visible as a red run and claims no main verdict.
       - name: Reconcile the main-red tracker
         if: always() && steps.judge.outputs.verdict != ''
         env:
@@ -145,8 +147,8 @@ jobs:
           number="$(gh api -X GET search/issues -f q="repo:$REPOSITORY is:issue is:open in:title main-red" --jq "[.items[] | select(.title == \"$title\") | .number][0] // empty")"
           run_url="${{ github.server_url }}/$REPOSITORY/actions/runs/${{ github.run_id }}"
           if [ "$VERDICT" = red ]; then
-            check_status="$(cat "$RUNNER_TEMP/main-health-sentinel/check.status")"
-            smoke_status="$(cat "$RUNNER_TEMP/main-health-sentinel/smoke.status")"
+            check_status="$(cat "$RUNNER_TEMP/main-health-sentinel/check.status" 2>/dev/null || echo 124)"
+            smoke_status="$(cat "$RUNNER_TEMP/main-health-sentinel/smoke.status" 2>/dev/null || echo 124)"
             body="$marker
           The scheduled main-health sentinel found main red at \`${GITHUB_SHA::7}\`.
 
