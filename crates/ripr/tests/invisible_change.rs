@@ -271,3 +271,34 @@ fn a_relational_assertion_that_flips_between_versions_keeps_the_credit() -> Resu
     );
     Ok(())
 }
+
+const LITERAL: &str = "impl Builder {\n    pub fn build(self) -> Req { Req { url: self.url, timeout_ms: self.timeout_ms.unwrap_or(3_000) } }\n\n    pub fn new(url: &str) -> Self { Builder { url: url.to_string(), timeout_ms: None } }\n\n    pub fn timeout_ms(mut self, t: u64) -> Self { self.timeout_ms = Some(t); self }\n}\n\npub struct Builder { url: String, timeout_ms: Option<u64> }\n\n#[derive(Debug)]\npub struct Req { pub url: String, pub timeout_ms: u64 }\n";
+const LITERAL_OLD: &str = "    pub fn build(self) -> Req { Req { url: self.url, timeout_ms: self.timeout_ms.unwrap_or(30_000) } }";
+
+#[test]
+fn an_assertion_on_an_untouched_field_does_not_expose_a_changed_default() -> Result<(), String> {
+    // #10916 case 2: only `timeout_ms` moved. The test reads `url`, and reads
+    // `timeout_ms` only after setting it, so nothing the diff changed reaches
+    // an assertion.
+    let findings = findings(
+        LITERAL,
+        LITERAL_OLD,
+        "use invisible::Builder;\n\n#[test]\nfn url_kept() {\n    assert_eq!(Builder::new(\"http://x\").build().url, \"http://x\");\n}\n\n#[test]\nfn explicit() {\n    let r = Builder::new(\"u\").timeout_ms(500).build();\n    assert_eq!(r.timeout_ms, 500);\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn an_assertion_that_reads_the_changed_default_keeps_the_credit() -> Result<(), String> {
+    // Control: the default is read and pinned to the new value.
+    let findings = findings(
+        LITERAL,
+        LITERAL_OLD,
+        "use invisible::Builder;\n\n#[test]\nfn url_kept() {\n    assert_eq!(Builder::new(\"http://x\").build().url, \"http://x\");\n}\n\n#[test]\nfn default() {\n    assert_eq!(Builder::new(\"u\").build().timeout_ms, 3_000);\n}\n",
+    )?;
+    let finding = return_value(&findings)?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
