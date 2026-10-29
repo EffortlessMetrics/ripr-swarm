@@ -12,7 +12,7 @@ Start here:
   Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
   File: ./src/lib.rs:18
   Static exposure: weak (severity: warning, confidence 0.92)
-  Why weak: a related test reaches this change, but no test input tells the old and new behavior apart
+  Why weak: a related test reaches this change, but no assertion tells the old and new behavior apart
   Gap ID (for scripts): gap:rust:src/lib.rs:mean_latency:predicate_boundary:predicate:samples.len==0
   Changed behavior: samples.len() == 0
   Missing check: samples.len() == 0

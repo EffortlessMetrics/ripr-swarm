@@ -806,3 +806,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — mixed_rust_typescript_preview (34)
+
+Reason:
+RIPR-SPEC-0122: #10920 review - the weak-infection hint claimed no test input tells the versions apart; the admitted relational sibling case (#10916) has asserted inputs that evaluate differently, so the hint now states the assertion-level fact
+
+Command:
+`cargo xtask goldens bless mixed_rust_typescript_preview --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
