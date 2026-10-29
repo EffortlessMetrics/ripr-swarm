@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 
 const PREFIX: &str = "ripr_probe_read_trace ";
 const STREAM_CAP: u64 = 1024 * 1024;
-const SOURCE: &str = "pub fn price(qty: u32) -> u32 {\n    if qty > 10 { 90 } else { 100 }\n}\n#[cfg(test)] mod tests { use super::*; #[test] fn boundary() { assert_eq!(price(10), 90); } }\n";
+const SOURCE: &str = "pub fn price(qty: u32) -> u32 {\n    if qty > 10 { 90 } else { 100 }\n}\npub fn op(bytes: &[u8]) -> bool {\n    bytes.contains(&b'=')\n}\npub mod alpha {\n    use super::op;\n    pub fn parse(bytes: &[u8]) -> bool {\n        op(bytes)\n    }\n}\npub mod beta {\n    pub fn parse(bytes: &[u8]) -> bool {\n        !bytes.is_empty()\n    }\n}\n#[cfg(test)]\nmod tests {\n    use super::op as parse;\n    use super::*;\n    #[test]\n    fn boundary() {\n        assert_eq!(price(10), 90);\n    }\n    #[test]\n    fn renamed_alias_calls_ambiguous_entry() {\n        assert!(parse(b\"=1.0\"));\n    }\n}\n";
 
 struct Fixture(PathBuf);
 impl Fixture {
@@ -54,7 +54,9 @@ impl Fixture {
                 "base",
             ],
         )?;
-        let changed = SOURCE.replace("qty > 10", "qty >= 10");
+        let changed = SOURCE
+            .replace("qty > 10", "qty >= 10")
+            .replace("bytes.contains(&b'=')", "bytes.contains(&b'>')");
         assert_ne!(changed, SOURCE, "fixture must change the actual predicate");
         std::fs::write(fixture.0.join("src/lib.rs"), changed).map_err(|error| error.to_string())?;
         Ok(fixture)
@@ -206,6 +208,21 @@ fn real_check_trace_is_opt_in_and_preserves_nonempty_json() -> Result<(), String
     assert!(
         rows.iter().any(|row| row["universe_observed"] == true),
         "fixture must reach a real whole-set view"
+    );
+    // #10933: the uniqueness-stop probe for `op` reaches
+    // `source_imports_foreign_entry` inside its classification scope, so at
+    // least one traced row carries a `memo`-kind read for the
+    // `foreign_entry_import` product.
+    assert!(
+        rows.iter().any(|row| row["reads"]
+            .as_array()
+            .is_some_and(
+                |reads| reads.iter().any(|entry| entry["read"]["kind"] == "memo"
+                    && entry["read"]["subject"]
+                        .as_str()
+                        .is_some_and(|subject| subject.starts_with("foreign_entry_import:")))
+            )),
+        "no traced probe row records a foreign_entry_import memo read"
     );
     assert_eq!(
         std::fs::read(fixture.0.join("src/lib.rs")).map_err(|error| error.to_string())?,
