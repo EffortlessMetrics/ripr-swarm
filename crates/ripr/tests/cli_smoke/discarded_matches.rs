@@ -357,11 +357,17 @@ fn normalize_moved_repair_advisories(bytes: &[u8]) -> (Vec<u8>, usize) {
             "  no repair start offered: <not-ready missing={list}>\n"
         ))
     };
-    // A printed start is the moved return-value or error-variant slot only
-    // when this capture holds one start line per value gap (#10948 item 7),
-    // so a start for a different return_value/error_variant seam in the same
-    // capture is never masked. A wrongly started boundary (or any other)
-    // seam is never masked either.
+    // A printed start is the moved return-value or error-variant slot only in
+    // the single-start/single-value-gap shape the bounded screen produces
+    // for its selected finding (#10948 item 7): one drill-in block whose
+    // route the pipeline bound to the selected finding id
+    // (`repair_route_for`). The capture text carries no start-to-gap
+    // identity — the start names a 16-hex seam hash while the gap line
+    // names a canonical gap id — so counts alone cannot pair one start
+    // with its own gap. Anything else stays byte-exact (fail-closed),
+    // including equal-count multi-gap captures where a start could name
+    // another seam. A wrongly started boundary (or any other) seam is
+    // never masked either.
     let text = String::from_utf8_lossy(bytes);
     let gaps: Vec<&str> = text
         .lines()
@@ -376,14 +382,19 @@ fn normalize_moved_repair_advisories(bytes: &[u8]) -> (Vec<u8>, usize) {
         .iter()
         .filter(|gap| gap.contains(":return_value:") || gap.contains(":error_variant:"))
         .count();
-    // One start line per value gap: a capture-wide all-value-gaps check would
-    // also mask a start printed for a different return_value/error_variant
-    // seam in the same capture.
+    // One start only in the single-start/single-value-gap shape the bounded
+    // screen produces for its selected finding (`repair_route_for` binds the
+    // route to the selected finding id; multi-finding captures stay exact
+    // per the equal-count control below). Count equality alone cannot
+    // establish start-to-gap identity: the start names a 16-hex seam hash
+    // while the gap line names a canonical gap id, so two value gaps with
+    // one start each still stay exact.
     let is_start_line =
         |line: &str| line.starts_with("  ripr repair ") && line.contains(" --root ");
     let value_gaps_only = !gaps.is_empty()
-        && value_gaps == gaps.len()
-        && text.lines().filter(|line| is_start_line(line)).count() == value_gaps;
+        && value_gaps == 1
+        && gaps.len() == 1
+        && text.lines().filter(|line| is_start_line(line)).count() == 1;
     let mut normalized = 0;
     let projected = text
         .split_inclusive('\n')
@@ -413,10 +424,12 @@ fn normalize_moved_repair_advisories(bytes: &[u8]) -> (Vec<u8>, usize) {
     (projected, normalized)
 }
 
-/// A printed start is projected to the moved return-value slot only beside
-/// return-value or error-variant gaps; a boundary seam's start stays exact.
-/// Masking is one start line per value gap (#10948 item 7): a second start
-/// in the same capture, or one start beside a second value gap, stays exact
+/// A printed start is projected to the moved return-value slot only in the
+/// single-start/single-value-gap shape the bounded screen produces for its
+/// selected finding; a boundary seam's start stays exact. Masking is one
+/// start beside one value gap (#10948 item 7): a second start, a second gap
+/// (even an equal-count one, where the count cannot pair the start with
+/// its own gap), or a wrong-kind gap beside the value gap all stay exact
 /// so a start for a different seam is never masked.
 #[test]
 fn moved_repair_start_projection_never_masks_another_seam_kind() {
@@ -445,7 +458,11 @@ fn moved_repair_start_projection_never_masks_another_seam_kind() {
     assert!(String::from_utf8_lossy(&mixed).contains(start));
     // A start for a different return_value/error_variant seam in the same
     // capture is never masked: two starts beside one value gap, and one
-    // start beside two value gaps, both stay exact.
+    // start beside two value gaps, both stay exact. The two-gaps/two-starts
+    // equal-count shape stays exact too: the count matches but the capture
+    // text pairs no start with its own gap (the start names a 16-hex seam
+    // hash, the gap line a canonical gap id), and one of the starts could
+    // name another seam.
     let two_starts =
         format!("  <gap-id-label>: gap:rust:src/lib.rs:f:return_value:r:x\n{start}{start}");
     let (kept, slots) = normalize_moved_repair_advisories(two_starts.as_bytes());
@@ -457,6 +474,15 @@ fn moved_repair_start_projection_never_masks_another_seam_kind() {
     let (kept, slots) = normalize_moved_repair_advisories(two_gaps.as_bytes());
     assert_eq!(slots, 0);
     assert!(String::from_utf8_lossy(&kept).contains(start));
+    let equal_counts = format!(
+        "  <gap-id-label>: gap:rust:a.rs:f:return_value:r:x\n  <gap-id-label>: gap:rust:b.rs:g:error_variant:e:y\n{start}{start}"
+    );
+    let (kept, slots) = normalize_moved_repair_advisories(equal_counts.as_bytes());
+    assert_eq!(
+        slots, 0,
+        "equal counts do not establish start-to-gap identity"
+    );
+    assert_eq!(kept.as_slice(), equal_counts.as_bytes());
 }
 
 /// The independent contract is score(1) == 2. Original/wrong sources differ
