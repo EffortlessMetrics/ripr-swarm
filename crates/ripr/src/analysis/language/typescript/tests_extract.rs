@@ -3143,7 +3143,10 @@ fn conditional_describe_factory<'s, 'a>(
 /// `describe.skipIf(cond)('name', () => { ... })` and the `runIf` twin: the
 /// suite name, its body and the factory call's source as the guard. The
 /// condition is a runtime value static analysis does not evaluate, so the
-/// suite's tests are indexed for reach but earn no assertion credit.
+/// suite's tests are indexed for reach but earn no assertion credit. The
+/// untitled callback-only form (`describe.runIf(cond)(() => { ... })`)
+/// holds its callback in the title position: the suite is named like any
+/// non-literal title and the body is the first argument.
 fn conditional_describe_body<'a>(
     stmt: &'a Statement<'a>,
     source: &SourceText<'_>,
@@ -3153,10 +3156,20 @@ fn conditional_describe_body<'a>(
     if !declaration_options_are_active(call) {
         return None;
     }
+    let untitled = matches!(
+        call.arguments.first(),
+        Some(
+            oxc_ast::ast::Argument::ArrowFunctionExpression(_)
+                | oxc_ast::ast::Argument::FunctionExpression(_)
+        )
+    );
     let name = title_argument(call.arguments.first()?, source, call.span.start as usize)?;
-    let body = function_body_statements_from_argument(
-        call.arguments.get(declaration_callback_index(call))?,
-    )?;
+    let callback_index = if untitled {
+        0
+    } else {
+        declaration_callback_index(call)
+    };
+    let body = function_body_statements_from_argument(call.arguments.get(callback_index)?)?;
     let guard = snippet_for_span(
         source.text(),
         factory.span.start as usize,
