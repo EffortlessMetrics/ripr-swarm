@@ -919,6 +919,16 @@ identity agree and the analysis-outcome validator accepts the artifact.
 }
 ```
 
+`summary.changed_files_by_language` lists every language the diff touched
+(#10719): one entry per adapter that ran (including an honest zero), plus one
+entry for each routed language whose adapter did not run (not enabled or not
+compiled in), so the counts agree with
+`analysis_outcome.outcome.counts.changed_file_count` and a consumer reading
+`summary` alone cannot see "no files changed" for a skipped TypeScript or
+Python diff. `summary.changed_rust_files` stays Rust-adapter-only (#2103):
+preview-language files never inflate it, so it is `0` for a Python-only diff
+by design; read `changed_files_by_language` for other languages.
+
 `canonical_next_action` (additive, no `schema_version` bump, #7258) is the
 same DTO RepairCard and agent-status JSON already embed. Check JSON carries
 it only when the CLI render path has a declared diff provenance.
