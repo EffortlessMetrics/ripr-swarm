@@ -375,6 +375,10 @@ pub(crate) enum StubRouteDecision {
     /// The shared resolver refuses: print its reason instead of a command
     /// that would only refuse.
     Refused { reason: String },
+    /// An existing test already reaches the gap and only needs a stronger
+    /// assertion; the guidance names that test, so it is already the next
+    /// step and no hand-written-test step is added after it (#10710).
+    WeakOracle { guidance: String },
     /// Unvalidated syntax selectors from the resolver; classification or
     /// stub generation can still refuse them. No seam or repair is selected.
     Ambiguous {
@@ -404,10 +408,8 @@ fn validated_ambiguity(
     reason: String,
     seam_ids: Vec<String>,
 ) -> StubRouteDecision {
-    let unvalidated = |reason: String, seam_ids: Vec<String>| StubRouteDecision::Ambiguous {
-        reason,
-        seam_ids,
-    };
+    let unvalidated =
+        |reason: String, seam_ids: Vec<String>| StubRouteDecision::Ambiguous { reason, seam_ids };
     if seam_ids.len() > AMBIGUOUS_VALIDATION_LIMIT {
         return unvalidated(reason, seam_ids);
     }
@@ -521,7 +523,7 @@ pub(crate) fn stub_route_for_finding(
     if let Some(guidance) = resolution.weak_oracle_guidance.take() {
         return Some(StubRoute {
             finding_id: finding.id.clone(),
-            decision: StubRouteDecision::Refused { reason: guidance },
+            decision: StubRouteDecision::WeakOracle { guidance },
         });
     }
     let decision = match resolution.outcome {

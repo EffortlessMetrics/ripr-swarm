@@ -3,6 +3,7 @@ use crate::analysis::{SourceRoleContext, classify_with, seeds_diff_probes};
 use crate::app::test_stub::StubRouteDecision;
 use crate::app::{CheckDiffProvenance, CheckOutput, FindingDrillIn};
 use crate::config::RiprConfig;
+use crate::domain::ProbeFamily;
 use crate::domain::{
     CanonicalNextActionV1, ExposureClass, Finding, LanguageId, NextActionAlternative,
     NextActionCheckCase, NextActionCurrentness, NextActionDiffSource, NextActionInput,
@@ -442,6 +443,9 @@ pub(crate) fn render_human_triage(
                             seam_ids,
                             "",
                         );
+                    }
+                    Some(StubRouteDecision::WeakOracle { guidance }) => {
+                        out.push_str(&format!("No test stub here: {guidance}\n"));
                     }
                     Some(StubRouteDecision::Refused { reason }) => {
                         out.push_str(&format!("No test stub here: {reason}\n"));
