@@ -53,9 +53,9 @@ Next: drill into the top finding:
 
 Hidden:
   3 lower-priority finding(s) omitted from default human output (Python preview: 3).
-    - src/shop.py:6 (weak)
-    - src/shop.py:10 (weak)
-    - src/shop.py:14 (weak)
+    - src/shop.py:6 (weak); kind: return_value; reason: A strong Python oracle reaches `float_area`, but numeric table rows agree under factor reordering; static evidence cannot confirm the changed operand is discriminated. Add a table…
+    - src/shop.py:10 (weak); kind: return_value; reason: A strong Python oracle reaches `boxed_area`, but numeric table rows agree under factor reordering; static evidence cannot confirm the changed operand is discriminated. Add a table…
+    - src/shop.py:14 (weak); kind: return_value; reason: A strong Python oracle reaches `hashed_area`, but numeric table rows agree under factor reordering; static evidence cannot confirm the changed operand is discriminated. Add a…
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

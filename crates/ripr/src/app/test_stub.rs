@@ -1762,11 +1762,14 @@ mod tests {
         assert!(selected.is_some(), "nonempty selected subject");
         let [hidden] = hidden.as_slice() else {
             return Err(format!(
-                "expected one hidden predicate, got {}",
+                "expected one hidden stub-route subject, got {}",
                 hidden.len()
             ));
         };
-        assert_eq!(hidden.probe.family.as_str(), "predicate");
+        // The changed boundary predicate is the selected top gap; the owner's
+        // return-value sink is the one hidden unique subject this control
+        // routes without a classified-inventory lookup.
+        assert_eq!(hidden.probe.family.as_str(), "return_value");
         let mut index = None;
         let direct = stub_route_for_finding(&root, &config, hidden, &mut index)
             .ok_or("the hidden subject must independently resolve")?;

@@ -745,3 +745,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_strict_actionability (34)
+
+Reason:
+RIPR-SPEC-0118 / docs/OUTPUT_SCHEMA.md: compose landed main fixture rows with 10192 hidden-row kind/reason naming and typed unresolved-edge guidance; JSON findings, classes, oracles and recommendations unchanged (golden-drift cosmetic-only)
+
+Command:
+`cargo xtask goldens bless typescript_strict_actionability --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

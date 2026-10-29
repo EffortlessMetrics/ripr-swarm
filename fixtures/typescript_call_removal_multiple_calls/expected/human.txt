@@ -48,7 +48,7 @@ Next: drill into the top finding:
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output (TypeScript preview: 1).
-    - src/audit.ts:3 (weak)
+    - src/audit.ts:3 (weak); kind: predicate; reason: Related tests reach `emit` with a strong oracle, but the TypeScript preview adapter does not recognise the shape of the changed line, so static evidence cannot tie an assertion to…
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

@@ -15,3 +15,16 @@ Updated:
 The full human projection from that same fixture execution is also retained as
 `expected/human-full.txt`; the family-specific honesty cases require it to
 check that human output agrees with the two JSON propagation refusals.
+
+## Pending — rust_qualified_helper_effect_reach (2)
+
+Reason:
+RIPR-SPEC-0118 / docs/OUTPUT_SCHEMA.md: compose landed main fixture rows with 10192 hidden-row kind/reason naming and typed unresolved-edge guidance; JSON findings, classes, oracles and recommendations unchanged (golden-drift cosmetic-only)
+
+Command:
+`cargo xtask goldens bless rust_qualified_helper_effect_reach --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
