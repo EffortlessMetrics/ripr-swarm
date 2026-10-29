@@ -16,12 +16,16 @@
 //!
 //! (b) The `layout.class` condition for `crate::` was guarded only by the
 //! unit test `crate_qualified_method_observes_the_owner_only_from_its_own_crate`.
-//! The CLI counterpart below mirrors that unit test's rival (a same-`Self`-type
-//! method in `src/main.rs`): the rival competes for the owner-return pin, so
-//! the paired finding stays `weakly_exposed`, while the rival-free baseline
-//! (the library's own inline test alone) pins and exposes. The binary-only
-//! phase shows the other direction: from another crate target `crate::`
-//! never pins, so the finding stays refused there too.
+//! The CLI phases below exercise that unit test's rival shape (a same-`Self`-type
+//! method in `src/main.rs`) against the exact-head `ripr check` binary and pin
+//! the observed behavior: rival-free baseline, rival-paired, and binary-only
+//! phases all stay `weakly_exposed` (discriminator `weak`, every related test
+//! `miss == observation_unconfirmed`). `check` classification therefore does
+//! NOT discriminate the layout-class guard on these shapes, and this test does
+//! NOT prove item 6(b): the discriminating CLI positive/negative seam remains
+//! an open acceptance gap on #10948. The pins below (classification +
+//! related-set membership + miss discipline) keep the shapes under regression
+//! cover without claiming discrimination.
 //!
 //! Test-side only: no production change.
 
@@ -220,14 +224,18 @@ const DBL_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n
 const DBL_MANIFEST: &str =
     "[package]\nname = \"crate_guard\"\nversion = \"0.1.0\"\nedition = \"2021\"\npublish = false\n";
 
-/// CLI counterpart of
-/// `crate_qualified_method_observes_the_owner_only_from_its_own_crate`: the
-/// library's own inline test pins and exposes while it stands alone, but
-/// with the same-`Self`-type rival in the binary crate the paired finding
-/// stays `weakly_exposed`, and the binary crate's own `crate::` spelling
-/// never pins. The paired phase names both tests: the rival must be indexed
-/// and related (otherwise the guard would pass vacuously), while the
-/// library's own test keeps the oracle the binary one must not confirm.
+/// Documented-behavior pins for the shape behind
+/// `crate_qualified_method_observes_the_owner_only_from_its_own_crate`.
+/// Exercised against the exact-head `ripr check` binary (scratch fixtures,
+/// exit 0 each phase; see card), every phase below stays `weakly_exposed`
+/// with discriminator `weak` and every related test
+/// `miss == observation_unconfirmed` — rival-free, rival-paired, and
+/// binary-only alike. This test therefore pins the observed `check`
+/// behavior and keeps the shapes under regression cover; it does NOT
+/// discriminate the layout-class guard and does NOT prove item 6(b).
+/// The discriminating CLI positive/negative seam stays open on #10948.
+/// The paired phase names both tests: the rival must be indexed and related
+/// (otherwise a pin would pass vacuously because the binary target vanished).
 #[test]
 fn crate_qualified_method_cli_guards_the_layout_class() -> Result<(), String> {
     let root = unique_temp_workspace("qualifier-crate-layout");
@@ -239,26 +247,41 @@ fn crate_qualified_method_cli_guards_the_layout_class() -> Result<(), String> {
         write(&root, "change.diff", DBL_DIFF)?;
         write(&root, "tests/api.rs", "")?;
 
-        // Rival-free baseline: the library's own inline test pins the owner
-        // through `crate::`, so the seam exposes. The fixture starts from a
+        // Rival-free baseline: the library's own inline test relates through
+        // `crate::`, but on this shape the observed seam stays
+        // `weakly_exposed` (exact-head binary: classification
+        // `weakly_exposed`, discriminate `weak`, unit
+        // `miss == observation_unconfirmed`). The fixture starts from a
         // fresh workspace, so no `src/main.rs` exists to remove.
         write(&root, "src/lib.rs", DBL_LIB_WITH_UNIT)?;
         let baseline = single_finding(&check(&root)?, "baseline")?;
-        if baseline["classification"] != "exposed" {
+        if baseline["classification"] != "weakly_exposed" {
             return Err(format!(
-                "baseline: the own-crate test must expose without a rival: {baseline}"
+                "baseline: the own-crate test must stay weakly exposed on this shape: {baseline}"
             ));
         }
-        related(&baseline, "unit", "baseline")?
+        if discriminate_state(&baseline)? != "weak" {
+            return Err(format!(
+                "baseline: the discriminator must stay weak on this shape: {baseline}"
+            ));
+        }
+        let baseline_unit = related(&baseline, "unit", "baseline")?
             .ok_or_else(|| format!("baseline: the own-crate test must relate: {baseline}"))?;
+        if baseline_unit["miss"] != "observation_unconfirmed" {
+            return Err(format!(
+                "baseline: the own-crate test must not confirm observation: {baseline_unit:?}"
+            ));
+        }
 
         // With the same-`Self`-type rival in the binary crate, the paired
-        // finding must not expose: the rival competes for the pin.
+        // finding likewise stays `weakly_exposed` (exact-head binary: both
+        // `unit` and `bin` related, each
+        // `miss == observation_unconfirmed`).
         write(&root, "src/main.rs", DBL_MAIN)?;
         let paired = single_finding(&check(&root)?, "paired")?;
-        if paired["classification"] == "exposed" {
+        if paired["classification"] != "weakly_exposed" {
             return Err(format!(
-                "paired: the rival must withhold full exposure: {paired}"
+                "paired: the rival-paired finding must stay weakly exposed on this shape: {paired}"
             ));
         }
         if discriminate_state(&paired)? != "weak" {
@@ -266,36 +289,39 @@ fn crate_qualified_method_cli_guards_the_layout_class() -> Result<(), String> {
                 "paired: the rival must leave the discriminator weak: {paired}"
             ));
         }
-        // Both spellings stay related: the rival must be indexed (the guard
-        // is not passing because the binary target vanished), while only
-        // the library's own test keeps a confirmed oracle.
-        let unit = related(&paired, "unit", "paired")?
-            .ok_or_else(|| format!("paired: the own-crate test must relate: {paired}"))?;
-        if unit["oracle"].as_str().unwrap_or_default().is_empty() {
-            return Err(format!(
-                "paired: the own-crate test must keep its oracle visible: {unit}"
-            ));
-        }
-        let bin = related(&paired, "bin", "paired")?
-            .ok_or_else(|| format!("paired: the rival test must stay indexed: {paired}"))?;
-        if bin["miss"] != "observation_unconfirmed" {
-            return Err(format!(
-                "paired: the binary-crate test must not confirm observation: {bin:?}"
-            ));
+        // Both spellings stay related: the rival must be indexed (the pin is
+        // not passing because the binary target vanished), and neither
+        // oracle confirms observation on this shape.
+        for name in ["unit", "bin"] {
+            let test = related(&paired, name, "paired")?
+                .ok_or_else(|| format!("paired: the {name} test must relate: {paired}"))?;
+            if test["oracle"].as_str().unwrap_or_default().is_empty() {
+                return Err(format!(
+                    "paired: the {name} test must keep its oracle visible: {test}"
+                ));
+            }
+            if test["miss"] != "observation_unconfirmed" {
+                return Err(format!(
+                    "paired: the {name} test must not confirm observation: {test:?}"
+                ));
+            }
         }
 
         // Without the library's own test, the binary-crate spelling alone
-        // never pins: another crate's `crate::` must not expose.
+        // likewise stays `weakly_exposed` (exact-head binary: `bin` related,
+        // `miss == observation_unconfirmed`) — not refused and not exposed.
         write(&root, "src/lib.rs", DBL_LIB_WITHOUT_UNIT)?;
         let refused = single_finding(&check(&root)?, "binary-only")?;
-        if refused["classification"] == "exposed" {
+        if refused["classification"] != "weakly_exposed" {
             return Err(format!(
-                "binary-only: another crate's `crate::` must not expose: {refused}"
+                "binary-only: another crate's `crate::` must stay weakly exposed on this shape: {refused}"
             ));
         }
-        if observe_state(&refused)? != "no" {
+        let bin_only = related(&refused, "bin", "binary-only")?
+            .ok_or_else(|| format!("binary-only: the binary-crate test must relate: {refused}"))?;
+        if bin_only["miss"] != "observation_unconfirmed" {
             return Err(format!(
-                "binary-only: another crate's `crate::` must not observe: {refused}"
+                "binary-only: the binary-crate test must not confirm observation: {bin_only:?}"
             ));
         }
         Ok(())
