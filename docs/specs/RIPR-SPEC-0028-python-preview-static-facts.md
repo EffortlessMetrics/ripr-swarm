@@ -629,11 +629,16 @@ any other workspace file: a reflective spelling (`getattr`, `dir`,
 ...), a frame or a function's globals (`__globals__`, `f_globals`,
 `f_locals`, `_getframe`, `currentframe`, `f_back`, `tb_frame`,
 `get_referrers`, `get_referents`), `gc.get_objects`, `setattr`,
-`__setattr__` and `delattr`, or the import system (`sys` with `modules`,
-however imported, `meta_path`, `path_hooks`, `importlib`, `__import__`,
+`__setattr__`, `delattr`, `__dict__` and `vars`, or the import system
+(`sys` with `modules`, however imported, `meta_path`, `path_hooks`,
+`__path__`, `pkgutil`, `extend_path`, `importlib`, `__import__`,
 `import_module`, `exec_module`, `reload`). Such code can write a module
 namespace under a name built at runtime, or hand an importer a different
-module, so no name it mentions bounds what it changes. Because these are
+module, so no name it mentions bounds what it changes. Another workspace file
+with the owner's file name refuses it too: under pytest's default `prepend`
+import mode or an extra import root, the test's import of the owner's dotted
+path may load that file instead. A test whose module has header effects is
+refused like one under a conftest with effects. Because these are
 whole-word matches over every workspace file, the credit rarely applies in
 repositories that use reflection anywhere; that is missed credit, not a
 wrong verdict.

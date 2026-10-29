@@ -26,9 +26,13 @@
 //! - no workspace file, the owner module included, writes a dunder attribute
 //!   or reflects (`getattr`, `inspect`, `gc`, frames, a function's
 //!   `__globals__`, `setattr`, ...) or touches the import system
-//!   (`sys.modules`, `meta_path`, `importlib`, ...), which can write the module
-//!   namespace under a name built at runtime or hand an importer another
-//!   module;
+//!   (`sys.modules`, `meta_path`, `__path__`, `importlib`, ...), which can
+//!   write the module namespace under a name built at runtime or hand an
+//!   importer another module;
+//! - no other workspace file has the owner's module name (its file stem, or
+//!   its package directory for `__init__.py`), since an import of its dotted
+//!   path may load that file instead (pytest's `prepend` mode, or a package
+//!   beating a same-named module);
 //! - inside a callable, a name is a parameter, a call is a bare call of a model
 //!   function or class of the module, or a method call on an instance of a
 //!   model class (the method's receiver, a parameter holding one, or
@@ -172,6 +176,7 @@ fn credits<'a>(
     if module_owner.foreign_writes.may_replace_reader_code()
         || module_owner.foreign_writes.writes_dunder()
         || module_owner.foreign_writes.reflection_elsewhere()
+        || module_owner.foreign_writes.shares_module_name()
     {
         return None;
     }
@@ -211,13 +216,9 @@ fn credits<'a>(
             || test.constant_rebinding.edited_in_diff
             || test.constant_rebinding.module_opaque
             || test.constant_rebinding.implicit_reach
+            || test.constant_rebinding.header_reach
             || !test.fixtures.is_empty()
             || !test.decorators.is_empty()
-            || all_tests.iter().any(|other| {
-                !std::ptr::eq(other, test)
-                    && other.file == test.file
-                    && other.qualified_name == test.qualified_name
-            })
         {
             continue;
         }
@@ -229,7 +230,15 @@ fn credits<'a>(
                     .map(|spelling| (spelling, (*entry).clone()))
             })
             .collect();
-        if spellings.is_empty() {
+        // A later definition with the same name replaces this test, so its
+        // body is not what pytest runs. Checked after the cheap gates.
+        if spellings.is_empty()
+            || all_tests.iter().any(|other| {
+                !std::ptr::eq(other, test)
+                    && other.file == test.file
+                    && other.qualified_name == test.qualified_name
+            })
+        {
             continue;
         }
         let Some(body) = test_body(test) else {

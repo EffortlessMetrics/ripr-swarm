@@ -88,6 +88,12 @@ pub(super) struct ForeignWrites {
     /// Some other file reflects ([`mentions_reflection`]): it may reach a
     /// module's namespace under a name built at runtime (#9226).
     reflection_elsewhere: bool,
+    /// Some other file has the module's module name (its file stem, or its
+    /// package directory for `__init__.py`): under pytest's `prepend` import
+    /// mode, an extra import root, or a package beating a same-named module,
+    /// an import of the module's dotted path may load that file instead
+    /// (#9226).
+    shares_module_name: bool,
     /// A workspace file could not be read or the scan hit its bound, so the
     /// absence of a write is unknown.
     unknown: bool,
@@ -136,20 +142,31 @@ const FRAME_WALKERS: [&str; 9] = [
 /// write a module namespace under a name built at runtime, so no name it
 /// mentions bounds what it changes (#9226).
 /// The import system counts too: a file that may replace a module in
-/// `sys.modules` (however spelled: `from sys import modules`) or install an
-/// import hook hands every importer a different module.
+/// `sys.modules` (however spelled: `from sys import modules`), install an
+/// import hook, or extend a package's `__path__` hands every importer a
+/// different module.
 pub(super) fn mentions_reflection(source: &str) -> bool {
     REFLECTIVE_SPELLINGS
         .iter()
         .chain(&FRAME_WALKERS)
         .chain(&IMPORT_SYSTEM)
-        .chain(&["get_objects", "setattr", "__setattr__", "delattr"])
+        .chain(&[
+            "get_objects",
+            "setattr",
+            "__setattr__",
+            "delattr",
+            "__dict__",
+            "vars",
+        ])
         .any(|spelling| mentions_identifier(source, spelling))
         || (mentions_identifier(source, "sys") && mentions_identifier(source, "modules"))
 }
 
 /// Words that replace what an `import` binds (#9226).
-const IMPORT_SYSTEM: [&str; 8] = [
+const IMPORT_SYSTEM: [&str; 11] = [
+    "__path__",
+    "pkgutil",
+    "extend_path",
     "meta_path",
     "path_hooks",
     "path_importer_cache",
@@ -404,6 +421,7 @@ impl<'a> ForeignIndex<'a> {
         let mut excluded = ForeignTotals::default();
         let mut reflective_opaque = false;
         let mut reflection_elsewhere = false;
+        let mut shares_module_name = false;
         let mut unparsed = Vec::new();
         for indexed in &self.files {
             if indexed.file == own {
@@ -412,6 +430,7 @@ impl<'a> ForeignIndex<'a> {
             }
             reflective_opaque |= indexed.reflective_opaque;
             reflection_elsewhere |= indexed.reflects;
+            shares_module_name |= same_module_name(indexed.file, own);
             if indexed.assigned.is_none() {
                 unparsed.push(indexed.file);
             }
@@ -452,6 +471,7 @@ impl<'a> ForeignIndex<'a> {
             reflective_reach: held_by_others(&totals.reflective_reach, &excluded.reflective_reach),
             reflective_opaque,
             reflection_elsewhere,
+            shares_module_name,
             unknown,
         }
     }
@@ -491,6 +511,23 @@ impl<'a> ForeignIndex<'a> {
                 .collect(),
             ..self.excluding(own)
         }
+    }
+}
+
+/// Whether two files would bind the same last module-name component: a
+/// file's stem, or its package directory's name for `__init__.py`. A file
+/// whose module name cannot be read counts as a match (#9226).
+fn same_module_name(file: &Path, own: &Path) -> bool {
+    fn module_name(file: &Path) -> Option<&std::ffi::OsStr> {
+        if file.file_name().is_some_and(|name| name == "__init__.py") {
+            file.parent().and_then(Path::file_name)
+        } else {
+            file.file_stem()
+        }
+    }
+    match (module_name(file), module_name(own)) {
+        (Some(file), Some(own)) => file == own,
+        _ => true,
     }
 }
 
@@ -544,6 +581,12 @@ impl ForeignWrites {
     /// so it may write this module's namespace under a name built at runtime.
     pub(super) fn reflection_elsewhere(&self) -> bool {
         self.unknown || self.reflection_elsewhere
+    }
+
+    /// Whether another workspace file has this module's module name, so an
+    /// import of its dotted path may load that file instead.
+    pub(super) fn shares_module_name(&self) -> bool {
+        self.unknown || self.shares_module_name
     }
 
     /// Whether some workspace file assigns a dunder attribute (`__new__`,
