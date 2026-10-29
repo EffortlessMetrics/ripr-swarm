@@ -5481,20 +5481,57 @@ fn file_rebinds_type(index: &RustIndex, file: &Path, ty: &str) -> bool {
             .descendants()
             .filter_map(ast::UseTree::cast)
             .any(|tree| tree.star_token().is_some());
-        if mentions(item.syntax())
-            || (glob && !matches!(compact.as_str(), "usesuper::*;" | "useself::*;"))
-        {
+        // `super::*` reaches the file root only from a `mod` declared directly
+        // in it; anywhere else `super` is another module that may hold `ty`.
+        let reaches_root = match compact.as_str() {
+            "useself::*;" => true,
+            "usesuper::*;" => item
+                .syntax()
+                .parent()
+                .and_then(|list| list.parent())
+                .is_some_and(|module| {
+                    ast::Module::can_cast(module.kind())
+                        && module
+                            .parent()
+                            .is_some_and(|parent| ast::SourceFile::can_cast(parent.kind()))
+                }),
+            _ => false,
+        };
+        if mentions(item.syntax()) || (glob && !reaches_root) {
             return true;
         }
     }
-    if syntax
-        .descendants()
-        .filter_map(ast::TypeAlias::cast)
-        .any(|alias| alias.name().is_some_and(|name| name.text() == ty))
-    {
-        return true;
+    // A local alias, trait or module spelled `ty`, or a type declared away
+    // from the root or twice, can stand for a different type than the owner.
+    let at_root = |node: &SyntaxNode| {
+        node.parent()
+            .is_some_and(|parent| ast::SourceFile::can_cast(parent.kind()))
+    };
+    let named = |name: Option<ast::Name>| name.is_some_and(|name| name.text() == ty);
+    let mut root_types = 0;
+    for node in syntax.descendants() {
+        if let Some(alias) = ast::TypeAlias::cast(node.clone()) {
+            if named(alias.name()) {
+                return true;
+            }
+        } else if let Some(item) = ast::Trait::cast(node.clone()) {
+            if named(item.name()) {
+                return true;
+            }
+        } else if let Some(item) = ast::Module::cast(node.clone()) {
+            if named(item.name()) {
+                return true;
+            }
+        } else if let Some(adt) = ast::Adt::cast(node.clone())
+            && named(adt.name())
+        {
+            if !at_root(&node) {
+                return true;
+            }
+            root_types += 1;
+        }
     }
-    false
+    root_types > 1
 }
 
 /// A struct/enum/union `ty` declared exactly once in `test_file`, as a direct

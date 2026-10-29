@@ -19882,9 +19882,14 @@ fn inherent_receiver_typed_parameter_names_the_owner_only_for_a_plain_type() -> 
         ("<Site: Tr>|s: Site", used, false),
         ("use ext::Site;|s: Site", used, false),
         ("use ext::Other as Site;|s: Site", used, false),
+        ("use ext::*;|s: Site", used, false),
+        ("mod inner { pub struct Site; }|s: Site", used, false),
+        ("trait Site {}|s: Site", used, false),
+        ("mod tests { use super::*; }|s: Site", used, true),
+        ("mod a { mod b { use super::*; } }|s: Site", used, false),
     ] {
         let (prefix, params) = params.split_once('|').unwrap_or(("", params));
-        let (imports, generics) = if prefix.starts_with("use ") {
+        let (imports, generics) = if !prefix.starts_with('<') {
             (prefix, "")
         } else {
             ("", prefix)
