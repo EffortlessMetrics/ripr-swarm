@@ -34,12 +34,17 @@ verify-execute` declining a packet (the refusal JSON document is on stdout)
   `ripr agent card` and `ripr agent stub` print their refusal document
   (`agent_card_refusal` / `rust_test_stub` `state: refused`) on stdout only
   with `--json`, with the prose on stderr; without it stdout stays empty and
-  stderr names the cause. An unknown `--seam-id`, or a known one that agent
-  policy withholds (#10712), is one typed refusal with one exit, `3`, on
-  `agent start`, `agent card`, `agent stub` and `agent packet`
-  (`agent repair --phase before` still exits `2` for it): with `--json` the
-  document is on stdout and the prose on stderr, except `agent start`, whose
-  refusal is prose on stderr with empty stdout).
+  stderr names the cause. An unknown `--seam-id` is one typed refusal with
+  one exit, `3`, on `agent start`, `agent card`, `agent stub`,
+  `agent packet`, and `agent repair --phase before`. A known seam that
+  agent policy withholds (#10712) is the same typed refusal (exit `3`) on
+  `agent start`, `agent card`, `agent packet`, and
+  `agent repair --phase before`; `agent stub` still produces the stub
+  (exit `0`) with the omission disclosed in `warnings` and no repair
+  journey offered. With `--json` the
+  document is on stdout and the prose on stderr, except `agent start` and
+  `agent repair --phase before`, whose
+  refusals are prose on stderr with empty stdout).
 - `2`: the invocation or operation failed; retrying differently is
   appropriate.
 

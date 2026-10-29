@@ -1825,6 +1825,37 @@ and the test is `tests/test_subject.py`, which imports each owner from
   the off-boundary parity and every negative shape of example 42;
   `classify/tests.rs` `an_indirect_parametrize_argname_is_an_unresolved_fixture`.
 
+## Numeric factor reorders
+
+A factor swap involving named operands retains the ordinary table-row reading
+(#9815). Python `int`/`float` annotations and numeric defaults do not enforce
+runtime operand types: custom `__mul__`/`__rmul__` methods can make the swap a
+behavior change. Numeric test rows alone cannot establish global commutativity.
+Order-sensitive repair guidance requests operands that distinguish multiplication
+order; varying numeric rows alone cannot do so. Literal-only products have no
+named table operand and keep their ordinary exact-oracle reading. This rule does
+not infer local or module runtime types.
+
+Guidance follows the changed product inside a container, and quoted `#` text
+does not hide the expression. Exact binary swaps also read primitive finite
+float rows. Integer literals are bounded to i128; mixed integer/float rows
+require the integer to fit i32 before conversion, and the product must remain
+finite. Calls, booleans, strings and nonfinite values are not numeric evidence.
+This reading never flattens multiplication trees or assumes floating-point
+associativity; unsupported rows retain the ordinary reading.
+
+A direct whole-result table assertion can distinguish an independently changed
+integer tuple or list sibling beside a factor swap. Credit this only for a
+single-line replacement and a direct, undecorated simple owner with stable
+parameters, a plain literal parametrization and a direct equality whose whole
+old result matches an actual row while the new result differs. Unsupported
+numeric comparisons and projected assertions do not establish this proof. A
+test that rebinds a directly parametrized factor and has one admitted strong
+assertion keeps the factor finding weak when the row no longer binds
+that call value. The rebound-specific fallback applies only when the test has
+one admitted strong assertion; prior handling of tests with multiple admitted
+strong assertions is retained.
+
 ## Implementation Mapping
 
 - `crates/ripr/src/analysis/language/python/doctest_tests.rs` and

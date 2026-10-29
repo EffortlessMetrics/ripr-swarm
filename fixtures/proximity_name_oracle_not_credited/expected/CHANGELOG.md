@@ -347,3 +347,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — proximity_name_oracle_not_credited (30)
+
+Reason:
+RIPR-SPEC-0122: #10701 a weak assertion on a changed return value or error with a direct caller test now reaches a repair start
+
+Command:
+`cargo xtask goldens bless proximity_name_oracle_not_credited --reason "..."`
+
+Updated:
+- `expected/human.txt`

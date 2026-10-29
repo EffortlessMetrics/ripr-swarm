@@ -142,3 +142,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — test_in_index_read_not_exact (12)
+
+Reason:
+RIPR-SPEC-0122: #10701 a weak assertion on a changed return value or error with a direct caller test now reaches a repair start
+
+Command:
+`cargo xtask goldens bless test_in_index_read_not_exact --reason "..."`
+
+Updated:
+- `expected/human.txt`

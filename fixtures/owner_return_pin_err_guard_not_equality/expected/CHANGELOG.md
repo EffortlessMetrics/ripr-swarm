@@ -206,3 +206,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — owner_return_pin_err_guard_not_equality (17)
+
+Reason:
+RIPR-SPEC-0122: #10701 a weak assertion on a changed return value or error with a direct caller test now reaches a repair start
+
+Command:
+`cargo xtask goldens bless owner_return_pin_err_guard_not_equality --reason "..."`
+
+Updated:
+- `expected/human.txt`

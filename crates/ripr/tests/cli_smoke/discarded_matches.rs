@@ -267,7 +267,13 @@ fn neutralize_plain_language_wording(bytes: &[u8]) -> Vec<u8> {
 ///   the old `(missing evidence: LIST); run ...` form and the current
 ///   `still missing: LIST; follow ...` form both become
 ///   `<not-ready missing=LIST>`, so the list is still compared byte-exact and
-///   a wrong list fails. A line in neither shape is left untouched.
+///   a wrong list fails.
+/// - #10701: a changed return value or error variant now starts a repair. A
+///   not-ready list that is exactly that single discriminator, and a printed
+///   `ripr repair <id> --root ...` start (only in a capture whose canonical
+///   gaps are all `return_value` or `error_variant`), both project to
+///   `<return-value-or-error-gap>`; any other list stays byte-exact. The
+///   start contract lives in `return_value_repair_start.rs`.
 ///
 /// Every other advisory line stays byte-exact. Returns the projected bytes and
 /// how many lines were normalized.
@@ -334,19 +340,51 @@ fn normalize_moved_repair_advisories(bytes: &[u8]) -> (Vec<u8>, usize) {
     const NEW_NOT_READY: &str = "  no repair start offered: ripr cannot build a repair packet for this \
          finding yet because it is still missing: ";
     const NEW_LIST_END: &str = "; follow the Next step above";
+    const MOVED_GAP_LISTS: [&str; 4] = [
+        "producer-owned missing discriminator fact: return_value",
+        "producer-owned missing discriminator fact: error_variant",
+        "a test assertion that checks the changed return value",
+        "a test assertion that observes the changed error variant",
+    ];
+    const MOVED_GAP_SLOT: &str = "  no repair start offered: <return-value-or-error-gap>\n";
     let list_between = |line: &str, start: &str, end: &str| -> Option<String> {
         let rest = line.strip_prefix(start)?;
         let list = &rest[..rest.find(end)?];
+        if MOVED_GAP_LISTS.contains(&list) {
+            return Some(MOVED_GAP_SLOT.to_string());
+        }
         Some(format!(
             "  no repair start offered: <not-ready missing={list}>\n"
         ))
     };
+    // A printed start is the moved return-value or error-variant slot only
+    // when this capture's own canonical gaps are all of those two kinds, so a
+    // wrongly started boundary (or any other) seam is never masked.
+    let text = String::from_utf8_lossy(bytes);
+    let gaps: Vec<&str> = text
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim_start();
+            // The plain-language neutralization turns the gap label into a slot.
+            line.strip_prefix("Canonical gap: ")
+                .or_else(|| line.strip_prefix("<gap-id-label>: "))
+        })
+        .collect();
+    let value_gaps_only = !gaps.is_empty()
+        && gaps
+            .iter()
+            .all(|gap| gap.contains(":return_value:") || gap.contains(":error_variant:"));
     let mut normalized = 0;
-    let projected = String::from_utf8_lossy(bytes)
+    let projected = text
         .split_inclusive('\n')
         .map(|line| {
             let replacement = if NO_BINDING.iter().any(|prefix| line.starts_with(prefix)) {
                 Some(format!("{NO_BINDING_SLOT}\n"))
+            } else if value_gaps_only
+                && line.starts_with("  ripr repair ")
+                && line.contains(" --root ")
+            {
+                Some(MOVED_GAP_SLOT.to_string())
             } else if line.starts_with(EXPOSED_ADVISORY) {
                 Some(format!("{EXPOSED_SLOT}\n"))
             } else if counted_untied(line) {
@@ -366,6 +404,35 @@ fn normalize_moved_repair_advisories(bytes: &[u8]) -> (Vec<u8>, usize) {
         .collect::<String>()
         .into_bytes();
     (projected, normalized)
+}
+
+/// A printed start is projected to the moved return-value slot only beside
+/// return-value or error-variant gaps; a boundary seam's start stays exact.
+#[test]
+fn moved_repair_start_projection_never_masks_another_seam_kind() {
+    let start = "  ripr repair 0123456789abcdef --root /x\n";
+    let capture = |gap: &str| format!("  <gap-id-label>: {gap}\n{start}");
+    let (value, slots) = normalize_moved_repair_advisories(
+        capture("gap:rust:src/lib.rs:f:return_value:r:x").as_bytes(),
+    );
+    assert_eq!(slots, 1);
+    assert!(!String::from_utf8_lossy(&value).contains("ripr repair"));
+    for other in [
+        "gap:rust:src/lib.rs:f:predicate_boundary:p:x > 1",
+        "gap:rust:src/lib.rs:f:match_arm:m:x",
+    ] {
+        let (kept, slots) = normalize_moved_repair_advisories(capture(other).as_bytes());
+        assert_eq!(slots, 0, "{other}");
+        assert!(String::from_utf8_lossy(&kept).contains(start), "{other}");
+    }
+    let (mixed, slots) = normalize_moved_repair_advisories(
+        format!(
+            "  <gap-id-label>: gap:rust:a.rs:f:return_value:r:x\n  Canonical gap: gap:rust:a.rs:g:predicate_boundary:p:y\n{start}"
+        )
+        .as_bytes(),
+    );
+    assert_eq!(slots, 0);
+    assert!(String::from_utf8_lossy(&mixed).contains(start));
 }
 
 /// The independent contract is score(1) == 2. Original/wrong sources differ

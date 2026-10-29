@@ -619,6 +619,9 @@ pub(super) fn collect_tests_from_statements(
                     body_text,
                     imports,
                     decorators: decorator_names(&function.decorator_list),
+                    simple_literal_parametrize: simple_literal_parametrize(
+                        &function.decorator_list,
+                    ),
                     activation_controls: super::test_activation::activation_controls(
                         &function.decorator_list,
                         &definition_imports,
@@ -747,6 +750,9 @@ pub(super) fn collect_tests_from_statements(
                     body_text,
                     imports,
                     decorators: decorator_names(&function.decorator_list),
+                    simple_literal_parametrize: simple_literal_parametrize(
+                        &function.decorator_list,
+                    ),
                     activation_controls: super::test_activation::activation_controls(
                         &function.decorator_list,
                         &definition_imports,
@@ -935,6 +941,25 @@ pub(super) fn collect_tests_from_statements(
             _ => {}
         }
     }
+}
+
+/// The narrow literal shape required for positive whole-row observation.
+fn simple_literal_parametrize(decorators: &[Expr]) -> bool {
+    fn literal(expr: &Expr) -> bool {
+        match expr {
+            Expr::Constant(_) => true,
+            Expr::Tuple(value) => value.elts.iter().all(literal),
+            Expr::List(value) => value.elts.iter().all(literal),
+            Expr::UnaryOp(value) if matches!(value.op, ast::UnaryOp::UAdd | ast::UnaryOp::USub) => {
+                matches!(value.operand.as_ref(), Expr::Constant(constant) if matches!(constant.value, ast::Constant::Int(_) | ast::Constant::Float(_)))
+            }
+            _ => false,
+        }
+    }
+    let [Expr::Call(call)] = decorators else {
+        return false;
+    };
+    call.args.len() == 2 && call.keywords.is_empty() && call.args.iter().all(literal)
 }
 
 /// The test's cases without the argnames its body rebinds, read through a

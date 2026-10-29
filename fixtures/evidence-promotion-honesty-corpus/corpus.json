@@ -440,6 +440,29 @@
       ]
     },
     {
+      "id": "rust_recording_double_observer_refusals",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/recording_double_observer_refusals",
+      "vector": "raw_receiver_clone_binding_aliases_diverging_setup_push_dispatch_assertion_diagnostics_and_dyn_ambiguity_cannot_supply_field_observation",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 16
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        }
+      ]
+    },
+    {
       "id": "rust_operand_callee_later_binding",
       "language": "rust",
       "tier": "pure",
@@ -14258,6 +14281,30 @@
       ]
     },
     {
+      "id": "python_factor_reorder_unknown_operands",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_factor_reorder",
+      "vector": "numeric_table_rows_cannot_establish_runtime_commutativity_of_named_operands",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 4
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
       "id": "python_table_bool_key_get_fallback",
       "language": "python",
       "tier": "pure",
@@ -14829,6 +14876,20 @@
           "type": "expected_class",
           "class": "no_static_path"
         }
+      ]
+    },
+    {
+      "id": "rust_binary_alias_foreign_dependency",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_binary_alias_foreign_dependency",
+      "vector": "registry_namesake_does_not_bind_indexed_wrapper",
+      "probe_family": "return_value",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "no_static_path" }
       ]
     }
   ]

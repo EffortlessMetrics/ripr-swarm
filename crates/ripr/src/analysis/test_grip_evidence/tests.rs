@@ -3271,9 +3271,15 @@ fn device_labels_start_empty() {
         "activation summary should explain the value-insensitive owner-call route: {}",
         evidence.activate.summary
     );
+    // #10701: the only debt is the exact changed return value (the weak
+    // `is_empty()` oracle), never a boundary-value fact.
     assert!(
-        evidence.missing_discriminators.is_empty(),
-        "return-value no-arg activation must not create boundary debt"
+        evidence
+            .missing_discriminators
+            .iter()
+            .all(|fact| fact.value == return_seam.expression()),
+        "return-value no-arg activation must not create boundary debt: {:?}",
+        evidence.missing_discriminators
     );
     Ok(())
 }
@@ -3320,9 +3326,15 @@ fn device_labels_start_empty() {
         "activation summary should explain the value-insensitive owner-call route: {}",
         evidence.activate.summary
     );
+    // #10701: the only debt is the exact changed return value (the weak
+    // `is_empty()` oracle), never a boundary-value fact.
     assert!(
-        evidence.missing_discriminators.is_empty(),
-        "multiline value-insensitive direct owner calls must not create boundary debt"
+        evidence
+            .missing_discriminators
+            .iter()
+            .all(|fact| fact.value == return_seam.expression()),
+        "multiline value-insensitive direct owner calls must not create boundary debt: {:?}",
+        evidence.missing_discriminators
     );
     Ok(())
 }
@@ -19789,5 +19801,318 @@ fn seam_evidence_keeps_equal_value_facts_from_distinct_test_files() -> Result<()
         "facts: {:?}",
         evidence.observed_values
     );
+    Ok(())
+}
+
+/// Whether the named owner of `source` may name a non-plain `Drop` type.
+fn may_name_non_plain_drop(source: &str, owner: &str, expression: &str) -> Result<bool, String> {
+    let index = index_from_files(&[(PathBuf::from("src/lib.rs"), source)])?;
+    let function = index
+        .functions()
+        .iter()
+        .find(|function| function.name == owner)
+        .ok_or_else(|| format!("no function `{owner}` indexed"))?;
+    Ok(names_non_plain_drop_type(function, expression, &index))
+}
+
+fn mk_x(source: &str) -> Result<bool, String> {
+    may_name_non_plain_drop(source, "mk", "x")
+}
+
+fn f_x(source: &str) -> Result<bool, String> {
+    may_name_non_plain_drop(source, "f", "x")
+}
+
+fn mk_make(source: &str) -> Result<bool, String> {
+    may_name_non_plain_drop(source, "mk", "make(x)")
+}
+
+#[test]
+fn drop_type_gate_masks_the_corpus_once_across_many_seams() -> Result<(), String> {
+    let index = index_from_files(&[(
+        PathBuf::from("src/lib.rs"),
+        "pub struct Row(pub u32);\npub fn mk(x: u32) -> Row {\n    Row(x)\n}\n",
+    )])?;
+    let function = index
+        .functions()
+        .iter()
+        .find(|function| function.name == "mk")
+        .ok_or_else(|| "no function `mk` indexed".to_string())?;
+    MASK_BUILD_COUNT.with(|count| count.set(0));
+    for _ in 0..25 {
+        if names_non_plain_drop_type(function, "Row(x)", &index) {
+            return Err("a plain Row must not withhold".to_string());
+        }
+    }
+    let builds = MASK_BUILD_COUNT.with(|count| count.get());
+    if builds != 1 {
+        return Err(format!(
+            "expected one masking pass over 25 seams, saw {builds}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn drop_type_facts_are_keyed_by_type_within_one_index() -> Result<(), String> {
+    let source = format!(
+        "pub struct Row(pub u32);\npub struct Loud(pub u32);\n{EXIT_DROP}pub type Al = u32;\n\
+         pub fn mk_row(x: u32) -> Row {{\n    Row(x)\n}}\n\
+         pub fn mk_loud(x: u32) -> Loud {{\n    Loud(x)\n}}\n\
+         pub fn mk_al(x: u32) -> Al {{\n    x\n}}\n"
+    );
+    for order in [
+        [("mk_row", false), ("mk_loud", true), ("mk_al", true)],
+        [("mk_al", true), ("mk_loud", true), ("mk_row", false)],
+        [("mk_loud", true), ("mk_row", false), ("mk_al", true)],
+    ] {
+        let index = index_from_files(&[(PathBuf::from("src/lib.rs"), source.as_str())])?;
+        for (name, expected) in order {
+            let function = index
+                .functions()
+                .iter()
+                .find(|function| function.name == name)
+                .ok_or_else(|| format!("no function `{name}` indexed"))?;
+            let got = names_non_plain_drop_type(function, "", &index);
+            if got != expected {
+                return Err(format!("{name}: expected withhold={expected}, got {got}"));
+            }
+        }
+    }
+    Ok(())
+}
+
+const EXIT_DROP: &str =
+    "impl Drop for Loud {\n    fn drop(&mut self) {\n        std::process::exit(0);\n    }\n}\n";
+const PLAIN_DROP: &str = "impl Drop for Loud {\n    fn drop(&mut self) {}\n}\n";
+
+#[test]
+fn self_return_type_resolves_to_the_impl_self_type() -> Result<(), String> {
+    let lib = |drop: &str| {
+        format!(
+            "pub struct Loud(pub u32);\n{drop}impl Loud {{\n    pub fn mk(&self, x: u32) -> Self {{\n        Self(x * 3)\n    }}\n}}\n"
+        )
+    };
+    assert!(may_name_non_plain_drop(
+        &lib(EXIT_DROP),
+        "mk",
+        "Self(x * 3)"
+    )?);
+    assert!(!may_name_non_plain_drop(
+        &lib(PLAIN_DROP),
+        "mk",
+        "Self(x * 3)"
+    )?);
+    Ok(())
+}
+
+#[test]
+fn a_type_alias_is_not_resolved_so_it_withholds() -> Result<(), String> {
+    let lib = |alias: &str, ret: &str| {
+        format!(
+            "pub struct Loud(pub u32);\n{PLAIN_DROP}{alias}pub fn mk(x: u32) -> {ret} {{\n    Loud(x)\n}}\n"
+        )
+    };
+    assert!(mk_make(&lib("pub type Out = Loud;\n", "Out"))?);
+    assert!(!mk_make(&lib("", "Loud"))?);
+    Ok(())
+}
+
+#[test]
+fn an_open_workspace_calls_no_type_plain() -> Result<(), String> {
+    let lib = |extra: &str| {
+        format!(
+            "{extra}pub struct Loud(pub u32);\n{PLAIN_DROP}pub fn mk(x: u32) -> Loud {{\n    Loud(x)\n}}\n"
+        )
+    };
+    assert!(!mk_make(&lib(""))?);
+    assert!(mk_make(&lib("use rand::Rng;\n"))?);
+    assert!(mk_make(&lib("extern crate rand;\n"))?);
+    Ok(())
+}
+
+#[test]
+fn a_use_rename_is_followed_to_the_original_type() -> Result<(), String> {
+    let lib = |drop: &str, ret: &str| {
+        format!(
+            "pub struct Loud(pub u32);\n{drop}use crate::Loud as Quiet;\npub fn mk(x: u32) -> {ret} {{\n    make(x)\n}}\n"
+        )
+    };
+    assert!(mk_make(&lib(EXIT_DROP, "Quiet"))?);
+    assert!(!mk_make(&lib(PLAIN_DROP, "Quiet"))?);
+    assert!(!mk_make(&lib(EXIT_DROP, "u32"))?);
+    Ok(())
+}
+
+#[test]
+fn a_wrapper_of_a_non_plain_type_withholds() -> Result<(), String> {
+    let lib = |drop: &str, field: &str, shape: &str| {
+        let definition = match shape {
+            "tuple" => format!("pub struct Wrapper(pub {field});\n"),
+            "record" => format!("pub struct Wrapper {{\n    pub inner: {field},\n}}\n"),
+            _ => format!("pub enum Wrapper {{\n    One({field}),\n    Two,\n}}\n"),
+        };
+        format!(
+            "pub struct Loud(pub u32);\n{drop}{definition}pub fn mk(x: u32) -> Wrapper {{\n    make(x)\n}}\n"
+        )
+    };
+    for shape in ["tuple", "record", "enum"] {
+        assert!(mk_make(&lib(EXIT_DROP, "Loud", shape))?);
+        assert!(!mk_make(&lib(PLAIN_DROP, "Loud", shape))?);
+        assert!(!mk_make(&lib(EXIT_DROP, "u32", shape))?);
+    }
+    Ok(())
+}
+
+#[test]
+fn a_generic_return_type_withholds() -> Result<(), String> {
+    let lib = |signature: &str| format!("pub fn mk{signature} {{\n    x\n}}\n");
+    for generic in [
+        "<T>(x: T) -> T",
+        "<'a, T: Clone>(x: &'a T) -> T",
+        "<T: Fn(u32) -> u32>(x: T) -> T",
+        "<const N: usize, T>(x: [T; N]) -> T",
+        "<T>(x: Vec<T>) -> Option<T>",
+        "<T>(x: T) -> (T, Box<dyn Fn() -> u8>)",
+        "<T>(x: T) -> T\nwhere\n    T: Clone",
+        "<T>(f: fn(T) -> u8, x: T) -> T",
+    ] {
+        assert!(mk_x(&lib(generic))?, "{generic}");
+    }
+    for concrete in [
+        "(x: u32) -> u32",
+        "<T>(x: T) -> u32",
+        "<T>(x: T) -> String where T: Clone",
+        "<T>(x: T) -> String\nwhere\n    T: Clone",
+        "<T>(f: fn(T) -> u8, x: T) -> u8",
+        "(x: Vec<u32>) -> Option<u32>",
+    ] {
+        assert!(!mk_x(&lib(concrete))?, "{concrete}");
+    }
+    Ok(())
+}
+
+#[test]
+fn opaque_dyn_and_impl_returns_withhold() -> Result<(), String> {
+    let lib = |signature: &str| format!("pub fn mk{signature} {{\n    x\n}}\n");
+    for opaque in [
+        "(x: u32) -> impl Iterator<Item = u32>",
+        "(x: u32) -> Box<dyn Fn() -> u8>",
+        "(x: u32) -> &'static dyn std::fmt::Debug",
+    ] {
+        assert!(mk_x(&lib(opaque))?, "{opaque}");
+    }
+    assert!(!mk_x(&lib("(x: u32) -> Box<u32>"))?);
+    Ok(())
+}
+
+#[test]
+fn enclosing_impl_generics_in_the_return_type_withhold() -> Result<(), String> {
+    let lib = |header: &str, signature: &str| {
+        format!(
+            "pub struct S<T>(pub T);\n{header} {{\n    pub fn f{signature} {{\n        x\n    }}\n}}\n"
+        )
+    };
+    for (header, signature) in [
+        ("impl<T> S<T>", "(x: T) -> T"),
+        ("impl<T> S<T>", "(x: T) -> Option<T>"),
+        ("impl<T> S<T>", "(x: T) -> Self"),
+        ("impl<T: Clone> S<T>", "(x: T) -> T"),
+    ] {
+        assert!(f_x(&lib(header, signature))?, "{header} {signature}");
+    }
+    for (header, signature) in [
+        ("impl S<u32>", "(x: u32) -> u32"),
+        ("impl S<u32>", "(x: u32) -> Self"),
+        ("impl<T> S<T>", "(x: u32) -> u32"),
+    ] {
+        assert!(!f_x(&lib(header, signature))?, "{header} {signature}");
+    }
+    let trait_lib = |ret: &str| {
+        format!("pub trait Tr<T> {{\n    fn f(x: T) -> {ret} {{\n        x\n    }}\n}}\n")
+    };
+    assert!(f_x(&trait_lib("T"))?);
+    assert!(!f_x(&trait_lib("u32"))?);
+    Ok(())
+}
+
+#[test]
+fn same_named_types_in_other_modules_are_all_read() -> Result<(), String> {
+    let lib = |drop: &str, second: &str| {
+        format!(
+            "pub struct Loud(pub u32);\n{drop}pub mod a {{\n    pub struct W(pub u8);\n}}\npub mod b {{\n    pub struct W(pub {second});\n}}\npub fn mk(x: u32) -> b::W {{\n    make(x)\n}}\n"
+        )
+    };
+    assert!(mk_make(&lib(EXIT_DROP, "super::Loud"))?);
+    assert!(!mk_make(&lib(PLAIN_DROP, "super::Loud"))?);
+    assert!(!mk_make(&lib(EXIT_DROP, "u8"))?);
+    Ok(())
+}
+
+#[test]
+fn a_self_import_rename_is_followed_to_its_type() {
+    use super::renamed_from;
+    assert!(
+        renamed_from("use crate::Loud::{self as Quiet};", "Quiet").contains(&"Loud".to_string())
+    );
+    assert!(renamed_from("use crate::Loud as Quiet;", "Quiet").contains(&"Loud".to_string()));
+    for grouped in [
+        "use crate::Loud::{Other, self as Quiet};",
+        "use crate::Loud::{Other, nested::{Deep}, self as Quiet, More};",
+    ] {
+        assert!(
+            renamed_from(grouped, "Quiet").contains(&"Loud".to_string()),
+            "{grouped}"
+        );
+    }
+    assert!(renamed_from("use crate::Loud as Other;", "Quiet").is_empty());
+}
+
+#[test]
+fn an_earlier_impl_trait_argument_does_not_hide_the_real_impl_header() -> Result<(), String> {
+    let lib = |earlier: &str, header: &str, signature: &str| {
+        format!(
+            "pub struct S<T>(pub T);\n{earlier}{header} {{\n    pub fn f{signature} {{\n        x\n    }}\n}}\n"
+        )
+    };
+    let earlier_arg = "pub fn a(f: impl Fn()) {\n    f();\n}\n";
+    let earlier_ret = "pub fn r() -> impl Iterator<Item = u32> {\n    0..1\n}\n";
+    for earlier in [earlier_arg, earlier_ret] {
+        assert!(f_x(&lib(earlier, "impl<T> S<T>", "(x: T) -> T"))?);
+        assert!(!f_x(&lib(earlier, "impl S<u32>", "(x: u32) -> u32"))?);
+    }
+    Ok(())
+}
+
+#[test]
+fn a_header_on_the_owners_own_line_is_read() -> Result<(), String> {
+    let impl_lib = |header: &str, signature: &str| {
+        format!("pub struct S<T>(pub T);\n{header} {{ pub fn f{signature} {{ x }} }}\n")
+    };
+    assert!(may_name_non_plain_drop(
+        &impl_lib("impl<T> S<T>", "(x: T) -> T"),
+        "f",
+        "x"
+    )?);
+    assert!(!may_name_non_plain_drop(
+        &impl_lib("impl S<u32>", "(x: u32) -> u32"),
+        "f",
+        "x"
+    )?);
+    let trait_lib = |ret: &str| format!("pub trait Tr<T> {{ fn f(x: T) -> {ret} {{ x }} }}\n");
+    assert!(f_x(&trait_lib("T"))?);
+    assert!(!f_x(&trait_lib("u32"))?);
+    Ok(())
+}
+
+#[test]
+fn a_header_after_an_earlier_fn_on_the_owners_line_is_read() -> Result<(), String> {
+    let lib = |second: &str, signature: &str| {
+        format!(
+            "pub struct S<T>(pub T);\nimpl S<u32> {{ fn g() {{}} }} {second} {{ pub fn f{signature} {{ x }} }}\n"
+        )
+    };
+    assert!(f_x(&lib("impl<T> S<T>", "(x: T) -> T"))?);
+    assert!(!f_x(&lib("impl S<u8>", "(x: u8) -> u8"))?);
     Ok(())
 }

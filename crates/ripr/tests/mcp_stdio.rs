@@ -4813,7 +4813,7 @@ fn install_exposed_match_arm_fixture() -> Result<PathBuf, String> {
     .map_err(|error| error.to_string())?;
     std::fs::write(
         root.join("tests/t.rs"),
-        "use parity_fixture::*;\n#[test] fn a() { assert_eq!(price(Kind::A), 1); }\n#[test] fn t() { assert!(total(&[1, 2]) > 0); }\n",
+        "use parity_fixture::*;\n#[test] fn a() { assert_eq!(price(Kind::A), 1); }\n#[test] fn t() { assert!(total(&[1, 2]) >= 3 && total(&[1, 2]) <= 3); }\n",
     )
     .map_err(|error| error.to_string())?;
     std::fs::write(root.join(".gitignore"), "/target\n").map_err(|error| error.to_string())?;
@@ -4830,7 +4830,7 @@ fn install_exposed_match_arm_fixture() -> Result<PathBuf, String> {
     .map_err(|error| error.to_string())?;
     std::fs::write(
         root.join("tests/t.rs"),
-        "use parity_fixture::*;\n#[test] fn a() { assert_eq!(price(Kind::A), 1); }\n#[test] fn t() { assert!(total(&[1, 2]) > 0); }\n#[test] fn b() { assert_eq!(price(Kind::B), 5); assert_eq!(price(Kind::A), 1); }\n",
+        "use parity_fixture::*;\n#[test] fn a() { assert_eq!(price(Kind::A), 1); }\n#[test] fn t() { assert!(total(&[1, 2]) >= 3 && total(&[1, 2]) <= 3); }\n#[test] fn b() { assert_eq!(price(Kind::B), 5); assert_eq!(price(Kind::A), 1); }\n",
     )
     .map_err(|error| error.to_string())?;
     commit_fixture(&root, "change arms")?;
@@ -5552,7 +5552,7 @@ fn install_weak_boundary_fixture() -> Result<PathBuf, String> {
     .map_err(|error| error.to_string())?;
     std::fs::write(
         root.join("tests/adult.rs"),
-        "use weak_boundary_fixture::is_adult;\n\n#[test]\nfn adult_is_recognized() {\n    assert!(is_adult(30));\n}\n",
+        "use weak_boundary_fixture::is_adult;\n\n#[test]\nfn adult_is_recognized() {\n    assert!(is_adult(30));\n    assert!(is_adult(40) == true);\n}\n",
     )
     .map_err(|error| error.to_string())?;
     std::fs::write(root.join(".gitignore"), "/target\n").map_err(|error| error.to_string())?;
