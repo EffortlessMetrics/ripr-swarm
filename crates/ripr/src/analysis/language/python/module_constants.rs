@@ -528,10 +528,16 @@ fn writes_namespace_dynamically(source: &str) -> bool {
                 after_sys = usize::from(name == "sys");
             }
             Tok::Dot if after_sys == 1 => after_sys = 2,
-            // `getattr(importlib, "reload")(m)` names the writer only as a
-            // string, so a string that is exactly a writer name still counts.
+            // `getattr(importlib, "reload")(m)` and `locate("importlib.reload")`
+            // name the writer only as a string, so a whitespace-free string
+            // with a writer name among its dotted parts still counts. Prose
+            // (a docstring saying "env vars") has whitespace and does not.
             Tok::String { value, kind, .. }
-                if !kind.is_any_fstring() && DYNAMIC_NAMESPACE_WRITERS.contains(&value.trim()) =>
+                if !kind.is_any_fstring()
+                    && !value.trim().contains(char::is_whitespace)
+                    && value
+                        .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                        .any(|part| DYNAMIC_NAMESPACE_WRITERS.contains(&part)) =>
             {
                 return true;
             }

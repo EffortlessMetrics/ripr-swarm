@@ -6062,6 +6062,7 @@ fn classify_change_parametrize_argnames_stay_unsettled_when_code_writes_the_name
         "import sys\nsys . modules[\"pytest\"] = object()\n",
         "setattr(object(), \"x\", 1)\n",
         "eval(\"globals().update(x=1)\")\n",
+        "import pydoc\npydoc.locate(\"importlib.reload\")(object())\n",
         "getattr(object(), \"__setattr__\")(\"x\", 1)\n",
     ] {
         let module_text = format!(
