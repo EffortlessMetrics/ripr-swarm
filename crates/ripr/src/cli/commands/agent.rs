@@ -1724,9 +1724,17 @@ impl SharedWorkflowArtifacts {
         // name. Check all destinations before preserving any original.
         for (path, backup) in paths.iter().zip(&backup_paths) {
             for candidate in [path, backup] {
-                let relative = candidate.strip_prefix(root).map_err(|error| format!("workflow path {} is outside the root: {error}", candidate.display()))?;
+                let relative = candidate.strip_prefix(root).map_err(|error| {
+                    format!(
+                        "workflow path {} is outside the root: {error}",
+                        candidate.display()
+                    )
+                })?;
                 if !crate::edit_cage::workflow_path_components_are_safe(root, relative)? {
-                    return Err(format!("workflow path {} has a symlink, reparse point or hard-linked component", candidate.display()));
+                    return Err(format!(
+                        "workflow path {} has a symlink, reparse point or hard-linked component",
+                        candidate.display()
+                    ));
                 }
             }
             match std::fs::symlink_metadata(backup) {
@@ -1862,6 +1870,9 @@ impl SharedWorkflowArtifacts {
     /// failure restores the pre-attempt state.
     fn resolve(self, phase_ok: bool, terminal: bool, tail_reached: bool) -> Result<(), String> {
         let restore = !phase_ok && (terminal || !tail_reached);
+        let mut plans = Vec::with_capacity(self.paths.len());
+        // Validate the entire set before touching any file. Otherwise a
+        // conflict in the last slot can discard an earlier slot's only copy.
         for (((path, backup), original), written) in self
             .paths
             .iter()
@@ -1889,14 +1900,34 @@ impl SharedWorkflowArtifacts {
                     path.display()
                 ));
             }
-            if restore && current != *original {
-                if current != *written || written.is_none() {
+            if restore && current != *original && (current != *written || written.is_none()) {
+                return Err(format!(
+                    "workflow artifact {} changed outside this phase; backups retained",
+                    path.display()
+                ));
+            }
+            plans.push((
+                path.clone(),
+                backup.clone(),
+                original.clone(),
+                current,
+                backup_bytes,
+            ));
+        }
+        // Leave every backup in place until all restorations have succeeded.
+        for (path, backup, original, current, backup_bytes) in &plans {
+            if restore && current != original {
+                if read_workflow_file(path)?
+                    .map(|(_, identity)| identity)
+                    .as_ref()
+                    != current.as_ref()
+                {
                     return Err(format!(
-                        "workflow artifact {} changed outside this phase; backups retained",
+                        "workflow artifact {} changed during resolution; backups retained",
                         path.display()
                     ));
                 }
-                if let Some(bytes) = &backup_bytes {
+                if let Some(bytes) = backup_bytes {
                     let permissions = output::file_write::open_regular_read(
                         backup.as_ref().ok_or("backup missing")?,
                     )
@@ -1915,6 +1946,34 @@ impl SharedWorkflowArtifacts {
                         .map_err(|error| format!("remove {} failed: {error}", path.display()))?;
                 }
             }
+        }
+        // Recheck every slot before any backup is discarded. This detects
+        // ordinary non-cooperating writes but is not a filesystem CAS.
+        for (path, backup, original, current, _) in &plans {
+            let expected = if restore { original } else { current };
+            if read_workflow_file(path)?
+                .map(|(_, identity)| identity)
+                .as_ref()
+                != expected.as_ref()
+            {
+                return Err(format!(
+                    "workflow artifact {} changed during resolution; backups retained",
+                    path.display()
+                ));
+            }
+            if let Some(backup) = backup
+                && read_workflow_file(backup)?
+                    .map(|(_, identity)| identity)
+                    .as_ref()
+                    != original.as_ref()
+            {
+                return Err(format!(
+                    "workflow backup {} changed during resolution; backups retained",
+                    backup.display()
+                ));
+            }
+        }
+        for (_, backup, _, _, _) in &plans {
             if let Some(backup) = backup {
                 #[cfg(windows)]
                 {
@@ -5387,6 +5446,35 @@ mod repair_summary_tests {
         Ok(())
     }
 
+    #[test]
+    fn later_conflict_preserves_every_previously_validated_backup() -> Result<(), String> {
+        let root = temp_root("later-conflict")?;
+        let workflow = root.join("target/ripr/workflow");
+        std::fs::create_dir_all(&workflow).map_err(|error| error.to_string())?;
+        let first = workflow.join("after.check-findings.json");
+        let second = workflow.join("agent-verify.json");
+        std::fs::write(&first, b"first prior").map_err(|error| error.to_string())?;
+        std::fs::write(&second, b"second prior").map_err(|error| error.to_string())?;
+        let mut tracked = SharedWorkflowArtifacts::track(&root, true)?;
+        std::fs::write(&first, b"first phase").map_err(|error| error.to_string())?;
+        tracked.note_write(&first, b"first phase")?;
+        std::fs::write(&second, b"second phase").map_err(|error| error.to_string())?;
+        tracked.note_write(&second, b"second phase")?;
+        std::fs::write(&second, b"outside").map_err(|error| error.to_string())?;
+        let refused = tracked.resolve(true, false, true).is_err();
+        let first_backup = workflow.join("after.check-findings.json.ripr-preattempt-backup");
+        let second_backup = workflow.join("agent-verify.json.ripr-preattempt-backup");
+        let preserved = std::fs::read(&first_backup).map_err(|error| error.to_string())?
+            == b"first prior"
+            && std::fs::read(&second_backup).map_err(|error| error.to_string())? == b"second prior"
+            && std::fs::read(&second).map_err(|error| error.to_string())? == b"outside";
+        let _ = std::fs::remove_dir_all(&root);
+        if !refused || !preserved {
+            return Err("later conflict lost an earlier backup".to_string());
+        }
+        Ok(())
+    }
+
     #[cfg(unix)]
     #[test]
     fn tracking_restores_original_mode_on_refusal() -> Result<(), String> {
@@ -5447,12 +5535,15 @@ mod repair_summary_tests {
         std::fs::create_dir_all(&outside).map_err(|error| error.to_string())?;
         let sentinel = outside.join("after.check-findings.json");
         std::fs::write(&sentinel, b"outside").map_err(|error| error.to_string())?;
-        std::os::unix::fs::symlink(&outside, root.join("target/ripr/workflow")).map_err(|error| error.to_string())?;
+        std::os::unix::fs::symlink(&outside, root.join("target/ripr/workflow"))
+            .map_err(|error| error.to_string())?;
         let result = SharedWorkflowArtifacts::track(&root, true);
         let intact = std::fs::read(&sentinel).map_err(|error| error.to_string())? == b"outside";
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::remove_dir_all(&outside);
-        if result.is_ok() || !intact { return Err("symlinked workflow was accepted or changed".to_string()); }
+        if result.is_ok() || !intact {
+            return Err("symlinked workflow was accepted or changed".to_string());
+        }
         Ok(())
     }
 
