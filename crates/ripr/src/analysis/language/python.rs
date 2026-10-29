@@ -1271,10 +1271,17 @@ impl PythonAdapter {
             workspace_incomplete,
             &assigned_attributes_by_file,
         );
+        // Bytecode CPython never checks against its source runs instead of
+        // the code read here (#9226). Read once, only when a file changed.
+        let unchecked_bytecode = !python_changed_files.is_empty()
+            && module_value::unchecked_bytecode(
+                &options.root,
+                workspace_read.sources.keys().map(|file| file.as_path()),
+            );
         for changed in &python_changed_files {
             let mut foreign = foreign_index.excluding(&changed.path);
-            if module_value::extension_beside(&options.root, &changed.path) {
-                foreign.mark_extension_beside();
+            if unchecked_bytecode || module_value::extension_beside(&options.root, &changed.path) {
+                foreign.mark_compiled_shadow();
             }
             conditional_defs::retain_workspace_certain(&mut all_owners, &changed.path, &foreign);
             for owner in all_owners

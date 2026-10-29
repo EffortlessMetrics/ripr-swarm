@@ -669,6 +669,70 @@ fn owner_module_hooks_and_class_body_code_are_not_credited() -> Check {
             true,
         ),
     ];
+    // A source encoding other than UTF-8 decodes an ASCII comment into code
+    // (`+AAo-` is a newline in UTF-7); unchecked-hash bytecode runs in place
+    // of its source. A UTF-8 declaration and checked or timestamp pycs keep
+    // the credit.
+    let utf7_owner = format!("# coding: utf-7\n{functions}NOTE = 0  # +AAo-_pad = lambda: 2\n");
+    let utf7_boot =
+        "# coding: utf-7\nfrom reach import ledger as _m\nNOTE = 0  # +AAo-_m._pad = lambda: 2\n";
+    let utf7_test = "# coding: utf-7\nfrom reach.ledger import render\nNOTE = 0  # +AAo-render = lambda: +ACIAfAAgACAAfAAi-\n\n\ndef test_render():\n    assert render() == \"|  |\"\n";
+    let utf8_owner = format!("# -*- coding: utf-8 -*-\n{functions}");
+    let pyc = |flags: char| format!("\u{d}\r\r\n{flags}\0\0\0{}", "\0".repeat(8));
+    let (unchecked, checked, timestamp) = (pyc('\u{1}'), pyc('\u{3}'), pyc('\0'));
+    let cases = cases.into_iter().chain([
+        ("utf-7 owner", utf7_owner, vec![], false),
+        (
+            "utf-7 foreign",
+            functions.to_string(),
+            vec![
+                ("reach/boot.py", utf7_boot),
+                ("tests/test_ledger.py", test_with_boot),
+            ],
+            false,
+        ),
+        (
+            "utf-7 test",
+            functions.to_string(),
+            vec![("tests/test_ledger.py", utf7_test)],
+            false,
+        ),
+        ("utf-8 declared", utf8_owner, vec![], true),
+        (
+            "unchecked pyc",
+            functions.to_string(),
+            vec![(
+                "reach/__pycache__/ledger.cpython-313.pyc",
+                unchecked.as_str(),
+            )],
+            false,
+        ),
+        (
+            "unchecked foreign pyc",
+            functions.to_string(),
+            vec![
+                ("reach/boot.py", "VALUE = 1\n"),
+                ("reach/__pycache__/boot.cpython-313.pyc", unchecked.as_str()),
+                ("tests/test_ledger.py", test_with_boot),
+            ],
+            false,
+        ),
+        (
+            "checked pyc",
+            functions.to_string(),
+            vec![("reach/__pycache__/ledger.cpython-313.pyc", checked.as_str())],
+            true,
+        ),
+        (
+            "timestamp pyc",
+            functions.to_string(),
+            vec![(
+                "reach/__pycache__/ledger.cpython-313.pyc",
+                timestamp.as_str(),
+            )],
+            true,
+        ),
+    ]);
     let extensions = [
         "reach/ledger.cpython-313-x86_64-linux-gnu.so",
         "reach/ledger.abi3.so",
@@ -693,7 +757,18 @@ fn owner_module_hooks_and_class_body_code_are_not_credited() -> Check {
             files.retain(|(present, _)| *present != path);
             files.push((path, text));
         }
-        let finding = classify(&files, "reach/ledger.py", 2, "    return 2", "    return 3")?;
+        let line = source
+            .lines()
+            .position(|line| line == "    return 3")
+            .ok_or("no changed line")?
+            + 1;
+        let finding = classify(
+            &files,
+            "reach/ledger.py",
+            line,
+            "    return 2",
+            "    return 3",
+        )?;
         if credited {
             assert_eq!(
                 finding.class,

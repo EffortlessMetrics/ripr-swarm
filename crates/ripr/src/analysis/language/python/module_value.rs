@@ -94,10 +94,10 @@ pub(super) struct ForeignWrites {
     /// an import of the module's dotted path may load that file instead
     /// (#9226).
     shares_module_name: bool,
-    /// Some other file spells a name with a non-ASCII character
-    /// ([`spells_non_ascii_name`]), so a byte-exact name match cannot bound
-    /// what it binds (#9226).
-    non_ascii_elsewhere: bool,
+    /// Some other file may bind names it does not spell byte for byte
+    /// ([`names_may_differ`]), so a byte-exact name match cannot bound what
+    /// it binds (#9226).
+    names_may_differ_elsewhere: bool,
     /// A workspace file could not be read or the scan hit its bound, so the
     /// absence of a write is unknown.
     unknown: bool,
@@ -326,8 +326,8 @@ struct IndexedSource<'a> {
     reflective_opaque: bool,
     /// The file reflects, whatever tables the workspace holds.
     reflects: bool,
-    /// The file spells a name with a non-ASCII character ([`spells_non_ascii_name`]).
-    non_ascii_names: bool,
+    /// The file may bind names it does not spell byte for byte ([`names_may_differ`]).
+    loose_names: bool,
 }
 
 impl<'a> ForeignIndex<'a> {
@@ -428,7 +428,7 @@ impl<'a> ForeignIndex<'a> {
         let mut reflective_opaque = false;
         let mut reflection_elsewhere = false;
         let mut shares_module_name = false;
-        let mut non_ascii_elsewhere = false;
+        let mut names_may_differ_elsewhere = false;
         let mut unparsed = Vec::new();
         for indexed in &self.files {
             if indexed.file == own {
@@ -438,7 +438,7 @@ impl<'a> ForeignIndex<'a> {
             reflective_opaque |= indexed.reflective_opaque;
             reflection_elsewhere |= indexed.reflects;
             shares_module_name |= same_module_name(indexed.file, own);
-            non_ascii_elsewhere |= indexed.non_ascii_names;
+            names_may_differ_elsewhere |= indexed.loose_names;
             if indexed.assigned.is_none() {
                 unparsed.push(indexed.file);
             }
@@ -480,7 +480,7 @@ impl<'a> ForeignIndex<'a> {
             reflective_opaque,
             reflection_elsewhere,
             shares_module_name,
-            non_ascii_elsewhere,
+            names_may_differ_elsewhere,
             unknown,
         }
     }
@@ -523,11 +523,16 @@ impl<'a> ForeignIndex<'a> {
     }
 }
 
-/// Whether `source` spells a name, or an f-string, with a non-ASCII
-/// character, or fails to lex. Python NFKC-normalises identifiers, so
-/// `def _\u{ff50}ad()` rebinds `_pad`, while every name comparison here is
-/// byte-exact (#9226).
-pub(super) fn spells_non_ascii_name(source: &str) -> bool {
+/// Whether CPython may bind names `source` does not spell byte for byte: it
+/// declares a source encoding other than UTF-8 ([`declares_foreign_encoding`]),
+/// or spells a name or an f-string with a non-ASCII character, or fails to
+/// lex. Python NFKC-normalises identifiers, so `def _\u{ff50}ad()` rebinds
+/// `_pad`, while every name comparison here is byte-exact (#9226).
+pub(super) fn names_may_differ(source: &str) -> bool {
+    declares_foreign_encoding(source) || spells_non_ascii_name(source)
+}
+
+fn spells_non_ascii_name(source: &str) -> bool {
     use rustpython_parser::{Mode, Tok, lexer::lex};
     !source.is_ascii()
         && lex(source, Mode::Module).any(|token| match token {
@@ -536,6 +541,40 @@ pub(super) fn spells_non_ascii_name(source: &str) -> bool {
             Ok((Tok::String { value, kind, .. }, _)) => kind.is_any_fstring() && !value.is_ascii(),
             Ok(_) => false,
         })
+}
+
+/// Whether `source` declares a PEP 263 encoding other than UTF-8 in a
+/// comment on its first two lines (`# coding: utf-7`). CPython decodes the
+/// file with that codec, so an all-ASCII file can hold code the scan reads
+/// as a comment (`# +AAo-_pad = 2` is a second line in UTF-7) (#9226).
+fn declares_foreign_encoding(source: &str) -> bool {
+    source.lines().take(2).any(|line| {
+        let line = line
+            .trim_start_matches('\u{feff}')
+            .trim_start_matches([' ', '\t', '\x0c']);
+        let Some(comment) = line.strip_prefix('#') else {
+            return false;
+        };
+        let Some(declared) = comment.match_indices("coding").find_map(|(at, word)| {
+            let rest = &comment[at + word.len()..];
+            rest.strip_prefix([':', '='])
+        }) else {
+            return false;
+        };
+        let name: String = declared
+            .trim_start_matches([' ', '\t'])
+            .chars()
+            .take_while(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+            .map(|ch| {
+                if ch == '_' {
+                    '-'
+                } else {
+                    ch.to_ascii_lowercase()
+                }
+            })
+            .collect();
+        name != "utf-8" && name != "utf8"
+    })
 }
 
 /// Whether the directory of the module `file` (relative to `root`) holds a
@@ -567,6 +606,62 @@ pub(super) fn extension_beside(root: &Path, file: &Path) -> bool {
         };
         name.starts_with(&prefix) && (name.ends_with(".so") || name.ends_with(".pyd"))
     })
+}
+
+/// Whether some workspace source has an unchecked-hash pyc (PEP 552,
+/// `compileall --invalidation-mode unchecked-hash`) in its `__pycache__`:
+/// CPython loads it without comparing it with the source, so the code that
+/// runs may not be the code the scan read. Timestamp and checked-hash pycs
+/// are trusted the way CPython trusts them: it recompiles them when the
+/// source's mtime, size or hash moves. An unreadable cache or pyc counts as
+/// unchecked (#9226).
+pub(super) fn unchecked_bytecode<'a>(root: &Path, files: impl Iterator<Item = &'a Path>) -> bool {
+    let mut stems: std::collections::BTreeMap<&Path, std::collections::BTreeSet<&str>> =
+        std::collections::BTreeMap::new();
+    for file in files {
+        let (Some(directory), Some(stem)) = (
+            file.parent(),
+            file.file_stem().and_then(|stem| stem.to_str()),
+        ) else {
+            return true;
+        };
+        stems.entry(directory).or_default().insert(stem);
+    }
+    stems.iter().any(|(directory, stems)| {
+        let entries = match std::fs::read_dir(root.join(directory).join("__pycache__")) {
+            Ok(entries) => entries,
+            Err(error) => return error.kind() != std::io::ErrorKind::NotFound,
+        };
+        entries.into_iter().any(|entry| {
+            let Ok(entry) = entry else {
+                return true;
+            };
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else {
+                return true;
+            };
+            name.ends_with(".pyc")
+                && name
+                    .split_once('.')
+                    .is_some_and(|(stem, _)| stems.contains(stem))
+                && pyc_unchecked(&entry.path())
+        })
+    })
+}
+
+/// Whether the pyc at `pyc` is hash-based without the source check: its
+/// flags word (bytes 4..8) has bit 0 set and bit 1 clear (PEP 552).
+fn pyc_unchecked(pyc: &Path) -> bool {
+    use std::io::Read;
+    let mut header = [0_u8; 8];
+    let Ok(mut opened) = std::fs::File::open(pyc) else {
+        return true;
+    };
+    if opened.read_exact(&mut header).is_err() {
+        return true;
+    }
+    let flags = u32::from_le_bytes([header[4], header[5], header[6], header[7]]);
+    flags & 0b11 == 0b01
 }
 
 /// Whether two files would bind the same last module-name component: a
@@ -644,16 +739,17 @@ impl ForeignWrites {
         self.unknown || self.shares_module_name
     }
 
-    /// Records that a compiled extension module of the same name sits beside
-    /// the module ([`extension_beside`]), so an import loads it instead.
-    pub(super) fn mark_extension_beside(&mut self) {
+    /// Records that compiled code may run in place of the scanned source: an
+    /// extension module beside it ([`extension_beside`]) or an unchecked pyc
+    /// in the workspace ([`unchecked_bytecode`]).
+    pub(super) fn mark_compiled_shadow(&mut self) {
         self.shares_module_name = true;
     }
 
-    /// Whether some other workspace file spells a name with a non-ASCII
-    /// character, which Python may normalise to one of this module's names.
-    pub(super) fn non_ascii_elsewhere(&self) -> bool {
-        self.unknown || self.non_ascii_elsewhere
+    /// Whether some other workspace file may bind names it does not spell
+    /// byte for byte (a non-ASCII name, or a non-UTF-8 source encoding).
+    pub(super) fn names_may_differ_elsewhere(&self) -> bool {
+        self.unknown || self.names_may_differ_elsewhere
     }
 
     /// Whether some workspace file assigns a dunder attribute (`__new__`,
@@ -765,7 +861,7 @@ fn scan_source<'a>(
             import_words(source)
         },
         reflects: mentions_reflection(source),
-        non_ascii_names: spells_non_ascii_name(source),
+        loose_names: names_may_differ(source),
         reflective_opaque: reflective
             && (source.contains("sys.modules")
                 || MODULE_LOADERS

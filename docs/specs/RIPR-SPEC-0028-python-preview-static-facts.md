@@ -644,7 +644,11 @@ a compiled extension module of the owner's name beside it (`ledger.*.so`,
 A non-ASCII character in a name or an f-string, in the owner module or any
 other workspace file, refuses the credit: Python NFKC-normalises identifiers,
 so a fullwidth `_ｐad` rebinds `_pad`, while the credit's name matches are
-byte-exact. A test whose module has header effects is
+byte-exact. So does a PEP 263 encoding declaration other than UTF-8 in any of
+those files: in UTF-7 an all-ASCII comment can decode to a second line of
+code. An unchecked-hash pyc (PEP 552) of any workspace source refuses it as
+well, since CPython loads it without comparing it with the source; timestamp
+and checked-hash pycs are trusted the way CPython trusts them. A test whose module has header effects is
 refused like one under a conftest with effects. Because these are
 whole-word matches over every workspace file, the credit rarely applies in
 repositories that use reflection anywhere; that is missed credit, not a
