@@ -634,6 +634,26 @@ test("multiplies", runMultiply, 5000);
     );
 }
 
+/// Without AVA provenance a named second argument is not a macro: a
+/// `node:test` options object held in a variable may carry `skip`, so its
+/// callback is not credited as running (Devin review on #10966).
+#[test]
+fn a_named_options_object_is_not_read_as_an_ava_macro() {
+    let source = r#"
+import { test } from "node:test";
+const options = { skip: true };
+test("adds", options, (t) => {
+    t.assert.strictEqual(add(1, 2), 3);
+});
+"#;
+    let tests = extract_tests(Path::new("test/math.test.ts"), source);
+
+    assert!(
+        tests.iter().all(|test| test.assertions.is_empty()),
+        "{tests:?}"
+    );
+}
+
 /// A `describe` whose title is not a string literal still has its body
 /// walked (#4548); it is named by the computed-title placeholder (#4593).
 #[test]
