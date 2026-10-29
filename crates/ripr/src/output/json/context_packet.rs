@@ -5,6 +5,7 @@ use super::{array_field, escape, field, float_field, number_field};
 use crate::config::RiprConfig;
 use crate::output::json::report::{related_test_json, stop_reason_values};
 use crate::output::next_step::reconcile_next_step;
+use crate::output::preview_actionability::projected_preview_actionability_missing;
 
 // Keep the registered packet version literal in this renderer path so the
 // output-contract check can verify the JSON surface while the DTO owns values.
@@ -41,6 +42,10 @@ pub(crate) fn render_context_packet_with_explain_command(
     // DTO's `from_finding` seed is the class profile default for callers
     // that hold no config.
     packet.severity = config.severity().for_exposure(&finding.class).as_str();
+    // The DTO starts with raw analysis evidence; resolve the provisional preview
+    // packet-availability message using the same validator-backed projection as
+    // the check surface and next-step reconciliation. Keep real missing facts.
+    packet.missing = projected_preview_actionability_missing(finding);
     if let (Some(witness), Some(command)) = (packet.witness.as_mut(), explain_command) {
         witness.explain_command = command;
     }

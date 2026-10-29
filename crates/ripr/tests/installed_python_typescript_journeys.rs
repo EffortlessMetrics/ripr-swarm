@@ -569,6 +569,52 @@ fn typescript_literal_threshold_packet_is_complete_and_controls_fail_closed() ->
         "literal const resolves",
     )?;
     need(&check, "subtotal == DISCOUNT_THRESHOLD", "discriminator")?;
+    // The same selected subject must agree across human output and context.
+    // Packet readiness removes only the provisional packet-availability
+    // summary, not the real discriminator or the raw RIPR stage states.
+    let finding_id = check
+        .split_whitespace()
+        .find(|token| token.starts_with("probe:") && token.contains(":typescript_preview:"))
+        .ok_or_else(|| format!("check printed no finding id:\n{check}"))?;
+    let context = ripr_output(
+        &decoy,
+        &[
+            "context", "--root", &root_arg, "--base", "HEAD~1", "--at", finding_id,
+        ],
+    )?;
+    if !context.status.success() {
+        return Err(format!(
+            "context failed: {}",
+            String::from_utf8_lossy(&context.stderr)
+        ));
+    }
+    let packet: serde_json::Value = serde_json::from_slice(&context.stdout)
+        .map_err(|error| format!("context JSON: {error}"))?;
+    if packet["probe"]["id"] != finding_id
+        || packet["classification"] != "weakly_exposed"
+        || packet["ripr"]["infect"] != "unknown"
+        || packet["missing_discriminators"][0]["value"] != "subtotal == DISCOUNT_THRESHOLD"
+        || !packet["recommended_next_step"]
+            .as_str()
+            .is_some_and(|step| step.contains("repair packet is complete"))
+    {
+        return Err(format!(
+            "context changed the subject, stages, or discriminator: {packet}"
+        ));
+    }
+    let missing = packet["missing"]
+        .as_array()
+        .ok_or_else(|| format!("context omitted missing array: {packet}"))?;
+    if missing.is_empty()
+        || missing.iter().any(|line| {
+            line.as_str()
+                .is_some_and(|line| line.contains("incomplete_repair_packet"))
+        })
+    {
+        return Err(format!(
+            "context lost real missing evidence or retained provisional packet text: {packet}"
+        ));
+    }
     need(
         &check,
         "expect(discountedTotal(10000)).toBe(expected)",
@@ -594,6 +640,11 @@ fn typescript_literal_threshold_packet_is_complete_and_controls_fail_closed() ->
         .nth(4)
         .ok_or_else(|| format!("start line names no gap: {start_line}"))?
         .to_string();
+    if gap != selected_typescript_gap(&check)? {
+        return Err(format!(
+            "context finding {finding_id} and repair start gap {gap} differ"
+        ));
+    }
     if !gap.starts_with("gap:typescript:typescript_preview:") {
         return Err(format!(
             "start line names a non-TypeScript gap: {start_line}"
