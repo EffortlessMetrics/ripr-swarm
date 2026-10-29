@@ -222,3 +222,114 @@ fn metadata_failure_messages_do_not_invent_package_or_toolchain_causes() {
         assert!(!message.contains("private environment-specific diagnostic"));
     }
 }
+
+#[test]
+fn metadata_real_cargo_probe_preserves_legacy_refusal_and_recovers() -> Result<(), String> {
+    let fixture = CaptureFixture::new()?;
+    let root = fixture.root.join("workspace with spaces");
+    std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+    let root = root.canonicalize().map_err(|error| error.to_string())?;
+    let manifest = "\
+[package]
+name = 'ripr-metadata-probe-control'
+version = '0.0.0'
+edition = '2024'
+[lib]
+path = 'src/lib.rs'
+[workspace]
+";
+    let lock = "\
+version = 4
+[[package]]
+name = 'ripr-metadata-probe-control'
+version = '0.0.0'
+";
+    let source = "pub fn observed() -> bool { true }\n";
+    let inputs = [
+        ("Cargo.toml", manifest),
+        ("Cargo.lock", lock),
+        ("src/lib.rs", source),
+    ];
+    for (path, contents) in inputs {
+        std::fs::write(root.join(path), contents).map_err(|error| error.to_string())?;
+    }
+
+    // Exercise the real fixed-argv probe: no mock executable, injected command,
+    // shared environment mutation, dependency preparation or project build.
+    // A missing/broken Cargo installation fails this positive; it is not a skip.
+    let before = metadata_probe_result(&root)
+        .map_err(|failure| format!("real Cargo metadata positive: {failure}"))?;
+    let metadata: serde_json::Value =
+        serde_json::from_slice(&before).map_err(|error| error.to_string())?;
+    let workspace = metadata["workspace_root"]
+        .as_str()
+        .ok_or("missing workspace root in real metadata")?;
+    assert_eq!(
+        Path::new(workspace)
+            .canonicalize()
+            .map_err(|error| error.to_string())?,
+        root
+    );
+    let packages = metadata["packages"]
+        .as_array()
+        .ok_or("missing packages in real metadata")?;
+    assert_eq!(packages.len(), 1, "the positive must contain its exact package");
+    let package = &packages[0];
+    assert_eq!(package["name"], "ripr-metadata-probe-control");
+    assert_eq!(package["version"], "0.0.0");
+    assert_eq!(
+        metadata["workspace_members"],
+        serde_json::json!([package["id"]])
+    );
+    let targets = package["targets"]
+        .as_array()
+        .ok_or("missing targets in real metadata")?;
+    assert_eq!(targets.len(), 1, "zero targets cannot satisfy the positive");
+    assert_eq!(targets[0]["kind"], serde_json::json!(["lib"]));
+    let target = targets[0]["src_path"]
+        .as_str()
+        .ok_or("missing source path in real metadata")?;
+    assert_eq!(
+        Path::new(target)
+            .canonicalize()
+            .map_err(|error| error.to_string())?,
+        root.join("src/lib.rs")
+    );
+    assert_eq!(metadata_probe(&root), Some(before.clone()));
+
+    // A native Cargo refusal is neither a launch failure nor an empty success.
+    // The malformed manifest is the stimulus, not an inferred missing package.
+    let invalid_manifest = "[package\n";
+    std::fs::write(root.join("Cargo.toml"), invalid_manifest)
+        .map_err(|error| error.to_string())?;
+    let refused = metadata_probe_result(&root);
+    assert!(
+        matches!(
+            refused,
+            Err(MetadataProbeFailure::UnsuccessfulExit(Some(code))) if code != 0
+        ),
+        "expected native Cargo refusal, got {refused:?}"
+    );
+    assert!(metadata_probe(&root).is_none());
+    assert_eq!(
+        std::fs::read_to_string(root.join("Cargo.toml"))
+            .map_err(|error| error.to_string())?,
+        invalid_manifest
+    );
+
+    // Restore only the owned stimulus. A prior failure must not poison either
+    // interface, and --locked metadata must leave all three fixture inputs alone.
+    std::fs::write(root.join("Cargo.toml"), manifest).map_err(|error| error.to_string())?;
+    let restored = metadata_probe_result(&root)
+        .map_err(|failure| format!("restored real Cargo metadata: {failure}"))?;
+    assert_eq!(restored, before);
+    assert_eq!(metadata_probe(&root), Some(before));
+    for (path, contents) in inputs {
+        assert_eq!(
+            std::fs::read_to_string(root.join(path)).map_err(|error| error.to_string())?,
+            contents,
+            "metadata changed {path}"
+        );
+    }
+    Ok(())
+}
