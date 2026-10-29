@@ -5961,7 +5961,11 @@ fn analyze_diff_surfaces_over_limit_read_as_named_limitation() -> Result<(), Str
         resolved_subject_identity: None,
         open_rust_index_paths: Default::default(),
     };
-    let result = adapter.analyze_diff(&options, &OraclePolicy::default(), &[]);
+    let result = adapter.analyze_diff(
+        &options,
+        &OraclePolicy::default(),
+        &[changed("src/entry.ts")],
+    );
     let _ = std::fs::remove_dir_all(&root);
     let result = result?;
 
@@ -6020,7 +6024,12 @@ fn analyze_diff_bounds_workspace_budget_disclosure_with_true_total() -> Result<(
         ts_write_file(&root.join(format!("src/pkg_{index:02}.ts")), source)?;
     }
     let options = ts_analysis_options(root.clone());
-    let result = TypeScriptAdapter::analyze_diff_with_read_limits(&options, &[], 1024, 32);
+    let result = TypeScriptAdapter::analyze_diff_with_read_limits(
+        &options,
+        &[changed("src/entry.ts")],
+        1024,
+        32,
+    );
     let _ = std::fs::remove_dir_all(&root);
     let result = result?;
     let disclosure = result
@@ -6112,7 +6121,7 @@ fn analyze_diff_bounds_capped_read_disclosure_with_stable_sample_and_total() -> 
     let options = ts_analysis_options(root.clone());
     let result = TypeScriptAdapter::analyze_diff_with_read_limits(
         &options,
-        &[],
+        &[changed("src/entry.ts")],
         64,
         DEFAULT_TS_MAX_WORKSPACE_READ_BYTES,
     );
@@ -6344,7 +6353,11 @@ fn analyze_diff_surfaces_over_limit_tsconfig_read_as_named_limitation() -> Resul
         resolved_subject_identity: None,
         open_rust_index_paths: Default::default(),
     };
-    let result = adapter.analyze_diff(&options, &OraclePolicy::default(), &[]);
+    let result = adapter.analyze_diff(
+        &options,
+        &OraclePolicy::default(),
+        &[changed("src/entry.ts")],
+    );
     let _ = std::fs::remove_dir_all(&root);
     let result = result?;
 
@@ -6422,7 +6435,11 @@ fn analyze_diff_surfaces_absolute_base_url_as_named_limitation() -> Result<(), S
         resolved_subject_identity: None,
         open_rust_index_paths: Default::default(),
     };
-    let result = adapter.analyze_diff(&options, &OraclePolicy::default(), &[]);
+    let result = adapter.analyze_diff(
+        &options,
+        &OraclePolicy::default(),
+        &[changed("src/entry.ts")],
+    );
     let _ = std::fs::remove_dir_all(&root);
     let result = result?;
 
@@ -11437,7 +11454,9 @@ fn unresolved_alias_import_names_the_import_in_no_reach_text() -> Result<(), Str
     );
     assert_eq!(
         finding.missing.first().map(String::as_str),
-        Some("No test references `applyDiscount(` — add a test that calls the changed owner.")
+        Some(
+            "No statically linked test call to `applyDiscount(` was established; inspect existing test calls and their import/export paths."
+        )
     );
     // #10708: the ordinary owner with no static link carries the honest
     // ordered next step — owner name, add-test route, native verifier,
@@ -11450,6 +11469,8 @@ fn unresolved_alias_import_names_the_import_in_no_reach_text() -> Result<(), Str
         .ok_or_else(|| "owner with no static link must carry guidance".to_string())?;
     for expected in [
         "no statically linked test calls `applyDiscount(`",
+        "inspect existing test calls and their import/export paths",
+        "if no suitable test exists, add a test",
         "add a test that calls the changed owner",
         "asserts the changed behavior with `toBe` / `toEqual`",
         "run the project's native test command",
@@ -11512,6 +11533,8 @@ fn untested_function_owner_guidance_names_owner_and_ordered_route() -> Result<()
         .ok_or_else(|| "owner with no static link must carry guidance".to_string())?;
     for expected in [
         "no statically linked test calls `shippingFee(`",
+        "inspect existing test calls and their import/export paths",
+        "if no suitable test exists, add a test",
         "add a test that calls the changed owner",
         "asserts the changed behavior with `toBe` / `toEqual`",
         "run the project's native test command",
@@ -14007,7 +14030,7 @@ fn spec_0027_unrelated_test_does_not_reach_the_boundary_witness() -> Result<(), 
     assert_eq!(finding.ripr.reach.state, StageState::No);
     assert!(
         finding.missing.iter().any(|line| line
-            == "No test references `shippingFee(` — add a test that calls the changed owner."),
+            == "No statically linked test call to `shippingFee(` was established; inspect existing test calls and their import/export paths."),
         "no_static_path must name the missing owner reference: {:?}",
         finding.missing
     );
@@ -16831,7 +16854,7 @@ fn same_stem_tests_that_only_call_a_sibling_owner_are_not_related() -> Result<()
     );
     assert!(
         finding.missing.iter().any(|line| line
-            == "No test references `loyaltyPrice(` — add a test that calls the changed owner."),
+            == "No statically linked test call to `loyaltyPrice(` was established; inspect existing test calls and their import/export paths."),
         "no_static_path must name the missing owner reference: {:?}",
         finding.missing
     );
@@ -17034,7 +17057,7 @@ it("tiers", () => {
 // `no_static_path` and the advice "add a test that calls the changed owner"
 // points at tests that already exist.
 
-fn ts_analysis_options(root: PathBuf) -> AnalysisOptions {
+pub(super) fn ts_analysis_options(root: PathBuf) -> AnalysisOptions {
     AnalysisOptions {
         root,
         base: None,
@@ -19889,4 +19912,76 @@ fn instance_call_receivers_name_plain_receivers_only() {
     );
     assert!(classifier::instance_call_receivers("a.b.add(1)", "add").is_empty());
     assert!(classifier::instance_call_receivers("add(1)", "add").is_empty());
+}
+
+/// #10931: a diff with no file this adapter would analyze returns the empty
+/// complete result without walking or reading the workspace. A source over the
+/// read cap would otherwise surface as a workspace limitation on a docs edit.
+#[test]
+fn diff_without_analyzable_files_skips_the_workspace() -> Result<(), String> {
+    let root = ts_unique_tempdir("skip-workspace-docs-only")?;
+    ts_write_file(
+        &root.join("src/huge.ts"),
+        &format!("export const value = {};\n", "x".repeat(200)),
+    )?;
+    let options = ts_analysis_options(root.clone());
+    let analyze = |files: &[ChangedFile]| {
+        TypeScriptAdapter::analyze_diff_with_read_limits(&options, files, 64, 1024)
+    };
+    let docs_only = analyze(&[changed("docs/guide.mdx"), changed("package.json")]);
+    let excluded = analyze(&[
+        changed("node_modules/pkg/index.ts"),
+        changed("src/api.generated.ts"),
+    ]);
+    let ts_edit = analyze(&[changed("src/huge.ts")]);
+    let _ = std::fs::remove_dir_all(&root);
+    for (label, result) in [("docs-only", docs_only?), ("excluded", excluded?)] {
+        if !result.limitations.is_empty()
+            || !result.findings.is_empty()
+            || result.changed_files != 0
+        {
+            return Err(format!(
+                "{label} diff must return the empty complete result, got {:?}",
+                result.limitations
+            ));
+        }
+    }
+    let ts_edit = ts_edit?;
+    if !ts_edit
+        .limitations
+        .iter()
+        .any(|limitation| limitation.path.as_deref() == Some("src/huge.ts"))
+    {
+        return Err(format!(
+            "a changed TypeScript file must still read the workspace and name the capped file, got {:?}",
+            ts_edit.limitations
+        ));
+    }
+    Ok(())
+}
+
+/// #10931: each reason a changed file reaches Phase 2 keeps the workspace walk:
+/// a JavaScript file, a declared hand-written file under an excluded directory
+/// and a Rust file a Bun bridge profile reads against the TypeScript tests.
+#[test]
+fn diff_needs_workspace_for_every_file_the_loop_would_analyze() {
+    let needs = |paths: &[&str], handwritten: &[&str]| {
+        let files: Vec<ChangedFile> = paths.iter().map(|path| changed(path)).collect();
+        let handwritten: Vec<String> = handwritten.iter().map(|path| path.to_string()).collect();
+        diff_needs_typescript_workspace(&files, &handwritten)
+    };
+    assert!(needs(&["README.md", "src/lib.js"], &[]));
+    assert!(needs(&["README.md", "src/lib.tsx"], &[]));
+    assert!(!needs(&["README.md", "Cargo.toml", "src/lib.rs"], &[]));
+    assert!(!needs(&["dist/bundle.ts"], &[]));
+    assert!(needs(&["dist/bundle.ts"], &["dist/bundle.ts"]));
+    assert!(!needs(&["src/api.generated.ts"], &[]));
+    let bridge = BUN_RUST_CROSS_LANGUAGE_BRIDGE_PROFILES
+        .iter()
+        .map(|profile| profile.rust_file)
+        .next();
+    assert!(
+        bridge.is_some_and(|file| needs(&[file], &[])),
+        "a Bun bridge Rust file must keep the workspace walk"
+    );
 }

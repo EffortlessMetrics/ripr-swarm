@@ -73,15 +73,18 @@ use super::*;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Assertion admission for one extracted TypeScript test.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) enum TypeScriptAssertionAdmission {
     /// The extractor recognized at least one assertion whose oracle kind it
     /// can grade (anything other than `OracleKind::Unknown`).
+    #[serde(rename = "recognized_assertion_present")]
     Recognized,
     /// The whole test and everything the runner runs around it were walked
     /// and nothing assertion-like exists.
+    #[serde(rename = "extraction_complete_no_assertion")]
     NoAssertionLike,
     /// Something assertion-like is present that RIPR cannot admit or resolve.
+    #[serde(rename = "assertion_like_present_but_unresolved")]
     Unresolved,
 }
 

@@ -544,3 +544,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_adversarial_owner_identity_after_insertion (33)
+
+Reason:
+RIPR-SPEC-0113 and #10913: missing static relation is not universal test absence; inspect existing calls and import/export paths before adding a test if needed. Preserve classification, related-test credit and repair eligibility.
+
+Command:
+`cargo xtask goldens bless typescript_adversarial_owner_identity_after_insertion --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

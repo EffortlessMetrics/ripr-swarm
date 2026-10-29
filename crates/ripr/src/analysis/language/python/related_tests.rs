@@ -590,6 +590,64 @@ pub(super) fn related_test_relation(
     test: &PythonTest,
     owner: &PythonOwner,
 ) -> Option<PythonRelationKind> {
+    // Most of a large workspace's tests never spell the owner's name; for
+    // them the full scan below (route parsing, fixture views, import
+    // matching) is pure cost (#10914: pandas scans ~23k tests per changed
+    // owner).
+    if let Some(name) = name_anchor(owner)
+        && !test_text_mentions(test, name)
+    {
+        debug_assert_eq!(
+            related_test_relation_scan(test, owner),
+            None,
+            "a test that never spells `{name}` related to it"
+        );
+        return None;
+    }
+    related_test_relation_scan(test, owner)
+}
+
+/// The name every relation of `owner` needs the test to spell, or `None` when
+/// a relation can hold without it: a module owner (reached through its module
+/// path), a dunder method (reached by operator, builtin or construction) and
+/// a routed handler (reached by URL).
+fn name_anchor(owner: &PythonOwner) -> Option<&str> {
+    (!owner.name.is_empty()
+        && !owner.is_module_owner()
+        && !is_dunder_name(&owner.name)
+        && dunder_method_class(owner).is_none()
+        && owner.route_paths.is_empty())
+    .then_some(owner.name.as_str())
+}
+
+/// Whether `name` occurs anywhere a relation reads source text: the body, the
+/// assertions, the imports, and the bodies and imports of resolved fixtures.
+fn test_text_mentions(test: &PythonTest, name: &str) -> bool {
+    let import_mentions = |import: &super::PythonImport| {
+        import.imported.contains(name)
+            || import.alias.contains(name)
+            || import.source_module.contains(name)
+    };
+    test.body_text.contains(name)
+        || test.assertions.iter().any(|assertion| {
+            assertion.text.contains(name)
+                || assertion.gate_text.contains(name)
+                || assertion
+                    .callable_call
+                    .as_deref()
+                    .is_some_and(|call| call.contains(name))
+        })
+        || test.imports.iter().any(import_mentions)
+        || test
+            .fixture_defs
+            .iter()
+            .any(|def| def.body_text.contains(name) || def.imports.iter().any(import_mentions))
+}
+
+fn related_test_relation_scan(
+    test: &PythonTest,
+    owner: &PythonOwner,
+) -> Option<PythonRelationKind> {
     if let Some(class) = dunder_method_class(owner) {
         return dunder_method_relation(test, owner, class);
     }

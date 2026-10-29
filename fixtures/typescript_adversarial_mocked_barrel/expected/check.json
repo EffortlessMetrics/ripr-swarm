@@ -36,7 +36,7 @@
       "flow_sinks": [
       ],
       "evidence": ["owner: applyDiscount", "gap_state: advisory", "actionability_category: missing_context", "why_not_actionable: no trusted related Jest/Vitest test or observer is available for a bounded TypeScript repair route", "repair_route: add trusted related-test matching for this owner shape before emitting a repair packet", "missing_actionability_fields: related_test_or_observer, target_test_shape, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: trusted related test or observer, target shape, verify command, receipt command, and edit boundaries", "raw_evidence_ref: file=src/discount.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_discount.ts:typescript_preview:2396aec1;owner=applyDiscount", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
-      "missing": ["No test references `applyDiscount(` — add a test that calls the changed owner.", "TypeScript preview actionability `advisory` / `missing_context`: no trusted related Jest/Vitest test or observer is available for a bounded TypeScript repair route. Repair route: add trusted related-test matching for this owner shape before emitting a repair packet"],
+      "missing": ["No statically linked test call to `applyDiscount(` was established; inspect existing test calls and their import/export paths.", "TypeScript preview actionability `advisory` / `missing_context`: no trusted related Jest/Vitest test or observer is available for a bounded TypeScript repair route. Repair route: add trusted related-test matching for this owner shape before emitting a repair packet"],
       "assertion_texts": {
       },
       "activation": {
@@ -116,8 +116,8 @@
       "stop_reasons": [],
       "oracle_kind": "unknown",
       "oracle_strength": "none",
-      "recommended_next_step": "TypeScript preview advisory: no statically linked test calls `applyDiscount(`; add a test that calls the changed owner and asserts the changed behavior with `toBe` / `toEqual`, run the project's native test command, then rerun `ripr check` to refresh the finding.",
-      "suggested_next_action": "TypeScript preview advisory: no statically linked test calls `applyDiscount(`; add a test that calls the changed owner and asserts the changed behavior with `toBe` / `toEqual`, run the project's native test command, then rerun `ripr check` to refresh the finding.",
+      "recommended_next_step": "TypeScript preview advisory: no statically linked test calls `applyDiscount(`; inspect existing test calls and their import/export paths; if no suitable test exists, add a test that calls the changed owner and asserts the changed behavior with `toBe` / `toEqual`. Then run the project's native test command and rerun `ripr check` to refresh the finding.",
+      "suggested_next_action": "TypeScript preview advisory: no statically linked test calls `applyDiscount(`; inspect existing test calls and their import/export paths; if no suitable test exists, add a test that calls the changed owner and asserts the changed behavior with `toBe` / `toEqual`. Then run the project's native test command and rerun `ripr check` to refresh the finding.",
       "language": "typescript",
       "language_status": "preview",
       "owner_kind": "function",

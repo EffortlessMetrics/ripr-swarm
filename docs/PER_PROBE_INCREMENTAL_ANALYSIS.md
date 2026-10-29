@@ -228,9 +228,21 @@ emit only some observations, or none; it supplies no complete denominator.
 The useful first measurement is a lower bound on observed whole-set reads and
 their sites. Preserve unknown and dropped-detail counts. Do not use these rows
 to report the complete no-whole-set-read fraction, claim invalidation or enable
-Phase C. Remaining Phase A work must record memo dependencies on every read
-(including warm hits and pre-primed answers), replace direct scalar access with
-recording accessors, and cover or explicitly refuse the named disk inputs.
+Phase C. The syntax run memo (`syntax/run_memo.rs`: `memoize`, `memoize_with`
+and `memoize_many`) now records a `memo` read, named `product:key-digest`, on
+every consultation inside a memo scope, hit or build, attributed to the calling
+site. The digest is of the key (source text, discriminator and query), not of
+the produced value, and the other memos in the table above are not yet
+recorded. The run memo has four consumers (the external-docs scan in
+`classify/reach.rs`, the renamed foreign-entry import query in
+`classify/helper_transfer.rs`, function-oracle extraction in `syntax/ra.rs`
+and local test macro expansion); which of them run inside a probe's
+classification scope depends on the input. The unit control covers the
+recording and its attribution. No end-to-end fixture asserts a memo read from
+a real classification: the CLI fixture, with and without a helper chain,
+produced none. Remaining Phase A work must record those memo dependencies on every
+read (including warm hits and pre-primed answers), replace direct scalar access
+with recording accessors, and cover or explicitly refuse the named disk inputs.
 
 The controls compare actual traced and untraced findings plus private
 `ValueOrigins`, exercise real index hits/misses and whole-set views, isolate
