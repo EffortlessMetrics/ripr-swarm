@@ -6690,7 +6690,7 @@ pub(crate) fn classify_resolved_owner(
     // there is no static_limit. We always compute them; they are empty when there
     // are no oracle-eligible candidates or no qualifying assertions.
     let named_limitations_from_oracle =
-        named_limitations_for_oracle_candidates(owner, related_candidates);
+        named_limitations_for_oracle_candidates(owner, related_candidates, &probe_shape.family);
     // Oracle metadata evidence lines (RIPR-SPEC-0085 §PR5).
     // Emitted from the strongest owner-call-observing assertion across
     // candidates. ADDITIVE: does not change oracle_kind, oracle_strength,

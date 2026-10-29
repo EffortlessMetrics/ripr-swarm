@@ -1481,7 +1481,7 @@ pub(crate) fn ava_assertion_from_expression(
         .first()
         .and_then(|arg| source_text_for_argument(arg, source));
     let expected_arg = call.arguments.get(1);
-    let expected_is_literal = expected_arg.is_some_and(|arg| is_literal_argument(arg));
+    let expected_is_literal = expected_arg.is_some_and(|arg| is_literal_expected_argument(arg));
     let expected_value_or_variant = if expected_is_literal {
         expected_arg.and_then(|arg| source_text_for_argument(arg, source))
     } else {
@@ -3184,6 +3184,41 @@ pub(crate) fn is_literal_argument(arg: &Argument<'_>) -> bool {
     }
 }
 
+/// Literal expected value for deep-equality oracles: a scalar/object literal
+/// as in [`is_literal_argument`], or an all-literal array.
+pub(crate) fn is_literal_expected_argument(arg: &Argument<'_>) -> bool {
+    is_literal_argument(arg) || is_literal_array_argument(arg)
+}
+
+/// An array literal whose elements are all scalar literals or nested
+/// all-literal arrays. Holes, spreads, identifiers, calls and objects keep the
+/// array dynamic.
+pub(crate) fn is_literal_array_argument(arg: &Argument<'_>) -> bool {
+    match arg {
+        Argument::ArrayExpression(array) => literal_array_elements(array),
+        _ => false,
+    }
+}
+
+fn literal_array_elements(array: &oxc_ast::ast::ArrayExpression<'_>) -> bool {
+    use oxc_ast::ast::ArrayExpressionElement as Element;
+    array.elements.iter().all(|element| match element {
+        Element::StringLiteral(_)
+        | Element::NumericLiteral(_)
+        | Element::BooleanLiteral(_)
+        | Element::NullLiteral(_) => true,
+        Element::ArrayExpression(inner) => literal_array_elements(inner),
+        Element::UnaryExpression(unary) => {
+            matches!(
+                unary.operator,
+                oxc_ast::ast::UnaryOperator::UnaryNegation
+                    | oxc_ast::ast::UnaryOperator::UnaryPlus
+            ) && matches!(unary.argument, Expression::NumericLiteral(_))
+        }
+        _ => false,
+    })
+}
+
 /// Extract the expected value or variant from the first matcher argument.
 ///
 /// Returns `(Some(text), false)` when the argument is a concrete literal.
@@ -3231,7 +3266,9 @@ pub(crate) fn extract_matcher_expected_value(
         return (None, false);
     };
 
-    if is_literal_argument(first_arg) {
+    if is_literal_argument(first_arg)
+        || (matches!(matcher, "toEqual" | "toStrictEqual") && is_literal_array_argument(first_arg))
+    {
         let text = source_text_for_argument(first_arg, source);
         (text, false)
     } else {
