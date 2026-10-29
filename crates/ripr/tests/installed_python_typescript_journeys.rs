@@ -1809,6 +1809,12 @@ fn gap_currentness_survives_only_proven_workflow_projection_cleanup() -> Result<
         false,
         "finished attempt after pending recovery",
     )?;
+    let (_, recovered_error) = text_of(&recovered);
+    need(
+        &recovered_error,
+        "already finished",
+        "pending promotion reached the finished attempt",
+    )?;
     let recovered_manifest: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&manifest_path).map_err(|error| error.to_string())?)
             .map_err(|error| error.to_string())?;
@@ -1832,8 +1838,15 @@ fn gap_currentness_survives_only_proven_workflow_projection_cleanup() -> Result<
     )
     .map_err(|error| error.to_string())?;
     std::fs::write(&after, b"forged pending snapshot").map_err(|error| error.to_string())?;
+    let staged_before = std::fs::read(&retained_path).map_err(|error| error.to_string())?;
     let pending = attempt.after(false)?;
     expect_exit(pending.status.success(), false, "forged pending promotion")?;
+    let (_, pending_error) = text_of(&pending);
+    need(
+        &pending_error,
+        "already finished",
+        "forged pending promotion reached the finished attempt",
+    )?;
     let pending_manifest: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&manifest_path).map_err(|error| error.to_string())?)
             .map_err(|error| error.to_string())?;
@@ -1841,6 +1854,8 @@ fn gap_currentness_survives_only_proven_workflow_projection_cleanup() -> Result<
         .get("terminal_artifacts")
         .and_then(serde_json::Value::as_array)
         .is_some_and(|roles| !roles.is_empty())
+        || std::fs::read(&after).map_err(|error| error.to_string())? != b"forged pending snapshot"
+        || std::fs::read(&retained_path).map_err(|error| error.to_string())? != staged_before
     {
         return Err("forged pending snapshot was promoted".to_string());
     }
