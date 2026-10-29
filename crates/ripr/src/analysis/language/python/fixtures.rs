@@ -70,6 +70,7 @@ pub(super) fn collect_fixture_defs(
                     body_text: text_for_range(source, range),
                     imports: test_imports(file, module_imports, body),
                     literal_construction: None,
+                    inert_tool: None,
                     literal_params: None,
                     isolated: false,
                     scope_imports: Vec::new(),
@@ -83,7 +84,9 @@ pub(super) fn collect_fixture_defs(
             file: file.to_path_buf(),
             body_text: text_for_range(source, range),
             imports: test_imports(file, module_imports, body),
-            literal_construction: literal_construction(stmt, statements, source, &aliases),
+            literal_construction: literal_construction(stmt, statements, source, &aliases, false),
+            inert_tool: literal_construction(stmt, statements, source, &aliases, true)
+                .filter(|class| is_inert_tool_import(module_imports, class)),
             literal_params: super::param_fixtures::literal_params(
                 stmt,
                 statements,
@@ -237,6 +240,7 @@ fn literal_construction(
     statements: &[Stmt],
     source: &str,
     aliases: &[String],
+    allow_request_param: bool,
 ) -> Option<String> {
     let Stmt::FunctionDef(function) = stmt else {
         return None;
@@ -246,6 +250,23 @@ fn literal_construction(
     };
     let decorator_target = match decorator {
         Expr::Call(call) if call.args.is_empty() && call.keywords.is_empty() => &*call.func,
+        // The inert-tool read also takes the explicit default
+        // `scope="function"` (click's own `runner` spells it).
+        Expr::Call(call)
+            if allow_request_param
+                && call.args.is_empty()
+                && matches!(
+                    call.keywords.as_slice(),
+                    [keyword] if keyword.arg.as_ref().is_some_and(|arg| arg.as_str() == "scope")
+                        && matches!(
+                            &keyword.value,
+                            Expr::Constant(constant)
+                                if matches!(&constant.value, Constant::Str(value) if value == "function")
+                        )
+                ) =>
+        {
+            &*call.func
+        }
         Expr::Call(_) => return None,
         other => other,
     };
@@ -256,8 +277,16 @@ fn literal_construction(
         return None;
     }
     let args = &function.args;
+    // A lone unused `request` parameter (`def runner(request): return
+    // CliRunner()`): the body is only a literal-argument call, so it cannot
+    // read `request.param` or `request.node`.
+    let lone_request = allow_request_param
+        && matches!(
+            args.args.as_slice(),
+            [arg] if arg.def.arg.as_str() == "request" && arg.default.is_none()
+        );
     if !args.posonlyargs.is_empty()
-        || !args.args.is_empty()
+        || (!args.args.is_empty() && !lone_request)
         || args.vararg.is_some()
         || !args.kwonlyargs.is_empty()
         || args.kwarg.is_some()
@@ -520,7 +549,10 @@ pub(super) fn mark_isolated_fixture_defs(
     for test in tests {
         let test_file = test.file.clone();
         for def in &mut test.fixture_defs {
-            if def.literal_construction.is_none() && def.literal_params.is_none() {
+            if def.literal_construction.is_none()
+                && def.inert_tool.is_none()
+                && def.literal_params.is_none()
+            {
                 continue;
             }
             let key = (test_file.clone(), def.file.clone(), def.binding.clone());
@@ -625,6 +657,62 @@ pub(super) fn literal_owner_instance_fixture(
             .scope_imports
             .iter()
             .all(|(file, import)| import_source_module_matches_owner(import, owner, file))
+}
+
+/// Test-support classes whose construction with literal arguments only
+/// builds an invoker: nothing they hold can carry the changed value or the
+/// expected one into a test (#11016). Matched structurally, by the module the
+/// fixture file imports the class from, never by fixture name.
+const INERT_TOOL_CLASSES: [(&str, &str); 2] = [
+    ("click.testing", "CliRunner"),
+    ("typer.testing", "CliRunner"),
+];
+
+/// Whether the file imports `class` under its own name from an inert tool
+/// module.
+fn is_inert_tool_import(imports: &[PythonImport], class: &str) -> bool {
+    imports
+        .iter()
+        .rev()
+        .find(|import| import.alias == class)
+        .is_some_and(|import| {
+            import.imported == class
+                && INERT_TOOL_CLASSES
+                    .iter()
+                    .any(|(module, name)| *module == import.source_module && *name == class)
+        })
+}
+
+/// A fixture that hands the test a fresh `CliRunner()` (#11016): an isolated
+/// plain fixture whose whole body is `return CliRunner(<literals>)`. The
+/// runner only invokes commands, so it hides no discriminator or expected
+/// value. The same test-side guards as [`literal_owner_instance_fixture`]
+/// apply: a module-level pytest test that does not rebind the parameter, no
+/// decorator but pytest marks, and no module binding the name over a
+/// conftest fixture.
+pub(super) fn inert_tool_fixture(test: &PythonTest, fixture: &str) -> bool {
+    if test.framework != PythonFramework::Pytest
+        || test.qualified_name != test.name
+        || test_body_binds_local(test, fixture)
+        || !injected_parameter(test, fixture)
+    {
+        return false;
+    }
+    let Some(def) = test.fixture_defs.iter().find(|def| def.name == fixture) else {
+        return false;
+    };
+    let rebinding = &test.constant_rebinding;
+    if def.file != test.file
+        && (rebinding.module_opaque || rebinding.module_bound.iter().any(|name| name == fixture))
+    {
+        return false;
+    }
+    def.isolated
+        && def.inert_tool.is_some()
+        && test
+            .decorators
+            .iter()
+            .all(|decorator| decorator.starts_with("pytest.mark."))
 }
 
 /// Whether the test's signature takes `fixture` as a parameter pytest

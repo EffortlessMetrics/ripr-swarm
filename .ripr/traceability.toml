@@ -17199,6 +17199,9 @@ id = "RIPR-SPEC-0238"
 name = "Python oracle and reach rules"
 spec = "docs/specs/RIPR-SPEC-0238-python-oracle-and-reach-rules.md"
 tests = [
+  "crates/ripr/src/analysis/language/python/inert_tool_fixture_tests.rs::a_clirunner_fixture_does_not_hide_the_expected_value",
+  "crates/ripr/src/analysis/language/python/inert_tool_fixture_tests.rs::shapes_that_can_hide_state_keep_the_limit",
+  "crates/ripr/src/analysis/language/python/inert_tool_fixture_tests.rs::a_test_that_rebinds_the_runner_or_overrides_it_keeps_the_limit",
   "crates/ripr/src/analysis/language/python/tests.rs::classify_change_parametrize_argnames_survive_prose_that_names_dynamic_writers",
   "crates/ripr/src/analysis/language/python/tests.rs::classify_change_names_unsettled_indirect_values_apart_from_known_fixtures",
   "crates/ripr/src/analysis/language/python/tests.rs::classify_change_parametrize_argnames_stay_unsettled_when_code_writes_the_namespace",
