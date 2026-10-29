@@ -1290,10 +1290,21 @@ impl PythonAdapter {
                 workspace_read.sources.keys().map(|file| file.as_path()),
             )
         };
+        let mut import_roots: BTreeSet<&Path> = workspace_read
+            .sources
+            .keys()
+            .filter_map(|file| file.parent())
+            .collect();
+        import_roots.insert(Path::new(""));
         for changed in &python_changed_files {
             let mut foreign = foreign_index.excluding(&changed.path);
             if shadowed_import
                 || module_value::extension_beside(&options.root, &changed.path)
+                || module_value::compiled_package_shadow(
+                    &options.root,
+                    &import_roots,
+                    &changed.path,
+                )
                 || extension_names
                     .as_ref()
                     .is_none_or(|names| module_value::shadowed_by_extension(names, &changed.path))

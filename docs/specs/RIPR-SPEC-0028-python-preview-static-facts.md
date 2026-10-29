@@ -662,15 +662,20 @@ own directory refuses the credit: any other entry (an archive, a directory
 the workspace walk excludes, a root holding only compiled extensions, a path
 outside the workspace, an expansion such as `{toxinidir}`, or entries that
 cannot be read off its lines) can hold code the scan does not read.
-`pythonpath = ["."]` keeps it. TOML configurations are parsed, so every
-`pythonpath` key at any depth counts and a mention outside such a key (an
-`addopts` override) refuses; an INI value runs on across blank and comment
-lines, as iniconfig reads it. A compiled extension or sourceless `.pyc` in
-the workspace root or any source directory named like the owner or one of
-its packages (a compiled `__init__` counts as its package) refuses it too.
+`pythonpath = ["."]` keeps it. Any `addopts` refuses too, since its shell
+split `-o pythonpath=...` can be quoted past any word match. TOML
+configurations are always parsed, so an escaped key counts, every
+`pythonpath` key at any depth counts and a mention outside such a key
+refuses; an INI value runs on across blank and comment lines, as iniconfig
+reads it. A compiled extension or sourceless `.pyc` in the workspace root
+or any source directory named like the owner or one of its packages (a
+compiled `__init__` counts as its package) refuses it, and so does one in a
+package directory below such a root along a dotted path the owner can be
+imported by (`tests/reach/ledger.pyc`, which pytest's prepend mode puts
+ahead of `reach/ledger.py`).
 What the environment supplies is outside the static claim and stays a
-residual risk: a `PYTHONPATH` set by the caller (a Makefile, a noxfile, CI
-configuration, `.envrc`), a `.pth` file in site packages, or an installed
+residual risk: a `PYTHONPATH` or `PYTEST_ADDOPTS` set by the caller (a
+Makefile, a noxfile, CI configuration, `.envrc`), a `.pth` file in site packages, or an installed
 non-editable copy that wins over the checkout (#10969). A test whose module has header effects is
 refused like one under a conftest with effects. Because these are
 whole-word matches over every workspace file, the credit rarely applies in

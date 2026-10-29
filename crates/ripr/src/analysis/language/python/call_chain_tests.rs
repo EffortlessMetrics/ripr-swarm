@@ -841,6 +841,51 @@ fn owner_module_hooks_and_class_body_code_are_not_credited() -> Check {
             false,
         ),
         (
+            "pytest addopts override",
+            functions.to_string(),
+            vec![
+                (
+                    "pytest.ini",
+                    "[pytest]\naddopts = -o \"python\"path=vendor.zip\n",
+                ),
+                ("vendor.zip", "PK"),
+            ],
+            false,
+        ),
+        (
+            "pyproject pythonpath under an escaped key",
+            functions.to_string(),
+            vec![(
+                "pyproject.toml",
+                "[tool.pytest.ini_options]\n\"\\u0070ythonpath\" = [\"vendor.zip\"]\n",
+            )],
+            false,
+        ),
+        (
+            "pyproject addopts under an escaped key",
+            functions.to_string(),
+            vec![(
+                "pyproject.toml",
+                "[tool.pytest.ini_options]\n\"\\u0061ddopts\" = \"-p vendor\"\n",
+            )],
+            false,
+        ),
+        (
+            "sourceless package in a test directory",
+            functions.to_string(),
+            vec![
+                ("tests/reach/__init__.pyc", "\x00"),
+                ("tests/reach/ledger.pyc", "\x00"),
+            ],
+            false,
+        ),
+        (
+            "pyproject without pytest settings",
+            functions.to_string(),
+            vec![("pyproject.toml", "[project]\nname = \"reach\"\n")],
+            true,
+        ),
+        (
             "pytest pythonpath of its own directory",
             functions.to_string(),
             vec![("pytest.ini", "[pytest]\npythonpath = .\n")],

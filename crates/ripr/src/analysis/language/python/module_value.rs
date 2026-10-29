@@ -709,17 +709,23 @@ pub(super) fn import_path_configured<'a>(
     })
 }
 
-/// Whether the configuration `text` sets an import path other than `.`. A
-/// TOML file is parsed, and every `pythonpath` or `python_paths` key at any
-/// depth must hold `.` alone; a mention the parsed keys do not account for
-/// (an `addopts` override, a dotted or quoted key) refuses. In an INI file
-/// the entries are the whitespace-separated words after the key's `=`
-/// through its continuation lines, which, as in iniconfig, run on across
-/// blank and `#`/`;` comment lines.
+/// Whether the configuration `text` sets an import path other than `.`, or
+/// sets `addopts`, whose shell-split `-o`/`--override-ini` (or `-p`,
+/// `--rootdir`, `--import-mode`) can set one under any quoting. A TOML file
+/// is always parsed, since an escaped key spells `pythonpath` without the
+/// word: every `pythonpath` or `python_paths` key at any depth must hold `.`
+/// alone, no key may be `addopts`, and a textual mention the parsed keys do
+/// not account for refuses. In an INI file the entries are the
+/// whitespace-separated words after the key's `=` through its continuation
+/// lines, which, as in iniconfig, run on across blank and `#`/`;` comment
+/// lines.
 fn sets_unread_import_path(toml_file: bool, text: &str) -> bool {
     let lowered = text.to_ascii_lowercase();
+    if lowered.contains("addopts") {
+        return true;
+    }
     let mentions = lowered.matches("pythonpath").count() + lowered.matches("python_paths").count();
-    if mentions == 0 {
+    if mentions == 0 && !toml_file {
         return false;
     }
     if toml_file {
@@ -727,9 +733,11 @@ fn sets_unread_import_path(toml_file: bool, text: &str) -> bool {
             return true;
         };
         let mut settings = Vec::new();
+        let mut overrides = false;
         let table = toml::Value::Table(table);
-        import_path_values(&table, &mut settings);
-        return settings.len() != mentions
+        import_path_values(&table, &mut settings, &mut overrides);
+        return overrides
+            || settings.len() != mentions
             || settings.iter().any(|value| match value {
                 toml::Value::String(entry) => !own_directory(entry),
                 toml::Value::Array(entries) => {
@@ -769,8 +777,13 @@ fn sets_unread_import_path(toml_file: bool, text: &str) -> bool {
     })
 }
 
-/// Every value under a `pythonpath` or `python_paths` key in `value`.
-fn import_path_values<'v>(value: &'v toml::Value, settings: &mut Vec<&'v toml::Value>) {
+/// Every value under a `pythonpath` or `python_paths` key in `value`, and
+/// whether any key is `addopts`.
+fn import_path_values<'v>(
+    value: &'v toml::Value,
+    settings: &mut Vec<&'v toml::Value>,
+    overrides: &mut bool,
+) {
     match value {
         toml::Value::Table(table) => {
             for (key, value) in table {
@@ -778,13 +791,14 @@ fn import_path_values<'v>(value: &'v toml::Value, settings: &mut Vec<&'v toml::V
                 if key == "pythonpath" || key == "python_paths" {
                     settings.push(value);
                 } else {
-                    import_path_values(value, settings);
+                    *overrides |= key == "addopts";
+                    import_path_values(value, settings, overrides);
                 }
             }
         }
         toml::Value::Array(values) => {
             for value in values {
-                import_path_values(value, settings);
+                import_path_values(value, settings, overrides);
             }
         }
         _ => {}
@@ -846,6 +860,70 @@ pub(super) fn shadowed_by_extension(
                     .to_str()
                     .is_none_or(|part| names.contains(part))
             })
+}
+
+/// Whether a package directory below an import root, along a dotted path
+/// the owner `file` can be imported by, holds compiled code (`.so`, `.pyd`,
+/// sourceless `.pyc`) for the next component of that path or for the
+/// package's `__init__`. Under pytest's prepend mode a test directory goes
+/// first on `sys.path`, so `tests/reach/ledger.pyc` in a directory with no
+/// source is what `import reach.ledger` loads. `roots` are the workspace
+/// root and every directory holding a source; their own entries are left
+/// to `extension_names`. An unreadable directory or name counts as one
+/// (#9226).
+pub(super) fn compiled_package_shadow(
+    root: &Path,
+    roots: &std::collections::BTreeSet<&Path>,
+    file: &Path,
+) -> bool {
+    let module = file.with_extension("");
+    let mut parts = Vec::new();
+    for part in module.components() {
+        let Some(part) = part.as_os_str().to_str() else {
+            return true;
+        };
+        parts.push(part);
+    }
+    if parts.last() == Some(&"__init__") {
+        parts.pop();
+    }
+    roots.iter().any(|base| {
+        (0..parts.len()).any(|start| {
+            let mut directory = root.join(base);
+            for (depth, name) in parts[start..].iter().enumerate() {
+                if depth > 0 && compiled_entry(&directory, name) {
+                    return true;
+                }
+                directory.push(name);
+                if !directory.is_dir() {
+                    return false;
+                }
+            }
+            false
+        })
+    })
+}
+
+/// Whether `directory` holds compiled code named `name` or `__init__`, or
+/// cannot be read.
+fn compiled_entry(directory: &Path, name: &str) -> bool {
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return true;
+    };
+    entries.into_iter().any(|entry| {
+        let Ok(entry) = entry else {
+            return true;
+        };
+        let file_name = entry.file_name();
+        let Some(file_name) = file_name.to_str() else {
+            return true;
+        };
+        let module = file_name.split('.').next().unwrap_or_default();
+        (module == name || module == "__init__")
+            && (file_name.ends_with(".so")
+                || file_name.ends_with(".pyd")
+                || file_name.ends_with(".pyc"))
+    })
 }
 
 /// Whether two files would bind the same last module-name component: a
