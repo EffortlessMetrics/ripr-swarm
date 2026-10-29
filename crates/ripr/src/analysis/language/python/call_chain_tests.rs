@@ -853,6 +853,97 @@ fn owner_module_hooks_and_class_body_code_are_not_credited() -> Check {
     let finding = classify(&files, "reach/ledger.py", 2, "    return 2", "    return 3")?;
     assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
 
+    // An import shadow refuses the credit: a zip or egg in the workspace, or
+    // a pytest config that sets `pythonpath`, can load code the scan never
+    // reads (#10969). A stale timestamp pyc and an installed copy stay
+    // residual risk, not refusals: the scan trusts timestamp pycs the way
+    // CPython trusts them, and installed-copy detection needs a live
+    // interpreter query outside the bounded static reads.
+    //
+    // (label, owner source, files replaced or added, credited)
+    type ShadowCase<'a> = (&'a str, Vec<(&'a str, &'a str)>, bool);
+    let shadow_cases: Vec<ShadowCase> = vec![
+        (
+            "zip archive in workspace",
+            vec![("vendor.zip", "PK\x03\x04")],
+            false,
+        ),
+        (
+            "egg archive in workspace",
+            vec![("vendor.egg", "PK\x03\x04")],
+            false,
+        ),
+        (
+            "nested zip archive",
+            vec![("third_party/vendor.zip", "PK\x03\x04")],
+            false,
+        ),
+        (
+            "pytest.ini pythonpath",
+            vec![("pytest.ini", "[pytest]\npythonpath = vendor.zip\n")],
+            false,
+        ),
+        (
+            "pyproject pythonpath",
+            vec![(
+                "pyproject.toml",
+                "[tool.pytest.ini_options]\npythonpath = [\"vendor.zip\"]\n",
+            )],
+            false,
+        ),
+        (
+            "setup.cfg pythonpath",
+            vec![("setup.cfg", "[tool:pytest]\npythonpath = vendor.zip\n")],
+            false,
+        ),
+        (
+            "tox.ini pythonpath",
+            vec![("tox.ini", "[pytest]\npythonpath = vendor.zip\n")],
+            false,
+        ),
+        (
+            "pytest.ini without pythonpath",
+            vec![("pytest.ini", "[pytest]\naddopts = -q\n")],
+            true,
+        ),
+        (
+            "pythonpath outside the pytest section",
+            vec![("pytest.ini", "[other]\npythonpath = vendor.zip\n")],
+            true,
+        ),
+        (
+            "commented pythonpath",
+            vec![("pytest.ini", "[pytest]\n# pythonpath = vendor.zip\n")],
+            true,
+        ),
+        (
+            "pyproject without pytest section",
+            vec![("pyproject.toml", "[project]\nname = \"reach\"\n")],
+            true,
+        ),
+    ];
+    for (label, extra, credited) in shadow_cases {
+        let mut files = vec![
+            ("reach/__init__.py", ""),
+            ("reach/ledger.py", functions),
+            ("tests/test_ledger.py", test),
+        ];
+        for (path, text) in extra {
+            files.retain(|(present, _)| *present != path);
+            files.push((path, text));
+        }
+        let finding = classify(&files, "reach/ledger.py", 2, "    return 2", "    return 3")?;
+        if credited {
+            assert_eq!(
+                finding.class,
+                ExposureClass::Exposed,
+                "{label}: {finding:?}"
+            );
+        } else {
+            withheld(&finding, label);
+        }
+    }
+
     // Many locals and many earlier assertions: the pinned assertion still
     // credits.
     let mut test = String::from("from reach.ledger import Ledger\n\n\ndef test_render_ledger():\n");

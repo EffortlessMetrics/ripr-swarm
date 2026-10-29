@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Python: the one-`return` call-chain credit no longer credits a chain when the workspace holds a `*.zip` or `*.egg` file, or when a pytest config (`pytest.ini`, `pyproject.toml`, `setup.cfg`, `tox.ini`) sets `pythonpath`, since either can load code the scan never reads. Stale timestamp pycs and installed, non-editable copies of the package stay recorded as residual risk rather than refusals (#10969).

@@ -641,7 +641,12 @@ an extra import root, or a package `name/__init__.py` beside `name.py`, the
 test's import of the owner's dotted path may load that file instead. So does
 a compiled extension module of the owner's name beside it (`ledger.*.so`,
 `ledger.so`, `ledger.pyd`, or `__init__.*.so` for a package's `__init__.py`),
-which the import system loads before the source.
+which the import system loads before the source. A `*.zip` or `*.egg` file
+anywhere in the workspace refuses it too, as does any pytest config that sets
+`pythonpath` (`pytest.ini`, `pyproject.toml`, `setup.cfg`, `tox.ini`): either
+can put code the scan never reads on the import path, so the test may load an
+archived or shadowing copy of the owner instead of the scanned source
+(#10969).
 A non-ASCII character in a name or an f-string, in the owner module or any
 other workspace file, refuses the credit: Python NFKC-normalises identifiers,
 so a fullwidth `_ｐad` rebinds `_pad`, while the credit's name matches are
@@ -654,7 +659,14 @@ workspace source refuses it as well, since CPython loads it without comparing
 it with the source. Timestamp and checked-hash pycs are trusted the way
 CPython trusts them; the residual risk is a stale timestamp pyc after a
 same-size edit whose mtime lands in the compile second or is restored
-(`rsync -t`, `tar`, CI caches), which CPython itself would load. A test whose module has header effects is
+(`rsync -t`, `tar`, CI caches), which CPython itself would load. A stale
+timestamp pyc stays residual risk rather than a refusal: the scan cannot tell
+whether the pyc is actually stale without trusting the same mtime it doubts,
+and a static pass cannot query the live interpreter for it (#10969). An
+installed, non-editable copy of the package in site-packages is residual risk
+for the same reason: detecting it needs a live query (`pip show -f`,
+`importlib.util.find_spec`) outside the scan's bounded static reads. A test
+whose module has header effects is
 refused like one under a conftest with effects. Because these are
 whole-word matches over every workspace file, the credit rarely applies in
 repositories that use reflection anywhere; that is missed credit, not a

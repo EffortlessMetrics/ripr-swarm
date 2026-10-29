@@ -621,6 +621,14 @@ pub(super) fn extension_beside(root: &Path, file: &Path) -> bool {
 /// are trusted the way CPython trusts them: it recompiles them when the
 /// source's mtime, size or hash moves. An unreadable cache or pyc counts as
 /// unchecked (#9226).
+///
+/// Stale timestamp pycs (a same-size edit whose mtime lands in the compile
+/// second, or is restored by `rsync -t`, `tar` or a CI cache) and an
+/// installed, non-editable copy of the package in site-packages are recorded
+/// as residual risk, not refusals (#10969): a static pass cannot tell whether
+/// the pyc is actually stale without trusting the same mtime it doubts, and
+/// installed-copy detection needs a live interpreter query (`pip show -f`,
+/// `importlib.util.find_spec`) outside the scan's bounded static reads.
 pub(super) fn unchecked_bytecode<'a>(root: &Path, files: impl Iterator<Item = &'a Path>) -> bool {
     let mut stems: std::collections::BTreeMap<&Path, std::collections::BTreeSet<&str>> =
         std::collections::BTreeMap::new();
@@ -668,6 +676,100 @@ fn pyc_unchecked(pyc: &Path) -> bool {
     }
     let flags = u32::from_le_bytes([header[4], header[5], header[6], header[7]]);
     flags & 0b11 == 0b01
+}
+
+/// Whether the workspace's import configuration can load code the scan never
+/// reads (#10969):
+///
+/// - a `*.zip` or `*.egg` file anywhere in the workspace: pytest's
+///   `pythonpath` ini setting (or `rootdir`/`conftest` path tricks via
+///   config rather than code) can put that archive on `sys.path`, so an
+///   import of the owner's dotted path loads the archived copy instead of
+///   the scanned source;
+/// - a pytest config that sets `pythonpath`: `pytest.ini` (`[pytest]`
+///   section), `pyproject.toml` (`[tool.pytest.ini_options]` table),
+///   `setup.cfg` (`[tool:pytest]` section) or `tox.ini` (`[pytest]` section)
+///   with a `pythonpath` key on any line. The value may name a zip, an egg,
+///   or a directory holding a shadowing copy, so any such setting refuses
+///   the credit; parsing the value to allow-list it would trust the same
+///   config the check doubts.
+///
+/// A stale timestamp pyc and an installed, non-editable copy of the package
+/// are recorded as residual risk, not refusals: see [`unchecked_bytecode`].
+/// An unreadable directory or config file counts as a shadow, since the scan
+/// cannot show the import path is clean. `vendor.zip` at the root is not
+/// exempted: `vendor/` as a directory is excluded source, but an archive of
+/// that name is only loadable through exactly the config this refuses.
+pub(super) fn import_shadow(root: &Path) -> bool {
+    if has_archive_shadow(root) {
+        return true;
+    }
+    pytest_config_sets_pythonpath(&root.join("pytest.ini"), "[pytest]")
+        || pytest_config_sets_pythonpath(&root.join("pyproject.toml"), "[tool.pytest.ini_options]")
+        || pytest_config_sets_pythonpath(&root.join("setup.cfg"), "[tool:pytest]")
+        || pytest_config_sets_pythonpath(&root.join("tox.ini"), "[pytest]")
+}
+
+/// Whether any `*.zip` or `*.egg` file sits anywhere in the workspace: only
+/// regular files count, and an unreadable directory fails closed (#10969).
+fn has_archive_shadow(root: &Path) -> bool {
+    fn walk(dir: &Path) -> bool {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return true;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let entry_type = match entry.file_type() {
+                Ok(entry_type) => entry_type,
+                Err(_) => return true,
+            };
+            if entry_type.is_dir() {
+                if walk(&path) {
+                    return true;
+                }
+            } else if entry_type.is_file() {
+                let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                    return true;
+                };
+                if name.ends_with(".zip") || name.ends_with(".egg") {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+    walk(root)
+}
+
+/// Whether the pytest config at `path` sets `pythonpath`: the file holds the
+/// expected section header and a `pythonpath` key (a `=` or `:` assignment,
+/// comments stripped) on any line. A missing file is clean; an unreadable
+/// one fails closed (#10969).
+fn pytest_config_sets_pythonpath(path: &Path, section: &str) -> bool {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return false,
+        Err(_) => return true,
+    };
+    let mut in_section = false;
+    for line in text.lines() {
+        let stripped = line.trim();
+        if stripped.starts_with('[') {
+            in_section = stripped == section;
+            continue;
+        }
+        if !in_section {
+            continue;
+        }
+        let code = stripped.split(['#', ';']).next().unwrap_or("").trim_end();
+        let Some((key, _)) = code.split_once(['=', ':']) else {
+            continue;
+        };
+        if key.trim().eq_ignore_ascii_case("pythonpath") {
+            return true;
+        }
+    }
+    false
 }
 
 /// Whether two files would bind the same last module-name component: a
@@ -746,8 +848,9 @@ impl ForeignWrites {
     }
 
     /// Records that compiled code may run in place of the scanned source: an
-    /// extension module beside it ([`extension_beside`]) or an unchecked pyc
-    /// in the workspace ([`unchecked_bytecode`]).
+    /// extension module beside it ([`extension_beside`]), an unchecked pyc
+    /// in the workspace ([`unchecked_bytecode`]), or an import configuration
+    /// that can load code the scan never reads ([`import_shadow`]).
     pub(super) fn mark_compiled_shadow(&mut self) {
         self.shares_module_name = true;
     }

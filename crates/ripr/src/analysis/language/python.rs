@@ -1278,9 +1278,17 @@ impl PythonAdapter {
                 &options.root,
                 workspace_read.sources.keys().map(|file| file.as_path()),
             );
+        // An archive on the import path, or a pytest config that sets one
+        // (`pythonpath`), can load code the scan never reads (#10969). Read
+        // once, only when a file changed, beside the bytecode check.
+        let import_shadow =
+            !python_changed_files.is_empty() && module_value::import_shadow(&options.root);
         for changed in &python_changed_files {
             let mut foreign = foreign_index.excluding(&changed.path);
-            if unchecked_bytecode || module_value::extension_beside(&options.root, &changed.path) {
+            if unchecked_bytecode
+                || import_shadow
+                || module_value::extension_beside(&options.root, &changed.path)
+            {
                 foreign.mark_compiled_shadow();
             }
             conditional_defs::retain_workspace_certain(&mut all_owners, &changed.path, &foreign);

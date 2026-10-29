@@ -42,7 +42,9 @@
 //!   comment can hold code), or holds a NUL or a lone `\r` (CPython breaks
 //!   lines there);
 //! - no workspace source has an unchecked-hash pyc, which CPython loads
-//!   without comparing it with the source;
+//!   without comparing it with the source; no `*.zip` or `*.egg` sits in
+//!   the workspace and no pytest config sets `pythonpath`, since either can
+//!   load code the scan never reads (#10969);
 //! - inside a callable, a name is a parameter, a call is a bare call of a model
 //!   function or class of the module, or a method call on an instance of a
 //!   model class (the method's receiver, a parameter holding one, or
