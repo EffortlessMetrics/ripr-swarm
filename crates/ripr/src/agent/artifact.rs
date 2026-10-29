@@ -2285,15 +2285,15 @@ mod tests {
                 (metadata.dev(), metadata.ino()),
                 (source_metadata.dev(), source_metadata.ino())
             );
-            // A copy would accept this writer and revive the fork/exec race.
-            let writer = std::fs::OpenOptions::new()
-                .write(true)
-                .open(fixture.executable());
-            match writer {
-                Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy => {}
-                Err(e) => return Err(format!("unexpected writable-open failure: {e}")),
-                Ok(_) => return Err("helper image accepted a writable descriptor".to_string()),
-            }
+            // This is the executing image's *same inode*, not a copied
+            // binary. A write-open/ETXTBSY probe would itself acquire a writer
+            // on some Linux kernels, contradicting the fixture's safety rule.
+            // The source and both private links must retain the same count.
+            assert_eq!(
+                metadata.nlink(),
+                source_metadata.nlink(),
+                "private link count differs from the running image"
+            );
         }
         drop(first);
         assert!(!first_root.exists());
