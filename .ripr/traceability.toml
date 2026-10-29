@@ -11247,6 +11247,7 @@ id = "RIPR-SPEC-0140"
 name = "check-artifact reuse for explain/context"
 spec = "docs/specs/RIPR-SPEC-0140-check-artifact-reuse.md"
 tests = [
+  "crates/ripr/src/app/check_artifact/tests.rs::live_truthiness_admission_cannot_be_reused_from_an_artifact",
   "crates/ripr/tests/cli_smoke/unsupported_artifact.rs::unsupported_artifact_preserves_destinations_and_incomplete_report",
   "crates/ripr/tests/cli_smoke/unsupported_artifact.rs::unsupported_artifact_preserves_valid_artifact_and_its_context",
   "crates/ripr/tests/cli_smoke/unsupported_artifact.rs::unsupported_artifact_keeps_advisory_partial_write_and_reuse",
@@ -17195,6 +17196,17 @@ id = "RIPR-SPEC-0238"
 name = "Python oracle and reach rules"
 spec = "docs/specs/RIPR-SPEC-0238-python-oracle-and-reach-rules.md"
 tests = [
+  "crates/ripr/src/app/check_artifact/tests.rs::live_truthiness_admission_cannot_be_reused_from_an_artifact",
+  "crates/ripr/src/analysis/language/python/dunder_truthiness_tests.rs::integer_truthiness_credits_only_a_changed_truth_value",
+  "crates/ripr/src/analysis/language/python/dunder_truthiness_tests.rs::integer_truthiness_refuses_assertion_messages",
+  "crates/ripr/src/analysis/language/python/dunder_truthiness/workspace_admission.rs::tests::pytest_collection_configuration_is_refused",
+  "crates/ripr/src/analysis/language/python/dunder_truthiness/workspace_admission.rs::tests::ancestor_pytest_configuration_is_refused",
+  "crates/ripr/src/analysis/language/python/dunder_truthiness_tests.rs::integer_truthiness_refuses_test_rebinding_activation_and_wrappers",
+  "crates/ripr/src/analysis/language/python/dunder_truthiness_tests.rs::integer_truthiness_refuses_replaced_tests_and_definition_effects",
+  "crates/ripr/src/analysis/language/python/dunder_truthiness/workspace_admission.rs::tests::physical_pair_and_empty_package_initializers_are_admitted",
+  "crates/ripr/src/analysis/language/python/dunder_truthiness/workspace_admission.rs::tests::every_third_python_source_is_refused_without_discovery_filters",
+  "crates/ripr/src/analysis/language/python/dunder_truthiness/workspace_admission.rs::tests::local_import_artifacts_and_changed_source_bytes_are_refused",
+  "crates/ripr/src/analysis/language/python/dunder_truthiness/workspace_admission.rs::tests::entry_and_depth_limits_refuse_unknown_frontiers",
   "crates/ripr/src/analysis/language/python/verdict_corpus_tests.rs::factor_reorder_guidance_requires_order_sensitive_operands",
   "crates/ripr/src/analysis/language/python/verdict_corpus_tests.rs::nested_factor_reorder_guidance_requires_order_sensitive_operands",
   "crates/ripr/src/analysis/language/python/verdict_corpus_tests.rs::float_table_factor_reorder_does_not_gain_static_credit",
@@ -17256,6 +17268,16 @@ fixtures = [
   "fixtures/python_caplog_aliased_fixture_import",
   "fixtures/python_caplog_builtin_beside_fixtures",
   "fixtures/python_assertion_helper_field",
+  "fixtures/python_dunder_truthiness_integer",
+  "fixtures/python_dunder_truthiness_pytest_config",
+  "fixtures/python_dunder_truthiness_assert_message",
+  "fixtures/python_dunder_truthiness_foreign_import",
+  "fixtures/python_dunder_truthiness_replaced_test",
+  "fixtures/python_dunder_truthiness_header_effect",
+  "fixtures/python_dunder_truthiness_cross_file_direct",
+  "fixtures/python_dunder_truthiness_cross_file_hidden",
+  "fixtures/python_dunder_truthiness_cross_file_unicode",
+  "fixtures/python_dunder_truthiness_cross_file_generated",
   "fixtures/python_assertion_helper_wrong_receiver",
   "fixtures/python_assertion_helper_wrong_field",
   "fixtures/python_assertion_helper_weak_comparison",
@@ -17270,6 +17292,10 @@ code = [
   "crates/ripr/src/analysis/language/python/caplog_text.rs",
   "crates/ripr/src/analysis/language/python/fixtures.rs",
   "crates/ripr/src/analysis/language/python/helper_assertions.rs",
+  "crates/ripr/src/analysis/language/python/dunder_truthiness.rs",
+  "crates/ripr/src/analysis/language/python/dunder_truthiness/workspace_admission.rs",
+  "crates/ripr/src/app/check_artifact.rs",
+  "crates/ripr/src/analysis/language/python/module_constants.rs",
   "crates/ripr/src/analysis/language/python/classify.rs",
   "crates/ripr/src/analysis/language/python/message_pin.rs",
   "crates/ripr/src/analysis/language/python/oracles.rs",

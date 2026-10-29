@@ -74,6 +74,7 @@ mod dataclass_default;
 mod deleted_lines;
 mod doctest_eval;
 mod doctest_tests;
+mod dunder_truthiness;
 mod guard_activation;
 mod guard_credit;
 mod helper_inline;
@@ -1264,6 +1265,24 @@ impl PythonAdapter {
         let workspace_incomplete = refused_files > 0
             || !workspace_read.limits.is_empty()
             || !workspace_read.io_failures.is_empty();
+        // This physical-only capability cannot establish the complete HEAD
+        // import environment for committed-history or materialized subjects.
+        // Explicit diff input is the pipeline's live-source view.
+        if options.diff_file.is_some()
+            && all_owners.iter().any(|owner| {
+                owner.name == "__bool__"
+                    && python_changed_files
+                        .iter()
+                        .any(|changed| changed.path == owner.file)
+            })
+        {
+            dunder_truthiness::bind_workspace_observer(
+                &options.root,
+                &mut all_owners,
+                &workspace_read.sources,
+                workspace_incomplete,
+            );
+        }
         let foreign_index = module_value::ForeignIndex::build_with_assigned(
             workspace_read
                 .sources
@@ -1588,6 +1607,8 @@ mod param_fixture_tests;
 
 #[cfg(test)]
 mod dunder_entry_tests;
+#[cfg(test)]
+mod dunder_truthiness_tests;
 
 #[cfg(test)]
 mod module_field_tests;

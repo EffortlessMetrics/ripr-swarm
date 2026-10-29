@@ -1124,6 +1124,45 @@ mutant calibrates the rule; ripr reports only the static shape.
     `py-numpy-shadowed-np`, `py-numpy-patched-helper` and
     `py-numpy-tautology` stay non-credited, #10936).
 
+29. **Bounded integer dunder truthiness.** For a sole-line replacement in
+    `__bool__`, a bare `assert Class(integer)` (optionally `not`) is an exact
+    discriminator only when its condition holds before and fails after the
+    edit. The module must contain one plain, undecorated class without bases;
+    methods have no decorators, defaults or annotations and are limited to
+    `__init__` and `__bool__`.
+    Its constructor is one `self.field = parameter` and
+    `__bool__` is one return comparing that field to a signed 64-bit integer
+    literal with `==`, `!=`, `<`, `<=`, `>` or `>=`. Both old and new predicates
+    must resolve on the same field. The test module contains one import and
+    one argument-free, undecorated function without annotations or defaults;
+    literal docstrings are allowed. This capability is limited to explicit
+    `--diff` input's live source view; default/`--base`, `--worktree` and immutable
+    candidate subjects retain abstention. A committed-content overlay also
+    refuses credit: a physical audit cannot exclude committed writers or import
+    artifacts deleted or truncated on disk. A truthiness-only physical audit must find
+    exactly those two nonempty, ASCII Python sources with bytes matching the
+    parsed view. Empty package initializers are allowed. It inspects every
+    directory, including generated, excluded and hidden paths, within 512
+    entries and 16 levels; a third Python source, local bytecode/native/import
+    artifact, symlink, non-ASCII path, incomplete read or traversal/type error
+    refuses this credit. The audit is a bounded current filesystem observation,
+    not a change to the general walker or a hostile-race guarantee.
+    Pytest configuration files in the workspace or its bounded ancestor chain
+    also refuse credit, because collection settings and options are not
+    interpreted by this audit. Environment options, external plugins and
+    explicit pytest command-line selection are not audited. Assertions with
+    message expressions refuse credit because those expressions run on failure.
+    The physical observation cannot be reused through `explain/context --from`:
+    artifacts carrying this credit refuse with `check_artifact_unusable` and
+    direct fresh analysis; other artifact findings retain their existing contract.
+    The selected function's sole statement is that assertion,
+    the class import identifies the exact owner module, and no fixture, implicit
+    setup, activation control, edited test, rebinding or known foreign write
+    can replace the class, constructor, method or field. Other types and wider
+    object behavior retain the existing abstention. In particular, `Money(1)`
+    and `not Money(0)` do not distinguish `!= 0` from `> 0`; `Money(-1)` does
+    (#9795). This does not broaden equality guards, properties or `__str__`.
+
 ### Verdict ladder
 
 No finding is produced for docstring, comment or blank changes, header-only
