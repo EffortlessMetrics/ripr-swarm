@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- Python: the module-value foreign index now builds each source's sorted distinct words once, inside the parallel stage. The sequential fold visits each distinct word once per file, identifier mentions are lookups in that list rather than one scan of the source per spelling, and the per-source write totals are counted in parallel and merged. Measured warm on 4 cores at ce0dab9, with byte-identical output: the foreign index phase on pandas ecdb4258 went from 1.95 s to 1.18 s and on Django 5c13b5a from 1.27 s to 0.82 s (#10914).
