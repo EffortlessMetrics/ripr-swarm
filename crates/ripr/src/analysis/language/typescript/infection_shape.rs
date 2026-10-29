@@ -1,0 +1,275 @@
+//! Change shapes whose infection the TypeScript preview adapter cannot model
+//! (#10704).
+//!
+//! The adapter has no value-level infection model: whether a test input makes
+//! the changed value differ is only decided for the shapes the classifier
+//! guards read (boundary inputs, untaken `if` arms, ...). A literal return
+//! value, a default parameter, a `??` / `||` fallback operand, a comment-only
+//! edit or an arithmetic no-op therefore cannot be called `weakly_exposed` on
+//! oracle strength alone: that reading asks for an assertion on the changed
+//! expression text. This module names those shapes from the old and new line
+//! so the classifier can fail closed to `infection_unknown`.
+//!
+//! Every function here is conservative: `None` keeps the ladder verdict, and a
+//! shape is named only when the old and new lines differ in exactly that
+//! position and nowhere else.
+
+/// An edit whose effect on the returned value the adapter does not compute.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct UnmodeledInfection {
+    /// Stable shape name, spelled in the `typescript_infection_shape:` line.
+    pub(crate) shape: &'static str,
+    /// Why infection is not established for this shape.
+    pub(crate) reason: &'static str,
+    /// The edit is behavior-neutral by construction (a comment, `+ 0`), so
+    /// even an `exposed` ladder verdict is not an infection claim.
+    pub(crate) behavior_neutral: bool,
+}
+
+/// The unmodeled shape the edit from `old` to `new` has, if any.
+pub(crate) fn ts_unmodeled_infection(old: Option<&str>, new: &str) -> Option<UnmodeledInfection> {
+    let old = old?;
+    if old.trim() == new.trim() {
+        return None;
+    }
+    let (old_code, new_code) = (code_of(old), code_of(new));
+    if old_code == new_code && !new_code.is_empty() {
+        return Some(UnmodeledInfection {
+            shape: "comment_only",
+            reason: "the edit changes only a comment, so no input changes the executed code; no infection exists to establish",
+            behavior_neutral: true,
+        });
+    }
+    if is_arithmetic_noop(&old_code, &new_code) {
+        return Some(UnmodeledInfection {
+            shape: "arithmetic_noop",
+            reason: "the edit adds or drops an identity operand (`+ 0`, `- 0`, `* 1`, `/ 1`), which the adapter does not fold; whether any input changes the value is not established",
+            behavior_neutral: true,
+        });
+    }
+    if fallback_literal_changed(&old_code, &new_code) {
+        return Some(UnmodeledInfection {
+            shape: "fallback_literal",
+            reason: "the edit changes the literal operand of a `??` / `||` fallback, and the adapter does not model whether any test input takes the fallback",
+            behavior_neutral: false,
+        });
+    }
+    if default_parameter_changed(&old_code, &new_code) {
+        return Some(UnmodeledInfection {
+            shape: "default_parameter",
+            reason: "the edit changes a default parameter value, and the adapter does not model whether any test call omits the argument",
+            behavior_neutral: false,
+        });
+    }
+    if literal_return_changed(&old_code, &new_code) {
+        return Some(UnmodeledInfection {
+            shape: "literal_return",
+            reason: "the edit changes a literal return value, and the adapter does not model whether any test input reaches this return",
+            behavior_neutral: false,
+        });
+    }
+    if numeric_operand_changed(&old_code, &new_code) {
+        return Some(UnmodeledInfection {
+            shape: "numeric_operand",
+            reason: "the edit changes one numeric literal inside an expression, and the adapter does not evaluate whether any test input makes the expression's value differ",
+            behavior_neutral: false,
+        });
+    }
+    None
+}
+
+/// The line with a trailing `//` comment and a trailing `;` removed. Quotes
+/// are tracked so a `//` inside a string literal is kept.
+fn code_of(line: &str) -> String {
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    let mut cut = line.len();
+    let mut previous = '\0';
+    for (index, ch) in line.char_indices() {
+        if let Some(open) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == open {
+                quote = None;
+            }
+        } else if matches!(ch, '"' | '\'' | '`') {
+            quote = Some(ch);
+        } else if ch == '/' && previous == '/' {
+            cut = index - 1;
+            break;
+        }
+        previous = ch;
+    }
+    let code = line[..cut].trim();
+    code.strip_suffix(';')
+        .unwrap_or(code)
+        .trim_end()
+        .to_string()
+}
+
+fn is_arithmetic_noop(old: &str, new: &str) -> bool {
+    const IDENTITY: [&str; 4] = [" + 0", " - 0", " * 1", " / 1"];
+    IDENTITY.iter().any(|suffix| {
+        (new.strip_suffix(suffix) == Some(old) || old.strip_suffix(suffix) == Some(new))
+            && !old.is_empty()
+            && !new.is_empty()
+    })
+}
+
+fn is_literal(token: &str) -> bool {
+    let token = token.trim();
+    if token.is_empty() {
+        return false;
+    }
+    if matches!(token, "true" | "false" | "null" | "undefined") {
+        return true;
+    }
+    let unsigned = token.strip_prefix('-').unwrap_or(token);
+    if unsigned.starts_with(|c: char| c.is_ascii_digit()) {
+        return unsigned.replace('_', "").parse::<f64>().is_ok();
+    }
+    let mut chars = token.chars();
+    let (Some(first), Some(last)) = (chars.next(), token.chars().last()) else {
+        return false;
+    };
+    token.len() >= 2
+        && first == last
+        && matches!(first, '"' | '\'' | '`')
+        && !token[1..token.len() - 1].contains(first)
+        && !(first == '`' && token.contains("${"))
+}
+
+/// Split `text` at its first top-level literal token: `(literal, rest)`. The
+/// literal runs to the first `,`, `)`, `]`, `}` or `;` outside quotes.
+fn leading_literal(text: &str) -> Option<(&str, &str)> {
+    let text = text.trim_start();
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    let mut end = text.len();
+    for (index, ch) in text.char_indices() {
+        if let Some(open) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == open {
+                quote = None;
+            }
+        } else if matches!(ch, '"' | '\'' | '`') {
+            quote = Some(ch);
+        } else if matches!(ch, ',' | ')' | ']' | '}' | ';' | ' ') {
+            end = index;
+            break;
+        }
+    }
+    let (literal, rest) = text.split_at(end);
+    is_literal(literal).then_some((literal, rest))
+}
+
+fn fallback_literal_changed(old: &str, new: &str) -> bool {
+    ["??", "||"].iter().any(|operator| {
+        let (Some(o), Some(n)) = (old.rfind(operator), new.rfind(operator)) else {
+            return false;
+        };
+        if old[..o] != new[..n] {
+            return false;
+        }
+        match (
+            leading_literal(&old[o + operator.len()..]),
+            leading_literal(&new[n + operator.len()..]),
+        ) {
+            (Some((old_literal, old_rest)), Some((new_literal, new_rest))) => {
+                old_literal != new_literal && old_rest == new_rest
+            }
+            _ => false,
+        }
+    })
+}
+
+fn default_parameter_changed(old: &str, new: &str) -> bool {
+    let (Some(old_open), Some(new_open)) = (old.find('('), new.find('(')) else {
+        return false;
+    };
+    if old[..old_open] != new[..new_open] {
+        return false;
+    }
+    let (Some(old_close), Some(new_close)) = (old.find(')'), new.find(')')) else {
+        return false;
+    };
+    if old_close < old_open || new_close < new_open || old[old_close..] != new[new_close..] {
+        return false;
+    }
+    let old_params: Vec<&str> = old[old_open + 1..old_close].split(',').collect();
+    let new_params: Vec<&str> = new[new_open + 1..new_close].split(',').collect();
+    if old_params.len() != new_params.len() {
+        return false;
+    }
+    let mut changed = false;
+    for (o, n) in old_params.iter().zip(&new_params) {
+        if o.trim() == n.trim() {
+            continue;
+        }
+        let (Some((o_head, o_value)), Some((n_head, n_value))) =
+            (o.split_once(" = "), n.split_once(" = "))
+        else {
+            return false;
+        };
+        if o_head.trim() != n_head.trim() || !is_literal(o_value) || !is_literal(n_value) {
+            return false;
+        }
+        changed = true;
+    }
+    changed
+}
+
+fn literal_return_changed(old: &str, new: &str) -> bool {
+    match (
+        old.trim().strip_prefix("return "),
+        new.trim().strip_prefix("return "),
+    ) {
+        (Some(o), Some(n)) => is_literal(o) && is_literal(n) && o.trim() != n.trim(),
+        _ => false,
+    }
+}
+
+/// The two lines differ in exactly one numeric literal token and nowhere else.
+fn numeric_operand_changed(old: &str, new: &str) -> bool {
+    let (o, n): (Vec<char>, Vec<char>) = (old.chars().collect(), new.chars().collect());
+    let prefix = o.iter().zip(&n).take_while(|(a, b)| a == b).count();
+    let suffix = o[prefix..]
+        .iter()
+        .rev()
+        .zip(n[prefix..].iter().rev())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let numeric = |c: &char| c.is_ascii_digit() || matches!(c, '.' | '_');
+    let mut start = prefix;
+    while start > 0 && numeric(&o[start - 1]) {
+        start -= 1;
+    }
+    let (mut o_end, mut n_end) = (o.len() - suffix, n.len() - suffix);
+    while o_end < o.len() && numeric(&o[o_end]) {
+        o_end += 1;
+        n_end += 1;
+    }
+    if start > o_end || start > n_end {
+        return false;
+    }
+    let boundary_before =
+        start == 0 || !(o[start - 1].is_alphanumeric() || matches!(o[start - 1], '_' | '$' | '.'));
+    let boundary_after =
+        o_end >= o.len() || !(o[o_end].is_alphanumeric() || matches!(o[o_end], '_' | '$'));
+    let (old_token, new_token): (String, String) = (
+        o[start..o_end].iter().collect(),
+        n[start..n_end].iter().collect(),
+    );
+    boundary_before
+        && boundary_after
+        && old_token != new_token
+        && old_token.starts_with(|c: char| c.is_ascii_digit())
+        && new_token.starts_with(|c: char| c.is_ascii_digit())
+        && old_token.replace('_', "").parse::<f64>().is_ok()
+        && new_token.replace('_', "").parse::<f64>().is_ok()
+}

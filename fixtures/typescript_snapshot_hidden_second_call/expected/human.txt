@@ -3,7 +3,7 @@ mode: fast
 root: fixtures/typescript_snapshot_hidden_second_call/input
 config: <cwd>/fixtures/typescript_snapshot_hidden_second_call/input/ripr.toml
 
-Summary: 1 changed behavior checked: 0 appear noticed by tests, 1 partly noticed, 0 reached but not noticed, 0 no test path. 1 found, 0 suppressed by your settings
+Summary: 1 changed behavior checked: 0 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 0 no test path, 1 unclear. 1 found, 0 suppressed by your settings
 
 Changed file(s) by language: typescript = 1
 
@@ -16,17 +16,18 @@ Start here:
   File: src/lib.ts:3
   Language: typescript
   Language status: preview
-  Static exposure: weak (severity: warning, confidence 0.40)
-  Why weak: a related test reaches this change but does not observe the exact changed value
+  Static exposure: unknown (severity: warning, confidence 0.40)
+  Why unknown: ripr could not tell which inputs would trigger the change, and could not follow it to something a test can check
   Changed behavior: return amount - 20;
-  Missing check (1 of 2): Related test reaches `price` with snapshot evidence; keep the snapshot as
-    weak preview evidence and add an exact-value assertion for the changed discriminator before
-    routing a repair packet
+  Missing check: The change to `price` is a `numeric_operand` edit: the edit changes one numeric
+    literal inside an expression, and the adapter does not evaluate whether any test input makes the
+    expression's value differ. No assertion is requested until a test input is shown to change the
+    behavior
   Related test: tests/lib.test.ts:3 price
-  Next step — TypeScript preview advisory: add an exact-value assertion alongside the snapshot for
-    missing discriminator `return value == amount - 20`; no actionable repair packet is emitted
-    until verify, receipt, and edit-boundary fields are available
-  Evidence: reach yes · infection unknown · propagation unknown · observation weak · discriminator weak
+  Next step — TypeScript preview advisory: infection is not established for this edit shape, so no
+    assertion is requested and no repair packet is emitted; show a test input that changes the
+    behavior first
+  Evidence: reach yes · infection unknown · propagation unknown · observation unknown · discriminator unknown
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
       discriminator = assertion distinguishes intended from wrong behavior
@@ -38,7 +39,7 @@ Start here:
       found = listed for review; suppressed by your settings = hidden by your suppression policy;
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: 1 related test(s) found for owner `price`
-    - infection unknown: TypeScript preview adapter does not yet model infection
+    - infection unknown: TypeScript preview adapter does not model infection for this `numeric_operand` edit: the edit changes one numeric literal inside an expression, and the adapter…
     - 5 more detail line(s) in --format human-full
 
 Next: drill into the top finding:

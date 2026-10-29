@@ -3534,6 +3534,7 @@ fixtures = [
   "fixtures/typescript_empty_each",
   "fixtures/benches_harness_evidence",
   "fixtures/typescript_boundary_gap",
+  "fixtures/typescript_infection_shapes",
   "fixtures/typescript_strong_oracle",
   "fixtures/ts_return_ternary_boundary",
   "fixtures/ts_return_comparison_boundary",

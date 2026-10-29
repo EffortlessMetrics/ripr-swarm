@@ -1183,6 +1183,17 @@ pub(crate) fn typescript_gap_record_for(finding: &Finding) -> Option<GapRecord> 
         return None;
     }
 
+    // #10704: infection the classifier did not establish (`unknown` / `no`)
+    // never yields a delegatable packet; the shared validator below stays the
+    // only flip authority.
+    if finding
+        .evidence
+        .iter()
+        .any(|line| line.starts_with("typescript_infection: "))
+    {
+        return None;
+    }
+
     // G-C: non-dynamic oracle: `typescript_oracle_expected` must be present.
     let oracle_expected = evidence_value(finding, "typescript_oracle_expected: ")?;
     if oracle_expected.is_empty() {
