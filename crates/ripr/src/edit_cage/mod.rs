@@ -1352,41 +1352,8 @@ fn delta_from_repository_states(
             .cloned(),
     );
     for change in &mut changes {
-        // Attempt manifests and other declared operational writes may change
-        // as the finish itself is committed, including the manifest that
-        // stores this delta hash. Do not add their volatile identity to this
-        // commitment. They retain the existing path/kind cage binding; a
-        // tracked, selected, authored or forbidden path is never excluded.
         if let Ok(path) = normalize_repo_relative_path(&change.path) {
-            let tracked = before
-                .paths
-                .get(&path)
-                .and_then(|s| s.index_entry.as_ref())
-                .is_some()
-                || after
-                    .paths
-                    .get(&path)
-                    .and_then(|s| s.index_entry.as_ref())
-                    .is_some();
-            let operational_only = before
-                .policy
-                .expected_operational_writes
-                .iter()
-                .any(|r| r.matches(&path))
-                && !before.policy.selected_target.matches(&path)
-                && !before
-                    .policy
-                    .allowed_edit_surface
-                    .iter()
-                    .any(|r| r.matches(&path))
-                && !before
-                    .policy
-                    .forbidden_paths
-                    .iter()
-                    .any(|r| r.matches(&path));
-            if tracked || !operational_only {
-                change.after_state = after.paths.get(&path).cloned();
-            }
+            change.after_state = after.paths.get(&path).cloned();
         }
     }
     AttemptDelta {
@@ -1398,6 +1365,47 @@ fn delta_from_repository_states(
         changes,
         inline_test_region: None,
     }
+}
+
+/// The selected attempt manifest contains the delta digest itself, so its
+/// pre-finish bytes cannot be part of that digest. Exclude only this exact
+/// manifest's identity, not its path/kind or other operational files. A
+/// tracked or authored/forbidden manifest path never receives the exception.
+pub(crate) fn omit_attempt_manifest_identity(
+    delta: &mut AttemptDelta,
+    baseline: &AttemptBaseline,
+    manifest_path: &Path,
+) -> Result<(), String> {
+    let path = normalize_repo_relative_path(manifest_path)?;
+    let policy = baseline.policy();
+    if baseline.index_entry(&path).is_some()
+        || policy.selected_target.matches(&path)
+        || policy
+            .allowed_edit_surface
+            .iter()
+            .any(|rule| rule.matches(&path))
+        || policy
+            .forbidden_paths
+            .iter()
+            .any(|rule| rule.matches(&path))
+        || !policy
+            .expected_operational_writes
+            .iter()
+            .any(|rule| rule.matches(&path))
+    {
+        return Ok(());
+    }
+    for change in &mut delta.changes {
+        if normalize_repo_relative_path(&change.path)? == path
+            && change
+                .after_state
+                .as_ref()
+                .is_none_or(|state| state.index_entry.is_none())
+        {
+            change.after_state = None;
+        }
+    }
+    Ok(())
 }
 
 /// Removes from a recomputed `delta` the command-owned output that appeared

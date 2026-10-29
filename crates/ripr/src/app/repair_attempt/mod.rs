@@ -565,9 +565,14 @@ fn recompute_after_verdict_binding(
     // Recomputed under the admitting rule: for an attempt whose head did not
     // move it is identical to the exact-head rule, and an attempt whose finish
     // required the exact head and saw it move is already refused as stale.
-    let (delta, _) = evaluate_repository_edit_cage_with_head_movement(
+    let (mut delta, _) = evaluate_repository_edit_cage_with_head_movement(
         &baseline,
         HeadMovement::AdmitDescendantCommits,
+    )?;
+    crate::edit_cage::omit_attempt_manifest_identity(
+        &mut delta,
+        &baseline,
+        &manifest_relative_path(manifest),
     )?;
     // The after phase, a rerun of `ripr agent receipt`, and `ripr agent
     // status` write command-owned files under `target/ripr` after the finish
@@ -583,6 +588,17 @@ fn recompute_after_verdict_binding(
         .map_err(|error| format!("serialize repair delta failed: {error}"))?;
     let holds = sha256_bytes(&delta_bytes) == after.delta_sha256 && verdict == after.verdict;
     Ok((verdict, holds))
+}
+
+fn manifest_relative_path(manifest: &RepairAttemptManifest) -> PathBuf {
+    Path::new(
+        manifest
+            .store
+            .as_ref()
+            .map_or(REPAIR_ATTEMPT_DIRECTORY, |store| store.locator.as_str()),
+    )
+    .join(manifest.repair_attempt_id.as_str())
+    .join(REPAIR_ATTEMPT_MANIFEST)
 }
 
 /// Resolve the retained before snapshot a verify document must name, and read
@@ -2606,8 +2622,13 @@ pub(crate) fn finish_repair_attempt_from(
     // swap inside the window is undetectable by commit comparison alone,
     // so the reflog fingerprint makes `current` robust to it (#5930).
     let before = crate::agent::artifact::current_git_head_identity(&root)?;
-    let (delta, mut verdict) =
+    let (mut delta, mut verdict) =
         evaluate_repository_edit_cage_with_head_movement(&baseline, movement)?;
+    crate::edit_cage::omit_attempt_manifest_identity(
+        &mut delta,
+        &baseline,
+        &manifest_relative_path(&manifest),
+    )?;
     let (current, current_head) =
         after_phase_window_is_current(&root, &before, &manifest.repository_head, movement)?;
     if !current {
@@ -6342,6 +6363,9 @@ mod tests {
         let root = test_repo_root("worktree-drift-currentness")?;
         let result = (|| -> Result<(), String> {
             let prepared = prepare_sample_attempt(&root, "seam:sample", "drift")?;
+            let unrelated = root.join("target/ripr/unrelated.txt");
+            std::fs::write(&unrelated, "prior unrelated bytes\n")
+                .map_err(|error| error.to_string())?;
             let finished = finish_sample_attempt(&root, &prepared)?;
             if finished.state != RepairAttemptState::ReadyToFinish {
                 return Err(format!("expected a finished attempt: {:?}", finished.state));
@@ -6352,6 +6376,21 @@ mod tests {
                 return Err(format!(
                     "undrifted finished attempt must read current: {reading:?}"
                 ));
+            }
+
+            std::fs::write(&unrelated, "different unrelated bytes\n")
+                .map_err(|error| error.to_string())?;
+            if repair_attempt_head_reading(&root, &finished, Some(&head)).head_current == Some(true)
+            {
+                return Err("changed unrelated operational path remained current".to_string());
+            }
+            std::fs::write(&unrelated, "prior unrelated bytes\n")
+                .map_err(|error| error.to_string())?;
+            if repair_attempt_head_reading(&root, &finished, Some(&head)).head_current != Some(true)
+            {
+                return Err(
+                    "restored unrelated operational path did not recover currentness".to_string(),
+                );
             }
 
             let mut legacy = finished.clone();

@@ -538,9 +538,11 @@ attempt keeps its own baseline, delta and verdict authority; receipt issuance,
 the after phase and MCP reads capture afresh.
 
 The finished attempt's delta commitment includes the captured post-change
-index and worktree identities of changed source, test, configuration and
-other non-operational paths, including tracked paths inside operational
-directories. The same HEAD and the same changed path and kind do not establish
+index and worktree identities of changed paths, including non-owned paths
+inside operational directories. The selected attempt manifest itself is the
+only identity omitted to avoid hashing the digest into itself; its path and
+kind remain bound, and tracked or authored paths do not receive that exception.
+The same HEAD and the same changed path and kind do not establish
 the same bytes: changing an already-bound boundary assertion after finish must
 make both status currentness and receipt issuance refuse or remain unknown;
 restoring the recorded state may restore currentness. Legacy path-only
