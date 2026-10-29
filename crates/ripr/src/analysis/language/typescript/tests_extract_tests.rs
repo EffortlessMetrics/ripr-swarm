@@ -603,6 +603,37 @@ test("adds", () => {
     );
 }
 
+/// AVA's macro form puts a named macro between the title and the callback
+/// (`test('x', withServer, async (t, server) => {})`, #10964); the callback
+/// is argument 2 and its assertions are read. A macro-looking second argument
+/// without a function third argument is not a callback shape and stays
+/// argument 1 (here an identifier body, nothing to read).
+#[test]
+fn reads_callback_after_a_named_macro() {
+    let source = r#"
+import test from "ava";
+test("adds", withServer, async (t, server) => {
+    t.is(add(1, 2), 3);
+});
+test("subtracts", macros.withServer, async (t) => {
+    t.is(subtract(3, 1), 2);
+});
+test("multiplies", runMultiply, 5000);
+"#;
+    let tests = extract_tests(Path::new("test/math.test.ts"), source);
+
+    let names: Vec<&str> = tests.iter().map(|test| test.name.as_str()).collect();
+    assert_eq!(names, vec!["adds", "subtracts", "multiplies"], "{tests:?}");
+    assert_eq!(tests[0].assertions.len(), 1, "{:?}", tests[0].assertions);
+    assert_eq!(tests[0].assertions[0].matcher, "is");
+    assert_eq!(tests[1].assertions.len(), 1, "{:?}", tests[1].assertions);
+    assert_eq!(tests[2].assertions.len(), 0, "{:?}", tests[2].assertions);
+    assert!(
+        detect_partial_test_extraction(Path::new("test/math.test.ts"), source, &tests).is_none(),
+        "macro-form registrations are extracted, not dropped"
+    );
+}
+
 /// A `describe` whose title is not a string literal still has its body
 /// walked (#4548); it is named by the computed-title placeholder (#4593).
 #[test]
