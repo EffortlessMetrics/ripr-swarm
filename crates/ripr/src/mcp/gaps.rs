@@ -495,7 +495,8 @@ fn gap_evidence_core(
         "missing": finding.missing,
         "static_limitation": static_limitation,
         "source_currentness": source_currentness,
-        "recommended_next_step": finding.recommended_next_step,
+        "recommended_next_step": crate::output::next_step::unresolved_edge_guidance(finding)
+            .or_else(|| finding.recommended_next_step.clone()),
         "readiness": {
             "repair_packet_ready": readiness.ready,
             "reason": readiness.detail(),
@@ -763,6 +764,74 @@ mod tests {
 
     fn finding() -> Result<Finding, String> {
         test_finding()
+    }
+
+    #[cfg(feature = "lang-rust")]
+    #[test]
+    fn limited_journey_mcp_preserves_shared_guidance_and_refusal() -> Result<(), String> {
+        let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .ok_or("missing repository root")?;
+        let fixture = repository.join("fixtures/rust_transitive_reach_positive");
+        let root = fixture.join("input");
+        let output = crate::app::check_workspace(crate::app::CheckInput {
+            root: root.clone(),
+            diff_file: Some(fixture.join("diff.patch")),
+            mode: crate::app::Mode::Fast,
+            ..Default::default()
+        })?;
+        assert_eq!(output.findings.len(), 1, "nonempty real producer subject");
+        let finding = &output.findings[0];
+        assert_eq!(finding.class, crate::domain::ExposureClass::NoStaticPath);
+        assert!(matches!(
+            finding.static_limit_kind,
+            Some(crate::domain::StaticLimitKind::RustIntegrationPublicApiPathUnresolved)
+        ));
+        let item = GapItem::from_finding(finding, &root)?;
+        let expected = crate::output::next_step::reconcile_next_step(finding);
+        assert!(expected.contains("Tests cannot close this static-analysis limitation"));
+        assert!(expected.contains("entry `outer` -> owner `inner`"));
+        assert_ne!(
+            finding.recommended_next_step.as_deref(),
+            Some(expected.as_str())
+        );
+        assert_eq!(item.evidence_core["recommended_next_step"], expected);
+        assert_eq!(item.evidence_core["class"], "no_static_path");
+        assert_eq!(
+            item.evidence_core["source_currentness"],
+            serde_json::to_value(finding.source_currentness).map_err(|error| error.to_string())?
+        );
+        assert_eq!(item.evidence_core["evidence"], json!(finding.evidence));
+        assert_eq!(
+            item.evidence_core["readiness"]["repair_packet_ready"],
+            false
+        );
+
+        let mut absent = finding.clone();
+        absent.recommended_next_step = None;
+        let absent = GapItem::from_finding(&absent, &root)?;
+        assert_eq!(absent.evidence_core["recommended_next_step"], Value::Null);
+
+        let mut no_edge = finding.clone();
+        no_edge.evidence.retain(|line| {
+            !line.starts_with(crate::domain::LIMITATION_FIRST_UNRESOLVED_EDGE_PREFIX)
+        });
+        let projected = GapItem::from_finding(&no_edge, &root)?;
+        assert_eq!(
+            projected.evidence_core["recommended_next_step"],
+            json!(no_edge.recommended_next_step)
+        );
+
+        let mut unrelated = finding.clone();
+        unrelated.static_limit_kind =
+            Some(crate::domain::StaticLimitKind::RustValuePropagationUnresolved);
+        let projected = GapItem::from_finding(&unrelated, &root)?;
+        assert_eq!(
+            projected.evidence_core["recommended_next_step"],
+            json!(unrelated.recommended_next_step)
+        );
+        Ok(())
     }
 
     #[test]

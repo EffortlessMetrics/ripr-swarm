@@ -1248,6 +1248,416 @@ fn ambiguous_at_files_refuse_with_disambiguation_and_no_write() -> Result<(), St
 }
 
 #[test]
+fn limited_journey_check_names_ambiguous_stub_seams() -> Result<(), String> {
+    let scratch = kind_refusal_crate(
+        "pub fn pair(a: u32, b: u32) -> u32 {\n    if a >= 10 && b > 20 { 1 } else { 0 }\n}\n",
+    )?;
+    let root = scratch.directory.clone();
+    let diff = one_line_diff(
+        &scratch,
+        "src/lib.rs",
+        "    if a > 10 && b > 20 { 1 } else { 0 }",
+        "    if a >= 10 && b > 20 { 1 } else { 0 }",
+    )?;
+    let stdout = check_human(&root, &diff)?;
+    assert!(stdout.contains("src/lib.rs:2"), "{stdout}");
+    assert!(!stdout.contains("Write a test for it:"), "{stdout}");
+    // #10192: preserve the ambiguity and offer explicit, runnable selectors.
+    let seam_ids = stdout
+        .lines()
+        .filter(|line| line.trim_start().starts_with("ripr agent stub "))
+        .filter_map(|line| line.split_once("--seam-id ").map(|(_, id)| id.trim()))
+        .collect::<Vec<_>>();
+    assert_eq!(seam_ids.len(), 2, "{stdout}");
+    assert_ne!(seam_ids[0], seam_ids[1]);
+    assert!(
+        stdout.contains("do not establish a repair binding"),
+        "{stdout}"
+    );
+    for id in seam_ids {
+        let mut command = ripr_command();
+        command
+            .args(["agent", "stub", "--root"])
+            .arg(&root)
+            .args(["--seam-id", id, "--json"]);
+        let selected = run_bounded(command, &root, "check-seam-choice", Duration::from_mins(2))?;
+        assert!(
+            selected.status.success(),
+            "{}",
+            String::from_utf8_lossy(&selected.stderr)
+        );
+        let ready: serde_json::Value =
+            serde_json::from_slice(&selected.stdout).map_err(|error| error.to_string())?;
+        assert_eq!(ready["seam_id"], id);
+        assert_eq!(ready["state"], "ready");
+        assert_eq!(ready["written"], false);
+    }
+
+    scratch.cleanup()
+}
+
+#[test]
+fn limited_journey_mixed_grip_choices_disclose_unvalidated_refusal() -> Result<(), String> {
+    const SOURCE: &str = "pub fn pair(a: u32, b: u32) -> u32 {\n    if a >= 10 { return 1; } if b >= 20 { return 2; } 0\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn pins_a() {\n        assert_eq!(pair(9, 0), 0);\n        assert_eq!(pair(10, 0), 1);\n        assert_eq!(pair(11, 0), 1);\n    }\n}\n";
+    let scratch = kind_refusal_crate(SOURCE)?;
+    let root = &scratch.directory;
+    let diff = one_line_diff(
+        &scratch,
+        "src/lib.rs",
+        "    if a >= 10 { return 1; } if b > 20 { return 2; } 0",
+        "    if a >= 10 { return 1; } if b >= 20 { return 2; } 0",
+    )?;
+    // Establish real classified subjects before checking selector wording.
+    let mut inventory = ripr_command();
+    inventory
+        .args(["check", "--root"])
+        .arg(root)
+        .args(["--format", "repo-exposure-json"]);
+    let inventory = run_bounded(
+        inventory,
+        root,
+        "mixed-grip-inventory",
+        Duration::from_mins(2),
+    )?;
+    assert!(
+        inventory.status.success(),
+        "{}",
+        String::from_utf8_lossy(&inventory.stderr)
+    );
+    let inventory: serde_json::Value =
+        serde_json::from_slice(&inventory.stdout).map_err(|error| error.to_string())?;
+    let seams = inventory["seams"]
+        .as_array()
+        .ok_or("missing seam inventory")?;
+    let mut subjects = Vec::new();
+    for (expression, class, eligible) in [
+        ("a >= 10", "strongly_gripped", false),
+        ("b >= 20", "weakly_gripped", true),
+    ] {
+        let matching = seams
+            .iter()
+            .filter(|seam| seam["kind"] == "predicate_boundary" && seam["expression"] == expression)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            matching.len(),
+            1,
+            "one real subject for {expression}: {inventory}"
+        );
+        let seam = matching[0];
+        assert_eq!(seam["owner"], "src/lib.rs::pair");
+        assert_eq!(seam["grip_class"], class);
+        assert_eq!(seam["headline_eligible"], eligible);
+        let id = seam["seam_id"]
+            .as_str()
+            .filter(|id| !id.is_empty())
+            .ok_or("classified subject has no nonempty seam ID")?;
+        subjects.push((id.to_string(), class, eligible));
+    }
+    assert_ne!(subjects[0].0, subjects[1].0);
+    let stdout = check_human(root, &diff)?;
+    assert!(stdout.contains("Choose a test-stub seam for "), "{stdout}");
+    assert!(
+        stdout.contains("syntax choices are unvalidated"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("commands may refuse, including for already-gripped seams"),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("Write a test for it:"), "{stdout}");
+    let mut choices = stdout
+        .lines()
+        .filter(|line| line.trim_start().starts_with("ripr agent stub "))
+        .filter_map(|line| {
+            line.split_once("--seam-id ")
+                .map(|(_, id)| id.trim().to_string())
+        })
+        .collect::<Vec<_>>();
+    choices.sort();
+    let mut expected = subjects
+        .iter()
+        .map(|(id, _, _)| id.clone())
+        .collect::<Vec<_>>();
+    expected.sort();
+    assert_eq!(
+        choices, expected,
+        "same syntax identities, not filtered by readiness"
+    );
+    for (id, class, eligible) in subjects {
+        let mut command = ripr_command();
+        command
+            .args(["agent", "stub", "--root"])
+            .arg(root)
+            .args(["--seam-id", &id, "--json"]);
+        let outcome = run_bounded(command, root, "mixed-grip-choice", Duration::from_mins(2))?;
+        assert_eq!(outcome.status.code(), Some(if eligible { 0 } else { 3 }));
+        let document: serde_json::Value =
+            serde_json::from_slice(&outcome.stdout).map_err(|error| error.to_string())?;
+        assert_eq!(document["seam_id"], id);
+        assert_eq!(document["grip_class"], class);
+        if eligible {
+            assert_eq!(document["state"], "ready");
+            assert_eq!(document["classification"], "weakly_exposed");
+            assert_eq!(document["written"], false);
+            assert!(
+                document["text"]
+                    .as_str()
+                    .is_some_and(|text| text.contains("b >= 20"))
+            );
+        } else {
+            assert_eq!(document["state"], "refused");
+            assert_eq!(document["classification"], "exposed");
+            assert_eq!(document["refusal"]["kind"], "not_a_gap");
+        }
+    }
+    assert_eq!(
+        std::fs::read_to_string(root.join("src/lib.rs")).map_err(|error| error.to_string())?,
+        SOURCE
+    );
+    scratch.cleanup()
+}
+
+#[test]
+fn limited_journey_public_api_helper_boundary_stays_limited() -> Result<(), String> {
+    let scratch = kind_refusal_crate(include_str!(
+        "../../../fixtures/rust_transitive_reach_positive/input/src/lib.rs"
+    ))?;
+    let root = &scratch.directory;
+    std::fs::write(root.join("Cargo.toml"), "[package]\nname='rust_transitive_reach_positive_fixture'\nversion='0.0.0'\nedition='2024'\n").map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("src/internal.rs"),
+        "pub(crate) fn inner(a: i32, b: i32) -> i32 {\n    if a >= b { a - b } else { b }\n}\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::create_dir_all(root.join("tests")).map_err(|error| error.to_string())?;
+    std::fs::write(root.join("tests/it.rs"), "use rust_transitive_reach_positive_fixture::outer;\n#[test]\nfn public_api_exact_boundary() { assert_eq!(outer(3, 3), 0); }\n").map_err(|error| error.to_string())?;
+    let diff = one_line_diff(
+        &scratch,
+        "src/internal.rs",
+        "    if a > b { a - b } else { b }",
+        "    if a >= b { a - b } else { b }",
+    )?;
+    let text = check_human(root, &diff)?
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(
+        text.contains("Tests cannot close this static-analysis limitation"),
+        "{text}"
+    );
+    assert!(text.contains("entry `outer` -> owner `inner`"), "{text}");
+    assert!(
+        text.contains("restricted-visibility helper `inner` behind public entry point `outer`"),
+        "{text}"
+    );
+    assert!(!text.contains("Write a test for it:"), "{text}");
+    let mut check_json = ripr_command();
+    check_json
+        .args(["check", "--root"])
+        .arg(root)
+        .arg("--diff")
+        .arg(&diff)
+        .arg("--json");
+    let output = run_bounded(check_json, root, "limited-json", Duration::from_mins(2))?;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value =
+        serde_json::from_slice(&output.stdout).map_err(|error| error.to_string())?;
+    let findings = report["findings"].as_array().ok_or("missing findings")?;
+    assert_eq!(findings.len(), 1, "{report}");
+    let finding = &findings[0];
+    assert_eq!(finding["classification"], "no_static_path", "{report}");
+    assert_eq!(
+        finding["static_limitation"]["first_unresolved_edge"],
+        "entry `outer` -> owner `inner` through a transitive Rust helper path",
+        "canonical edge is stable: {report}"
+    );
+    let evidence = finding["evidence"].as_array().ok_or("missing evidence")?;
+    assert!(evidence.iter().any(|line| line.as_str() == Some("limitation_helper_boundary: restricted-visibility helper `inner` behind public entry point `outer`; candidate path only")), "{report}");
+    let mut explain = ripr_command();
+    explain
+        .args(["explain", "--root"])
+        .arg(root)
+        .arg("--diff")
+        .arg(&diff)
+        .arg("src/internal.rs:2");
+    let output = run_bounded(explain, root, "limited-explain", Duration::from_mins(2))?;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let explanation = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        explanation.contains("Tests cannot close this static-analysis limitation"),
+        "{explanation}"
+    );
+    assert!(
+        !explanation.contains("To change the verdict, a test needs to:"),
+        "{explanation}"
+    );
+    scratch.cleanup()
+}
+
+#[test]
+fn limited_journey_hidden_predicate_ambiguity_keeps_identity_and_refuses_stale_bytes()
+-> Result<(), String> {
+    const SOURCE: &str = "pub fn pair(a: u32, b: u32) -> bool {\n    a >= 10 && b > 20\n}\n";
+    let scratch = kind_refusal_crate(SOURCE)?;
+    let root = &scratch.directory;
+    let diff = one_line_diff(
+        &scratch,
+        "src/lib.rs",
+        "    a > 10 && b > 20",
+        "    a >= 10 && b > 20",
+    )?;
+    let stdout = check_human(root, &diff)?;
+    assert!(
+        stdout.contains("--kind return_value") && stdout.contains("kind: predicate"),
+        "two-finding control: {stdout}"
+    );
+    let mut report_command = ripr_command();
+    report_command
+        .args(["check", "--root"])
+        .arg(root)
+        .arg("--diff")
+        .arg(&diff)
+        .arg("--json");
+    let report = run_bounded(
+        report_command,
+        root,
+        "hidden-identity",
+        Duration::from_mins(2),
+    )?;
+    assert!(
+        report.status.success(),
+        "{}",
+        String::from_utf8_lossy(&report.stderr)
+    );
+    let report: serde_json::Value =
+        serde_json::from_slice(&report.stdout).map_err(|error| error.to_string())?;
+    let findings = report["findings"].as_array().ok_or("missing findings")?;
+    assert_eq!(findings.len(), 2, "{report}");
+    let predicate = findings
+        .iter()
+        .find(|finding| finding["probe"]["family"] == "predicate")
+        .ok_or("missing predicate")?;
+    let identity = predicate["id"]
+        .as_str()
+        .ok_or("missing predicate identity")?;
+    assert!(
+        stdout.contains(&format!("Choose a test-stub seam for {identity}:")),
+        "{stdout}"
+    );
+    // Inspect the emitted route itself before reconstructing any argv below:
+    // an explicit root in the harness must not mask a missing printed root.
+    let expected_root = if cfg!(windows) {
+        root.to_string_lossy()
+            .trim_start_matches(r"\\?\")
+            .replace('\\', "/")
+    } else {
+        root.to_string_lossy().into_owned()
+    };
+    let printed = stdout
+        .lines()
+        .filter(|line| line.trim_start().starts_with("ripr agent stub "))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        printed
+            .iter()
+            .filter(|line| line.contains("--seam-id "))
+            .count(),
+        2,
+        "two nonempty hidden choices: {stdout}"
+    );
+    for command in printed {
+        assert!(command.contains("--root "), "root omitted: {command}");
+        assert!(command.contains(&expected_root), "wrong root: {command}");
+    }
+    let mut ids = stdout
+        .lines()
+        .filter(|line| line.trim_start().starts_with("ripr agent stub "))
+        .filter_map(|line| {
+            line.split_once("--seam-id ")
+                .map(|(_, id)| id.trim().to_string())
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(ids.len(), 2, "{stdout}");
+    assert_ne!(ids[0], ids[1]);
+    let selector = run_bounded(
+        kind_refusal_command(root, "src/lib.rs:2", Some("predicate")),
+        root,
+        "hidden-selector",
+        Duration::from_mins(2),
+    )?;
+    assert_eq!(selector.status.code(), Some(3));
+    let (envelope, _) = split_refusal_envelope(
+        &String::from_utf8_lossy(&selector.stdout),
+        &String::from_utf8_lossy(&selector.stderr),
+    )?;
+    assert_selector_refusal(&envelope, "selector_ambiguous");
+    let reason = envelope["refusal"]["reason"]
+        .as_str()
+        .ok_or("missing selector reason")?;
+    let mut expected = reason
+        .split("--seam-id ")
+        .skip(1)
+        .map(|tail| tail.split(',').next().unwrap_or(tail).trim().to_string())
+        .collect::<Vec<_>>();
+    ids.sort();
+    expected.sort();
+    assert_eq!(ids, expected);
+    for id in &ids {
+        let mut command = ripr_command();
+        command
+            .args(["agent", "stub", "--root"])
+            .arg(root)
+            .args(["--seam-id", id, "--json"]);
+        let output = run_bounded(command, root, "hidden-choice", Duration::from_mins(2))?;
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let ready: serde_json::Value =
+            serde_json::from_slice(&output.stdout).map_err(|error| error.to_string())?;
+        assert_eq!(ready["seam_id"], id.as_str());
+        assert_eq!(ready["state"], "ready");
+        assert_eq!(ready["written"], false);
+    }
+    assert_eq!(
+        std::fs::read_to_string(root.join("src/lib.rs")).map_err(|error| error.to_string())?,
+        SOURCE
+    );
+    std::fs::write(
+        root.join("src/lib.rs"),
+        format!(
+            "{}\npub mod a;\n",
+            SOURCE.replace("a >= 10 && b > 20", "a >= 11 && b > 21")
+        ),
+    )
+    .map_err(|error| error.to_string())?;
+    // Keep a separate, correctly bound changed owner ahead of the stale
+    // predicate so the disk guard is exercised for an actual hidden row.
+    std::fs::write(root.join("src/a.rs"), "pub fn seen(n: u32) -> u32 {\n    n + 2\n}\n#[cfg(test)] mod tests { use super::*; #[test] fn calls_seen() { let _ = seen(1); } }\n").map_err(|error| error.to_string())?;
+    let previous = std::fs::read_to_string(&diff).map_err(|error| error.to_string())?;
+    std::fs::write(&diff, format!("{previous}diff --git a/src/a.rs b/src/a.rs\n--- a/src/a.rs\n+++ b/src/a.rs\n@@ -2 +2 @@\n-    n + 1\n+    n + 2\n")).map_err(|error| error.to_string())?;
+    let stale = check_human(root, &diff)?;
+    assert!(
+        stale.contains("kind: predicate"),
+        "the stale control must retain its hidden subject: {stale}"
+    );
+    assert!(
+        !stale.contains("Choose a test-stub seam"),
+        "stale bytes must not gain a route: {stale}"
+    );
+    scratch.cleanup()
+}
+
+#[test]
 fn ambiguous_at_tied_seams_refuse_without_weakening_nested_selection() -> Result<(), String> {
     let source = "pub fn pair(a: u32, b: u32) -> bool {\n    a > 10 && b > 20\n}\n";
     let scratch = kind_refusal_crate(source)?;

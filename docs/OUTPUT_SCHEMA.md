@@ -783,6 +783,23 @@ header and summary counts, then one `Start here:` triage block with a closed
 state (`top_gap`, `no_actionable_gap`, `preview_limited`, `static_limited`, or
 `missing_scope`), one selected finding digest when available, an omitted-finding
 count, and pointers to `--format human-full` and `--format json`.
+Each listed hidden finding includes its probe kind and bounded explanatory
+reason alongside location, exposure class, and any currentness label. When
+`--at FILE:LINE --kind FAMILY` is ambiguous, check prints explicit
+`ripr agent stub --seam-id ID` choices from that resolver. Choices also appear beside eligible hidden findings within the same first
+twenty-row window, keyed by finding ID. Base-side/unresolved subjects and
+stale source bytes receive no choices. These syntax choices are unvalidated:
+the seam-ID command may refuse an already-gripped or unsupported seam. They
+do not establish stub readiness, a canonical finding-to-seam repair binding,
+or repair eligibility. Hidden rows resolve syntax ambiguity only; unique
+hidden routes do not trigger classified inventory lookups merely to be omitted.
+A named Rust transitive/public-API reach limitation with retained unresolved-edge
+evidence says tests cannot close that analysis limitation, names the edge and
+analyzer route, and reserves test changes for an independently confirmed gap.
+Exact indexed declarations may additionally identify a private or restricted
+helper behind a public entry; the path remains a candidate, not confirmed reach.
+That declaration context uses additive `limitation_helper_boundary` evidence;
+canonical edge, route, and non-claim values retain their original bytes.
 `ripr check --format human-full` (alias `text-full`) preserves the exhaustive
 per-finding human report. Navigation-aware CLI reports may define identical
 facts or guidance once with explicit finding-ordinal references; every finding

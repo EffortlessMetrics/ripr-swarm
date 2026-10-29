@@ -153,7 +153,10 @@ pub(crate) enum TestStubError {
     NotFound(String),
     /// Several candidate files or disjoint tied seams match the selector;
     /// no seam was selected and the message names how to disambiguate.
-    Ambiguous(String),
+    Ambiguous {
+        message: String,
+        seam_ids: Vec<String>,
+    },
     /// Stub generation supports Rust source paths only. This says nothing
     /// about whether another language's check finding exists or is exposed.
     UnsupportedLanguage(String),
@@ -372,6 +375,12 @@ pub(crate) enum StubRouteDecision {
     /// The shared resolver refuses: print its reason instead of a command
     /// that would only refuse.
     Refused { reason: String },
+    /// Unvalidated syntax selectors from the resolver; classification or
+    /// stub generation can still refuse them. No seam or repair is selected.
+    Ambiguous {
+        reason: String,
+        seam_ids: Vec<String>,
+    },
 }
 
 /// A route decision bound to the finding it was computed for.
@@ -423,7 +432,19 @@ pub(crate) fn stub_route_for_finding(
         });
     }
     let mut resolution =
-        resolve_at_location(root, config, &file, line, Some(kind), seam_index).ok()?;
+        match resolve_at_location(root, config, &file, line, Some(kind), seam_index) {
+            Ok(resolution) => resolution,
+            Err(TestStubError::Ambiguous { message, seam_ids }) if !seam_ids.is_empty() => {
+                return Some(StubRoute {
+                    finding_id: finding.id.clone(),
+                    decision: StubRouteDecision::Ambiguous {
+                        reason: message,
+                        seam_ids,
+                    },
+                });
+            }
+            Err(_) => return None,
+        };
     // #10683: `agent stub` refuses a weak-oracle boundary seam (an existing
     // test already reaches it); never advertise a stub command it will refuse.
     if resolution.weak_oracle_guidance.is_none() {
@@ -757,24 +778,68 @@ fn names_identifier(text: &str, name: &str) -> bool {
     })
 }
 
-/// The route decision for the one finding the default human `ripr check`
-/// selects. `check_config` drives that selection exactly as the renderer
-/// does. Resolution loads configuration the way `ripr agent stub` does for
-/// the same `root`, so the printed decision is that command's answer. It
-/// parses only the selected finding's file: no workspace index or evidence.
-pub(crate) fn check_stub_route(
+/// Resolve the selected route plus typed ambiguities for the eligible rows
+/// inside the same bounded Hidden window the default human report displays.
+/// Uses the stub command's root config, disk guard and resolver. A shared seam
+/// index is reused when it covers a file; alternating files may replace it.
+pub(crate) fn check_stub_routes(
     root: &Path,
     check_config: &RiprConfig,
     output: &CheckOutput,
     seam_index: &mut Option<analysis::FileSeamIndex>,
-) -> Option<StubRoute> {
-    let finding = crate::output::human::selected_triage_finding(output, check_config)?;
-    let (file, line, _) = stub_route_location(finding, root)?;
-    if !finding_text_is_on_disk(root, &file, line, &finding.probe.expression) {
-        return None;
+) -> Vec<StubRoute> {
+    let (selected, hidden) = crate::output::human::stub_route_subjects(output, check_config);
+    if selected.is_none() && hidden.is_empty() {
+        return Vec::new();
     }
-    let config = crate::config::load_for_root(root).ok()?;
-    stub_route_for_finding(root, &config, finding, seam_index)
+    let Ok(config) = crate::config::load_for_root(root) else {
+        return Vec::new();
+    };
+    selected
+        .into_iter()
+        .map(|finding| (finding, true))
+        .chain(hidden.into_iter().map(|finding| (finding, false)))
+        .filter_map(|(finding, selected)| {
+            let (file, line, _) = stub_route_location(finding, root)?;
+            if !finding_text_is_on_disk(root, &file, line, &finding.probe.expression) {
+                return None;
+            }
+            if selected {
+                stub_route_for_finding(root, &config, finding, seam_index)
+            } else {
+                hidden_stub_ambiguity(root, &config, finding, seam_index)
+            }
+        })
+        .collect()
+}
+
+/// Hidden rows display only syntax ambiguity. Do not finish a unique route's
+/// classified inventory/weak-oracle lookup merely to discard its result.
+fn hidden_stub_ambiguity(
+    root: &Path,
+    config: &RiprConfig,
+    finding: &Finding,
+    seam_index: &mut Option<analysis::FileSeamIndex>,
+) -> Option<StubRoute> {
+    let (file, line, kind) = stub_route_location(finding, root)?;
+    // A changed constant has no seam of its own; its selected route may
+    // investigate consumers, but hidden syntax choices must not widen scope.
+    analysis::seam_kind_for_probe_family(kind)?;
+    // Keep this the single-file shape path. A missing/out-of-root file must
+    // not fall back to the resolver's repo-wide classified suffix lookup.
+    scoped_file(root, &file)?;
+    match resolve_at_location(root, config, &file, line, Some(kind), seam_index) {
+        Err(TestStubError::Ambiguous { message, seam_ids }) if !seam_ids.is_empty() => {
+            Some(StubRoute {
+                finding_id: finding.id.clone(),
+                decision: StubRouteDecision::Ambiguous {
+                    reason: message,
+                    seam_ids,
+                },
+            })
+        }
+        _ => None,
+    }
 }
 
 /// Whether the finding's expression is still on disk in the function the
@@ -837,10 +902,13 @@ fn resolve_at(
         // A suffix like `src/lib.rs` can name several crates' files; reading
         // one file and applying another file's seam offsets would build a
         // stub for the wrong function.
-        return Err(TestStubError::Ambiguous(format!(
-            "{file} matches more than one file with gaps ({}); pass one of those paths or a seam ID",
-            files.join(", ")
-        )));
+        return Err(TestStubError::Ambiguous {
+            message: format!(
+                "{file} matches more than one file with gaps ({}); pass one of those paths or a seam ID",
+                files.join(", ")
+            ),
+            seam_ids: Vec::new(),
+        });
     }
     let Some(first) = in_file.first() else {
         // Name the parse failure: a file ripr cannot parse has no seams,
@@ -905,12 +973,18 @@ fn resolve_at(
                 .iter()
                 .map(|seam| format!("--seam-id {}", seam.id().as_str()))
                 .collect::<Vec<_>>();
-            return Err(TestStubError::Ambiguous(format!(
-                "{file}:{} holds more than one {} seam, so --at cannot pick one; pass one of: {}",
-                lead.seam().display_line(),
-                lead.seam().kind().as_str(),
-                ids.join(", ")
-            )));
+            return Err(TestStubError::Ambiguous {
+                message: format!(
+                    "{file}:{} holds more than one {} seam, so --at cannot pick one; pass one of: {}",
+                    lead.seam().display_line(),
+                    lead.seam().kind().as_str(),
+                    ids.join(", ")
+                ),
+                seam_ids: tied
+                    .iter()
+                    .map(|seam| seam.id().as_str().to_string())
+                    .collect(),
+            });
         }
     }
     let mut first_refusal = None;
@@ -1054,6 +1128,11 @@ fn next_repair_for(
     })
 }
 
+#[cfg(test)]
+std::thread_local! {
+    static INVENTORY_ENTRY_FACTS_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// Inventory class for a seam selected from a file parse (`--at --kind`).
 /// Classification is not used to pick the seam (#5471); this lookup is
 /// disclosure only, plus the weak-oracle pointer (#10683). A failed or empty
@@ -1064,6 +1143,8 @@ fn inventory_entry_facts(
     file: &str,
     seam_id: &str,
 ) -> Option<(SeamGripClass, Option<String>)> {
+    #[cfg(test)]
+    INVENTORY_ENTRY_FACTS_CALLS.with(|count| count.set(count.get() + 1));
     let relative = scoped_file(root, file)?;
     let scoped = analysis::inventory_diff_scoped_classified_seams_at_with_config(
         root,
@@ -1195,7 +1276,7 @@ pub(crate) fn revalidate_already_present_stub(
     let fresh = resolve_test_stub(root, config, selector).map_err(|error| match error {
         TestStubError::Operational(message)
         | TestStubError::NotFound(message)
-        | TestStubError::Ambiguous(message)
+        | TestStubError::Ambiguous { message, .. }
         | TestStubError::UnsupportedLanguage(message) => {
             format!("{message}; the workspace changed after the stub was computed, so rerun `ripr agent stub`")
         }
@@ -1658,6 +1739,79 @@ mod tests {
         Ok(root)
     }
 
+    #[cfg(feature = "lang-rust")]
+    #[test]
+    fn limited_journey_hidden_unique_stub_is_not_projected() -> Result<(), String> {
+        let root = scratch_stub_crate(
+            "hidden-unique",
+            "pub fn bulk(qty: u32) -> bool {\n    qty >= 10\n}\n",
+        )?;
+        let diff = root.join("change.patch");
+        std::fs::write(
+            &diff,
+            "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -2 +2 @@\n-    qty > 10\n+    qty >= 10\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let config = RiprConfig::default();
+        let output = crate::app::check_workspace(crate::app::CheckInput {
+            root: root.clone(),
+            diff_file: Some(diff),
+            ..Default::default()
+        })?;
+        let (selected, hidden) = crate::output::human::stub_route_subjects(&output, &config);
+        assert!(selected.is_some(), "nonempty selected subject");
+        let [hidden] = hidden.as_slice() else {
+            return Err(format!(
+                "expected one hidden stub-route subject, got {}",
+                hidden.len()
+            ));
+        };
+        // The changed boundary predicate is the selected top gap; the owner's
+        // return-value sink is the one hidden unique subject this control
+        // routes without a classified-inventory lookup.
+        assert_eq!(hidden.probe.family.as_str(), "return_value");
+        let mut index = None;
+        let direct = stub_route_for_finding(&root, &config, hidden, &mut index)
+            .ok_or("the hidden subject must independently resolve")?;
+        assert!(matches!(direct.decision, StubRouteDecision::Stub { .. }));
+        let original_count = INVENTORY_ENTRY_FACTS_CALLS.with(|count| count.replace(0));
+        let mut selected_index = None;
+        let selected_route = stub_route_for_finding(
+            &root,
+            &config,
+            selected.ok_or("missing selected subject")?,
+            &mut selected_index,
+        )
+        .ok_or("selected subject must keep its full route")?;
+        let selected_inventory_calls = INVENTORY_ENTRY_FACTS_CALLS.with(|count| count.get());
+        assert!(
+            selected_inventory_calls > 0,
+            "positive classified-lookup control"
+        );
+        INVENTORY_ENTRY_FACTS_CALLS.with(|count| count.set(0));
+        let routes = check_stub_routes(&root, &config, &output, &mut index);
+        assert_eq!(
+            INVENTORY_ENTRY_FACTS_CALLS.with(|count| count.get()),
+            selected_inventory_calls,
+            "hidden unique route must add no classified inventory lookup"
+        );
+        assert!(
+            routes.contains(&selected_route),
+            "selected full decision preserved"
+        );
+        INVENTORY_ENTRY_FACTS_CALLS.with(|count| count.set(original_count));
+        assert!(routes.iter().all(|route| route.finding_id != hidden.id));
+        assert!(
+            routes.iter().any(|route| Some(route.finding_id.as_str())
+                == selected.map(|finding| finding.id.as_str()))
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("src/lib.rs")).map_err(|error| error.to_string())?,
+            "pub fn bulk(qty: u32) -> bool {\n    qty >= 10\n}\n"
+        );
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())
+    }
+
     #[test]
     fn at_selector_refuses_a_suffix_that_names_two_files_with_gaps() {
         let classified = vec![
@@ -1674,7 +1828,7 @@ mod tests {
             None,
         );
         assert!(
-            matches!(&result, Err(TestStubError::Ambiguous(message))
+            matches!(&result, Err(TestStubError::Ambiguous { message, .. })
                 if message.contains("crates/a/src/lib.rs, crates/b/src/lib.rs")
                     && message.contains("seam ID")),
             "{:?}",

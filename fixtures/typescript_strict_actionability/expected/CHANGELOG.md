@@ -687,6 +687,17 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 
+## Pending — typescript_strict_actionability (26)
+
+Reason:
+RIPR-SPEC-0118 / docs/OUTPUT_SCHEMA.md: #10192 displays hidden finding kind/reason, exact ambiguous seam choices, and evidence-specific unresolved-edge guidance; verdict, stage, identity and oracle fields stay unchanged (independently compared against actual JSON).
+
+Command:
+`cargo xtask goldens bless typescript_strict_actionability --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
 ## Pending — typescript_strict_actionability (30)
 
 Reason:
@@ -727,6 +738,18 @@ Updated:
 
 Reason:
 RIPR-SPEC-0113 and #10913: missing static relation is not universal test absence; inspect existing calls and import/export paths before adding a test if needed. Preserve classification, related-test credit and repair eligibility.
+
+Command:
+`cargo xtask goldens bless typescript_strict_actionability --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — typescript_strict_actionability (34)
+
+Reason:
+RIPR-SPEC-0118 / docs/OUTPUT_SCHEMA.md: compose landed main fixture rows with 10192 hidden-row kind/reason naming and typed unresolved-edge guidance; JSON findings, classes, oracles and recommendations unchanged (golden-drift cosmetic-only)
 
 Command:
 `cargo xtask goldens bless typescript_strict_actionability --reason "..."`

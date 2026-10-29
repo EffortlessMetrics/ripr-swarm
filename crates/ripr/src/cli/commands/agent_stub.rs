@@ -38,7 +38,7 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
         Err(error) => {
             let (refusal_kind, message, list_selectors) = match error {
                 TestStubError::NotFound(message) => ("seam_not_found", message, true),
-                TestStubError::Ambiguous(message) => ("selector_ambiguous", message, true),
+                TestStubError::Ambiguous { message, .. } => ("selector_ambiguous", message, true),
                 TestStubError::UnsupportedLanguage(message) => {
                     ("unsupported_language", message, false)
                 }

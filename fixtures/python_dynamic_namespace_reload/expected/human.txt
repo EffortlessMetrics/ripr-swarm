@@ -51,7 +51,7 @@ Next: drill into the top finding:
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output (Python preview: 1).
-    - shop/route.py:7 (unknown)
+    - shop/route.py:7 (unknown); kind: field_construction; reason: A mocked module replaces the real implementation, so a passing test may not observe the actual changed behavior.
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

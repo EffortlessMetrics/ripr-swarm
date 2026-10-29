@@ -506,6 +506,17 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
+## Pending — typescript_adversarial_owner_identity_after_insertion (25)
+
+Reason:
+RIPR-SPEC-0118 / docs/OUTPUT_SCHEMA.md: #10192 displays hidden finding kind/reason, exact ambiguous seam choices, and evidence-specific unresolved-edge guidance; verdict, stage, identity and oracle fields stay unchanged (independently compared against actual JSON).
+
+Command:
+`cargo xtask goldens bless typescript_adversarial_owner_identity_after_insertion --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
 ## Pending — typescript_adversarial_owner_identity_after_insertion (29)
 
 Reason:
@@ -549,6 +560,19 @@ Updated:
 
 Reason:
 RIPR-SPEC-0113 and #10913: missing static relation is not universal test absence; inspect existing calls and import/export paths before adding a test if needed. Preserve classification, related-test credit and repair eligibility.
+
+Command:
+`cargo xtask goldens bless typescript_adversarial_owner_identity_after_insertion --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — typescript_adversarial_owner_identity_after_insertion (32)
+
+Reason:
+RIPR-SPEC-0118 / docs/OUTPUT_SCHEMA.md: compose landed main fixture rows with 10192 hidden-row kind/reason naming and typed unresolved-edge guidance; JSON findings, classes, oracles and recommendations unchanged (golden-drift cosmetic-only)
 
 Command:
 `cargo xtask goldens bless typescript_adversarial_owner_identity_after_insertion --reason "..."`
