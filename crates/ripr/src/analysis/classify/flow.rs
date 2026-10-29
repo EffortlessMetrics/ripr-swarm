@@ -562,9 +562,27 @@ fn tail_if_branch_value(
     // sink. The inline body is the text between the signature's body brace
     // and the line's closing brace; nothing else may follow.
     let inline_body = if offset == 0 {
-        let open = first_line.find('{')?;
+        // The body brace is the one matching the line's final `}`, found by
+        // walking back with brace depth: a `{` earlier in the signature
+        // (`-> [u32; { N + 1 }]`) is not the body's.
         let close = first_line.trim_end().strip_suffix('}')?.len();
-        if close <= open || masked.lines().nth(1).is_some() {
+        let mut depth = 0usize;
+        let open = first_line[..close]
+            .char_indices()
+            .rev()
+            .find_map(|(at, ch)| match ch {
+                '}' => {
+                    depth += 1;
+                    None
+                }
+                '{' if depth == 0 => Some(at),
+                '{' => {
+                    depth -= 1;
+                    None
+                }
+                _ => None,
+            })?;
+        if masked.lines().nth(1).is_some() {
             return None;
         }
         Some(open + 1..close)
@@ -1748,6 +1766,23 @@ mod tests {
         assert_eq!(compact_sinks[0].line, 1);
         assert_eq!(compact_sinks[0].kind, formatted_sinks[0].kind);
         assert_eq!(compact_sinks[0].text, formatted_sinks[0].text);
+    }
+
+    /// A brace inside the signature (a const-generic array length) is not the
+    /// body's opening brace.
+    #[test]
+    fn tail_if_on_the_signature_line_finds_the_body_brace_past_signature_braces() {
+        let owner = tail_owner(
+            "pub fn pick<const N: usize>(score: u32) -> [u32; { N + 1 }] { if score > 50 { first } else { second } }",
+        );
+
+        let sinks = local_flow_sinks(
+            &probe(ProbeFamily::Predicate, "score > 50", 1),
+            Some(&owner),
+        );
+
+        assert_eq!(sinks.len(), 1);
+        assert_eq!(sinks[0].text, "first");
     }
 
     #[test]
