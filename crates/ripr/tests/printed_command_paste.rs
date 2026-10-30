@@ -867,11 +867,18 @@ fn collect(fixture: &Fixture, subcommands: &BTreeSet<String>) -> Result<Collecte
                 }
             }
             let (stdout, stderr) = ripr_streams_in(cwd, args)?;
+            // The warm route: the pilot report is accepted (first-pr only
+            // accepts one carrying an `artifact` object), so the ledger is
+            // the single missing input and its command reads the pilot report.
             if *label == "first-pr-after-pilot"
-                && !stdout.contains("target/ripr/pilot/repo-exposure.json")
+                && !(stdout.contains("Missing artifact: Gap decision ledger")
+                    && stdout.contains("--repo-exposure")
+                    && stdout.contains("target/ripr/pilot/repo-exposure.json")
+                    && !stdout.contains("Repo exposure report")
+                    && !stdout.contains("Also missing"))
             {
                 return Err(format!(
-                    "flow `{prefix}{label}` did not read the pilot's repo-exposure report:\n{stdout}"
+                    "flow `{prefix}{label}` should leave only the gap-ledger command, reading the pilot report:\n{stdout}"
                 ));
             }
             sink.ingest(&format!("{prefix}{label}"), &stdout, &stderr);
