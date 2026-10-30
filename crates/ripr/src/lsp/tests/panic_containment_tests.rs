@@ -5,6 +5,8 @@
 
 use super::*;
 use crate::lsp::panic_containment::ContainPanics;
+use std::task::{Context, Poll};
+use tower_lsp_server::jsonrpc::{Request, Response};
 
 const HOVER_BUDGET: Duration = Duration::from_secs(30);
 
@@ -56,15 +58,24 @@ impl Wire {
     }
 }
 
-fn start(root: &Path, contain: bool) -> (Wire, tokio::task::JoinHandle<()>) {
+#[derive(Clone, Copy)]
+enum Fault {
+    Hover,
+    DidSave,
+}
+
+fn start(root: &Path, contain: bool, fault: Fault) -> (Wire, tokio::task::JoinHandle<()>) {
     let (client_io, server_io) = tokio::io::duplex(64 * 1024);
     let (reader, writer) = tokio::io::split(client_io);
     let (server_read, server_write) = tokio::io::split(server_io);
     let backend_root = root.to_path_buf();
     let (service, socket) =
         LspService::new(move |client| Backend::new(client, backend_root.clone()));
-    // The next hover handler call unwinds.
-    service.inner().panic_in_next_hover_for_test();
+    // The next call of the chosen handler unwinds.
+    match fault {
+        Fault::Hover => service.inner().panic_in_next_hover_for_test(),
+        Fault::DidSave => service.inner().panic_in_next_did_save_for_test(),
+    }
     let server = Server::new(server_read, server_write, socket);
     let task = if contain {
         tokio::spawn(async move { server.serve(ContainPanics(service)).await })
@@ -88,7 +99,7 @@ fn panicking_hover_handler_becomes_a_typed_error_and_the_session_keeps_serving()
         let root = unique_lsp_test_root("panic-containment-contained")?;
         let root_uri = file_uri_for_path(root.path())?;
         let uri = root_uri.to_string();
-        let (mut wire, task) = start(root.path(), true);
+        let (mut wire, task) = start(root.path(), true, Fault::Hover);
         wire.initialize(&uri).await?;
 
         let failed = wire.hover(10, &uri).await?;
@@ -128,6 +139,117 @@ fn panicking_hover_handler_becomes_a_typed_error_and_the_session_keeps_serving()
     })
 }
 
+fn did_save(uri: &str) -> serde_json::Value {
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didSave",
+        "params": {"textDocument": {"uri": uri}, "text": "fn main() {}\n"}
+    })
+}
+
+/// A panicking notification has no response to carry an error: it is dropped,
+/// nothing is written for it, and the session keeps serving.
+#[test]
+fn panicking_notification_is_dropped_and_the_session_keeps_serving() -> Result<(), String> {
+    runtime()?.block_on(async {
+        let root = unique_lsp_test_root("panic-containment-notification")?;
+        let uri = file_uri_for_path(root.path())?.to_string();
+        let (mut wire, task) = start(root.path(), true, Fault::DidSave);
+        wire.initialize(&uri).await?;
+
+        write_lsp_message(&mut wire.writer, did_save(&uri)).await?;
+        // The hover is answered with its own success response, not an error
+        // for the dropped notification.
+        let recovered = wire.hover(11, &uri).await?;
+        if recovered.get("error").is_some() || recovered.get("result").is_none() {
+            return Err(format!(
+                "request after a dropped notification must succeed: {recovered}"
+            ));
+        }
+        if task.is_finished() {
+            return Err("server task ended after a contained notification panic".to_string());
+        }
+        Ok(())
+    })
+}
+
+/// Control for the notification path: the same didSave fault without the layer
+/// unwinds the serve task, proving the injection fires on this path.
+#[test]
+fn panicking_notification_without_containment_ends_the_session() -> Result<(), String> {
+    runtime()?.block_on(async {
+        let root = unique_lsp_test_root("panic-containment-notification-control")?;
+        let uri = file_uri_for_path(root.path())?.to_string();
+        let (mut wire, task) = start(root.path(), false, Fault::DidSave);
+        wire.initialize(&uri).await?;
+        write_lsp_message(&mut wire.writer, did_save(&uri)).await?;
+        let joined = tokio::time::timeout(HOVER_BUDGET, task)
+            .await
+            .map_err(|elapsed| format!("uncontained server task never ended: {elapsed}"))?;
+        match joined {
+            Err(error) if error.is_panic() => Ok(()),
+            other => Err(format!("expected the serve task to unwind: {other:?}")),
+        }
+    })
+}
+
+/// Inner service whose `call` panics synchronously, before any future exists.
+struct PanicsWhileConstructing;
+
+impl tower::Service<Request> for PanicsWhileConstructing {
+    type Response = Option<Response>;
+    type Error = std::convert::Infallible;
+    type Future = std::future::Ready<Result<Option<Response>, Self::Error>>;
+
+    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, _request: Request) -> Self::Future {
+        std::panic::resume_unwind(Box::new("injected call-construction panic"))
+    }
+}
+
+#[test]
+fn panic_while_constructing_the_handler_future_is_contained() -> Result<(), String> {
+    use tower::Service;
+    runtime()?.block_on(async {
+        let mut layer = ContainPanics(PanicsWhileConstructing);
+
+        let request = Request::build("textDocument/hover").id(7).finish();
+        let response = layer
+            .call(request)
+            .await
+            .unwrap_or_else(|never| match never {})
+            .ok_or("a request must be answered with an error response")?;
+        let value = serde_json::to_value(&response).map_err(|err| err.to_string())?;
+        let error = value
+            .get("error")
+            .ok_or_else(|| format!("expected an error response: {value}"))?;
+        let message = error
+            .get("message")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        if error.get("code").and_then(serde_json::Value::as_i64) != Some(-32603)
+            || value.get("id") != Some(&serde_json::json!(7))
+            || !message.contains("textDocument/hover")
+            || message.contains("injected call-construction panic")
+        {
+            return Err(format!("unexpected contained response: {value}"));
+        }
+
+        let notification = Request::build("textDocument/didSave").finish();
+        let dropped = layer
+            .call(notification)
+            .await
+            .unwrap_or_else(|never| match never {});
+        if dropped.is_some() {
+            return Err(format!("a notification must get no response: {dropped:?}"));
+        }
+        Ok(())
+    })
+}
+
 /// Control: the same injection without the layer ends the serve loop, so the
 /// test above fails for the right reason if the layer is removed.
 #[test]
@@ -135,7 +257,7 @@ fn panicking_hover_handler_without_containment_ends_the_session() -> Result<(), 
     runtime()?.block_on(async {
         let root = unique_lsp_test_root("panic-containment-control")?;
         let uri = file_uri_for_path(root.path())?.to_string();
-        let (mut wire, task) = start(root.path(), false);
+        let (mut wire, task) = start(root.path(), false, Fault::Hover);
         wire.initialize(&uri).await?;
         let outcome = wire.hover(10, &uri).await;
         if outcome.is_ok() {
