@@ -1,0 +1,241 @@
+name: Stub tail probe (non-shipping)
+run-name: Stub tail at 79d2e550
+on:
+  push:
+    branches: [codex/8547-stub-tail-proof]
+    paths: [.github/workflows/stub-tail-proof.yml]
+permissions:
+  contents: read
+concurrency:
+  group: stub-tail-proof-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      SUBJECT: 79d2e55079e03dd1d3ac7e149270e04893f9b003
+      CARGO_BUILD_JOBS: '2'
+      CARGO_TERM_COLOR: never
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: 79d2e55079e03dd1d3ac7e149270e04893f9b003
+          path: build
+          persist-credentials: false
+      - uses: actions/checkout@v6
+        with:
+          ref: 79d2e55079e03dd1d3ac7e149270e04893f9b003
+          path: subject
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: 1.95.0
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+        with:
+          workspaces: build -> target
+          shared-key: ripr-swarm-rust-small-${{ runner.os }}
+          save-if: 'false'
+      - name: Bind source, resources and measurement driver
+        run: |
+          set -euo pipefail
+          export EVIDENCE="$RUNNER_TEMP/stub-tail-proof"
+          echo "EVIDENCE=$EVIDENCE" >> "$GITHUB_ENV"
+          mkdir -p "$EVIDENCE"
+          for checkout in build subject; do
+            test "$(git -C "$checkout" rev-parse HEAD)" = "$SUBJECT"
+            test -z "$(git -C "$checkout" status --porcelain)"
+          done
+          {
+            printf 'controller=%s\nsubject=%s\nrun=%s\nattempt=%s\n' "$GITHUB_SHA" "$SUBJECT" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+            rustc +1.95.0 -Vv
+            cargo +1.95.0 -Vv
+            uname -a
+            nproc
+            free -h
+            df -h .
+            du -sh build/target || true
+            sha256sum subject/Cargo.lock subject/rust-toolchain.toml subject/crates/ripr/examples/sample/example.diff
+          } > "$EVIDENCE/identity.txt"
+          # One owned target, serial builds, no frozen executable copy. Evidence
+          # excludes targets/caches. Runner disposal releases temporary state.
+          python3 - <<'PY'
+          import shutil
+          assert shutil.disk_usage('.').free > 20 * 1024**3, 'insufficient space for bounded diagnostic build'
+          PY
+          cat > "$EVIDENCE/measure.py" <<'PY'
+          import hashlib, json, os, signal, subprocess, sys, time
+          from pathlib import Path
+          evidence = Path(os.environ['EVIDENCE'])
+          subject = Path(os.environ['GITHUB_WORKSPACE']) / 'subject'
+          binary = Path(os.environ['GITHUB_WORKSPACE']) / 'build/target/debug/ripr'
+          mode = sys.argv[1]
+          destination = evidence / mode
+          destination.mkdir()
+          digest = hashlib.sha256(binary.read_bytes()).hexdigest()
+          records = []
+          for scope in ['repository', 'boundary-fixture']:
+              formats = ['human-full', 'json', 'human']
+              for output_format in formats:
+                  cache = evidence / 'caches' / f'{mode}-{scope}-{output_format}'
+                  cache.mkdir(parents=True)
+                  previous_completed = False
+                  for repeat in range(2):
+                      condition = 'empty-ripr-cache' if repeat == 0 else ('repeat-after-completion' if previous_completed else 'repeat-after-incomplete')
+                      label = f'{scope}-{output_format}-{repeat}'
+                      argv = [str(binary), 'check']
+                      if scope == 'repository':
+                          argv += ['--diff', 'crates/ripr/examples/sample/example.diff']
+                      else:
+                          argv += ['--root', 'fixtures/boundary_gap/input', '--diff', 'fixtures/boundary_gap/diff.patch']
+                      argv += ['--format', output_format]
+                      stdout_path = destination / f'{label}.stdout'
+                      stderr_path = destination / f'{label}.stderr'
+                      budget = 60 if mode == 'instrumented' and scope == 'repository' and output_format == 'human' else 30
+                      env = dict(os.environ, RIPR_CACHE_DIR=str(cache))
+                      started = time.perf_counter()
+                      stopped = False
+                      with stdout_path.open('wb') as stdout, stderr_path.open('wb') as stderr:
+                          child = subprocess.Popen(argv, cwd=subject, env=env, stdout=stdout, stderr=stderr, start_new_session=True)
+                          try:
+                              code = child.wait(timeout=budget)
+                          except subprocess.TimeoutExpired:
+                              stopped = True
+                              os.killpg(child.pid, signal.SIGTERM)
+                              try:
+                                  code = child.wait(timeout=5)
+                              except subprocess.TimeoutExpired:
+                                  os.killpg(child.pid, signal.SIGKILL)
+                                  code = child.wait()
+                      elapsed = time.perf_counter() - started
+                      previous_completed = not stopped and code == 0
+                      row = dict(mode=mode, scope=scope, format=output_format, repeat=repeat, cache_condition=condition, binary_sha256=digest, argv=argv, elapsed_seconds=elapsed, exit_code=code, external_stop=stopped, external_budget_seconds=budget, os_page_cache='uncontrolled; no OS-cold claim')
+                      for stream, path in [('stdout', stdout_path), ('stderr', stderr_path)]:
+                          data = path.read_bytes()
+                          row[stream + '_bytes'] = len(data)
+                          row[stream + '_sha256'] = hashlib.sha256(data).hexdigest()
+                          row[stream + '_complete'] = len(data) <= 4 * 1024**2
+                          if not row[stream + '_complete']:
+                              path.write_bytes(data[:4 * 1024**2])
+                      if output_format == 'json' and previous_completed and row['stdout_complete']:
+                          value = json.loads(stdout_path.read_text())
+                          row['finding_count'] = len(value.get('findings', []))
+                          row['findings_sha256'] = hashlib.sha256(json.dumps(value.get('findings'), sort_keys=True).encode()).hexdigest()
+                          row['summary'] = value.get('summary')
+                          row['analysis_outcome'] = value.get('analysis_outcome')
+                      row['phase_lines'] = [line for line in stderr_path.read_text(errors='replace').splitlines() if line.startswith('STUB_TAIL')]
+                      records.append(row)
+                      (destination / 'measurements.json').write_text(json.dumps(records, indent=2) + '\n')
+                      print(json.dumps({key: row[key] for key in ['mode', 'scope', 'format', 'repeat', 'elapsed_seconds', 'exit_code', 'external_stop', 'stdout_bytes']}), flush=True)
+                      if row['phase_lines']:
+                          print('\n'.join(row['phase_lines'][-60:]), flush=True)
+                      if 'analysis_outcome' in row:
+                          print(json.dumps({'scope': scope, 'analysis_outcome': row['analysis_outcome'], 'finding_count': row['finding_count']}), flush=True)
+          if mode == 'instrumented':
+              baseline = json.loads((evidence / 'baseline/measurements.json').read_text())
+              comparisons = []
+              for row in records:
+                  old = next(item for item in baseline if all(item[key] == row[key] for key in ['scope', 'format', 'repeat']))
+                  completed = not old['external_stop'] and not row['external_stop'] and old['exit_code'] == row['exit_code'] == 0
+                  comparison = dict(scope=row['scope'], format=row['format'], repeat=row['repeat'], both_completed=completed)
+                  if completed:
+                      comparison['stdout_byte_identical'] = old['stdout_sha256'] == row['stdout_sha256']
+                  comparisons.append(comparison)
+              (evidence / 'output-comparison.json').write_text(json.dumps(comparisons, indent=2) + '\n')
+              assert all(row.get('stdout_byte_identical', True) for row in comparisons), 'instrumentation changed completed stdout'
+          assert any(row.get('finding_count', 0) > 0 for row in records), 'missing nonempty JSON control'
+          PY
+      - name: Build and measure unmodified development CLI
+        working-directory: build
+        run: |
+          set -euo pipefail
+          set +e
+          timeout --signal=TERM --kill-after=30s 1800s cargo +1.95.0 build --locked -p ripr --bin ripr > "$EVIDENCE/baseline-build.stdout" 2> "$EVIDENCE/baseline-build.stderr"
+          status=$?
+          set -e
+          echo "baseline_build_exit=$status" > "$EVIDENCE/status.txt"
+          test "$status" = 0
+          git diff --exit-code
+          python3 "$EVIDENCE/measure.py" baseline
+      - name: Instrument inner stub owners without changing analysis inputs
+        working-directory: build
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+          module = Path('crates/ripr/src/stub_tail_trace.rs')
+          assert not module.exists()
+          module.write_text('''use std::io::Write;
+          use std::time::Instant;
+          pub(crate) struct Phase { name: &'static str, started: Instant }
+          impl Phase {
+              pub(crate) fn new(name: &'static str) -> Self {
+                  let _ = writeln!(std::io::stderr().lock(), "STUB_TAIL begin {name}");
+                  Self { name, started: Instant::now() }
+              }
+          }
+          impl Drop for Phase {
+              fn drop(&mut self) {
+                  let _ = writeln!(std::io::stderr().lock(), "STUB_TAIL end {} elapsed_ns={}", self.name, self.started.elapsed().as_nanos());
+              }
+          }
+          ''')
+          library = Path('crates/ripr/src/lib.rs')
+          library.write_text(library.read_text() + '\nmod stub_tail_trace;\n')
+          for relative, name in [
+              ('app/test_stub.rs', 'check_stub_routes'),
+              ('app/test_stub.rs', 'stub_route_for_finding'),
+              ('app/test_stub.rs', 'hidden_stub_ambiguity'),
+              ('app/test_stub.rs', 'resolve_at_location'),
+              ('app/test_stub.rs', 'inventory_entry_facts'),
+              ('app/test_stub.rs', 'narrowed_ambiguity'),
+              ('app/test_stub.rs', 'validate_ambiguity'),
+              ('app/test_stub.rs', 'seam_stub_refusal'),
+              ('app/test_stub.rs', 'finding_text_is_on_disk'),
+              ('analysis/seam_inventory.rs', 'scoped_file_seams'),
+              ('analysis/seam_inventory.rs', 'inventory_diff_scoped_classified_seams_at_with_config'),
+              ('analysis/seam_inventory.rs', 'inventory_classified_seams_at_with_config'),
+          ]:
+              path = Path('crates/ripr/src') / relative
+              text = path.read_text()
+              matches = list(re.finditer(r'\bfn\s+' + re.escape(name) + r'\b', text))
+              assert len(matches) == 1, f'non-unique instrumentation anchor: {name}'
+              brace = text.index('{', matches[0].end())
+              text = text[:brace+1] + f'\n    let _stub_tail_phase = crate::stub_tail_trace::Phase::new("{name}");' + text[brace+1:]
+              path.write_text(text)
+          PY
+          git add -N crates/ripr/src/stub_tail_trace.rs
+          git diff --binary > "$EVIDENCE/timing-only.patch"
+          sha256sum "$EVIDENCE/timing-only.patch" > "$EVIDENCE/timing-only.patch.sha256"
+          git -C ../subject diff --exit-code
+      - name: Build and measure instrumented CLI
+        working-directory: build
+        run: |
+          set -euo pipefail
+          set +e
+          timeout --signal=TERM --kill-after=30s 1800s cargo +1.95.0 build --locked -p ripr --bin ripr > "$EVIDENCE/instrumented-build.stdout" 2> "$EVIDENCE/instrumented-build.stderr"
+          status=$?
+          set -e
+          echo "instrumented_build_exit=$status" >> "$EVIDENCE/status.txt"
+          test "$status" = 0
+          python3 "$EVIDENCE/measure.py" instrumented
+          git -C ../subject diff --exit-code
+      - name: Retain bounded evidence only
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: stub-tail-79d2e550-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/stub-tail-proof/identity.txt
+            ${{ runner.temp }}/stub-tail-proof/status.txt
+            ${{ runner.temp }}/stub-tail-proof/*.py
+            ${{ runner.temp }}/stub-tail-proof/*.patch
+            ${{ runner.temp }}/stub-tail-proof/*.sha256
+            ${{ runner.temp }}/stub-tail-proof/*.stdout
+            ${{ runner.temp }}/stub-tail-proof/*.stderr
+            ${{ runner.temp }}/stub-tail-proof/*.json
+            ${{ runner.temp }}/stub-tail-proof/baseline/*
+            ${{ runner.temp }}/stub-tail-proof/instrumented/*
+          if-no-files-found: error
+          retention-days: 14
