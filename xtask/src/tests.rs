@@ -58121,6 +58121,23 @@ fn pr_triage_unknown_check_is_not_a_pass_or_merge_candidate() -> Result<(), Stri
     );
     assert!(markdown.contains("1 unknown"));
     assert!(markdown.contains("unknown checks:"));
+    let expected_action = "Wait for checks, inspect failures or unknown evidence, or update the PR body with actual commands run.";
+    assert_eq!(
+        value["queue_disposition"][0]["recommended_action"],
+        expected_action
+    );
+    let queue = markdown
+        .split_once("\n## Queue Disposition\n\n")
+        .ok_or("missing queue")?
+        .1
+        .split_once("\n## Open PRs\n\n")
+        .ok_or("missing open PRs")?
+        .0;
+    assert!(
+        queue
+            .lines()
+            .any(|row| row.starts_with("| #42 |") && row.contains(expected_action))
+    );
     assert!(!markdown.contains("1 passed"));
     Ok(())
 }
