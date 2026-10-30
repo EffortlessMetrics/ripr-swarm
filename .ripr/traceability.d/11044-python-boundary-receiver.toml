@@ -1,0 +1,7 @@
+# Method boundary rows require receiver identity (#11044).
+[[extend]]
+id = "RIPR-SPEC-0028"
+tests = [
+  "crates/ripr/tests/cli_smoke.rs::python_foreign_receiver_does_not_witness_owner_boundary",
+  "fixtures/python_foreign_boundary_receiver",
+]

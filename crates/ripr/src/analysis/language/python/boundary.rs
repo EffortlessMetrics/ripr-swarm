@@ -46,7 +46,8 @@ use super::no_behavior::{
 };
 use super::related_tests::{
     PythonRelatedCandidate, import_source_module_matches_owner, is_python_identifier_char,
-    owner_module_callees, owner_module_paths, python_text_hides_code, test_body_binds_local,
+    method_call_receiver_is_bound, owner_module_callees, owner_module_paths,
+    python_text_hides_code, test_body_binds_local,
 };
 use super::{PythonOwner, PythonTest};
 use crate::{
@@ -1490,6 +1491,26 @@ fn candidate_call_rows(
     for name in owner_call_names(owner, candidate.test, method_call) {
         for (first_line, text) in &sources {
             for (offset, arglist) in call_arglists_with_offsets(text, &name, method_call) {
+                if method_call {
+                    let class = owner
+                        .qualified_name
+                        .rsplit_once('.')
+                        .map(|(class, _)| class);
+                    if !class.is_some_and(|class| {
+                        method_call_receiver_is_bound(
+                            candidate.test,
+                            owner,
+                            class,
+                            &name,
+                            &text[..offset - 1],
+                        )
+                    }) {
+                        // This call may be foreign or an unresolved owner
+                        // receiver. It cannot donate a witness or prove a miss.
+                        gaps = true;
+                        continue;
+                    }
+                }
                 let Some((bindings, case_arguments, elements)) =
                     bind_call_arguments(owner, constants, candidate.test, skip, arglist)
                 else {

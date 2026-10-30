@@ -1,0 +1,10 @@
+diff --git a/src/subject.py b/src/subject.py
+--- a/src/subject.py
++++ b/src/subject.py
+@@ -1,5 +1,5 @@
+ class Eligible:
+     def check(self, x):
+-        if x > 3:
++        if x >= 3:
+             return True
+         return False

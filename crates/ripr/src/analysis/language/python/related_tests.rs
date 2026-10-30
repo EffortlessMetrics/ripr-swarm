@@ -3031,24 +3031,43 @@ pub(super) fn assertion_calls_method_only_on_foreign_receiver(
             continue;
         }
         saw_call = true;
-        let before = assertion_text[..dot].trim_end();
-        let receiver = if before.ends_with(')') {
-            inline_construct_callee(before)
-        } else {
-            let start = before
-                .rfind(|ch: char| !(is_python_identifier_char(ch) || ch == '.'))
-                .map_or(0, |idx| idx + 1);
-            Some(&before[start..])
-        };
-        let bound = receiver.is_some_and(|receiver| {
-            class_locals.iter().any(|local| local == receiver)
-                || bound_locals.iter().any(|local| local == receiver)
-        });
-        if bound {
+        if receiver_is_bound(&assertion_text[..dot], &class_locals, &bound_locals) {
             return false;
         }
     }
     saw_call
+}
+
+/// Whether the receiver immediately before a method-call dot is bound to the
+/// changed owner. An unknown receiver is not evidence of owner identity.
+pub(super) fn method_call_receiver_is_bound(
+    test: &PythonTest,
+    owner: &PythonOwner,
+    class: &str,
+    method: &str,
+    before_dot: &str,
+) -> bool {
+    receiver_is_bound(
+        before_dot,
+        &owner_class_locals(test, owner, class),
+        &owner_method_bound_locals(test, owner, class, method),
+    )
+}
+
+fn receiver_is_bound(before_dot: &str, class_locals: &[String], bound_locals: &[String]) -> bool {
+    let before = before_dot.trim_end();
+    let receiver = if before.ends_with(')') {
+        inline_construct_callee(before)
+    } else {
+        let start = before
+            .rfind(|ch: char| !(is_python_identifier_char(ch) || ch == '.'))
+            .map_or(0, |idx| idx + 1);
+        Some(&before[start..])
+    };
+    receiver.is_some_and(|receiver| {
+        class_locals.iter().any(|local| local == receiver)
+            || bound_locals.iter().any(|local| local == receiver)
+    })
 }
 
 /// The callee name of the trailing call in `before` (`Cart(...)` -> `Cart`,

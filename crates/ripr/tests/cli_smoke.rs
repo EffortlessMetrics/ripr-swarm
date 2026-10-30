@@ -19665,6 +19665,116 @@ fn python_empty_comprehension_input_is_resolved_for_shifted_boundary() -> Result
     Ok(())
 }
 
+#[test]
+#[cfg(feature = "lang-python")]
+fn python_foreign_receiver_does_not_witness_owner_boundary() -> Result<(), String> {
+    let root = pilot_language_fixture_repo(
+        "python-foreign-boundary-11044",
+        &[
+            (
+                "pyproject.toml",
+                "[project]\nname = \"boundary\"\nversion = \"0.1.0\"\n",
+            ),
+            (
+                "pricing/__init__.py",
+                "class Eligible:\n    def check(self, x):\n        if x > 3:\n            return True\n        return False\n\nclass Other:\n    def check(self, x):\n        return True\n",
+            ),
+            (
+                "tests/test_pricing.py",
+                "from pricing import Eligible, Other\n\ndef test_check():\n    assert Eligible().check(5) == True\n    assert Other().check(3) == True\n",
+            ),
+        ],
+        (
+            "pricing/__init__.py",
+            "class Eligible:\n    def check(self, x):\n        if x >= 3:\n            return True\n        return False\n\nclass Other:\n    def check(self, x):\n        return True\n",
+        ),
+    )?;
+    let root_arg = root.display().to_string();
+    let check = || -> Result<serde_json::Value, String> {
+        let output = run_ripr(&[
+            "check",
+            "--root",
+            &root_arg,
+            "--base",
+            "origin/main",
+            "--format",
+            "json",
+        ]);
+        assert_success(&output);
+        serde_json::from_slice(&output.stdout).map_err(|err| err.to_string())
+    };
+    let foreign = check()?;
+    assert_eq!(
+        foreign["findings"].as_array().map(Vec::len),
+        Some(1),
+        "{foreign}"
+    );
+    assert_ne!(
+        foreign["findings"][0]["classification"], "exposed",
+        "{foreign}"
+    );
+    assert!(
+        !foreign["findings"][0]["observed_values"]
+            .to_string()
+            .contains("x == 3"),
+        "{foreign}"
+    );
+    assert_eq!(
+        foreign["findings"][0]["missing_discriminators"]
+            .as_array()
+            .map(Vec::len),
+        Some(0),
+        "{foreign}"
+    );
+    assert!(
+        foreign["findings"][0]["python_repair_card"].is_null(),
+        "{foreign}"
+    );
+    std::fs::write(root.join("tests/test_pricing.py"), "from pricing import Eligible, Other\n\ndef test_check():\n    assert Eligible().check(5) == True and Other().check(3) == True\n").map_err(|err| err.to_string())?;
+    let same_line = check()?;
+    assert_ne!(
+        same_line["findings"][0]["classification"], "exposed",
+        "{same_line}"
+    );
+    assert!(
+        !same_line["findings"][0]["observed_values"]
+            .to_string()
+            .contains("x == 3"),
+        "{same_line}"
+    );
+    std::fs::write(root.join("tests/test_pricing.py"), "from pricing import Eligible\n\ndef test_check(unknown):\n    assert Eligible().check(5) == True\n    assert unknown.check(3) == True\n").map_err(|err| err.to_string())?;
+    let unknown = check()?;
+    assert_ne!(
+        unknown["findings"][0]["classification"], "exposed",
+        "{unknown}"
+    );
+    assert_eq!(
+        unknown["findings"][0]["missing_discriminators"]
+            .as_array()
+            .map(Vec::len),
+        Some(0),
+        "{unknown}"
+    );
+    assert!(
+        unknown["findings"][0]["python_repair_card"].is_null(),
+        "{unknown}"
+    );
+    std::fs::write(root.join("tests/test_pricing.py"), "from pricing import Eligible, Other\n\ndef test_check():\n    assert Eligible().check(3) == True\n    assert Other().check(5) == True\n").map_err(|err| err.to_string())?;
+    let owner = check()?;
+    assert_eq!(owner["findings"][0]["classification"], "exposed", "{owner}");
+    assert!(
+        owner["findings"][0]["observed_values"]
+            .to_string()
+            .contains("x == 3"),
+        "{owner}"
+    );
+    std::fs::write(root.join("tests/test_pricing.py"), "from pricing import Eligible as E\n\ndef test_check():\n    obj = E()\n    assert obj.check(3) == True\n").map_err(|err| err.to_string())?;
+    let alias = check()?;
+    assert_eq!(alias["findings"][0]["classification"], "exposed", "{alias}");
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
 /// #4216 row 1: the onboarding re-walk's `pyapp` shape. A named module
 /// constant threshold leaves the boundary operand unresolved, so the Python
 /// preview finding is weakly exposed with no repair card. `check` used to

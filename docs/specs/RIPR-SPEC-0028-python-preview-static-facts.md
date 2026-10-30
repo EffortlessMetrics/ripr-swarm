@@ -731,7 +731,10 @@ keeps the equality rule, because the equality row notices the edit itself
 none witnesses the boundary, the boundary is named as the missing discriminator
 (`amount == threshold`, with the observed
 operand values in its reason). A resolved boundary witness remains valid even
-if another call cannot be placed. If no witness is resolved, an unreadable
+if another call cannot be placed. A method call's receiver must be bound to
+the changed owner before its arguments can witness that owner's boundary;
+an unbound receiver leaves a call gap rather than proving a miss (#11044).
+If no witness is resolved, an unreadable
 call or an operand ripr cannot bind (an attribute such
 as `item.on_hand`, a computed `len(name)`, a comprehension local, or a line
 with several comparisons) never counts as observed, and such a boundary is not

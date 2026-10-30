@@ -5006,6 +5006,20 @@
       ]
     },
     {
+      "id": "py_foreign_receiver_cannot_witness_owner_boundary",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_foreign_boundary_receiver",
+      "vector": "foreign_method_receiver_does_not_place_owner_boundary",
+      "probe_family": "predicate",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" }
+      ]
+    },
+    {
       "id": "py_wrong_receiver_assertion_not_owner_identity",
       "language": "python",
       "tier": "pure",
