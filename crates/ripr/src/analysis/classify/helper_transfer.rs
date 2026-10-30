@@ -2649,8 +2649,53 @@ fn hops_carry_owner_string_data(owner_name: &str, hops: &[HelperHop], index: &Ru
                 && std_data_return(&hop.caller)
                 && caller_carries_callee_as_data(&hop.caller.body, &callee.name)
                 && format_placeholders_are_plain(&hop.caller.body)
+                && carried_value_stays_injective(&hop.caller.body, &callee.name)
                 && !caller_rebinds_parameter(&hop.caller.body, &callee.name)
                 && !caller_invokes_opaque_macro(&hop.caller.body, hop.transparent_macros_rebound)
+        })
+}
+
+/// The callee's value reaches the caller's result through nothing that can
+/// collapse it (#11248): the callee is named once (so it is never nested in
+/// its own arguments), a macro argument's `&` is a unary borrow, never a
+/// bitwise and, and a `.name` is one of the value-preserving methods, not
+/// a caller parameter that happens to share a method's name.
+fn carried_value_stays_injective(body: &str, callee: &str) -> bool {
+    use ra_ap_syntax::{AstNode, SyntaxKind};
+    const METHODS: [&str; 3] = ["to_string", "to_owned", "clone"];
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(body) else {
+        return false;
+    };
+    let tokens: Vec<_> = parse
+        .tree()
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| token.kind() != SyntaxKind::WHITESPACE)
+        .collect();
+    // The signature names the function, not a call of the callee.
+    let body_start = tokens
+        .iter()
+        .position(|token| token.kind() == SyntaxKind::L_CURLY)
+        .unwrap_or(0);
+    let body_tokens = &tokens[body_start..];
+    let callee_mentions = body_tokens
+        .iter()
+        .filter(|token| token.kind() == SyntaxKind::IDENT && token.text() == callee)
+        .count();
+    callee_mentions == 1
+        && body_tokens.iter().enumerate().all(|(at, token)| {
+            let previous = at.checked_sub(1).map(|before| body_tokens[before].kind());
+            match token.kind() {
+                SyntaxKind::AMP => matches!(
+                    previous,
+                    None | Some(SyntaxKind::L_PAREN | SyntaxKind::COMMA | SyntaxKind::L_CURLY)
+                ),
+                SyntaxKind::IDENT if previous == Some(SyntaxKind::DOT) => {
+                    METHODS.contains(&token.text())
+                }
+                _ => true,
+            }
         })
 }
 
@@ -5317,6 +5362,29 @@ mod tests {
         )]));
         assert!(!helper_only_reach(&[(&near, RelationReason::SameTestFile)]));
         assert!(!helper_only_reach(&[]));
+    }
+
+    /// #11248: the carried value must reach the result unmerged.
+    #[test]
+    fn carried_value_must_stay_injective() {
+        let ok = |body: &str| carried_value_stays_injective(body, "base");
+        assert!(ok("fn f() -> String {\n    format!(\"{}\", base())\n}"));
+        assert!(ok("fn f() -> String {\n    base().to_string()\n}"));
+        assert!(ok(
+            "fn f(x: &str) -> String {\n    format!(\"{}{}\", &x, base())\n}"
+        ));
+        // A bitwise and collapses the value; so does nesting the callee.
+        assert!(!ok(
+            "fn f() -> String {\n    format!(\"{}\", base() & 1)\n}"
+        ));
+        assert!(!ok(
+            "fn f(mask: u32) -> String {\n    format!(\"{}\", base() & mask)\n}"
+        ));
+        assert!(!ok("fn f() -> String {\n    base(base(1)).to_string()\n}"));
+        // A parameter named like a method is not that method.
+        assert!(!ok(
+            "fn f(len: usize) -> String {\n    format!(\"{}{}\", len, base().len())\n}"
+        ));
     }
 
     /// #11248: only a plain `{}` placeholder keeps the whole interpolated value.

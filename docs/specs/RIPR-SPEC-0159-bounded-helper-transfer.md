@@ -288,12 +288,15 @@ can only hint that a caller "may lead here" without changing anything.
   carrying its callee as data. Only an injective carry counts: every
   string literal in the caller uses plain `{}` placeholders, so a width,
   precision, radix or `{:?}` spec (which can drop or re-render the value),
-  a positional or named argument and a user `Display`/`From` impl keep the
-  abstention. The free-call chain identity rule and the owner-call entry
+  a positional or named argument, a bitwise `&` on the value
+  (`format!("{}", base() & 1)`), the callee nested in its own arguments, a
+  parameter that shares a method's name and a user `Display`/`From` impl keep
+  the abstention. The free-call chain identity rule and the owner-call entry
   pin still apply, and an owner whose value is built by a macro
   (`concat!("ri", "pr")`) is refused because its expansion is not seen.
-  Corpus: `spec0117-external-std-macro` credits;
-  `format-forward-precision-hides-value` and
+  Corpus: `spec0117-external-std-macro` and `format-forward-to-string-credits` credit;
+  `format-forward-precision-hides-value`,
+  `format-forward-bitand-hides-value` and
   `old-title-through-format-macro` keep abstaining.
 - Effect propagation (#6780): a `side_effect` or `call_deletion` probe
   acts on state rather than on a returned value, so it is not judged by
