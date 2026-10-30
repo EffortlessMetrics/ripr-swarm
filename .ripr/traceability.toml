@@ -9071,6 +9071,9 @@ tests = [
   "fixtures/python_effect_order_module_before_call",
 ]
 fixtures = [
+  "fixtures/typescript_reassigned_setup_hook",
+  "fixtures/typescript_parameter_default_setup_hook",
+  "fixtures/typescript_trailing_setup_hook_argument",
   "fixtures/inherent_receiver_operand_item_shadow",
   "fixtures/inherent_receiver_macro_discard",
   "fixtures/inherent_receiver_foreign_helper",
@@ -17696,6 +17699,8 @@ id = "RIPR-SPEC-0246"
 name = "TypeScript corpus oracle amendments"
 spec = "docs/specs/RIPR-SPEC-0246-typescript-corpus-oracle-amendments.md"
 tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/mocha_hook_owner_tests.rs::hook_registration_identity_keeps_registered_mocha_bodies",
+  "crates/ripr/src/analysis/language/typescript/tests/mocha_hook_owner_tests.rs::reassigned_mocha_setup_hook_does_not_abstain",
   "crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs::literal_foreach_reads_one_case_per_element",
   "crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs::other_foreach_forms_collect_nothing",
   "crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs::returned_or_awaited_then_reads_the_resolved_receiver",
@@ -17734,6 +17739,8 @@ fixtures = [
   "fixtures/typescript-verdict-corpus",
 ]
 code = [
+  "crates/ripr/src/analysis/language/typescript/tests_extract_hook_identity.rs",
+  "crates/ripr/src/analysis/language/typescript/tests_extract.rs",
   "crates/ripr/src/analysis/language/typescript/catch_arm_guard.rs",
   "crates/ripr/src/analysis/language/typescript/classifier.rs",
   "crates/ripr/src/analysis/language/typescript/comparison_edit_guard.rs",
@@ -18235,6 +18242,9 @@ id = "RIPR-SPEC-0243"
 name = "TypeScript oracle and reach rules"
 spec = "docs/specs/RIPR-SPEC-0243-typescript-oracle-and-reach-rules.md"
 tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/scope_receiver_tests.rs::hook_registration_identity_preserves_order_and_lexical_scope",
+  "crates/ripr/src/analysis/language/typescript/tests/scope_receiver_tests.rs::reassigned_setup_hook_does_not_establish_a_method_receiver",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::reassigned_hook_targets_withhold_setup_facts",
   "crates/ripr/src/analysis/language/typescript/call_removal_tests.rs::counted_removal_refuses_concurrent_receiver_edits",
   "crates/ripr/src/analysis/language/typescript/call_removal_tests.rs::counted_removal_refuses_multiple_old_calls",
   "crates/ripr/src/analysis/language/typescript/call_removal_tests.rs::counted_removal_refuses_unusable_target_methods",
@@ -18538,6 +18548,9 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/assertion_library_tests.rs::exported_bindings_preserve_genuine_imported_runner_expect",
 ]
 fixtures = [
+  "fixtures/typescript_reassigned_setup_hook",
+  "fixtures/typescript_parameter_default_setup_hook",
+  "fixtures/typescript_trailing_setup_hook_argument",
   "fixtures/typescript_call_removal_throwing_method",
   "fixtures/typescript_call_removal_absent_method",
   "fixtures/typescript_call_removal_unbound_argument",
@@ -18557,6 +18570,7 @@ fixtures = [
   "fixtures/ts_dead_assertion_after_try_empty_catch",
 ]
 code = [
+  "crates/ripr/src/analysis/language/typescript/tests_extract_hook_identity.rs",
   "crates/ripr/src/analysis/language/typescript/call_removal_guard.rs",
   "crates/ripr/src/analysis/language/typescript/mod.rs",
   "crates/ripr/src/analysis/language/typescript/enum_member_guard.rs",

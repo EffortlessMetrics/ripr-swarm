@@ -1,0 +1,10 @@
+diff --git a/src/cart.ts b/src/cart.ts
+--- a/src/cart.ts
++++ b/src/cart.ts
+@@ -1,5 +1,5 @@
+ export class Cart {
+   total() {
+-    return 1;
++    return 2;
+   }
+ }
