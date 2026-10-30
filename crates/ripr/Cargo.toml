@@ -146,6 +146,13 @@ lang-python = ["dep:rustpython-parser"]
 lang-perl = []
 
 [dev-dependencies]
+# Dev-only self-reference: xtask's dev-dependency enables `lang-perl` in
+# workspace test builds (SARIF identity controls), so package-scoped test
+# builds must resolve the same feature set. Otherwise a policy test's
+# spawned `cargo test -p ripr` relinks the shared test binary with a
+# different `build_identity::cache_identity`, and artifact reuse between
+# the two builds fails closed on `analyzer_version`.
+ripr = { path = ".", features = ["lang-perl"] }
 proptest = "1"
 rmcp = { version = "=3.7.0", default-features = false, features = ["client", "transport-async-rw"] }
 serial_test = "4"

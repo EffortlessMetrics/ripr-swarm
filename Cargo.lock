@@ -1555,6 +1555,7 @@ dependencies = [
  "pulldown-cmark",
  "ra_ap_syntax",
  "rayon",
+ "ripr",
  "rmcp",
  "rustpython-parser",
  "serde",

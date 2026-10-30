@@ -22637,7 +22637,19 @@ fn context_from_consumes_artifact_written_with_no_unchanged_tests() -> Result<()
     let artifact_arg = artifact.display().to_string();
     let selector = "probe:crates_ripr_examples_sample_src_lib.rs:error_path:c1a03250";
 
-    let check = run_ripr(&[
+    // This test analyzes the whole workspace three times, so it holds the
+    // shared test binary across a long window. A sibling policy test's
+    // spawned cargo build can relink that binary mid-test with a different
+    // feature set, and artifact reuse then fails closed on
+    // `analyzer_version` even though no input changed. Pin a private copy
+    // for every invocation below so the writing and reading builds are
+    // the same binary by construction.
+    let pinned_binary = dir.join(if cfg!(windows) { "ripr.exe" } else { "ripr" });
+    std::fs::copy(env!("CARGO_BIN_EXE_ripr"), &pinned_binary)
+        .map_err(|err| format!("copy test binary: {err}"))?;
+    let run_pinned = |args: &[&str]| Command::new(&pinned_binary).args(args).output().unwrap();
+
+    let check = run_pinned(&[
         "check",
         "--root",
         &root,
@@ -22649,7 +22661,7 @@ fn context_from_consumes_artifact_written_with_no_unchanged_tests() -> Result<()
     ]);
     assert_success(&check);
 
-    let fresh = run_ripr(&[
+    let fresh = run_pinned(&[
         "context",
         "--root",
         &root,
@@ -22660,7 +22672,7 @@ fn context_from_consumes_artifact_written_with_no_unchanged_tests() -> Result<()
         selector,
     ]);
     assert_success(&fresh);
-    let reused = run_ripr(&[
+    let reused = run_pinned(&[
         "context",
         "--root",
         &root,
@@ -22673,7 +22685,7 @@ fn context_from_consumes_artifact_written_with_no_unchanged_tests() -> Result<()
     assert_success(&reused);
     context_reuse_matches_fresh(&fresh.stdout, &reused.stdout)?;
 
-    let without_flag = run_ripr(&[
+    let without_flag = run_pinned(&[
         "context",
         "--root",
         &root,
