@@ -582,6 +582,8 @@ fn render_start_here_packet_with_selection(
     // the operator discover each on the next invocation. This reads artifact
     // presence only; it runs no analysis. Other artifact rows are optional
     // until a particular selection needs them.
+    // The chain only applies to missing-artifact selections: any other
+    // selection has no `artifact` id and falls through to the empty arm.
     let chain: &[&str] = match selected["artifact"]["id"].as_str() {
         Some("repo_exposure") => &["gap_ledger", "review_comments"],
         Some("gap_ledger") => &["review_comments"],
@@ -5159,16 +5161,37 @@ mod tests {
         write_json(&repo.join(DEFAULT_GAP_LEDGER), ledger)
     }
 
-    /// #3905 negative: the chain is only disclosed ahead of the missing
-    /// artifact. With the ledger present and only the cards missing, the
-    /// single recovery step is unchanged and nothing is listed as also missing.
+    fn packet_for_repo(repo: &Path) -> Result<Value, String> {
+        write_first_pr(repo, &FirstPrOptions::default())?;
+        read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))
+    }
+
+    /// #3905 negative (a): the `status == "missing"` filter. Repo exposure
+    /// is present and the ledger is missing, while a valid cards file already
+    /// exists, so the present cards must not be listed as also missing.
+    #[test]
+    fn present_review_cards_are_not_listed_as_also_missing() -> Result<(), String> {
+        let repo = temp_repo("first-pr-chain-cards-present")?;
+        write_json(&repo.join(DEFAULT_REPO_EXPOSURE), json!({}))?;
+        write_json(
+            &repo.join(DEFAULT_REVIEW_COMMENTS),
+            review_comments_report(Vec::new()),
+        )?;
+        let packet = packet_for_repo(&repo)?;
+        assert_eq!(packet["selected"]["state"], "missing_artifact");
+        assert_eq!(packet["selected"]["artifact"]["id"], "gap_ledger");
+        assert!(packet["selected"].get("also_missing").is_none());
+        cleanup(&repo)
+    }
+
+    /// #3905 negative (b): the chain starts only at repo exposure or the
+    /// gap ledger. With the ledger present and only the cards missing, the
+    /// cards are the single selected recovery step and nothing is also missing.
     #[test]
     fn single_missing_review_cards_lists_no_also_missing() -> Result<(), String> {
         let repo = temp_repo("first-pr-single-missing-cards")?;
         write_no_top_gap_ledger(&repo)?;
-        let options = FirstPrOptions::default();
-        write_first_pr(&repo, &options)?;
-        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        let packet = packet_for_repo(&repo)?;
         assert_eq!(packet["selected"]["state"], "missing_artifact");
         assert_eq!(packet["selected"]["artifact"]["id"], "review_comments");
         assert!(packet["selected"].get("also_missing").is_none());
@@ -5178,6 +5201,34 @@ mod tests {
             Path::new("target/ripr/reports/start-here.md"),
         );
         assert!(!summary.contains("Also missing"), "{summary}");
+        cleanup(&repo)
+    }
+
+    /// #3905 negative (c): ledger and cards both present means no missing
+    /// artifact selection and no chain.
+    #[test]
+    fn ledger_and_cards_present_lists_no_also_missing() -> Result<(), String> {
+        let repo = temp_repo("first-pr-chain-all-present")?;
+        write_no_top_gap_ledger(&repo)?;
+        write_json(
+            &repo.join(DEFAULT_REVIEW_COMMENTS),
+            review_comments_report(Vec::new()),
+        )?;
+        let packet = packet_for_repo(&repo)?;
+        assert_ne!(packet["selected"]["state"], "missing_artifact");
+        assert!(packet["selected"].get("also_missing").is_none());
+        cleanup(&repo)
+    }
+
+    /// #3905 negative: the `uses_check_output_gap_ledger` guard. A Python
+    /// root without a ledger selects the ledger itself and must not grow a
+    /// Rust-only repo-exposure/cards chain.
+    #[test]
+    fn check_output_root_suppresses_also_missing_chain() -> Result<(), String> {
+        let repo = temp_python_repo("first-pr-chain-python-root")?;
+        let packet = packet_for_repo(&repo)?;
+        assert_eq!(packet["selected"]["artifact"]["id"], "gap_ledger");
+        assert!(packet["selected"].get("also_missing").is_none());
         cleanup(&repo)
     }
 

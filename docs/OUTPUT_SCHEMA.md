@@ -14316,8 +14316,8 @@ Field contract:
   gap ledger, PR repair cards chain, `selected.artifact` remains the first
   recovery step and `selected.also_missing[]` names each later missing input
   and its regeneration command, in dependency order. The PR repair cards entry
-  carries `needed_when` because the cards are only consulted when the gap
-  ledger names no repair start.
+  carries `needed_when`, a display-prose string (not an enum) explaining that
+  the cards are only consulted when the gap ledger names no repair start.
   The CLI and Markdown show every missing input in dependency order. This
   discovery field does not imply either command ran or that an existing
   `agent repair` receipt was consumed; receipt recognition remains separate.
