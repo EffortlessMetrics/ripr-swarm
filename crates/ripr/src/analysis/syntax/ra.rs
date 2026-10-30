@@ -1117,10 +1117,15 @@ fn is_unconditional_impl_associated_fn(function: &ast::Fn) -> bool {
             let end = body
                 .find(|c: char| !(c.is_alphanumeric() || c == '_' || c == '#'))
                 .unwrap_or(body.len());
-            matches!(
-                cfg_predicates::rust_ident_name(&body[..end]),
-                "cfg" | "cfg_attr"
-            )
+            // An inner `#![cfg_attr(..)]` (crate or module level, such as
+            // `no_std` or `doc_cfg` toggles) conditions attributes, not the
+            // items it sits in; only an inner `#![cfg(..)]` can remove them.
+            let inner = text.trim_start().starts_with("#!");
+            match cfg_predicates::rust_ident_name(&body[..end]) {
+                "cfg" => true,
+                "cfg_attr" => !inner,
+                _ => false,
+            }
         })
     }
     if gated(function.attrs()) {
