@@ -157,15 +157,16 @@ A short glossary for the terms below:
 | discriminator | The check that would tell the old behavior from the new. |
 | oracle / assertion | What a test compares against; a weak oracle (for example `> 0`) reaches the code but does not notice the change. |
 | grip | How firmly tests hold a behavior, for example `weakly_gripped` or `strongly_gripped`. |
-| `probe:` ID | Names one finding in one diff; accepted by `explain` and `context`, not by repair. |
-| edit cage | The repair attempt's rule that only the allowed test files may change. |
+| `probe:` ID | Names one finding in one diff. `explain` and `context` take it; `ripr repair` resolves it to its seam, then may refuse if that seam is not repair-eligible. |
+| edit cage | The repair attempt's rule: only new test functions inside the allowed test surface (for inline tests, the existing `#[cfg(test)] mod tests`) may be added; production code and existing tests stay unchanged. |
 | receipt | The static before/after evidence record from the after phase; not a test result. |
 
 Human output uses plain words for the schema values: `appear noticed` is
 `exposed`, `partly noticed` is `weakly_exposed`, `reached but not noticed` is
 `reachable_unrevealed`, and `no test path` is `no_static_path`. Use
 `--format human-full` or JSON to see the schema value. See
-[Terminology](TERMINOLOGY.md) for the full mapping.
+[Terminology](TERMINOLOGY.md) for the seam-level words and
+[RIPR-SPEC-0122](specs/RIPR-SPEC-0122-bounded-human-check-output.md) for the human output wording.
 
 When a finding is selected, copy its printed `ripr explain` command to inspect
 the evidence, or its `ripr context` command for an agent handoff. Those commands
@@ -425,19 +426,17 @@ ripr pilot --root .
 ```
 
 **Before you start:** commit your change and make sure `/target/` is in
-`.gitignore`.
-
-Before starting a repair, make sure `target/` is in a committed `.gitignore`
-(see below) and that the production change itself is committed: the before
-phase refuses a seam whose edit-target file has uncommitted changes. When pilot recommends a repair, run the exact
+`.gitignore` (details below). The before phase refuses a seam whose
+edit-target file has uncommitted changes. When pilot recommends a repair, run the exact
 `ripr agent repair ... --phase before` command it prints. That printed command
 is the advanced spelling of the ordinary start `ripr repair <seam-id>`; both
 begin the same before/edit/after attempt, and the ordinary start additionally
 prints the repair card for the seam. The card is long; the command to run next
-is the line under `Next, after the test edit:`. The printed command carries pilot's seam ID,
-which names a code
-location across the repository. The `probe:...` IDs printed by `ripr check`
-name findings in one diff and are not accepted here.
+is on the `Next, after the test edit:` line, printed just before the card.
+The printed command carries pilot's seam ID, which names a code
+location across the repository. A `probe:...` ID printed by `ripr check`
+names a finding in one diff; `ripr repair` resolves it to its seam but may then
+refuse if that seam is not repair-eligible.
 
 Before starting a Rust repair, ensure Git ignores Cargo's entire `target/`
 directory, for example with `/target/` in `.gitignore`. Effective local or global
@@ -461,7 +460,8 @@ Then run the after-phase command the before phase printed:
 `ripr agent repair ... --attempt ... --phase after`). Plain `ripr continue`
 selects the attempt when the choice is unambiguous. Run before you have edited
 the test, it exits 3 (recoverable): the attempt stays `awaiting_edit`, and you
-can rerun it after the edit.
+can rerun it after the edit. Each premature run counts as one of the attempt's
+5 after-phase refusals, so edit the test first.
 It records the after snapshot and a receipt of static evidence movement.
 Keep the test execution result separately: a static improvement is not proof
 that a test ran or that a mutant was caught.
@@ -510,6 +510,8 @@ rerun `first-pr`. In a Rust repository the sequence is: `ripr check --root .
 target/ripr/review/comments.json`. Commit your test first, because the
 committed diff does not include uncommitted edits. After a successful repair
 the final state `no actionable gap` is expected: the gap is already addressed.
+It also appears when no repairable PR-local gap was selected; read the printed
+`Reason:` line to tell which.
 
 ## Troubleshooting
 
