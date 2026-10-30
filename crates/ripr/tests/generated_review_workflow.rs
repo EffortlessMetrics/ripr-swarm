@@ -2786,7 +2786,7 @@ fn generated_capture_step_runs_end_to_end() -> Result<(), Box<dyn Error>> {
     );
     assert!(
         String::from_utf8_lossy(&run.stdout)
-            .contains("::error title=Capture pull request diff::ripr: cannot resolve base ref origin/nonexistent-base-branch"),
+            .contains("::error title=Capture pull request diff::ripr: the pull request base `origin/nonexistent-base-branch` is not in this checkout"),
         "missing base must name the failure; got:\n{}",
         String::from_utf8_lossy(&run.stdout)
     );

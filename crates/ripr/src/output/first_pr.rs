@@ -837,6 +837,20 @@ fn git_preflight_recovery(root: &Path, options: &FirstPrOptions) -> Option<Selec
     match git_rev_exists(root, &options.base) {
         Ok(true) => {}
         Ok(false) => {
+            // A shallow clone (actions/checkout's default `fetch-depth: 1`) is
+            // the usual cause in CI, and a one-branch fetch does not repair
+            // it: name the checkout setting and the unshallow command, like
+            // `ripr check` does.
+            if crate::analysis::is_shallow_repository(root, None) {
+                return Some(Selection::blocked(
+                    "blocked_artifact",
+                    format!(
+                        "The first-pr base `{}` does not resolve to a commit. This is a shallow clone, so the base branch was never fetched: set `fetch-depth: 0` on actions/checkout (or fetch the full history) before assigning repair work.",
+                        options.base
+                    ),
+                    Some(unshallow_command(options)),
+                ));
+            }
             return Some(Selection::blocked(
                 "blocked_artifact",
                 format!(
@@ -4532,6 +4546,61 @@ mod tests {
         let message = packet["selected"]["message"].as_str().unwrap_or_default();
         assert!(
             message.contains("no merge base")
+                && message.contains("shallow clone")
+                && message.contains("fetch-depth: 0"),
+            "unexpected message: {message}"
+        );
+        assert_eq!(
+            packet["selected"]["next_command"],
+            format!("git -C {} fetch --unshallow", bound_arg("."))
+        );
+        cleanup(&shallow)?;
+        cleanup(&origin)
+    }
+
+    #[test]
+    fn shallow_checkout_without_the_base_branch_points_at_fetch_depth() -> Result<(), String> {
+        // A default `actions/checkout` (fetch-depth 1) fetches only the head
+        // commit, so `origin/main` does not exist at all. A one-branch fetch
+        // is not the repair; the checkout setting and the unshallow command
+        // are. The full-clone twin above keeps the plain fetch advice.
+        let origin = temp_repo("first-pr-shallow-nobase-origin")?;
+        run_git_setup(&origin, &["checkout", "-q", "-b", "feature"])?;
+        run_git_setup(&origin, &["commit", "-q", "--allow-empty", "-m", "feature"])?;
+        let shallow = write_temp_root(&env::temp_dir(), "first-pr-shallow-nobase-clone")?;
+        let origin_path = origin.display().to_string().replace('\\', "/");
+        let url = if origin_path.starts_with('/') {
+            format!("file://{origin_path}")
+        } else {
+            format!("file:///{origin_path}")
+        };
+        run_git_setup(&shallow, &["init", "-q"])?;
+        run_git_setup(&shallow, &["remote", "add", "origin", &url])?;
+        run_git_setup(
+            &shallow,
+            &[
+                "fetch",
+                "-q",
+                "--depth=1",
+                "origin",
+                "+refs/heads/feature:refs/remotes/origin/feature",
+            ],
+        )?;
+        run_git_setup(&shallow, &["checkout", "-q", "--detach", "origin/feature"])?;
+        write_json(
+            &shallow.join(DEFAULT_GAP_LEDGER),
+            ledger_with_repairable_gap(),
+        )?;
+        let options = FirstPrOptions {
+            base: "origin/main".to_string(),
+            ..FirstPrOptions::default()
+        };
+        write_first_pr(&shallow, &options)?;
+        let packet = read_packet(&shallow.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        assert_eq!(packet["selected"]["state"], "blocked_artifact");
+        let message = packet["selected"]["message"].as_str().unwrap_or_default();
+        assert!(
+            message.contains("does not resolve to a commit")
                 && message.contains("shallow clone")
                 && message.contains("fetch-depth: 0"),
             "unexpected message: {message}"

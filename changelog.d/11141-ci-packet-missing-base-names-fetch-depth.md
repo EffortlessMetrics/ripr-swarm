@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `ripr reports ci-packet` and the `first-pr` start-here no longer leave a first-time adopter with Git's raw `Needed a single revision` when the pull request base is not in the checkout: the failing "Capture pull request diff" step now says the base is missing and, for a shallow clone (the default `actions/checkout` depth of 1), names `fetch-depth: 0`; the start-here next command for a shallow clone is `git fetch --unshallow` instead of a one-branch fetch that cannot repair it (#11141).
