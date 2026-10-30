@@ -173,12 +173,13 @@ fn dropping_a_semicolon_before_a_comment_is_not_comment_only() {
 
 #[test]
 fn only_a_real_declaration_head_makes_a_default_parameter_edit() {
-    // Negative: a substring match on `function`, and a call that ends in `{`.
+    // Negative: a substring match on `function` in a call, a member call and
+    // a control statement are not declarations.
     assert_eq!(
-        shape("myfunctionCall(a = 1) {", "myfunctionCall(a = 2) {"),
+        shape("myfunctionCall(a = 1);", "myfunctionCall(a = 2);"),
         None
     );
-    assert_eq!(shape("  wrap.call(a = 1) {", "  wrap.call(a = 2) {"), None);
+    assert_eq!(shape("  wrap.call(a = 1);", "  wrap.call(a = 2);"), None);
     assert_eq!(shape("if (a = 1) {", "if (a = 2) {"), None);
     // Positive: a function declaration, an anonymous function, an async
     // generator and a typed arrow.

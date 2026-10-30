@@ -71,3 +71,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_infection_shapes (7)
+
+Reason:
+RIPR-SPEC-0122 (#10704): main's Why-unrevealed wording for the untaken-arm case now reads 'no assertion tells the old and new behavior apart'; fixture typescript_infection_shapes human.txt re-rendered after merging origin/main (formatting-only)
+
+Command:
+`cargo xtask goldens bless typescript_infection_shapes --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

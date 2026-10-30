@@ -17,7 +17,7 @@ Start here:
   Language: typescript
   Language status: preview
   Static exposure: unrevealed (severity: warning, confidence 0.40)
-  Why unrevealed: a related test reaches this change, but no test input tells the old and new behavior apart
+  Why unrevealed: a related test reaches this change, but no assertion tells the old and new behavior apart
   Changed behavior: return b;
   Missing check: The change to `safeDiv` sits inside `b === 0`, and no related test call enters it:
     observed `safeDiv` calls: `(4, 2)`. The changed line never runs under the tests, so no assertion
