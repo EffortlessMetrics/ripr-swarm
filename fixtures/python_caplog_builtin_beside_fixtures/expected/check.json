@@ -1,0 +1,101 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/python_caplog_builtin_beside_fixtures/input",
+  "config_path": "<cwd>/fixtures/python_caplog_builtin_beside_fixtures/input/ripr.toml",
+  "summary": {"changed_rust_files":0,"probes":1,"findings":1,"exposed":1,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"python","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:22d926b58d6300e8","base_revision":null,"input_identity":"sha256:8cd130e1460a70c4a4959c597af8cb65688c57ab47aee6e084a6487f7c10761a","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:audit.py:python_preview:e21f54bb",
+      "canonical_gap_id": "gap:python:audit.py:check_balance:call_or_output_effect:side_effect:log.warning_balance_low%s_balance",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:python:audit.py:check_balance:call_or_output_effect:side_effect:log.warning_balance_low%s_balance",
+        "language": "python",
+        "file": "audit.py",
+        "owner": "check_balance",
+        "behavior_kind": "call_or_output_effect",
+        "probe_kind": "side_effect",
+        "normalized_discriminator": "log.warning_balance_low%s_balance"
+
+      },
+      "classification": "exposed",
+      "severity": "info",
+      "confidence": 0.60,
+      "probe": {
+        "id": "probe:audit.py:python_preview:e21f54bb",
+        "family": "side_effect",
+        "delta": "effect",
+        "file": "audit.py",
+        "line": 8,
+        "expression": "        log.warning(\"balance low: %s\", balance)",
+        "owner": "python:audit.py::check_balance"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"low","summary":"1 related Python test(s) found for owner `check_balance`"},
+        "infect": {"state":"yes","confidence":"low","summary":"Changed Python call or output effect can alter observable side effects: `log.warning(\"balance low: %s\", balance)`"},
+        "propagate": {"state":"weak","confidence":"low","summary":"Changed Python call/output behavior can propagate through side effects; runtime target resolution is not inferred."},
+        "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted Python oracle kind: `relational_check` (rank 3)"},
+        "discriminate": {"state":"yes","confidence":"low","summary":"Related Python test uses a `relational_check` oracle; static evidence suggests the changed behavior is discriminated."}
+       },
+      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `check_balance`", "infection yes: Changed Python call or output effect can alter observable side effects: `log.warning(\"balance low: %s\", balance)`", "propagation weak: Changed Python call/output behavior can propagate through side effects; runtime target resolution is not inferred.", "observation yes: Strongest extracted Python oracle kind: `relational_check` (rank 3)", "discriminator yes: Related Python test uses a `relational_check` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches call effect: log.warning(\"balance low: %s\", balance) (line 8)", "related test tests/test_audit.py:6 test_low_balance uses weak relational check oracle: assert \"low balance: 5\" in caplog.text"],
+      "flow_sinks": [
+        {"kind":"call_effect","text":"log.warning(\"balance low: %s\", balance)","line":8}
+      ],
+      "evidence": ["owner: check_balance", "owner_kind: function", "test_framework: pytest (test_low_balance)", "test_fixtures: caplog (test_low_balance)", "test_verify_command: python -m pytest tests/test_audit.py::test_low_balance (test_low_balance)", "related_test_relation: syntactic_call (test_low_balance)", "test_oracle: relational_check weak (test_low_balance)", "test_oracle_shape: output_assertion (test_low_balance)"],
+      "missing": ["Related Python test reaches `check_balance` and reads the logged text through `caplog`: the asserted text `low balance: 5` is in the old logged message `low balance: 5` and not after the edit: the new message reads `balance low: 5`."],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "test_low_balance",
+          "file": "tests/test_audit.py",
+          "line": 6,
+          "oracle_strength": "weak",
+          "oracle_kind": "relational_check",
+          "oracle": "assert \"low balance: 5\" in caplog.text"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "relational_check",
+      "oracle_strength": "weak",
+      "recommended_next_step": "Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior.",
+      "suggested_next_action": "Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior.",
+      "language": "python",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "changed_sink": "log, warning, balance, low, balance low: %s",
+      "oracle_alignment": "unknown",
+      "alignment_reason": "no_strong_oracle",
+      "source_currentness": "candidate_current"
+    }
+  ],
+  "preview_languages": [
+    {
+      "language": "python",
+      "file_count": 1,
+      "sample_paths": ["audit.py"],
+      "enabled": true,
+      "analyzed": true,
+      "category": "preview_language_advisory",
+      "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+    }
+  ],
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"audit.py","digest":"sha256:d4de73ddf767dc25caae35c6520b233af7d07a01623bc01884a30b216babe5f8"}]}
+}

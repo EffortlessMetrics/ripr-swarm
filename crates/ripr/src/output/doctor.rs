@@ -718,8 +718,10 @@ pub(crate) enum DoctorArtifactIgnore {
     NoArtifacts,
     /// Git ignore rules cover the artifact root.
     Ignored,
-    /// The artifact root exists and git positively reports it as not
-    /// ignored. `warning` is the exact line the human screen prints.
+    /// Git positively reports the artifact root as not ignored. On a first
+    /// run in a non-Cargo project the root may not exist yet; the warning
+    /// wording then says ripr *will write* there (#9858). `warning` is the
+    /// exact line the human screen prints.
     Unignored {
         /// The actionable warning, including the exact `.gitignore` entry.
         warning: String,
@@ -1096,6 +1098,22 @@ impl DoctorReport {
         self.checks.push(DoctorCheck {
             name: name.to_string(),
             status: DoctorCheckStatus::Advisory,
+            evidence: Some(evidence),
+            elapsed_ms: None,
+        });
+    }
+
+    /// Record the `.mcp.json` verdict (#10347): `pass` when the `ripr` server
+    /// entry matches what `ripr init --mcp` writes, `advisory` otherwise. It
+    /// never changes the overall status.
+    pub(crate) fn add_mcp_config_check(&mut self, ok: bool, evidence: String) {
+        self.checks.push(DoctorCheck {
+            name: "mcp_config".to_string(),
+            status: if ok {
+                DoctorCheckStatus::Pass
+            } else {
+                DoctorCheckStatus::Advisory
+            },
             evidence: Some(evidence),
             elapsed_ms: None,
         });
@@ -3543,7 +3561,7 @@ mod tests {
         std::fs::create_dir_all(&dir).map_err(|err| format!("create dir: {err}"))?;
         let file = dir.join("a-file");
         std::fs::write(&file, "x").map_err(|err| format!("write file: {err}"))?;
-        let mut cases: Vec<(&str, PathBuf, Option<&str>)> = vec![
+        let mut cases = vec![
             ("directory", dir.clone(), None),
             (
                 "missing",
@@ -3552,25 +3570,7 @@ mod tests {
             ),
             ("file", file, Some("the root is not a directory")),
         ];
-        #[cfg(unix)]
-        {
-            let dangling = dir.join("dangling");
-            std::os::unix::fs::symlink(dir.join("no-such-target"), &dangling)
-                .map_err(|err| format!("dangling symlink: {err}"))?;
-            cases.push((
-                "dangling symlink",
-                dangling,
-                Some("the root is not a directory"),
-            ));
-            let looped = dir.join("looped");
-            std::os::unix::fs::symlink(&looped, &looped)
-                .map_err(|err| format!("self symlink: {err}"))?;
-            cases.push((
-                "self-referencing symlink",
-                looped,
-                Some("the root directory cannot be read"),
-            ));
-        }
+        push_symlink_root_cases(&dir, &mut cases)?;
         let failures: Vec<String> = cases
             .iter()
             .filter_map(|(name, root, expected)| {
@@ -3584,6 +3584,43 @@ mod tests {
         } else {
             Err(failures.join("; "))
         }
+    }
+
+    /// Symlinked roots are unix-only. The unconditional call plus the
+    /// `not(unix)` stub keep `cases` mutably borrowed on every platform, so
+    /// the shared vec needs no lint suppression to stay clippy-clean on
+    /// Windows (`unused_mut` fired when the pushes were an inline
+    /// `#[cfg(unix)]` block, #9926 follow-up).
+    #[cfg(unix)]
+    fn push_symlink_root_cases(
+        dir: &Path,
+        cases: &mut Vec<(&'static str, PathBuf, Option<&'static str>)>,
+    ) -> Result<(), String> {
+        let dangling = dir.join("dangling");
+        std::os::unix::fs::symlink(dir.join("no-such-target"), &dangling)
+            .map_err(|err| format!("dangling symlink: {err}"))?;
+        cases.push((
+            "dangling symlink",
+            dangling,
+            Some("the root is not a directory"),
+        ));
+        let looped = dir.join("looped");
+        std::os::unix::fs::symlink(&looped, &looped)
+            .map_err(|err| format!("self symlink: {err}"))?;
+        cases.push((
+            "self-referencing symlink",
+            looped,
+            Some("the root directory cannot be read"),
+        ));
+        Ok(())
+    }
+
+    #[cfg(not(unix))]
+    fn push_symlink_root_cases(
+        _dir: &Path,
+        _cases: &mut Vec<(&'static str, PathBuf, Option<&'static str>)>,
+    ) -> Result<(), String> {
+        Ok(())
     }
 
     #[cfg(unix)]
@@ -5064,42 +5101,68 @@ mod tests {
         // the probe terminates it at the deadline and names the timeout. Run
         // the materialization and probe repeatedly to catch visibility and
         // cleanup races under full-suite parallelism.
-        for attempt in 0..100 {
-            let dir = unique_test_dir("timeout");
-            std::fs::create_dir(&dir).map_err(|err| format!("create dir: {err}"))?;
-            let sleep = ["/usr/bin/sleep", "/bin/sleep"]
+        // Ten threads of ten attempts: the same 100 probes, but each waits out
+        // its 250ms deadline concurrently, so the race window is wider and the
+        // test takes about a tenth of the wall time.
+        let attempts: Vec<Result<(), String>> = std::thread::scope(|scope| {
+            let workers: Vec<_> = (0..10)
+                .map(|worker| {
+                    scope.spawn(move || {
+                        for step in 0..10 {
+                            hanging_tool_attempt(worker * 10 + step)?;
+                        }
+                        Ok(())
+                    })
+                })
+                .collect();
+            workers
                 .into_iter()
-                .find(|candidate| std::path::Path::new(candidate).is_file())
-                .ok_or("no portable Unix sleep utility found")?;
-            let script = format!("#!/bin/sh\nexec {sleep} 60\n");
-            let shim = publish_doctor_test_tool(&dir, "ripr-hanging-probe-tool", &script)?;
+                .map(|worker| {
+                    worker
+                        .join()
+                        .unwrap_or_else(|_| Err("probe worker panicked".to_string()))
+                })
+                .collect()
+        });
+        attempts.into_iter().collect()
+    }
 
-            let start = std::time::Instant::now();
-            let shim_text = shim.to_str().ok_or("shim path is not utf-8")?;
-            // #2242/#2378: publish the executable pathname only after the
-            // writer is closed. The bounded retry for independent host-level
-            // exec contention now lives in `probe_published_tool`, shared with
-            // the atomic-publication test (#2441); a real timeout result is
-            // still never retried.
-            let (status, evidence) = probe_published_tool(shim_text, Duration::from_millis(250));
-            let elapsed = start.elapsed();
+    #[cfg(unix)]
+    fn hanging_tool_attempt(attempt: usize) -> Result<(), String> {
+        let dir = unique_test_dir("timeout");
+        std::fs::create_dir(&dir).map_err(|err| format!("create dir: {err}"))?;
+        let sleep = ["/usr/bin/sleep", "/bin/sleep"]
+            .into_iter()
+            .find(|candidate| std::path::Path::new(candidate).is_file())
+            .ok_or("no portable Unix sleep utility found")?;
+        let script = format!("#!/bin/sh\nexec {sleep} 60\n");
+        let shim = publish_doctor_test_tool(&dir, "ripr-hanging-probe-tool", &script)?;
 
-            std::fs::remove_dir_all(&dir).map_err(|err| format!("remove dir: {err}"))?;
-            if status != DoctorStatus::Fail {
-                return Err(format!(
-                    "attempt {attempt}: hanging tool unexpectedly passed"
-                ));
-            }
-            if evidence != format!("{shim_text} timed out after 250ms") {
-                return Err(format!(
-                    "attempt {attempt}: expected a 250ms timeout, got: {evidence}"
-                ));
-            }
-            if elapsed >= std::time::Duration::from_secs(30) {
-                return Err(format!(
-                    "attempt {attempt}: hanging tool was not terminated: {elapsed:?}"
-                ));
-            }
+        let start = std::time::Instant::now();
+        let shim_text = shim.to_str().ok_or("shim path is not utf-8")?;
+        // #2242/#2378: publish the executable pathname only after the
+        // writer is closed. The bounded retry for independent host-level
+        // exec contention now lives in `probe_published_tool`, shared with
+        // the atomic-publication test (#2441); a real timeout result is
+        // still never retried.
+        let (status, evidence) = probe_published_tool(shim_text, Duration::from_millis(250));
+        let elapsed = start.elapsed();
+
+        std::fs::remove_dir_all(&dir).map_err(|err| format!("remove dir: {err}"))?;
+        if status != DoctorStatus::Fail {
+            return Err(format!(
+                "attempt {attempt}: hanging tool unexpectedly passed"
+            ));
+        }
+        if evidence != format!("{shim_text} timed out after 250ms") {
+            return Err(format!(
+                "attempt {attempt}: expected a 250ms timeout, got: {evidence}"
+            ));
+        }
+        if elapsed >= std::time::Duration::from_secs(30) {
+            return Err(format!(
+                "attempt {attempt}: hanging tool was not terminated: {elapsed:?}"
+            ));
         }
         Ok(())
     }

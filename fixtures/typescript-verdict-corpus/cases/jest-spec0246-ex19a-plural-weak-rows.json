@@ -1,0 +1,47 @@
+{
+  "case_id": "jest-spec0246-ex19a-plural-weak-rows",
+  "subject_id": "authored-ts-spec0246-19a",
+  "diff": "cases/jest-spec0246-ex19a-plural-weak-rows.diff",
+  "anchor": {
+    "file": "src/plural.ts",
+    "line": 2
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "jest_plural_ternary_rows_one_and_three",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx jest",
+    "toolchain": "node 22.22.0; jest 30.5.2, ts-jest 29.4.15, typescript 5.9.3; edit applied by hand and the test command run on the whole package",
+    "mutants": [
+      {
+        "replacement": "return `${n} item${n <= 1 ? \"\" : \"s\"}`;",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "the edit itself: for n = 1 and n = 3 the original and the edit both print the same text, and no test calls plural with 0 or a negative count"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The ternary `n === 1` becomes `n <= 1`. The tests call plural(1) and plural(3), both of which read the same under either operator, so the edit changes nothing the suite can see. Spec cells: RIPR-SPEC-0246 example 19.",
+  "labeling_observation": {
+    "ripr_commit": "345ec05",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0246#19"
+  ]
+}

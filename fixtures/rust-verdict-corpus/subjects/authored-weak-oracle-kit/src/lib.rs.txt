@@ -1,0 +1,7 @@
+//! Authored weak-oracle controls: each owner is reached through a form ripr
+//! cannot follow (an executor, a function value), but the assertion beside it
+//! is too weak to notice a changed result, so the gap is real.
+#![allow(clippy::all)]
+
+pub mod executors;
+pub mod values;

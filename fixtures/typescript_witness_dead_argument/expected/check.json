@@ -12,6 +12,7 @@
   "findings": [
     {
       "id": "probe:src_discount.ts:typescript_preview:a9f257a1",
+      "canonical_gap_id": "gap:typescript:typescript_preview:a9f257a1",
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.40,
@@ -69,8 +70,8 @@
           "oracle": "expect(...).toBe(...)",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "missing_input",
+          "why": "no input this test passes was seen reaching `total == 100`"
         }
       ],
       "typescript_preview_card": {

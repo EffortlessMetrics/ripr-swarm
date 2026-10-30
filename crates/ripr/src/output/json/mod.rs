@@ -1,5 +1,6 @@
 mod context_packet;
 mod finding_alignment;
+mod findings_priority;
 mod formatter;
 mod report;
 
@@ -147,7 +148,6 @@ mod tests {
             owner: None,
         });
         finding.activation.observed_values.push(ValueFact {
-            file: None,
             line: 12,
             text: "discounted_total(50, 100)".to_string(),
             value: "amount = 50".to_string(),
@@ -171,6 +171,8 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         });
 
         let mut out = String::new();
@@ -212,6 +214,35 @@ mod tests {
         let rendered = render(&output);
 
         assert!(rendered.contains("\"base\": \"origin/main\""));
+    }
+
+    /// RIPR-SPEC-0051: the exhaustive text and JSON forms retain source details
+    /// that a compact Markdown summary may normalize onto one line.
+    #[test]
+    fn given_source_controls_when_rendered_then_json_round_trips_and_text_spells_controls()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let source = "`a``b``` | \\\"\n\t  next\r\n\u{0}\u{1b}\u{85}\u{202e}🦀";
+        let mut output = sample_output(None);
+        let finding = output
+            .findings
+            .first_mut()
+            .ok_or("fixture needs a finding")?;
+        finding.probe.expression = source.to_string();
+        finding.probe.before = None;
+        finding.probe.after = None;
+        let text = crate::output::human::render_finding(finding);
+        let changed = text
+            .split_once("\nChanged\n")
+            .and_then(|(_, tail)| tail.split_once("\nChange type\n"))
+            .map(|(changed, _)| changed)
+            .ok_or("full human report needs Changed and Change type sections")?;
+        assert_eq!(
+            changed,
+            "  expr:   `a``b``` | \\\"\n\t  next\\u{0d}\n\\u{00}\\u{1b}\\u{85}\\u{202e}🦀\n"
+        );
+        let json: serde_json::Value = serde_json::from_str(&render(&output))?;
+        assert_eq!(json["findings"][0]["probe"]["expression"], source);
+        Ok(())
     }
 
     // --- Property-based tests (#2751) ---
@@ -305,6 +336,7 @@ mod tests {
             uninspected_changed_lines_lower_bound: 120,
             stop_reason: crate::analysis::PartialDiffStopReason::LineBudget,
             next_file_changed_lines: Some(50),
+            whole_diff_budgets: None,
             partition_identity: "b".repeat(64),
         }
     }
@@ -566,8 +598,26 @@ mod tests {
         for finding in &output.findings {
             output.summary.increment_exposure_class(&finding.class);
         }
+        // The budget keeps the highest-priority finding first (#10093), so the
+        // boundary is that finding's byte size, not the sort-order first.
+        let lead_raw = render_with_config(
+            &output,
+            &config,
+            Some((1, FindingsBudgetSource::Configured)),
+        );
+        let lead_value: serde_json::Value =
+            serde_json::from_str(&lead_raw).map_err(|e| e.to_string())?;
+        let lead_id = lead_value["findings"][0]["id"]
+            .as_str()
+            .ok_or("lead finding id")?
+            .to_string();
+        let lead = output
+            .findings
+            .iter()
+            .find(|finding| finding.id == lead_id)
+            .ok_or("lead finding must be one of the analyzed findings")?;
         let mut first = String::new();
-        super::report::finding_json(&mut first, &output.findings[0], 2);
+        super::report::finding_json(&mut first, lead, 2);
         let exact = first.len();
         for (budget, expected) in [(exact - 1, 1usize), (exact, 2), (exact + 1, 2)] {
             let raw = render_with_config(
@@ -585,8 +635,12 @@ mod tests {
                     .as_str()
                     .is_some_and(|m| m.contains(&format!("{expected} of 3")) && m.contains("=0"))
             );
-            for (actual, original) in rows.iter().zip(&output.findings) {
-                assert_eq!(actual["id"], original.id);
+            for actual in rows {
+                let original = output
+                    .findings
+                    .iter()
+                    .find(|finding| actual["id"] == finding.id.as_str())
+                    .ok_or("rendered finding must be an analyzed finding")?;
                 assert_eq!(actual["classification"], original.class.as_str());
             }
             println!(
@@ -626,22 +680,252 @@ mod tests {
         let unbounded: serde_json::Value =
             serde_json::from_str(&unbounded).map_err(|e| e.to_string())?;
         assert_eq!(bounded["summary"]["no_static_path"], 1);
-        assert_eq!(bounded["findings"][0]["severity"], "note");
+        // #10093: the budget keeps the warning-severity gap instead of the
+        // sort-order first note.
+        assert_eq!(bounded["findings"][0]["severity"], "warning");
         assert_eq!(unbounded["findings"][2]["severity"], "warning");
         assert_eq!(unbounded["findings"][2]["id"], severe.findings[2].id);
-        assert_ne!(bounded["findings"][0]["id"], severe.findings[2].id);
+        assert_eq!(bounded["findings"][0]["id"], severe.findings[2].id);
         assert_eq!(bounded["findings"].as_array().map(Vec::len), Some(1));
         assert_eq!(
             bounded["run_limitations"][0]["downstream_consumable"],
             false
         );
         println!(
-            "SEVERE omitted warning identity={} preserved_total=1 disclosed=true recovered=true",
+            "SEVERE kept warning identity={} preserved_total=1 disclosed=true recovered=true",
             severe.findings[2].id
         );
         println!(
             "EMPTY rendered=0 total=0 limited=false; FULL rendered=3 total=3; SUMMARY unchanged"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn findings_byte_budget_keeps_actionable_findings_over_file_order() -> Result<(), String> {
+        use super::report::{FindingsBudgetSource, render_with_config};
+        use crate::config::RiprConfig;
+        use crate::domain::SourceCurrentness;
+
+        // Sort order is a.rs (exposed x2, unknown), then z.rs (weakly_exposed,
+        // base-side reachable_unrevealed). A file-order prefix would keep only
+        // a.rs; the priority order keeps the candidate-current gap in z.rs.
+        let mut output = sample_output(None);
+        output.findings = vec![
+            finding_with_expression_in_file(
+                "src/a.rs",
+                "a1",
+                10,
+                ExposureClass::Exposed,
+                ProbeFamily::CallDeletion,
+                "values.push(1)",
+                vec![],
+            ),
+            finding_with_expression_in_file(
+                "src/a.rs",
+                "a2",
+                11,
+                ExposureClass::Exposed,
+                ProbeFamily::CallDeletion,
+                "values.push(2)",
+                vec![],
+            ),
+            finding_with_expression_in_file(
+                "src/a.rs",
+                "a3",
+                12,
+                ExposureClass::StaticUnknown,
+                ProbeFamily::SideEffect,
+                "values.len()",
+                vec![],
+            ),
+            finding_with_expression_in_file(
+                "src/z.rs",
+                "z1",
+                967,
+                ExposureClass::WeaklyExposed,
+                ProbeFamily::ReturnValue,
+                "map.insert(key, value)",
+                vec![],
+            ),
+            finding_with_expression_in_file(
+                "src/z.rs",
+                "z2",
+                970,
+                ExposureClass::ReachableUnrevealed,
+                ProbeFamily::Predicate,
+                "a > b",
+                vec![],
+            ),
+        ];
+        output.findings[4].source_currentness = SourceCurrentness::BaseDeleted;
+        let config = RiprConfig::default();
+        let ids = |value: &serde_json::Value| -> Result<Vec<String>, String> {
+            value["findings"]
+                .as_array()
+                .ok_or("findings array")?
+                .iter()
+                .map(|row| {
+                    row["id"]
+                        .as_str()
+                        .map(str::to_string)
+                        .ok_or("finding id".to_string())
+                })
+                .collect()
+        };
+        let parse = |raw: &str| -> Result<serde_json::Value, String> {
+            serde_json::from_str(raw).map_err(|error| error.to_string())
+        };
+
+        // Budget 1: only the top-priority finding, the candidate-current
+        // weakly_exposed one in the LAST file, not the file-order first.
+        let one = parse(&render_with_config(
+            &output,
+            &config,
+            Some((1, FindingsBudgetSource::Configured)),
+        ))?;
+        assert_eq!(ids(&one)?, vec![output.findings[3].id.clone()]);
+        let message = one["run_limitations"][0]["message"]
+            .as_str()
+            .ok_or("limitation message")?;
+        assert!(message.contains("1 of 5"), "{message}");
+        assert!(message.contains("omitted 4:"), "{message}");
+        assert!(
+            message.contains("exposed=2") && message.contains("static_unknown=1"),
+            "per-class dropped counts: {message}"
+        );
+        assert!(
+            message.contains("reachable_unrevealed=1"),
+            "per-class dropped counts: {message}"
+        );
+        assert!(
+            message.contains("src/a.rs=3") && message.contains("src/z.rs=1"),
+            "per-file dropped counts: {message}"
+        );
+        assert!(
+            message.contains("1 base-side or unresolved-currentness"),
+            "{message}"
+        );
+        assert!(message.contains("=0 for the full set"), "{message}");
+        assert_eq!(one["summary"]["findings"], output.summary.findings);
+
+        // Budget between one and two payloads: two kept (weakly_exposed, then
+        // the exposed/unknown tier per key), emitted in sort order, with the
+        // alignment computed over exactly the kept findings.
+        let mut lead = String::new();
+        super::report::finding_json(&mut lead, &output.findings[3], 2);
+        let two = parse(&render_with_config(
+            &output,
+            &config,
+            Some((lead.len(), FindingsBudgetSource::Configured)),
+        ))?;
+        let two_ids = ids(&two)?;
+        assert_eq!(two_ids.len(), 2, "{two_ids:?}");
+        assert_eq!(
+            two_ids[1], output.findings[3].id,
+            "kept set is in sort order"
+        );
+        assert_eq!(
+            two_ids[0], output.findings[2].id,
+            "next by priority: unknown"
+        );
+
+        // Negative: a budget that does not engage keeps every finding in the
+        // unchanged sort order.
+        let all = parse(&render_with_config(
+            &output,
+            &config,
+            Some((usize::MAX / 2, FindingsBudgetSource::Configured)),
+        ))?;
+        let expected: Vec<String> = output.findings.iter().map(|f| f.id.clone()).collect();
+        assert_eq!(ids(&all)?, expected);
+        assert!(all.get("run_limitations").is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn findings_priority_next_step_breaks_class_ties_before_sort_order() -> Result<(), String> {
+        use super::report::{FindingsBudgetSource, render_with_config};
+        use crate::config::RiprConfig;
+
+        // Same class, same currentness, same file: only the later finding in
+        // sort order carries a recommended next step, so it is kept first.
+        let mut output = sample_output(None);
+        output.findings = ["early", "late"]
+            .iter()
+            .enumerate()
+            .map(|(index, name)| {
+                finding_with_expression_in_file(
+                    "src/a.rs",
+                    name,
+                    10 + 10 * index,
+                    ExposureClass::WeaklyExposed,
+                    ProbeFamily::ReturnValue,
+                    "value",
+                    vec![],
+                )
+            })
+            .collect();
+        let kept_id = |output: &CheckOutput| -> Result<String, String> {
+            let raw = render_with_config(
+                output,
+                &RiprConfig::default(),
+                Some((1, FindingsBudgetSource::Configured)),
+            );
+            let value: serde_json::Value = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
+            value["findings"][0]["id"]
+                .as_str()
+                .map(str::to_string)
+                .ok_or("kept finding id".to_string())
+        };
+        // Control: no next step on either, the sort order decides.
+        assert_eq!(kept_id(&output)?, output.findings[0].id);
+        output.findings[1].recommended_next_step =
+            Some("Add an exact assertion for the boundary.".to_string());
+        assert_eq!(
+            kept_id(&output)?,
+            output.findings[1].id,
+            "a recommended next step outranks sort order within one class"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn findings_priority_ties_keep_sort_order_and_name_extra_files() -> Result<(), String> {
+        use super::report::{FindingsBudgetSource, render_with_config};
+        use crate::config::RiprConfig;
+
+        // Equal priority keys fall back to the deterministic sort order, so
+        // the kept finding is the first one, never an arbitrary one. Seven
+        // files exercise the bounded per-file listing.
+        let mut output = sample_output(None);
+        output.findings = (0..7)
+            .map(|index| {
+                finding_with_expression_in_file(
+                    &format!("src/f{index}.rs"),
+                    &format!("f{index}"),
+                    10 + index,
+                    ExposureClass::WeaklyExposed,
+                    ProbeFamily::ReturnValue,
+                    "value",
+                    vec![],
+                )
+            })
+            .collect();
+        let raw = render_with_config(
+            &output,
+            &RiprConfig::default(),
+            Some((1, FindingsBudgetSource::Configured)),
+        );
+        let value: serde_json::Value = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
+        assert_eq!(value["findings"][0]["id"], output.findings[0].id.as_str());
+        let message = value["run_limitations"][0]["message"]
+            .as_str()
+            .ok_or("limitation message")?;
+        assert!(message.contains("omitted 6:"), "{message}");
+        assert!(message.contains("weakly_exposed=6"), "{message}");
+        assert!(message.contains("(+1 more file(s))"), "{message}");
+        assert!(!message.contains("base-side"), "{message}");
         Ok(())
     }
 
@@ -758,7 +1042,7 @@ mod tests {
             finding_with_expression(
                 "decl",
                 46,
-                ExposureClass::Exposed,
+                ExposureClass::WeaklyExposed,
                 ProbeFamily::FieldConstruction,
                 "pub const APPLE_M3_AIR_DEVICE_LABELS_TEXT: &str =",
             ),
@@ -810,6 +1094,7 @@ mod tests {
     #[test]
     fn render_adds_presentation_text_finding_alignment_when_supported() -> Result<(), String> {
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -916,8 +1201,11 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         };
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -1056,8 +1344,11 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         };
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -1235,6 +1526,8 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             },
             RelatedTest {
                 name: "strict_check".to_string(),
@@ -1246,6 +1539,8 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             },
         ];
 
@@ -1260,7 +1555,6 @@ mod tests {
     fn finding_json_formats_observed_value_context_labels() {
         let mut finding = unknown_finding();
         finding.activation.observed_values.push(ValueFact {
-            file: None,
             line: 33,
             text: "assert_eq!(actual, expected)".to_string(),
             value: "actual = 10".to_string(),
@@ -1298,6 +1592,8 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             })
             .collect();
         let mut out = String::new();
@@ -1328,6 +1624,8 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             })
             .collect();
         let mut out = String::new();
@@ -1391,6 +1689,8 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             })
             .collect();
         let mut out = String::new();
@@ -1420,6 +1720,8 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             })
             .collect();
         assert_eq!(finding.related_tests_total(), 2);
@@ -1465,6 +1767,8 @@ mod tests {
                     relation_reason: None,
                     relation_confidence: None,
                     miss: None,
+                    miss_support: None,
+                    role: crate::domain::RelatedTestRole::Contributing,
                 })
                 .collect();
             finding.related_tests_matched_total = Some(count);
@@ -1506,6 +1810,8 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             })
             .collect();
         finding.related_tests_matched_total = Some(9);
@@ -1767,6 +2073,50 @@ mod tests {
     }
 
     #[test]
+    fn finding_json_states_typescript_preview_canonical_gap_id() -> Result<(), String> {
+        let mut finding = unknown_finding();
+        add_typescript_preview_actionability(&mut finding);
+        finding.id = "probe:src_lib.ts:typescript_preview:1a2b3c4d".to_string();
+        let mut out = String::new();
+        finding_json(&mut out, &finding, 0);
+        let value: serde_json::Value = serde_json::from_str(&out)
+            .map_err(|err| format!("finding JSON parse failed: {err}"))?;
+        assert_eq!(
+            value["canonical_gap_id"],
+            "gap:typescript:typescript_preview:1a2b3c4d"
+        );
+
+        // Negative: a finding without the TypeScript preview card, or whose id
+        // is not a TypeScript preview probe id, states no gap id.
+        let mut other_id = finding.clone();
+        other_id.id = "probe:src_lib.ts:other:1a2b3c4d".to_string();
+        let mut out = String::new();
+        finding_json(&mut out, &other_id, 0);
+        let value: serde_json::Value = serde_json::from_str(&out)
+            .map_err(|err| format!("finding JSON parse failed: {err}"))?;
+        assert!(value.get("canonical_gap_id").is_none());
+
+        let mut not_ts = finding.clone();
+        not_ts.language = None;
+        let mut out = String::new();
+        finding_json(&mut out, &not_ts, 0);
+        let value: serde_json::Value = serde_json::from_str(&out)
+            .map_err(|err| format!("finding JSON parse failed: {err}"))?;
+        assert!(value.get("canonical_gap_id").is_none());
+
+        // JavaScript shares the preview card and probe family but has no
+        // TypeScript gap identity (#10709 review).
+        let mut js = finding.clone();
+        js.language = Some(LanguageId::JavaScript);
+        let mut out = String::new();
+        finding_json(&mut out, &js, 0);
+        let value: serde_json::Value = serde_json::from_str(&out)
+            .map_err(|err| format!("finding JSON parse failed: {err}"))?;
+        assert!(value.get("canonical_gap_id").is_none());
+        Ok(())
+    }
+
+    #[test]
     fn finding_json_projects_perl_preview_card_public_preview_scope() -> Result<(), String> {
         let mut finding = unknown_finding();
         add_perl_preview_card_inputs(&mut finding);
@@ -1883,14 +2233,32 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         }];
         finding.recommended_next_step = Some("Add a focused Perl assertion.".to_string());
         finding.language = Some(LanguageId::Perl);
         finding.language_status = Some(LanguageStatus::Preview);
     }
 
+    /// #5531: the typed scope is omitted from a serialized diff `Finding`
+    /// (byte-stable) and round-trips for a repo finding.
+    #[test]
+    fn analysis_scope_serializes_only_for_repo() -> Result<(), String> {
+        let mut finding = unknown_finding();
+        let diff = serde_json::to_value(&finding).map_err(|e| e.to_string())?;
+        assert!(diff.get("analysis_scope").is_none());
+        finding.mark_repo_scoped();
+        let repo = serde_json::to_value(&finding).map_err(|e| e.to_string())?;
+        assert_eq!(repo["analysis_scope"], serde_json::json!("repo"));
+        let restored: Finding = serde_json::from_value(repo).map_err(|e| e.to_string())?;
+        assert_eq!(restored, finding);
+        Ok(())
+    }
+
     fn unknown_finding() -> Finding {
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: "probe:src_lib_rs:1:static_unknown".to_string(),
             canonical_gap: None,
             probe: Probe {
@@ -1942,6 +2310,7 @@ mod tests {
 
     fn sample_output(base: Option<String>) -> CheckOutput {
         CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -2073,7 +2442,6 @@ mod tests {
         let mut finding = unknown_finding();
         finding.activation.observed_values = (0..500)
             .map(|i| ValueFact {
-                file: None,
                 line: 42,
                 text: long_text.clone(),
                 value: format!("arg_{i} = {i}"),
@@ -2082,6 +2450,7 @@ mod tests {
             .collect();
 
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -2140,7 +2509,6 @@ mod tests {
         let mut finding = unknown_finding();
         finding.activation.observed_values = (1..=5_000)
             .map(|line| ValueFact {
-                file: None,
                 line,
                 text: format!("assert!(rendered.contains(\"field_{line}\"));"),
                 value: format!("\"field_{line}\""),
@@ -2185,7 +2553,6 @@ mod tests {
     fn json_omits_observed_values_total_when_nothing_is_dropped() {
         let mut finding = unknown_finding();
         finding.activation.observed_values = vec![ValueFact {
-            file: None,
             line: 12,
             text: "assert_eq!(discounted_total(50, 100), 50);".to_string(),
             value: "amount = 50".to_string(),
@@ -2200,6 +2567,7 @@ mod tests {
 
     fn single_finding_output(finding: Finding) -> CheckOutput {
         CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -2229,6 +2597,7 @@ mod tests {
         // When no_scope_provided=true the JSON output must include the
         // scope_disclosures additive field with scope_status=no_scope_provided.
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -2294,6 +2663,7 @@ mod tests {
         // When no_scope_provided=false (scope was provided) the scope_disclosures
         // field must be absent — this is a real analyzed-empty result.
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -2335,6 +2705,7 @@ mod tests {
         // string must recommend `ripr pilot --root .` and NOT --mode fast.
         // --mode is a speed tier; pilot is the whole-repository route.
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),

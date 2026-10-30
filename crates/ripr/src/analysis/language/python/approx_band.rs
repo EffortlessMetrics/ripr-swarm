@@ -21,7 +21,8 @@ use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion
 use super::related_tests::PythonRelatedCandidate;
 use super::source_facts::parse_module_result;
 use super::{PythonAssertion, PythonOwner, expr_full_name};
-use crate::domain::{OracleStrength, OwnerKind, ValueContext, ValueFact};
+use crate::domain::{OracleStrength, OwnerKind, ValueContext};
+use crate::value_origins::LocatedValueFact;
 use rustpython_parser::ast::{self, Expr, Mod, Stmt};
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -57,7 +58,7 @@ pub(super) enum PythonBandVerdict {
 pub(super) struct PythonBandEvidence {
     pub(super) verdict: PythonBandVerdict,
     pub(super) discriminator: String,
-    pub(super) observed_values: Vec<ValueFact>,
+    pub(super) observed_values: Vec<LocatedValueFact>,
     pub(super) reason: String,
 }
 
@@ -124,7 +125,7 @@ pub(super) fn python_band_reading(
         .collect();
     let observed_values = matching
         .iter()
-        .map(|outcome| ValueFact {
+        .map(|outcome| LocatedValueFact {
             file: None,
             line: outcome.line,
             text: outcome.assertion_text.clone(),

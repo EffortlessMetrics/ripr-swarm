@@ -1,0 +1,9 @@
+# Registers the gap-reach resolution-config scoping regressions (#10954).
+[[extend]]
+id = "RIPR-SPEC-0027"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/gap_reach.rs::resolution_config_that_remaps_imports_disables_scoping",
+  "crates/ripr/src/analysis/language/typescript/gap_reach.rs::a_nested_package_tsconfig_remaps_only_its_own_directory",
+  "crates/ripr/src/analysis/language/typescript/gap_reach.rs::a_workspace_extends_chain_hides_imports_only_when_it_remaps",
+  "crates/ripr/src/analysis/language/typescript/gap_reach.rs::a_self_import_follows_exports_only_into_workspace_sources",
+]

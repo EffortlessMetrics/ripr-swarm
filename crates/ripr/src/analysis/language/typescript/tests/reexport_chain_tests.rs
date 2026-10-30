@@ -333,3 +333,39 @@ fn mock_of_a_module_off_the_chain_keeps_the_credit() -> Result<(), String> {
     assert_credited(&related, "an unrelated mock");
     Ok(())
 }
+
+#[test]
+fn unavailable_star_sibling_cannot_supply_negative_export_evidence() -> Result<(), String> {
+    let barrel = "export * from './utils';\nexport * from './other';\n";
+    for unavailable in [None, Some("export function broken(")] {
+        let mut files = vec![("src/utils.ts", UTILS), ("src/index.ts", barrel)];
+        if let Some(source) = unavailable {
+            files.push(("src/other.ts", source));
+        }
+        let related = related_through_barrel(&files, "src/utils.ts", "withoutBase", UFO_TEST)?;
+        assert!(related.is_empty(), "unavailable star sibling: {related:?}");
+    }
+    // Successfully parsed empty exports establish absence, so credit survives.
+    let files = [
+        ("src/utils.ts", UTILS),
+        ("src/index.ts", barrel),
+        ("src/other.ts", "const privateValue = 1;\n"),
+    ];
+    assert_credited(
+        &related_through_barrel(&files, "src/utils.ts", "withoutBase", UFO_TEST)?,
+        "parsed sibling with no exports",
+    );
+    // An explicit export wins over stars without consulting their bindings.
+    let files = [
+        ("src/utils.ts", UTILS),
+        (
+            "src/index.ts",
+            "export { withoutBase } from './utils';\nexport * from './missing';\n",
+        ),
+    ];
+    assert_credited(
+        &related_through_barrel(&files, "src/utils.ts", "withoutBase", UFO_TEST)?,
+        "explicit export shadows unavailable star",
+    );
+    Ok(())
+}

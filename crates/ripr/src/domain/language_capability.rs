@@ -77,6 +77,12 @@ impl AnalysisMode {
 }
 
 /// Semantic capability family a cell speaks to.
+///
+/// The family set is deliberately two coarse families (#5531 disposition): a
+/// finer family is added only when a distinct producer or consumer makes an
+/// admission/gating decision from its own cell. Today every consumer reads
+/// `StaticFacts` or `RepairRouting`; an unbacked finer cell would only be an
+/// unproven claim, and an absent cell is already the honest `not_proven`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum CapabilityFamily {
     /// Owners, tests, assertions/oracles, probes, related-test relations, and
@@ -136,8 +142,7 @@ pub(crate) const COMMON_NON_CLAIMS: &[&str] = &[
     "no gate, badge, baseline, or RIPR Zero authority",
 ];
 
-const RUST_FALLBACK: &str =
-    "unknown stop reasons stay explicit; static findings never claim a runtime mutation outcome";
+const RUST_FALLBACK: &str = "unknown stop reasons stay explicit; static findings never claim a runtime mutation outcome; property evidence is limited to audited registry proptest 1.11.0, canonical qualified function macros at file level in ordinary Cargo lib/test roots, explicitly suffixed integer or bool Just inputs, and direct exact-arity prop_assert/prop_assert_eq with no runner overrides; repository property attribution also requires existing free-owner binding proof, with canonical library-qualified owner calls covered; unsuffixed integers, inline modules, raw-spelled declarations/bindings, unresolved owner paths, prop_assert_ne, prelude imports, ranges, strings, model/helper propagation, QuickCheck and explicit runners remain unproved";
 const PYTHON_FACTS_LIMIT: &str = "syntax-first and advisory; static-limit, heuristic-only, no-path, and already-observed states stay out of repair packets";
 const PYTHON_REPO_LIMIT: &str = "bounded working set; capped or partial runs are disclosed on language_runs and never back a full-denominator, all-clear, badge, or baseline claim; repo-scoped seam formats render no Python seams (python_diff_first)";
 const PYTHON_REPAIR_LIMIT: &str = "selected static repair routes only: direct weak evidence, concrete missing discriminator, safe test location, and verify command; no test execution, generated tests, or production edits";
@@ -148,7 +153,7 @@ const PERL_LIMIT: &str = "requires a ripr build with Cargo feature lang-perl plu
 const PERL_REPAIR_LIMIT: &str =
     "blocked on real-repository producer proof and real Perl repository receipts";
 
-const SPEC_RUST: &[&str] = &["RIPR-SPEC-0001"];
+const SPEC_RUST: &[&str] = &["RIPR-SPEC-0001", "RIPR-SPEC-0117", "RIPR-SPEC-0197"];
 const SPEC_RUST_REPAIR: &[&str] = &["RIPR-SPEC-0001", "RIPR-SPEC-0057"];
 const SPEC_PYTHON: &[&str] = &["RIPR-SPEC-0026", "RIPR-SPEC-0028"];
 const SPEC_TS: &[&str] = &["RIPR-SPEC-0026", "RIPR-SPEC-0027"];
@@ -377,6 +382,29 @@ pub(crate) fn state_establishes_capability(state: SupportState) -> bool {
     )
 }
 
+/// Scope-specific reason a repo-mode finding carries no repair route (#5531),
+/// derived from the capability registry instead of a hardcoded copy. `None`
+/// when the registry establishes repo-mode `repair_routing` for `language`,
+/// so a future promotion cannot leave this text stale.
+pub(crate) fn repo_mode_no_repair_routing_reason(language: LanguageId) -> Option<String> {
+    let state = cell_state(
+        language,
+        AnalysisMode::Repo,
+        CapabilityFamily::RepairRouting,
+    );
+    if state_establishes_capability(state) {
+        return None;
+    }
+    Some(format!(
+        "repo-mode findings have no repair routing ({}/{}/{}/{} is {})",
+        language.as_str(),
+        FRAMEWORK_ANY,
+        AnalysisMode::Repo.as_str(),
+        CapabilityFamily::RepairRouting.as_str(),
+        state.as_str()
+    ))
+}
+
 /// Whether any registered cell, whatever its framework (`any`, `pytest`,
 /// `unittest`, ...), establishes `family` for `language` in `mode`. A
 /// combination with no registered cell is `not_proven` and never implied by a
@@ -451,6 +479,30 @@ pub(crate) fn cell_id(cell: &CapabilityCell) -> String {
     )
 }
 
+pub(crate) const REGISTRY_BEGIN: &str = "<!-- capability-registry:begin (generated from domain::language_capability::CAPABILITY_CELLS; do not edit) -->";
+pub(crate) const REGISTRY_END: &str = "<!-- capability-registry:end -->";
+
+/// The generated registry projection, markers included. This is the single
+/// renderer: `ripr capabilities --markdown` prints it and the drift test and
+/// `cargo xtask capability-docs` compare/write exactly this text. One row per cell, in
+/// table order; state and ceiling come straight from the cell.
+pub(crate) fn render_registry_block(cells: &[CapabilityCell]) -> String {
+    let mut out = String::new();
+    out.push_str(REGISTRY_BEGIN);
+    out.push_str("\n\n| Cell (language/framework/mode/family) | Support state | Tier ceiling |\n| --- | --- | --- |\n");
+    for cell in cells {
+        out.push_str(&format!(
+            "| `{}` | `{}` | `{}` |\n",
+            cell_id(cell),
+            cell.state.as_str(),
+            cell.tier_ceiling.as_str()
+        ));
+    }
+    out.push('\n');
+    out.push_str(REGISTRY_END);
+    out
+}
+
 /// Digest of the semantic content, independent of row order, so a consumer can
 /// tell whether anything it cached about capability support moved.
 pub(crate) fn semantic_digest(cells: &[CapabilityCell]) -> String {
@@ -485,6 +537,79 @@ pub(crate) fn semantic_digest(cells: &[CapabilityCell]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn repo_mode_no_repair_routing_reason_is_registry_derived() {
+        for (language, name) in [
+            (LanguageId::Python, "python"),
+            (LanguageId::TypeScript, "typescript"),
+            (LanguageId::JavaScript, "javascript"),
+        ] {
+            assert_eq!(
+                cell_state(language, Repo, CapabilityFamily::RepairRouting),
+                NotProven
+            );
+            assert_eq!(
+                repo_mode_no_repair_routing_reason(language),
+                Some(format!(
+                    "repo-mode findings have no repair routing ({name}/any/repo/repair_routing is not_proven)"
+                ))
+            );
+        }
+    }
+
+    /// Rust repo-mode repair routing is absent on purpose (#5531): the Rust
+    /// repair path (RIPR-SPEC-0057) is validated for diff-scoped findings only,
+    /// and repo-mode static facts being established implies nothing about it.
+    #[test]
+    fn rust_repo_repair_routing_is_deliberately_absent_and_fails_closed() {
+        assert_eq!(cell_state(LanguageId::Rust, Repo, RepairRouting), NotProven);
+        assert!(
+            !CAPABILITY_CELLS
+                .iter()
+                .any(|cell| cell.mode == Repo && cell.family == RepairRouting),
+            "no language registers repo-mode repair routing; adding one needs its own validated path and this test updated"
+        );
+        assert!(!family_established_for_any_framework(
+            LanguageId::Rust,
+            Repo,
+            RepairRouting
+        ));
+        assert_eq!(
+            repo_mode_no_repair_routing_reason(LanguageId::Rust),
+            Some(
+                "repo-mode findings have no repair routing (rust/any/repo/repair_routing is not_proven)"
+                    .to_string()
+            )
+        );
+        // Neighbors stay established: absence is not inherited from them, and
+        // they do not imply the absent cell.
+        assert!(state_establishes_capability(cell_state(
+            LanguageId::Rust,
+            Repo,
+            StaticFacts
+        )));
+        assert!(state_establishes_capability(cell_state(
+            LanguageId::Rust,
+            Diff,
+            RepairRouting
+        )));
+    }
+
+    /// Exhaustive on purpose: adding a family is a compile error here until the
+    /// author records which producer/consumer needs it and registers cells.
+    #[test]
+    fn capability_families_are_the_two_backed_by_consumers() {
+        fn backed(family: CapabilityFamily) -> &'static str {
+            match family {
+                CapabilityFamily::StaticFacts => "static_facts",
+                CapabilityFamily::RepairRouting => "repair_routing",
+            }
+        }
+        for cell in CAPABILITY_CELLS {
+            assert_eq!(backed(cell.family), cell.family.as_str());
+        }
+    }
 
     #[test]
     fn absent_repo_repair_routing_cells_are_not_proven_and_fail_closed() {

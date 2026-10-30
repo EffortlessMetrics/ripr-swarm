@@ -48,15 +48,6 @@ pub(crate) const CODE_ITEM_NOT_FOUND: &str = "item_not_found";
 /// closed instead of silently picking one item.
 pub(crate) const CODE_ID_AMBIGUOUS: &str = "id_ambiguous";
 pub(crate) const CODE_RESULT_TOO_LARGE: &str = "result_too_large";
-/// #7462: `ripr_get_gap` is already one item. Retrying it cannot shrink the
-/// document. The recovery names `--committed` because the snapshot analyzed
-/// the committed default-branch diff: a plain `ripr check` on a dirty tracked
-/// worktree would select the working tree and can silently analyze a
-/// different diff (#7462 review). The CLI JSON stays a bounded summary —
-/// related tests cap per finding and a large findings array can omit
-/// findings (#5203) — so the recovery discloses that bound instead of
-/// promising the complete item.
-pub(crate) const RECOVERY_GAP_ITEM_TOO_LARGE: &str = "this item's evidence exceeds the MCP response bound; ripr_get_gap and ripr://gap cannot return it. Outside MCP, ripr check --committed --format json reads the committed diff as a bounded summary: related tests are capped per finding and a large findings array can omit findings";
 /// The list pager byte-fits every page and refuses closed when nothing fits
 /// (#6021), so a page that reaches this final guard was already narrowed as
 /// far as paging can narrow it; no caller action shrinks it further. The
@@ -65,6 +56,14 @@ pub(crate) const RECOVERY_GAP_LIST_TOO_LARGE: &str =
     "this page was already narrowed to fit; there is no narrower MCP read of this list page";
 pub(crate) const RECOVERY_SNAPSHOT_TOO_LARGE: &str =
     "page identities with ripr_list_gaps; this snapshot document exceeds the MCP response bound";
+/// The non-pageable disclosure overflow that filtering cannot cause: only
+/// then is the snapshot identity route the honest recovery (#9895).
+pub(crate) const RECOVERY_GAP_LIST_IDENTITY_ROUTE: &str = "read identities through the ripr://snapshot/{snapshot_id} resource and single items through ripr_get_gap";
+/// The overflow the snapshot identity route cannot fix: when the echoed
+/// filter value is the difference between a fitting shell and an
+/// overflowing one, the truthful recovery names the filter, not the page
+/// (#9895).
+pub(crate) const RECOVERY_GAP_LIST_FILTER_TOO_LARGE: &str = "the echoed filter value, not the page, exceeds the response bound; narrow the file/class/language filter and retry ripr_list_gaps";
 pub(crate) const RECOVERY_REFRESH_TOO_LARGE: &str = "the refresh result exceeds the MCP response bound; read session state with ripr_workspace_status";
 pub(crate) const RECOVERY_STATUS_TOO_LARGE: &str =
     "the status document exceeds the MCP response bound; there is no narrower status read";
@@ -80,6 +79,10 @@ pub(crate) const RESERVED_FAILURE_CODES: &[&str] = &[
 ];
 
 const MAX_FAILURE_DETAIL_CHARS: usize = 512;
+/// Whole recovery strings are bounded before they enter failure envelopes.
+/// Never truncate shell quoting or a JSON retry into executable-looking text.
+pub(crate) const MAX_FAILURE_RECOVERY_BYTES: usize = 4096;
+pub(crate) const RECOVERY_TOO_LONG: &str = "literal recovery is unavailable because its complete source-bound route exceeds the bounded MCP failure response; inspect the captured input and repository configuration before retrying. No truncated command is provided";
 
 /// The caller-narrowed window over a gap list's selected items (#6021):
 /// `offset` indexes the selected items in snapshot order, `limit` caps the
@@ -88,7 +91,23 @@ const MAX_FAILURE_DETAIL_CHARS: usize = 512;
 pub(crate) struct GapListWindow {
     pub(crate) offset: usize,
     pub(crate) limit: Option<usize>,
+    /// Start index within the stored omission disclosure (#9360). The
+    /// omission list pages on its own axis, [`OMITTED_WINDOW`] entries at a
+    /// time, so a large truncated selection cannot make the shell outgrow
+    /// the wire bound.
+    pub(crate) omitted_offset: usize,
 }
+
+/// Omitted identities disclosed inline per response. Each entry is a short
+/// identity plus a reason token, so this keeps the omission window well under
+/// the page ceiling; the remainder is reached through `omitted_page`.
+pub(crate) const OMITTED_WINDOW: usize = 200;
+
+/// Serialized-byte budget for one omission window. The entry cap alone does
+/// not bound size (canonical identities embed paths and qualified owners), so
+/// the window also stops once this many bytes are emitted; the first entry
+/// always ships so the walk makes progress.
+pub(crate) const OMITTED_WINDOW_BYTES: usize = 16 * 1024;
 
 /// Caller-narrowed filters over already-projected commit-time facts
 /// (#7464): `file` (exact, prefix, or trailing-segment match after `./`
@@ -203,6 +222,8 @@ struct GapListScope<'a> {
 /// full stored-selection count while `page.returned` counts this page.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct GapPage {
+    /// Requested start of the omission window; see [`GapListWindow`].
+    omitted_offset: usize,
     offset: usize,
     limit: Option<usize>,
     returned: usize,
@@ -245,7 +266,7 @@ fn document_bytes(value: &Value) -> Result<usize, AttemptFailure> {
 pub(crate) struct AttemptFailure {
     pub(crate) code: &'static str,
     pub(crate) detail: String,
-    pub(crate) recovery: &'static str,
+    pub(crate) recovery: String,
     pub(crate) data: Value,
 }
 
@@ -253,12 +274,12 @@ impl AttemptFailure {
     pub(crate) fn new(
         code: &'static str,
         detail: impl Into<String>,
-        recovery: &'static str,
+        recovery: impl Into<String>,
     ) -> Self {
         Self {
             code,
             detail: bounded_detail(detail),
-            recovery,
+            recovery: bounded_recovery(recovery),
             data: json!({}),
         }
     }
@@ -309,6 +330,83 @@ fn bounded_detail(detail: impl Into<String>) -> String {
     bounded
 }
 
+fn bounded_recovery(recovery: impl Into<String>) -> String {
+    let recovery = recovery.into();
+    if recovery.len() > MAX_FAILURE_RECOVERY_BYTES {
+        RECOVERY_TOO_LONG.to_string()
+    } else {
+        recovery
+    }
+}
+
+/// One existing CLI renderer owns root/base quoting and explicit source flags.
+/// The route re-analyzes current state; it cannot replay immutable snapshot bytes.
+fn recovery_check_command(root: &Path, base: Option<&str>, source: RefreshSource) -> String {
+    let input = crate::app::CheckInput {
+        root: root.to_path_buf(),
+        base: base.map(str::to_string),
+        ..Default::default()
+    };
+    crate::app::finding_navigation_with_worktree(
+        &input,
+        None,
+        false,
+        source == RefreshSource::Worktree,
+    )
+    .list_command()
+}
+
+fn refresh_retry_arguments(base: Option<&str>, source: RefreshSource) -> String {
+    let mut arguments = json!({});
+    if source == RefreshSource::Worktree {
+        arguments["source"] = json!("worktree");
+    }
+    if let Some(base) = base {
+        arguments["base"] = json!(base);
+    }
+    arguments.to_string()
+}
+
+fn check_retry_recovery(root: &Path, base: Option<&str>, source: RefreshSource) -> String {
+    format!(
+        "retry ripr_refresh with {}; if the failure persists, run `{}` outside MCP for the full diagnostic of the current repository state",
+        refresh_retry_arguments(base, source),
+        recovery_check_command(root, base, source)
+    )
+}
+
+fn gap_item_recovery(output: &crate::app::CheckOutput, source: RefreshSource) -> String {
+    let command = recovery_check_command(&output.root, output.base.as_deref(), source);
+    bounded_recovery(format!(
+        "this item's evidence exceeds the MCP response bound; ripr_get_gap and ripr://gap cannot return it. Outside MCP, run `{command}` for a bounded summary using the captured root, source kind and base. This re-analyzes current state, not immutable snapshot bytes: related tests are capped per finding and a large findings array can omit findings"
+    ))
+}
+
+/// Which input a `ripr_refresh` analyzes (#7357). `Committed` is the
+/// default and the only behavior of an omitted argument; `Worktree` is the
+/// opt-in saved tracked-worktree diff (staged and unstaged tracked edits).
+/// The requested source (session) and the captured source (snapshot) are
+/// distinct facts: a failed worktree request never relabels a retained
+/// committed snapshot.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum RefreshSource {
+    #[default]
+    Committed,
+    Worktree,
+}
+
+impl RefreshSource {
+    pub(crate) const COMMITTED_NAME: &'static str = "committed";
+    pub(crate) const WORKTREE_NAME: &'static str = "worktree";
+
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Committed => Self::COMMITTED_NAME,
+            Self::Worktree => Self::WORKTREE_NAME,
+        }
+    }
+}
+
 /// The completed-snapshot authority for one MCP session. Immutable once
 /// committed: refresh replaces the whole snapshot, never mutates it.
 pub(crate) struct Snapshot {
@@ -340,6 +438,21 @@ pub(crate) struct Snapshot {
     /// names it so a snapshot never reads as the default-branch diff when it
     /// was analyzed against another revision.
     pub(crate) base: Option<String>,
+    /// The source the analysis was actually captured under (#7357). Worktree
+    /// snapshots carry it in the snapshot identity; committed identities are
+    /// unchanged. A worktree snapshot binds no seam inventory and no card
+    /// producers: no consumed-source commitment spans the findings and
+    /// those later live-file producers, so cards and repair readiness are
+    /// withheld rather than claimed current.
+    pub(crate) source: RefreshSource,
+    /// Private CLI fallback bound when the producer output is captured. It is
+    /// not part of portable identity or ordinary success documents. Newer
+    /// requested inputs cannot relabel recovery for retained evidence.
+    gap_item_recovery: String,
+    /// The producer's mixed-language completeness view bound at commit time
+    /// (#6475). Served as `session.language_completeness`; deliberately not
+    /// part of the snapshot identity, so existing identities are unchanged.
+    pub(crate) language_view: Option<crate::analysis::language_outcome::LanguageCompletenessView>,
 }
 
 /// The scope-relevant working-tree facts one snapshot was analyzed against.
@@ -378,6 +491,7 @@ impl Snapshot {
         output: &crate::app::CheckOutput,
         root_identity: Option<&str>,
         admission: &super::repair_admission::SeamAdmission,
+        source: RefreshSource,
     ) -> Result<Self, AttemptFailure> {
         let outcome = output
             .analysis_outcome
@@ -386,7 +500,7 @@ impl Snapshot {
                 AttemptFailure::new(
                     CODE_ANALYSIS_FAILED,
                     "the producer returned no typed analysis outcome",
-                    "retry with ripr_refresh; if the failure persists, run `ripr check --format json` in the repository",
+                    check_retry_recovery(&output.root, output.base.as_deref(), source),
                 )
             })?
             .clone();
@@ -398,14 +512,18 @@ impl Snapshot {
                         "the workspace input is unsupported: {}",
                         limitation_summary(&outcome)
                     ),
-                    "narrow the diff (for example `ripr check --base <revision> --format json`) and retry ripr_refresh",
+                    format!(
+                        "narrow the diff by retrying ripr_refresh with {}; for a diagnostic of the current input, run `{}` outside MCP",
+                        refresh_retry_arguments(Some("<revision>"), source),
+                        recovery_check_command(&output.root, output.base.as_deref(), source)
+                    ),
                 ));
             }
             AnalysisOutcomeKind::AnalysisFailed => {
                 return Err(AttemptFailure::new(
                     CODE_ANALYSIS_FAILED,
                     format!("the analysis failed: {}", limitation_summary(&outcome)),
-                    "retry with ripr_refresh; if the failure persists, run `ripr check --format json` in the repository",
+                    check_retry_recovery(&output.root, output.base.as_deref(), source),
                 ));
             }
             AnalysisOutcomeKind::NoScope
@@ -431,7 +549,7 @@ impl Snapshot {
         items.sort_by(|left, right| left.canonical_id.cmp(&right.canonical_id));
 
         let scope = ScopeFacts::from_output(output);
-        let snapshot_id = snapshot_identity(&outcome, &items, &scope).map_err(|error| {
+        let snapshot_id = snapshot_identity(&outcome, &items, &scope, source).map_err(|error| {
             AttemptFailure::new(CODE_ANALYSIS_FAILED, error, "retry with ripr_refresh")
         })?;
         let profile_identity = format!(
@@ -466,6 +584,9 @@ impl Snapshot {
             selection,
             scope,
             base: None,
+            source,
+            gap_item_recovery: gap_item_recovery(output, source),
+            language_view: None,
         })
     }
 
@@ -481,6 +602,7 @@ impl Snapshot {
             output,
             root_identity,
             &super::repair_admission::SeamAdmission::unevaluated(),
+            RefreshSource::Committed,
         )
     }
 
@@ -504,6 +626,7 @@ fn snapshot_identity(
     outcome: &AnalysisOutcome,
     items: &[GapItem],
     scope: &ScopeFacts,
+    source: RefreshSource,
 ) -> Result<String, String> {
     let outcome_digest = outcome.semantic_digest()?;
     let item_ids = items
@@ -514,7 +637,7 @@ fn snapshot_identity(
         .iter()
         .map(|item| item.evidence_sha256.as_str())
         .collect::<Vec<_>>();
-    let payload = json!({
+    let mut payload = json!({
         "outcome_digest": outcome_digest,
         "items": item_ids,
         "evidence": evidence_digests,
@@ -523,6 +646,14 @@ fn snapshot_identity(
         // share an identity (#5995 review).
         "scope": scope.identity_key(),
     });
+    // #7357: the source kind is load-bearing identity. Equal findings under
+    // a committed and a saved-worktree capture are different snapshots
+    // (different scope, different withheld claims), so a worktree snapshot
+    // never shares an id with a committed one. The committed payload is
+    // unchanged, so existing committed identities do not move.
+    if source == RefreshSource::Worktree {
+        payload["source"] = json!(source.as_str());
+    }
     let bytes = serde_json::to_vec(&payload)
         .map_err(|error| format!("serialize snapshot identity: {error}"))?;
     Ok(format!("snapshot:sha256:{}", sha256_hex(&bytes)))
@@ -568,6 +699,10 @@ pub(crate) struct WorkspaceSession {
     /// The explicit base revision of the most recent refresh request, `None`
     /// when it asked for the default branch (or none was requested yet).
     pub(crate) desired_base: Option<String>,
+    /// The source of the most recent refresh request (#7357). Distinct from
+    /// the retained snapshot's captured `source`: a failed worktree request
+    /// leaves a committed last-good tagged committed.
+    pub(crate) desired_source: RefreshSource,
     /// Session repair transactions created by `ripr_prepare_repair`, keyed by
     /// deterministic attempt identity. In-memory like the snapshot: a restart
     /// drops it, and every transaction binds the snapshot identity it was
@@ -671,20 +806,72 @@ impl WorkspaceSession {
         // item summaries; its measured size sets the page budget. The
         // reserve absorbs the small byte difference between this shell's
         // zeroed page fields and the filled ones the caller receives.
-        let shell_bytes = {
+        let shell_page = GapPage {
+            omitted_offset: window.omitted_offset,
+            ..GapPage::default()
+        };
+        let shell = {
             let scope = GapListScope {
                 selection,
                 requested,
                 filter,
                 filtered,
             };
-            let shell =
-                self.gap_list_document(snapshot, &scope, Vec::new(), &GapPage::default())?;
-            document_bytes(&shell)?
+            self.gap_list_document(snapshot, &scope, Vec::new(), &shell_page)?
         };
+        let shell_bytes = document_bytes(&shell)?;
+        // The same shell with an empty filter echo isolates the echo's
+        // contribution: when the echo is the difference between a fitting
+        // shell and an overflowing one, the overflow is filter-driven and
+        // the refusal must name the filter, not the identity route (#9895).
+        // `filtered` stays as counted so only the echo differs between the
+        // two probes.
+        let shell_without_filter = {
+            let scope = GapListScope {
+                selection,
+                requested,
+                filter: &GapListFilter::default(),
+                filtered,
+            };
+            self.gap_list_document(snapshot, &scope, Vec::new(), &shell_page)?
+        };
+        let shell_without_filter_bytes = document_bytes(&shell_without_filter)?;
+        let shell_envelope_overflows =
+            crate::mcp::protocol::structured_envelope_overflows(&shell, max_envelope_bytes)
+                .map_err(|error| {
+                    AttemptFailure::new(CODE_ANALYSIS_FAILED, error, "retry with ripr_refresh")
+                })?;
         // Reserve covers the array syntax around the summaries and the
         // byte-accounting margin; per-item commas are charged below.
         let reserve = 256usize;
+        // The recovery names what the caller can change: a shell that fits
+        // once the filter echo is removed overflowed because of the filter;
+        // any other overflow is a disclosure the page cannot narrow.
+        let recovery_for_envelope =
+            |shell_without_filter_envelope_overflows: bool| -> &'static str {
+                if shell_envelope_overflows && !shell_without_filter_envelope_overflows {
+                    RECOVERY_GAP_LIST_FILTER_TOO_LARGE
+                } else {
+                    RECOVERY_GAP_LIST_IDENTITY_ROUTE
+                }
+            };
+        // The overflow side carries the same reserve margin the page budget
+        // charges: the final document adds the echoed window (for example a
+        // past-end offset renders longer than the zero-page shell probe), so
+        // a shell that fits raw can still overflow once page metadata is
+        // rendered. Attributing that overflow without the reserve would
+        // fall back to the identity route even when dropping the echo
+        // leaves a fitting shell (#9895 review).
+        let recovery_for_document = || -> &'static str {
+            if shell_bytes.saturating_add(reserve) > super::MAX_TOOL_DOCUMENT_BYTES
+                && shell_without_filter_bytes.saturating_add(reserve)
+                    <= super::MAX_TOOL_DOCUMENT_BYTES
+            {
+                RECOVERY_GAP_LIST_FILTER_TOO_LARGE
+            } else {
+                RECOVERY_GAP_LIST_IDENTITY_ROUTE
+            }
+        };
         let page_budget =
             super::MAX_TOOL_DOCUMENT_BYTES.saturating_sub(shell_bytes.saturating_add(reserve));
 
@@ -716,6 +903,7 @@ impl WorkspaceSession {
         // keep it whole when it fits; only then bisect the strictly
         // monotone continuation prefixes for the largest fitting page.
         let page_fields = |count: usize| GapPage {
+            omitted_offset: window.omitted_offset,
             // The window echoes the requested offset; a past-end request is
             // an empty disclosed page at that offset, not a renumbered one.
             offset: window.offset,
@@ -763,13 +951,21 @@ impl WorkspaceSession {
                 // includes empty pages whose echoed filters fill the shell;
                 // fail closed instead of shipping a text-only success that
                 // breaks the outputSchema contract (#6021 review, #7768).
+                let shell_without_filter_overflows =
+                    crate::mcp::protocol::structured_envelope_overflows(
+                        &shell_without_filter,
+                        max_envelope_bytes,
+                    )
+                    .map_err(|error| {
+                        AttemptFailure::new(CODE_ANALYSIS_FAILED, error, "retry with ripr_refresh")
+                    })?;
                 return Err(AttemptFailure::new(
                     CODE_RESULT_TOO_LARGE,
                     format!(
                         "gap list cannot serve even one page with its structured result: the non-pageable disclosure alone fills the {max_envelope_bytes}-byte id-aware envelope budget ({}-byte response bound minus the request id and outer reserve)",
                         super::MAX_RESPONSE_BYTES
                     ),
-                    "read identities through the ripr://snapshot/{snapshot_id} resource and single items through ripr_get_gap",
+                    recovery_for_envelope(shell_without_filter_overflows),
                 )
                 .with_data(json!({ "current_snapshot_id": snapshot.snapshot_id })));
             }
@@ -787,7 +983,8 @@ impl WorkspaceSession {
         let document = self.gap_list_document(snapshot, &scope, items, &page)?;
         // A listing whose non-pageable shell (for example an omission
         // disclosure alone) outgrows the ceiling cannot be narrowed by
-        // paging; fail closed naming the identity route (#6021).
+        // paging; fail closed naming what the caller can change (#6021,
+        // #9895).
         let bytes = document_bytes(&document)?;
         if bytes > super::MAX_TOOL_DOCUMENT_BYTES {
             return Err(AttemptFailure::new(
@@ -796,7 +993,7 @@ impl WorkspaceSession {
                     "gap list cannot fit even one wire-fitting page: its non-pageable disclosure renders {bytes} bytes against the {}-byte page ceiling",
                     super::MAX_TOOL_DOCUMENT_BYTES
                 ),
-                "read identities through the ripr://snapshot/{snapshot_id} resource and single items through ripr_get_gap",
+                recovery_for_document(),
             )
             .with_data(json!({ "current_snapshot_id": snapshot.snapshot_id })));
         }
@@ -821,21 +1018,63 @@ impl WorkspaceSession {
             "tool": "ripr_get_gap",
             "resource_template": "ripr://gap/{canonical_id}",
         });
-        if let Some(next_offset) = page.next_offset {
-            // The generated route pins the snapshot identity and the caller
-            // filters: a refresh between pages fails closed with
-            // stale_snapshot instead of silently mixing snapshots, and the
-            // narrowed walk resumes narrowed (#6021 review, #7464).
+        // The omission list is windowed independently of the item page: a
+        // past-end offset is an empty disclosed window, never a renumbered
+        // one (#9360).
+        let omitted_start = page.omitted_offset.min(selection.omitted.len());
+        let mut omitted_window = Vec::new();
+        let mut omitted_bytes = 0usize;
+        for item in &selection.omitted[omitted_start..] {
+            let entry = json!({
+                "canonical_id": item.canonical_id,
+                "reason": omitted_reason_as_str(item.reason),
+            });
+            // One byte per joining comma keeps the accounting exact.
+            let cost = document_bytes(&entry)?.saturating_add(1);
+            if omitted_window.len() >= OMITTED_WINDOW
+                || (!omitted_window.is_empty()
+                    && omitted_bytes.saturating_add(cost) > OMITTED_WINDOW_BYTES)
+            {
+                break;
+            }
+            omitted_bytes = omitted_bytes.saturating_add(cost);
+            omitted_window.push(entry);
+        }
+        let omitted_end = omitted_start + omitted_window.len();
+        let omitted_next = (omitted_end < selection.omitted.len()).then_some(omitted_end);
+        // Both continuation routes replay the caller's whole request and
+        // advance only their own axis: the snapshot pin, filters, and the
+        // limit carry over so following either route never silently changes
+        // the other window (#9360 review).
+        let replay_arguments = |offset: usize, omitted_offset: usize| {
             let mut arguments = json!({
                 "snapshot_id": snapshot.snapshot_id,
-                "offset": next_offset,
+                "offset": offset,
             });
+            if omitted_offset > 0 {
+                arguments["omitted_offset"] = json!(omitted_offset);
+            }
             for (name, value) in filter.arguments().as_object().cloned().unwrap_or_default() {
                 arguments[name] = value;
             }
             if let Some(limit) = page.limit {
                 arguments["limit"] = json!(limit);
             }
+            arguments
+        };
+        if let Some(next_omitted) = omitted_next {
+            continuation["next_omitted_page"] = json!({
+                "tool": "ripr_list_gaps",
+                "arguments": replay_arguments(page.offset, next_omitted),
+            });
+        }
+        if let Some(next_offset) = page.next_offset {
+            // The generated route pins the snapshot identity and the caller
+            // filters: a refresh between pages fails closed with
+            // stale_snapshot instead of silently mixing snapshots, and the
+            // narrowed walk resumes narrowed (#6021 review, #7464). It also
+            // keeps the requested omission window (#9360 review).
+            let arguments = replay_arguments(next_offset, page.omitted_offset);
             continuation["next_page"] = json!({
                 "tool": "ripr_list_gaps",
                 "arguments": arguments,
@@ -885,14 +1124,13 @@ impl WorkspaceSession {
                 "has_more": page.has_more,
                 "next_offset": page.next_offset,
             },
-            "omitted_items": selection
-                .omitted
-                .iter()
-                .map(|item| json!({
-                    "canonical_id": item.canonical_id,
-                    "reason": omitted_reason_as_str(item.reason),
-                }))
-                .collect::<Vec<_>>(),
+            "omitted_items": omitted_window,
+            "omitted_page": {
+                "offset": page.omitted_offset,
+                "returned": omitted_window.len(),
+                "has_more": omitted_next.is_some(),
+                "next_offset": omitted_next,
+            },
             "continuation": continuation,
             "claim_boundary": "Bounded working-set projection over one completed snapshot. Selection is the shared CLI/LSP budget authority; omitted identities and reasons are disclosed, never silently truncated, and no business-risk ranking is inferred. Filters narrow the stored selection over commit-time facts before paging; they never widen it.",
             "limitations": [
@@ -931,7 +1169,20 @@ impl WorkspaceSession {
             );
             links.remove("repair_attempt_note");
         }
-        bounded_document(document, RECOVERY_GAP_ITEM_TOO_LARGE)
+        bounded_document(document, &snapshot.gap_item_recovery)
+    }
+
+    /// Capture the document and its overflow recovery during one immutable
+    /// session read. Callers keep the same session lock through this read;
+    /// envelope construction needs no second lock or current-state lookup.
+    pub(crate) fn get_gap_with_recovery(
+        &self,
+        canonical_id: &str,
+        requested: Option<&str>,
+    ) -> Result<(Value, String), AttemptFailure> {
+        let document = self.get_gap(canonical_id, requested)?;
+        let snapshot = self.active_snapshot(requested)?;
+        Ok((document, snapshot.gap_item_recovery.clone()))
     }
 
     /// The `ripr://snapshot/{snapshot_id}` evidence resource: snapshot
@@ -988,12 +1239,15 @@ impl WorkspaceSession {
     /// detail, per progressive disclosure.
     pub(crate) fn session_document(&self, profile: &SessionProfile) -> Value {
         let last_completed = self.last_good.as_ref().map(|snapshot| {
-            json!({
-                "snapshot_id": snapshot.snapshot_id,
-                "outcome_kind": snapshot.outcome.kind.as_str(),
-                "finding_count": snapshot.outcome.counts.finding_count,
-                "total_items": snapshot.selection.total_canonical_items,
-            })
+            tag_source(
+                json!({
+                    "snapshot_id": snapshot.snapshot_id,
+                    "outcome_kind": snapshot.outcome.kind.as_str(),
+                    "finding_count": snapshot.outcome.counts.finding_count,
+                    "total_items": snapshot.selection.total_canonical_items,
+                }),
+                snapshot,
+            )
         });
         let analysis_outcome = self
             .last_good
@@ -1003,7 +1257,7 @@ impl WorkspaceSession {
         let last_known_good = self
             .last_good
             .as_ref()
-            .map(|snapshot| json!({ "snapshot_id": snapshot.snapshot_id }));
+            .map(|snapshot| tag_source(json!({ "snapshot_id": snapshot.snapshot_id }), snapshot));
         let last_failure = self
             .last_failure
             .as_ref()
@@ -1021,7 +1275,12 @@ impl WorkspaceSession {
             desired_input["base"] = json!("explicit");
             desired_input["base_revision"] = json!(base);
         }
-        json!({
+        // Source-less callers keep the unchanged v1 shape: `source` appears
+        // only after a worktree refresh was requested (#7357).
+        if self.desired_source == RefreshSource::Worktree {
+            desired_input["source"] = json!(RefreshSource::WORKTREE_NAME);
+        }
+        let mut document = json!({
             "schema_version": SESSION_SCHEMA_VERSION,
             "attempt_state": self.attempt_state(),
             "current_attempt": if self.in_flight {
@@ -1051,8 +1310,35 @@ impl WorkspaceSession {
                     "the session is in-memory: restarting the server drops the snapshot unless a new ripr_refresh commits one",
                 ])
                 .collect::<Vec<_>>(),
-        })
+        });
+        // Additive (#6475): per-language completeness from the committed
+        // snapshot's aggregate view. Absent without a snapshot or a view, so
+        // consumers that ignore the field see the unchanged v1 shape.
+        if let Some(view) = self
+            .last_good
+            .as_ref()
+            .and_then(|snapshot| snapshot.language_view.as_ref())
+        {
+            document["language_completeness"] = language_completeness_document(view);
+        }
+        document
     }
+}
+
+/// `[{language, status}]` in label order, straight from the aggregate-owned
+/// view: one row per canonical language label, with the closed status
+/// spelling the aggregate records (`complete`, `complete_zero`, `partial`,
+/// `unavailable`, `invalid`, `failed`, `unsupported`, `not_selected`,
+/// `no_current_scope`).
+fn language_completeness_document(
+    view: &crate::analysis::language_outcome::LanguageCompletenessView,
+) -> Value {
+    Value::Array(
+        view.rows
+            .iter()
+            .map(|row| json!({ "language": row.label, "status": row.status.as_str() }))
+            .collect(),
+    )
 }
 
 /// Guard that clears [`WorkspaceSession::in_flight`] on every terminal path.
@@ -1110,9 +1396,12 @@ impl Drop for InFlightAttempt {
 /// untracked files exist, the note never offers bare `--worktree` as the
 /// remedy: they are invisible to both the committed diff and `--worktree`
 /// (#5258), so the disclosure names staging or an explicit diff instead,
-/// the same contract as the human note. `ripr_refresh` takes no diff-source
-/// argument, so there is no in-protocol expansion to promise.
+/// the same contract as the human note. The in-protocol expansion is the
+/// explicit `source: "worktree"` refresh argument (#7357).
 fn scope_disclosure(snapshot: &Snapshot) -> Option<Value> {
+    if snapshot.source == RefreshSource::Worktree {
+        return Some(worktree_scope_disclosure(snapshot));
+    }
     let mut disclosure = tracked_scope_disclosure(snapshot);
     let scope = &snapshot.scope;
     if scope.ignored.is_empty() {
@@ -1138,6 +1427,60 @@ fn scope_disclosure(snapshot: &Snapshot) -> Option<Value> {
         })
     });
     base["ignored_edits"] = ignored_edits;
+    disclosure
+}
+
+/// The scope disclosure for a saved tracked-worktree snapshot (#7357). It
+/// always exists: the snapshot never covers unsaved editor buffers, untracked
+/// files or gitignored files, and it carries no consumed-source commitment,
+/// so a clean or empty result is never an all-clear and no currentness is
+/// claimed beyond the refresh that produced it.
+fn worktree_scope_disclosure(snapshot: &Snapshot) -> Value {
+    const NAMED_PATHS: usize = 3;
+    let scope = &snapshot.scope;
+    let analyzed = match &snapshot.base {
+        Some(base) => format!("saved tracked-worktree diff against base `{base}`"),
+        None => "saved tracked-worktree diff against the default branch".to_string(),
+    };
+    let mut disclosure = json!({
+        "analyzed": analyzed,
+        "uncommitted_edits": "saved tracked edits included",
+        "note": "this snapshot analyzed saved staged and unstaged tracked edits as the producer read them during the refresh; unsaved editor buffers, untracked files and gitignored files are outside it. It carries no consumed-source commitment, so edits after the refresh are not detected (refresh again) and repair cards and repair readiness are withheld",
+        "consumed_source_commitment": "not_established",
+        "repair_cards": "withheld",
+    });
+    if !scope.untracked.is_empty() {
+        let named = scope
+            .untracked
+            .iter()
+            .take(NAMED_PATHS)
+            .cloned()
+            .collect::<Vec<_>>();
+        let more = scope.untracked.len().saturating_sub(NAMED_PATHS);
+        let listing = if more > 0 {
+            format!("{} and {more} more", named.join(", "))
+        } else {
+            named.join(", ")
+        };
+        disclosure["untracked_edits"] = json!({
+            "files": named,
+            "total": scope.untracked.len(),
+            "more": more,
+            "listing_example": listing,
+            "remedy": "untracked files are invisible to this analysis; stage them (`git add -N <paths>` intent-to-add is enough) and rerun ripr_refresh with source `worktree`",
+        });
+    }
+    if !scope.ignored.is_empty() {
+        let language_label = analyzed_language_label(&snapshot.findings);
+        let named = scope.ignored.iter().take(NAMED_PATHS).collect::<Vec<_>>();
+        disclosure["ignored_edits"] = json!({
+            "files": named,
+            "total": scope.ignored.len(),
+            "more": scope.ignored.len().saturating_sub(NAMED_PATHS),
+            "languages_analyzed": language_label,
+            "remedy": format!("gitignored {language_label} files were excluded and not analyzed; stage them with `git add -f -N <paths>` (force intent-to-add) and rerun ripr_refresh with source `worktree`"),
+        });
+    }
     disclosure
 }
 
@@ -1186,7 +1529,7 @@ fn tracked_scope_disclosure(snapshot: &Snapshot) -> Option<Value> {
         return Some(json!({
             "analyzed": analyzed_label(snapshot),
             "uncommitted_edits": "outside this analysis",
-            "note": "staged and unstaged tracked edits are outside the analyzed scope of this snapshot; analyze them with `ripr check --worktree --format json` in the repository",
+            "note": "staged and unstaged tracked edits are outside the analyzed scope of this snapshot; analyze them with ripr_refresh source `worktree` or `ripr check --worktree --format json` in the repository",
         }));
     }
     let listing = if more > 0 {
@@ -1197,7 +1540,7 @@ fn tracked_scope_disclosure(snapshot: &Snapshot) -> Option<Value> {
     Some(json!({
         "analyzed": analyzed_label(snapshot),
         "uncommitted_edits": "outside this analysis",
-        "note": "this snapshot reads each file as committed at HEAD; `ripr check --worktree --format json` adds staged and unstaged tracked edits only. Untracked files are invisible to both; stage them (`git add <paths>`, or `git add -N <paths>` intent-to-add makes a new file visible to `--worktree`) and rerun, or pass an explicit `--diff`",
+        "note": "this snapshot reads each file as committed at HEAD; ripr_refresh source `worktree` (or `ripr check --worktree --format json`) adds staged and unstaged tracked edits only. Untracked files are invisible to both; stage them (`git add <paths>`, or `git add -N <paths>` intent-to-add makes a new file visible to `--worktree`) and rerun, or pass an explicit `--diff`",
         "untracked_edits": {
             "files": named,
             "total": scope.untracked.len(),
@@ -1208,17 +1551,29 @@ fn tracked_scope_disclosure(snapshot: &Snapshot) -> Option<Value> {
     }))
 }
 
+/// Tag a snapshot summary with its captured source (#7357). Committed
+/// summaries keep the unchanged v1 shape; only a worktree capture adds it.
+fn tag_source(mut summary: Value, snapshot: &Snapshot) -> Value {
+    if snapshot.source == RefreshSource::Worktree {
+        summary["source"] = json!(RefreshSource::WORKTREE_NAME);
+    }
+    summary
+}
+
 /// The refresh-time attempt document returned by `ripr_refresh`.
 pub(crate) fn refresh_document(session: &WorkspaceSession) -> Value {
     let snapshot = session.last_good.as_ref().map(|snapshot| {
-        json!({
-            "snapshot_id": snapshot.snapshot_id,
-            "outcome_kind": snapshot.outcome.kind.as_str(),
-            "finding_count": snapshot.outcome.counts.finding_count,
-            "total_items": snapshot.selection.total_canonical_items,
-            "list_route": "ripr_list_gaps",
-            "snapshot_resource": format!("ripr://snapshot/{}", snapshot.snapshot_id),
-        })
+        tag_source(
+            json!({
+                "snapshot_id": snapshot.snapshot_id,
+                "outcome_kind": snapshot.outcome.kind.as_str(),
+                "finding_count": snapshot.outcome.counts.finding_count,
+                "total_items": snapshot.selection.total_canonical_items,
+                "list_route": "ripr_list_gaps",
+                "snapshot_resource": format!("ripr://snapshot/{}", snapshot.snapshot_id),
+            }),
+            snapshot,
+        )
     });
     // `requested_base` appears only when the request named one, so a base-less
     // refresh keeps the unchanged v1 shape.
@@ -1241,7 +1596,7 @@ pub(crate) fn refresh_document(session: &WorkspaceSession) -> Value {
         "last_known_good": session
             .last_good
             .as_ref()
-            .map(|snapshot| json!({ "snapshot_id": snapshot.snapshot_id })),
+            .map(|snapshot| tag_source(json!({ "snapshot_id": snapshot.snapshot_id }), snapshot)),
         "claim_boundary": "One bounded static analysis attempt over the workspace diff. The server never edits source, executes verification or mutation commands, or loads project-local provider configuration.",
         "limitations": [
             "an attempt runs to a terminal state; MCP cancellation of the request does not roll back a running attempt and never manufactures a snapshot",
@@ -1250,6 +1605,20 @@ pub(crate) fn refresh_document(session: &WorkspaceSession) -> Value {
     });
     if let Some(base) = &session.desired_base {
         document["requested_base"] = json!(base);
+    }
+    // #7357: requested and captured source are distinct facts. Both appear
+    // only once a worktree source is involved, so source-less callers keep
+    // the unchanged v1 shape.
+    let captured_worktree = session
+        .last_good
+        .as_ref()
+        .is_some_and(|snapshot| snapshot.source == RefreshSource::Worktree);
+    if session.desired_source == RefreshSource::Worktree || captured_worktree {
+        document["requested_source"] = json!(session.desired_source.as_str());
+        document["captured_source"] = session
+            .last_good
+            .as_ref()
+            .map_or(Value::Null, |snapshot| json!(snapshot.source.as_str()));
     }
     document
 }
@@ -1382,12 +1751,16 @@ pub(crate) fn run_check(
     root: &Path,
     root_identity: Option<&str>,
     base: Option<&str>,
+    source: RefreshSource,
 ) -> Result<Snapshot, AttemptFailure> {
     let config = crate::config::load_for_root(root).map_err(|error| {
         AttemptFailure::new(
             CODE_CONFIG_INVALID,
             format!("the workspace configuration could not be loaded: {error}"),
-            "address the configuration error above (the detail names the cause), then retry with ripr_refresh",
+            format!(
+                "address the configuration error above (the detail names the cause), then {}",
+                check_retry_recovery(root, base, source)
+            ),
         )
     })?;
     let input = crate::app::CheckInput {
@@ -1396,8 +1769,11 @@ pub(crate) fn run_check(
         git_timeout: Some(crate::app::default_cli_git_timeout()),
         ..Default::default()
     };
-    let output = crate::app::check_workspace_with_config_typed(input, &config)
-        .map_err(|error| check_failure(&error, base))?;
+    if source == RefreshSource::Worktree {
+        return run_worktree_check(input, &config, root_identity, base);
+    }
+    let (output, language_view) = crate::app::check_workspace_with_config_typed(input, &config)
+        .map_err(|error| check_failure(&error, root, base, RefreshSource::Committed))?;
     // The seam inventory is gathered once inside this bounded attempt and
     // feeds both consumers: the shared repair validator that decides each
     // item's repair readiness (#8717) and the repair-card seam bindings
@@ -1410,8 +1786,14 @@ pub(crate) fn run_check(
         crate::app::agent_brief::AgentBriefPolicy::from_config(&config),
         &inventory.completeness,
     );
-    let mut snapshot = Snapshot::from_output_admitted(&output, root_identity, &admission)?;
+    let mut snapshot = Snapshot::from_output_admitted(
+        &output,
+        root_identity,
+        &admission,
+        RefreshSource::Committed,
+    )?;
     snapshot.base = base.map(str::to_string);
+    snapshot.language_view = language_view;
     // Bind the repair-card producers inside the same bounded attempt, after
     // the shared check authority completed: the snapshot commits complete —
     // items, findings, head, and card seams — or not at all (RIPR-SPEC-0215).
@@ -1422,13 +1804,76 @@ pub(crate) fn run_check(
     Ok(snapshot)
 }
 
+/// The saved tracked-worktree refresh (#7357): the shared worktree check
+/// producer's findings, bound into a snapshot tagged `worktree`. It
+/// deliberately gathers no seam inventory and binds no card producers. Those
+/// producers read live files after the findings pass and no shared
+/// consumed-source commitment spans the two, so a worktree snapshot could
+/// pair findings from one saved state with seams from another. Repair
+/// readiness is refused for every finding and the card read discloses
+/// unavailability instead of claiming currentness.
+fn run_worktree_check(
+    input: crate::app::CheckInput,
+    config: &crate::config::RiprConfig,
+    root_identity: Option<&str>,
+    base: Option<&str>,
+) -> Result<Snapshot, AttemptFailure> {
+    let root = input.root.clone();
+    let (output, language_view) =
+        crate::app::check_workspace_worktree_with_config_typed(input, config)
+            .map_err(|error| check_failure(&error, &root, base, RefreshSource::Worktree))?;
+    let admission = super::repair_admission::SeamAdmission::withheld(
+        &output.findings,
+        super::repair_admission::SEAM_WORKTREE_SOURCE,
+        WORKTREE_CARD_WITHHELD_DETAIL,
+    );
+    let mut snapshot = Snapshot::from_output_admitted(
+        &output,
+        root_identity,
+        &admission,
+        RefreshSource::Worktree,
+    )?;
+    snapshot.base = base.map(str::to_string);
+    snapshot.language_view = language_view;
+    Ok(snapshot)
+}
+
+/// Why a saved tracked-worktree snapshot carries no repair readiness or
+/// repair card (#7357).
+pub(crate) const WORKTREE_CARD_WITHHELD_DETAIL: &str = "this snapshot analyzed saved tracked-worktree edits; no consumed-source commitment spans its findings and the live seam inventory that repair readiness and cards need, so they are withheld rather than claimed current. Commit the change and run ripr_refresh without `source` for repair cards";
+
 /// Project a shared-check refusal into the attempt failure. The recovery
 /// names routes this server can actually take: base resolution is retried
 /// through `ripr_refresh`'s own `base` argument (the CLI's `--base` is not
 /// reachable from a running MCP session), and an unusable repository root
 /// needs a server restart at a Git work tree.
-fn check_failure(error: &crate::core_error::CoreError, base: Option<&str>) -> AttemptFailure {
+fn check_failure(
+    error: &crate::core_error::CoreError,
+    root: &Path,
+    base: Option<&str>,
+    source: RefreshSource,
+) -> AttemptFailure {
     let detail = format!("shared check authority failed: {error}");
+    let retry = |base: Option<&str>| refresh_retry_arguments(base, source);
+    if source == RefreshSource::Worktree {
+        let recovery = match (error.check_refusal().identity, base) {
+            ("base_unresolvable", None) => format!(
+                "retry ripr_refresh with the `base` argument set to a branch, tag or commit this repository has (the detail names candidates), for example {}",
+                retry(Some("<ref>"))
+            ),
+            ("base_unresolvable", Some(_)) => format!(
+                "retry ripr_refresh with a different `base` that resolves to a commit in this repository, for example {}; or omit only `base` to use the default branch: {}",
+                retry(Some("<ref>")),
+                retry(None)
+            ),
+            ("repository_root_unusable", _) => format!(
+                "restart the server with `ripr mcp --stdio --root <repository>` pointing inside a Git work tree, then retry ripr_refresh with {}",
+                retry(base)
+            ),
+            _ => check_retry_recovery(root, base, source),
+        };
+        return AttemptFailure::new(CODE_ANALYSIS_FAILED, detail, recovery);
+    }
     let recovery = match (error.check_refusal().identity, base) {
         ("base_unresolvable", None) => {
             "retry ripr_refresh with the `base` argument set to a branch, tag or commit this repository has (the detail names candidates), for example {\"base\": \"<ref>\"}"
@@ -1440,7 +1885,11 @@ fn check_failure(error: &crate::core_error::CoreError, base: Option<&str>) -> At
             "restart the server with `ripr mcp --stdio --root <repository>` pointing inside a Git work tree, then retry ripr_refresh"
         }
         _ => {
-            "retry with ripr_refresh; if the failure persists, run `ripr check --format json` in the repository for the full diagnostic"
+            return AttemptFailure::new(
+                CODE_ANALYSIS_FAILED,
+                detail,
+                check_retry_recovery(root, base, source),
+            );
         }
     };
     AttemptFailure::new(CODE_ANALYSIS_FAILED, detail, recovery)
@@ -1466,10 +1915,7 @@ fn omitted_reason_as_str(reason: OmittedDiagnosticReason) -> &'static str {
 
 /// Fail closed when even one bounded document cannot fit the wire cap: an
 /// over-cap response would otherwise terminate the transport.
-pub(crate) fn bounded_document(
-    document: Value,
-    recovery: &'static str,
-) -> Result<Value, AttemptFailure> {
+pub(crate) fn bounded_document(document: Value, recovery: &str) -> Result<Value, AttemptFailure> {
     struct LengthWriter(usize);
 
     impl std::io::Write for LengthWriter {
@@ -1553,6 +1999,7 @@ mod tests {
         limitations: Vec<AnalysisLimitation>,
     ) -> Result<crate::app::CheckOutput, String> {
         Ok(crate::app::CheckOutput {
+            value_origins: Default::default(),
             schema_version: crate::app::CHECK_OUTPUT_SCHEMA_VERSION.to_string(),
             harness_projections: Vec::new(),
             tool: "ripr".to_string(),
@@ -1587,6 +2034,7 @@ mod tests {
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
+            desired_source: RefreshSource::Committed,
             superseded_order: std::collections::VecDeque::new(),
         })
     }
@@ -1597,6 +2045,192 @@ mod tests {
             Err(failure) if failure.code == code => Ok(()),
             Err(failure) => Err(format!("expected {code}, got {}", failure.code)),
         }
+    }
+
+    /// A session whose committed snapshot carries a producer view: rust ran
+    /// to its boundary with nothing found, python was not selected.
+    fn session_with_language_view() -> Result<WorkspaceSession, String> {
+        use crate::analysis::language_outcome::{
+            FixtureDiffResult, LanguageAggregate, LanguageAnalysisOutcomeV1,
+            LanguageCompletenessView,
+        };
+        let touched = std::collections::BTreeSet::from(["rust".to_string()]);
+        let mut aggregate = LanguageAggregate::new("full".to_string());
+        for child in LanguageAnalysisOutcomeV1::from_diff_result(
+            crate::domain::LanguageId::Rust,
+            &FixtureDiffResult {
+                changed_files: 1,
+                ..FixtureDiffResult::default()
+            },
+            &[],
+            &touched,
+            "full",
+        ) {
+            aggregate.record(child);
+        }
+        aggregate.record(LanguageAnalysisOutcomeV1::not_selected(
+            "python",
+            1,
+            "language not in the effective [languages].enabled set",
+            "full",
+        ));
+        let view = LanguageCompletenessView::from_aggregate(&aggregate.finish());
+        let mut session = session_with(AnalysisOutcomeKind::CompleteNoFindings, 0)?;
+        let mut snapshot = Snapshot::from_output(
+            &output(AnalysisOutcomeKind::CompleteNoFindings, 0, Vec::new())?,
+            Some("root:sha256:test"),
+        )
+        .map_err(|failure| failure.detail)?;
+        snapshot.language_view = Some(view);
+        session.last_good = Some(Arc::new(snapshot));
+        Ok(session)
+    }
+
+    #[test]
+    fn status_serves_per_language_completeness_from_the_view() -> Result<(), String> {
+        let document = session_with_language_view()?.session_document(&SessionProfile::built_in());
+        // Literal expectation, independent of the view code under test.
+        assert_eq!(
+            document["language_completeness"],
+            json!([
+                { "language": "python", "status": "not_selected" },
+                { "language": "rust", "status": "complete_zero" }
+            ])
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn status_without_a_view_keeps_the_unchanged_shape() -> Result<(), String> {
+        for session in [
+            WorkspaceSession::default(),
+            session_with(AnalysisOutcomeKind::CompleteNoFindings, 0)?,
+        ] {
+            let document = session.session_document(&SessionProfile::built_in());
+            assert!(
+                document.get("language_completeness").is_none(),
+                "{document}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn every_emitted_session_key_is_declared_by_the_status_schema() -> Result<(), String> {
+        let document = session_with_language_view()?.session_document(&SessionProfile::built_in());
+        let schema = super::super::protocol::status_success_schema();
+        let declared = schema["properties"]["session"]["properties"]
+            .as_object()
+            .ok_or("session schema must declare properties")?;
+        let required = schema["properties"]["session"]["required"]
+            .as_array()
+            .ok_or("session schema must declare required")?;
+        for key in document
+            .as_object()
+            .ok_or("session must be an object")?
+            .keys()
+        {
+            assert!(declared.contains_key(key), "undeclared session key {key}");
+        }
+        // The addition is optional: absent from `required`, so a document
+        // without it (no snapshot) still satisfies the closed schema.
+        assert!(!required.contains(&json!("language_completeness")));
+        let item = &declared["language_completeness"]["items"];
+        for row in document["language_completeness"]
+            .as_array()
+            .ok_or("language_completeness must be an array")?
+        {
+            let status = row["status"].as_str().ok_or("status must be a string")?;
+            assert!(
+                item["properties"]["status"]["enum"]
+                    .as_array()
+                    .ok_or("status enum")?
+                    .iter()
+                    .any(|allowed| allowed == status),
+                "{status}"
+            );
+        }
+        Ok(())
+    }
+
+    /// #6475: MCP carries no per-language state of its own. What it commits
+    /// and serves (the typed outcome and its limitations) must agree with
+    /// the aggregate-owned view on every shared mixed-language fixture.
+    /// Expectations are literal and independent of the view code.
+    #[test]
+    fn committed_snapshot_agrees_with_the_language_completeness_view() -> Result<(), String> {
+        use crate::analysis::language_outcome::{DiffCompleteness, LanguageCompletenessView};
+        use crate::output::language_view_agreement_tests as shared;
+        // (fixture, committed limitation kinds); `None` = refused as unsupported.
+        let expected: [(&str, Option<&[&str]>); 9] = [
+            ("complete", Some(&[])),
+            ("complete_zero", Some(&[])),
+            ("partial", Some(&["producer_failure"])),
+            ("unavailable", Some(&["language_adapter_unavailable"])),
+            ("invalid", Some(&["language_adapter_unavailable"])),
+            ("failed", Some(&["producer_failure"])),
+            ("unsupported", None),
+            (
+                "repo_partial_with_not_selected",
+                Some(&["language_adapter_unavailable"]),
+            ),
+            (
+                "configured_uncompiled_perl_dual_row",
+                Some(&["language_adapter_unavailable"]),
+            ),
+        ];
+        let fixtures = shared::fixtures()?;
+        assert_eq!(fixtures.len(), expected.len());
+        for (name, kinds) in expected {
+            let fixture = fixtures
+                .iter()
+                .find(|fixture| fixture.name == name)
+                .ok_or_else(|| format!("missing fixture {name}"))?;
+            let aggregate = shared::aggregate_for(fixture);
+            let view = LanguageCompletenessView::from_aggregate(&aggregate);
+            let produced = view.total_findings;
+            let findings = (0..produced)
+                .map(|_| shared::rust_finding())
+                .collect::<Result<Vec<_>, _>>()?;
+            let outcome = shared::analysis_outcome(fixture, produced as u64)?;
+            let output = shared::check_output(findings, view.public_runs.clone(), outcome);
+            let committed = Snapshot::from_output(&output, Some("root:sha256:test"));
+            match (kinds, committed) {
+                (None, Err(failure)) => {
+                    assert_eq!(failure.code, CODE_UNSUPPORTED_PROFILE, "{name}");
+                    assert!(
+                        failure.detail.contains("language_scope_unsupported"),
+                        "{name}: {}",
+                        failure.detail
+                    );
+                }
+                (Some(kinds), Ok(snapshot)) => {
+                    let served: Vec<String> = serde_json::to_value(&snapshot.outcome)
+                        .map_err(|error| format!("{name}: {error}"))?["limitations"]
+                        .as_array()
+                        .map(|limitations| {
+                            limitations
+                                .iter()
+                                .filter_map(|item| item["kind"].as_str().map(str::to_string))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    assert_eq!(served, kinds, "{name}");
+                    // The view calls a run incomplete exactly when MCP serves
+                    // a non-complete outcome.
+                    assert_eq!(
+                        view.completeness == DiffCompleteness::Incomplete,
+                        !snapshot.outcome.kind.is_complete(),
+                        "{name}"
+                    );
+                }
+                (None, Ok(_)) => return Err(format!("{name}: unsupported input was committed")),
+                (Some(_), Err(failure)) => {
+                    return Err(format!("{name}: refused: {}", failure.detail));
+                }
+            }
+        }
+        Ok(())
     }
 
     #[test]
@@ -1617,6 +2251,7 @@ mod tests {
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
+            desired_source: RefreshSource::Committed,
             superseded_order: std::collections::VecDeque::new(),
         };
         let _ = complete
@@ -1770,12 +2405,21 @@ mod tests {
     /// shared gaps test finding with per-index identities. No analysis runs:
     /// the session contract is exercised against typed producer output.
     fn session_with_findings(count: usize) -> Result<WorkspaceSession, String> {
+        session_with_padded_findings(count, 0)
+    }
+
+    /// Like [`session_with_findings`], with `id_pad` filler bytes in every
+    /// canonical gap identity so omission windows can be byte-bound.
+    fn session_with_padded_findings(
+        count: usize,
+        id_pad: usize,
+    ) -> Result<WorkspaceSession, String> {
         let findings = (0..count)
             .map(|index| {
                 let mut finding = gaps::test_finding()?;
                 finding.id = format!("finding:test:{index}");
                 if let Some(gap) = finding.canonical_gap.as_mut() {
-                    gap.id = format!("gap:test:{index}");
+                    gap.id = format!("gap:test:{index}:{}", "x".repeat(id_pad));
                 }
                 finding.probe.id = crate::domain::ProbeId(format!("probe:test:{index}"));
                 // Distinct files: the shared budget caps items per document,
@@ -1786,6 +2430,7 @@ mod tests {
             })
             .collect::<Result<Vec<_>, String>>()?;
         let output = crate::app::CheckOutput {
+            value_origins: Default::default(),
             schema_version: crate::app::CHECK_OUTPUT_SCHEMA_VERSION.to_string(),
             harness_projections: Vec::new(),
             tool: "ripr".to_string(),
@@ -1820,6 +2465,7 @@ mod tests {
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
+            desired_source: RefreshSource::Committed,
             superseded_order: std::collections::VecDeque::new(),
         })
     }
@@ -1865,6 +2511,7 @@ mod tests {
 
         let findings = vec![ready, exposed_python, unready, unlocalized];
         let output = crate::app::CheckOutput {
+            value_origins: Default::default(),
             schema_version: crate::app::CHECK_OUTPUT_SCHEMA_VERSION.to_string(),
             harness_projections: Vec::new(),
             tool: "ripr".to_string(),
@@ -1899,6 +2546,7 @@ mod tests {
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
+            desired_source: RefreshSource::Committed,
             superseded_order: std::collections::VecDeque::new(),
         })
     }
@@ -2224,6 +2872,7 @@ mod tests {
                 GapListWindow {
                     offset: 0,
                     limit: Some(1),
+                    ..GapListWindow::default()
                 },
                 &file("src/checkout.rs"),
                 crate::mcp::MAX_RESPONSE_BYTES,
@@ -2261,6 +2910,7 @@ mod tests {
                 GapListWindow {
                     offset: 1,
                     limit: Some(1),
+                    ..GapListWindow::default()
                 },
                 &file("src/checkout.rs"),
                 crate::mcp::MAX_RESPONSE_BYTES,
@@ -2319,28 +2969,323 @@ mod tests {
         assert!(!gap_file_matches("./src/checkout.rs", "./src/checkout.rs/"));
     }
 
-    /// #7462: the single-item read is already the narrow MCP route. An item
-    /// that does not fit must not tell the caller to call `ripr_get_gap` again.
-    /// The routed exercise lives in `server_tests.rs`
-    /// (`oversized_gap_item_leaves_mcp_through_the_real_routes`): this
-    /// constant-level control only pins the shared wording.
+    /// The shared recovery owner emits a bounded failure without cutting an
+    /// executable command, even for a pathological captured root spelling.
     #[test]
     fn oversized_gap_item_recovery_leaves_mcp() -> Result<(), String> {
-        let document = json!({
-            "evidence": "x".repeat(crate::mcp::MAX_RESPONSE_BYTES),
-        });
-        let Err(failure) = bounded_document(document, RECOVERY_GAP_ITEM_TOO_LARGE) else {
+        let mut output = output(AnalysisOutcomeKind::CompleteWithFindings, 1, Vec::new())?;
+        output.root = PathBuf::from("captured repository with spaces");
+        output.base = Some("nondefault-base".to_string());
+        let recovery = gap_item_recovery(&output, RefreshSource::Worktree);
+        let document = json!({"evidence": "x".repeat(crate::mcp::MAX_RESPONSE_BYTES)});
+        let Err(failure) = bounded_document(document, &recovery) else {
             return Err("an oversized gap item was accepted".to_string());
         };
-        if failure.code != CODE_RESULT_TOO_LARGE {
-            return Err(format!("unexpected code {}", failure.code));
+        assert_eq!(failure.code, CODE_RESULT_TOO_LARGE);
+        assert!(failure.recovery.contains("--worktree --json"));
+        assert!(
+            failure
+                .recovery
+                .contains("related tests are capped per finding")
+        );
+        assert!(!failure.recovery.contains("one item through ripr_get_gap"));
+        output.root = PathBuf::from("\"\\".repeat(MAX_FAILURE_RECOVERY_BYTES));
+        let long = gap_item_recovery(&output, RefreshSource::Worktree);
+        assert_eq!(long, RECOVERY_TOO_LONG);
+        assert!(!long.contains("ripr check"));
+        assert!(long.len() <= MAX_FAILURE_RECOVERY_BYTES);
+        Ok(())
+    }
+
+    #[test]
+    fn generic_check_failure_recovery_binds_requested_root_base_and_source() -> Result<(), String> {
+        let root = std::env::temp_dir().join("captured failure root");
+        for source in [RefreshSource::Committed, RefreshSource::Worktree] {
+            let failure = check_failure(
+                &crate::core_error::CoreError::message("an untyped diagnostic"),
+                &root,
+                Some("captured-base"),
+                source,
+            );
+            assert!(failure.recovery.contains("captured failure root"));
+            assert!(failure.recovery.contains("--root "));
+            assert!(failure.recovery.contains("captured-base"));
+            assert!(failure.recovery.contains("--base "));
+            let (expected, wrong) = match source {
+                RefreshSource::Committed => ("--committed --json", "--worktree"),
+                RefreshSource::Worktree => ("--worktree --json", "--committed"),
+            };
+            assert!(failure.recovery.contains(expected), "{}", failure.recovery);
+            assert!(!failure.recovery.contains(wrong), "{}", failure.recovery);
+            let begin = failure
+                .recovery
+                .find('{')
+                .ok_or_else(|| format!("missing JSON retry: {}", failure.recovery))?;
+            let end = failure.recovery[begin..]
+                .find('}')
+                .map(|end| begin + end + 1);
+            let end = end.ok_or_else(|| format!("unfinished JSON retry: {}", failure.recovery))?;
+            let arguments: Value = serde_json::from_str(&failure.recovery[begin..end])
+                .map_err(|error| format!("invalid retry JSON: {error}"))?;
+            assert_eq!(arguments["base"], "captured-base");
+            if source == RefreshSource::Worktree {
+                assert_eq!(arguments["source"], "worktree");
+            } else {
+                assert!(arguments.get("source").is_none());
+            }
         }
-        if !failure
-            .recovery
-            .contains("ripr check --committed --format json")
-            || failure.recovery.contains("one item through ripr_get_gap")
+        Ok(())
+    }
+
+    #[test]
+    fn refused_output_recovery_preserves_root_base_and_source() -> Result<(), String> {
+        for source in [RefreshSource::Committed, RefreshSource::Worktree] {
+            for (kind, limitation_kind) in [
+                (
+                    AnalysisOutcomeKind::AnalysisFailed,
+                    AnalysisLimitationKind::ProducerFailure,
+                ),
+                (
+                    AnalysisOutcomeKind::UnsupportedInput,
+                    AnalysisLimitationKind::CombinedHunkUnsupported,
+                ),
+            ] {
+                let mut output = output(kind, 0, vec![limitation(limitation_kind)?])?;
+                output.root = std::env::temp_dir().join("refused output root");
+                output.base = Some("refused-output-base".to_string());
+                let failure = Snapshot::from_output_admitted(
+                    &output,
+                    None,
+                    &super::super::repair_admission::SeamAdmission::unevaluated(),
+                    source,
+                )
+                .err()
+                .ok_or("a refused producer outcome became a snapshot")?;
+                assert!(
+                    failure.recovery.contains("refused output root"),
+                    "{}",
+                    failure.recovery
+                );
+                assert!(
+                    failure.recovery.contains("refused-output-base"),
+                    "{}",
+                    failure.recovery
+                );
+                let expected = if source == RefreshSource::Worktree {
+                    "--worktree --json"
+                } else {
+                    "--committed --json"
+                };
+                assert!(failure.recovery.contains(expected), "{}", failure.recovery);
+                let begin = failure.recovery.find('{').ok_or("missing MCP retry")?;
+                let end = failure.recovery[begin..]
+                    .find('}')
+                    .map(|end| begin + end + 1)
+                    .ok_or("unfinished MCP retry")?;
+                let arguments: Value = serde_json::from_str(&failure.recovery[begin..end])
+                    .map_err(|error| error.to_string())?;
+                if source == RefreshSource::Worktree {
+                    assert_eq!(arguments["source"], "worktree");
+                } else {
+                    assert!(arguments.get("source").is_none());
+                }
+                if kind == AnalysisOutcomeKind::AnalysisFailed {
+                    assert_eq!(arguments["base"], "refused-output-base");
+                } else {
+                    assert_eq!(arguments["base"], "<revision>");
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// #9360: the omission disclosure pages on its own axis. A selection with
+    /// more omitted identities than one window used to render all of them
+    /// inside the non-pageable shell, so enough omissions failed the whole
+    /// listing with `result_too_large`. Now each response carries at most
+    /// [`OMITTED_WINDOW`] identities and `omitted_page` walks the rest
+    /// exactly once.
+    #[test]
+    fn omission_disclosure_pages_independently_of_items() -> Result<(), String> {
+        let session = session_with_findings(700)?;
+        let list = |omitted_offset: usize| -> Result<Value, String> {
+            session
+                .list_gaps(
+                    None,
+                    GapListWindow {
+                        limit: Some(1),
+                        omitted_offset,
+                        ..GapListWindow::default()
+                    },
+                    &GapListFilter::default(),
+                    crate::mcp::MAX_RESPONSE_BYTES,
+                )
+                .map_err(|failure| failure.detail)
+        };
+        let first = list(0)?;
+        let total = first["omitted"].as_u64().ok_or("missing omitted count")? as usize;
+        if total <= OMITTED_WINDOW {
+            return Err(format!(
+                "fixture must omit more than one window ({OMITTED_WINDOW}), got {total}"
+            ));
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        let mut document = first;
+        let mut windows = 0usize;
+        loop {
+            let ids = document["omitted_items"]
+                .as_array()
+                .ok_or("omitted_items must be an array")?;
+            if ids.len() > OMITTED_WINDOW {
+                return Err(format!("window exceeded the cap: {}", ids.len()));
+            }
+            if document["omitted_page"]["returned"] != json!(ids.len()) {
+                return Err(format!("returned must count the window: {document}"));
+            }
+            for item in ids {
+                let id = item["canonical_id"].as_str().ok_or("omitted id")?;
+                if !seen.insert(id.to_string()) {
+                    return Err(format!("omitted identity repeated across windows: {id}"));
+                }
+            }
+            windows += 1;
+            let page = &document["omitted_page"];
+            match page["next_offset"].as_u64() {
+                Some(next) => {
+                    if page["has_more"] != json!(true)
+                        || document["continuation"]["next_omitted_page"]["arguments"]["omitted_offset"]
+                            != json!(next)
+                    {
+                        return Err(format!(
+                            "continuation must name the next window: {document}"
+                        ));
+                    }
+                    document = list(next as usize)?;
+                }
+                None => {
+                    if page["has_more"] != json!(false)
+                        || !document["continuation"]["next_omitted_page"].is_null()
+                    {
+                        return Err(format!("last window must close the route: {document}"));
+                    }
+                    break;
+                }
+            }
+        }
+        if seen.len() != total || windows < 2 {
+            return Err(format!(
+                "walk must cover every omission once: saw {} of {total} in {windows} windows",
+                seen.len()
+            ));
+        }
+        // A past-end window is an empty disclosed window at the echoed offset.
+        let past = list(total + 50)?;
+        if past["omitted_items"] != json!([])
+            || past["omitted_page"]["offset"] != json!(total + 50)
+            || past["omitted_page"]["has_more"] != json!(false)
         {
-            return Err(failure.recovery.to_string());
+            return Err(format!("past-end window must be empty and closed: {past}"));
+        }
+        Ok(())
+    }
+
+    /// #9360 review: the omission window is byte-bound as well as
+    /// count-bound. Long canonical identities used to make a 200-entry
+    /// window outgrow the document ceiling; now the window stops at its byte
+    /// budget and the walk still covers every omission once.
+    #[test]
+    fn long_omitted_identities_are_byte_fitted_and_fully_walked() -> Result<(), String> {
+        let session = session_with_padded_findings(700, 600)?;
+        let list = |omitted_offset: usize| -> Result<Value, String> {
+            session
+                .list_gaps(
+                    None,
+                    GapListWindow {
+                        limit: Some(1),
+                        omitted_offset,
+                        ..GapListWindow::default()
+                    },
+                    &GapListFilter::default(),
+                    crate::mcp::MAX_RESPONSE_BYTES,
+                )
+                .map_err(|failure| format!("window at {omitted_offset} failed: {}", failure.detail))
+        };
+        let mut document = list(0)?;
+        let total = document["omitted"]
+            .as_u64()
+            .ok_or("missing omitted count")?;
+        let mut seen = std::collections::BTreeSet::new();
+        let mut shortened = false;
+        loop {
+            let ids = document["omitted_items"]
+                .as_array()
+                .ok_or("omitted_items must be an array")?;
+            if ids.is_empty() {
+                return Err(format!("a window must make progress: {document}"));
+            }
+            shortened |=
+                ids.len() < OMITTED_WINDOW && document["omitted_page"]["has_more"] == json!(true);
+            for item in ids {
+                let id = item["canonical_id"].as_str().ok_or("omitted id")?;
+                if !seen.insert(id.to_string()) {
+                    return Err(format!("omitted identity repeated: {id}"));
+                }
+            }
+            match document["omitted_page"]["next_offset"].as_u64() {
+                Some(next) => {
+                    let next = usize::try_from(next).map_err(|error| error.to_string())?;
+                    document = list(next)?;
+                }
+                None => break,
+            }
+        }
+        if !shortened {
+            return Err("fixture must exercise the byte budget, not only the count cap".into());
+        }
+        if seen.len() as u64 != total {
+            return Err(format!("walk saw {} of {total} omissions", seen.len()));
+        }
+        Ok(())
+    }
+
+    /// #9360 review: each continuation route replays the whole request and
+    /// advances only its own axis. Following `next_page` keeps the requested
+    /// omission window; following `next_omitted_page` keeps the filters and
+    /// item window.
+    #[test]
+    fn continuation_routes_preserve_the_other_axis() -> Result<(), String> {
+        let session = session_with_findings(700)?;
+        let filter = GapListFilter {
+            file: Some("src".to_string()),
+            ..GapListFilter::default()
+        };
+        let document = session
+            .list_gaps(
+                None,
+                GapListWindow {
+                    offset: 1,
+                    limit: Some(2),
+                    omitted_offset: 5,
+                },
+                &filter,
+                crate::mcp::MAX_RESPONSE_BYTES,
+            )
+            .map_err(|failure| failure.detail)?;
+        let next_page = &document["continuation"]["next_page"]["arguments"];
+        if next_page["omitted_offset"] != json!(5) || next_page["file"] != json!("src") {
+            return Err(format!(
+                "next_page lost the omission window or filter: {next_page}"
+            ));
+        }
+        let next_omitted = &document["continuation"]["next_omitted_page"]["arguments"];
+        if next_omitted["offset"] != json!(1)
+            || next_omitted["limit"] != json!(2)
+            || next_omitted["file"] != json!("src")
+            || next_omitted["snapshot_id"] != document["snapshot_id"]
+        {
+            return Err(format!(
+                "next_omitted_page lost the item window or filter: {next_omitted}"
+            ));
         }
         Ok(())
     }
@@ -2462,6 +3407,7 @@ mod tests {
                     GapListWindow {
                         offset,
                         limit: None,
+                        ..GapListWindow::default()
                     },
                     &GapListFilter::default(),
                     crate::mcp::MAX_RESPONSE_BYTES,
@@ -2513,6 +3459,7 @@ mod tests {
                 GapListWindow {
                     offset: 0,
                     limit: Some(1),
+                    ..GapListWindow::default()
                 },
                 &GapListFilter::default(),
                 crate::mcp::MAX_RESPONSE_BYTES,
@@ -2536,6 +3483,7 @@ mod tests {
                 GapListWindow {
                     offset: requested_offset,
                     limit: None,
+                    ..GapListWindow::default()
                 },
                 &GapListFilter::default(),
                 crate::mcp::MAX_RESPONSE_BYTES,
@@ -2593,6 +3541,179 @@ mod tests {
             .map_err(|error| format!("small listing must ship: {error}"))?;
         if envelope.get("structuredContent").is_none() {
             return Err("a fitting listing must keep structuredContent".to_string());
+        }
+        Ok(())
+    }
+
+    /// #9895: the refusal recovery names what the caller can change. A
+    /// shell that overflows only because of the echoed filter value names
+    /// the filter; a shell that overflows on its own keeps the snapshot
+    /// identity route.
+    #[test]
+    fn list_gaps_overflow_recovery_names_the_shrinkable_cause() -> Result<(), String> {
+        let session = session_with_findings(2)?;
+        // An empty page at a past-end offset with no filter echo IS the
+        // no-echo shell probe: its envelope sizes every later comparison.
+        let shell_probe = session
+            .list_gaps(
+                None,
+                GapListWindow {
+                    offset: 10,
+                    limit: None,
+                    ..GapListWindow::default()
+                },
+                &GapListFilter::default(),
+                crate::mcp::MAX_RESPONSE_BYTES,
+            )
+            .map_err(|failure| failure.detail)?;
+        let shell_envelope = crate::mcp::protocol::structured_envelope_bytes(&shell_probe)
+            .map_err(|error| error.to_string())?;
+        // A budget the no-echo shell fits with slack to spare: only the
+        // echoed filter can push the with-filter shell past it.
+        let filter_budget = shell_envelope + 64;
+        let huge_echo = GapListFilter {
+            file: Some("x".repeat(4_000)),
+            ..GapListFilter::default()
+        };
+        let filter_refusal: AttemptFailure = match session.list_gaps(
+            None,
+            GapListWindow::default(),
+            &huge_echo,
+            filter_budget,
+        ) {
+            Ok(value) => {
+                return Err(format!(
+                    "a 4000-character filter echo must overflow the {filter_budget}-byte budget: {value}"
+                ));
+            }
+            Err(failure) => failure,
+        };
+        if filter_refusal.code != CODE_RESULT_TOO_LARGE
+            || filter_refusal.recovery != RECOVERY_GAP_LIST_FILTER_TOO_LARGE
+        {
+            return Err(format!(
+                "filter-driven overflow must name the filter: {filter_refusal:?}"
+            ));
+        }
+        // No filter echo at all: a budget a few bytes below the same shell
+        // refuses with the identity route, because nothing caller-side can
+        // shrink the disclosure. (The probe's past-end offset renders one
+        // byte longer than the default window's, hence the margin.)
+        let identity_refusal = match session.list_gaps(
+            None,
+            GapListWindow::default(),
+            &GapListFilter::default(),
+            shell_envelope.saturating_sub(4),
+        ) {
+            Ok(value) => {
+                return Err(format!(
+                    "a budget below the empty shell must refuse: {value}"
+                ));
+            }
+            Err(failure) => failure,
+        };
+        if identity_refusal.code != CODE_RESULT_TOO_LARGE
+            || identity_refusal.recovery != RECOVERY_GAP_LIST_IDENTITY_ROUTE
+        {
+            return Err(format!(
+                "shell-driven overflow must keep the identity route: {identity_refusal:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// #9895 review: the document-branch attribution charges the same
+    /// `reserve` margin the page budget charges. A shell that fits raw at
+    /// the zero offset but overflows once the echoed window gains a digit
+    /// (a past-end offset renders longer than the zero-page shell probe) is
+    /// still echo-driven and must name the filter, not the identity route.
+    /// The reserve-only negative control — shell plus reserve over the
+    /// ceiling, the final rendered document under it — must keep shipping.
+    #[test]
+    fn document_branch_attribution_charges_the_page_metadata_reserve() -> Result<(), String> {
+        let session = session_with_findings(2)?;
+        let window = |offset: usize| GapListWindow {
+            offset,
+            limit: None,
+            ..GapListWindow::default()
+        };
+        let echo = |len: usize| GapListFilter {
+            file: Some("x".repeat(len)),
+            ..GapListFilter::default()
+        };
+        let refuses_at_offset_zero = |len: usize| -> Result<bool, String> {
+            match session.list_gaps(None, window(0), &echo(len), crate::mcp::MAX_RESPONSE_BYTES) {
+                Ok(_) => Ok(false),
+                Err(failure) if failure.code == CODE_RESULT_TOO_LARGE => Ok(true),
+                Err(failure) => Err(format!("unexpected refusal: {failure:?}")),
+            }
+        };
+        // Largest echo whose zero-offset page still ships: the document
+        // guard measures the raw document against MAX_TOOL_DOCUMENT_BYTES,
+        // and the envelope stays clear (the double envelope only exceeds the
+        // wire budget well above the document ceiling), so the search edge
+        // sits exactly at the document ceiling.
+        let (mut low, mut high) = (0usize, 70_000usize);
+        while low < high {
+            let mid = (low + high).div_ceil(2);
+            if refuses_at_offset_zero(mid)? {
+                high = mid - 1;
+            } else {
+                low = mid;
+            }
+        }
+        let edge_echo = low;
+        if session
+            .list_gaps(
+                None,
+                window(0),
+                &echo(edge_echo),
+                crate::mcp::MAX_RESPONSE_BYTES,
+            )
+            .is_err()
+        {
+            return Err("the edge echo must still ship at offset zero".to_string());
+        }
+        // One more window digit (offset ten renders two digits) pushes the
+        // final document past the ceiling; without the echo the shell fits
+        // with reserve to spare, so the attribution must name the filter.
+        let metadata_refusal = match session.list_gaps(
+            None,
+            window(10),
+            &echo(edge_echo),
+            crate::mcp::MAX_RESPONSE_BYTES,
+        ) {
+            Ok(value) => {
+                return Err(format!(
+                    "the echoed window metadata must tip the edge echo over: {value}"
+                ));
+            }
+            Err(failure) => failure,
+        };
+        if metadata_refusal.code != CODE_RESULT_TOO_LARGE
+            || metadata_refusal.recovery != RECOVERY_GAP_LIST_FILTER_TOO_LARGE
+        {
+            return Err(format!(
+                "echo-driven document overflow must name the filter: {metadata_refusal:?}"
+            ));
+        }
+        // Reserve-only negative control: 255 fewer echo bytes leave the
+        // shell plus reserve under the ceiling even though the shell alone
+        // is within 256 bytes of it; the widest window echo (20 digits)
+        // must still ship.
+        let reserve_echo = edge_echo.saturating_sub(255);
+        if session
+            .list_gaps(
+                None,
+                window(usize::MAX),
+                &echo(reserve_echo),
+                crate::mcp::MAX_RESPONSE_BYTES,
+            )
+            .is_err()
+        {
+            return Err(
+                "reserve exhaustion alone must not refuse: the rendered document fits".to_string(),
+            );
         }
         Ok(())
     }
@@ -2990,6 +4111,7 @@ mod tests {
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
+            desired_source: RefreshSource::Committed,
             superseded_order: std::collections::VecDeque::new(),
         };
 
@@ -3063,6 +4185,7 @@ mod tests {
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
+            desired_source: RefreshSource::Committed,
             superseded_order: std::collections::VecDeque::new(),
         };
         let untracked_refresh = refresh_document(&untracked_session);
@@ -3179,6 +4302,71 @@ mod tests {
         Ok(())
     }
 
+    /// #7357: identical producer output captured under the committed and the
+    /// saved-worktree source must never share a snapshot identity, the
+    /// committed identity stays the unchanged pre-source payload, and a
+    /// worktree snapshot discloses its limits and refuses repair readiness.
+    #[test]
+    fn worktree_source_tags_identity_and_withholds_repair_claims() -> Result<(), String> {
+        let mut equal = output(AnalysisOutcomeKind::CompleteWithFindings, 1, Vec::new())?;
+        equal.findings.push(gaps::test_finding()?);
+        let committed = Snapshot::from_output(&equal, Some("root:sha256:test"))
+            .map_err(|failure| failure.detail)?;
+        let admission = super::super::repair_admission::SeamAdmission::withheld(
+            &equal.findings,
+            super::super::repair_admission::SEAM_WORKTREE_SOURCE,
+            WORKTREE_CARD_WITHHELD_DETAIL,
+        );
+        let worktree = Snapshot::from_output_admitted(
+            &equal,
+            Some("root:sha256:test"),
+            &admission,
+            RefreshSource::Worktree,
+        )
+        .map_err(|failure| failure.detail)?;
+        assert_eq!(worktree.source, RefreshSource::Worktree);
+        assert_eq!(committed.source, RefreshSource::Committed);
+        assert_eq!(committed.items.len(), worktree.items.len());
+        assert_ne!(
+            committed.snapshot_id, worktree.snapshot_id,
+            "equal findings under different sources must not share an identity"
+        );
+        // The committed payload carries no source key, so existing committed
+        // identities do not move.
+        let outcome_digest = committed.outcome.semantic_digest()?;
+        let expected = json!({
+            "outcome_digest": outcome_digest,
+            "items": committed.items.iter().map(|item| item.canonical_id.as_str()).collect::<Vec<_>>(),
+            "evidence": committed.items.iter().map(|item| item.evidence_sha256.as_str()).collect::<Vec<_>>(),
+            "scope": committed.scope.identity_key(),
+        });
+        let bytes = serde_json::to_vec(&expected).map_err(|error| error.to_string())?;
+        assert_eq!(
+            committed.snapshot_id,
+            format!("snapshot:sha256:{}", sha256_hex(&bytes))
+        );
+        let scope = scope_disclosure(&worktree).ok_or("a worktree snapshot always discloses")?;
+        assert_eq!(scope["consumed_source_commitment"], "not_established");
+        assert_eq!(scope["repair_cards"], "withheld");
+        assert_eq!(scope["uncommitted_edits"], "saved tracked edits included");
+        assert!(
+            scope["analyzed"]
+                .as_str()
+                .is_some_and(|analyzed| analyzed.starts_with("saved tracked-worktree diff"))
+        );
+        assert!(scope_disclosure(&committed).is_none());
+        assert!(
+            worktree
+                .items
+                .iter()
+                .all(|item| !item.repair_readiness.ready
+                    && item.repair_readiness.ineligibility.is_some()),
+            "no worktree item is repair ready"
+        );
+        assert!(worktree.card_producers.is_none());
+        Ok(())
+    }
+
     #[test]
     fn portable_snapshot_identity_survives_distinct_absolute_checkouts() -> Result<(), String> {
         // #5254 item 6: the same finding content committed from two checkouts
@@ -3252,8 +4440,12 @@ mod tests {
                 item.evidence_sha256 = sha256_hex(&bytes);
                 lengths.push(bytes.len());
             }
-            let original_id =
-                snapshot_identity(&snapshot.outcome, &original_items, &snapshot.scope)?;
+            let original_id = snapshot_identity(
+                &snapshot.outcome,
+                &original_items,
+                &snapshot.scope,
+                RefreshSource::Committed,
+            )?;
             assert_eq!(snapshot.snapshot_id, original_id);
 
             let session = WorkspaceSession {
@@ -3264,6 +4456,7 @@ mod tests {
                 repairs: std::collections::BTreeMap::new(),
                 superseded_attempts: std::collections::BTreeMap::new(),
                 desired_base: None,
+                desired_source: RefreshSource::Committed,
                 superseded_order: std::collections::VecDeque::new(),
             };
             let item = original_items

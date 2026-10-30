@@ -17,6 +17,19 @@ use super::{
     baseline_created_at, non_empty_path_arg, read_optional_text_for_report, write_text_file,
 };
 
+/// Recovery route for a missing gate-decision input, in the sibling commands'
+/// vocabulary (#9851): `baseline create --from` / `baseline update --current`
+/// consume the artifact `ripr gate evaluate` writes.
+const GATE_DECISION_RECOVERY: &str = "Run `ripr gate evaluate --gap-ledger <gap-ledger> --out <gate-decision.json> --out-md <gate-decision.md>` first, or pass the correct path";
+
+/// Recovery route for a missing `--baseline` ledger (#9851 review follow-up):
+/// `baseline update` requires the reviewed historical-debt ledger with kind
+/// `gate_baseline` and an `entries` array, which only `baseline create`
+/// writes — pointing at `gate evaluate` hands the caller a gate-decision
+/// artifact the consumer still rejects. The route chains through a
+/// gate-decision file: create adopts it, update consumes the adoption.
+const BASELINE_LEDGER_RECOVERY: &str = "Run `ripr baseline create --from <gate-decision.json> --out <baseline.json>` first, or pass the correct path";
+
 pub(in crate::cli) fn baseline(args: &[String]) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         help::print_baseline_help();
@@ -40,13 +53,11 @@ pub(in crate::cli) fn baseline(args: &[String]) -> Result<(), String> {
 
 fn baseline_create(args: &[String]) -> Result<(), String> {
     let options = parse_baseline_create_options(args)?;
-    let gate_decision_json =
-        crate::bounded_input::read_to_string(&options.from).map_err(|err| {
-            format!(
-                "read baseline create source {} failed: {err}",
-                output::baseline::display_path(&options.from)
-            )
-        })?;
+    let gate_decision_json = crate::bounded_input::read_required_input(
+        "read baseline create source",
+        &options.from,
+        Some(GATE_DECISION_RECOVERY),
+    )?;
     let created_at = baseline_created_at()?;
     let source_report = output::baseline::display_path(&options.from);
     let report = output::baseline::baseline_create_report_from_gate_decision_json(
@@ -125,6 +136,10 @@ fn baseline_diff(args: &[String]) -> Result<(), String> {
         "Items: {}",
         output::baseline_delta::baseline_delta_item_count(&report)
     );
+    // Missing-input warnings ride stderr like every other advisory surface
+    // (#9856): a run that routed from nothing must not look like a healthy
+    // "no debt movement" run in the terminal or in `2>&1` CI logs.
+    super::emit_report_warnings(output::baseline_delta::baseline_delta_warnings(&report));
     Ok(())
 }
 
@@ -138,18 +153,16 @@ fn baseline_update(args: &[String]) -> Result<(), String> {
     }
     let baseline_path = output::baseline_update::display_path(&options.baseline);
     let current_path = output::baseline_update::display_path(&options.current);
-    let baseline_json = crate::bounded_input::read_to_string(&options.baseline).map_err(|err| {
-        format!(
-            "read baseline update baseline {} failed: {err}",
-            output::baseline_update::display_path(&options.baseline)
-        )
-    })?;
-    let current_json = crate::bounded_input::read_to_string(&options.current).map_err(|err| {
-        format!(
-            "read baseline update current gate-decision {} failed: {err}",
-            output::baseline_update::display_path(&options.current)
-        )
-    })?;
+    let baseline_json = crate::bounded_input::read_required_input(
+        "read baseline update baseline",
+        &options.baseline,
+        Some(BASELINE_LEDGER_RECOVERY),
+    )?;
+    let current_json = crate::bounded_input::read_required_input(
+        "read baseline update current gate-decision",
+        &options.current,
+        Some(GATE_DECISION_RECOVERY),
+    )?;
     let report = output::baseline_update::build_baseline_update_remove_resolved(
         output::baseline_update::BaselineUpdateInput {
             baseline_path,
@@ -397,6 +410,157 @@ mod tests {
             ),
             r"chosen baseline.json already exists; rerun `ripr baseline create --from 'gate $it'\''s.json' --out 'chosen baseline.json' --force` to overwrite it"
         );
+    }
+
+    #[test]
+    fn baseline_create_missing_source_names_path_and_recovery_route() -> Result<(), String> {
+        let err = baseline(&args(&[
+            "create",
+            "--from",
+            "missing-gate-decision.json",
+            "--out",
+            "unused-baseline.json",
+        ]))
+        .err()
+        .ok_or("missing --from source must fail")?;
+        assert!(
+            err.starts_with("read baseline create source missing-gate-decision.json failed:"),
+            "{err}"
+        );
+        assert!(err.contains("not found"), "{err}");
+        assert!(
+            err.contains("ripr gate evaluate --gap-ledger"),
+            "error should name the gate-evaluate recovery route, got: {err}"
+        );
+        assert!(!err.contains("os error"), "{err}");
+        Ok(())
+    }
+
+    #[test]
+    fn baseline_update_missing_current_names_recovery_route() -> Result<(), String> {
+        let dir = unique_command_test_dir("baseline-update-missing-current");
+        std::fs::create_dir_all(&dir).map_err(|error| format!("create dir: {error}"))?;
+        let baseline_path = dir.join("baseline.json");
+        std::fs::write(&baseline_path, "{\"entries\":[]}")
+            .map_err(|error| format!("write baseline: {error}"))?;
+        let err = baseline(&args(&[
+            "update",
+            "--baseline",
+            &baseline_path.to_string_lossy(),
+            "--current",
+            "missing-gate-decision.json",
+            "--remove-resolved",
+        ]))
+        .err()
+        .ok_or("missing --current source must fail")?;
+        assert!(
+            err.starts_with("read baseline update current gate-decision"),
+            "{err}"
+        );
+        assert!(err.contains("not found"), "{err}");
+        assert!(
+            err.contains("ripr gate evaluate --gap-ledger"),
+            "error should name the gate-evaluate recovery route, got: {err}"
+        );
+        assert!(!err.contains("os error"), "{err}");
+        std::fs::remove_dir_all(&dir).map_err(|error| format!("remove dir: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn baseline_update_missing_baseline_points_at_baseline_create() -> Result<(), String> {
+        // #9851 review follow-up: a missing --baseline ledger must name the
+        // command that actually produces the reviewed historical-debt
+        // ledger. The gate-evaluate route hands the caller a gate-decision
+        // artifact whose kind the update consumer still rejects.
+        let dir = unique_command_test_dir("baseline-update-missing-baseline");
+        std::fs::create_dir_all(&dir).map_err(|error| format!("create dir: {error}"))?;
+        let current_path = dir.join("current.json");
+        std::fs::write(&current_path, "{\"entries\":[]}")
+            .map_err(|error| format!("write current: {error}"))?;
+        let err = baseline(&args(&[
+            "update",
+            "--baseline",
+            "missing-baseline.json",
+            "--current",
+            &current_path.to_string_lossy(),
+            "--remove-resolved",
+        ]))
+        .err()
+        .ok_or("missing --baseline source must fail")?;
+        assert!(err.starts_with("read baseline update baseline"), "{err}");
+        assert!(err.contains("not found"), "{err}");
+        assert!(
+            err.contains("ripr baseline create --from"),
+            "error should name the baseline-create recovery route, got: {err}"
+        );
+        assert!(
+            !err.contains("ripr gate evaluate"),
+            "the missing-baseline route must not point at gate evaluate, got: {err}"
+        );
+        assert!(!err.contains("os error"), "{err}");
+        std::fs::remove_dir_all(&dir).map_err(|error| format!("remove dir: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn baseline_diff_missing_inputs_complete_with_warnings() -> Result<(), String> {
+        // #9856 contract: two missing inputs keep the documented exit-0
+        // contract (the typed answer completed) while the warnings that were
+        // previously report-only become visible on stderr; the report itself
+        // is unchanged.
+        let dir = unique_command_test_dir("baseline-diff-missing-inputs");
+        std::fs::create_dir_all(&dir).map_err(|error| format!("create dir: {error}"))?;
+        let missing_a = dir.join("missing-a.json");
+        let missing_b = dir.join("missing-b.json");
+        let out = dir.join("baseline-debt-delta.json");
+        let out_md = dir.join("baseline-debt-delta.md");
+        baseline(&args(&[
+            "diff",
+            "--baseline",
+            &missing_a.display().to_string(),
+            "--current",
+            &missing_b.display().to_string(),
+            "--out",
+            &out.display().to_string(),
+            "--out-md",
+            &out_md.display().to_string(),
+        ]))
+        .map_err(|error| format!("missing-input baseline diff must complete (exit 0): {error}"))?;
+        let json = std::fs::read_to_string(&out)
+            .map_err(|error| format!("read baseline delta JSON: {error}"))?;
+        let value: serde_json::Value = serde_json::from_str(&json)
+            .map_err(|error| format!("baseline delta JSON must parse: {error}"))?;
+        let warnings = value
+            .get("warnings")
+            .and_then(serde_json::Value::as_array)
+            .ok_or("baseline delta JSON must carry a warnings array")?;
+        assert!(!warnings.is_empty(), "warnings must not be empty: {json}");
+        for missing in [&missing_a, &missing_b] {
+            let missing_display = output::baseline_delta::display_path(missing);
+            assert!(
+                warnings.iter().any(|warning| warning
+                    .as_str()
+                    .is_some_and(|text| text.contains(&missing_display))),
+                "warnings must name the missing input {missing_display}: {json}"
+            );
+        }
+        // The stderr surface renders the same warnings: non-empty and naming
+        // the missing inputs.
+        let rendered = super::super::render_report_warnings(
+            &warnings
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .map(str::to_string)
+                .collect::<Vec<_>>(),
+        );
+        assert!(!rendered.is_empty(), "stderr warnings must be non-empty");
+        assert!(
+            rendered.contains(&output::baseline_delta::display_path(&missing_a)),
+            "{rendered}"
+        );
+        std::fs::remove_dir_all(&dir).map_err(|error| format!("remove dir: {error}"))?;
+        Ok(())
     }
 
     #[test]

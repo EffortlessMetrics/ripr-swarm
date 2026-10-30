@@ -491,7 +491,7 @@ suite('Extension Smoke', () => {
       (entry) => entry.source === 'ripr' && diagnosticCode(entry) === 'ripr-seam-weakly-gripped',
       60000
     );
-    assert.ok(diagnostic.message.includes('Weakly gripped behavioral seam'));
+    assert.ok(diagnostic.message.includes('Tests only loosely check this'));
 
     const hoverPosition = new vscode.Position(
       diagnostic.range.start.line,
@@ -934,7 +934,7 @@ suite('Extension Smoke', () => {
         (entry) => entry.source === 'ripr' && diagnosticCode(entry) === 'ripr-gap-MissingBoundaryAssertion',
         60000
       );
-      assert.ok(diagnostic.message.includes('preview advisory evidence'), diagnostic.message);
+      assert.ok(diagnostic.message.includes('Preview language: advisory'), diagnostic.message);
 
       const hoverPosition = new vscode.Position(
         diagnostic.range.start.line,
@@ -4516,6 +4516,7 @@ suite('Extension Smoke', () => {
         'expected a non-empty extension version in the riprEditor block'
       );
       assert.ok(advertised.riprEditor.commands?.includes('ripr.showStatus'));
+      assert.ok(advertised.riprEditor.commands?.includes('ripr.refreshDiagnostics'));
       // Guarded test edits are not implemented by this extension; the opt-in
       // must stay explicitly false rather than absent-truthy.
       assert.strictEqual(advertised.riprEditor.guardedTestEdit, false);

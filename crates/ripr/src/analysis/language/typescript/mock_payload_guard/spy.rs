@@ -66,15 +66,16 @@ pub(super) fn module_object_calls(
     owner_name: &str,
     owner_params: &[String],
     owner_start_line: usize,
-    module_source: &str,
+    module_source: (&str, SourceType),
 ) -> Vec<ModuleObjectCall> {
+    let (module_source, source_type) = module_source;
     if !runs_changed_line_once(owner_source, owner_name, line_text) {
         return Vec::new();
     }
-    let Some(body) = masked_owner_body(owner_source) else {
+    let masked_owner = ts_mask_literals_and_comments_for_source_type(owner_source, source_type);
+    let Some(body) = owner_body_from_mask(&masked_owner) else {
         return Vec::new();
     };
-    let masked_owner = ts_mask_literals_and_comments(owner_source);
     let header = &masked_owner[..masked_owner.len().saturating_sub(body.len())];
     // A non-ASCII name is no word the allowlist can read. A tagged
     // template needs a callable tag, which no allowed word holds.
@@ -85,7 +86,7 @@ pub(super) fn module_object_calls(
     {
         return Vec::new();
     }
-    let masked_module = ts_mask_literals_and_comments(module_source);
+    let masked_module = ts_mask_literals_and_comments_for_source_type(module_source, source_type);
     // Module code that imports, or that names the object anywhere but its
     // declaration and the owner's call, can leave a mock with calls on the
     // method (`o.m = jest.fn(); o.m(...)`) before the test's spy installs.
@@ -306,7 +307,7 @@ fn words_outside_members(text: &str) -> impl Iterator<Item = &str> {
 /// escape could spell another, and the file holds no `each`,
 /// `concurrent`, `retryTimes`, `mock`, `doMock`, module reset or
 /// isolation, `require`, dynamic `import(` or `eval`.
-pub(super) fn spy_safe_test_file(source: &str) -> bool {
+pub(super) fn spy_safe_test_file(source: &str, source_type: SourceType) -> bool {
     const RUNS_OR_REPLACES: [&str; 12] = [
         "each",
         "concurrent",
@@ -321,7 +322,7 @@ pub(super) fn spy_safe_test_file(source: &str) -> bool {
         "requireActual",
         "eval",
     ];
-    let masked = ts_mask_literals_and_comments(source);
+    let masked = ts_mask_literals_and_comments_for_source_type(source, source_type);
     source.matches("spyOn").count() == 1
         && one_test_after_imports(&masked)
         && imports_bind_names(&masked)
@@ -434,7 +435,8 @@ pub(super) fn credits_spy(
     test_file: &Path,
     test_body: &str,
 ) -> bool {
-    let masked_body = ts_mask_literals_and_comments(test_body);
+    let masked_body =
+        ts_mask_literals_and_comments_for_source_type(test_body, source_type_for(test_file));
     let Some(range) = callback_scope_range(&masked_body) else {
         return false;
     };
@@ -544,13 +546,71 @@ mod tests {
             "export const mailer = {{ send(m: string) {{ return m; }} }};\nexport function wrap(mailer: Mailer) {{\n  {owner}\n}}\n"
         );
         assert_eq!(
-            module_object_calls(line, owner, "announceMail", &id, 2, &top),
+            module_object_calls(
+                line,
+                owner,
+                "announceMail",
+                &id,
+                2,
+                (&top, SourceType::ts())
+            ),
             vec![ModuleObjectCall {
                 object: "mailer".to_string(),
                 method: "send".to_string(),
             }]
         );
-        assert!(module_object_calls(line, owner, "announceMail", &id, 3, &nested).is_empty());
-        assert!(module_object_calls(line, owner, "announceMail", &id, 0, &top).is_empty());
+        assert!(
+            module_object_calls(
+                line,
+                owner,
+                "announceMail",
+                &id,
+                3,
+                (&nested, SourceType::ts())
+            )
+            .is_empty()
+        );
+        assert!(
+            module_object_calls(
+                line,
+                owner,
+                "announceMail",
+                &id,
+                0,
+                (&top, SourceType::ts())
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn review_9936_module_spy_guard_uses_the_native_source_kind() {
+        let owner =
+            "function announceMail(id: number): void {\n    mailer.send(\"order \" + id);\n  }";
+        let line = "    mailer.send(\"order \" + id);";
+        let module = format!(
+            "export const mailer = {{ send(m: string) {{ return m; }} }};\n{owner}\nconst a = 8, g = 2, x: any = 0; type div = any; const node = <div>x</div>; require('x'); const q = a /g;"
+        );
+        for (source_type, allowed) in [(SourceType::ts(), true), (SourceType::tsx(), false)] {
+            assert_eq!(
+                !module_object_calls(
+                    line,
+                    owner,
+                    "announceMail",
+                    &["id".to_string()],
+                    2,
+                    (&module, source_type)
+                )
+                .is_empty(),
+                allowed
+            );
+        }
+    }
+
+    #[test]
+    fn review_9936_spy_test_guard_uses_the_native_source_kind() {
+        let source = "import { test } from 'vitest'; test('one', () => { const obj: any = { m() {} }; const spy = jest.spyOn(obj, 'm'); const a = 8, g = 2, x: any = 0; type div = any; const node = <div>x</div>; require('x'); const q = a /g; });";
+        assert!(spy_safe_test_file(source, SourceType::ts()));
+        assert!(!spy_safe_test_file(source, SourceType::tsx()));
     }
 }

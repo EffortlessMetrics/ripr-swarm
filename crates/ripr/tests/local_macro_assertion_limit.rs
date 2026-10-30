@@ -1,8 +1,8 @@
 //! Public-API controls for a same-file `macro_rules!` assertion wrapper that
 //! is not spelled `assert_*` (RIPR-SPEC-0120, #7089).
 //!
-//! `check_eq!(surcharge(100), 110)` expands to `assert_eq!`, but ripr only
-//! credits it at unknown grade. Beside a strong assertion on another function
+//! `check_eq!(surcharge(100), 110)` expands to `assert_eq!`, but a wrapper that
+//! does not expand exactly (here, two arms) is only credited at unknown grade. Beside a strong assertion on another function
 //! in the same file, that used to read as a confident `weakly_exposed` gap;
 //! it now names `rust_macro_wrapped_assertion_unresolved` (verdict `limited`). Each control
 //! changes one thing and keeps the old verdict.
@@ -69,7 +69,10 @@ index 1111111..2222222 100644
 +    base + base / 10
 ";
 
-const MACRO: &str = "    macro_rules! check_eq {\n        ($actual:expr, $expected:expr) => {\n            assert_eq!($actual, $expected)\n        };\n    }\n\n";
+/// Two arms, so the wrapper does not expand exactly (#10650) and keeps the
+/// capped credit this file controls. An exactly expandable wrapper credits
+/// like the written-out assertion (`local_macro_assertion_expansion.rs`).
+const MACRO: &str = "    macro_rules! check_eq {\n        ($actual:expr, $expected:expr) => {\n            assert_eq!($actual, $expected)\n        };\n        ($actual:expr) => {\n            assert!($actual)\n        };\n    }\n\n";
 const OTHER_PIN: &str = "    #[test]\n    fn other_is_pinned() {\n        assert_eq!(discount(200, 10), 180);\n    }\n\n";
 const MACRO_PIN: &str = "    #[test]\n    fn macro_pins_surcharge() {\n        check_eq!(surcharge(100), 110);\n    }\n";
 
@@ -162,6 +165,83 @@ fn the_witness_comes_from_the_directly_related_test() -> Result<(), String> {
         .ok_or_else(|| format!("expected a witness line, got {:?}", summary(&found)))?;
     if !witness.contains("macro_pins_surcharge") || witness.contains("a_prox") {
         return Err(format!("the witness names the wrong test: {witness}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn a_generated_test_case_comparison_beside_a_proximity_oracle_keeps_its_limit() -> Result<(), String>
+{
+    // `#[test_case(4 => 12)]` generates the comparison on `rows`, which calls
+    // the owner behind an opaque no-op macro; the only recognized oracle sits
+    // in an unrelated test. That used to read as a bare `weakly_exposed` gap
+    // although the generated assertion fails when the owner changes.
+    let noop = "    macro_rules! note {\n        () => {\n            ()\n        };\n    }\n\n";
+    let rows = "    #[test_case(100 => 110)]\n    fn rows(base: u32) -> u32 {\n        note!();\n        surcharge(base)\n    }\n\n";
+    let found = findings(&format!("{noop}{rows}{OTHER_PIN}"))?;
+    if !found.iter().any(limited) {
+        return Err(format!(
+            "expected the generated-comparison limit, got {:?}",
+            summary(&found)
+        ));
+    }
+    // The plain-argument form generates no comparison, so nothing is limited.
+    let plain = rows.replace("100 => 110", "100, 110");
+    let found = findings(&format!("{noop}{plain}{OTHER_PIN}"))?;
+    if found.iter().any(limited) {
+        return Err(format!(
+            "a row without `=>` must not be limited: {:?}",
+            summary(&found)
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn a_generated_comparison_on_a_constant_return_is_not_a_limit() -> Result<(), String> {
+    // The owner is called, but `rows` returns a literal, so the generated
+    // `=> 110` comparison cannot notice a changed owner. Calling that "an
+    // unreadable comparison" would hide the missing discriminator (#10302).
+    let constant = "    #[test_case(100 => 110)]\n    fn rows(base: u32) -> u32 {\n        let _ = surcharge(base);\n        110\n    }\n";
+    let found = findings(constant)?;
+    if found.is_empty() || found.iter().any(limited) {
+        return Err(format!(
+            "a constant-return generated comparison must stay a gap: {:?}",
+            summary(&found)
+        ));
+    }
+    if found
+        .iter()
+        .any(|f| f.class == ripr::ExposureClass::StaticUnknown)
+    {
+        return Err(format!(
+            "the unlimited finding must not read static_unknown: {:?}",
+            summary(&found)
+        ));
+    }
+    // The same row returning the owner's value keeps the named limit.
+    let live = constant.replace("let _ = surcharge(base);\n        110", "surcharge(base)");
+    let found = findings(&live)?;
+    if !found.iter().any(limited) {
+        return Err(format!(
+            "expected the generated-comparison limit, got {:?}",
+            summary(&found)
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn a_generated_predicate_beside_a_constant_return_keeps_the_limit() -> Result<(), String> {
+    // `with` runs a predicate of its own, which can read state the owner
+    // changed even though the row returns a literal.
+    let with = "    #[test_case(100 => with |_: u32| assert_eq!(surcharge(100), 110))]\n    fn rows(base: u32) -> u32 {\n        let _ = surcharge(base);\n        110\n    }\n";
+    let found = findings(with)?;
+    if !found.iter().any(limited) {
+        return Err(format!(
+            "a `with` predicate must keep the generated-comparison limit: {:?}",
+            summary(&found)
+        ));
     }
     Ok(())
 }

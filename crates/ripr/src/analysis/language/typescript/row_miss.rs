@@ -18,7 +18,7 @@
 //!
 //! `weak_assertion` is limited to weak and smoke oracles; a medium oracle keeps no miss.
 //!
-//! Shipped tokens: `weak_assertion` and `observation_unconfirmed`.
+//! Shipped tokens: `weak_assertion`, `missing_input` and `observation_unconfirmed`.
 //!
 //! Deliberately not emitted:
 //!
@@ -28,20 +28,16 @@
 //!   `it.each([[owner, 1]])`), and even the affirmative shadow or unrelated
 //!   import rejections refute only the apparent call, not hooks, helpers,
 //!   re-exports or mocks. Those rows keep `miss: None`.
-//! - `assertion_not_observing`: `RelatedTest::is_unmatched` reads it as a
-//!   decision input (gap next-step choice, witness and row triage), so
-//!   emitting it would change TypeScript behavior. Rows that would have
-//!   carried it get `observation_unconfirmed` or no miss.
+//! - `assertion_not_observing`: withheld by this producer. Row eligibility is the
+//!   explicit `RelatedTest::role` (#5563), not this value, so a later
+//!   annotation cannot change decisions; rows that would have carried it
+//!   get `observation_unconfirmed` or no miss.
 //! - `observation_unconfirmed` on an unanchored or unresolved-alias owner
 //!   call: identity is unproved, so no row-to-owner relationship exists to
 //!   leave unconfirmed.
 //! - `no_assertion`: the admission scan sees one file and cannot see project
 //!   setup files or runner plugins (`admission.rs` known blind spots), so
 //!   `NoAssertionLike` is not strong enough to claim absence.
-//! - `missing_input`: the shared prose says "no test input reaches ...",
-//!   stronger than a single-file static reading supports. A row whose own
-//!   boundary fact says its input misses the boundary gets
-//!   `observation_unconfirmed` instead.
 //! - `assertion_not_credited`: reserved for a typed established refusal
 //!   (#5446), which TypeScript does not produce;
 //! - `missing_exact_assertion`: the TypeScript model carries no row-owned
@@ -51,7 +47,7 @@
 //! and keep `miss: None`.
 
 use super::*;
-use crate::domain::RelatedTestMiss;
+use crate::domain::{RelatedTestMiss, RelatedTestMissSupport};
 
 /// The finding-level facts row assignment reads. All are already final.
 pub(crate) struct TsRowMissContext<'a> {
@@ -65,6 +61,10 @@ pub(crate) struct TsRowMissContext<'a> {
     pub(crate) alias_map: Option<&'a TsAliasMap>,
     pub(crate) workspace_root: Option<&'a Path>,
     pub(crate) credits: CreditFacts<'a>,
+    /// The finding's changed-boundary fact. A `missing_input` row carries it
+    /// as its `miss_support` only because that row's own activation proved its
+    /// input misses the boundary (RIPR-SPEC-0224, #5564).
+    pub(crate) boundary_fact: Option<&'a MissingDiscriminatorFact>,
 }
 
 /// Assign the typed miss of every row. `rows` maps one-to-one onto
@@ -83,6 +83,12 @@ pub(crate) fn assign_row_misses(
     }
     for ((row, candidate), activation) in rows.iter_mut().zip(candidates).zip(activations) {
         row.miss = ts_row_miss(context, candidate, row, *activation);
+        row.miss_support = match row.miss {
+            Some(RelatedTestMiss::MissingInput) => {
+                context.boundary_fact.map(RelatedTestMissSupport::from_fact)
+            }
+            _ => None,
+        };
     }
 }
 
@@ -183,10 +189,12 @@ fn established_path_miss(
         OracleStrength::Strong => {}
     }
     // 4. Predicate activation: the row's own module-derived boundary fact
-    // says its input misses the boundary. The stronger `missing_input` prose
-    // is withheld, so the row reports the unconfirmed observation.
+    // says every owner call it makes passes a plain integer input off the
+    // boundary. The shared renderer words a TypeScript row as "no input this
+    // test passes was seen ..." (#10040), so the claim stays at what one
+    // file's text shows.
     if activation == TypeScriptPredicateActivation::MissedBoundary {
-        return Some(RelatedTestMiss::ObservationUnconfirmed);
+        return Some(RelatedTestMiss::MissingInput);
     }
     // 7. Observation. A module entry's own code stands between the assertion
     // and the owner, so observation is never confirmed from here.

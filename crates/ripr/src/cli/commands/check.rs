@@ -75,7 +75,7 @@ fn validate_repo_scope_diff_inputs(
     } else {
         Err(crate::core_error::CoreError::base_unresolvable(format!(
             "check: base revision {base:?} does not resolve to a commit in {}",
-            input.root.display()
+            crate::output::path::human_path(&input.root)
         )))
     }
 }
@@ -1846,8 +1846,9 @@ fn check_inner(
     let navigation = if matches!(format, OutputFormat::Human) && analyzed_live_files {
         // #8547: both routes read seams of the selected finding's file
         // (the repair route adds its related-test evidence files); they
-        // share one bounded seam index built once for this invocation,
-        // repair first so its wider file set covers the stub route's.
+        // share a bounded seam index, repair first. Selected and listed
+        // hidden stub subjects reuse covered files; an uncovered file may
+        // replace the index. Hidden work is bounded by the displayed window.
         let mut seam_index = None;
         let repair_route = crate::app::task_first::check_repair_route(
             &limited_check_input.root,
@@ -1855,14 +1856,14 @@ fn check_inner(
             &output,
             &mut seam_index,
         );
-        let stub_route = app::test_stub::check_stub_route(
+        let stub_routes = app::test_stub::check_stub_routes(
             &limited_check_input.root,
             &config,
             &output,
             &mut seam_index,
         );
         navigation
-            .with_stub_route(stub_route)
+            .with_stub_routes(stub_routes)
             // #8166 Slice C: the repair line reuses the producer-owned
             // admission gate over the live seam inventory, for the same
             // live-files reason as the stub route above. Other formats
@@ -2099,6 +2100,34 @@ fn render_check_gap_ledger_badge(
     } else {
         Ok(output::badge::render_native_json(&summary))
     }
+}
+
+/// The diff-scoped check run behind a gap-bound repair start (#9103,
+/// RIPR-SPEC-0311): the analyzed output, whose findings the gap id resolves
+/// against, and its `check-findings-json` rendering.
+pub(super) struct GapCheckSnapshot {
+    pub(super) output: app::CheckOutput,
+    pub(super) rendered: String,
+}
+
+/// Run the same diff-scoped analysis `ripr check --base <base>` runs for the
+/// default human report (the live diff source selection included) and render
+/// it through the same `check-findings-json` producer `ripr check --format
+/// check-findings-json` uses, so the before snapshot of a gap-bound attempt
+/// is byte-comparable with the artifact `ripr agent verify --gap-id` reads.
+pub(super) fn gap_check_findings_snapshot(
+    root: &Path,
+    base: &str,
+) -> Result<GapCheckSnapshot, String> {
+    let config = load_for_root(root).map_err(|error| config_load_refusal(root, error))?;
+    let output = app::gap_bound_repair::default_check_output(root, Some(base), &config)?;
+    let rendered = output::render::render_check_with_config_and_progress(
+        &output,
+        &OutputFormat::CheckFindingsJson,
+        &config,
+        None,
+    )?;
+    Ok(GapCheckSnapshot { output, rendered })
 }
 
 // ── tests ─────────────────────────────────────────────────────────────────────

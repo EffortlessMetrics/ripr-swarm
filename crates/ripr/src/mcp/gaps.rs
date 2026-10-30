@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
-pub(crate) const GAP_LIST_SCHEMA_VERSION: &str = "ripr-mcp-gap-list-v3";
+pub(crate) const GAP_LIST_SCHEMA_VERSION: &str = "ripr-mcp-gap-list-v4";
 pub(crate) const GAP_SCHEMA_VERSION: &str = "ripr-mcp-gap-v1";
 
 /// `ripr_get_gap` / `ripr://gap/{canonical_id}` never authorizes an
@@ -240,7 +240,8 @@ impl RepairReadiness {
                 | crate::mcp::repair_admission::SEAM_GATE_REFUSED
                 | crate::mcp::repair_admission::SEAM_AMBIGUOUS
                 | crate::mcp::repair_admission::SEAM_NOT_FOUND
-                | crate::mcp::repair_admission::SEAM_INVENTORY_TRUNCATED,
+                | crate::mcp::repair_admission::SEAM_INVENTORY_TRUNCATED
+                | crate::mcp::repair_admission::SEAM_WORKTREE_SOURCE,
             ) => {
                 "the shared seam-level repair validator behind `ripr repair` does not admit this item"
             }
@@ -440,7 +441,7 @@ fn gap_evidence_core(
                 "miss": test.miss.map(|miss| miss.as_str()),
                 "why": crate::output::related_test_miss::related_test_miss_reason(
                     test,
-                    &finding.activation.missing_discriminators,
+                    &finding.probe.family,
                 ),
             })
         })
@@ -494,7 +495,8 @@ fn gap_evidence_core(
         "missing": finding.missing,
         "static_limitation": static_limitation,
         "source_currentness": source_currentness,
-        "recommended_next_step": finding.recommended_next_step,
+        "recommended_next_step": crate::output::next_step::unresolved_edge_guidance(finding)
+            .or_else(|| finding.recommended_next_step.clone()),
         "readiness": {
             "repair_packet_ready": readiness.ready,
             "reason": readiness.detail(),
@@ -544,19 +546,38 @@ pub(crate) fn budget_items(
         .collect()
 }
 
+/// Tolerate exactly one trailing slash on a captured resource id (#9895).
+/// Clients — especially LLMs hand-assembling `ripr://` links — not
+/// uncommonly produce `ripr://gap/{id}/`; every id-bearing resource route
+/// normalizes that single slash instead of answering `item_not_found` for
+/// an id that merely looks typo'd. Two trailing slashes still miss: the
+/// second one is not a normalization artifact, it is a different (invalid)
+/// id.
+pub(crate) fn trim_one_trailing_slash(id: &str) -> &str {
+    id.strip_suffix('/').unwrap_or(id)
+}
+
 /// Extract the canonical item id from a `ripr://gap/{id}` resource URI.
 ///
 /// The producer gap id embeds a workspace-relative path (Python, and since
 /// #5268 Rust), so the suffix is read whole: the `ripr://gap/` prefix alone
-/// routes the URI, and only an empty suffix fails. Returns `None` for any
-/// other URI, including the exact status resource.
+/// routes the URI, and only an empty suffix fails. One trailing slash is
+/// normalized away (see [`trim_one_trailing_slash`]). Returns `None` for
+/// any other URI, including the exact status resource.
 pub(crate) fn gap_resource_id(uri: &str) -> Option<&str> {
-    uri.strip_prefix("ripr://gap/").filter(|id| !id.is_empty())
+    uri.strip_prefix("ripr://gap/")
+        .map(trim_one_trailing_slash)
+        // A residual trailing slash means the URI carried more than one —
+        // that id does not exist, so the route misses rather than
+        // normalizing a second slash away. Gap ids embed workspace-relative
+        // paths, so only the trailing position is rejected.
+        .filter(|id| !id.is_empty() && !id.ends_with('/'))
 }
 
 /// Extract the snapshot id from a `ripr://snapshot/{id}` resource URI.
 pub(crate) fn snapshot_resource_id(uri: &str) -> Option<&str> {
     uri.strip_prefix("ripr://snapshot/")
+        .map(trim_one_trailing_slash)
         .filter(|id| !id.is_empty() && !id.contains('/'))
 }
 
@@ -670,6 +691,7 @@ pub(crate) fn test_finding() -> Result<Finding, String> {
     };
     let stage = || StageEvidence::new(StageState::Unknown, Confidence::Unknown, "test");
     Ok(Finding {
+        analysis_scope: crate::domain::AnalysisScope::Diff,
         id: "finding:test:1".to_string(),
         canonical_gap: Some(crate::domain::FindingCanonicalGap {
             id: "gap:test:1".to_string(),
@@ -719,6 +741,8 @@ pub(crate) fn test_finding() -> Result<Finding, String> {
             relation_reason: Some(crate::domain::RelationReason::DirectOwnerCall),
             relation_confidence: Some(crate::domain::RelationConfidence::High),
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         }],
         recommended_next_step: Some("add a boundary assertion for 10000".to_string()),
         language: Some(crate::domain::LanguageId::Rust),
@@ -740,6 +764,74 @@ mod tests {
 
     fn finding() -> Result<Finding, String> {
         test_finding()
+    }
+
+    #[cfg(feature = "lang-rust")]
+    #[test]
+    fn limited_journey_mcp_preserves_shared_guidance_and_refusal() -> Result<(), String> {
+        let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .ok_or("missing repository root")?;
+        let fixture = repository.join("fixtures/rust_transitive_reach_positive");
+        let root = fixture.join("input");
+        let output = crate::app::check_workspace(crate::app::CheckInput {
+            root: root.clone(),
+            diff_file: Some(fixture.join("diff.patch")),
+            mode: crate::app::Mode::Fast,
+            ..Default::default()
+        })?;
+        assert_eq!(output.findings.len(), 1, "nonempty real producer subject");
+        let finding = &output.findings[0];
+        assert_eq!(finding.class, crate::domain::ExposureClass::NoStaticPath);
+        assert!(matches!(
+            finding.static_limit_kind,
+            Some(crate::domain::StaticLimitKind::RustIntegrationPublicApiPathUnresolved)
+        ));
+        let item = GapItem::from_finding(finding, &root)?;
+        let expected = crate::output::next_step::reconcile_next_step(finding);
+        assert!(expected.contains("Tests cannot close this static-analysis limitation"));
+        assert!(expected.contains("entry `outer` -> owner `inner`"));
+        assert_ne!(
+            finding.recommended_next_step.as_deref(),
+            Some(expected.as_str())
+        );
+        assert_eq!(item.evidence_core["recommended_next_step"], expected);
+        assert_eq!(item.evidence_core["class"], "no_static_path");
+        assert_eq!(
+            item.evidence_core["source_currentness"],
+            serde_json::to_value(finding.source_currentness).map_err(|error| error.to_string())?
+        );
+        assert_eq!(item.evidence_core["evidence"], json!(finding.evidence));
+        assert_eq!(
+            item.evidence_core["readiness"]["repair_packet_ready"],
+            false
+        );
+
+        let mut absent = finding.clone();
+        absent.recommended_next_step = None;
+        let absent = GapItem::from_finding(&absent, &root)?;
+        assert_eq!(absent.evidence_core["recommended_next_step"], Value::Null);
+
+        let mut no_edge = finding.clone();
+        no_edge.evidence.retain(|line| {
+            !line.starts_with(crate::domain::LIMITATION_FIRST_UNRESOLVED_EDGE_PREFIX)
+        });
+        let projected = GapItem::from_finding(&no_edge, &root)?;
+        assert_eq!(
+            projected.evidence_core["recommended_next_step"],
+            json!(no_edge.recommended_next_step)
+        );
+
+        let mut unrelated = finding.clone();
+        unrelated.static_limit_kind =
+            Some(crate::domain::StaticLimitKind::RustValuePropagationUnresolved);
+        let projected = GapItem::from_finding(&unrelated, &root)?;
+        assert_eq!(
+            projected.evidence_core["recommended_next_step"],
+            json!(unrelated.recommended_next_step)
+        );
+        Ok(())
     }
 
     #[test]
@@ -885,6 +977,7 @@ mod tests {
         }
 
         let output = crate::app::CheckOutput {
+            value_origins: Default::default(),
             schema_version: crate::app::CHECK_OUTPUT_SCHEMA_VERSION.to_string(),
             harness_projections: Vec::new(),
             tool: "ripr".to_string(),
@@ -1704,6 +1797,40 @@ mod tests {
         assert_eq!(snapshot_resource_id("ripr://gap/x"), None);
     }
 
+    /// #9895: every id-bearing resource route tolerates exactly one
+    /// trailing slash — `ripr://gap/{id}/` addresses the same item as
+    /// `ripr://gap/{id}` — while a second slash, or a slash that would
+    /// leave the id empty, still misses.
+    #[test]
+    fn resource_id_routes_tolerate_one_trailing_slash() {
+        for (uri, expected) in [
+            ("ripr://gap/gap:test:1/", Some("gap:test:1")),
+            (
+                "ripr://gap/gap:rust:src/lib.rs:nested/",
+                Some("gap:rust:src/lib.rs:nested"),
+            ),
+            // A second slash is a different (invalid) id, not a
+            // normalization artifact.
+            ("ripr://gap/gap:test:1//", None),
+            // The bare prefix with only a slash still routes nowhere.
+            ("ripr://gap//", None),
+        ] {
+            assert_eq!(gap_resource_id(uri), expected, "gap route: {uri}");
+        }
+        for (uri, expected) in [
+            (
+                "ripr://snapshot/snapshot:sha256:x/",
+                Some("snapshot:sha256:x"),
+            ),
+            ("ripr://snapshot/snapshot:sha256:x//", None),
+            ("ripr://snapshot//", None),
+            // The single-segment grammar stays strict inside the id.
+            ("ripr://snapshot/a/b/", None),
+        ] {
+            assert_eq!(snapshot_resource_id(uri), expected, "snapshot route: {uri}");
+        }
+    }
+
     /// #5268 review: the producer gap id embeds a workspace-relative path,
     /// so the advertised `ripr://gap/{id}` resource must parse the suffix
     /// whole — a nested-file Rust (or Python) finding's resource link has to
@@ -1717,10 +1844,22 @@ mod tests {
             Some(nested)
         );
         assert_eq!(
+            gap_resource_id(&format!("ripr://gap/{nested}/")),
+            Some(nested),
+            "one trailing slash must not truncate a nested id"
+        );
+        assert_eq!(
             crate::mcp::repair_card::repair_card_resource_id(&format!(
                 "ripr://repair-card/{nested}"
             )),
             Some(nested)
+        );
+        assert_eq!(
+            crate::mcp::repair_card::repair_card_resource_id(&format!(
+                "ripr://repair-card/{nested}/"
+            )),
+            Some(nested),
+            "one trailing slash must not truncate a nested repair-card id"
         );
         // A snapshot id never carries a path, so its grammar stays strict.
         assert_eq!(snapshot_resource_id("ripr://snapshot/a/b"), None);
@@ -1776,7 +1915,7 @@ mod tests {
         let [direct, advisory] = finding.related_tests.as_slice() else {
             return Err(format!("expected two rows: {:?}", finding.related_tests));
         };
-        let why = related_test_miss_reason(direct, &finding.activation.missing_discriminators)
+        let why = related_test_miss_reason(direct, &finding.probe.family)
             .ok_or("the direct row should have a reason")?;
         let item = GapItem::from_finding(&finding, Path::new("/test-root"))?;
         let rows = item.evidence_core["related_tests"]

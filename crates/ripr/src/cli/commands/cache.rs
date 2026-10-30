@@ -2,6 +2,7 @@ use crate::analysis::seam_cache::{
     CACHE_DIR_ENV, CACHE_LAYER_NAMES, CacheStatus, cache_base_dir_from_env, inspect_cache_dir,
     inspect_cache_root,
 };
+use crate::cli::help;
 use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::output;
 use serde_json::json;
@@ -649,7 +650,7 @@ fn run_status(args: &[String]) -> Result<(), String> {
     // Help is positional-free like every sibling command family (#5024):
     // `ripr cache status --json --help` prints this help and exits 0.
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        println!("{CACHE_STATUS_HELP}");
+        println!("{}", help::render_command_help(CACHE_STATUS_HELP, &[]));
         return Ok(());
     }
 
@@ -713,7 +714,7 @@ fn run_clear(args: &[String]) -> Result<(), String> {
     // Help is positional-free like every sibling command family (#5024):
     // `ripr cache clear --dry-run --help` prints this help and exits 0.
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        println!("{CACHE_CLEAR_HELP}");
+        println!("{}", help::render_command_help(CACHE_CLEAR_HELP, &[]));
         return Ok(());
     }
 
@@ -730,12 +731,24 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     // matching siblings); subcommand-level argv keeps its own help handling
     // in `run_status`/`run_clear` (#5024).
     if matches!(args.first(), Some(arg) if arg == "--help" || arg == "-h") {
-        println!("{CACHE_USAGE}");
+        println!(
+            "{}",
+            help::render_command_help(
+                CACHE_USAGE,
+                &["cache status", "cache export", "cache clear"]
+            )
+        );
         return Ok(());
     }
 
     let Some((subcommand, rest)) = args.split_first() else {
-        println!("{CACHE_USAGE}");
+        println!(
+            "{}",
+            help::render_command_help(
+                CACHE_USAGE,
+                &["cache status", "cache export", "cache clear"]
+            )
+        );
         return Ok(());
     };
 
@@ -778,7 +791,7 @@ fn parse_export_args(args: &[String]) -> Result<(Option<PathBuf>, PathBuf), Stri
 
 fn run_export(args: &[String]) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        println!("{CACHE_EXPORT_HELP}");
+        println!("{}", help::render_command_help(CACHE_EXPORT_HELP, &[]));
         return Ok(());
     }
     let (root, output) = parse_export_args(args)?;

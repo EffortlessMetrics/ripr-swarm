@@ -11,9 +11,15 @@
 use crate::domain::{ExposureClass, Finding, StageState};
 
 pub(crate) fn discriminator_evidence_line(finding: &Finding) -> String {
+    discriminator_evidence_line_with_summary(finding, &finding.ripr.reveal.discriminate.summary)
+}
+
+/// Same line, with the stage summary supplied by the caller so a renderer can
+/// rewrite only the summary text before it is embedded in the line.
+pub(crate) fn discriminator_evidence_line_with_summary(finding: &Finding, summary: &str) -> String {
     let stage = &finding.ripr.reveal.discriminate;
     if finding.class == ExposureClass::Exposed || stage.state != StageState::Yes {
-        return format!("discriminator {}: {}", stage.state.as_str(), stage.summary);
+        return format!("discriminator {}: {}", stage.state.as_str(), summary);
     }
     let missing = finding
         .activation
@@ -25,13 +31,13 @@ pub(crate) fn discriminator_evidence_line(finding: &Finding) -> String {
         format!(
             "discriminator not established ({}); related oracle: {}",
             finding.class.as_str(),
-            stage.summary
+            summary
         )
     } else {
         format!(
             "discriminator missing: {}; related oracle: {}",
             missing.join(", "),
-            stage.summary
+            summary
         )
     }
 }

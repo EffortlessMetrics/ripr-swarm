@@ -10,6 +10,7 @@ use serde_json::Value;
 use std::borrow::Cow;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::Mutex;
 
 /// Upper bound for the `ripr_refresh` `base` revision text; no real ref name
@@ -112,8 +113,9 @@ impl McpServer {
         arguments: Option<serde_json::Map<String, Value>>,
         max_envelope_bytes: usize,
     ) -> Result<CallToolResponse, ErrorData> {
-        reject_unknown_arguments(&arguments, &["base"])?;
+        reject_unknown_arguments(&arguments, &["base", "source"])?;
         let base = optional_nonempty_string_argument(&arguments, "base")?;
+        let source = refresh_source_argument(&arguments)?;
         if let Some(base) = &base
             && base.len() > MAX_BASE_REVISION_BYTES
         {
@@ -145,10 +147,11 @@ impl McpServer {
             }
             session.in_flight = true;
             session.desired_base = base.clone();
+            session.desired_source = source;
         }
         let mut attempt = workspace::InFlightAttempt::new(session.clone());
         let worker = tokio::task::spawn_blocking(move || {
-            workspace::run_check(&root, root_identity.as_deref(), base.as_deref())
+            workspace::run_check(&root, root_identity.as_deref(), base.as_deref(), source)
         });
         let outcome = match worker.await {
             Ok(outcome) => outcome,
@@ -194,6 +197,7 @@ impl McpServer {
             &[
                 "snapshot_id",
                 "offset",
+                "omitted_offset",
                 "limit",
                 "file",
                 "class",
@@ -203,6 +207,7 @@ impl McpServer {
         )?;
         let requested = optional_string_argument(&arguments, "snapshot_id")?;
         let offset = optional_nonnegative_argument(&arguments, "offset")?;
+        let omitted_offset = optional_nonnegative_argument(&arguments, "omitted_offset")?;
         let limit = optional_positive_argument(&arguments, "limit")?;
         let file = optional_nonempty_string_argument(&arguments, "file")?;
         let class = optional_nonempty_string_argument(&arguments, "class")?;
@@ -255,6 +260,7 @@ impl McpServer {
             workspace::GapListWindow {
                 offset: offset.unwrap_or(0),
                 limit,
+                omitted_offset: omitted_offset.unwrap_or(0),
             },
             &workspace::GapListFilter {
                 file,
@@ -284,15 +290,34 @@ impl McpServer {
         let canonical_id = required_string_argument(&arguments, "canonical_id")?;
         let requested = optional_string_argument(&arguments, "snapshot_id")?;
         let session = self.session.lock().await;
-        match session.get_gap(&canonical_id, requested.as_deref()) {
-            Ok(document) => self.bounded_tool_result(
+        match session.get_gap_with_recovery(&canonical_id, requested.as_deref()) {
+            Ok((document, recovery)) => self.bounded_tool_result(
                 document,
                 gaps::GAP_SCHEMA_VERSION,
                 "serialize gap evidence",
-                workspace::RECOVERY_GAP_ITEM_TOO_LARGE,
+                &recovery,
                 max_envelope_bytes,
             ),
             Err(failure) => self.typed_failure(failure, gaps::GAP_SCHEMA_VERSION),
+        }
+    }
+
+    /// The gap resource and tool capture both evidence and its fallback while
+    /// holding one session read; a refresh cannot switch source between them.
+    async fn get_gap_resource(
+        &self,
+        uri: &str,
+        canonical_id: &str,
+        max_envelope_bytes: usize,
+    ) -> Result<ReadResourceResponse, ErrorData> {
+        let session = self.session.lock().await;
+        let result =
+            resource_id_document(canonical_id, |id| session.get_gap_with_recovery(id, None));
+        match result {
+            Ok((document, recovery)) => {
+                self.resource_result(document, uri, &recovery, max_envelope_bytes)
+            }
+            Err(failure) => Err(resource_failure("gap", &failure, None)),
         }
     }
 
@@ -501,7 +526,7 @@ impl McpServer {
         document: Value,
         failure_version: &'static str,
         serialize_context: &'static str,
-        recovery: &'static str,
+        recovery: &str,
         max_envelope_bytes: usize,
     ) -> Result<CallToolResponse, ErrorData> {
         let envelope = match protocol::tool_result(document, max_envelope_bytes) {
@@ -535,7 +560,7 @@ impl McpServer {
         envelope: Value,
         failure_version: &'static str,
         serialize_context: &'static str,
-        recovery: &'static str,
+        recovery: &str,
         max_envelope_bytes: usize,
     ) -> Result<CallToolResponse, ErrorData> {
         let bytes = serde_json::to_vec(&envelope)
@@ -571,6 +596,30 @@ fn optional_string_argument(
         Some(_other) => Err(ErrorData::invalid_params(
             format!("{name} must be a string"),
             Some(serde_json::json!({ "argument": name, "expected": "string" })),
+        )),
+    }
+}
+
+/// The `ripr_refresh` `source` selector (#7357): `committed` (also the
+/// meaning of omission) or `worktree`. Any other value, including an empty
+/// string, wrong case or a non-string, is invalid params; nothing coerces.
+fn refresh_source_argument(
+    arguments: &Option<serde_json::Map<String, Value>>,
+) -> Result<workspace::RefreshSource, ErrorData> {
+    match optional_string_argument(arguments, "source")?.as_deref() {
+        None | Some(workspace::RefreshSource::COMMITTED_NAME) => {
+            Ok(workspace::RefreshSource::Committed)
+        }
+        Some(workspace::RefreshSource::WORKTREE_NAME) => Ok(workspace::RefreshSource::Worktree),
+        Some(_other) => Err(ErrorData::invalid_params(
+            "source must be one of: committed, worktree",
+            Some(serde_json::json!({
+                "argument": "source",
+                "expected": [
+                    workspace::RefreshSource::COMMITTED_NAME,
+                    workspace::RefreshSource::WORKTREE_NAME,
+                ],
+            })),
         )),
     }
 }
@@ -615,30 +664,7 @@ fn optional_nonnegative_argument(
     arguments: &Option<serde_json::Map<String, Value>>,
     name: &str,
 ) -> Result<Option<usize>, ErrorData> {
-    let Some(arguments) = arguments else {
-        return Ok(None);
-    };
-    match arguments.get(name) {
-        None => Ok(None),
-        Some(value) => {
-            let raw = value.as_u64().ok_or_else(|| {
-                ErrorData::invalid_params(
-                    format!("{name} must be a non-negative integer"),
-                    Some(
-                        serde_json::json!({ "argument": name, "expected": "non-negative integer" }),
-                    ),
-                )
-            })?;
-            usize::try_from(raw).map(Some).map_err(|error| {
-                ErrorData::invalid_params(
-                    format!("{name} is out of range: {error}"),
-                    Some(
-                        serde_json::json!({ "argument": name, "expected": "non-negative integer" }),
-                    ),
-                )
-            })
-        }
-    }
+    optional_integer_argument(arguments, name, 0, u64::MAX)
 }
 
 /// A paging limit (#6021): a JSON integer `>= 1`.
@@ -646,13 +672,169 @@ fn optional_positive_argument(
     arguments: &Option<serde_json::Map<String, Value>>,
     name: &str,
 ) -> Result<Option<usize>, ErrorData> {
-    match optional_nonnegative_argument(arguments, name)? {
-        Some(0) => Err(ErrorData::invalid_params(
-            format!("{name} must be at least 1"),
-            Some(serde_json::json!({ "argument": name, "expected": "integer at least 1" })),
-        )),
-        other => Ok(other),
+    optional_integer_argument(arguments, name, 1, u64::MAX)
+}
+
+/// The shared integer validator behind `offset` and `limit` (#9895). Every
+/// refusal names the real constraint (a whole JSON integer from `minimum` to
+/// the effective maximum: the declared maximum capped at this platform's
+/// `usize::MAX`, so `data.maximum`, the message and the recovery never
+/// disagree on a 32-bit build), why this value misses it, and a
+/// `data.recovery`. A negative number, a non-number, a fractional or exponent-form number and an integer
+/// past `u64::MAX` are different mistakes that used to share the single wrong
+/// sentence "must be a non-negative integer". A JSON number that does not fit
+/// `u64` reaches this adapter as a float, so `18446744073709551616` and `1e30`
+/// are reported as too large instead of as non-integers.
+fn optional_integer_argument(
+    arguments: &Option<serde_json::Map<String, Value>>,
+    name: &str,
+    minimum: u64,
+    maximum: u64,
+) -> Result<Option<usize>, ErrorData> {
+    optional_integer_argument_for_platform(
+        arguments,
+        name,
+        minimum,
+        maximum,
+        u64::try_from(usize::MAX).unwrap_or(u64::MAX),
+    )
+}
+
+/// The bound a request is actually held to: the declared maximum, never above
+/// what the platform's `usize` can represent.
+fn effective_integer_maximum(declared: u64, platform_max: u64) -> u64 {
+    declared.min(platform_max)
+}
+
+/// `optional_integer_argument` with the platform's largest `usize` as a
+/// parameter so the effective-bound behavior is testable on any target.
+fn optional_integer_argument_for_platform(
+    arguments: &Option<serde_json::Map<String, Value>>,
+    name: &str,
+    minimum: u64,
+    declared_maximum: u64,
+    platform_max: u64,
+) -> Result<Option<usize>, ErrorData> {
+    let maximum = effective_integer_maximum(declared_maximum, platform_max);
+    let Some(value) = arguments.as_ref().and_then(|arguments| arguments.get(name)) else {
+        return Ok(None);
+    };
+    let expected = if maximum != u64::MAX {
+        format!("integer at most {maximum}")
+    } else if minimum == 0 {
+        "non-negative integer".to_string()
+    } else {
+        "integer at least 1".to_string()
+    };
+    let refuse = |message: String, recovery: String| {
+        ErrorData::invalid_params(
+            message,
+            Some(serde_json::json!({
+                "argument": name,
+                "expected": expected,
+                "minimum": minimum,
+                "maximum": maximum,
+                "recovery": recovery,
+            })),
+        )
+    };
+    let in_range = format!("send {name} as an integer from {minimum} to {maximum}, or omit it");
+    let Value::Number(number) = value else {
+        let kind = match value {
+            Value::String(_) => "a string",
+            Value::Bool(_) => "a boolean",
+            Value::Null => "null",
+            Value::Array(_) => "an array",
+            _ => "an object",
+        };
+        return Err(refuse(
+            format!("{name} must be a whole JSON integer from {minimum} to {maximum}, not {kind}"),
+            in_range,
+        ));
+    };
+    let raw = if let Some(raw) = number.as_u64() {
+        raw
+    } else if number.as_i64().is_some() || number.as_f64().is_some_and(f64::is_sign_negative) {
+        return Err(refuse(
+            format!("{name} must be at least {minimum}; {number} is negative"),
+            in_range,
+        ));
+    } else if number.as_f64().is_some_and(|float| {
+        // `u64::MAX as f64` rounds up to 2^64, which no `u64` equals.
+        float > maximum as f64 || (maximum == u64::MAX && float >= maximum as f64)
+    }) {
+        return Err(refuse(
+            format!(
+                "{name} is larger than the largest accepted integer {maximum}{}",
+                if maximum == u64::MAX {
+                    " (u64 maximum)"
+                } else {
+                    ""
+                }
+            ),
+            format!(
+                "{in_range}; a smaller value is enough because replies are byte-bounded and continuation walks the rest"
+            ),
+        ));
+    } else {
+        return Err(refuse(
+            format!(
+                "{name} must be a whole JSON integer from {minimum} to {maximum} without a fraction or exponent, not {number}"
+            ),
+            in_range,
+        ));
+    };
+    if raw < minimum {
+        return Err(refuse(
+            format!("{name} must be at least {minimum}"),
+            in_range,
+        ));
     }
+    if raw > maximum {
+        return Err(refuse(
+            format!("{name} must be at most {maximum}"),
+            in_range,
+        ));
+    }
+    // The effective maximum already caps at `usize::MAX`, so this checked
+    // conversion cannot fail for an in-range value; it stays as the guard and
+    // reports the same bound if it ever does.
+    usize::try_from(raw).map(Some).map_err(|_error| {
+        refuse(
+            format!("{name} must be at most {maximum}"),
+            in_range.clone(),
+        )
+    })
+}
+
+/// Protocol-level list pagination (#9895): these catalog lists are static and
+/// small, so the server returns the complete list in one response and never
+/// issues a `nextCursor`. A client-supplied cursor can only be stale or
+/// fabricated; ignoring it would let an agent believe paging worked, so the
+/// request fails closed with the recovery spelled out.
+fn reject_pagination_cursor(
+    params: Option<PaginatedRequestParams>,
+    method: &str,
+) -> Result<(), ErrorData> {
+    if params
+        .as_ref()
+        .is_some_and(|params| params.cursor.is_some())
+    {
+        return Err(pagination_cursor_error(method));
+    }
+    Ok(())
+}
+
+fn pagination_cursor_error(method: &str) -> ErrorData {
+    ErrorData::invalid_params(
+        format!(
+            "{method} does not paginate: this server returns the complete list in one response and never issues a nextCursor; drop the cursor argument"
+        ),
+        Some(serde_json::json!({
+            "argument": "cursor",
+            "expected": "omit; the complete list fits one page",
+        })),
+    )
 }
 
 /// A paging limit with a typed row cap: a JSON integer `>= 1` and `<= max`.
@@ -664,15 +846,7 @@ fn optional_capped_page_limit(
     name: &str,
     max: usize,
 ) -> Result<Option<usize>, ErrorData> {
-    match optional_positive_argument(arguments, name)? {
-        Some(value) if value > max => Err(ErrorData::invalid_params(
-            format!("{name} must be at most {max}"),
-            Some(
-                serde_json::json!({ "argument": name, "expected": format!("integer at most {max}") }),
-            ),
-        )),
-        other => Ok(other),
-    }
+    optional_integer_argument(arguments, name, 1, u64::try_from(max).unwrap_or(u64::MAX))
 }
 
 /// Resolve one captured resource-id segment through an exact-id lookup with
@@ -690,10 +864,10 @@ fn optional_capped_page_limit(
 /// Recovery for every ambiguous or unresolved read names the equivalent
 /// tool route, which takes the canonical id as a plain JSON string with no
 /// URI encoding.
-fn resource_id_document(
+fn resource_id_document<T>(
     captured: &str,
-    lookup: impl Fn(&str) -> Result<Value, workspace::AttemptFailure>,
-) -> Result<Value, workspace::AttemptFailure> {
+    lookup: impl Fn(&str) -> Result<T, workspace::AttemptFailure>,
+) -> Result<T, workspace::AttemptFailure> {
     match lookup(captured) {
         Ok(document) => {
             if let Some(decoded) = gaps::percent_decode_resource_id(captured)
@@ -814,6 +988,17 @@ impl ServerHandler for McpServer {
         request: CustomRequest,
         _: RequestContext<RoleServer>,
     ) -> Result<CustomResult, ErrorData> {
+        if matches!(
+            request.method.as_str(),
+            "tools/list" | "prompts/list" | "resources/list" | "resources/templates/list"
+        ) && request
+            .params
+            .as_ref()
+            .and_then(|params| params.get("cursor"))
+            .is_some_and(|cursor| !cursor.is_null() && !cursor.is_string())
+        {
+            return Err(pagination_cursor_error(&request.method));
+        }
         const SERVED_METHODS: [&str; 9] = [
             "initialize",
             "server/discover",
@@ -845,23 +1030,37 @@ impl ServerHandler for McpServer {
     }
     async fn list_tools(
         &self,
-        _: Option<PaginatedRequestParams>,
+        params: Option<PaginatedRequestParams>,
         _: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
+        reject_pagination_cursor(params, "tools/list")?;
         Ok(self.tools.clone())
+    }
+    async fn list_prompts(
+        &self,
+        params: Option<PaginatedRequestParams>,
+        _: RequestContext<RoleServer>,
+    ) -> Result<ListPromptsResult, ErrorData> {
+        // #9895: the SDK default returns an empty catalog and would silently
+        // ignore a client-supplied cursor; the static catalog rule is the
+        // same one tools/list and resources/list enforce.
+        reject_pagination_cursor(params, "prompts/list")?;
+        Ok(ListPromptsResult::default())
     }
     async fn list_resources(
         &self,
-        _: Option<PaginatedRequestParams>,
+        params: Option<PaginatedRequestParams>,
         _: RequestContext<RoleServer>,
     ) -> Result<ListResourcesResult, ErrorData> {
+        reject_pagination_cursor(params, "resources/list")?;
         Ok(self.resources.clone())
     }
     async fn list_resource_templates(
         &self,
-        _: Option<PaginatedRequestParams>,
+        params: Option<PaginatedRequestParams>,
         _: RequestContext<RoleServer>,
     ) -> Result<ListResourceTemplatesResult, ErrorData> {
+        reject_pagination_cursor(params, "resources/templates/list")?;
         Ok(self.resource_templates.clone())
     }
     async fn call_tool(
@@ -948,7 +1147,11 @@ impl ServerHandler for McpServer {
         // The same id-aware budget the tool path uses (#7768): a resource
         // read answers one request whose echoed id rides the same wire cap.
         let max_envelope_bytes = super::outer_envelope_budget(&context.id);
-        if request.uri == protocol::STATUS_RESOURCE_URI {
+        // The well-known status resource gets the same one-trailing-slash
+        // tolerance the id routes normalize (#9895); the id parsers trim
+        // their own captures, so `uri` is used only for this exact match.
+        let uri = gaps::trim_one_trailing_slash(&request.uri);
+        if uri == protocol::STATUS_RESOURCE_URI {
             let session = self.session.lock().await;
             let result = protocol::status_resource_result(
                 &self.status,
@@ -994,17 +1197,9 @@ impl ServerHandler for McpServer {
             };
         }
         if let Some(canonical_id) = gaps::gap_resource_id(&request.uri) {
-            let session = self.session.lock().await;
-            let result = resource_id_document(canonical_id, |id| session.get_gap(id, None));
-            return match result {
-                Ok(document) => self.resource_result(
-                    document,
-                    &request.uri,
-                    workspace::RECOVERY_GAP_ITEM_TOO_LARGE,
-                    max_envelope_bytes,
-                ),
-                Err(failure) => Err(resource_failure("gap", &failure, None)),
-            };
+            return self
+                .get_gap_resource(&request.uri, canonical_id, max_envelope_bytes)
+                .await;
         }
         if let Some(attempt_id) = repair::repair_attempt_resource_id(&request.uri) {
             return match self.repair_read_document(attempt_id, false).await {
@@ -1070,7 +1265,7 @@ impl McpServer {
         &self,
         document: Value,
         uri: &str,
-        recovery: &'static str,
+        recovery: &str,
         max_envelope_bytes: usize,
     ) -> Result<ReadResourceResponse, ErrorData> {
         // Resources pretty-print their document text while tool payloads
@@ -1099,11 +1294,7 @@ impl McpServer {
 /// id-aware response budget (#7768): the same `result_too_large` code and
 /// per-surface recovery the tool path returns, rendered through the
 /// standard resource failure shape.
-fn resource_budget_failure(
-    bytes: usize,
-    max_envelope_bytes: usize,
-    recovery: &'static str,
-) -> ErrorData {
+fn resource_budget_failure(bytes: usize, max_envelope_bytes: usize, recovery: &str) -> ErrorData {
     let failure = workspace::AttemptFailure::new(
         workspace::CODE_RESULT_TOO_LARGE,
         format!(
@@ -1172,6 +1363,7 @@ fn resource_failure(
 /// keep ping as method-not-found.
 pub(super) struct InitializeSessionService {
     inner: McpServer,
+    handshake_seen: AtomicBool,
 }
 
 impl InitializeSessionService {
@@ -1181,6 +1373,7 @@ impl InitializeSessionService {
     ) -> Result<Self, ErrorData> {
         Ok(Self {
             inner: McpServer::new(status, analysis_root)?,
+            handshake_seen: AtomicBool::new(false),
         })
     }
 }
@@ -1215,6 +1408,17 @@ impl rmcp::Service<RoleServer> for InitializeSessionService {
         if matches!(request, ClientRequest::PingRequest(_)) {
             return answer_initialize_session_ping(&self.inner, context).await;
         }
+        if matches!(request, ClientRequest::InitializeRequest(_))
+            && self.handshake_seen.swap(true, Ordering::SeqCst)
+        {
+            // The first `initialize` is the handshake itself and flows
+            // through this adapter; any later one is a lifecycle violation
+            // on a live session, not a missing method (#9895).
+            return Err(ErrorData::invalid_request(
+                ALREADY_INITIALIZED_MESSAGE,
+                None,
+            ));
+        }
         <McpServer as rmcp::Service<RoleServer>>::handle_request(&self.inner, request, context)
             .await
     }
@@ -1241,6 +1445,12 @@ impl rmcp::Service<RoleServer> for InitializeSessionService {
     }
 }
 
+const ALREADY_INITIALIZED_MESSAGE: &str = "session already initialized: `initialize` is accepted once per connection; continue with the existing session or restart `ripr mcp --stdio`";
+
 #[cfg(test)]
 #[path = "server_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "source_recovery_tests.rs"]
+mod source_recovery_tests;

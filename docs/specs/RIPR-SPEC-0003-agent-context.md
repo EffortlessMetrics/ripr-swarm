@@ -45,6 +45,18 @@ budget-truncated seam inventory refuses as undecidable instead of rendering
 a clean miss the lookup did not establish: the refusal names the
 truncation, the wider-budget recovery, and the listing route.
 
+On a fresh `context` or `explain` lookup miss, retain the check producer's
+detected-but-unanalyzed language advisories and non-success language-run
+reasons under `Analysis limitations for this run:`. Reuse the producer's
+configured-off versus unavailable-binary recovery and TypeScript/JavaScript
+family names. This describes the run's scope; capped sample paths do not
+establish that a limitation caused this particular selector to miss. Preserve
+the selector's syntax/seam guidance and effective root/base/source/mode retry.
+Successful selection, ambiguity and ordinary misses without such limitations
+retain their existing behavior. Recorded `--from` lookups do not infer these
+facts from ambient configuration: the artifact has no complete advisory carrier.
+Exit 2, prose stderr and empty stdout remain the miss contract (#10720).
+
 The packet should include:
 
 - task kind
@@ -143,6 +155,10 @@ Planned tests:
   with literal finding/class/reason identity, human/JSON section parity, and
   scope-preserving context replay
 - retained boundary, missing-assertion, and no-path verdict-change recipes
+- `crates/ripr/tests/cli_smoke/selector_language_recovery.rs` — fresh disabled,
+  unavailable-binary and enabled-run scope, exact retry replay from a separate
+  Git repository, capped samples, mixed-language hits, and artifact non-invention;
+  the enabled-Perl no-packet row requires a `lang-perl` test build
 
 ## Implementation Mapping
 

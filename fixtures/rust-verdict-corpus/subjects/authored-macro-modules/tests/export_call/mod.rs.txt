@@ -1,0 +1,7 @@
+use macro_modules::fits_crate_call;
+
+crate::crate_called_table! {
+    crate_call_under(3, 5, true)
+    crate_call_at(5, 5, true)
+    crate_call_over(6, 5, false)
+}

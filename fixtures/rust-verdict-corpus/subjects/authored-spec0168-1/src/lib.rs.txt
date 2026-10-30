@@ -1,0 +1,29 @@
+pub fn sum_raw(values: &[u32]) -> u32 {
+    let mut total = 0;
+    let ptr = values.as_ptr();
+    unsafe {
+        for i in 0..values.len() {
+            total += *ptr.add(i);
+        }
+    }
+    total
+}
+
+pub fn double(value: u32) -> u32 {
+    value * 2
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sums_every_element() {
+        assert_eq!(sum_raw(&[1, 2, 3]), 6);
+    }
+
+    #[test]
+    fn doubles() {
+        assert_eq!(double(4), 8);
+    }
+}

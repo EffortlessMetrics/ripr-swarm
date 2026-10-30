@@ -1,0 +1,8 @@
+--- a/shop.py
++++ b/shop.py
+@@ -1,4 +1,4 @@
+ def handling_fee(amount):
+-    if amount >= 100:
++    if amount > 99:
+         return 0
+     return 5

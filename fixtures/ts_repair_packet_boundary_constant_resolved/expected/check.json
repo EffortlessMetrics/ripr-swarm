@@ -12,6 +12,7 @@
   "findings": [
     {
       "id": "probe:src_pricing.ts:typescript_preview:17445ecf",
+      "canonical_gap_id": "gap:typescript:typescript_preview:17445ecf",
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.40,
@@ -69,8 +70,8 @@
           "oracle": "expect(...).toBe(...)",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "missing_input",
+          "why": "no input this test passes was seen reaching `amount == DISCOUNT_THRESHOLD`"
         },
         {
           "name": "discounts far above threshold",
@@ -81,8 +82,8 @@
           "oracle": "expect(...).toBe(...)",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "miss": "missing_input",
+          "why": "no input this test passes was seen reaching `amount == DISCOUNT_THRESHOLD`"
         }
       ],
       "typescript_preview_card": {
@@ -176,8 +177,8 @@
       "stop_reasons": [],
       "oracle_kind": "exact_value",
       "oracle_strength": "strong",
-      "recommended_next_step": "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `amount == DISCOUNT_THRESHOLD`; the repair packet is complete and delegatable (advisory).",
-      "suggested_next_action": "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `amount == DISCOUNT_THRESHOLD`; the repair packet is complete and delegatable (advisory).",
+      "recommended_next_step": "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `amount == DISCOUNT_THRESHOLD`; the repair packet is complete (advisory: `ripr context --at <finding-id>` prints it; the seam-based `ripr repair` covers Rust files only).",
+      "suggested_next_action": "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `amount == DISCOUNT_THRESHOLD`; the repair packet is complete (advisory: `ripr context --at <finding-id>` prints it; the seam-based `ripr repair` covers Rust files only).",
       "language": "typescript",
       "language_status": "preview",
       "owner_kind": "function",

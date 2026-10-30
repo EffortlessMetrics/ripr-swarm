@@ -609,7 +609,7 @@ pub(crate) struct ValidatedCheckFindings {
 /// Validate a `check-findings-json` artifact with the same identity,
 /// commitment and Git-provenance authority as `validate_repo_exposure_artifact`
 /// (one shared validator, no weaker twin), then require a complete document: an
-/// analysis that did not complete, or a findings array bounded to a prefix,
+/// analysis that did not complete, or a findings array bounded to a subset,
 /// cannot show a gap as closed.
 pub(crate) fn validate_check_findings_artifact(
     root: &Path,
@@ -936,11 +936,7 @@ fn validate_artifact_identity(
 
     let actual_head = git_output(&expected_root, &["rev-parse", "HEAD"])?;
     let actual_head = actual_head.trim();
-    let actual_worktree_dirty = git_output(
-        &expected_root,
-        &["status", "--porcelain", "--untracked-files=no"],
-    )
-    .map(|status| !status.trim().is_empty())?;
+    let actual_worktree_dirty = git_worktree_dirty(&expected_root)?;
     // Lineage presence (#2922 PR A): a well-formed head that does not name a
     // commit held by the checked repository is rejected, not merely disclosed
     // as historical. Git liveness is established by the HEAD and status reads
@@ -1341,15 +1337,53 @@ pub(crate) fn current_git_head(root: &Path) -> Result<String, String> {
     Ok(head.to_string())
 }
 
+/// Resolve a caller-spelled revision to its full commit id (#9103). A
+/// spelling that starts with `-` is refused before it reaches the VCS, and the
+/// result must be a full lowercase commit id.
+pub(crate) fn resolve_commit_rev(root: &Path, rev: &str) -> Result<String, String> {
+    if rev.trim().is_empty() || rev.starts_with('-') {
+        return Err(format!("`{rev}` is not a revision ripr can resolve"));
+    }
+    let spec = format!("{rev}^{{commit}}");
+    let resolved =
+        git_output(root, &["rev-parse", "--verify", "--quiet", &spec]).map_err(|error| {
+            format!("revision `{rev}` does not name a commit in the selected root: {error}")
+        })?;
+    let resolved = resolved.trim();
+    if !is_full_sha(resolved) {
+        return Err(format!(
+            "revision `{rev}` resolved to an invalid commit `{resolved}`"
+        ));
+    }
+    Ok(resolved.to_string())
+}
+
 /// The artifact producer's bounded worktree probe, shared with limitation
 /// disclosure. A successful HEAD read alone does not establish this status.
 pub(crate) fn current_git_worktree_status(root: &Path) -> Result<&'static str, String> {
-    let status = git_output(root, &["status", "--porcelain", "--untracked-files=no"])?;
-    Ok(if status.trim().is_empty() {
-        "clean"
-    } else {
+    Ok(if git_worktree_dirty(root)? {
         "dirty"
+    } else {
+        "clean"
     })
+}
+
+/// Whether the worktree differs from HEAD in anything the analysis reads: a
+/// tracked change, or an untracked, non-ignored Rust source. The seam
+/// inventory walks the filesystem, so an untracked production `.rs` file is
+/// analyzed and its seams emitted even though HEAD does not contain it
+/// (#6817). Other untracked files (build output, notes) are not analyzed and
+/// stay out of this probe, so they cannot flip an artifact to dirty.
+fn git_worktree_dirty(root: &Path) -> Result<bool, String> {
+    let tracked = git_output(root, &["status", "--porcelain", "--untracked-files=no"])?;
+    if !tracked.trim().is_empty() {
+        return Ok(true);
+    }
+    let untracked_sources = git_output(
+        root,
+        &["ls-files", "--others", "--exclude-standard", "--", "*.rs"],
+    )?;
+    Ok(!untracked_sources.trim().is_empty())
 }
 
 /// A HEAD read that also detects an A-B-A swap between two reads (#5930).
@@ -1855,6 +1889,16 @@ mod tests {
     }
 
     #[test]
+    fn resolve_commit_rev_refuses_option_shaped_and_blank_revisions() {
+        for rev in ["", "  ", "--output=x", "-1"] {
+            let error = resolve_commit_rev(Path::new("."), rev)
+                .err()
+                .unwrap_or_default();
+            assert!(error.contains("not a revision"), "{rev:?}: {error}");
+        }
+    }
+
+    #[test]
     fn gap_closure_refuses_absence_other_gaps_and_unmoved_classes() -> Result<(), String> {
         let open = [gap("gap:a", "weakly_exposed")];
         let refusals = [
@@ -2094,40 +2138,27 @@ mod tests {
     /// The production path (`running_executable` into the regeneration
     /// guidance) under the real Linux stimulus: a process whose executable was
     /// unlinked reports `current_exe()` as `/path (deleted)` (#9665 item 1).
-    /// The test re-runs itself as a copied, self-unlinking child so the parent
-    /// binary stays intact; the child writes the guidance it rendered.
+    /// A private hard link lets the child unlink its own path while preserving
+    /// Cargo's test binary, without ever opening the image for writing (#10168).
     #[cfg(target_os = "linux")]
     #[test]
     fn unlinked_running_executable_renders_bare_ripr_through_production_path() -> Result<(), String>
     {
         const CHILD_OUT: &str = "RIPR_TEST_UNLINKED_EXE_OUT";
-        if let Ok(out) = std::env::var(CHILD_OUT) {
+        if let Some(out) = std::env::var_os(CHILD_OUT) {
             let exe = std::env::current_exe().map_err(|e| e.to_string())?;
             std::fs::remove_file(&exe).map_err(|e| e.to_string())?;
+            let deleted = std::env::current_exe().map_err(|e| e.to_string())?;
+            if !deleted.to_string_lossy().ends_with(" (deleted)") || deleted.is_file() {
+                return Err(format!(
+                    "self-unlink did not produce a deleted executable: {deleted:?}"
+                ));
+            }
             let guidance = repo_exposure_regeneration_guidance(Path::new("."));
             return std::fs::write(out, guidance).map_err(|e| e.to_string());
         }
-        let dir = std::env::temp_dir().join(format!("ripr-unlinked-exe-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-        let copy = dir.join("ripr-lib-test-copy");
-        let out = dir.join("guidance.txt");
-        std::fs::copy(std::env::current_exe().map_err(|e| e.to_string())?, &copy)
-            .map_err(|e| e.to_string())?;
-        let status = std::process::Command::new(&copy)
-            .args([
-                "--exact",
-                "agent::artifact::tests::unlinked_running_executable_renders_bare_ripr_through_production_path",
-                "--test-threads=1",
-            ])
-            .env(CHILD_OUT, &out)
-            .status()
-            .map_err(|e| e.to_string())?;
-        let guidance = std::fs::read_to_string(&out).map_err(|e| format!("no child output: {e}"));
-        let _ = std::fs::remove_dir_all(&dir);
-        if !status.success() {
-            return Err(format!("child test run failed: {status}"));
-        }
-        let guidance = guidance?;
+        let mut fixture = UnlinkedExecutableFixture::new()?;
+        let guidance = fixture.guidance()?;
         if guidance.contains("(deleted)") {
             return Err(format!("recovery names a deleted executable: {guidance}"));
         }
@@ -2136,6 +2167,192 @@ mod tests {
                 "no bare-ripr fallback with version check: {guidance}"
             ));
         }
+        Ok(())
+    }
+
+    /// Owns a private link to the running image and reaps its child before
+    /// removing the directory. Never open an executable inode for writing:
+    /// another test's fork can inherit that writer until its own exec (#10168).
+    #[cfg(target_os = "linux")]
+    struct UnlinkedExecutableFixture {
+        root: PathBuf,
+        child: Option<std::process::Child>,
+    }
+
+    #[cfg(target_os = "linux")]
+    impl UnlinkedExecutableFixture {
+        fn new() -> Result<Self, String> {
+            static NEXT: AtomicU64 = AtomicU64::new(0);
+            let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+            let parent = exe.parent().ok_or("test executable has no parent")?;
+            let stamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|e| e.to_string())?
+                .as_nanos();
+            // Stay on the executable's filesystem so hard_link cannot cross
+            // mounts, even when the system temp directory is on another one.
+            let root = parent.join(format!(
+                "ripr-unlinked-exe-{}-{stamp}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::create_dir(&root).map_err(|e| {
+                format!(
+                    "create private executable directory {}: {e}",
+                    root.display()
+                )
+            })?;
+            let fixture = Self { root, child: None };
+            // A new pathname to the already executing inode needs no writable
+            // descriptor, chmod or copy. Unlinking it leaves Cargo's image intact.
+            std::fs::hard_link(&exe, fixture.executable())
+                .map_err(|e| format!("link running executable {}: {e}", exe.display()))?;
+            Ok(fixture)
+        }
+
+        fn executable(&self) -> PathBuf {
+            self.root.join("ripr-lib-test-link")
+        }
+
+        fn spawn(&mut self) -> Result<(), String> {
+            self.child = Some(std::process::Command::new(self.executable())
+                .args([
+                    "--exact",
+                    "agent::artifact::tests::unlinked_running_executable_renders_bare_ripr_through_production_path",
+                    "--test-threads=1",
+                ])
+                .env("RIPR_TEST_UNLINKED_EXE_OUT", self.root.join("guidance.txt"))
+                .spawn()
+                .map_err(|e| format!("spawn self-unlinking test: {e}"))?);
+            Ok(())
+        }
+
+        fn guidance(&mut self) -> Result<String, String> {
+            self.spawn()?;
+            let child = self.child.as_mut().ok_or("self-unlinking child missing")?;
+            let status = child
+                .wait()
+                .map_err(|e| format!("reap self-unlinking test: {e}"))?;
+            self.child = None;
+            if !status.success() {
+                return Err(format!("child test run failed: {status}"));
+            }
+            if self.executable().exists() {
+                return Err("child did not unlink its executable".to_string());
+            }
+            std::fs::read_to_string(self.root.join("guidance.txt"))
+                .map_err(|e| format!("no child output: {e}"))
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    impl Drop for UnlinkedExecutableFixture {
+        fn drop(&mut self) {
+            if let Some(child) = &mut self.child {
+                let _ = child.kill();
+                if let Err(e) = child.wait() {
+                    eprintln!(
+                        "reap self-unlinking child failed; retaining {}: {e}",
+                        self.root.display()
+                    );
+                    return;
+                }
+            }
+            if let Err(e) = std::fs::remove_dir_all(&self.root) {
+                eprintln!(
+                    "remove private executable directory {}: {e}",
+                    self.root.display()
+                );
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn unlinked_executable_fixtures_are_unique_and_never_writable_copies() -> Result<(), String> {
+        use std::os::unix::fs::MetadataExt;
+
+        let source = std::env::current_exe().map_err(|e| e.to_string())?;
+        let source_metadata = std::fs::metadata(&source).map_err(|e| e.to_string())?;
+        let first = UnlinkedExecutableFixture::new()?;
+        let second = UnlinkedExecutableFixture::new()?;
+        let first_root = first.root.clone();
+        let second_root = second.root.clone();
+        assert_ne!(first_root, second_root);
+        for fixture in [&first, &second] {
+            let metadata = std::fs::metadata(fixture.executable()).map_err(|e| e.to_string())?;
+            assert_eq!(
+                (metadata.dev(), metadata.ino()),
+                (source_metadata.dev(), source_metadata.ino())
+            );
+            // This is the executing image's *same inode*, not a copied
+            // binary. A write-open/ETXTBSY probe would itself acquire a writer
+            // on some Linux kernels, contradicting the fixture's safety rule.
+            // Both private links and Cargo's original path are present.
+            // This stays portable across Linux kernels and avoids the
+            // concurrent fixture's link-count changes from other tests.
+            assert!(
+                metadata.nlink() >= 3,
+                "running image must still have its original and two private links"
+            );
+        }
+        drop(first);
+        assert!(!first_root.exists());
+        assert!(second.executable().is_file());
+        drop(second);
+        assert!(!second_root.exists());
+        assert!(source.is_file());
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn unlinked_executable_fixture_cleans_up_on_early_error() -> Result<(), String> {
+        let mut root = None;
+        let result: Result<(), String> = (|| {
+            let fixture = UnlinkedExecutableFixture::new()?;
+            root = Some(fixture.root.clone());
+            Err("intentional early return".to_string())
+        })();
+        assert_eq!(result, Err("intentional early return".to_string()));
+        let root = root.ok_or("fixture setup did not run")?;
+        assert!(
+            !root.exists(),
+            "fixture leaked after early error: {}",
+            root.display()
+        );
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn unlinked_executable_fixture_reaps_child_and_removes_directory_on_drop() -> Result<(), String>
+    {
+        use nix::errno::Errno;
+        use nix::sys::signal::{Signal, kill};
+        use nix::sys::wait::{WaitPidFlag, WaitStatus, waitpid};
+        use nix::unistd::Pid;
+
+        let mut fixture = UnlinkedExecutableFixture::new()?;
+        fixture.spawn()?;
+        let child = fixture.child.as_ref().ok_or("child was not spawned")?;
+        let pid = Pid::from_raw(i32::try_from(child.id()).map_err(|e| e.to_string())?);
+        let root = fixture.root.clone();
+        drop(fixture);
+        let reaped = waitpid(pid, Some(WaitPidFlag::WNOHANG));
+        if reaped != Err(Errno::ECHILD) {
+            // A broken Drop must not leave this control's own child behind.
+            if reaped == Ok(WaitStatus::StillAlive) {
+                let _ = kill(pid, Signal::SIGKILL);
+                let _ = waitpid(pid, None);
+            }
+            return Err(format!("fixture did not reap its child: {reaped:?}"));
+        }
+        assert!(
+            !root.exists(),
+            "reaped child's directory remains: {}",
+            root.display()
+        );
         Ok(())
     }
 
@@ -3914,6 +4131,80 @@ mod tests {
                     "a declared-dirty artifact must stay DirtyWorktree on a clean worktree"
                         .to_string(),
                 );
+            }
+            Ok(())
+        })();
+        let cleanup =
+            std::fs::remove_dir_all(&root).map_err(|error| format!("remove temp root: {error}"));
+        result?;
+        cleanup?;
+        Ok(())
+    }
+
+    #[test]
+    fn untracked_rust_sources_make_the_worktree_dirty() -> Result<(), String> {
+        let root = temporary_git_root()?;
+        let result = (|| -> Result<(), String> {
+            commit_fixture_file(&root)?;
+            let raw = commit_content(&repo_exposure_raw_with_placeholder(&root)?)?;
+            let clean = |label: &str| -> Result<(), String> {
+                if current_git_worktree_status(&root)? != "clean" {
+                    return Err(format!("{label}: producer must report clean"));
+                }
+                let validated = validate_repo_exposure_artifact(&root, &raw, "test before")
+                    .map_err(|error| format!("{label}: validation failed: {error}"))?;
+                if validated.currentness != ArtifactCurrentness::Current {
+                    return Err(format!("{label}: verifier must report current"));
+                }
+                Ok(())
+            };
+            clean("baseline")?;
+            // Controls: files the analysis never reads stay clean.
+            std::fs::write(root.join("notes.txt"), "scratch\n")
+                .map_err(|error| format!("write notes: {error}"))?;
+            std::fs::write(root.join(".gitignore"), "ignored.rs\n")
+                .map_err(|error| format!("write ignore: {error}"))?;
+            run_git(&root, &["add", ".gitignore"])?;
+            run_git(&root, &["commit", "--quiet", "-m", "ignore"])?;
+            std::fs::write(root.join("ignored.rs"), "fn ignored() {}\n")
+                .map_err(|error| format!("write ignored: {error}"))?;
+            let raw_after_commit = commit_content(&repo_exposure_raw_with_placeholder(&root)?)?;
+            let still_clean = validate_repo_exposure_artifact(&root, &raw_after_commit, "t")
+                .map_err(|error| format!("control validation failed: {error}"))?;
+            if current_git_worktree_status(&root)? != "clean"
+                || still_clean.currentness != ArtifactCurrentness::Current
+            {
+                return Err("untracked non-Rust and gitignored Rust files must stay clean".into());
+            }
+            // An untracked Rust source is analyzed input, so it is dirty.
+            std::fs::write(root.join("extra.rs"), "pub fn extra() {}\n")
+                .map_err(|error| format!("write extra: {error}"))?;
+            if current_git_worktree_status(&root)? != "dirty" {
+                return Err("untracked Rust source must make the producer report dirty".into());
+            }
+            let dirty = validate_repo_exposure_artifact(&root, &raw_after_commit, "t")
+                .map_err(|error| format!("dirty validation failed: {error}"))?;
+            if dirty.currentness != ArtifactCurrentness::DirtyWorktree {
+                return Err("untracked Rust source must disclose DirtyWorktree".into());
+            }
+            // The probe is not root-only: a nested source under a spaced path
+            // is analyzed input too, so it must also be dirty on its own.
+            std::fs::remove_file(root.join("extra.rs"))
+                .map_err(|error| format!("remove extra: {error}"))?;
+            if current_git_worktree_status(&root)? != "clean" {
+                return Err("removing the untracked source must restore clean".into());
+            }
+            let nested = root.join("crates/nested dir/src");
+            std::fs::create_dir_all(&nested).map_err(|error| format!("create nested: {error}"))?;
+            std::fs::write(nested.join("deep.rs"), "pub fn deep() {}\n")
+                .map_err(|error| format!("write nested: {error}"))?;
+            if current_git_worktree_status(&root)? != "dirty" {
+                return Err("untracked nested Rust source must report dirty".into());
+            }
+            let nested_dirty = validate_repo_exposure_artifact(&root, &raw_after_commit, "t")
+                .map_err(|error| format!("nested validation failed: {error}"))?;
+            if nested_dirty.currentness != ArtifactCurrentness::DirtyWorktree {
+                return Err("untracked nested Rust source must disclose DirtyWorktree".into());
             }
             Ok(())
         })();

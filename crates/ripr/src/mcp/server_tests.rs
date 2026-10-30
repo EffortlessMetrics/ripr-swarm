@@ -305,6 +305,7 @@ async fn oversized_gap_item_leaves_mcp_through_the_real_routes() -> Result<(), S
     let mut finding = gaps::test_finding()?;
     finding.evidence = vec!["x".repeat(super::super::MAX_RESPONSE_BYTES)];
     let output = crate::app::CheckOutput {
+        value_origins: Default::default(),
         schema_version: crate::app::CHECK_OUTPUT_SCHEMA_VERSION.to_string(),
         harness_projections: Vec::new(),
         tool: "ripr".to_string(),
@@ -346,7 +347,7 @@ async fn oversized_gap_item_leaves_mcp_through_the_real_routes() -> Result<(), S
             "routed tool response missed typed refusal: {rendered}"
         ));
     }
-    if !rendered.contains("ripr check --committed --format json")
+    if !rendered.contains("--committed --json")
         || !rendered.contains("related tests are capped per finding")
     {
         return Err(format!(
@@ -378,7 +379,12 @@ async fn oversized_gap_item_leaves_mcp_through_the_real_routes() -> Result<(), S
     let data = error
         .data
         .ok_or_else(|| "the gap resource failure carries typed data".to_string())?;
-    if data["recovery"].as_str() != Some(workspace::RECOVERY_GAP_ITEM_TOO_LARGE) {
+    let recovery = data["recovery"]
+        .as_str()
+        .ok_or("gap resource lost recovery")?;
+    if !recovery.contains("--committed --json")
+        || !recovery.contains("related tests are capped per finding")
+    {
         return Err(format!("gap resource recovery drifted: {data}"));
     }
     Ok(())
@@ -414,6 +420,7 @@ async fn window_sized_gap_item_refuses_typed_instead_of_dropping_structured_cont
     let mut finding = gaps::test_finding()?;
     finding.evidence = vec!["x".repeat(70_000)];
     let output = crate::app::CheckOutput {
+        value_origins: Default::default(),
         schema_version: crate::app::CHECK_OUTPUT_SCHEMA_VERSION.to_string(),
         harness_projections: Vec::new(),
         tool: "ripr".to_string(),
@@ -487,7 +494,9 @@ async fn window_sized_gap_item_refuses_typed_instead_of_dropping_structured_cont
         .pointer("/structuredContent/failure/recovery")
         .and_then(Value::as_str)
         .ok_or_else(|| "window gap refusal omitted recovery".to_string())?;
-    if recovery != workspace::RECOVERY_GAP_ITEM_TOO_LARGE {
+    if !recovery.contains("--committed --json")
+        || !recovery.contains("related tests are capped per finding")
+    {
         return Err(format!("window gap refusal recovery drifted: {recovery}"));
     }
     Ok(())
@@ -526,7 +535,7 @@ fn sdk_server_metadata_preserves_bounded_status_instructions() -> Result<(), Str
         .instructions
         .ok_or_else(|| "SDK metadata omitted instructions".to_string())?;
     if config.server_info.name != "ripr"
-        || !instructions.contains("ripr check --format json")
+        || !instructions.contains("ripr check --worktree --format json")
         || !instructions.contains("never edits source")
         || !instructions.contains("ripr_list_gaps")
     {
@@ -1313,7 +1322,7 @@ fn resource_id_document_resolves_raw_decoded_and_ambiguous_spellings() -> Result
     }
 
     // Non-miss failures pass through untouched.
-    match resource_id_document("gap:rust:src/lib.rs:owner", |_id| {
+    match resource_id_document::<Value>("gap:rust:src/lib.rs:owner", |_id| {
         Err(workspace::AttemptFailure::new(
             workspace::CODE_ANALYSIS_FAILED,
             "instrument failure",
@@ -1368,7 +1377,93 @@ fn paging_argument_parsers_pin_type_range_and_absence() -> Result<(), String> {
             .err()
             .ok_or_else(|| format!("offset {bad} must be refused"))?;
         assert_eq!(error.code, rmcp::model::ErrorCode::INVALID_PARAMS);
-        assert_eq!(error.message, "offset must be a non-negative integer");
+        assert!(
+            error.message.starts_with(&format!(
+                "offset must be a whole JSON integer from 0 to {}",
+                usize::MAX
+            )) || error.message == "offset must be at least 0; -1 is negative",
+            "{}",
+            error.message
+        );
+    }
+    // The cap and the u64 bound are named for what they are (#9895).
+    let huge = argument_map(serde_json::json!({"limit": 1e30}));
+    let error = optional_positive_argument(&huge, "limit")
+        .err()
+        .ok_or("limit 1e30 must be refused")?;
+    assert!(
+        error.message.contains(&format!(
+            "larger than the largest accepted integer {}",
+            usize::MAX
+        )),
+        "{}",
+        error.message
+    );
+    let capped = optional_capped_page_limit(&huge, "limit", 256)
+        .err()
+        .ok_or("capped limit 1e30 must be refused")?;
+    assert!(
+        capped
+            .message
+            .contains("larger than the largest accepted integer 256"),
+        "{}",
+        capped.message
+    );
+    Ok(())
+}
+
+/// #9895 review: the declared maximum is capped at the platform's `usize`
+/// width, and `data.maximum`, the message and the recovery all name that one
+/// effective bound. Driven with a 32-bit `platform_max` so a 64-bit host
+/// proves the 32-bit behavior.
+#[test]
+fn integer_argument_effective_bound_is_the_platform_cap_everywhere() -> Result<(), String> {
+    const PLATFORM_MAX_32: u64 = u32::MAX as u64; // widening, never lossy
+    assert_eq!(
+        effective_integer_maximum(u64::MAX, PLATFORM_MAX_32),
+        PLATFORM_MAX_32
+    );
+    assert_eq!(effective_integer_maximum(256, PLATFORM_MAX_32), 256);
+    assert_eq!(effective_integer_maximum(u64::MAX, u64::MAX), u64::MAX);
+
+    let at_bound = argument_map(serde_json::json!({"limit": PLATFORM_MAX_32}));
+    assert_eq!(
+        optional_integer_argument_for_platform(&at_bound, "limit", 1, u64::MAX, PLATFORM_MAX_32),
+        Ok(Some(u32::MAX as usize))
+    );
+    for over in [
+        serde_json::json!(PLATFORM_MAX_32 + 1),
+        serde_json::json!(u64::MAX),
+        serde_json::json!(1e30),
+    ] {
+        let arguments = argument_map(serde_json::json!({"limit": over}));
+        let error = optional_integer_argument_for_platform(
+            &arguments,
+            "limit",
+            1,
+            u64::MAX,
+            PLATFORM_MAX_32,
+        )
+        .err()
+        .ok_or_else(|| format!("limit {over} must be refused"))?;
+        let data = error.data.clone().ok_or("refusal lost structured data")?;
+        let bound = PLATFORM_MAX_32.to_string();
+        assert_eq!(data["maximum"], serde_json::json!(PLATFORM_MAX_32));
+        assert!(error.message.contains(&bound), "{}", error.message);
+        assert!(
+            !error.message.contains("18446744073709551615"),
+            "{}",
+            error.message
+        );
+        let recovery = data["recovery"].as_str().ok_or("recovery missing")?;
+        assert!(
+            recovery.contains(&format!("from 1 to {bound}")),
+            "{recovery}"
+        );
+        assert_eq!(
+            data["expected"],
+            serde_json::json!(format!("integer at most {bound}"))
+        );
     }
     Ok(())
 }
@@ -1598,5 +1693,66 @@ fn resource_budget_failure_reports_bytes_budget_and_recovery() -> Result<(), Str
         envelope["contents"][0]["mimeType"],
         serde_json::json!("application/json")
     );
+    Ok(())
+}
+
+/// #10518/#10539: the JSON-RPC code is coarse by contract and consumers branch
+/// on `error.data.code`. `docs/interop/mcp.md` tabulates every kind; this test
+/// keeps that table equal to the shared vocabulary (`failure_vocabulary`, the
+/// owner of the enumerated kinds) and to what `resource_failure` answers.
+#[test]
+fn mcp_doc_error_table_matches_vocabulary_and_resource_failure_mapping() -> Result<(), String> {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/interop/mcp.md");
+    let doc =
+        std::fs::read_to_string(&path).map_err(|err| format!("read {}: {err}", path.display()))?;
+    let mut rows: Vec<(String, String)> = Vec::new();
+    for line in doc.lines() {
+        let cells: Vec<&str> = line.split('|').map(str::trim).collect();
+        // `| code | jsonrpc | class | recovery |` splits into 6 cells.
+        if cells.len() != 6 || !cells[1].starts_with('`') || !cells[2].starts_with('`') {
+            continue;
+        }
+        let code = cells[1].trim_matches('`').to_string();
+        let jsonrpc = cells[2].trim_matches('`').to_string();
+        if !jsonrpc.starts_with("-32") {
+            continue;
+        }
+        rows.push((code, jsonrpc));
+    }
+    if rows.is_empty() {
+        return Err("docs/interop/mcp.md lost its error-code table".to_string());
+    }
+    let mut documented: Vec<&str> = rows.iter().map(|(code, _)| code.as_str()).collect();
+    documented.sort_unstable();
+    let before = documented.len();
+    documented.dedup();
+    if documented.len() != before {
+        return Err("docs error table lists a data.code twice".to_string());
+    }
+    // `id_ambiguous` is emitted only by the resource-id route, so it rides
+    // `resource_failure` without being in the tool failure-schema vocabulary.
+    let mut vocabulary = protocol::failure_vocabulary();
+    vocabulary.push(workspace::CODE_ID_AMBIGUOUS);
+    vocabulary.sort_unstable();
+    if documented != vocabulary {
+        return Err(format!(
+            "docs/interop/mcp.md error table {documented:?} drifted from the failure vocabulary {vocabulary:?}"
+        ));
+    }
+    for code in vocabulary {
+        let jsonrpc = rows
+            .iter()
+            .find(|(documented, _)| documented == code)
+            .map(|(_, jsonrpc)| jsonrpc.as_str())
+            .ok_or_else(|| format!("{code} missing from docs table"))?;
+        let failure = workspace::AttemptFailure::new(code, "d", "r");
+        let error = resource_failure("gap", &failure, None);
+        if error.code.0.to_string() != jsonrpc {
+            return Err(format!(
+                "docs say {code} answers {jsonrpc}, resource_failure answers {}",
+                error.code.0
+            ));
+        }
+    }
     Ok(())
 }

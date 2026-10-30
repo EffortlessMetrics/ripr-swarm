@@ -56,7 +56,7 @@ defaults into a file.
 "#;
 pub(super) const PILOT_HELP: &str = r#"Find the top test gap in this repo and write a packet you can act on.
 
-Usage: ripr pilot [--root PATH] [--out PATH] [--mode MODE] [--max-seams N] [--timeout-ms MS] [--format json] [--quiet]
+Usage: ripr pilot [--root PATH] [--out PATH] [--mode MODE] [--max-seams N] [--timeout-ms MS] [--format FORMAT] [--quiet]
 
 Options:
   --root PATH       Workspace root. Defaults to the current directory, then
@@ -70,7 +70,7 @@ Options:
   --timeout-ms MS   Maximum analysis budget before writing a partial summary. Defaults to
                     30000; when the default passes, the same run continues for up to
                     240000 more. An explicit value is a hard limit.
-  --format FORMAT   human or json. Defaults to human. json writes the same
+  --format FORMAT   human (default) or json. `--format json` writes the same
                     pilot-summary.json document to stdout and suppresses the
                     human terminal; packet files are still written.
   --quiet           Suppress analysis progress and heartbeats on stderr. Does not
@@ -164,9 +164,8 @@ pub(super) const CHECK_HELP_SHORT: &str = r#"Analyze the current diff and name t
 Usage: ripr check [OPTIONS]
 
 Common options:
-  --base REV        Compare against this revision. When omitted, ripr uses the
-                    local origin/HEAD ref, then origin/main, origin/master,
-                    main, and master in order.
+  --base REV        Compare against this revision; when omitted, ripr uses
+                    the origin/HEAD ref, then origin/main, origin/master, main, master.
   --diff PATH       Read a diff file instead of running git diff (`-` = stdin).
   --worktree        Include staged and unstaged tracked edits (already the
                     default when the tree has them).
@@ -182,15 +181,16 @@ Common options:
                     this directory.
   --quiet           Suppress stderr progress. Unknown totals show no
                     percentage or ETA, and progress makes no speed claim.
+  --timeout SECS    Wall-clock analysis budget (600s default; 0 disables;
+                    excludes repo seam-inventory formats). On analysis_timeout,
+                    raise/disable it or narrow the diff; re-run.
 
 Exit status: 0 for a completed run, including `exposed` and `weakly_exposed`
 findings. `unsupported_input` reports exit 2, as do usage errors. Do not build
 a CI gate on check's exit code; run `ripr gate evaluate` (exit 3 on `blocked`).
-
 Examples:
   ripr check
   ripr check --base origin/main --json
-
 More:
   ripr check --help --all   Every option (--path/--exclude too), format, and env var.
 "#;
@@ -387,67 +387,79 @@ Progress:
   that the command will succeed. `--quiet` turns this stream off.
 
 Environment variables:
-  RIPR_MAX_DIFF_CHANGED_RUST_LINES  Maximum added plus removed Rust diff lines
-                                    before check fails closed as
-                                    diff_scope_oversized. With --json, stdout
-                                    carries a non-consumable limited artifact.
-                                    Default: 2000.
-  RIPR_MAX_DIFF_INDEX_FILES         Maximum Rust files loaded into the diff
-                                    index before check fails closed as
-                                    diff_scope_oversized (a memory guard).
-                                    With --json, stdout carries a
-                                    non-consumable limited artifact.
-                                    Default: 10000.
-  RIPR_DIFF_NARROW_INDEX_FILES      Index size above which Draft/Fast
-                                    narrows dependent packages and stops
-                                    widening reach searches. Bounds time,
-                                    never refuses; clamped to
-                                    RIPR_MAX_DIFF_INDEX_FILES. Default: 1200.
-  RIPR_DIFF_DEPENDENT_SCOPE         How Draft/Fast indexes packages that
-                                    depend on the changed ones: auto (whole
-                                    while under RIPR_DIFF_NARROW_INDEX_FILES,
-                                    else named), named (only files that can
-                                    change a result), or full. Default: auto.
-  RIPR_PARTIAL_DIFF_FILE_BUDGET     Changed-line files analyzed before check
-                                    returns a bounded limited_partial_scope
-                                    partition with exact selected paths,
-                                    lower-bound uninspected counts, and a named
-                                    stop reason; gate/baseline/badge/Zero
-                                    ineligible. Overrides above the effective
-                                    limit are clamped with disclosure. Invalid
-                                    values fail closed as partial_budget_invalid.
-                                    Default: 200.
-  RIPR_PARTIAL_DIFF_LINE_BUDGET     Changed lines analyzed before check returns
-                                    limited_partial_scope. The first selected
-                                    file is always analyzed, even when it alone
-                                    exceeds the budget. Overrides above the
-                                    effective limit are clamped with disclosure.
-                                    Invalid values fail closed as
-                                    partial_budget_invalid. Default: 1000.
-  RIPR_CHECK_FINDINGS_BYTES         Byte budget for the findings array in
-                                    `check --format json`; a render above the
-                                    budget fails the run closed instead of
-                                    emitting an unusable document. Set to 0
-                                    to remove the cap (unbounded); an
-                                    unparseable value fails the run.
-                                    Default: 1000000 (1 MB).
-  RIPR_GIT_TIMEOUT                  Cooperative deadline in seconds for each git
-                                    invocation in the diff-load path. A git command
-                                    that exceeds the deadline is terminated and the
-                                    error names git_invocation_timeout. 0 disables
-                                    the deadline. Invalid values fail closed.
-                                    Default: 300 (5 minutes).
-  RIPR_REPO_EXPOSURE_LATENCY_TRACE  When present, emits diagnostic phase/cache
-                                    trace lines for repo-exposure analysis.
-                                    Presence enables tracing even if the value
-                                    is empty or 0; it does not change the
-                                    analysis verdict.
-  RIPR_ALLOW_REPO_PERL_EXECUTABLE   Set to 1 to let [perl].executable from
-                                    ripr.toml run as the Perl facts exporter.
-                                    Unset, ripr ignores it and runs the
-                                    exporter from PATH, so a cloned
-                                    repository cannot choose a program for
-                                    ripr to run.
+  RIPR_MAX_DIFF_CHANGED_RUST_LINES        Maximum added plus removed Rust diff lines
+                                          before check fails closed as
+                                          diff_scope_oversized. With --json, stdout
+                                          carries a non-consumable limited artifact.
+                                          Default: 2000.
+  RIPR_MAX_DIFF_CHANGED_PYTHON_LINES      Maximum added plus removed Python diff
+                                          lines before check fails closed as
+                                          diff_scope_oversized (the Rust guard's
+                                          memory bound for the Python adapter).
+                                          Default: 2000.
+  RIPR_MAX_DIFF_CHANGED_TYPESCRIPT_LINES  Maximum added plus removed TypeScript
+                                          diff lines (the routed .ts/.tsx/.mts/
+                                          .cts/.js/.jsx/.mjs/.cjs family) before
+                                          check fails closed as diff_scope_oversized.
+                                          Default: 2000.
+  RIPR_MAX_DIFF_INDEX_FILES               Maximum Rust files loaded into the diff
+                                          index before check fails closed as
+                                          diff_scope_oversized (a memory guard).
+                                          With --json, stdout carries a
+                                          non-consumable limited artifact.
+                                          Default: 10000.
+  RIPR_DIFF_NARROW_INDEX_FILES            Index size above which Draft/Fast
+                                          narrows dependent packages and stops
+                                          widening reach searches. Bounds time,
+                                          never refuses; clamped to
+                                          RIPR_MAX_DIFF_INDEX_FILES. Default: 1200.
+  RIPR_DIFF_DEPENDENT_SCOPE               How Draft/Fast indexes packages that
+                                          depend on the changed ones: auto (whole
+                                          while under RIPR_DIFF_NARROW_INDEX_FILES,
+                                          else named), named (only files that can
+                                          change a result), or full. Default: auto.
+  RIPR_PARTIAL_DIFF_FILE_BUDGET           Changed-line files analyzed before check
+                                          returns a bounded limited_partial_scope
+                                          partition with exact selected paths,
+                                          lower-bound uninspected counts, and a
+                                          named stop reason; gate/baseline/badge/Zero
+                                          ineligible. Overrides above the effective
+                                          limit are clamped with disclosure. Invalid
+                                          values fail closed as partial_budget_invalid.
+                                          Default: 200.
+  RIPR_PARTIAL_DIFF_LINE_BUDGET           Changed lines analyzed before check
+                                          returns limited_partial_scope. The first
+                                          selected file is always analyzed, even
+                                          when it alone exceeds the budget.
+                                          Overrides above the effective limit are
+                                          clamped with disclosure. Invalid values
+                                          fail closed as partial_budget_invalid.
+                                          Default: 1000.
+  RIPR_CHECK_FINDINGS_BYTES               Byte budget for the findings array in
+                                          `check --format json`; a render above the
+                                          budget fails the run closed instead of
+                                          emitting an unusable document. Set to 0
+                                          to remove the cap (unbounded); an
+                                          unparseable value fails the run.
+                                          Default: 1000000 (1 MB).
+  RIPR_GIT_TIMEOUT                        Cooperative deadline in seconds for each
+                                          git invocation in the diff-load path. A
+                                          git command that exceeds the deadline is
+                                          terminated and the error names
+                                          git_invocation_timeout. 0 disables the
+                                          deadline. Invalid values fail closed.
+                                          Default: 300 (5 minutes).
+  RIPR_REPO_EXPOSURE_LATENCY_TRACE        When present, emits diagnostic phase/cache
+                                          trace lines for repo-exposure analysis.
+                                          Presence enables tracing even if the value
+                                          is empty or 0; it does not change the
+                                          analysis verdict.
+  RIPR_ALLOW_REPO_PERL_EXECUTABLE         Set to 1 to let [perl].executable from
+                                          ripr.toml run as the Perl facts exporter.
+                                          Unset, ripr ignores it and runs the
+                                          exporter from PATH, so a cloned
+                                          repository cannot choose a program for
+                                          ripr to run.
 
 Examples:
   ripr check
@@ -602,12 +614,15 @@ Performance:
 "#;
 pub(super) const CAPABILITIES_HELP: &str = r#"Show what ripr can establish per language, framework and mode.
 
-Usage: ripr capabilities [--language NAME] [--json]
+Usage: ripr capabilities [--language NAME] [--json | --markdown]
 
 Options:
   --language NAME  Narrow to one language: rust, typescript, javascript,
                    python or perl.
   --json           Emit the versioned machine-readable registry.
+  --markdown       Emit the generated registry block for
+                   docs/status/SUPPORT_TIERS.md (whole table; not with
+                   --json or --language).
 
 Each cell names a language, framework, mode (diff or repo) and family
 (static_facts or repair_routing) with one closed support state, a tier
@@ -631,8 +646,9 @@ Options:
                 that changed nothing: timing fields are omitted. The human
                 screen always prints its run-time summary; --timings only
                 affects --json.
-  --profile     Check installed-binary analysis (default) or prerequisites for
-                building RIPR from source.
+  --profile NAME  Select the doctor profile: analysis (default; checks the
+                  installed binary) or source-build (prerequisites for
+                  building RIPR from source).
 
 Environment variables:
   RIPR_CACHE_DIR  Relocate the cache base directory (all cache reads and

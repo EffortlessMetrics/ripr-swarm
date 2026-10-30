@@ -178,7 +178,6 @@ mod tests {
         let mut finding = sample_finding();
         finding.related_tests = vec![related("t1"), related("t2"), related("t3")];
         finding.activation.observed_values.push(ValueFact {
-            file: None,
             line: 11,
             text: "assert_eq!(x, 1)".to_string(),
             value: "1".to_string(),
@@ -317,6 +316,7 @@ mod tests {
 
     fn sample_finding() -> Finding {
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: "probe:src_lib_rs:9:predicate".to_string(),
             canonical_gap: None,
             probe: Probe {
@@ -362,6 +362,112 @@ mod tests {
         }
     }
 
+    #[test]
+    fn boundary_input_observed_flag_requires_every_condition() {
+        let mut positive = sample_finding();
+        positive.infect_for_boundary_test();
+        assert!(positive.boundary_input_observed_with_weak_oracle());
+
+        // The shared gate itself (not just the Finding wrapper) rejects another
+        // class or family.
+        let gate = |class: &ExposureClass, family: &ProbeFamily| {
+            crate::domain::probe::boundary_input_observed_with_weak_oracle(
+                class,
+                family,
+                &positive.ripr.infect,
+                &positive.ripr.reveal.discriminate,
+                &positive.related_tests,
+                &positive.stop_reasons,
+            )
+        };
+        assert!(gate(&positive.class, &positive.probe.family));
+        assert!(!gate(&ExposureClass::NoStaticPath, &positive.probe.family));
+        assert!(!gate(&positive.class, &ProbeFamily::ReturnValue));
+
+        let mut other_class = positive.clone();
+        other_class.class = ExposureClass::ReachableUnrevealed;
+        assert!(!other_class.boundary_input_observed_with_weak_oracle());
+
+        let mut other_family = positive.clone();
+        other_family.probe.family = ProbeFamily::ReturnValue;
+        assert!(!other_family.boundary_input_observed_with_weak_oracle());
+
+        let mut infect_weak = positive.clone();
+        infect_weak.ripr.infect.state = StageState::Weak;
+        assert!(!infect_weak.boundary_input_observed_with_weak_oracle());
+
+        let mut other_summary = positive.clone();
+        other_summary.ripr.infect.summary = "Possible infection".to_string();
+        assert!(!other_summary.boundary_input_observed_with_weak_oracle());
+
+        // An assertion-shaped owner gets the assertion-helper Next step, so
+        // the advisory must not claim the boundary is reached.
+        let mut assertion_shaped = positive.clone();
+        assertion_shaped.recommended_next_step =
+            Some(crate::domain::ASSERTION_SHAPED_WEAKLY_EXPOSED_NEXT_STEP.to_string());
+        assert!(!assertion_shaped.boundary_input_observed_with_weak_oracle());
+
+        // Pairing limitation (exact oracle elsewhere, not paired with the
+        // boundary call, e.g. split_test_boundary_oracle).
+        let mut pairing = positive.clone();
+        pairing.ripr.reveal.discriminate.summary = "Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call (same_test_pairing_missing)".to_string();
+        assert!(!pairing.boundary_input_observed_with_weak_oracle());
+
+        // Unverified observation (rust_predicate_returned_drop_exit).
+        let mut unverified = positive.clone();
+        unverified.ripr.reveal.discriminate.summary =
+            "Discriminator unconfirmed: a non-plain Drop may exit while unwinding (observation_unverified)"
+                .to_string();
+        assert!(!unverified.boundary_input_observed_with_weak_oracle());
+
+        // A strong or medium oracle credited on any related row.
+        for strength in [OracleStrength::Strong, OracleStrength::Medium] {
+            let mut credited = positive.clone();
+            let mut row = related("elsewhere");
+            row.oracle_strength = strength;
+            credited.related_tests.push(row);
+            assert!(!credited.boundary_input_observed_with_weak_oracle());
+        }
+
+        // Refused/unknown oracle rows only: no genuinely weak credited oracle
+        // (predicate_boundary_oracle_refused keeps the boundary call in `if false`).
+        let mut refused = positive.clone();
+        refused.related_tests[0].oracle_strength = OracleStrength::None;
+        refused.related_tests[0].oracle_kind = OracleKind::Unknown;
+        assert!(!refused.boundary_input_observed_with_weak_oracle());
+
+        // A stop reason that means the call may not run.
+        let mut stopped = positive.clone();
+        stopped.stop_reasons = vec![crate::domain::StopReason::NoChangedRustLine];
+        assert!(!stopped.boundary_input_observed_with_weak_oracle());
+
+        let mut no_step = positive;
+        no_step.recommended_next_step = None;
+        assert!(!no_step.boundary_input_observed_with_weak_oracle());
+    }
+
+    impl Finding {
+        fn infect_for_boundary_test(&mut self) {
+            self.ripr.infect = StageEvidence::new(
+                StageState::Yes,
+                Confidence::Medium,
+                crate::domain::BOUNDARY_INPUT_OBSERVED_SUMMARY,
+            );
+            self.ripr.reveal.discriminate = StageEvidence::new(
+                StageState::Weak,
+                Confidence::High,
+                "Only relational oracle found; it may not discriminate the changed value exactly",
+            );
+            let mut weak = related("boundary");
+            weak.oracle_kind = OracleKind::RelationalCheck;
+            weak.oracle_strength = OracleStrength::Weak;
+            self.related_tests = vec![weak];
+            self.stop_reasons = Vec::new();
+            self.recommended_next_step =
+                Some(crate::domain::BOUNDARY_OBSERVED_WEAK_ORACLE_NEXT_STEP.to_string());
+        }
+    }
+
     fn related(name: &str) -> RelatedTest {
         RelatedTest {
             name: name.to_string(),
@@ -373,6 +479,8 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         }
     }
 

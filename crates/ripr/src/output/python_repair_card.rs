@@ -1,6 +1,4 @@
-use crate::domain::language_capability::{
-    AnalysisMode, CapabilityFamily, family_established_for_any_framework, finding_is_repo_scoped,
-};
+use crate::domain::language_capability::{CapabilityFamily, family_established_for_any_framework};
 use crate::domain::{ExposureClass, Finding, LanguageId, ProbeFamily, RelatedTest};
 use serde_json::{Map, Value, json};
 
@@ -40,11 +38,7 @@ pub(crate) fn python_repair_card(finding: &Finding) -> Option<PythonRepairCard> 
     // diff-mode ones, but the capability table registers Python
     // `repair_routing` for diff mode only (absent repo cell = `not_proven`),
     // so a repo-scoped finding never becomes a repair card.
-    let mode = if finding_is_repo_scoped(&finding.evidence) {
-        AnalysisMode::Repo
-    } else {
-        AnalysisMode::Diff
-    };
+    let mode = finding.analysis_mode()?;
     if !family_established_for_any_framework(
         LanguageId::Python,
         mode,

@@ -19,9 +19,10 @@ mod review;
 pub(crate) use markdown::render_targeted_test_outcome_md;
 pub(crate) use path::display_path;
 use path::normalize_report_path;
+#[cfg(test)]
+pub(crate) use render_json::render_agent_verify_json_with_currentness;
 pub(crate) use render_json::{
-    render_agent_verify_json_with_bound_gap, render_agent_verify_json_with_currentness,
-    render_targeted_test_outcome_json,
+    render_agent_verify_json_with_bound_gap, render_targeted_test_outcome_json,
 };
 use review::review_attention_class;
 

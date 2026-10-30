@@ -120,6 +120,11 @@ was actually established (#4012):
 Note: `<base>...HEAD` has no analyzable changed files, so there was nothing to analyze. The compared base was `<base>`. Deleted files, submodule pointer changes and files ripr does not analyze are not counted, so this empty result does NOT mean no behavior changed.
 ```
 
+  In the bounded human render the triage "Safe next action" below already
+  names the compared range, so the note keeps only the caveat: `Note: deleted
+  files, submodule pointer changes and files ripr does not analyze are not
+  counted, so this empty result does NOT mean no behavior changed.` (#9922).
+
   The triage "Safe next action" likewise reads `no changed files were
   compared against `<base>`; commit a change and re-run, or add `--worktree` to
   include uncommitted tracked edits` (#5258 qualifies the remedy: the flag
@@ -196,11 +201,27 @@ Note: `<base>...HEAD` has no analyzable changed files, so there was nothing to a
 ```
 
 A working-tree read (`--worktree`) names `the working tree has no analyzable
-changed files against `<base>`` instead of the range. The explicit-base and
-default-base notes share this wording in the human, GitHub and JSON outputs
-(#9033, #9222): `no_scope` with zero changed files also covers ranges that only
-delete files, change submodule pointers or touch ripr artifacts, so neither
-note claims that no behavior changed.
+changed files against `<base>`` instead of the range.
+
+For qualifying empty Git ranges, human-full retains the range explanation and
+caveat. Bounded human output shortens the note to the caveat only when
+`no_scope_provided` is true and a base exists, because the triage line already
+names the comparison (#9922). Explicit `--base` and `--worktree` provide scope
+and keep the full note for those qualifying empty ranges. GitHub and JSON
+retain their existing `no_scope_provided`-gated disclosures; explicit-base
+empty ranges do not add the GitHub no-scope annotation or JSON
+`scope_disclosures` (#9033, #9222). `no_scope` with zero changed files also
+covers ranges that only delete files, change submodule pointers or touch ripr
+artifacts, so deletion-only, submodule and excluded-artifact ranges still carry
+no assurance that no behavior changed.
+
+A submodule with uncommitted changes counts as a submodule pointer change too.
+Git renders it as an adjacent `-Subproject commit <sha>` and
+`+Subproject commit <sha>-dirty` pair with no `160000` mode or `index` header,
+so the parser recognizes that pair when no header called the section a regular
+file. Such a diff gets the skipped-submodule notice and never the "non-source
+file" explanation, and a document that quotes a commit line is not mistaken for
+a gitlink (#10648).
 
 ### Non-claims
 

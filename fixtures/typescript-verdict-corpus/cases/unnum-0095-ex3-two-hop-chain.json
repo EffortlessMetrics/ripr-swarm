@@ -1,0 +1,48 @@
+{
+  "case_id": "unnum-0095-ex3-two-hop-chain",
+  "subject_id": "authored-ts-vitest-unnum",
+  "diff": "cases/unnum-0095-ex3-two-hop-chain.diff",
+  "anchor": {
+    "file": "src/hop/util.ts",
+    "line": 2
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "predicate_equality",
+  "test_shape": "vitest_expect_tobe_two_hop_named_reexport",
+  "hard_case": "the owner is reached through two named re-exports, index.ts to errors.ts to util.ts",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx vitest run",
+    "toolchain": "Node.js v22.22.0, vitest 4.1.11, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return e.code === \"ECONNREFUSED\";",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "test/hop.test.ts > a reset is a network error through two re-exports",
+        "equivalence_review": "not equivalent: the edit changes the owner's observable behavior"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The test imports `isHopNetworkError` from `src/hop/index.ts`, which re-exports it from `./errors`, which re-exports it from `./util`. It pins `true` for a reset and `false` for `EACCES`; the edit turns the reset into a miss and fails the first assertion. RIPR-SPEC-0095 example 3: two named hops are credited within the bound.",
+  "labeling_observation": {
+    "ripr_commit": "2939c0d",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0095#3"
+  ]
+}

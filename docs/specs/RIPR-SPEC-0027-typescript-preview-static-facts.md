@@ -124,6 +124,10 @@ Test discovery:
   `node:test` `suite(...)`, as test and describe roots with the same active
   modifiers (`.only`, `.concurrent`, `.sequential`); `.skip`, `xit`, and
   `xcontext` register nothing (#4548)
+- AVA's macro form, a named macro between the title and the callback
+  (`test(name, macro, async (t) => {})`, `test(name, ns.macro, fn)`): the
+  function third argument is the callback (#10964) for a root bound to AVA's `test`, and only an inline function; a macro without a
+  function third argument stays argument 1
 - an options object between the title and the callback
   (`it(name, { timeout }, fn)`, `describe(name, { concurrency }, fn)`); a
   trailing timeout (`test(name, fn, 5000)`) keeps argument 1 as the callback;
@@ -186,6 +190,60 @@ Test discovery:
   `describe` names, the placeholder `<computed title, line N>`, and the line
   of the registration. A string literal or a substitution-free template keeps
   its text.
+- a registration the extractor drops makes the analysis partial
+  (`typescript_test_extraction_partial`) only when a test in that file can be
+  related to the diff. The test index is workspace-wide, so the disclosure is
+  consulted only when a finding was classified against it, and then only for a
+  dropped-registration file whose local import closure reaches a changed file
+  or contains the name of a changed file's owner. The closure follows relative
+  imports, `export ... from`, `require`, `import()` and `mock` calls (also
+  spelled with whitespace or comments before the parenthesis), resolving
+  `./x.js` to `x.ts`. Anything the scan cannot follow keeps the disclosure: an
+  unresolved relative import, a computed `import()` / `require()`,
+  `import.meta.glob` / `require.context` / `createRequire`, a bare specifier a
+  tsconfig path, workspace package or the root package name could resolve
+  (a self-import follows the adapter's resolver, then `package.json` `exports`
+  targets that are indexed sources; an unscanned build output relates nothing,
+  and a missing entry, pattern or absent `exports` keeps the gap), a
+  `~`, `#`, `$`, `/` or `@/` specifier, a `baseUrl`, `rootDirs`, an `extends`
+  chain that is an npm package base, unreadable, or declares `paths`,
+  `baseUrl` or `rootDirs` (a workspace-relative chain without them does not
+  remap; JSONC keys are decoded), a project `references` entry the scan does
+  not visit, a `paths` in the root config that did not load, any bundler,
+  transpiler or test-runner config that declares an `alias` key (a
+  hyphenated lint-rule name such as `no-this-alias` does not) or module
+  directory, a Rust change related through the Bun
+  bridge, and a closure over 400 files. A nested package tsconfig that
+  declares `paths` or an unvisited `extends` remaps only files beneath its own
+  directory: a closure that reaches one keeps the gap, other gap files stay
+  scoped. The conditional
+  assertion credit and owner-extraction disclosures keep their own scopes.
+- a symlink or junction the walk does not follow is counted for
+  `typescript_workspace_links_skipped` / `typescript_repo_links_skipped`
+  (#10614) unless it is a link to an existing regular file whose own name the
+  adapter would not index (a docs `index.md -> README.md`): the walk indexes by
+  the entry's own path, so such a link hides no test or source. A directory
+  link is not counted either when it aliases a directory the walk already
+  visits (#10829): its canonical target is a listable directory inside the
+  canonical root with no excluded component (`.tools/skills ->
+  ../.agent/skills`), so its files are indexed at their real path, unless an
+  indexed file reaches it (#10829, #10899): a string or template literal (decoded, so
+  `'..\u002falias/sum'` counts) that is a relative specifier (`./x`, `../x`)
+  resolving lexically from the importing file's directory to the link or a path
+  beneath it (`../alias/sum` with `alias -> src`, `'../my lib/sum'`) names a path
+  the walk never indexes, so the alias is counted. The specifier is resolved
+  rather than matched by characters, so the link's real target spelled by prose,
+  a comment or a bare string is not an import through it. An absolute-looking
+  literal counts when it spells `/<link name>` as a component; an unreadable or
+  oversized indexed file counts; so does a file that does not parse cleanly and
+  has `/<link name>` in its text or a `\u`, `\x` or octal escape. A directory link that leaves the root, points into an excluded directory or at a
+  directory the walk cannot list, a source-named link, a dangling link and a
+  link whose target cannot be read stay counted.
+- a file named `*.d.ts`, `*.d.mts` or `*.d.cts` is parsed as a TypeScript
+  declaration file (#10812): its top-level declarations are ambient, so
+  `export const x: T;` is not a parse error there. The same text in an
+  ordinary `.ts` file, and any real syntax error in a declaration file, stay
+  disclosed as `language_scope_unsupported`.
 - top-level `expect(...)` calls when paired with a `test`/`it` block
 - exported test files matched by configured patterns (default:
   `*.test.ts`, `*.test.tsx`, `*.spec.ts`, `*.spec.tsx`, and the
@@ -457,6 +515,29 @@ boundary without changing the guards (#4104 E):
   in the owner, the changed line compares them as whole sides, and it runs on
   every call. No value is claimed; the call's own arguments at `<i>` and
   `<j>` decide whether it hits the boundary.
+- **One-line guard boundary** (#10463): `if (<a> <op> <b>) <statement>;` (also
+  `else if` and `while`) reads its condition as the predicate boundary exactly
+  as the braced form does, but only when the condition is one comparison of two
+  simple operands. A compound (`&&`, `||`) or arithmetic condition stays
+  unparsed, and a line whose condition equals the removed line's condition
+  (an edit to the statement) is not a predicate boundary change.
+- **Unreadable changed `if` withholds** (#10776): the dead-expectation check
+  folds the two branch returns of the changed `if` and withholds a boundary
+  witness whose numeric expectation equals neither. When the changed line is a
+  plain `if (` that opens a brace but the scan cannot read its pair (a one-line
+  `if (c) { return 1; }`, which would hand it the enclosing block's returns, or
+  an `if` nested in an arrow, a `function` or an object-literal or class
+  method such as `pick(n) {` or `async pick(n): T {`, whose returns belong to
+  that function), the check withholds as well: a pin that cannot be shown live does
+  not witness the boundary, live or dead. The rule applies after the existing
+  gates (an owner body, a numeric expectation, a unique changed line); where one
+  of those fails, the witness decision stands as before. A changed ternary,
+  `else if` head, brace-less one-line `if` (#10463) or a condition that
+  continues onto the next line keeps its previous behavior. A method head is
+  recognized by its signature (a name, a parameter list, an optional return
+  type); a computed or string-literal name, an optional method (`pick?(n)`), an
+  object-type return and a method named like a control keyword are not, and keep
+  their previous behavior (#10776).
 
 When the adapter cannot classify, it emits one of the `static_limit_kind`
 values defined in RIPR-SPEC-0026:
@@ -519,91 +600,91 @@ can show:
 
 ## Acceptance Examples
 
-Function with boundary gap:
+1. Function with boundary gap:
 
-```ts
-export function applyDiscount(amount: number, threshold: number) {
-  if (amount >= threshold) {
-    return amount * 0.9;
-  }
-  return amount;
-}
-```
+   ```ts
+   export function applyDiscount(amount: number, threshold: number) {
+     if (amount >= threshold) {
+       return amount * 0.9;
+     }
+     return amount;
+   }
+   ```
 
-Existing tests:
+   Existing tests:
 
-```ts
-test('discount applies above threshold', () => {
-  expect(applyDiscount(100, 50)).toBe(90);
-});
+   ```ts
+   test('discount applies above threshold', () => {
+     expect(applyDiscount(100, 50)).toBe(90);
+   });
 
-test('no discount below threshold', () => {
-  expect(applyDiscount(10, 50)).toBe(10);
-});
-```
+   test('no discount below threshold', () => {
+     expect(applyDiscount(10, 50)).toBe(10);
+   });
+   ```
 
-Expected static evidence:
+   Expected static evidence:
 
-- owner: `applyDiscount` (`function`)
-- predicate probe: `amount >= threshold`
-- oracle: `exact-value` via `.toBe(90)` and `.toBe(10)`
-- missing discriminator: `amount === threshold`
-- finding emits `language = "typescript"`,
-  `language_status = "preview"`, `owner_kind = "function"`
+   - owner: `applyDiscount` (`function`)
+   - predicate probe: `amount >= threshold`
+   - oracle: `exact-value` via `.toBe(90)` and `.toBe(10)`
+   - missing discriminator: `amount === threshold`
+   - finding emits `language = "typescript"`,
+     `language_status = "preview"`, `owner_kind = "function"`
 
-Snapshot oracle:
+2. Snapshot oracle:
 
-```ts
-test('renders header', () => {
-  expect(render(<Header user="ada"/>)).toMatchSnapshot();
-});
-```
+   ```ts
+   test('renders header', () => {
+     expect(render(<Header user="ada"/>)).toMatchSnapshot();
+   });
+   ```
 
-Expected static evidence:
+   Expected static evidence:
 
-- oracle: `snapshot` (medium)
-- finding stays `weakly_exposed` and names
-  `typescript_snapshot_discriminator_unresolved`
+   - oracle: `snapshot` (medium)
+   - finding stays `weakly_exposed` and names
+     `typescript_snapshot_discriminator_unresolved`
 
-Dynamic dispatch limit:
+3. Dynamic dispatch limit:
 
-```ts
-function dispatch(actions: Record<string, () => void>, key: string) {
-  actions[key]();
-}
-```
+   ```ts
+   function dispatch(actions: Record<string, () => void>, key: string) {
+     actions[key]();
+   }
+   ```
 
-Expected static evidence:
+   Expected static evidence:
 
-- probe emits `static_limit_kind = "dynamic_dispatch"`; finding stays
-  conservative.
+   - probe emits `static_limit_kind = "dynamic_dispatch"`; finding stays
+     conservative.
 
-Untested sibling owner in a tested module:
+4. Untested sibling owner in a tested module:
 
-```ts
-// src/pricing.ts
-export function discountedTotal(amount: number) { /* tested */ }
-export function loyaltyPrice(amount: number, years: number) {
-  if (years >= 5) {
-    return amount - Math.floor(amount / 20);
-  }
-  return amount;
-}
+   ```ts
+   // src/pricing.ts
+   export function discountedTotal(amount: number) { /* tested */ }
+   export function loyaltyPrice(amount: number, years: number) {
+     if (years >= 5) {
+       return amount - Math.floor(amount / 20);
+     }
+     return amount;
+   }
 
-// test/pricing.test.ts â€” never references loyaltyPrice
-import { discountedTotal } from "../src/pricing";
-it("no discount below threshold", () => {
-  expect(discountedTotal(5000)).toBe(5000);
-});
-```
+   // test/pricing.test.ts â€” never references loyaltyPrice
+   import { discountedTotal } from "../src/pricing";
+   it("no discount below threshold", () => {
+     expect(discountedTotal(5000)).toBe(5000);
+   });
+   ```
 
-Expected static evidence:
+   Expected static evidence:
 
-- changed `loyaltyPrice` lines classify `no_static_path` with
-  `reach no: 0 related test(s) found for owner \`loyaltyPrice\``;
-- no related test is listed, and the missing line names the absent
-  reference (`No test references \`loyaltyPrice(\``);
-- the same file still relates both tests to `discountedTotal`, which they call.
+   - changed `loyaltyPrice` lines classify `no_static_path` with
+     `reach no: 0 related test(s) found for owner \`loyaltyPrice\``;
+   - no related test is listed, and the missing line names the absent
+     reference (`No test references \`loyaltyPrice(\``);
+   - the same file still relates both tests to `discountedTotal`, which they call.
 
 ## Test Mapping
 

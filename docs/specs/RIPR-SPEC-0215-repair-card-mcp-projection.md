@@ -36,9 +36,9 @@ Policy impact:
 
 - None. No new output format, gate, badge, or report file is added; the card
   document is a wire payload bounded by the existing MCP byte caps. The wire
-  failure vocabulary gains the five `AgentCardRefusalKind` spellings
+  failure vocabulary gains the six `AgentCardRefusalKind` spellings
   (`seam_not_found`, `policy_omitted`, `witness_unavailable`,
-  `identity_unnameable`, `budget_overflow`); `policy_omitted` and
+  `identity_unnameable`, `budget_overflow`, `incomplete_inventory`); `policy_omitted` and
   `witness_unavailable` stay named for wire stability even though this slice
   cannot reach them.
 
@@ -122,7 +122,11 @@ and without execution authority (ADR 0022):
   with `incomplete_inventory` (#9231), ahead of every binding lookup, from the
   same completeness fact the refresh derived for the list/get/prepare
   `seam_inventory_truncated` refusal, so a truncated inventory never ships a
-  card with `readiness.repair_ready` true; producer operational failures stay
+  card with `readiness.repair_ready` true; a snapshot captured under the
+  opt-in saved tracked-worktree source (`ripr_refresh` `source: "worktree"`,
+  RIPR-SPEC-0211, #7357) binds no card producers and fails the same way with
+  a detail naming the worktree source, since no consumed-source commitment
+  spans its findings and the live seam inventory; producer operational failures stay
   `analysis_failed`. Refusal kinds travel under their CLI-pinned wire
   spellings via `AgentCardRefusalKind::as_str()`, so one machine state names
   one refusal on every transport. Unknown tool arguments are rejected at
@@ -142,6 +146,19 @@ and without execution authority (ADR 0022):
   workspace cache key, changed-file set and owner set, so a reuse hit
   returns the completeness fact its cold run derived and any corpus,
   configuration, scope or seam-limit change misses.
+- The same classified result is persisted under the cache root
+  (`repo-scoped-classified-seams`, #9899) so a new `ripr mcp --stdio`
+  process on an unchanged workspace skips the evidence context and the
+  per-seam evaluation instead of repeating them (a code-diff refresh on this
+  repository: about 60 s to about 24 s, against about 22 s for a second
+  refresh in one process). An entry is served only when the full workspace
+  cache key and the exact predicate identity embedded in it equal the
+  request's and its semantic digest verifies; a missing, damaged, tampered,
+  Git-tracked-root, unknown-Cargo-configuration or differently keyed entry
+  recomputes exactly what an uncached run computes. A hit rebuilds no
+  index, so its file-fact statistics are zero. The floor that remains is the
+  shared check analysis itself (the diff pipeline and its two index builds,
+  about 22 s here), which this layer does not touch.
 
 ## Required Evidence
 

@@ -1,0 +1,54 @@
+{
+  "case_id": "default-flow-smoked",
+  "subject_id": "authored-default-flow",
+  "diff": "cases/default-flow-smoked.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 20
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "default_branch_called_not_asserted",
+  "hard_case": null,
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "let end = sku.find('-').unwrap_or_else(|| 0);",
+        "mutated_line": "let end = sku.find('-').unwrap_or_else(|| 0);",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: an undashed SKU yields the empty text"
+      },
+      {
+        "replacement": "let end = sku.find('_').unwrap_or_else(|| sku.len());",
+        "mutated_line": "let end = sku.find('_').unwrap_or_else(|| sku.len());",
+        "outcome": "tests_failed",
+        "failing_test": "tests::smoked_family_of_a_dashed_sku",
+        "equivalence_review": "not equivalent: BOLT-M8 yields BOLT-M8"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "smoked_family_of_a_dashed_sku calls the defaulting input (`let _ = family_smoked(\"WASHER\")`) but pins only the dashed SKU, so the default branch runs without an assertion. A changed default passes. RIPR-SPEC-0357 negative: a default reached only by a call whose result is unchecked earns no credit.",
+  "labeling_observation": {
+    "ripr_commit": "6657a7ab6",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0357#3"
+  ]
+}

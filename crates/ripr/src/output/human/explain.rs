@@ -6,8 +6,8 @@
 //! verdict, and spells out each stop reason.
 
 use crate::domain::{
-    ExposureClass, Finding, OracleStrength, ProbeFamily, RelatedTest, RelatedTestMiss, StopReason,
-    exact_assertion_fact, input_boundary_fact,
+    ExposureClass, Finding, OracleStrength, ProbeFamily, RelatedTest, RelatedTestMiss,
+    StaticLimitKind, StopReason, exact_assertion_fact, input_boundary_fact,
 };
 use crate::output::path::display_path;
 use crate::output::related_test_miss::{checked_assertion_text, related_test_miss_reason};
@@ -82,6 +82,7 @@ pub(crate) fn render_verdict_explanation(
             ));
         }
     }
+    let mut investigation_step_printed = false;
     let needs = verdict_changers(finding, owner_signature);
     if !needs.is_empty() {
         out.push_str("  To change the verdict, a test needs to:\n");
@@ -94,8 +95,10 @@ pub(crate) fn render_verdict_explanation(
         ExposureClass::InfectionUnknown
             | ExposureClass::PropagationUnknown
             | ExposureClass::StaticUnknown
-    ) {
+    ) || crate::output::next_step::unresolved_edge_guidance(finding).is_some()
+    {
         let step = crate::output::next_step::reconcile_next_step(finding);
+        investigation_step_printed = !step.is_empty();
         if !step.is_empty() {
             out.push_str("  To investigate this uncertainty:\n");
             out.push_str(&format!("  - {step}\n"));
@@ -109,6 +112,10 @@ pub(crate) fn render_verdict_explanation(
                 reason.as_str(),
                 stop_reason_meaning(reason)
             ));
+            // The unknown classes already print one investigation step above.
+            if !investigation_step_printed {
+                out.push_str(&format!("    Next: {}\n", reason.next_step()));
+            }
         }
     }
     out
@@ -116,7 +123,7 @@ pub(crate) fn render_verdict_explanation(
 
 /// What ripr concluded about one assertion row.
 fn row_verdict(row: &RelatedTest, finding: &Finding) -> String {
-    match related_test_miss_reason(row, &finding.activation.missing_discriminators) {
+    match related_test_miss_reason(row, &finding.probe.family) {
         Some(why) => format!(
             "{}: {why}",
             crate::output::related_test_miss::related_test_miss_label(row)
@@ -167,12 +174,35 @@ fn group_rows_by_test(rows: &[RelatedTest]) -> Vec<Vec<&RelatedTest>> {
     groups
 }
 
+/// Whether the finding stopped at a reach edge ripr could not resolve, which
+/// no test shape is promised to close.
+fn reach_edge_unresolved(finding: &Finding) -> bool {
+    finding.effective_stop_reasons().iter().any(|reason| {
+        matches!(
+            reason,
+            StopReason::MaxDepthReached
+                | StopReason::TransitiveReachUnresolved
+                | StopReason::MacroReachUnresolved
+        )
+    }) || matches!(
+        finding.static_limit_kind,
+        Some(
+            StaticLimitKind::RustTransitiveReachUnresolved
+                | StaticLimitKind::RustIntegrationPublicApiPathUnresolved
+                | StaticLimitKind::RustMacroReachUnresolved
+        )
+    )
+}
+
 /// What a test would have to do for ripr to see a discriminator, one line per
 /// distinct miss. Only gap classes with a repair step get this list: for
 /// `exposed` there is nothing to change, for the unknown classes ripr has not
 /// established what is missing, and a gap whose next step was withheld (an
 /// exact oracle already covers the direct sink) indicates no assertion repair.
 fn verdict_changers(finding: &Finding, owner_signature: Option<&str>) -> Vec<String> {
+    if crate::output::next_step::unresolved_edge_guidance(finding).is_some() {
+        return Vec::new();
+    }
     if !matches!(
         finding.class,
         ExposureClass::NoStaticPath
@@ -198,6 +228,14 @@ fn verdict_changers(finding: &Finding, owner_signature: Option<&str>) -> Vec<Str
                 .map(|name| format!("`{name}`"))
         })
         .unwrap_or_else(|| "the changed code".to_string());
+    // An unresolved reach edge may end at a private helper no test can name,
+    // so a recipe that tells the reader to call the owner would promise a fix
+    // an exact public-API assertion cannot deliver (#10220).
+    let unresolved_edge = reach_edge_unresolved(finding);
+    let conditional_call = format!(
+        "call {owner} directly if tests can name it; if it is a private helper behind a \
+         public API, this edge can stay unresolved even with an exact assertion"
+    );
     let mut needs: Vec<String> = Vec::new();
     let mut push = |need: String| {
         if !needs.contains(&need) {
@@ -205,11 +243,16 @@ fn verdict_changers(finding: &Finding, owner_signature: Option<&str>) -> Vec<Str
         }
     };
     if finding.related_tests.is_empty() {
-        push(format!("call {owner} and assert on its result"));
+        push(if unresolved_edge {
+            format!("{conditional_call}; assert on its result")
+        } else {
+            format!("call {owner} and assert on its result")
+        });
     }
     for test in &finding.related_tests {
         let Some(miss) = test.miss else { continue };
         push(match miss {
+            RelatedTestMiss::NoCallPath if unresolved_edge => conditional_call.clone(),
             RelatedTestMiss::NoCallPath => format!("call {owner}, directly or through a helper"),
             RelatedTestMiss::NoAssertion | RelatedTestMiss::AssertionNotObserving => {
                 format!("assert on what {owner} returns or changes")
@@ -307,6 +350,28 @@ mod tests {
     use crate::output::perl_preview_card::tests::sample_perl_finding;
     use std::path::PathBuf;
 
+    #[test]
+    fn limited_journey_explain_names_the_analysis_boundary_instead_of_a_test_recipe() {
+        let mut finding = sample_perl_finding();
+        finding.class = ExposureClass::NoStaticPath;
+        finding.static_limit_kind =
+            Some(crate::domain::StaticLimitKind::RustTransitiveReachUnresolved);
+        finding.evidence =
+            vec!["limitation_first_unresolved_edge: entry `outer` -> owner `inner`".to_string()];
+        finding.recommended_next_step = Some("call inner directly".to_string());
+        finding.related_tests.clear();
+        let text = render_verdict_explanation(&finding, None);
+        assert!(
+            !text.contains("To change the verdict, a test needs to:"),
+            "{text}"
+        );
+        assert!(
+            text.contains("Tests cannot close this static-analysis limitation"),
+            "{text}"
+        );
+        assert!(text.contains("entry `outer` -> owner `inner`"), "{text}");
+    }
+
     fn row(oracle: &str, strength: OracleStrength, miss: RelatedTestMiss) -> RelatedTest {
         RelatedTest {
             name: "parses_empty".to_string(),
@@ -318,6 +383,8 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: Some(miss),
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         }
     }
 
@@ -343,7 +410,67 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         }
+    }
+
+    #[test]
+    fn unresolved_reach_edge_recipe_does_not_promise_a_direct_call_closes_it() {
+        let mut finding = sample_perl_finding();
+        finding.class = ExposureClass::NoStaticPath;
+        finding.recommended_next_step = Some("add a test that calls the owner".to_string());
+        finding.related_tests = Vec::new();
+        finding.stop_reasons = vec![StopReason::TransitiveReachUnresolved];
+
+        let text = render_verdict_explanation(&finding, None);
+        assert!(text.contains("directly if tests can name it"), "{text}");
+        assert!(
+            text.contains("can stay unresolved even with an exact assertion"),
+            "{text}"
+        );
+        assert!(!text.contains("directly or through a helper"), "{text}");
+        assert!(text.contains("; assert on its result"), "{text}");
+
+        // The same rule holds for a related test with no call path and a
+        // retained static limitation instead of a stop reason.
+        finding.stop_reasons = Vec::new();
+        finding.static_limit_kind = Some(StaticLimitKind::RustIntegrationPublicApiPathUnresolved);
+        finding.related_tests = vec![row(
+            "assert_eq!(outer(3, 3), 0)",
+            OracleStrength::Strong,
+            RelatedTestMiss::NoCallPath,
+        )];
+        let limited = render_verdict_explanation(&finding, None);
+        assert!(
+            limited.contains("directly if tests can name it"),
+            "{limited}"
+        );
+        assert!(
+            !limited.contains("directly or through a helper"),
+            "{limited}"
+        );
+
+        finding.static_limit_kind = None;
+        let plain = render_verdict_explanation(&finding, None);
+        assert!(plain.contains("directly or through a helper"), "{plain}");
+        assert!(!plain.contains("if tests can name it"), "{plain}");
+    }
+
+    #[test]
+    fn explain_renders_a_next_line_under_each_stop_reason() {
+        let mut finding = sample_perl_finding();
+        finding.class = ExposureClass::NoStaticPath;
+        finding.stop_reasons = vec![StopReason::HelperIdentityUnresolved];
+
+        let text = render_verdict_explanation(&finding, None);
+        assert!(
+            text.contains(&format!(
+                "    Next: {}\n",
+                StopReason::HelperIdentityUnresolved.next_step()
+            )),
+            "{text}"
+        );
     }
 
     #[test]
@@ -375,17 +502,24 @@ mod tests {
             reason: "no related test passes an empty input".to_string(),
             flow_sink: None,
         }];
+        finding.probe.family = crate::domain::ProbeFamily::Predicate;
+        let mut strong = row(
+            "assert_eq!(parse(\"a\"), Ok(1));",
+            OracleStrength::Strong,
+            RelatedTestMiss::MissingInput,
+        );
+        // #5564: the boundary is the row's own support, not the finding list.
+        strong.miss_support = Some(crate::domain::RelatedTestMissSupport {
+            value: "len == 0".to_string(),
+            flow_sink: None,
+        });
         finding.related_tests = vec![
             row(
                 "assert!(parse(\"a\").is_ok());",
                 OracleStrength::Weak,
                 RelatedTestMiss::WeakAssertion,
             ),
-            row(
-                "assert_eq!(parse(\"a\"), Ok(1));",
-                OracleStrength::Strong,
-                RelatedTestMiss::MissingInput,
-            ),
+            strong,
         ];
         let text = render_verdict_explanation(&finding, None);
         assert!(

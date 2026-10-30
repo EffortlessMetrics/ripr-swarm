@@ -1,0 +1,15 @@
+//! The edge value reaches the assertion through a named local, so the same test pins it.
+
+pub fn gate(input: u32) -> bool { input >= 10 }
+
+#[cfg(test)]
+mod tests {
+    use super::gate;
+
+    #[test]
+    fn edge_through_a_local() {
+        let threshold = 10;
+        assert_eq!(gate(threshold), true);
+        assert_eq!(gate(9), false);
+    }
+}

@@ -1,3 +1,0 @@
-case = "py-grid-returns-property"
-issue = 9594
-reason = "False exposed: property assertion credited as exact for a returns edit (#9594)."

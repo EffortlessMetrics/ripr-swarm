@@ -83,7 +83,10 @@ fn non_empty_arg<'a>(args: &'a [String], index: usize, flag: &str) -> Result<&'a
 }
 
 fn print_help() {
-    println!("{ANNOTATIONS_HELP}");
+    println!(
+        "{}",
+        crate::cli::help::render_command_help(ANNOTATIONS_HELP, &[])
+    );
 }
 
 /// Help body for `ripr annotations`. Also the flag source for unknown-argument

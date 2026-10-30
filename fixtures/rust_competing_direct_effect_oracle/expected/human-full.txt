@@ -2,10 +2,15 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/rust_competing_direct_effect_oracle/input
 
-Summary: 1 probe(s), 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+Summary: 1 changed behavior(s) checked: 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
 
 Analysis outcome: findings below (analysis complete; complete_with_findings)
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
 
 WARNING ./src/lib.rs:8
   id: probe:src_lib.rs:call_deletion:d55231d0
@@ -14,21 +19,22 @@ Changed
   before: self.sink.set(0)
   after:  self.sink.set(1)
 
-Probe
+Change type
+  a call was removed
   family: call_deletion
-  delta:  effect
+  delta:  effect (changes a side effect)
   owner:  src/lib.rs::impl Iterator for Counter::next
-  canonical gap: gap:rust:src/lib.rs:impl Iterator for Counter::next:call_deletion:call_deletion:self.sink.set_1
+  gap id (for scripts): gap:rust:src/lib.rs:impl Iterator for Counter::next:call_deletion:call_deletion:self.sink.set_1
 
 Static exposure
   weakly_exposed (warning, confidence 0.92)
 
 Evidence
-  - reach yes: Related tests appear to reach next: direct_smoke
+  - reach yes: Related tests appear to reach next: direct_smoke, implicit_observer
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation yes: Changed behavior appears to influence call effect: self.sink.set(1)
   - observation yes: A related test observes a value or effect near the changed behavior
-  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
+  - discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression
   - local flow reaches call effect: self.sink.set(1) (line 8)
   - related test src/lib.rs:15 direct_smoke uses no oracle; misses: has no assertion
   - related test src/lib.rs:20 implicit_observer uses strong whole object equality oracle: assert_eq!(Observation { cell: state }, Observation { cell: Rc::new(Cell::new(1)) }); unconfirmed: ripr could not confirm that this assertion observes the changed behavior

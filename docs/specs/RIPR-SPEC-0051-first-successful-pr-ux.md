@@ -86,6 +86,13 @@ An implementation may also mirror those files under
 `target/ripr/first-pr/` for local pilot ergonomics, but
 `target/ripr/reports/start-here.*` is the reviewer-facing packet location.
 
+Each start-here file and each gap-ledger file derived from `--check-output`
+must publish only after its complete write succeeds. A returned write failure
+must preserve the exact previous file bytes, or leave a new destination absent.
+Retrying the same command after repairing the write fault must publish the
+complete file. Publication applies to each file independently; earlier files
+may already contain their complete replacement when a later write fails.
+
 The packet must answer these reviewer questions in stable, user-facing terms:
 
 | Question | Required answer |
@@ -365,6 +372,24 @@ strength, missing discriminator, focused proof intent, static limit when
 present, verify command, receipt command, receipt path, receipt state, and
 advisory non-claims.
 Raw finding counts remain supporting evidence.
+
+The generated CI summary's `Changed behavior` value must render as one literal
+Markdown code span for either the start-here or first-useful-action artifact,
+including the latter's `why` fallback. Embedded backticks determine the span's
+delimiter length; they must not be backslash-escaped inside a fixed delimiter.
+Pipes, backslashes, markup-like text, and leading/trailing spaces remain literal.
+This compact projection normalizes LF, CRLF, and CR to spaces after the legacy
+field reader removes trailing LF characters. It does not rewrite the backing
+JSON artifact. The exhaustive text report preserves source lines and tabs and
+spells other terminal controls visibly; check JSON round-trips the original
+source expression, including controls. Neither is replaced by the compact CI
+projection.
+
+The first-useful-action `Why` value has the same literal code-span contract in
+both the first-run and recommended-next-test CI-summary sections. Markdown
+punctuation in this field is displayed as data, even when other surfaces use
+the value as prose. Its JSON value and existing field/failure fallbacks remain
+unchanged. Other legacy CI-summary fields are outside this escaping repair.
 
 ## Outputs
 

@@ -38,6 +38,14 @@
       "sha256": "6b3432d12335e6f2a0df6667ea92108cd957763c9a944fb9c818c7018062d5f9"
     },
     {
+      "path": "src/orderSumMember.ts",
+      "sha256": "c6cc17e22ed1b6a272bfa85b9fc92e786437109e6946df3e7f53f0839b06515d"
+    },
+    {
+      "path": "src/orderSumMultiline.ts",
+      "sha256": "76ee4a30ded57fb196eeea94eb992ef6759f392fbb6df1c739004c048151e2db"
+    },
+    {
       "path": "src/parseEx12.ts",
       "sha256": "b29e7cce4e97cdb7d6aeaa8ae7a9c967225945edf291859e9582eb710f8a348f"
     },
@@ -176,6 +184,14 @@
     {
       "path": "test/orderSum.test.ts",
       "sha256": "793bf36036dbc067a20995c378583ae5dfa4a3e69cf793e067dc6399a296161b"
+    },
+    {
+      "path": "test/orderSumMember.test.ts",
+      "sha256": "9f987c7f0e8282280835b021b4b0730ca01cfa83eaf08f3d94ae0d294027dce5"
+    },
+    {
+      "path": "test/orderSumMultiline.test.ts",
+      "sha256": "01aea5bf5188918665eae28604909bbbbc2631b5f90d2717493fce1b714f1912"
     },
     {
       "path": "test/otherEx16.test.ts",

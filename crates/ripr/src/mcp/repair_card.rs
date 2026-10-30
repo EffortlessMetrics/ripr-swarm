@@ -105,10 +105,15 @@ pub(crate) struct SeamCardBinding {
 /// Extract the canonical item id from a `ripr://repair-card/{id}` resource
 /// URI. The canonical id embeds a workspace-relative path (Python, and
 /// since #5268 Rust), so the suffix is read whole: the `ripr://repair-card/`
-/// prefix alone routes the URI, and only an empty suffix fails.
+/// prefix alone routes the URI, and only an empty suffix fails. One
+/// trailing slash is normalized away (#9895, `trim_one_trailing_slash`).
 pub(crate) fn repair_card_resource_id(uri: &str) -> Option<&str> {
     uri.strip_prefix("ripr://repair-card/")
-        .filter(|id| !id.is_empty())
+        .map(super::gaps::trim_one_trailing_slash)
+        // A residual trailing slash means the URI carried more than one —
+        // that id does not exist. Canonical ids embed workspace-relative
+        // paths, so only the trailing position is rejected.
+        .filter(|id| !id.is_empty() && !id.ends_with('/'))
 }
 
 /// Changed-file scope for the card inventory, in the inventory's own
@@ -381,6 +386,16 @@ impl WorkspaceSession {
                 "list the current canonical ids with ripr_list_gaps, then retry",
             ));
         };
+        if snapshot.source == super::workspace::RefreshSource::Worktree {
+            return Err(agent_card_failure(AgentCardError::refusal(
+                AgentCardRefusalKind::IncompleteInventory,
+                format!(
+                    "repair card for canonical item {} is unavailable: {}",
+                    item.canonical_id,
+                    super::workspace::WORKTREE_CARD_WITHHELD_DETAIL
+                ),
+            )));
+        }
         let Some(producers) = &snapshot.card_producers else {
             return Err(AttemptFailure::new(
                 CODE_NO_SNAPSHOT,
@@ -638,6 +653,7 @@ mod tests {
             Vec::new(),
         )?;
         Ok(crate::app::CheckOutput {
+            value_origins: Default::default(),
             schema_version: crate::app::CHECK_OUTPUT_SCHEMA_VERSION.to_string(),
             harness_projections: Vec::new(),
             tool: "ripr".to_string(),
@@ -697,6 +713,7 @@ mod tests {
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
+            desired_source: Default::default(),
             superseded_order: std::collections::VecDeque::new(),
         })
     }
@@ -723,6 +740,7 @@ mod tests {
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
+            desired_source: Default::default(),
             superseded_order: std::collections::VecDeque::new(),
         })
     }
@@ -802,6 +820,16 @@ mod tests {
             ),
             Some("gap:rust:src/lib.rs:discount:predicate_boundary:predicate:amount==fee")
         );
+        // #9895: one trailing slash normalizes away; a second one misses.
+        assert_eq!(
+            repair_card_resource_id("ripr://repair-card/gap:test:1/"),
+            Some("gap:test:1")
+        );
+        assert_eq!(
+            repair_card_resource_id("ripr://repair-card/gap:test:1//"),
+            None
+        );
+        assert_eq!(repair_card_resource_id("ripr://repair-card//"), None);
         for other in [
             "ripr://workspace/status",
             "ripr://repair-card/",
@@ -1011,9 +1039,9 @@ mod tests {
                     AgentCardRefusalKind::IncompleteInventory,
                     "the candidate inventory was truncated".to_string(),
                 ),
-                // Wire stability only: the uncapped diff-scoped card path
-                // never raises this refusal, but a kind must map to the same
-                // machine state on every transport.
+                // A truncated or unverified repo-wide seam inventory raises
+                // this refusal on the card read (#9231); a kind must map to
+                // the same machine state on every transport.
                 CODE_INCOMPLETE_INVENTORY,
             ),
             (

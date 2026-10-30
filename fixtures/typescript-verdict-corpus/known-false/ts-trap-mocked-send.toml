@@ -1,3 +1,0 @@
-case = "ts-trap-mocked-send"
-issue = 9684
-reason = "False exposed: a mock checked only for being called is credited the computed argument (#9684)."

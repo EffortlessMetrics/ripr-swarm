@@ -29,7 +29,6 @@ use super::{
     visit_workspace_with_handwritten,
 };
 use crate::analysis::diff::ChangedLine;
-use crate::domain::language_capability::REPO_SCOPE_EVIDENCE_LINE;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
@@ -189,6 +188,7 @@ pub(super) fn analyze_repo_with_limit(
         handwritten,
     )?;
     Ok(LanguageRepoResult {
+        value_origins: Default::default(),
         findings: selection.findings,
         harness_projections: Vec::new(),
         production_files: selection.production_files,
@@ -351,7 +351,7 @@ fn select_and_analyze(
                 // Scope stamp (#5531): consumers holding only a `Finding` look
                 // the capability cell up from this, so repo-mode evidence can
                 // never borrow the diff-mode repair-routing cell.
-                finding.evidence.push(REPO_SCOPE_EVIDENCE_LINE.to_string());
+                finding.mark_repo_scoped();
                 finding
             })
             .collect(),
