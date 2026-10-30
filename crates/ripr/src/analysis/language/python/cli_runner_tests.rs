@@ -262,3 +262,68 @@ fn a_click_name_that_is_not_the_click_module_is_not_a_command() -> Result<(), St
     );
     Ok(())
 }
+
+const LIB_PY: &str = "import click\n\n\n@click.command()\ndef hello():\n    click.echo('hi')\n\n\ndef internal_default(value):\n    if value > 3:\n        return 3\n    return value\n";
+
+fn lib_finding(tests_source: &str) -> Result<Finding, String> {
+    let owners = extract_owners(Path::new("src/app.py"), LIB_PY);
+    let tests = extract_tests(Path::new("tests/test_commands.py"), tests_source);
+    classify_change(
+        Path::new("src/app.py"),
+        10,
+        "    if value > 3:",
+        &owners,
+        &tests,
+    )
+    .ok_or_else(|| "expected a finding".to_string())
+}
+
+fn first_missing(finding: &Finding) -> &str {
+    finding.missing.first().map_or("", String::as_str)
+}
+
+#[test]
+fn a_runner_invoke_in_a_test_of_the_package_is_named_without_changing_the_class()
+-> Result<(), String> {
+    let finding = lib_finding(LOCAL_RUNNER)?;
+    assert_eq!(finding.class, ExposureClass::NoStaticPath);
+    assert!(finding.related_tests.is_empty());
+    assert!(
+        first_missing(&finding).contains("CliRunner.invoke(")
+            && first_missing(&finding).contains("tests/test_commands.py:5"),
+        "{:?}",
+        finding.missing
+    );
+    assert_eq!(finding.recommended_next_step, None);
+    Ok(())
+}
+
+#[test]
+fn without_a_recognised_runner_invoke_the_generic_line_stays() -> Result<(), String> {
+    let sources = [
+        // imports the package, no invoke
+        "from src.app import hello\n\n\ndef test_run():\n    assert hello is not None\n",
+        // invoke only in a comment
+        "from click.testing import CliRunner\nfrom src.app import hello\n\n\ndef test_run():\n    runner = CliRunner()\n    # runner.invoke(hello, [])\n    assert runner\n",
+        // receiver is not a CliRunner
+        "from src.app import hello\n\n\ndef test_run(runner):\n    runner.invoke(hello, [])\n",
+        // runner imported from an unrelated module
+        "from helpers import CliRunner\nfrom src.app import hello\n\n\ndef test_run():\n    runner = CliRunner()\n    runner.invoke(hello, [])\n",
+        // invoke only inside a string literal
+        "from click.testing import CliRunner\nfrom src.app import hello\n\n\ndef test_run():\n    runner = CliRunner()\n    note = \"runner.invoke(hello, [])\"\n    assert note\n",
+        // receiver rebound away from the runner
+        "from click.testing import CliRunner\nfrom src.app import hello\n\n\ndef test_run():\n    runner = CliRunner()\n    runner = make_runner()\n    runner.invoke(hello, [])\n",
+        // runner test that does not import the owner's package
+        "from click.testing import CliRunner\nfrom other.tool import cmd\n\n\ndef test_run():\n    runner = CliRunner()\n    runner.invoke(cmd, [])\n",
+    ];
+    for source in sources {
+        let finding = lib_finding(source)?;
+        assert_eq!(finding.class, ExposureClass::NoStaticPath, "{source}");
+        assert!(
+            first_missing(&finding).starts_with("No Python test references"),
+            "{source}: {:?}",
+            finding.missing
+        );
+    }
+    Ok(())
+}

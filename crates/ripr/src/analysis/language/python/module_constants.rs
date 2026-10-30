@@ -725,7 +725,7 @@ pub(super) fn assigned_attribute_names(statements: &[Stmt]) -> Vec<String> {
 /// lexer rejects names every identifier it contains, so nothing is hidden.
 /// Only names `watched` accepts are kept, each once: the caller asks about a
 /// fixed set of classes, and every file's facts are stored and decoded.
-pub(super) fn names_used_beyond_construction(
+pub(super) fn watched_names_used_beyond_construction(
     source: &str,
     watched: &dyn Fn(&str) -> bool,
 ) -> Vec<String> {

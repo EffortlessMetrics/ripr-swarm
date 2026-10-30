@@ -1,5 +1,14 @@
 # Golden Output Changes
 
+## Pending — literal fold and sole-glob reach cache generation (#10479)
+
+The portable unchanged-attempt snapshots follow corpus cache generation 1.119
+to 1.120 for the literal-only integer fold and the sole-glob owner reach.
+Refresh the corpus generation and artifact content commitment, then the
+dependent verify commitments and receipt byte hashes. Weak grip, unchanged
+movement, historical currentness, incomplete receipt status and fail-closed
+first-action routing remain unchanged. No other fixture output is regenerated.
+
 ## Pending — integration composition to cache generation 1.119 (#8610, #10792)
 
 Integration update:

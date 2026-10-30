@@ -1,6 +1,8 @@
 use crate::domain::ExposureClass;
 
-/// Changed-file count attributed to one language adapter run.
+/// Changed-file count for one language: the count an adapter that returned a
+/// result reported, or the path-routed count for a changed language whose
+/// adapter produced none (not enabled, not compiled in, or errored; #10719).
 ///
 /// `language` is the stable wire string from `LanguageId::as_str`
 /// (`"rust"`, `"typescript"`, `"javascript"`, `"python"`, `"perl"`).
@@ -16,8 +18,10 @@ pub struct Summary {
     /// language adapters report their own counts in
     /// `changed_files_by_language`; they must never inflate this field.
     pub changed_rust_files: usize,
-    /// Per-language changed-file counts, one entry per adapter that ran,
-    /// sorted by language wire string for deterministic serialization.
+    /// Per-language changed-file counts: one entry per adapter that returned a
+    /// result (its own count, possibly zero) plus one entry per routed language
+    /// whose adapter produced none (#10719). Sorted by language wire string for
+    /// deterministic serialization.
     pub changed_files_by_language: Vec<LanguageFileCount>,
     pub probes: usize,
     pub findings: usize,

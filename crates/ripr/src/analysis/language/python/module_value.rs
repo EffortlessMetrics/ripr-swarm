@@ -153,6 +153,13 @@ const FRAME_WALKERS: [&str; 9] = [
 /// import hook, or extend a package's `__path__` hands every importer a
 /// different module.
 pub(super) fn mentions_reflection(source: &str) -> bool {
+    mentions_reflection_with(&|identifier| mentions_identifier(source, identifier))
+}
+
+/// [`mentions_reflection`] through a whole-word `mentions` test, so a caller
+/// holding the source's sorted words looks each spelling up instead of
+/// scanning the source once per spelling (#10914).
+fn mentions_reflection_with(mentions: &dyn Fn(&str) -> bool) -> bool {
     REFLECTIVE_SPELLINGS
         .iter()
         .chain(&FRAME_WALKERS)
@@ -165,9 +172,8 @@ pub(super) fn mentions_reflection(source: &str) -> bool {
             "__dict__",
             "vars",
         ])
-        .any(|spelling| mentions_identifier(source, spelling))
-        || (mentions_identifier(source, "sys")
-            && (mentions_identifier(source, "modules") || mentions_identifier(source, "path")))
+        .any(|spelling| mentions(spelling))
+        || (mentions("sys") && (mentions("modules") || mentions("path")))
 }
 
 /// Words that replace what an `import` binds (#9226).
@@ -375,6 +381,8 @@ pub(super) struct ForeignLexes {
     /// [`unsafe_table_uses`] of every name, sorted: the uses of the
     /// workspace's tables are this list filtered to them.
     pub(super) unsafe_names: Vec<String>,
+    /// [`names_may_differ`], which lexes a source holding non-ASCII text.
+    pub(super) loose_names: bool,
 }
 
 impl ForeignLexes {
@@ -389,6 +397,7 @@ impl ForeignLexes {
             unsafe_names: unsafe_table_uses_lexed(source, &lexed, &|_| true, None)
                 .into_iter()
                 .collect(),
+            loose_names: names_may_differ(source),
         }
     }
 }
@@ -1294,30 +1303,29 @@ fn scan_source<'a>(
         || DYNAMIC_WRITERS.iter().any(|writer| mentions(writer))
         || source.contains("sys.modules");
     let lexes = prior.and_then(|facts| facts.lexes.as_ref());
-    let table_unsafe: Vec<String> =
-        if tables.is_empty() || !words.iter().any(|word| tables.contains(*word)) {
-            Vec::new()
-        } else if let Some(lexes) = lexes {
-            let supplied: Vec<String> = lexes
-                .unsafe_names
-                .iter()
-                .filter(|name| tables.contains(name.as_str()))
-                .cloned()
-                .collect();
-            debug_assert_eq!(
-                supplied,
-                unsafe_table_uses(source, &|word| tables.contains(word), None)
-                    .into_iter()
-                    .collect::<Vec<_>>(),
-                "{}: supplied unsafe table uses differ from the source's",
-                file.display()
-            );
-            supplied
-        } else {
+    let table_unsafe: Vec<String> = if tables.is_empty() || !mentions_any_table(words, tables) {
+        Vec::new()
+    } else if let Some(lexes) = lexes {
+        let supplied: Vec<String> = lexes
+            .unsafe_names
+            .iter()
+            .filter(|name| tables.contains(name.as_str()))
+            .cloned()
+            .collect();
+        debug_assert_eq!(
+            supplied,
             unsafe_table_uses(source, &|word| tables.contains(word), None)
                 .into_iter()
-                .collect()
-        };
+                .collect::<Vec<_>>(),
+            "{}: supplied unsafe table uses differ from the source's",
+            file.display()
+        );
+        supplied
+    } else {
+        unsafe_table_uses(source, &|word| tables.contains(word), None)
+            .into_iter()
+            .collect()
+    };
     // Reflection reaches a module's dict without naming it, or with a name
     // built at runtime (`getattr(module, n)`, `dir(module)`,
     // `inspect.getmembers`, `locals()`, `fn.__globals__`).
@@ -1347,13 +1355,36 @@ fn scan_source<'a>(
                 None => import_words(source),
             }
         },
-        reflects: mentions_reflection(source),
-        loose_names: names_may_differ(source),
+        reflects: mentions_reflection_with(&mentions),
+        loose_names: match lexes {
+            Some(lexes) => {
+                debug_assert_eq!(
+                    lexes.loose_names,
+                    names_may_differ(source),
+                    "{}: supplied loose-name answer differs from the source's",
+                    file.display()
+                );
+                lexes.loose_names
+            }
+            None => names_may_differ(source),
+        },
         reflective_opaque: reflective
             && (source.contains("sys.modules")
                 || MODULE_LOADERS.iter().any(|loader| mentions(loader))),
     };
     (hides_import, indexed)
+}
+
+/// Whether one of the sorted distinct `words` names a table, probing from
+/// the smaller side: pandas holds a few tables and ~300 words per file.
+fn mentions_any_table(words: &[&str], tables: &std::collections::BTreeSet<String>) -> bool {
+    if tables.len() < words.len() {
+        tables
+            .iter()
+            .any(|table| words.binary_search(&table.as_str()).is_ok())
+    } else {
+        words.iter().any(|word| tables.contains(*word))
+    }
 }
 
 fn import_words(source: &str) -> Vec<&str> {

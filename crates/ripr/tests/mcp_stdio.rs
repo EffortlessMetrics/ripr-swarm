@@ -736,6 +736,7 @@ fn malformed_catalog_cursors_preserve_protocol_validation_and_recover() -> Resul
     }
     Ok(())
 }
+
 /// Optional tool fields may be omitted, but their advertised string/integer
 /// types do not accept explicit null. Pin the schemas and dispatch separately
 /// against literal expectations, through the actual stdio process (#7314).
