@@ -40,7 +40,7 @@ c.onNotification('exit',()=>process.exit(0)); c.listen();`);
       resolveServer: async () => ({ command: process.env.NODE_BINARY!, source: 'configured', detail: 'fake client', installationState: 'unmanaged', compatibilityResult: compatibleLspEvidence }),
       createLanguageClient: (server: ServerOptions, options: LanguageClientOptions) => {
         checkpoint('factory');
-        const client = new LanguageClient('glob-probe', 'glob-probe', server, options);
+        const client = new LanguageClient('glob-probe', 'glob-probe', server, { ...options, documentSelector: [{ language: 'rust', scheme: 'file' }] });
         const start = client.start.bind(client);
         client.start = async () => { checkpoint('client-start'); await start(); checkpoint('client-started'); };
         return client;
