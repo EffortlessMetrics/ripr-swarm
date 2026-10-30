@@ -48,7 +48,7 @@ from active machinery; it does not replace current checks or authorize a cutover
 5. If the issue is missing or materially wrong, use `prepare-issue` and continue.
 6. If proof is absent or self-confirming, use `prepare-proof` and continue.
 7. Build or repair the one current candidate with `build-candidate` and materialize an exact committed head.
-8. Run `review-pr` on that exact head. Before publication, retain unavailable remote checks, artifacts, and external review as `REVIEW_INCOMPLETE`; do not convert them to pass.
+8. Perform `review-pr` on that exact head inline in the owning session's main context, with distinct directed challenges; subagents and bot input are optional evidence. Before publication, retain unavailable remote checks, artifacts, and required review evidence as `REVIEW_INCOMPLETE`; do not convert them to pass.
 9. Use `finish-pr` to publish or resume the exact candidate when no equivalent PR already exists. Committing, pushing an ordinary branch, opening or updating the PR, and repairing it are routine delivery inside the selected claim; do not pause for owner permission. Immediately before pushing to a candidate branch, re-read the PR head (`gh pr view --json headRefOid` or equivalent) and compare it with the expected candidate SHA; see Candidate law for an externally advanced head. An agent-authored PR body must include the `.github/pull_request_template.md` Source-of-truth Links and Candidate Relationships lines verbatim, with real values, before first Ready (see `finish-pr` step 2); validate it offline with `cargo xtask check-pr-shape --body-file <path>` or `--body-env <var>` fed from `gh pr view --json body`, and fix every missing or placeholder line it names before the Ready transition.
 10. Immediately before publication, before resolving a conflict, and before replacing a supposedly stale candidate, repeat the claim-identity search against current `main`, open PRs, and recently merged PRs. If equivalent work landed, stop conflict repair, preserve any unique residual, and close or disposition the duplicate instead of manufacturing a rival PR.
 11. Re-enter `review-pr` on the exact published PR head after remote evidence is available. A green check set, empty thread list, or unavailable reviewer does not establish substantive review.
@@ -59,7 +59,15 @@ from active machinery; it does not replace current checks or authorize a cutover
 # Continuation handoff
 
 At a phase change or bounded worker return, confirm the current user scope and
-surviving limits before selecting the next transition.
+surviving limits before selecting the next transition. Keep the authorized
+issue-through-merge outcome with the owning session as stages evolve. Retire
+an obsolete assistant-imposed phase restriction only when the active user
+instruction names the implementation outcome and that instruction is quoted
+in the session record; preserve explicit user limits, task-scoped boundaries
+imposed by the coordinating owner or run script until that owner retires
+them, and actual resource denials; route genuine doubt to the user. A routine phase boundary is not a parent approval
+lease; continue authorized repairs, factual comments and finish-through. Tracking
+updates support that work without becoming a new engineering gate.
 
 A bounded worker finishing its phase returns an obligation, not parent
 completion. The delivery owner verifies its evidence and takes the next useful
@@ -116,7 +124,7 @@ Refresh only the dimensions changed by the latest edit. Unrelated movement on `m
 
 # Useful fan-out
 
-Focused read-only agents may inspect authority, tests, correctness, security, compatibility, product behavior, or platform semantics. One writer integrates accepted repairs. A delegated writer receives the candidate-owned worktree and is the only mutator until handback. Conflicting reports must be resolved against canonical source and actual behavior before publication.
+The owner normally inspects authority, tests, correctness, security, compatibility, product behavior and platform semantics through directed review in its main context. Optional in-session subagents may inspect a bounded question; an observational step does not make that step permanently read-only. One writer integrates accepted repairs. A delegated writer receives the candidate-owned worktree and is the only mutator until handback. Conflicting reports must be resolved against canonical source and actual behavior before publication.
 
 # Valid exits
 
