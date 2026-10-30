@@ -6,6 +6,23 @@
 
 use crate::domain::{ProbeFamily, RelatedTest, RelatedTestMiss, RelationReason};
 
+/// The one related-test selection rule shared by the check headline, the
+/// preview card, the repair packet and the JSON oracle summary (#11228).
+///
+/// The strongest oracle wins; equal strength keeps the earliest row, which is
+/// the row the human `Related test` line names (`related_tests.first()`).
+/// `Iterator::max_by_key` returns the *last* maximum, which made the packet
+/// name a different test than the headline whenever two tests tied.
+pub(crate) fn strongest_related_test<'a>(tests: &'a [RelatedTest]) -> Option<&'a RelatedTest> {
+    let mut best: Option<&RelatedTest> = None;
+    for test in tests {
+        if best.is_none_or(|current| test.oracle_strength.rank() > current.oracle_strength.rank()) {
+            best = Some(test);
+        }
+    }
+    best
+}
+
 /// Short reason the test misses the changed behavior, or `None` when the
 /// analyzer did not establish one.
 ///
@@ -229,6 +246,32 @@ mod tests {
             "assert_eq!(a,  b);"
         );
         assert_eq!(single_line_evidence_text(""), "");
+    }
+
+    /// #11228: two equally strong tests keep the first row (the one the
+    /// headline names); a strictly stronger later row still wins.
+    #[test]
+    fn strongest_related_test_keeps_the_first_of_equal_strength() {
+        let mut big = test_with(None, None);
+        big.name = "big".to_string();
+        big.line = 5;
+        let mut small = test_with(None, None);
+        small.name = "small".to_string();
+        small.line = 6;
+        let tied = [big.clone(), small.clone()];
+        assert_eq!(
+            strongest_related_test(&tied).map(|t| t.name.as_str()),
+            Some("big")
+        );
+        // Discriminating negative: a strictly stronger later row wins.
+        let mut weak = big.clone();
+        weak.oracle_strength = OracleStrength::Weak;
+        let mixed = [weak, small];
+        assert_eq!(
+            strongest_related_test(&mixed).map(|t| t.name.as_str()),
+            Some("small")
+        );
+        assert!(strongest_related_test(&[]).is_none());
     }
 
     fn test_with(miss: Option<RelatedTestMiss>, reason: Option<RelationReason>) -> RelatedTest {

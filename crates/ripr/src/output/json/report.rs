@@ -1280,10 +1280,7 @@ fn evidence_path_values(finding: &Finding) -> Vec<String> {
 }
 
 fn strongest_related_test(finding: &Finding) -> Option<&RelatedTest> {
-    finding
-        .related_tests
-        .iter()
-        .max_by_key(|test| test.oracle_strength.rank())
+    crate::output::related_test_miss::strongest_related_test(&finding.related_tests)
 }
 
 /// The observed values the check JSON renders for a finding: every value up
