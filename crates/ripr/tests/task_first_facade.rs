@@ -2869,6 +2869,88 @@ fn continue_two_attempts_requires_explicit_selection() -> Result<(), String> {
     Ok(())
 }
 
+/// #11111 review: `ripr continue` shares only the retry template with the
+/// repair selection; its choices stay the bare current attempt ids (an
+/// attempt has no separate change description to show). With a root that
+/// quotes differently in PowerShell, the retry keeps its `<attempt-id>`
+/// placeholder in both spellings and prints the PowerShell form instead of a
+/// disclosure about the placeholder. No attempt advances without a pick.
+#[test]
+fn continue_selection_retry_pairs_powershell_form_for_apostrophe_root() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-continue-o'neil")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    assert!(
+        root_arg.contains('\''),
+        "fixture root must carry an apostrophe"
+    );
+    for _ in 0..2 {
+        let before = run_ripr(
+            root,
+            &[
+                "agent",
+                "repair",
+                "--root",
+                &root_arg,
+                "--seam-id",
+                FIXTURE_SEAM,
+                "--phase",
+                "before",
+            ],
+        )?;
+        assert_exit(&before, 0, "advanced before phase");
+    }
+    let ids = attempt_ids(root);
+    assert_eq!(ids.len(), 2, "two current attempts must exist");
+    assert_ne!(ids[0], ids[1], "the two attempts must be distinct");
+    let continued = run_ripr(root, &["continue", "--root", &root_arg])?;
+    assert_exit(&continued, 3, "continue with two current attempts");
+    assert!(
+        stdout_text(&continued).is_empty(),
+        "selection must leave stdout empty"
+    );
+    let stderr = stderr_text(&continued);
+    let lines: Vec<&str> = stderr.lines().collect();
+    assert!(
+        lines
+            .first()
+            .is_some_and(|line| line.starts_with("ripr: 2 current attempts under ")),
+        "must state the bounded choice:\n{stderr}"
+    );
+    for id in &ids {
+        assert_eq!(
+            lines.iter().filter(|line| line.trim() == id).count(),
+            1,
+            "attempt {id} must be listed once as its own choice:\n{stderr}"
+        );
+    }
+    assert!(
+        lines.windows(2).any(|pair| {
+            pair[0].starts_with("retry: ripr continue --attempt <attempt-id> --root ")
+                && pair[0].contains("'\\''")
+                && pair[1].starts_with(
+                    "retry (PowerShell): ripr continue --attempt <attempt-id> --root '",
+                )
+                && pair[1].contains("''")
+                && !pair[1].contains("'\\''")
+        }),
+        "retry must pair its PowerShell form around the placeholder:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("PowerShell form unavailable"),
+        "the placeholder must not trigger the no-form disclosure:\n{stderr}"
+    );
+    for id in &ids {
+        assert_eq!(
+            read_manifest(root, id)?["state"],
+            "awaiting_edit",
+            "no attempt may move before selection"
+        );
+    }
+    assert_eq!(attempt_ids(root), ids, "no attempt may be created");
+    Ok(())
+}
+
 /// #8726: once an attempt spent its after-phase retry budget it refuses its
 /// after phase, so a repeated `ripr repair` must start a fresh attempt (the
 /// shared repair-start gate still admits the seam) instead of resuming the
