@@ -1,7 +1,7 @@
 //! Native check-findings language identity control. The Python toggle also
 //! changes conditional config-hash fields in the old producer, so this proves
 //! behavior across complete native artifacts, not isolation of the new field.
-#![cfg(all(feature = "lang-typescript", feature = "lang-python"))]
+#![cfg(feature = "lang-typescript")]
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -38,6 +38,7 @@ fn ripr(root: &Path, args: &[&str]) -> Result<Output, String> {
 }
 
 #[test]
+#[cfg(feature = "lang-python")]
 fn complete_language_movement_is_not_comparable() -> Result<(), String> {
     let root = std::env::temp_dir().join(format!(
         "ripr-language-complete-{}-{}",
