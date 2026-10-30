@@ -132,7 +132,9 @@ pub(crate) fn render_finding_digest_with_config(
     // #2614: add a brief classification hint so the digest reader understands
     // WHY the finding is at this class without reading the full form.
     let refused_macro = refused_assertion_macro(finding);
-    if let Some(hint) = classification_hint(&finding.class, &finding.ripr, refused_macro) {
+    if let Some(hint) = unresolved_fixture_hint(finding)
+        .or_else(|| classification_hint(&finding.class, &finding.ripr, refused_macro))
+    {
         out.push_str(&format!("  Why {}: {hint}\n", finding.class.plain_label()));
     }
     // The refusal names a file and a blocker; a cut would drop the blocker,
@@ -1381,6 +1383,45 @@ fn refused_assertion_macro(finding: &Finding) -> Option<&str> {
     let note = evidence_value(finding, crate::domain::ASSERTION_NOT_CREDITED_PREFIX)?;
     let name = note.strip_prefix('`')?.split_once("!`")?.0;
     matches!(name, "assert_eq" | "assert").then_some(name)
+}
+
+/// The plain-words reason for a Python finding stopped by a pytest fixture
+/// ripr does not read (#10979): names the test and the fixture, so the reader
+/// knows which definition to open. Read back from the `unresolved_fixtures:`
+/// evidence line the analyzer writes beside the limit it explains.
+fn unresolved_fixture_hint(finding: &Finding) -> Option<String> {
+    if finding.class != ExposureClass::StaticUnknown {
+        return None;
+    }
+    let quoted = |prefix: &str| {
+        let entry = evidence_value(finding, prefix)?;
+        let (names, test) = entry.rsplit_once(" (")?;
+        let names: Vec<String> = names.split(", ").map(|name| format!("`{name}`")).collect();
+        Some((names, test.strip_suffix(')')?.to_string()))
+    };
+    if let Some((names, test)) = quoted("unresolved_fixtures: ") {
+        let (noun, pronoun, verb) = if names.len() == 1 {
+            ("fixture", "it supplies", "it passes")
+        } else {
+            ("fixtures", "they supply", "they pass")
+        };
+        return Some(format!(
+            "test `{test}` takes pytest {noun} {} that ripr does not read, so it cannot tell what {pronoun}; open the {noun} to see whether {verb} the changed input",
+            names.join(", ")
+        ));
+    }
+    // Not a known fixture: a parametrized value whose `indirect=` ripr cannot
+    // settle, which may still reach the test through a fixture of that name.
+    let (names, test) = quoted("unsettled_indirect_params: ")?;
+    let noun = if names.len() == 1 {
+        "argument"
+    } else {
+        "arguments"
+    };
+    Some(format!(
+        "test `{test}` parametrizes {noun} {} with an `indirect=` ripr cannot settle, so it cannot tell whether a fixture changes the value; check `indirect=` and any fixture of that name",
+        names.join(", ")
+    ))
 }
 
 fn classification_hint(

@@ -744,9 +744,13 @@ imported from the owner's module (`discounted_total(DISCOUNT_THRESHOLD)` or
 or its module binds that name again. The name stays unresolved when anything
 can rebind it: a second module-scope binding (including inside
 `if`/`try`/`for`/`with`), a `global` declaration or walrus target anywhere in
-the module, a star import, a module-scope `match`, any mention of a dynamic
-namespace writer (`exec`, `globals`, `vars`, `locals`, `setattr`,
-`sys.modules`, `__dict__`), a non-literal value, a parameter or local binding
+the module, a star import, a module-scope `match`, a dynamic
+namespace writer in code (`exec`, `eval`, `globals`, `vars`, `locals`,
+`setattr`, `__setattr__`, `delattr`, `reload`, `patch`, `sys.modules`,
+`__dict__`), whether called, named in an f-string, or named as a
+whitespace-free string such as `getattr(m, "exec")` (a word in a comment or in
+prose, like a docstring saying "env vars", is not a writer, #10979; a module
+the lexer rejects falls back to the whole-text scan), a non-literal value, a parameter or local binding
 of the same name in the owner, a nested `def`/`class`/`lambda` in the owner,
 or a related test file that assigns the attribute (`pricing.DISCOUNT_THRESHOLD
 = 5`). A call inside a `@pytest.mark.parametrize` (or `@mark.parametrize`)

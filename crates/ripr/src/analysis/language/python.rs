@@ -176,7 +176,9 @@ use sink_alignment::{
 #[cfg(test)]
 use source_facts::parse_module;
 pub(crate) use source_facts::{detect_python_test_framework, detect_python_test_frameworks};
-use source_facts::{extract_source_facts, source_fact_snapshot_observation};
+use source_facts::{
+    extract_source_facts, extract_workspace_source_facts, source_fact_snapshot_observation,
+};
 mod source_utils;
 use source_utils::{is_test_file, normalized_path};
 mod fixtures;
@@ -857,14 +859,17 @@ fn stored_or_extracted_facts(
         .to_str()
         .is_some_and(|path| cfg!(windows) || !path.contains('\\'));
     let Some(store) = store.filter(|_| lossless) else {
-        return (extract_source_facts(relative, source), FactLookup::Skipped);
+        return (
+            extract_workspace_source_facts(relative, source),
+            FactLookup::Skipped,
+        );
     };
     let key = fact_store::PythonFileFactKey::new(relative, source, root);
     let corrupt = match store.load(&key) {
         crate::analysis::seam_cache::CacheLoad::Hit(facts) => {
             debug_assert_eq!(
                 facts,
-                fact_store::served_view(extract_source_facts(relative, source)),
+                fact_store::served_view(extract_workspace_source_facts(relative, source)),
                 "a stored envelope served facts a fresh extraction of {} does not produce",
                 relative.display()
             );
@@ -873,7 +878,7 @@ fn stored_or_extracted_facts(
         crate::analysis::seam_cache::CacheLoad::Miss => false,
         crate::analysis::seam_cache::CacheLoad::CorruptIgnored { .. } => true,
     };
-    let facts = extract_source_facts(relative, source);
+    let facts = extract_workspace_source_facts(relative, source);
     let stored = store.store(&key, &facts);
     let lookup = if corrupt {
         FactLookup::Corrupt { stored }
@@ -1096,7 +1101,7 @@ impl PythonAdapter {
             BTreeMap::new();
         let mut docstring_ranges_by_file: BTreeMap<PathBuf, Vec<RangeInclusive<usize>>> =
             BTreeMap::new();
-        let mut assigned_attributes_by_file: BTreeMap<PathBuf, Option<Vec<String>>> =
+        let mut foreign_prior_by_file: BTreeMap<PathBuf, module_value::PriorFileFacts> =
             BTreeMap::new();
         let mut import_ranges_by_file: BTreeMap<PathBuf, Vec<RangeInclusive<usize>>> =
             BTreeMap::new();
@@ -1157,8 +1162,13 @@ impl PythonAdapter {
                 {
                     limitations.push(limitation);
                 }
-                assigned_attributes_by_file
-                    .insert(relative.clone(), facts.assigned_attributes.clone());
+                foreign_prior_by_file.insert(
+                    relative.clone(),
+                    module_value::PriorFileFacts {
+                        assigned: facts.assigned_attributes.clone(),
+                        lexes: facts.foreign_lexes.clone(),
+                    },
+                );
                 docstring_ranges_by_file
                     .insert(relative.clone(), facts.docstring_line_ranges.clone());
                 import_ranges_by_file.insert(relative.clone(), facts.import_line_ranges.clone());
@@ -1383,13 +1393,13 @@ impl PythonAdapter {
                 workspace_incomplete,
             );
         }
-        let foreign_index = module_value::ForeignIndex::build_with_assigned(
+        let foreign_index = module_value::ForeignIndex::build_with_prior(
             workspace_read
                 .sources
                 .iter()
                 .map(|(file, source)| (file.as_path(), source.as_str())),
             workspace_incomplete,
-            &assigned_attributes_by_file,
+            &foreign_prior_by_file,
         );
         for changed in &python_changed_files {
             let foreign = foreign_index.excluding(&changed.path);

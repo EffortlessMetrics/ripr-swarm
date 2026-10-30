@@ -3149,6 +3149,25 @@ fold that fails, overflows the declared width or meets a float, an unsupported
 method or a `let` is not evaluable and changes nothing. It asks nothing of
 the oracle's strength and is not a runtime claim.
 
+### A partly changed struct literal confirms only through its changed fields (#10916)
+
+A probe on a returned struct literal (`Request { url: self.url, timeout_ms:
+self.timeout_ms.unwrap_or(3_000) }`) confirms observation and discrimination
+through tokens of the whole literal, so an assertion on an untouched field
+(`assert_eq!(build().url, ..)`) used to credit a change that only moved
+`timeout_ms`. When the probe carries its `before` text and the baseline and
+the current literal are the same struct literal (the same type or variant
+path, the same field names in the same order, no `..base` spread) with a
+proper, non-empty subset of the initializers differing (compared by non-trivia
+tokens, so formatting and comments are not a change while whitespace inside a
+string literal is), the confirming tokens and the builder-override fields
+(RIPR-SPEC-0040, #6613) are those fields' names and initializer text alone.
+A test that reads the changed default keeps the credit; one that sets the
+field through a verified setter before reading it does not. Any other shape
+(no `before`, a different path or field list, a spread, every field changed,
+a non-literal) keeps today's reading. The rule only downgrades and is not a
+runtime claim.
+
 ### A returned bare comparison is read at its boundary (#9094)
 
 A `return_value` probe whose changed expression is one bare relational
