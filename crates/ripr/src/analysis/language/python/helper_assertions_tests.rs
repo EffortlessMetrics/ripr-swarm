@@ -468,7 +468,7 @@ fn wrapped_source(wrapper: &str, call: &str) -> String {
 fn helper_reading(test: &PythonTest) -> Option<&PythonAssertion> {
     test.assertions
         .iter()
-        .find(|assertion| assertion.helper_derived)
+        .find(|assertion| assertion.helper_origin.is_helper())
 }
 
 #[test]
