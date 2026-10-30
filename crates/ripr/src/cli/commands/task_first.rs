@@ -25,12 +25,16 @@ use crate::cli::suggest::unknown_argument;
 
 pub(in crate::cli) const REPAIR_HELP: &str = r#"Start a repair attempt from a Rust seam, or select a seam to repair.
 
-Usage: ripr repair [<item>] [--root PATH]
+Usage: ripr repair [<item>] [--root PATH] [--base REF]
 
 Options:
   --root PATH      Workspace root. Defaults to the current directory, then
                    walks up to the enclosing workspace or package, or the git
                    top level; `--root .` pins this directory.
+  --base REF       Diff base used to find the lines you changed, as in
+                   `ripr check --base`. Without it, repair infers the base
+                   the way `ripr check` does. Only for a start ripr picks;
+                   not allowed with an item.
 
 Without an item, repair starts only when exactly one repair-eligible seam
 is visible under the selected root. Several eligible seams print a bounded
@@ -117,6 +121,9 @@ pub(super) struct RepairFacadeOptions {
     /// `--root` was typed, so the root is used as given (#8767).
     pub(super) root_explicit: bool,
     pub(super) item: Option<String>,
+    /// `--base`: the diff base for scoping an automatic start, as in
+    /// `ripr check --base` (#11246). `None` infers it the way check does.
+    pub(super) base: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -161,6 +168,7 @@ pub(super) fn parse_repair_args(args: &[String]) -> Result<RepairFacadeCommand, 
     let mut root = PathBuf::from(".");
     let mut root_explicit = false;
     let mut item: Option<String> = None;
+    let mut base: Option<String> = None;
     let mut index = 0usize;
     while index < args.len() {
         match args[index].as_str() {
@@ -168,6 +176,14 @@ pub(super) fn parse_repair_args(args: &[String]) -> Result<RepairFacadeCommand, 
                 index += 1;
                 root = PathBuf::from(expect_value(args, index, "--root")?);
                 root_explicit = true;
+            }
+            "--base" => {
+                index += 1;
+                let value = expect_value(args, index, "--base")?;
+                if value.trim().is_empty() {
+                    return Err("repair requires a non-empty --base".to_string());
+                }
+                base = Some(value.to_string());
             }
             other if other.starts_with('-') => {
                 return Err(unknown_argument("repair", other));
@@ -187,10 +203,17 @@ pub(super) fn parse_repair_args(args: &[String]) -> Result<RepairFacadeCommand, 
         }
         index += 1;
     }
+    if item.is_some() && base.is_some() {
+        return Err(
+            "repair --base only scopes an automatic start; drop `--base` when naming an item"
+                .to_string(),
+        );
+    }
     Ok(RepairFacadeCommand::Repair(RepairFacadeOptions {
         root,
         root_explicit,
         item,
+        base,
     }))
 }
 
@@ -309,7 +332,9 @@ fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandErro
                 RepairSubject::Decision(message) => return Err(CommandError::Decision(message)),
             }
         }
-        None => match resolve_repair_start(&options.root).map_err(CommandError::from)? {
+        None => match resolve_repair_start(&options.root, options.base.as_deref())
+            .map_err(CommandError::from)?
+        {
             RepairStartDecision::Start { seam_id } => seam_id,
             RepairStartDecision::NoEligible {
                 total_seams,
@@ -640,7 +665,7 @@ fn start_fresh_clause(
 /// consults the same auto selector `ripr repair` runs, so a start the build
 /// would refuse is not offered.
 fn start_with_repair_clause(root: &std::path::Path, root_arg: &str) -> String {
-    match resolve_repair_start(root) {
+    match resolve_repair_start(root, None) {
         Ok(RepairStartDecision::NoEligible {
             total_seams,
             reasons,
@@ -830,6 +855,34 @@ mod tests {
 
     fn args(words: &[&str]) -> Vec<String> {
         words.iter().map(|word| word.to_string()).collect()
+    }
+
+    fn parsed_repair(words: &[&str]) -> Result<RepairFacadeOptions, String> {
+        match parse_repair_args(&args(words))? {
+            RepairFacadeCommand::Repair(options) => Ok(options),
+            RepairFacadeCommand::Help => Err("expected options, got help".to_string()),
+        }
+    }
+
+    /// #11246: `--base` is optional, carried as given, and only scopes an
+    /// automatic start.
+    #[test]
+    fn repair_base_is_optional_and_never_combines_with_an_item() -> Result<(), String> {
+        assert_eq!(parsed_repair(&[])?.base, None);
+        assert_eq!(
+            parsed_repair(&["--base", "origin/dev"])?.base.as_deref(),
+            Some("origin/dev")
+        );
+        assert!(
+            matches!(parsed_repair(&["--base", " "]), Err(message) if message.contains("non-empty"))
+        );
+        assert!(matches!(parsed_repair(&["--base"]), Err(message) if !message.is_empty()));
+        let both = parsed_repair(&["seam-a", "--base", "main"]);
+        assert!(
+            matches!(&both, Err(message) if message.contains("drop `--base` when naming an item")),
+            "{both:?}"
+        );
+        Ok(())
     }
 
     /// #11111: a retry template keeps its placeholder, yet a root that quotes

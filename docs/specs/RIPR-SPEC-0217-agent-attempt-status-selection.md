@@ -139,6 +139,15 @@ receipt strength, and currentness as separate facts:
   diff, leaves the whole-repository selection unscoped, and an explicit
   `ripr repair <seam-id>` is never scoped.
 
+- That diff's base is inferred the way a bare `ripr check` infers it, through
+  the shared base resolver (#11246), so a change committed on a branch scopes
+  repair like the same change left uncommitted. Inference only narrows: when
+  no base resolves, or nothing differs from the inferred base (for example on
+  the default branch itself), the selection stays unscoped and the refusal
+  says first that ripr could not tell which lines changed. `--base REF`, as on
+  `ripr check`, names the base explicitly and wins over inference; it is
+  refused together with an item, which is never scoped.
+
 - A restart or fresh-start route is named only when the shared repair
   eligibility gate admits the seam (#8766): `repair_refusal` (the gate
   `ripr repair` applies), the recommended-test edit-target predicate and the
@@ -258,6 +267,18 @@ store.
 - `crates/ripr/tests/cli_help_hierarchy.rs::agent_status_help_names_the_selected_store_and_exact_attempt_selection`
 - `crates/ripr/tests/task_first_facade.rs::status_and_continue_do_not_offer_a_start_the_repair_gate_refuses`
 - `crates/ripr/tests/task_first_facade.rs::status_keeps_the_restart_when_the_repair_gate_admits_the_seam`
+- `crates/ripr/tests/repair_infer_base.rs::committed_error_variant_change_scopes_repair_like_the_uncommitted_one`
+- `crates/ripr/tests/repair_infer_base.rs::committed_workspace_change_scopes_repair_like_the_uncommitted_one`
+- `crates/ripr/tests/repair_infer_base.rs::a_spot_outside_the_changed_lines_is_not_offered_as_the_start`
+- `crates/ripr/tests/repair_infer_base.rs::no_resolvable_base_keeps_the_unscoped_list_and_says_so`
+- `crates/ripr/tests/repair_infer_base.rs::refusal_with_no_resolvable_base_says_it_could_not_tell_which_lines_changed`
+- `crates/ripr/tests/repair_infer_base.rs::refusal_on_the_default_branch_says_nothing_differs_from_the_base`
+- `crates/ripr/tests/repair_infer_base.rs::an_explicit_base_wins_over_inference`
+- `crates/ripr/tests/repair_infer_base.rs::repair_base_is_refused_with_an_item`
+- `crates/ripr/src/cli/commands/task_first.rs::tests::repair_base_is_optional_and_never_combines_with_an_item`
+- `crates/ripr/src/app/task_first.rs::unscoped_note_tests::unreadable_diff_says_no_base_could_be_found`
+- `crates/ripr/src/app/task_first.rs::unscoped_note_tests::empty_diff_says_nothing_differs_from_the_base`
+- `crates/ripr/src/app/task_first.rs::unscoped_note_tests::a_readable_nonempty_diff_adds_no_note`
 
 ## Implementation Mapping
 
