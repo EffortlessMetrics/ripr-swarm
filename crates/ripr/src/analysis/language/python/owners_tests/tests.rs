@@ -204,7 +204,7 @@ fn async_python_tests_use_default_name_prefix() -> Result<(), String> {
 }
 
 #[test]
-fn nested_function_owners_get_qualified_names() {
+fn nested_function_owners_get_qualified_names() -> Result<(), String> {
     let owners = extract_owners(
         Path::new("src/factory.py"),
         "def outer():\n    def inner():\n        return 2\n    return inner\n\nclass Builder:\n    def build(self):\n        def step():\n            return 3\n        return step()\n",
@@ -224,15 +224,16 @@ fn nested_function_owners_get_qualified_names() {
     let inner = owners
         .iter()
         .find(|owner| owner.qualified_name == "outer.inner")
-        .expect("inner owner");
+        .ok_or_else(|| "inner owner missing".to_string())?;
     let outer = owners
         .iter()
         .find(|owner| owner.qualified_name == "outer")
-        .expect("outer owner");
+        .ok_or_else(|| "outer owner missing".to_string())?;
     assert!(
         inner.start_line > outer.start_line && inner.end_line <= outer.end_line,
         "inner owner span must lie inside outer: {inner:?} vs {outer:?}"
     );
+    Ok(())
 }
 
 #[test]
