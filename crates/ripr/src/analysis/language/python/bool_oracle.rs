@@ -50,7 +50,7 @@ pub(super) fn credit_bare_bool_asserts<'a>(
     read_source: impl Fn(&Path) -> Option<&'a str>,
 ) {
     let mut parsed: BTreeMap<PathBuf, Option<(Mod, &'a str)>> = BTreeMap::new();
-    let mut kept: BTreeMap<(PathBuf, String), bool> = BTreeMap::new();
+    let mut kept: BTreeMap<(PathBuf, String, String), bool> = BTreeMap::new();
     let mut credits: Vec<(usize, usize, bool)> = Vec::new();
     for (test_index, test) in tests.iter().enumerate() {
         for (assertion_index, assertion) in test.assertions.iter().enumerate() {
@@ -65,7 +65,7 @@ pub(super) fn credit_bare_bool_asserts<'a>(
             };
             // A patched or locally rebound callee is not the owner under test.
             let keeps_callee = *kept
-                .entry((test.file.clone(), call.callee.clone()))
+                .entry((test.file.clone(), call.callee.clone(), owner.name.clone()))
                 .or_insert_with(|| {
                     read_source(&test.file).is_some_and(|source| {
                         test_keeps_callee(source, &test.file, &call.callee, &owner.name)

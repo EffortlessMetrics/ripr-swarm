@@ -252,8 +252,10 @@ impl Regions {
                 Tok::Name { .. } if depth == 0 && parameter_start => {
                     self.parameters[index] = true;
                     parameter_start = false;
-                    if matches!(tokens.get(index + 1), Some(Tok::Colon)) {
-                        self.annotations[index + 2] = true;
+                    if matches!(tokens.get(index + 1), Some(Tok::Colon))
+                        && let Some(slot) = self.annotations.get_mut(index + 2)
+                    {
+                        *slot = true;
                     }
                 }
                 _ => {}
@@ -479,7 +481,7 @@ impl<'a> Chain<'a> {
     /// The dotted name starting at `index`, when a name starts there. A name
     /// after a dot starts a chain only when the dot follows a non-name (`f().mock`).
     fn at(tokens: &'a [Tok], index: usize) -> Option<Self> {
-        let Tok::Name { name } = &tokens[index] else {
+        let Tok::Name { name } = tokens.get(index)? else {
             return None;
         };
         if index >= 1 && matches!(tokens[index - 1], Tok::Dot) {
