@@ -735,8 +735,8 @@ mod tests {
         let source = "export function f(): string {\n  return \"a ? b : c\";\n}\n";
         let shape = ast_shape_at(source, 2);
         assert_eq!(
-            shape.as_ref().map(|shape| shape.family),
-            Some(ProbeFamily::ReturnValue)
+            shape.as_ref().map(|shape| &shape.family),
+            Some(&ProbeFamily::ReturnValue)
         );
         assert_eq!(shape.map(|shape| shape.specific), Some(true));
     }
@@ -764,8 +764,8 @@ mod tests {
         );
         let continuation = ast_shape_at(source, 3);
         assert_eq!(
-            continuation.as_ref().map(|shape| shape.family),
-            Some(ProbeFamily::ReturnValue)
+            continuation.as_ref().map(|shape| &shape.family),
+            Some(&ProbeFamily::ReturnValue)
         );
         assert_eq!(continuation.map(|shape| shape.specific), Some(true));
     }
