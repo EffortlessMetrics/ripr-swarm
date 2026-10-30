@@ -13358,6 +13358,71 @@ fn unavailable_language_notices(shown: &[serde_json::Value]) -> Vec<&serde_json:
         .collect()
 }
 
+// #10715: the file itself carries the limitation. Without it the editor ends
+// on an empty list for a changed file that was never analyzed, which reads as
+// clean. Requires the Python adapter compiled in (disabled-but-available
+// advisory), like the notice test below.
+#[test]
+#[cfg(feature = "lang-python")]
+fn changed_file_of_a_disabled_language_gets_a_not_analyzed_diagnostic() -> Result<(), String> {
+    let root = disabled_python_change_fixture("disabled-language-diagnostic")?;
+    let config = LspAnalysisConfig {
+        base_ref: Some("HEAD".to_string()),
+        mode: Mode::Instant,
+        ..LspAnalysisConfig::default()
+    };
+    let diagnostics = workspace_diagnostics_with_config(root.path(), &config, true)?;
+    let code = super::diagnostic_catalog::DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE;
+    let marked = diagnostics
+        .batches
+        .iter()
+        .flat_map(|batch| batch.diagnostics.iter().map(move |d| (batch, d)))
+        .filter(|(_, diagnostic)| diagnostic.code == Some(NumberOrString::String(code.to_string())))
+        .collect::<Vec<_>>();
+    let [(batch, diagnostic)] = marked.as_slice() else {
+        return Err(format!(
+            "exactly one not-analyzed diagnostic expected, got {} ({:?})",
+            marked.len(),
+            marked.iter().map(|(_, d)| &d.message).collect::<Vec<_>>()
+        ));
+    };
+    if !batch.uri.as_str().ends_with("zpy/pricing.py") {
+        return Err(format!(
+            "marker must sit on the changed file: {:?}",
+            batch.uri
+        ));
+    }
+    if diagnostic.severity != Some(DiagnosticSeverity::INFORMATION)
+        || !diagnostic.message.contains("did not analyze")
+        || !diagnostic.message.contains("does not mean it is clean")
+        || !diagnostic.message.contains("[languages] enabled")
+    {
+        return Err(format!(
+            "message must be plain and name recovery: {diagnostic:?}"
+        ));
+    }
+    let data = diagnostic.data.as_ref().ok_or("marker must carry data")?;
+    if data["limitation"] != "language_adapter_unavailable"
+        || data["not_analyzed_reason"] != "language_adapter_not_enabled"
+        || data["language"] != "python"
+    {
+        return Err(format!("typed reason must stay in data: {data}"));
+    }
+    // Negative control: a repository with no changed disabled-language file
+    // publishes no marker.
+    let clean_root = boundary_gap_git_fixture_root("disabled-language-diagnostic-control")?;
+    let control = workspace_diagnostics_with_config(clean_root.path(), &config, true)?;
+    if control
+        .batches
+        .iter()
+        .flat_map(|batch| batch.diagnostics.iter())
+        .any(|diagnostic| diagnostic.code == Some(NumberOrString::String(code.to_string())))
+    {
+        return Err("no marker is owed when no disabled-language file changed".to_string());
+    }
+    Ok(())
+}
+
 #[test]
 #[cfg(not(feature = "lang-python"))]
 fn rust_only_build_reports_no_unavailable_python_row_for_a_changed_py_file() -> Result<(), String> {

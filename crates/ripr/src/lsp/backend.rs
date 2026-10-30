@@ -8379,7 +8379,7 @@ fn outside_partition_recovery(partial_scope: Option<&crate::analysis::PartialDif
 /// compiled in (Perl on the default build), enablement is not enough —
 /// reuse the shared
 /// [`crate::domain::LanguageId::unavailable_adapter_recovery`] text.
-fn language_adapter_not_enabled_recovery(language: crate::domain::LanguageId) -> String {
+pub(super) fn language_adapter_not_enabled_recovery(language: crate::domain::LanguageId) -> String {
     if !language.is_available() {
         return language.unavailable_adapter_recovery();
     }

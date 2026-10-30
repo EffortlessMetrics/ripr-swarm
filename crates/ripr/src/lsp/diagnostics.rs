@@ -16,6 +16,7 @@ use crate::agent::command_specs::{command_display_is_nonblank, command_displays_
 use crate::analysis::ClassifiedSeam;
 use crate::analysis::cancellation::AnalysisCancellationToken;
 use crate::analysis::inventory_classified_seams_at_with_config;
+use crate::analysis::language_outcome::LanguageCompletenessView;
 use crate::analysis::seams::SeamGripClass;
 use crate::analysis_outcome::AnalysisOutcome;
 use crate::app::causal_projection::{CausalDeltaArtifact, insert_canonical_delta_fields};
@@ -1470,6 +1471,19 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
         );
     }
 
+    // A changed file of a language whose adapter is not enabled was never
+    // analyzed; say so on the file itself rather than leaving an empty list
+    // that reads as clean (#10715).
+    let unavailable_adapter = super::state::UnavailableAdapterCoverage::from_preview_advisories(
+        &output.preview_language_advisories,
+    );
+    append_unavailable_language_diagnostics(
+        &root,
+        &unavailable_adapter,
+        language_view.as_ref(),
+        &mut grouped,
+    );
+
     let batches = canonicalize_diagnostic_batches(
         grouped
             .into_iter()
@@ -1502,12 +1516,54 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
         partial_scope,
         component_outcomes,
         out_of_scope_test_file_findings,
-        unavailable_adapter: super::state::UnavailableAdapterCoverage::from_preview_advisories(
-            &output.preview_language_advisories,
-        ),
+        unavailable_adapter,
         language_view,
     };
     Ok(WorkspaceDiagnostics { snapshot, batches })
+}
+
+/// One Information diagnostic on each changed file whose language adapter is
+/// not enabled (#10715). The file was not analyzed, so the editor must not
+/// end on an empty list that reads as a clean file; the message says so and
+/// names the recovery. The typed reason stays in `data`, matching the
+/// `language_adapter_unavailable` limitation `check` and MCP report.
+fn append_unavailable_language_diagnostics(
+    root: &Path,
+    coverage: &super::state::UnavailableAdapterCoverage,
+    view: Option<&LanguageCompletenessView>,
+    grouped: &mut BTreeMap<Uri, Vec<Diagnostic>>,
+) {
+    for path in &coverage.named_paths {
+        let Some(language) = coverage.not_enabled_language(Path::new(path), view) else {
+            continue;
+        };
+        let Ok(uri) = file_uri_for_path(&root.join(path)) else {
+            continue;
+        };
+        let recovery = super::backend::language_adapter_not_enabled_recovery(language);
+        let name = language.as_str();
+        grouped.entry(uri).or_default().push(Diagnostic {
+            range: Range::default(),
+            severity: Some(DiagnosticSeverity::INFORMATION),
+            code: Some(NumberOrString::String(
+                super::diagnostic_catalog::DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE.to_string(),
+            )),
+            source: Some("ripr".to_string()),
+            message: format!(
+                "ripr did not analyze this file: the {name} adapter is not enabled, so having no \
+                 findings here does not mean it is clean. Fix: {recovery}."
+            ),
+            data: Some(serde_json::json!({
+                "kind": "language_not_analyzed",
+                "limitation": "language_adapter_unavailable",
+                "not_analyzed_reason": "language_adapter_not_enabled",
+                "language": name,
+                "recovery": recovery,
+                "path": path,
+            })),
+            ..Default::default()
+        });
+    }
 }
 
 /// Decide whether the validated gap ledger is safe to project into the editor.
