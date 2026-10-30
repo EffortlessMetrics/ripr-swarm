@@ -1973,7 +1973,7 @@ fn missing_gap_ledger_selection(root: &Path, options: &FirstPrOptions) -> Select
         );
     }
 
-    if !repo_exposure_available(root) {
+    if available_repo_exposure(root, options).is_none() {
         return missing_repo_exposure_selection(root, options);
     }
     missing_gap_ledger_artifact(
@@ -2810,27 +2810,25 @@ fn regenerate_gap_ledger_command(root: &Path, options: &FirstPrOptions) -> Strin
     if uses_check_output_gap_ledger(root) {
         return regenerate_check_output_gap_ledger_command(options);
     }
-    regenerate_repo_exposure_gap_ledger_command(options, repo_exposure_input(root))
+    regenerate_repo_exposure_gap_ledger_command(
+        options,
+        available_repo_exposure(root, options).unwrap_or(DEFAULT_REPO_EXPOSURE),
+    )
 }
 
-/// Whether a repo-exposure report exists for the gap ledger to read: the
-/// default report or the one `ripr pilot` wrote.
-fn repo_exposure_available(root: &Path) -> bool {
-    resolve_path(root, DEFAULT_REPO_EXPOSURE).exists()
-        || resolve_path(root, PILOT_REPO_EXPOSURE).exists()
-}
-
-/// The repo-exposure path the ledger command reads: the default report when
-/// present, else the pilot's (#3905: `ripr pilot` then `ripr first-pr` must
-/// not report the pilot's own report missing), else the default.
-fn repo_exposure_input(root: &Path) -> &'static str {
-    if !resolve_path(root, DEFAULT_REPO_EXPOSURE).exists()
-        && resolve_path(root, PILOT_REPO_EXPOSURE).exists()
-    {
-        PILOT_REPO_EXPOSURE
-    } else {
-        DEFAULT_REPO_EXPOSURE
+/// The repo-exposure report the gap ledger is built from: the default report
+/// when present, else (only while the ledger itself is still missing) the
+/// report `ripr pilot` wrote (#3905), else `None`. A ledger that already
+/// exists is stale, timed out, wrong-rooted or malformed, and regenerating it
+/// from the same pilot snapshot would reproduce that state, so those routes
+/// keep naming the default report.
+fn available_repo_exposure(root: &Path, options: &FirstPrOptions) -> Option<&'static str> {
+    if resolve_path(root, DEFAULT_REPO_EXPOSURE).exists() {
+        return Some(DEFAULT_REPO_EXPOSURE);
     }
+    (!resolve_path(root, &options.gap_ledger).exists()
+        && resolve_path(root, PILOT_REPO_EXPOSURE).is_file())
+    .then_some(PILOT_REPO_EXPOSURE)
 }
 
 /// A blocked ledger could not use its input, so regenerating the ledger
@@ -4169,24 +4167,46 @@ mod tests {
     }
 
     /// #3905: the default report stays the preferred input when both exist,
-    /// and with neither the default report is still the named missing input.
+    /// and a ledger that already exists (here stale) never switches to the
+    /// pilot snapshot, since regenerating from it would reproduce the state.
     #[test]
-    fn default_repo_exposure_wins_over_pilot_report() -> Result<(), String> {
+    fn default_repo_exposure_wins_and_existing_ledger_keeps_default() -> Result<(), String> {
         let repo = temp_repo("first-pr-default-over-pilot")?;
-        assert_eq!(repo_exposure_input(&repo), DEFAULT_REPO_EXPOSURE);
-        assert!(!repo_exposure_available(&repo));
-        for path in [PILOT_REPO_EXPOSURE, DEFAULT_REPO_EXPOSURE] {
+        let options = FirstPrOptions::default();
+        assert_eq!(available_repo_exposure(&repo, &options), None);
+        let write = |path: &str| -> Result<(), String> {
             let file = repo.join(path);
             if let Some(parent) = file.parent() {
                 fs::create_dir_all(parent).map_err(|err| format!("mkdir {path}: {err}"))?;
             }
-            fs::write(&file, "{}").map_err(|err| format!("write {path}: {err}"))?;
-        }
-        assert_eq!(repo_exposure_input(&repo), DEFAULT_REPO_EXPOSURE);
-        let options = FirstPrOptions::default();
+            fs::write(&file, "{}").map_err(|err| format!("write {path}: {err}"))
+        };
+        write(PILOT_REPO_EXPOSURE)?;
+        assert_eq!(
+            available_repo_exposure(&repo, &options),
+            Some(PILOT_REPO_EXPOSURE)
+        );
+        // An existing ledger: the pilot fallback is off and the command names
+        // the default report again.
+        write(DEFAULT_GAP_LEDGER)?;
+        assert_eq!(available_repo_exposure(&repo, &options), None);
+        let stale = regenerate_gap_ledger_command(&repo, &options);
+        let default_arg = shell_arg(&anchored_redirect_target(".", DEFAULT_REPO_EXPOSURE));
+        assert!(
+            stale.contains(&format!("--repo-exposure {default_arg}")),
+            "existing ledger must keep the default report: {stale}"
+        );
+        // Both reports and no ledger: the default report wins.
+        fs::remove_file(repo.join(DEFAULT_GAP_LEDGER)).map_err(|err| format!("rm: {err}"))?;
+        write(DEFAULT_REPO_EXPOSURE)?;
+        assert_eq!(
+            available_repo_exposure(&repo, &options),
+            Some(DEFAULT_REPO_EXPOSURE)
+        );
         let command = regenerate_gap_ledger_command(&repo, &options);
         assert!(
-            !command.contains("pilot/repo-exposure.json"),
+            command.contains(&format!("--repo-exposure {default_arg}"))
+                && !command.contains("pilot/repo-exposure.json"),
             "default report must win: {command}"
         );
         cleanup(&repo)
