@@ -395,6 +395,104 @@ fn empty_root_names_every_missing_artifact_and_its_regeneration() -> TestResult 
     Ok(())
 }
 
+const PILOT_SUMMARY_JSON: &str = "target/ripr/pilot/pilot-summary.json";
+
+/// The First-run status block, which the pilot deadline notice belongs to.
+fn first_run_block(summary: &str) -> &str {
+    summary
+        .split("#### First-run status\n")
+        .nth(1)
+        .and_then(|rest| rest.split("\n### ").next())
+        .unwrap_or_default()
+}
+
+/// #11205: a pilot that stopped at its deadline is named as the cause where
+/// the `missing_artifact` state is reported, with the effect and a next step
+/// that names the control the packet actually reads.
+#[test]
+fn a_pilot_deadline_is_named_as_the_cause_of_the_missing_artifacts() -> TestResult {
+    let fixture = Fixture::new("pilot-deadline")?;
+    fixture.write(
+        PILOT_SUMMARY_JSON,
+        r#"{"status":"partial","reason":"timeout","timeout_ms":270000}"#,
+    )?;
+    let summary = fixture.render(&[])?;
+    let block = first_run_block(&summary);
+    for line in [
+        "- Pilot deadline: `ripr pilot` stopped at its deadline after `270000` ms and wrote a partial packet.",
+        "- Cause: the pilot deadline, not a missing setup step.",
+        "- Effect: repo exposure and agent seam packets were not written",
+        "- Next step: set `RIPR_PILOT_TIMEOUT_MS` in the workflow `env:` to at least `540000`",
+        "`target/ripr/cache`",
+    ] {
+        assert!(block.contains(line), "missing {line:?} in:\n{block}");
+    }
+    // The cause leads the downstream `missing_artifact` state it explains.
+    let deadline = block.find("- Pilot deadline:").ok_or("no deadline line")?;
+    let missing = block
+        .find("- State: `missing_artifact`")
+        .ok_or("no missing_artifact line")?;
+    assert!(deadline < missing, "{block}");
+
+    // A timeout summary without a readable budget still names the deadline.
+    fixture.write(
+        PILOT_SUMMARY_JSON,
+        r#"{"status":"partial","reason":"timeout"}"#,
+    )?;
+    let block_text = fixture.render(&[])?;
+    let block = first_run_block(&block_text);
+    assert!(
+        block.contains("- Pilot deadline: `ripr pilot` stopped at its deadline and wrote"),
+        "{block}"
+    );
+    assert!(
+        block.contains("- Next step: raise `RIPR_PILOT_TIMEOUT_MS` in the workflow `env:`"),
+        "{block}"
+    );
+    Ok(())
+}
+
+/// Controls for #11205: the notice never names a cause the pilot artifacts do
+/// not show, so each of these stays silent.
+#[test]
+fn the_pilot_deadline_notice_stays_silent_without_a_timeout_partial() -> TestResult {
+    for (label, pilot) in [
+        (
+            "complete",
+            Some(r#"{"status":"complete","timeout_ms":30000}"#),
+        ),
+        (
+            "other-partial",
+            Some(r#"{"status":"partial","reason":"inventory_failed","timeout_ms":30000}"#),
+        ),
+        (
+            "reason-without-partial",
+            Some(r#"{"status":"complete","reason":"timeout"}"#),
+        ),
+        ("malformed", Some("{ not json")),
+        ("absent", None),
+    ] {
+        let fixture = Fixture::new(&format!("pilot-quiet-{label}"))?;
+        if let Some(pilot) = pilot {
+            fixture.write(PILOT_SUMMARY_JSON, pilot)?;
+        }
+        let summary = fixture.render(&[])?;
+        assert!(
+            !summary.contains("Pilot deadline") && !summary.contains("RIPR_PILOT_TIMEOUT_MS"),
+            "{label}: unexpected deadline notice:\n{summary}"
+        );
+        // The downstream state is unchanged, so the notice only adds a cause.
+        assert!(summary.contains("- State: `missing_artifact`"), "{label}");
+    }
+    let complete = Fixture::complete("pilot-quiet-complete-packet")?;
+    assert!(
+        !complete
+            .render(&["rust"])?
+            .contains("RIPR_PILOT_TIMEOUT_MS")
+    );
+    Ok(())
+}
+
 /// #3906 (F60-3, F60-14): a carried repair start leads each block with its
 /// after phase, and the low-level verify and receipt become the manual
 /// alternative.
