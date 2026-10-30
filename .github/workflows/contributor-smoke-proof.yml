@@ -1,0 +1,219 @@
+name: Contributor smoke proof (non-shipping)
+on:
+  push:
+    branches: [codex/8547-stub-tail-proof]
+    paths: [.github/workflows/contributor-smoke-proof.yml]
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: contributor-smoke-proof
+  cancel-in-progress: false
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      BASE: 7bfb58428e20c47b0b73303c7971f0ec3edff9a5
+      CANDIDATE_BRANCH: codex/8547-contributor-smoke
+      CARGO_BUILD_JOBS: '2'
+      CARGO_TERM_COLOR: never
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: 7bfb58428e20c47b0b73303c7971f0ec3edff9a5
+          path: build
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: 1.95.0
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+        with:
+          workspaces: build -> target
+          shared-key: ripr-8547-focused
+          save-if: 'true'
+      - name: Prepare exact documentation candidate
+        working-directory: build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          export EVIDENCE="$RUNNER_TEMP/contributor-smoke-proof"
+          echo "EVIDENCE=$EVIDENCE" >> "$GITHUB_ENV"
+          mkdir -p "$EVIDENCE"
+          test "$(git rev-parse HEAD)" = "$BASE"
+          test -z "$(git status --porcelain)"
+          test "$(gh api repos/$GITHUB_REPOSITORY/git/ref/heads/$CANDIDATE_BRANCH --jq .object.sha)" = "$BASE"
+          {
+            printf 'controller=%s\nbase=%s\nrun=%s\nattempt=%s\n' "$GITHUB_SHA" "$BASE" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+            rustc +1.95.0 -Vv
+            cargo +1.95.0 -Vv
+            uname -a
+            nproc
+            free -h
+            df -h .
+          } > "$EVIDENCE/identity.txt"
+          python3 - <<'PY'
+          from pathlib import Path
+          import shutil
+          assert shutil.disk_usage('.').free > 16 * 1024**3
+          path = Path('CONTRIBUTING.md')
+          old = '''5. Try the binary against the in-repo sample:
+
+             ```bash
+             cargo run -p ripr -- check --diff crates/ripr/examples/sample/example.diff
+             ```'''
+          new = '''5. Run a bounded first-use smoke check from the repository root:
+
+             ```bash
+             cargo run --locked -p ripr -- check --root fixtures/boundary_gap/input --diff fixtures/boundary_gap/diff.patch
+             ```
+
+             Expect one boundary finding for `amount >= discount_threshold`, not
+             an all-clear. This exercises real diff loading, Rust analysis and
+             default human guidance in a small, explicit workspace. It does not
+             analyze this whole repository, other languages or an installed package.
+
+             The reference smoke budget is **one second after the CLI is built**
+             on the measured Linux x86-64 four-CPU runner. Downloads and compilation
+             are separate; other hosts may differ. The command, repeated cold-RIPR-
+             cache and warm measurements, and host identity are retained in
+             [#8547](https://github.com/EffortlessMetrics/ripr-swarm/issues/8547).
+             This is a bounded-fixture budget, not a whole-repository latency promise.
+
+             The broader repository-root sample remains available:
+
+             ```bash
+             cargo run --locked -p ripr -- check --diff crates/ripr/examples/sample/example.diff
+             ```
+
+             That is a different workload. Its default human guidance can still
+             build a repository-wide evidence index, so it is not the quick setup
+             check and is not covered by the fixture budget.'''
+          text = path.read_text()
+          assert text.count(old) == 1, 'contributor setup anchor changed'
+          path.write_text(text.replace(old, new))
+          fragment = Path('changelog.d/8547-bounded-contributor-smoke.md')
+          assert not fragment.exists()
+          fragment.write_text('<!-- section: Docs -->\n- Contributor setup uses an explicitly bounded Rust fixture for its first-use smoke command, with expected findings and a measured post-build reference budget; the broader repository-root sample remains separate (#8547).\n')
+          PY
+          git diff --check
+          git add CONTRIBUTING.md changelog.d/8547-bounded-contributor-smoke.md
+          test -z "$(git diff --name-only)"
+          test "$(git diff --cached --name-only | wc -l)" = 2
+          git diff --cached --binary > "$EVIDENCE/candidate.patch"
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'docs(contributing): use a measured bounded first-use smoke (#8547)'
+          git rev-parse HEAD > "$EVIDENCE/candidate.sha"
+          git rev-parse HEAD^{tree} > "$EVIDENCE/candidate.tree"
+          git diff --exit-code "$BASE" HEAD -- crates xtask tools Cargo.toml Cargo.lock rust-toolchain.toml fixtures
+      - name: Build the documented development binary
+        working-directory: build
+        run: |
+          set -euo pipefail
+          set +e
+          timeout --signal=TERM --kill-after=30s 1200s cargo +1.95.0 build --locked -p ripr --bin ripr > "$EVIDENCE/build.stdout" 2> "$EVIDENCE/build.stderr"
+          status=$?
+          set -e
+          echo "build exit=$status" | tee -a "$EVIDENCE/status.txt"
+          if [ "$status" != 0 ]; then tail -n 80 "$EVIDENCE/build.stderr"; exit "$status"; fi
+      - name: Execute literal command and discriminate its result
+        working-directory: build
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib, json, os, signal, subprocess, time
+          e = Path(os.environ['EVIDENCE'])
+          root = Path.cwd()
+          binary = root / 'target/debug/ripr'
+          digest = hashlib.sha256(binary.read_bytes()).hexdigest()
+          argv = [str(binary), 'check', '--root', 'fixtures/boundary_gap/input', '--diff', 'fixtures/boundary_gap/diff.patch']
+          rows = []
+          def run(command, label, cache, condition):
+              start = time.perf_counter()
+              stopped = False
+              with (e/(label+'.stdout')).open('wb') as out, (e/(label+'.stderr')).open('wb') as err:
+                  process = subprocess.Popen(command,cwd=root,env=dict(os.environ,RIPR_CACHE_DIR=str(cache)),stdout=out,stderr=err,start_new_session=True)
+                  try: code=process.wait(timeout=5)
+                  except subprocess.TimeoutExpired:
+                      stopped=True
+                      os.killpg(process.pid,signal.SIGTERM)
+                      try: code=process.wait(timeout=2)
+                      except subprocess.TimeoutExpired:
+                          os.killpg(process.pid,signal.SIGKILL)
+                          code=process.wait()
+              elapsed=time.perf_counter()-start
+              data=(e/(label+'.stdout')).read_bytes()
+              row=dict(label=label,argv=command,condition=condition,elapsed_seconds=elapsed,exit_code=code,external_stop=stopped,binary_sha256=digest,stdout_bytes=len(data),stdout_sha256=hashlib.sha256(data).hexdigest(),os_page_cache='uncontrolled; no OS-cold claim')
+              rows.append(row)
+              (e/'measurements.json').write_text(json.dumps(rows,indent=2)+'\n')
+              print(json.dumps(row),flush=True)
+              assert code==0 and not stopped and data, 'command did not complete with nonempty output'
+              return elapsed,data
+          for trial in range(5):
+              cache=e/'caches'/str(trial)
+              cache.mkdir(parents=True)
+              for repeat in range(2):
+                  elapsed,data=run(argv,f'human-{trial}-{repeat}',cache,'empty-ripr-cache' if repeat==0 else 'repeat-after-completion')
+                  assert elapsed<1.0, 'reference fixture budget not met'
+                  assert b'amount >= discount_threshold' in data and b'1 changed behavior' in data
+                  assert b'analysis complete' in data and b'Static exposure: weak' in data
+              _,data=run(argv+['--format','json'],f'json-{trial}',cache,'control-after-human')
+              output=json.loads(data)
+              assert output['analysis_outcome']['analysis_complete'] is True
+              assert not output['analysis_outcome']['outcome']['limitations']
+              assert output['analysis_outcome']['outcome']['kind']=='complete_with_findings'
+              assert len(output['findings'])==1
+              finding=output['findings'][0]
+              assert finding['classification']=='weakly_exposed'
+              assert finding['probe']['family']=='predicate'
+              assert finding['probe']['expression']=='amount >= discount_threshold'
+          # Also execute the literal Cargo front door, separately from the
+          # post-build binary budget. No install/download time is hidden.
+          cache=e/'caches'/'cargo'
+          cache.mkdir(parents=True)
+          run(['cargo','+1.95.0','run','--locked','-p','ripr','--']+argv[1:],'cargo-frontdoor',cache,'fresh-cache; warm Cargo build')
+          PY
+          git diff --exit-code
+      - name: Check the changed documentation surfaces
+        working-directory: build
+        run: |
+          set -euo pipefail
+          for gate in check-changelog-fragments check-doc-artifacts check-static-language; do
+            set +e
+            timeout --signal=TERM --kill-after=30s 600s cargo +1.95.0 run --locked -p xtask -- "$gate" > "$EVIDENCE/$gate.stdout" 2> "$EVIDENCE/$gate.stderr"
+            status=$?
+            set -e
+            echo "$gate exit=$status" | tee -a "$EVIDENCE/status.txt"
+            if [ "$status" != 0 ]; then tail -n 80 "$EVIDENCE/$gate.stdout" "$EVIDENCE/$gate.stderr"; exit "$status"; fi
+          done
+          git diff --check
+          git diff --exit-code
+      - name: Publish only the documentation candidate
+        working-directory: build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(gh api repos/$GITHUB_REPOSITORY/git/ref/heads/$CANDIDATE_BRANCH --jq .object.sha)" = "$BASE"
+          test -z "$(git status --porcelain)"
+          test "$(git diff --name-only "$BASE" HEAD | wc -l)" = 2
+          gh auth setup-git
+          git push origin "HEAD:refs/heads/$CANDIDATE_BRANCH"
+          test "$(gh api repos/$GITHUB_REPOSITORY/git/ref/heads/$CANDIDATE_BRANCH --jq .object.sha)" = "$(git rev-parse HEAD)"
+          echo 'published=true; normal PR review and required qualification remain' | tee -a "$EVIDENCE/status.txt"
+      - name: Retain exact evidence without binaries or caches
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: contributor-smoke-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/contributor-smoke-proof/*.txt
+            ${{ runner.temp }}/contributor-smoke-proof/*.json
+            ${{ runner.temp }}/contributor-smoke-proof/*.sha
+            ${{ runner.temp }}/contributor-smoke-proof/*.tree
+            ${{ runner.temp }}/contributor-smoke-proof/*.patch
+            ${{ runner.temp }}/contributor-smoke-proof/*.stdout
+            ${{ runner.temp }}/contributor-smoke-proof/*.stderr
+          if-no-files-found: error
+          retention-days: 14
