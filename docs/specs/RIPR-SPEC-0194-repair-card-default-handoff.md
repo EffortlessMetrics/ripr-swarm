@@ -48,7 +48,8 @@ compatibility `ripr agent packet` command remains byte-for-byte unchanged.
 ## Behavior
 
 The human card groups detail families only when their route, evidence state,
-and unavailable reason agree. Every family remains named and the state is
+and unavailable reason agree, at the position of their first reference. Family
+order within a group follows the card. Every family remains named and the state is
 shown, including stale, missing, and unavailable. Distinct states or reasons
 remain separate; the full JSON card and its detail references are unchanged.
 
