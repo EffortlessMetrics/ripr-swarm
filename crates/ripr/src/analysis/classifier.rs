@@ -147,6 +147,17 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins(
                 name,
                 facts.functions.iter(),
             )
+            // `Type::name(` resolves to an inherent method of that name before
+            // a trait default one, wherever it is defined: a reader name any
+            // other workspace function shares is not bound.
+            && binding.readers.iter().all(|reader| {
+                index
+                    .functions()
+                    .iter()
+                    .filter(|function| function.name == reader.name)
+                    .count()
+                    == 1
+            })
         {
             assoc_type = Some(binding.self_type);
             readers = binding.readers;
