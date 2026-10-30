@@ -251,11 +251,13 @@ descended. The dropped-registration disclosure no longer fires for these shapes.
 **Rule 22. A test inside `describe.skipIf(cond)` / `describe.runIf(cond)` is reached, never credited (#10629).**
 Vitest's conditional suite factories take a runtime condition static analysis
 does not evaluate. A `describe.skipIf(cond)('name', () => { ... })` or
-`describe.runIf(cond)(...)` is indexed for reach with the
+`describe.runIf(cond)(...)` — including the untitled callback-only form
+`describe.runIf(cond)(() => { ... })` (#10982) — is indexed for reach with the
 factory call as its guard (`describe.skipIf(!existsSync(dist))`; nested guards
 join with `&&`). Its tests keep no assertion, their admission stays
 unresolved, and findings read as under Rule 20. A non-literal title is named
-as for any suite; another root (`runner.skipIf`) is not descended. An options
+as for any suite; an untitled suite is named like a non-literal title; another
+root (`runner.skipIf`) is not descended. An options
 object that skips the suite (`{ skip: true }`) is honored as for `describe`, and
 strict mode is read from the callback, not the title.
 

@@ -14911,6 +14911,19 @@
         { "type": "must_not_promote" },
         { "type": "expected_class", "class": "no_static_path" }
       ]
+    },
+    {
+      "id": "rust_struct_literal_untouched_field_builder",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/struct_literal_untouched_field_builder",
+      "vector": "assertion_on_untouched_struct_literal_field_does_not_expose_a_changed_default",
+      "probe_family": "call_deletion",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" }
+      ]
     }
   ]
 }

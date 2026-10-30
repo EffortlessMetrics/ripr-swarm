@@ -106,6 +106,9 @@ mod python_source_admission;
 #[cfg(feature = "lang-python")]
 #[path = "cli_smoke/python_unittest_selectors.rs"]
 mod python_unittest_selectors;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/qualified_owner_observation.rs"]
+mod qualified_owner_observation;
 #[path = "cli_smoke/recall_tradeoff.rs"]
 mod recall_tradeoff;
 #[cfg(unix)]

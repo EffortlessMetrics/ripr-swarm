@@ -602,11 +602,21 @@ mod tests {
             let command = route
                 .commit_prerequisite(&root_text)
                 .ok_or("no commit step")?;
+            // The root anchors at the analyzed tree with the shared quoting
+            // (`shell_arg`: console quotes on Windows, single quotes on
+            // Unix), and the glob-lookalike pathspec stays literal — the
+            // quote form is owned by `shell_arg`, not spelled here (#10996).
+            let expected_prefix = format!("git -C {}", shell_arg(&root_text));
             assert!(
-                command.starts_with("git -C '") && command.contains("--literal-pathspecs commit"),
-                "{command}"
+                command.starts_with(&expected_prefix)
+                    && command.contains("--literal-pathspecs commit"),
+                "Expected command to start with '{expected_prefix}' and contain '--literal-pathspecs commit'. Actual command: {command}"
             );
-            assert!(command.ends_with("-- 'src/[ab].py'"), "{command}");
+            let expected_suffix = format!("-- {}", shell_arg("src/[ab].py"));
+            assert!(
+                command.ends_with(&expected_suffix),
+                "Expected command to end with '{expected_suffix}'. Actual command: {command}"
+            );
             let command = command.replace("<message>", "hint");
             let status = std::process::Command::new("sh")
                 .arg("-c")
