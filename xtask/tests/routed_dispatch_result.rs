@@ -786,7 +786,7 @@ fn a_newer_run_or_attempt_on_the_same_head_revokes_the_superseded_invocation() -
             !with_runs(
                 event,
                 &advanced.to_string(),
-                &[runs_page(1, &[advanced.clone()])]
+                &[runs_page(1, std::slice::from_ref(&advanced))]
             )?,
             "{event}: a newer attempt must revoke the superseded attempt"
         );
@@ -832,7 +832,7 @@ fn succession_reads_follow_every_page_and_fail_closed() -> Result<(), String> {
             )?,
             "{event}: a newer run on page two revokes"
         );
-        let single = runs_page(1, &[own.clone()]);
+        let single = runs_page(1, std::slice::from_ref(&own));
         let malformed_newer = {
             let mut bad = run_entry(event, 101, 8, 1);
             bad["display_title"] = serde_json::Value::Null;
@@ -912,7 +912,7 @@ fn succession_reads_follow_every_page_and_fail_closed() -> Result<(), String> {
             (
                 "listing is an inconsistent count",
                 own_text.clone(),
-                vec![runs_page(2, &[own.clone()])],
+                vec![runs_page(2, std::slice::from_ref(&own))],
             ),
             (
                 "later page read fails",
@@ -927,7 +927,10 @@ fn succession_reads_follow_every_page_and_fail_closed() -> Result<(), String> {
             (
                 "duplicate run ids across pages",
                 own_text.clone(),
-                vec![runs_page(101, &page_one), runs_page(101, &[own.clone()])],
+                vec![
+                    runs_page(101, &page_one),
+                    runs_page(101, std::slice::from_ref(&own)),
+                ],
             ),
             (
                 "newer run lacks a title",
