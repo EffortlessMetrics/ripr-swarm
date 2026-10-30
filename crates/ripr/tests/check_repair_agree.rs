@@ -308,3 +308,89 @@ fn exposed_boolean_tail_is_gripped_for_both_check_and_repair() -> Result<(), Str
     );
     Ok(())
 }
+
+const CONST_OLD: &str = "pub const GREETING: &str = \"hello\";\n\npub fn greet(name: &str) -> String {\n    format!(\"{GREETING}, {name}\")\n}\n\npub fn shout(name: &str) -> String {\n    format!(\"{name}!\")\n}\n";
+const CONST_NEW: &str = "pub const GREETING: &str = \"howdy\";\n\npub fn greet(name: &str) -> String {\n    format!(\"{GREETING}, {name}\")\n}\n\npub fn shout(name: &str) -> String {\n    format!(\"{name}!\")\n}\n";
+const CONST_TEST: &str = "use ar::{greet, shout};\n\n#[test]\nfn greets() {\n    assert!(greet(\"a\").contains(\"a\"));\n    assert!(!shout(\"a\").is_empty());\n}\n";
+
+/// #11111 (group 2): a changed string constant has no seam of its own, so
+/// `ripr check` offers no repair start for it ("no gap ID"). Bare repair must
+/// not start, or offer to choose, a repair on the unchanged functions that
+/// merely sit in the same file: that is a different change than the one
+/// check reported.
+#[test]
+fn changed_constant_with_no_seam_does_not_start_repair_elsewhere() -> Result<(), String> {
+    let repo = Repo::create_uncommitted(CONST_OLD, CONST_NEW, CONST_TEST)?;
+    let check = repo.ripr(&["check", "--base", "HEAD"])?;
+    assert!(
+        check.contains("Changed behavior: pub const GREETING")
+            && check.contains("no repair start offered: this finding has no gap ID"),
+        "precondition, check offers no repair start for the constant:\n{check}"
+    );
+    let (code, repair) = repo.ripr_status(&["repair", "--root", "."])?;
+    assert_eq!(
+        code,
+        Some(3),
+        "repair must not start a repair the changed finding does not have:\n{repair}"
+    );
+    assert!(
+        !repair.contains("choose the change to repair")
+            && !repair.contains("repair_ready=true")
+            && !repair.contains("Repair prepared"),
+        "repair must not offer unrelated seams as the change's repair:\n{repair}"
+    );
+    assert!(
+        repair.contains("your changed lines (src/lib.rs:1)")
+            && repair.contains("not offered")
+            && repair.contains("`ripr repair <seam-id>`"),
+        "repair must say why nothing is offered and how to name a seam:\n{repair}"
+    );
+    Ok(())
+}
+
+/// The scoping applies only when the diff changes Rust production lines:
+/// a diff that touches nothing but a test file keeps bare repair's
+/// whole-repository selection, since nothing says which seam is "the change".
+#[test]
+fn test_only_diff_keeps_the_whole_repository_selection() -> Result<(), String> {
+    let repo = Repo::create_uncommitted(CONST_OLD, CONST_OLD, CONST_TEST)?;
+    repo.write("tests/t.rs", &format!("{CONST_TEST}\n// touched\n"))?;
+    let (code, repair) = repo.ripr_status(&["repair", "--root", "."])?;
+    assert_eq!(
+        code,
+        Some(3),
+        "several seams still need a choice:\n{repair}"
+    );
+    assert!(
+        repair.contains("choose the change to repair") && !repair.contains("your changed lines"),
+        "a test-only diff must not scope the selection:\n{repair}"
+    );
+    Ok(())
+}
+
+/// #11111 (review note on the return-value widening): only a tail that is
+/// exactly the one boundary comparison shares the predicate seam's verdict.
+/// With `age >= 18 && age < 65` the assertions pin the lower boundary but not
+/// the upper operand, so check does not read the change as exposed and repair
+/// must keep the whole-tail return-value seam as a repair candidate rather
+/// than refusing it as gripped.
+#[test]
+fn compound_boolean_tail_is_not_read_as_exposed_by_repair() -> Result<(), String> {
+    let repo = Repo::create(
+        "pub fn is_adult(age: u32) -> bool {\n    age > 18 && age < 65\n}\n",
+        "pub fn is_adult(age: u32) -> bool {\n    age >= 18 && age < 65\n}\n",
+        "use ar::is_adult;\n\n#[test]\nfn adult() {\n    assert!(is_adult(19));\n    assert!(!is_adult(18));\n}\n",
+    )?;
+    let check = repo.ripr(&["check", "--base", "HEAD~1"])?;
+    assert!(
+        !check.contains("nothing to repair here"),
+        "precondition, check does not read the compound change as exposed:\n{check}"
+    );
+    let (code, repair) = repo.ripr_status(&["repair", "--root", "."])?;
+    assert_eq!(code, Some(3), "several candidates need a choice:\n{repair}");
+    assert!(
+        repair.contains("`age >= 18 && age < 65`") && !repair.contains("already grip it (exposed)"),
+        "the whole-tail seam must stay a candidate, not read as gripped:\n{repair}"
+    );
+    Ok(())
+}

@@ -227,7 +227,7 @@ fn repair_refusal(
             {
                 (
                     RefusalKind::AlreadyGripped,
-                    format!("{label}: its existing tests already grip it (exposed) on current static evidence, so no static gap remains to repair in this seam (this is the whole-seam view of `ripr repair`; `ripr check` judges your changed lines)"),
+                    "its existing tests already grip it (exposed) on current static evidence, so no static gap remains to repair in this seam (this is the whole-seam view of `ripr repair`; `ripr check` judges your changed lines)".to_string(),
                 )
             } else if reason == RepairPacketIneligibility::RouteNotReady {
                 // Name the evidence the route still needs, not just the gate
@@ -365,7 +365,7 @@ fn ineligibility_label(reason: RepairPacketIneligibility) -> &'static str {
     // bug to the user (#9604).
     match reason {
         RepairPacketIneligibility::ClassNotHeadlineEligible => {
-            "its class is not a repair target under the current policy"
+            "ripr does not start a repair for a seam in this state"
         }
         RepairPacketIneligibility::CrossLanguageOracleVisibilityUnresolved => {
             "ripr cannot resolve which external-language observer would notice this seam"
@@ -440,17 +440,33 @@ pub(crate) fn resolve_repair_start(root: &Path) -> Result<RepairStartDecision, S
     let mut refusal_reasons: Vec<String> = Vec::new();
     let mut gripped_reasons: Vec<String> = Vec::new();
     // #11111: the gate judges whole seams, not the change. When the diff a
-    // bare `ripr check` would read is available and touches a seam, an
-    // already-gripped seam the diff does not touch says nothing about the
-    // change, so it is counted, not listed as if it were the verdict.
-    let changed = live_check_diff_files(root).filter(|files| {
-        classified
+    // bare `ripr check` would read is available, a seam the diff does not
+    // touch says nothing about the change: an already-gripped one is counted,
+    // not listed as if it were the verdict, and an eligible one is not offered
+    // as the change's repair start (check offers none for a line with no
+    // seam, so repair must not start somewhere else). A diff that changes no
+    // Rust production line leaves the whole-repository selection unscoped.
+    let diff = live_check_diff_files(root);
+    let scope = diff.as_ref().and_then(|files| {
+        if classified
             .iter()
             .any(|entry| seam_touches_change(entry, files))
+        {
+            Some(ChangeScope::TouchesSeams(files))
+        } else {
+            changed_rust_production_lines(files).map(ChangeScope::TouchesNoSeam)
+        }
     });
+    let off_change = |entry: &crate::analysis::ClassifiedSeam| match &scope {
+        Some(ChangeScope::TouchesSeams(files)) => !seam_touches_change(entry, files),
+        Some(ChangeScope::TouchesNoSeam(_)) => true,
+        None => false,
+    };
     let mut gripped_off_change = 0usize;
+    let mut eligible_off_change = 0usize;
     for entry in &classified {
         match repair_refusal(entry, policy, Some(root)) {
+            None if off_change(entry) => eligible_off_change += 1,
             None => {
                 eligible_ids.push(entry.seam.id().as_str().to_string());
                 candidate_notes.push(describe_candidate(entry, &bound));
@@ -459,10 +475,7 @@ pub(crate) fn resolve_repair_start(root: &Path) -> Result<RepairStartDecision, S
             // never read as the verdict on a different changed line; it is
             // listed after the reasons that can still name work.
             Some((RefusalKind::AlreadyGripped, reason)) => {
-                if changed
-                    .as_ref()
-                    .is_some_and(|files| !seam_touches_change(entry, files))
-                {
+                if off_change(entry) {
                     gripped_off_change += 1;
                 } else {
                     gripped_reasons.push(format!("{}: {reason}", seam_label(entry)));
@@ -474,6 +487,26 @@ pub(crate) fn resolve_repair_start(root: &Path) -> Result<RepairStartDecision, S
         }
     }
     refusal_reasons.extend(gripped_reasons);
+    if eligible_off_change > 0 {
+        let (noun, verb) = if eligible_off_change == 1 {
+            ("seam", "is")
+        } else {
+            ("seams", "are")
+        };
+        let lead = match &scope {
+            Some(ChangeScope::TouchesNoSeam(lines)) => format!(
+                "your changed lines ({lines}) touch no seam ripr can start a repair on, the same as `ripr check`; "
+            ),
+            _ => String::new(),
+        };
+        refusal_reasons.insert(
+            0,
+            format!(
+                "{lead}{eligible_off_change} repairable {noun} outside your changed lines {verb} not offered, since repairing {} would not address your change (to repair one anyway, pass its id: `ripr repair <seam-id>`)",
+                if eligible_off_change == 1 { "it" } else { "them" }
+            ),
+        );
+    }
     if gripped_off_change > 0 {
         let noun = if gripped_off_change == 1 {
             "seam outside your changed lines is"
@@ -502,6 +535,48 @@ pub(crate) fn resolve_repair_start(root: &Path) -> Result<RepairStartDecision, S
         candidate_notes: &candidate_notes,
         start_spec: spec.as_ref(),
     })
+}
+
+/// How the diff a bare `ripr check` reads relates to the seam inventory.
+enum ChangeScope<'a> {
+    /// The diff touches at least one seam: only those seams are the change.
+    TouchesSeams(&'a [crate::analysis::ChangedFile]),
+    /// The diff changes Rust production lines, none inside a seam; the
+    /// string names up to three of them for the refusal.
+    TouchesNoSeam(String),
+}
+
+/// `src/lib.rs:1, src/lib.rs:12` for the Rust production lines (outside any
+/// `tests/` directory) a diff changes, or `None` when it changes none.
+fn changed_rust_production_lines(files: &[crate::analysis::ChangedFile]) -> Option<String> {
+    const LISTED: usize = 3;
+    let mut lines: Vec<String> = Vec::new();
+    for file in files {
+        let path = normalized_relative_path(&file.path);
+        let is_production = path.ends_with(".rs")
+            && !path
+                .split('/')
+                .any(|component| component == "tests" || component == "benches");
+        if !is_production {
+            continue;
+        }
+        for line in file.added_lines.iter().chain(file.removed_lines.iter()) {
+            let label = format!("{path}:{}", line.new_side_line);
+            if !lines.contains(&label) {
+                lines.push(label);
+            }
+        }
+    }
+    if lines.is_empty() {
+        return None;
+    }
+    let more = lines.len().saturating_sub(LISTED);
+    lines.truncate(LISTED);
+    let mut text = lines.join(", ");
+    if more > 0 {
+        text.push_str(&format!(", and {more} more"));
+    }
+    Some(text)
 }
 
 /// Whether `files` (a parsed diff) adds, or deletes next to, a line inside
@@ -2787,7 +2862,7 @@ pub(crate) mod tests {
         let labels = [
             (
                 RepairPacketIneligibility::ClassNotHeadlineEligible,
-                "its class is not a repair target under the current policy",
+                "ripr does not start a repair for a seam in this state",
             ),
             (
                 RepairPacketIneligibility::CrossLanguageOracleVisibilityUnresolved,
