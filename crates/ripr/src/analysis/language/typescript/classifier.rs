@@ -7156,30 +7156,27 @@ pub(crate) fn classify_resolved_owner(
     // callback, is what static analysis cannot resolve (#10438, #10501).
     let conditional_registration_unknown =
         ladder_unresolved_unknown && only_conditionally_registered_tests(related_candidates);
-    ts_apply_post_ladder_rules(
-        &mut verdict,
-        &mut static_limit,
-        &TsPostLadderContext {
-            all_tests,
-            line,
-            probe_shape: &probe_shape,
-            line_text,
-            old_line_text,
-            owner,
-            candidates: related_candidates,
-            ladder: Rule8LadderFacts {
-                boundary: &predicate_boundary,
-                activations: &predicate_activations,
-                error_facts: &error_facts,
-                mock_facts: &mock_facts,
-                pin_facts: &pin_facts,
-                changed_field: changed_field.as_ref(),
-            },
-            mock_paths: &context.mock_paths,
-            alias_map,
-            workspace_root,
+    let post_ladder_context = TsPostLadderContext {
+        all_tests,
+        line,
+        probe_shape: &probe_shape,
+        line_text,
+        old_line_text,
+        owner,
+        candidates: related_candidates,
+        ladder: Rule8LadderFacts {
+            boundary: &predicate_boundary,
+            activations: &predicate_activations,
+            error_facts: &error_facts,
+            mock_facts: &mock_facts,
+            pin_facts: &pin_facts,
+            changed_field: changed_field.as_ref(),
         },
-    );
+        mock_paths: &context.mock_paths,
+        alias_map,
+        workspace_root,
+    };
+    ts_apply_post_ladder_rules(&mut verdict, &mut static_limit, &post_ladder_context);
     // RIPR-SPEC-0246 rule 7: a setup hook that calls the owner outside every
     // test body. It reads an actionable gap, never a credit.
     let hook_owner_unknown = !ladder_exposed
@@ -7227,12 +7224,65 @@ pub(crate) fn classify_resolved_owner(
             owner.name
         )];
     }
+    // #10704: infection the adapter can state. An unmodeled change shape
+    // fails closed to `infection_unknown`; a changed line under an `if` arm
+    // no related test call enters reads `reachable_unrevealed` with infection
+    // `no`, never `weakly_exposed` with an "assertion too weak" row.
+    let mut infection: Option<TsInfectionVerdict> = None;
+    if static_limit.is_none() {
+        let weak = matches!(verdict.class, ExposureClass::WeaklyExposed);
+        let exposed = matches!(verdict.class, ExposureClass::Exposed);
+        let is_predicate = matches!(probe_shape.family, ProbeFamily::Predicate);
+        // The stronger fact wins: a changed line no test input enters is
+        // infection `no`, whatever shape the edit has.
+        let untaken = if weak && !is_predicate {
+            ts_unentered_guard(&post_ladder_context)
+        } else {
+            None
+        };
+        if let Some(guard) = untaken {
+            verdict.class = ExposureClass::ReachableUnrevealed;
+            verdict.discriminate_state = StageState::Unknown;
+            verdict.missing = vec![format!(
+                "The change to `{}` sits inside `{}`, and no related test call enters it: {}. The changed line never runs under the tests, so no assertion can observe it. Add a test input that enters the guard.",
+                owner.name, guard.condition, guard.observed
+            )];
+            infection = Some(TsInfectionVerdict {
+                state: StageState::No,
+                shape: "branch_not_entered",
+                summary: format!(
+                    "No related test call enters `{}`: {}.",
+                    guard.condition, guard.observed
+                ),
+            });
+        } else if let Some(shape) =
+            super::infection_shape::ts_unmodeled_infection(old_line_text, line_text, is_predicate)
+            && (weak || (exposed && shape.behavior_neutral))
+        {
+            verdict.class = ExposureClass::InfectionUnknown;
+            verdict.observe_state = StageState::Unknown;
+            verdict.discriminate_state = StageState::Unknown;
+            verdict.missing = vec![format!(
+                "The change to `{}` is a `{}` edit: {}. No assertion is requested until a test input is shown to change the behavior.",
+                owner.name, shape.shape, shape.reason
+            )];
+            infection = Some(TsInfectionVerdict {
+                state: StageState::Unknown,
+                shape: shape.shape,
+                summary: format!(
+                    "TypeScript preview adapter does not model infection for this `{}` edit: {}.",
+                    shape.shape, shape.reason
+                ),
+            });
+        }
+    }
     let TsLadderVerdict {
         class,
         observe_state,
         discriminate_state,
         mut missing,
     } = verdict;
+    let infection_unknown_class = matches!(class, ExposureClass::InfectionUnknown);
     let static_unknown_by_mock = matches!(class, ExposureClass::StaticUnknown)
         && !ladder_unresolved_unknown
         && !ladder_entry_unknown
@@ -7345,11 +7395,16 @@ pub(crate) fn classify_resolved_owner(
         related_count, owner.name
     );
     let reach = StageEvidence::new(reach_state.clone(), Confidence::Low, &reach_summary);
-    let infect = StageEvidence::new(
-        StageState::Unknown,
-        Confidence::Low,
-        "TypeScript preview adapter does not yet model infection.",
-    );
+    let infect = match &infection {
+        Some(verdict) => {
+            StageEvidence::new(verdict.state.clone(), Confidence::Low, &verdict.summary)
+        }
+        None => StageEvidence::new(
+            StageState::Unknown,
+            Confidence::Low,
+            "TypeScript preview adapter does not yet model infection.",
+        ),
+    };
     let propagate = StageEvidence::new(
         StageState::Unknown,
         Confidence::Low,
@@ -7361,7 +7416,13 @@ pub(crate) fn classify_resolved_owner(
         strongest_strength
     );
     let observe = StageEvidence::new(observe_state, Confidence::Low, &observe_summary);
-    let discriminate_summary = if static_unknown_by_mock {
+    let discriminate_summary = if let Some(verdict) = &infection {
+        format!(
+            "TypeScript preview adapter: infection is `{}` for this `{}` edit, so whether an assertion discriminates the change is not asked (#10704).",
+            verdict.state.as_str(),
+            verdict.shape
+        )
+    } else if static_unknown_by_mock {
         "TypeScript preview adapter: every exposing test file mocks a module the changed line calls; discriminate unknown (RIPR-SPEC-0243 rule 8).".to_string()
     } else if loop_count_unknown {
         "TypeScript preview adapter: the changed counted-loop header is observed only through a mock call count; the iteration count is not modeled, so discriminate unknown (RIPR-SPEC-0246 rule 8).".to_string()
@@ -7440,6 +7501,12 @@ pub(crate) fn classify_resolved_owner(
         ExposureClass::Exposed => {
             "TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value.".to_string()
         }
+        ExposureClass::InfectionUnknown if infection.is_some() => {
+            "TypeScript preview advisory: infection is not established for this edit shape, so no assertion is requested and no repair packet is emitted; show a test input that changes the behavior first.".to_string()
+        }
+        ExposureClass::ReachableUnrevealed if infection.is_some() => {
+            "TypeScript preview advisory: no related test call enters the changed branch; add a test input that enters it before strengthening any assertion. No repair packet is emitted.".to_string()
+        }
         ExposureClass::StaticUnknown if ladder_entry_unknown => {
             "TypeScript preview advisory: the related test reaches the changed owner only through a same-module caller, so no new assertion is needed on that evidence; no repair packet is emitted.".to_string()
         }
@@ -7494,6 +7561,13 @@ pub(crate) fn classify_resolved_owner(
     let mut evidence = vec![format!("owner: {}", owner.name)];
     if !probe_shape.specific {
         evidence.push("probe_fact: ambiguous_fallback".to_string());
+    }
+    if let Some(verdict) = &infection {
+        evidence.push(format!(
+            "typescript_infection: {} ({})",
+            verdict.state.as_str(),
+            verdict.shape
+        ));
     }
     for discriminator in &missing_discriminators {
         evidence.push(format!("missing_discriminator: {}", discriminator.value));
@@ -7621,7 +7695,9 @@ pub(crate) fn classify_resolved_owner(
             observed_values: Vec::new(),
             missing_discriminators,
         },
-        stop_reasons: if static_unknown_by_mock {
+        stop_reasons: if infection_unknown_class {
+            vec![StopReason::InfectionEvidenceUnknown]
+        } else if static_unknown_by_mock {
             vec![StopReason::StaticProbeUnknown]
         } else if unresolved_callback_unknown || loop_count_unknown {
             vec![StopReason::GapEvidenceUnresolved]
@@ -7644,6 +7720,13 @@ pub(crate) fn classify_resolved_owner(
         // Resolved above, before the probe moved into the finding (#3281).
         source_currentness,
     })
+}
+
+/// Infection the classifier could state for a change (#10704).
+struct TsInfectionVerdict {
+    state: StageState,
+    shape: &'static str,
+    summary: String,
 }
 
 /// The ladder's verdict fields a post-ladder rule may rewrite.
