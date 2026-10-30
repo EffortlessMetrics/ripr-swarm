@@ -151,6 +151,22 @@ fn a_wrong_expected_value_does_not_confirm() -> Result<(), String> {
 }
 
 #[test]
+fn a_one_or_two_digit_folded_value_is_no_token() -> Result<(), String> {
+    // The same rule as an unrewritten literal: `42` is not kept as a token
+    // either, so neither spelling confirms an assertion that mentions it.
+    assert_eq!(40 + 2, 42);
+    for (before, after) in [("42", "40 + 2"), ("1", "2 - 1")] {
+        let expected = before;
+        assert_ne!(
+            class_after(before, after, expected)?,
+            ExposureClass::Exposed,
+            "{after}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn an_overflowing_or_non_literal_expression_does_not_confirm() -> Result<(), String> {
     // 100000 * 100000 overflows u32 and the fold's own bound.
     assert_eq!(100_000u64 * 100_000, 10_000_000_000);

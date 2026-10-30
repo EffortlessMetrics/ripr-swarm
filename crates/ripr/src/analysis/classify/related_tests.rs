@@ -1960,8 +1960,12 @@ fn sole_glob_import_is_dependency(
         .strip_prefix(dependency_name)
         .and_then(|rest| rest.trim_start().strip_prefix("::"))
         .is_some_and(|rest| {
-            // A flat `a::b::*` path only: a brace group could hide a second
-            // glob or a rename.
+            // A path of plain segments ending in `*` (`dep::*` or
+            // `dep::module::*`), no brace group: a brace group could hide a
+            // second glob or a rename. Which module the glob names does not
+            // matter here; a type of that name reaching the call from outside
+            // the owner's workspace is refused by the competitor and
+            // owner-crate import checks.
             !rest.contains(['{', '}', ',']) && rest.trim_end().ends_with('*')
         });
     let other_statement_names_type = statements.iter().any(|statement| {
