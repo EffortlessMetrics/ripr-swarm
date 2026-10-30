@@ -130,7 +130,7 @@ resolve through the default directory. An explicit store outside
 
 The exact filenames follow the command-owned source artifacts. `attempt.json` identifies them by semantic role and binds each retained file by path, byte count, and SHA-256 digest. After-phase `agent_receipt` / `agent_verify` files are recorded in `terminal_artifacts` and are excluded from the before commitment. Attempt identity alone does not bind the verdict: every read that can report `finished` (CLI status, `--attempt` status, and the MCP receipt/attempt documents) re-validates the receipt against its verify document — schema, verify digest linkage, the retained before content commitment, and the seam movement, lifecycle state, and guidance kind the verify document records. A pair that fails any of those checks reads `unconfirmed`/`unavailable` with the reason, never `finished`. Pending retention additionally requires the verify document to pass the same canonical receipt-issuance validation the after phase applies before it promotes the pair.
 
-Repository-global files under `target/ripr/workflow/` and `target/ripr/reports/agent-receipt.json` remain compatibility projections for existing cockpit and review consumers. They are not repair-attempt identity, and they are not the sole surviving copy of a finished attempt's result.
+Repository-global files under `target/ripr/workflow/` and `target/ripr/reports/agent-receipt.json` remain compatibility projections for existing cockpit and review consumers. They are not repair-attempt identity, and they are not the sole surviving copy of a finished attempt's result. A newly finished gap-bound attempt also retains the raw `after_check_findings` snapshot. Its retained receipt, verify and snapshot are cross-bound to the attempt and recorded after head. If exact producer projections are later absent, currentness may reconstruct their identities in memory only when that retained evidence and the complete bound delta agree. Present drift, tracked or authored files, unrelated neighbors, and missing or invalid evidence are not excused. Legacy two-role retention does not establish this snapshot custody. Snapshot validation requires Git access and a matching RIPR producer version; when either is unavailable, cleanup currentness stays unconfirmed rather than being inferred, even if the historical receipt remains readable.
 
 The trust-bound Python verify route still writes repository-global
 `python-repair-driver-verification.json` (and related execution/analysis files)
@@ -241,6 +241,16 @@ The after phase also retains the terminal static result under the attempt direct
 `ripr agent status` is the attempt-first discovery and resume surface. Without `--attempt` it enumerates every manifest in the resolved store (RIPR-SPEC-0195), validates each row independently, and selects a next command only when that choice is unambiguous; several active attempts are never resolved by newest, first, same seam, or most recently modified. One refused row poisons the whole listing: the inventory names it in `warnings[]`, withholds every candidate, and selects no next command until the row is repaired or removed — while exact `--attempt` selection of a valid row in the same store still reads that row alone. With `--attempt <id>` a fresh process selects exactly one attempt and reads one typed state from repository artifacts alone: the manifest's operational state, the status class (`awaiting_edit`, `prepared`, `finished_current`, `finished_historical`, `stale`, `incomparable`, `failed`, `limited`, `corrupt_or_unavailable`, `legacy_compatibility_only`), a `current`/`historical`/`unknown` currentness posture derived from `HEAD`, and one exact next or recovery action.
 
 The class is never stronger than the receipt the attempt retained. `finished_current` requires a digest-bound attempt-local receipt whose reading shows the gap closed at the current `HEAD`; a moved `HEAD` downgrades the same retained result to `finished_historical`, which stays readable but is never presented as current proof. Missing, tampered, or unbound attempt-local terminal evidence reads `corrupt_or_unavailable` and never falls back to another attempt's compatibility receipt. Legacy manifests without `terminal_artifacts` read `legacy_compatibility_only`: the one-slot compatibility projection is exactly the strength they earned. A missing or malformed selected manifest is also typed `corrupt_or_unavailable` naming the refused artifact, so one bad row cannot hide or strengthen the store's other rows.
+
+An already issued gap receipt remains readable when live `HEAD` is unavailable
+or the reader uses a newer RIPR version. Its retained snapshot must still match
+the attempt's recorded producer version, root, after head, immutable base,
+verify and receipt commitments, and the same structural/completeness rules,
+including the supported v5 run-owned findings identity. Earlier findings
+identity versions remain refused; historical readability is not a migration.
+This historical reading carries no live currentness authority: promotion,
+receipt reissue and reconstruction of missing workflow projections still use
+the full current executable and Git-provenance validation.
 
 Status is read-only on both surfaces: inspecting an attempt cannot finish, restart, rewrite, or delete it, and a resumed attempt receives no stronger state than its receipt shows. Human Markdown and normalized JSON derive from one DTO, so both surfaces agree and reordered directory traversal produces byte-stable output. See `docs/OUTPUT_SCHEMA.md` ("Exact attempt selection") for the field contract.
 
@@ -370,3 +380,8 @@ Missing or modified retained evidence, user-authored bytes at the same path,
 tracked/authored/forbidden paths, and neighboring files do not gain an
 exception. The predecessor can remain historical; no currentness recursion or
 cross-store lookup occurs. No witness is added for an unowned projection.
+
+For gap-bound attempts, exact receipt replacement and absent workflow
+projections can coexist. Currentness checks both identities in the same
+reconstructed whole delta, accepts only one matching projection candidate,
+and validates declared retained gap evidence on every accepting route.

@@ -646,27 +646,70 @@ pub(crate) fn validate_check_findings_artifact(
     raw: &str,
     label: &str,
 ) -> Result<ValidatedCheckFindings, String> {
-    let document: CheckFindingsDocument = serde_json::from_str(raw).map_err(|err| {
-        format!("agent verify {label} artifact is not a canonical check-findings artifact: {err}")
-    })?;
     let CheckFindingsDocument {
-        schema_version,
         artifact: identity,
         analysis_outcome,
         analysis_scope,
         run_limitations,
         findings,
-    } = document;
-    if schema_version.trim().is_empty() {
-        return Err(format!(
-            "agent verify {label} artifact has an empty check schema version"
-        ));
-    }
+        ..
+    } = parse_check_findings_document(raw, label)?;
     let artifact =
         validate_artifact_identity(root, raw, label, identity, &CHECK_FINDINGS_IDENTITY_SPEC)?;
     check_findings_run_is_whole(label, analysis_scope.as_ref(), run_limitations.as_deref())?;
     let gaps = check_findings_gaps(label, analysis_outcome, &findings)?;
     Ok(ValidatedCheckFindings { artifact, gaps })
+}
+
+fn parse_check_findings_document(raw: &str, label: &str) -> Result<CheckFindingsDocument, String> {
+    let document: CheckFindingsDocument = serde_json::from_str(raw).map_err(|err| {
+        format!("agent verify {label} artifact is not a canonical check-findings artifact: {err}")
+    })?;
+    if document.schema_version.trim().is_empty() {
+        return Err(format!(
+            "agent verify {label} artifact has an empty check schema version"
+        ));
+    }
+    Ok(document)
+}
+
+/// Commitment-validated issued history, deliberately without any currentness
+/// field. Only an already-bound terminal reader may use this result; issuance
+/// and missing-projection reconstruction still require the live validator.
+pub(crate) struct IssuedCheckFindingsCommitment {
+    pub(crate) repository_head: String,
+    pub(crate) base_revision: Option<String>,
+    pub(crate) content_sha256: String,
+}
+
+pub(crate) fn validate_issued_check_findings_commitment(
+    root: &Path,
+    raw: &str,
+    label: &str,
+    recorded_producer_version: &str,
+) -> Result<IssuedCheckFindingsCommitment, String> {
+    let CheckFindingsDocument {
+        artifact: identity,
+        analysis_outcome,
+        analysis_scope,
+        run_limitations,
+        findings,
+        ..
+    } = parse_check_findings_document(raw, label)?;
+    validate_artifact_identity_shape(label, &identity, &CHECK_FINDINGS_IDENTITY_SPEC)?;
+    if identity.producer.version != recorded_producer_version {
+        return Err(format!(
+            "agent verify {label} artifact producer does not match the issued attempt"
+        ));
+    }
+    validate_artifact_commitment(root, raw, label, &identity, &CHECK_FINDINGS_IDENTITY_SPEC)?;
+    check_findings_run_is_whole(label, analysis_scope.as_ref(), run_limitations.as_deref())?;
+    check_findings_gaps(label, analysis_outcome, &findings)?;
+    Ok(IssuedCheckFindingsCommitment {
+        repository_head: identity.repository.head,
+        base_revision: identity.analysis.base_revision,
+        content_sha256: identity.content_sha256,
+    })
 }
 
 /// Prefix of every typed refusal from [`evaluate_gap_closure`]; the CLI maps
@@ -864,6 +907,70 @@ fn validate_artifact_identity(
     spec: &ArtifactIdentitySpec,
 ) -> Result<ValidatedArtifact, String> {
     let subject = format!("agent verify {label} artifact");
+    validate_artifact_identity_shape(label, &identity, spec)?;
+    // #9500: the envelope's producer version must be this executable's. A
+    // forged or foreign version used to pass because only non-emptiness and
+    // before/after equality were checked. Fail closed on any other version
+    // (conservative: an artifact from another RIPR build, even a patch
+    // release, is regenerated rather than trusted).
+    if identity.producer.version != env!("CARGO_PKG_VERSION") {
+        return Err(foreign_producer_refusal(
+            root,
+            &subject,
+            &identity.producer.version,
+        ));
+    }
+    let expected_root = validate_artifact_commitment(root, raw, label, &identity, spec)?;
+
+    let actual_head = git_output(&expected_root, &["rev-parse", "HEAD"])?;
+    let actual_head = actual_head.trim();
+    let actual_worktree_dirty = git_worktree_dirty(&expected_root)?;
+    // Lineage presence (#2922 PR A): a well-formed head that does not name a
+    // commit held by the checked repository is rejected, not merely disclosed
+    // as historical. Git liveness is established by the HEAD and status reads
+    // above, so a failed `cat-file` here means the object is absent.
+    match git_object_type(&expected_root, &identity.repository.head)? {
+        Some(kind) if kind == "commit" => {}
+        Some(kind) => {
+            return Err(format!(
+                "agent verify {label} artifact repository head `{}` names a {kind}, not a commit",
+                identity.repository.head
+            ));
+        }
+        None => {
+            return Err(format!(
+                "agent verify {label} artifact repository head `{}` is not present in the checked repository",
+                identity.repository.head
+            ));
+        }
+    }
+    let currentness = if actual_head == identity.repository.head {
+        if identity.analysis.worktree == "dirty" || actual_worktree_dirty {
+            ArtifactCurrentness::DirtyWorktree
+        } else {
+            ArtifactCurrentness::Current
+        }
+    } else {
+        ArtifactCurrentness::Historical
+    };
+    Ok(ValidatedArtifact {
+        currentness,
+        base_revision: identity.analysis.base_revision,
+        input_identity: identity.analysis.input_identity,
+        snapshot_identity: identity.snapshot_identity,
+        repository_head: identity.repository.head,
+        producer_version: identity.producer.version,
+        analysis_mode: identity.analysis.mode,
+        analysis_profile: identity.analysis.profile,
+        content_sha256: identity.content_sha256,
+    })
+}
+
+fn validate_artifact_identity_shape(
+    label: &str,
+    identity: &ArtifactIdentity,
+    spec: &ArtifactIdentitySpec,
+) -> Result<(), String> {
     if identity.kind != spec.kind
         || identity.schema_version != ARTIFACT_IDENTITY_SCHEMA_VERSION
         || identity.canonicalization != CONTENT_COMMITMENT_CANONICALIZATION
@@ -883,18 +990,18 @@ fn validate_artifact_identity(
             "agent verify {label} artifact has invalid or unknown producer identity"
         ));
     }
-    // #9500: the envelope's producer version must be this executable's. A
-    // forged or foreign version used to pass because only non-emptiness and
-    // before/after equality were checked. Fail closed on any other version
-    // (conservative: an artifact from another RIPR build, even a patch
-    // release, is regenerated rather than trusted).
-    if identity.producer.version != env!("CARGO_PKG_VERSION") {
-        return Err(foreign_producer_refusal(
-            root,
-            &subject,
-            &identity.producer.version,
-        ));
-    }
+    Ok(())
+}
+
+/// Structural and commitment authority shared by live evidence and already
+/// issued history. It resolves only filesystem roots, not live Git state.
+fn validate_artifact_commitment(
+    root: &Path,
+    raw: &str,
+    label: &str,
+    identity: &ArtifactIdentity,
+    spec: &ArtifactIdentitySpec,
+) -> Result<PathBuf, String> {
     // #7369: a present stamp must carry the same `unix_ms:` millisecond
     // disclosure shape the producer pins, or the producer's documented
     // `unavailable` fallback for a clock that predates the Unix epoch. A
@@ -910,7 +1017,7 @@ fn validate_artifact_identity(
         ));
     }
     // Version gate (#2823): only the current input-identity algorithm
-    // validates as current evidence. A previous-version identity (for example
+    // validates as live evidence or issued history. A previous-version identity (for example
     // the v1 `input:<digest>` form that embedded the absolute checkout root)
     // is rejected with an explicit bounded reason rather than silently
     // accepted; a compatibility/migration boundary for earlier versions is
@@ -998,48 +1105,7 @@ fn validate_artifact_identity(
         ));
     }
 
-    let actual_head = git_output(&expected_root, &["rev-parse", "HEAD"])?;
-    let actual_head = actual_head.trim();
-    let actual_worktree_dirty = git_worktree_dirty(&expected_root)?;
-    // Lineage presence (#2922 PR A): a well-formed head that does not name a
-    // commit held by the checked repository is rejected, not merely disclosed
-    // as historical. Git liveness is established by the HEAD and status reads
-    // above, so a failed `cat-file` here means the object is absent.
-    match git_object_type(&expected_root, &identity.repository.head)? {
-        Some(kind) if kind == "commit" => {}
-        Some(kind) => {
-            return Err(format!(
-                "agent verify {label} artifact repository head `{}` names a {kind}, not a commit",
-                identity.repository.head
-            ));
-        }
-        None => {
-            return Err(format!(
-                "agent verify {label} artifact repository head `{}` is not present in the checked repository",
-                identity.repository.head
-            ));
-        }
-    }
-    let currentness = if actual_head == identity.repository.head {
-        if identity.analysis.worktree == "dirty" || actual_worktree_dirty {
-            ArtifactCurrentness::DirtyWorktree
-        } else {
-            ArtifactCurrentness::Current
-        }
-    } else {
-        ArtifactCurrentness::Historical
-    };
-    Ok(ValidatedArtifact {
-        currentness,
-        base_revision: identity.analysis.base_revision,
-        input_identity: identity.analysis.input_identity,
-        snapshot_identity: identity.snapshot_identity,
-        repository_head: identity.repository.head,
-        producer_version: identity.producer.version,
-        analysis_mode: identity.analysis.mode,
-        analysis_profile: identity.analysis.profile,
-        content_sha256: identity.content_sha256,
-    })
+    Ok(expected_root)
 }
 
 /// Classify only the old repo-exposure shape after canonical parsing refused it.
@@ -2029,6 +2095,21 @@ mod tests {
                 .to_string())
         );
         assert!(!"agent verify --gap-id requires".starts_with(GAP_BINDING_REFUSAL_PREFIX));
+    }
+
+    #[test]
+    fn gap_binding_over_a_non_findings_after_snapshot_names_the_after_artifact() {
+        let error = verify_gap_closure(
+            Path::new("."),
+            r#"{"artifact":{"kind":"check_findings"}}"#,
+            r#"{"artifact":{"kind":"repo_exposure"}}"#,
+            "gap:a",
+        );
+        assert_eq!(
+            error.map(|closure| closure.after_classification),
+            Err("agent verify --gap-id requires `check-findings-json` snapshots; the after artifact is not one"
+                .to_string())
+        );
     }
 
     #[test]
@@ -5474,3 +5555,7 @@ mod tests {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "artifact_issued_history_tests.rs"]
+mod issued_history_tests;

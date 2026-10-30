@@ -187,8 +187,10 @@ output is unchanged).
   snapshot-refresh model covers saved content transparently, and no
   `workspace/codeLens/refresh` is sent on quarantine transitions (clients re-request
   lenses on document change).
-- No aggregation lens: one lens per finding (matching the current diagnostics
-  model). Aggregation into a single per-file count is a separate UI concern.
+- No aggregation lens beyond collapsing: one lens per finding, except that
+  findings on one line whose lens range and title are identical share one lens
+  (hover still lists every finding on the line). Aggregation into a single
+  per-file count is a separate UI concern.
 - No Python-specific label differentiation beyond the preview prefix; the same
   softening logic covers both TS and Python for now.
 - No JSON output schema changes; codeLens is LSP-only.
@@ -238,6 +240,7 @@ result:   [lens for a.rs only]
 - `crates/ripr/src/lsp/lens.rs::tests::code_lens_response_filters_to_requested_file`
 - `crates/ripr/src/lsp/lens.rs::tests::code_lens_response_zero_related_tests_is_honest`
 - `crates/ripr/src/lsp/lens.rs::tests::code_lens_response_reports_real_related_test_count`
+- `crates/ripr/src/lsp/lens.rs::tests::code_lens_response_collapses_identical_lenses_on_one_line`
 - `crates/ripr/src/lsp/lens.rs::tests::code_lens_response_preview_finding_softens`
 - `crates/ripr/src/lsp/lens.rs::tests::code_lens_response_uncertain_class_does_not_claim_grip`
 - `crates/ripr/src/lsp/lens.rs::tests::code_lens_response_static_language_clean`
