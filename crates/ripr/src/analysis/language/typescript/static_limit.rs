@@ -904,10 +904,11 @@ pub(crate) fn named_limitations_for_oracle_candidates(
             // A dynamic argument only hides a discriminator for this change
             // when the assertion is in the seam's oracle family
             // (RIPR-SPEC-0104): an unresolved error expectation cannot pin a
-            // returned value or predicate, and vice versa.
+            // returned value or predicate, and vice versa. That family
+            // condition scopes the dynamic-assertion limitation only; the
+            // table-case limitation below keeps its original rule.
             if assertion.has_dynamic_matcher_arg
                 && assertion.expected_object_const.is_none()
-                && ts_oracle_kind_matches_seam(&assertion.oracle_kind, probe_family)
                 && !saw_dynamic_assertion
             {
                 if table_case_test(candidate.test) && !saw_table_case {
@@ -928,22 +929,24 @@ pub(crate) fn named_limitations_for_oracle_candidates(
                     });
                     saw_table_case = true;
                 }
-                let sample = format!(
-                    "{}:{}",
-                    normalized_path(&candidate.test.file),
-                    candidate.test.evidence_line(assertion)
-                );
-                let why = format!(
-                    "the matcher `.{}(...)` receives a non-literal dynamic argument; the adapter cannot statically resolve the expected value and cannot confirm the discriminator pins the changed behavior",
-                    assertion.matcher
-                );
-                limitations.push(TypeScriptNamedLimitation {
-                    name: "typescript_dynamic_assertion_unresolved",
-                    sample_source: sample,
-                    why_not_actionable: why,
-                    repair_route: "analysis/typescript-dynamic-assertion-resolution",
-                });
-                saw_dynamic_assertion = true;
+                if ts_oracle_kind_matches_seam(&assertion.oracle_kind, probe_family) {
+                    let sample = format!(
+                        "{}:{}",
+                        normalized_path(&candidate.test.file),
+                        candidate.test.evidence_line(assertion)
+                    );
+                    let why = format!(
+                        "the matcher `.{}(...)` receives a non-literal dynamic argument; the adapter cannot statically resolve the expected value and cannot confirm the discriminator pins the changed behavior",
+                        assertion.matcher
+                    );
+                    limitations.push(TypeScriptNamedLimitation {
+                        name: "typescript_dynamic_assertion_unresolved",
+                        sample_source: sample,
+                        why_not_actionable: why,
+                        repair_route: "analysis/typescript-dynamic-assertion-resolution",
+                    });
+                    saw_dynamic_assertion = true;
+                }
             }
         }
     }

@@ -8919,7 +8919,7 @@ fn named_limitation_dynamic_assertion_not_emitted_for_other_family_assertion() -
             argument_count: 1,
             line: 3,
             oracle_kind: OracleKind::BroadError,
-            oracle_strength: OracleStrength::Strong,
+            oracle_strength: OracleStrength::Weak,
             mock_payload: None,
             error_payload: None,
             observed_expression: Some("clamp(-5, 0, 10)".to_string()),
@@ -16658,6 +16658,323 @@ fn expected_side_is_live_unique_line_still_folds_liveness() {
             "999",
         ),
         Some(false)
+    );
+}
+
+/// Point a `direct_test_with_assertion` test at `src/clamp.ts` so it relates
+/// to the `clamp` owner by a direct imported call.
+fn retarget_to_clamp(test: &mut TypeScriptTest) {
+    test.file = PathBuf::from("tests/clamp.test.ts");
+    test.imports_in_file = vec![TypeScriptImport {
+        source: "../src/clamp".to_string(),
+        imported: Some("clamp".to_string()),
+        local: "clamp".to_string(),
+        namespace: false,
+    }]
+    .into();
+}
+
+/// A wrong-family dynamic assertion no longer raises the limitation, but it
+/// must not change the class: with a pinned literal assertion beside it, the
+/// finding keeps the class it had. (The retained-case control above shows a
+/// right-family dynamic assertion still raises the limit.)
+#[test]
+fn wrong_family_dynamic_assertion_with_pinned_literal_keeps_class() -> Result<(), String> {
+    let owner = test_owner("clamp", "src/clamp.ts");
+    let mut test = direct_test_with_assertion(
+        "clamps",
+        "clamp",
+        "clamp(-5, 0, 10);\nexpect(clamp(-5, 0, 10)).toBe(0);",
+        "toBe",
+        1,
+        OracleKind::ExactValue,
+        OracleStrength::Strong,
+    );
+    retarget_to_clamp(&mut test);
+    test.assertions[0].line = 2;
+    test.assertions[0].observed_expression = Some("clamp(-5, 0, 10)".to_string());
+    test.assertions[0].expected_value_or_variant = Some("0".to_string());
+    test.assertions[0].oracle_confidence = OracleConfidence::High;
+    let mut dynamic_wrong_family = test.assertions[0].clone();
+    dynamic_wrong_family.matcher = "throwsAsync".to_string();
+    dynamic_wrong_family.line = 3;
+    dynamic_wrong_family.oracle_kind = OracleKind::BroadError;
+    dynamic_wrong_family.oracle_strength = OracleStrength::Weak;
+    dynamic_wrong_family.expected_value_or_variant = None;
+    dynamic_wrong_family.has_dynamic_matcher_arg = true;
+    test.assertions.push(dynamic_wrong_family);
+    let finding = classify_change(
+        Path::new("src/clamp.ts"),
+        2,
+        "    if (value < min) {",
+        &[owner],
+        &[test],
+        None,
+        &ReExportIndex::empty(),
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    assert_evidence_lacks(
+        &finding,
+        "typescript_limitation: typescript_dynamic_assertion_unresolved",
+    );
+    // The class is the one the finding had with the limitation: the narrowing
+    // changes which limitation is listed, never the exposure class, and the
+    // actionability gate stays the evidence-based projection (unchanged).
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "{:?}",
+        finding.evidence
+    );
+    Ok(())
+}
+
+/// The family condition scopes the dynamic-assertion limitation only: a
+/// table-driven test whose only dynamic assertion is wrong-family keeps
+/// `typescript_table_case_unresolved` exactly as before.
+#[test]
+fn table_case_limitation_is_not_narrowed_by_the_family_condition() -> Result<(), String> {
+    let owner = test_owner("clamp", "src/clamp.ts");
+    let mut test = direct_test_with_assertion(
+        "clamps rows",
+        "clamp",
+        "test.each([[1, 1]])('row', (v, e) => {\n  expect(clamp(v, 0, 10)).toThrow(e);\n});",
+        "toThrow",
+        1,
+        OracleKind::BroadError,
+        OracleStrength::Weak,
+    );
+    retarget_to_clamp(&mut test);
+    test.assertions[0].line = 2;
+    test.assertions[0].observed_expression = Some("clamp(v, 0, 10)".to_string());
+    test.assertions[0].has_dynamic_matcher_arg = true;
+    let finding = classify_change(
+        Path::new("src/clamp.ts"),
+        2,
+        "    if (value < min) {",
+        &[owner],
+        &[test],
+        None,
+        &ReExportIndex::empty(),
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    assert_evidence_contains(
+        &finding,
+        "typescript_limitation: typescript_table_case_unresolved",
+    );
+    assert_evidence_lacks(
+        &finding,
+        "typescript_limitation: typescript_dynamic_assertion_unresolved",
+    );
+    Ok(())
+}
+
+/// End to end through the parser: an all-literal `toEqual([...])` array
+/// removes the dynamic limit, and an array holding an identifier keeps it.
+#[test]
+fn literal_array_to_equal_removes_the_dynamic_limit_and_identifier_array_keeps_it()
+-> Result<(), String> {
+    for (source, limited) in [
+        ("expect(clamp(-5, 0, 10)).toEqual([0, 1]);", false),
+        ("expect(clamp(-5, 0, 10)).toEqual([0, y]);", true),
+    ] {
+        let allocator = Allocator::default();
+        let parse_result = Parser::new(&allocator, source, SourceType::ts()).parse();
+        let assertions = collect_expect_assertions_in_statements(
+            &parse_result.program.body,
+            &SourceText::new(source),
+            None,
+        );
+        let mut test = direct_test_with_assertion(
+            "clamps",
+            "clamp",
+            format!("clamp(-5, 0, 10);\n{source}"),
+            "toEqual",
+            1,
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+        );
+        retarget_to_clamp(&mut test);
+        test.assertions = assertions
+            .into_iter()
+            .map(|mut assertion| {
+                assertion.line = 2;
+                assertion
+            })
+            .collect();
+        let finding = classify_change(
+            Path::new("src/clamp.ts"),
+            2,
+            "    if (value < min) {",
+            &[test_owner("clamp", "src/clamp.ts")],
+            &[test],
+            None,
+            &ReExportIndex::empty(),
+            None,
+        )
+        .ok_or_else(|| "expected a finding".to_string())?;
+        let has = finding
+            .evidence
+            .iter()
+            .any(|line| line == "typescript_limitation: typescript_dynamic_assertion_unresolved");
+        assert_eq!(has, limited, "{source}: {:?}", finding.evidence);
+    }
+    Ok(())
+}
+
+/// A pinned empty or zero-like array does not witness a field update (it can
+/// match the field's initial state); a nonzero scalar pin still does.
+#[test]
+fn field_update_pinned_by_zero_like_array_stays_unwitnessed() {
+    let owner = TypeScriptOwner {
+        name: "record".to_string(),
+        file: PathBuf::from("src/stats.ts"),
+        start_line: 1,
+        end_line: 5,
+        owner_kind: OwnerKind::Method,
+        class_name: Some("Stats".to_string()),
+        arity: Some(1),
+        params: vec!["n".to_string()],
+        source_text: Some(
+            concat!("record(n: number): void {\n", "    this.hits = n;\n", "}",).to_string(),
+        ),
+        ..test_owner("record", "src/stats.ts")
+    };
+    let change = FieldUpdateChange {
+        field: "hits".to_string(),
+        class_name: "Stats".to_string(),
+    };
+    let witnessed = |expected: &str, matcher: &str| {
+        let mut test = direct_test_with_assertion(
+            "records",
+            "record",
+            format!(
+                "const stats = new Stats();\nstats.record(3);\nexpect(stats.hits).{matcher}({expected});"
+            ),
+            matcher,
+            1,
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+        );
+        test.assertions[0].line = 3;
+        test.assertions[0].observed_expression = Some("stats.hits".to_string());
+        test.assertions[0].expected_value_or_variant = Some(expected.to_string());
+        let candidate = TypeScriptRelatedCandidate::with_owner_path(
+            &test,
+            TypeScriptRelationKind::DirectOwnerCall,
+            TypeScriptOwnerPathDisposition::TrustedOwnerPath,
+        );
+        ts_field_update_witnessed(&change, &owner, &[candidate])
+    };
+    assert!(
+        witnessed("3", "toBe"),
+        "control: a nonzero scalar pin witnesses"
+    );
+    for zero in ["[]", "[0]", "[0, 0]", "0"] {
+        assert!(!witnessed(zero, "toEqual"), "{zero} must stay unwitnessed");
+    }
+}
+
+/// An array expectation equals no scalar arm, so it cannot witness a changed
+/// ternary arm; the matching scalar pin still does.
+#[test]
+fn array_expectation_does_not_witness_a_changed_ternary_arm() {
+    let owner = TypeScriptOwner {
+        name: "pick".to_string(),
+        file: PathBuf::from("src/pick.ts"),
+        start_line: 1,
+        end_line: 3,
+        owner_kind: OwnerKind::Function,
+        arity: Some(1),
+        params: vec!["p".to_string()],
+        source_text: Some(
+            concat!(
+                "export function pick(p: number): number {\n",
+                "    return p > 5 ? 3 : 2;\n",
+                "}",
+            )
+            .to_string(),
+        ),
+        ..test_owner("pick", "src/pick.ts")
+    };
+    let change = ts_ternary_arm_change(
+        &owner,
+        "    return p > 5 ? 3 : 2;",
+        Some("    return p > 5 ? 1 : 2;"),
+    );
+    assert!(
+        change.is_some(),
+        "the one-arm ternary edit must read as a TernaryArmChange"
+    );
+    let Some(change) = change else {
+        return;
+    };
+    let witnessed = |expected: &str, matcher: &str| {
+        let mut test = direct_test_with_assertion(
+            "picks",
+            "pick",
+            format!("expect(pick(7)).{matcher}({expected});"),
+            matcher,
+            1,
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+        );
+        test.assertions[0].line = 1;
+        test.assertions[0].observed_expression = Some("pick(7)".to_string());
+        test.assertions[0].expected_value_or_variant = Some(expected.to_string());
+        let candidate = TypeScriptRelatedCandidate::with_owner_path(
+            &test,
+            TypeScriptRelationKind::DirectOwnerCall,
+            TypeScriptOwnerPathDisposition::TrustedOwnerPath,
+        );
+        ts_arm_change_witnessed(
+            &change,
+            &owner,
+            &[candidate],
+            &ReExportIndex::empty(),
+            None,
+            None,
+        )
+    };
+    assert!(
+        witnessed("3", "toBe"),
+        "control: the new arm value witnesses"
+    );
+    assert!(!witnessed("[3]", "toEqual"));
+    assert!(!witnessed("[]", "toEqual"));
+}
+
+/// A pinned literal array is a dead witness against scalar numeric branches.
+#[test]
+fn expected_side_is_live_treats_an_array_expectation_as_dead_for_scalar_branches() {
+    let owner = boundary_witness_owner();
+    for expected in ["[90]", "[ 100 ]", "[]"] {
+        assert_eq!(
+            expected_side_is_live(
+                &owner,
+                "  if (total >= 100) {",
+                "total",
+                "100",
+                &["100".to_string()],
+                expected,
+            ),
+            Some(false),
+            "{expected}"
+        );
+    }
+    // Control: a non-numeric, non-array expectation stays undetermined.
+    assert_eq!(
+        expected_side_is_live(
+            &owner,
+            "  if (total >= 100) {",
+            "total",
+            "100",
+            &["100".to_string()],
+            "expectedTotal",
+        ),
+        None
     );
 }
 

@@ -1956,8 +1956,11 @@ The evidence-first fields are additive in schema `0.2`:
       name that is not in the recognised matcher set (real oxc-parsed AST
       evidence).
     - `typescript_dynamic_assertion_unresolved` — fired (RIPR-SPEC-0085 §PR5)
-      when an oracle-eligible related test assertion has a non-literal dynamic
-      matcher argument (a variable, function call, or computed expression). The
+      when an oracle-eligible related test assertion in the changed seam's
+      oracle family (RIPR-SPEC-0104) has a non-literal dynamic matcher argument
+      (a variable, function call, or computed expression); a dynamic assertion
+      of another family (for example an error expectation on a value or
+      predicate seam) does not fire it. The
       real producer is `oracle.rs::extract_matcher_expected_value`, which sets
       `has_dynamic_matcher_arg = true` when the argument is not a resolvable
       literal. The limitation explains that the expected discriminator value
@@ -2176,7 +2179,9 @@ JSON fields:
     being observed by the assertion.
   - `typescript_oracle_expected: <value>` — additive; the matcher argument as
     source text, emitted ONLY when the argument is a concrete resolvable literal
-    (string, number, boolean, null, or a safe all-literal object). NOT emitted
+    (string, number, boolean, null, a safe all-literal object, or, for the
+    deep-equality matchers AVA `deepEqual` and Jest `toEqual` / `toStrictEqual`,
+    an all-literal array). NOT emitted
     for dynamic/non-literal arguments; those trigger
     `typescript_dynamic_assertion_unresolved` instead.
   - `typescript_oracle_confidence: <level>` — additive; confidence derived from

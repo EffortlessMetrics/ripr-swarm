@@ -1934,12 +1934,11 @@ pub(crate) fn ts_predicate_boundary_row_activation(
     )
 }
 
-/// RIPR-SPEC-0243 decision 18: whether some strong, pinned, exact-value assertion
-/// of an oracle relation reads the updated field from an instance the test
-/// called the owner method on.
-/// A zero or empty expected value matches a field's initial state: a scalar
+/// A zero or empty expected value is treated as matching a field's initial
+/// state, so pinning it cannot show an update ran: a scalar
 /// zero/empty/false/null/undefined, or an array holding only such values
-/// (`[]`, `[0, 0]`, `[[], '']`).
+/// (`[]`, `[0, 0]`, `[[], '']`). Conservative by design: an array of zero-like
+/// values may under-credit a real pin, never over-credit one.
 pub(crate) fn ts_expected_is_zero_like(expected: &str) -> bool {
     let compact: String = expected.split_whitespace().collect();
     if matches!(
@@ -1958,6 +1957,9 @@ pub(crate) fn ts_expected_is_zero_like(expected: &str) -> bool {
     rest.chars().all(|ch| matches!(ch, '[' | ']' | ','))
 }
 
+/// RIPR-SPEC-0243 decision 18: whether some strong, pinned, exact-value assertion
+/// of an oracle relation reads the updated field from an instance the test
+/// called the owner method on.
 pub(crate) fn ts_field_update_witnessed(
     change: &FieldUpdateChange,
     owner: &TypeScriptOwner,
@@ -4996,7 +4998,17 @@ pub(crate) fn expected_side_is_live(
     expected: &str,
 ) -> Option<bool> {
     let source = owner.source_text.as_deref()?;
-    let expected_value = signed_numeric_expected_value(expected)?;
+    // An array literal is never a scalar branch value; it is judged below,
+    // once the branches are known to be scalar-foldable.
+    let expected_is_array = {
+        let trimmed = expected.trim();
+        trimmed.starts_with('[') && trimmed.ends_with(']')
+    };
+    let expected_value = if expected_is_array {
+        None
+    } else {
+        Some(signed_numeric_expected_value(expected)?)
+    };
     let operator = changed_comparison_operator(line_text)?;
     let lines: Vec<&str> = source.lines().collect();
     // Locate the changed line inside the owner body. Uniqueness runs before
@@ -5045,6 +5057,11 @@ pub(crate) fn expected_side_is_live(
     };
     let new_value = fold_numeric_expression(new_expr, &bindings)?;
     let old_value = fold_numeric_expression(old_expr, &bindings)?;
+    // Both branches fold to numbers, so an array expectation equals neither:
+    // the pin is dead on both versions and cannot show the change.
+    let Some(expected_value) = expected_value else {
+        return Some(false);
+    };
     // Jest `toBe` uses `Object.is`, which distinguishes `+0` from `-0`.
     // Epsilon equality would credit `toBe(-0)` against a `return 0` branch.
     if expected_value == 0.0 || new_value == 0.0 || old_value == 0.0 {
