@@ -73,7 +73,12 @@ repository, checkout, run, attempt, profile, partition and command with
 are exactly that shard's partition list, and the partition lists are pairwise
 disjoint and equal to the full workspace list; and `routed-rust.yml`'s
 `result` job fails unless that job passed (also after a self-hosted tempfail
-fallback). A missing, cancelled or red shard is a failure, never a pass. Each
+fallback). A missing, cancelled or red shard is a failure, never a pass. After
+a partial "re-run failed jobs", each shard's evidence is its latest artifact
+for this run at or below the verifying attempt (#10605), and the combined
+context discloses `verified_attempts` whenever any accepted shard's evidence
+comes from an attempt other than the verifying attempt, so reused results are
+never presented as fresh. Each
 shard retains its own `junit.xml` and `run-context.txt` (the context names the
 partition and the blob identities of this workflow too), and the verifier writes
 the combined `junit.xml` and `run-context.txt` plus `shards-summary.txt` under

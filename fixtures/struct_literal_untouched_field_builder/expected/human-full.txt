@@ -1,0 +1,90 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/struct_literal_untouched_field_builder/input
+
+Summary: 2 changed behavior(s) checked: 0 exposed, 2 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
+
+WARNING ./src/lib.rs:22
+  id: probe:src_lib.rs:call_deletion:5af80bde
+
+Changed
+  before: Request { url: self.url, timeout_ms: self.timeout_ms.unwrap_or(30_000) }
+  after:  Request { url: self.url, timeout_ms: self.timeout_ms.unwrap_or(3_000) }
+
+Change type
+  a call was removed
+  family: call_deletion
+  delta:  effect (changes a side effect)
+  owner:  src/lib.rs::impl RequestBuilder::build
+  gap id (for scripts): gap:rust:src/lib.rs:impl RequestBuilder::build:call_deletion:call_deletion:request_url_self.url_timeout_ms_self.timeout_ms.unwrap_or_3_000
+
+Static exposure
+  weakly_exposed (warning, confidence 0.92)
+
+Evidence
+  - reach yes: Related tests appear to reach build: url_is_kept
+  - infection yes: Reachable tests can plausibly activate this changed behavior
+  - propagation yes: Changed behavior appears to influence call effect: Request { url: self.url, timeout_ms: self.timeout_ms.unwrap_or(3_000) }
+  - observation yes: A related test observes a value or effect near the changed behavior
+  - discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression
+  - local flow reaches call effect: Request { url: self.url, timeout_ms: self.timeout_ms.unwrap_or(3_000) } (line 22)
+  - related test tests/builder.rs:4 url_is_kept uses strong exact value oracle: assert_eq!(RequestBuilder::new("http://x").build().url, "http://x"); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - related test tests/builder.rs:9 explicit_timeout_is_kept uses strong exact value oracle: assert_eq!(request.timeout_ms, 500); misses: no established call path to the changed code; linked by name only
+  - source assertion argument value "http://x" at line 5
+  - source assertion argument value 500 at line 11
+
+Weakness
+  - No strong discriminator was detected
+
+Next step
+  Strengthen the related assertion so it discriminates the changed behavior
+Drill in:
+  ripr explain --root <cwd>/fixtures/struct_literal_untouched_field_builder/input --diff <cwd>/fixtures/struct_literal_untouched_field_builder/diff.patch --mode fast probe:src_lib.rs:call_deletion:5af80bde
+  ripr context --root <cwd>/fixtures/struct_literal_untouched_field_builder/input --diff <cwd>/fixtures/struct_literal_untouched_field_builder/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:5af80bde
+
+WARNING ./src/lib.rs:22
+  id: probe:src_lib.rs:field_construction:dcc39302
+
+Changed
+  before: Request { url: self.url, timeout_ms: self.timeout_ms.unwrap_or(30_000) }
+  after:  Request { url: self.url, timeout_ms: self.timeout_ms.unwrap_or(3_000) }
+
+Change type
+  a constructed field changed
+  family: field_construction
+  delta:  value (changes a computed value)
+  owner:  src/lib.rs::impl RequestBuilder::build
+  gap id (for scripts): gap:rust:src/lib.rs:impl RequestBuilder::build:field_construction:field_construction:request_url_self.url_timeout_ms_self.timeout_ms.unwrap_or_3_000
+
+Static exposure
+  weakly_exposed (warning, confidence 0.92)
+
+Evidence
+  - reach yes: Related tests appear to reach build: url_is_kept
+  - infection yes: Reachable tests can plausibly activate this changed behavior
+  - propagation yes: Complete propagation witness reaches constructed field: Request { url: self.url, timeout_ms: self.timeout_ms.unwrap_or(3_000) }
+  - observation yes: A related test observes a value or effect near the changed behavior
+  - discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression
+  - local flow reaches constructed field: Request { url: self.url, timeout_ms: self.timeout_ms.unwrap_or(3_000) } (line 22)
+  - related test tests/builder.rs:4 url_is_kept uses strong exact value oracle: assert_eq!(RequestBuilder::new("http://x").build().url, "http://x"); misses: no assertion pins `Request { url: self.url, timeout_ms: self.timeout_ms.unwrap_or(3_000) }`
+  - related test tests/builder.rs:9 explicit_timeout_is_kept uses strong exact value oracle: assert_eq!(request.timeout_ms, 500); misses: no established call path to the changed code; linked by name only
+  - source assertion argument value "http://x" at line 5
+  - source assertion argument value 500 at line 11
+
+Weakness
+  - No strong discriminator was detected
+  - missing discriminator Request { url: self.url, timeout_ms: self.timeout_ms.unwrap_or(3_000) }: No field-value assertion observes the constructed field: Request { url: self.url, timeout_ms: self.timeout_ms.unwrap_or(3_000) }
+
+Next step
+  Strengthen the related assertion so it discriminates the changed behavior
+Drill in:
+  ripr explain --root <cwd>/fixtures/struct_literal_untouched_field_builder/input --diff <cwd>/fixtures/struct_literal_untouched_field_builder/diff.patch --mode fast probe:src_lib.rs:field_construction:dcc39302
+  ripr context --root <cwd>/fixtures/struct_literal_untouched_field_builder/input --diff <cwd>/fixtures/struct_literal_untouched_field_builder/diff.patch --mode fast --at probe:src_lib.rs:field_construction:dcc39302

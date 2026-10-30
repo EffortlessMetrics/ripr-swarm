@@ -20,7 +20,7 @@
 //! Rust fact extraction behind this trait, and add the preview adapters
 //! per RIPR-SPEC-0027 and RIPR-SPEC-0028.
 
-mod adapter;
+pub(crate) mod adapter;
 mod id;
 #[cfg(feature = "lang-perl")]
 mod perl;
@@ -33,10 +33,12 @@ mod rust;
 pub(crate) use rust::producer_gap_names_seam_shape;
 #[cfg(feature = "lang-typescript")]
 mod typescript;
+#[cfg(feature = "lang-typescript")]
+pub(crate) use typescript::TypeScriptFileFactStore;
 
 pub(crate) use adapter::{
-    LanguageAdapter, LanguageDiffResult, LanguageRepoResult, RepoCapFired, RepoFileAccounting,
-    RepoLimitingStage,
+    LanguageAdapter, LanguageDiffResult, LanguageRepoResult, PreviewFactCacheStats, RepoCapFired,
+    RepoFileAccounting, RepoLimitingStage,
 };
 pub(crate) use id::LanguageId;
 #[cfg(all(test, feature = "lang-perl"))]
@@ -48,7 +50,7 @@ pub(crate) use perl::{
 pub(crate) use perl::{PERL_PRODUCER_FAILURE_REASON_PREFIX, PerlAdapter};
 #[cfg(feature = "lang-python")]
 pub(crate) use python::{
-    PythonAdapter, detect_python_test_framework, detect_python_test_frameworks,
+    PythonAdapter, PythonFileFactStore, detect_python_test_framework, detect_python_test_frameworks,
 };
 #[cfg(test)]
 pub(crate) use router::UNANALYZED_SOURCE_LANGUAGES_FOR_TESTS;
@@ -57,10 +59,13 @@ pub(crate) use router::{
     is_ts_js_source_extension, route, snapshot_input, ts_js_source_kind,
     unanalyzed_source_language,
 };
+#[cfg(test)]
+pub(crate) use rust::with_forced_diff_limit_env;
 pub(crate) use rust::{
     DIFF_SCOPE_OVERSIZED_PREFIX, GeneratedRustSources, RustAdapter, changed_let_binding,
-    diff_changed_rust_line_limit, is_diff_scope_oversized, is_generated_rust_file_with_patterns,
-    mask_rust_char_literals, mask_rust_comments_and_strings,
+    diff_changed_rust_line_limit, diff_limit_env, is_diff_scope_oversized,
+    is_generated_rust_file_with_patterns, mask_rust_char_literals, mask_rust_comments_and_strings,
+    positive_limit_from_env,
 };
 pub use rust::{
     PARTIAL_DIFF_LANGUAGE_TIER_VERSION, PARTIAL_DIFF_SELECTION_VERSION, PartialDiffScope,

@@ -101,6 +101,15 @@ pub(crate) fn build_gate_decision_report(
                         // a malformed or incomplete producer document.
                         config_errors.push(partial_error);
                         Value::Null
+                    } else if let Some(refusal_error) =
+                        refusal_input_error(&value, path, "gate input")
+                    {
+                        // #10733: a producer refusal (exit 2, empty findings,
+                        // `downstream_consumable: false`) is not a denominator
+                        // at all; fail closed instead of deriving `pass` from
+                        // zero evaluated records.
+                        config_errors.push(refusal_error);
+                        Value::Null
                     } else if let Some(producer_error) = pr_guidance_producer_error(&value, path) {
                         // The document is structurally valid but the producer
                         // disclosed it did not complete (status=error/incomplete/
@@ -1621,6 +1630,116 @@ fn findings_bound_input_error(value: &Value, path: &Path, role: &str) -> Option<
             crate::output::json::FINDINGS_BOUND_RUN_STATUS,
             role,
             crate::output::json::CHECK_FINDINGS_BYTES_ENV,
+        ))
+    } else {
+        None
+    }
+}
+
+/// Producer refusal run statuses: the typed identities the limited-check
+/// renderers emit when the producer refused to run (exit 2, nothing
+/// analyzed, empty findings, `downstream_consumable: false`). These are the
+/// scope guards (`crates/ripr/src/output/limited_check.rs`); the
+/// post-argv-parse refusal envelope (#6834) uses other typed identities and
+/// is caught by the generic non-consumable record check.
+const REFUSAL_RUN_STATUSES: [&str; 2] = ["diff_scope_oversized", "repo_scope_oversized"];
+
+fn as_refusal_run_status(status: &str) -> Option<&'static str> {
+    REFUSAL_RUN_STATUSES
+        .iter()
+        .find(|known| **known == status)
+        .copied()
+}
+
+/// The typed producer refusal status a document discloses, if any (#10733).
+/// Positions mirror `discloses_limited_partial_scope`: top-level
+/// `run_status`, `analysis_scope.run_status`, and
+/// `run_limitations[].run_status` / `category`.
+pub(crate) fn refusal_run_status(value: &Value) -> Option<&'static str> {
+    if let Some(status) = value
+        .get("run_status")
+        .and_then(Value::as_str)
+        .and_then(as_refusal_run_status)
+    {
+        return Some(status);
+    }
+    if let Some(status) = value
+        .pointer("/analysis_scope/run_status")
+        .and_then(Value::as_str)
+        .and_then(as_refusal_run_status)
+    {
+        return Some(status);
+    }
+    value
+        .get("run_limitations")
+        .and_then(Value::as_array)
+        .and_then(|limitations| {
+            limitations.iter().find_map(|entry| {
+                ["run_status", "category"].iter().find_map(|key| {
+                    entry
+                        .get(*key)
+                        .and_then(Value::as_str)
+                        .and_then(as_refusal_run_status)
+                })
+            })
+        })
+}
+
+/// Whether any disclosed record of the producer run is explicitly
+/// non-consumable (`downstream_consumable: false`) in the positions the
+/// check schema opens for it: `analysis_scope` and `run_limitations[]`
+/// entries (#10733). Complete producers never write the member, so an
+/// explicit `false` is a refusal regardless of whether this reader knows
+/// the typed run status.
+pub(crate) fn discloses_non_consumable_record(value: &Value) -> bool {
+    value
+        .pointer("/analysis_scope/downstream_consumable")
+        .and_then(Value::as_bool)
+        == Some(false)
+        || value
+            .get("run_limitations")
+            .and_then(Value::as_array)
+            .is_some_and(|limitations| {
+                limitations.iter().any(|entry| {
+                    entry.get("downstream_consumable").and_then(Value::as_bool) == Some(false)
+                })
+            })
+}
+
+/// Fail-closed refusal for gate inputs that disclose a producer refusal
+/// (#10733). A refused run produced no denominator at all, so it must never
+/// reach the evaluation — an empty refusal envelope would otherwise pass as
+/// a zero-finding run. Names the typed refusal status when the document
+/// carries one; otherwise names the generic `downstream_consumable: false`
+/// record. Runs after the typed bounded/partial/incomplete checks so those
+/// keep their own named repairs; the generic check also sees partial and
+/// bounded envelopes, which is exactly why the order matters.
+///
+/// RIPR-SPEC-0362 identity: the explicit `downstream_consumable: false` is
+/// required — from either the `analysis_scope` or the `run_limitations[]`
+/// position. A known refusal status WITHOUT the explicit flag is the healthy
+/// complete shape (a complete producer never writes the member), so it is
+/// admitted here, exactly like any other consumable document; refusing it
+/// would report a refusal the document does not disclose.
+pub(crate) fn refusal_input_error(value: &Value, path: &Path, role: &str) -> Option<String> {
+    if !discloses_non_consumable_record(value) {
+        return None;
+    }
+    if let Some(status) = refusal_run_status(value) {
+        Some(format!(
+            "gate input {} discloses a producer refusal (run_status: {status}, \
+             downstream_consumable: false); nothing was analyzed, so a refusal is never a \
+             {role} — follow the refusal's repair_route (narrower diff or scope budget) \
+             and re-run before gating",
+            display_path(path),
+        ))
+    } else if discloses_non_consumable_record(value) {
+        Some(format!(
+            "gate input {} discloses a non-consumable producer record \
+             (downstream_consumable: false) with no known typed run status; a refused or \
+             limited document is never a {role} — follow its repair_route and re-run before \
+             gating",
+            display_path(path),
         ))
     } else {
         None

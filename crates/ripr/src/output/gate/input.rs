@@ -175,6 +175,16 @@ pub(super) fn read_gap_ledger_impl(
             ));
             return Some(Vec::new());
         }
+        // #10733: a producer refusal (exit 2, empty findings,
+        // `downstream_consumable: false`) is not a denominator at all. Runs
+        // after the typed bounded/partial/incomplete checks so those keep
+        // their named repairs.
+        if let Some(refusal_error) =
+            super::refusal_input_error(&value, path, "gap decision ledger input")
+        {
+            config_errors.push(format!("required {refusal_error}"));
+            return Some(Vec::new());
+        }
     }
     match gap_decision_ledger::parse_gap_records_json(&text) {
         Ok(records) => {
@@ -412,6 +422,13 @@ pub(super) fn read_baseline_impl(
                      an incomplete denominator is never a baseline input",
                     display_path(path),
                 ));
+                return BaselineIndex::default();
+            }
+            // #10733: a producer refusal is not a denominator at all; the
+            // same shared refusal admission as the ledger input applies.
+            if let Some(refusal_error) = super::refusal_input_error(&value, path, "baseline input")
+            {
+                config_errors.push(refusal_error);
                 return BaselineIndex::default();
             }
             if let Some(defect) = baseline_document_defect(&value, &display_path(&input.root)) {

@@ -28,7 +28,7 @@ fn digest(packet: &PerlFactPacket) -> (String, usize) {
     let findings = packet_to_findings_with_currentness(packet, &BTreeMap::new(), |_, _| {
         crate::domain::SourceCurrentness::UnresolvedSubject
     });
-    // These snapshots predate `analysis_scope` (#9941), the absent related-test
+    // These snapshots predate `analysis_scope` (#9941), `confidence_basis` (#10700), the absent related-test
     // support field (#5564) and the related-test `role` (#5563). Retain their
     // original field set.
     let rendered = pre_index_debug(&format!("{findings:#?}"));
@@ -62,7 +62,11 @@ fn pre_index_debug(rendered: &str) -> String {
         let default_role = related_test_indent.is_some_and(|item_indent| {
             indent == item_indent + 4 && trimmed == "role: Contributing,"
         });
-        if trimmed != "analysis_scope: Diff," && !absent_support && !default_role {
+        if trimmed != "analysis_scope: Diff,"
+            && trimmed != "confidence_basis: [],"
+            && !absent_support
+            && !default_role
+        {
             lines.push(line);
         }
     }
@@ -79,6 +83,11 @@ enum Shape {
 
 /// An ingestion-valid packet with exactly `CAP` entries in every capped array.
 fn capped_packet(shape: Shape) -> Result<PerlFactPacket, String> {
+    sized_packet(shape, CAP)
+}
+
+/// The same packet shape with `size` entries in every capped array.
+fn sized_packet(shape: Shape, size: usize) -> Result<PerlFactPacket, String> {
     let mut packet = consume(FIXTURE)?;
     let file = packet.files.first().cloned().ok_or("file")?;
     let owner = packet.owners.first().cloned().ok_or("owner")?;
@@ -98,7 +107,7 @@ fn capped_packet(shape: Shape) -> Result<PerlFactPacket, String> {
     packet.limitations.clear();
     packet.dynamic_boundaries.clear();
 
-    for i in 0..CAP {
+    for i in 0..size {
         let mut f = file.clone();
         f.file_id = format!("file:f-{i}");
         f.path = format!("lib/My/App-{i}.pm");
@@ -119,7 +128,7 @@ fn capped_packet(shape: Shape) -> Result<PerlFactPacket, String> {
 
         let mut t = test.clone();
         t.test_id = format!("test:t-{i}");
-        t.file_id = format!("file:f-{}", (i + 1) % CAP);
+        t.file_id = format!("file:f-{}", (i + 1) % size);
         packet.tests.push(t);
 
         let mut k = oracle.clone();
@@ -162,7 +171,10 @@ fn capped_packet(shape: Shape) -> Result<PerlFactPacket, String> {
         packet.oracles.len(),
         packet.relations.len(),
     ] {
-        assert_eq!(len, CAP, "every capped array sits exactly at the cap");
+        assert_eq!(
+            len, size,
+            "every capped array sits exactly at the requested size"
+        );
     }
     Ok(packet)
 }
@@ -211,20 +223,35 @@ fn duplicates_packet() -> Result<PerlFactPacket, String> {
 }
 
 fn check(packet: &PerlFactPacket, expected: &str, label: &str) {
-    let started = std::time::Instant::now();
     let (actual, findings) = digest(packet);
-    let elapsed = started.elapsed();
     assert!(findings > 0, "{label}: projection produced findings");
     assert_eq!(actual, expected, "{label}: findings digest");
-    if label != "duplicates" {
-        // The pre-index code took 41 s (distributed) and 28 s (star) on this
-        // input in a debug build under load; the indexed path takes ~1-2 s.
-        // The bound sits between them, so the old quadratic scans fail it.
-        assert!(
-            elapsed < std::time::Duration::from_secs(12),
-            "{label}: full projection at the cap took {elapsed:?}"
-        );
-    }
+}
+
+/// The pre-index code took 41 s (distributed) and 28 s (star) at the cap in a
+/// debug build under load, while the indexed path takes ~1-2 s: the old
+/// scans were quadratic, so doubling the packet quadrupled the time. Compare
+/// half the cap with the full cap on the same runner instead of bounding
+/// seconds, so runner speed cancels out.
+fn assert_projection_scales(shape: Shape, label: &str) -> Result<(), String> {
+    let half = sized_packet(shape, CAP / 2)?;
+    let full = sized_packet(shape, CAP)?;
+    crate::testing::scale::assert_growth_within(label, CAP / 2, CAP, 3, |size| {
+        let packet = if size == CAP { &full } else { &half };
+        let (_, findings) = digest(packet);
+        assert!(findings > 0, "{label}: projection produced findings");
+    });
+    Ok(())
+}
+
+#[test]
+fn distributed_projection_time_grows_linearly_with_the_packet() -> Result<(), String> {
+    assert_projection_scales(Shape::Distributed, "distributed")
+}
+
+#[test]
+fn star_projection_time_grows_linearly_with_the_packet() -> Result<(), String> {
+    assert_projection_scales(Shape::Star, "star")
 }
 
 #[test]

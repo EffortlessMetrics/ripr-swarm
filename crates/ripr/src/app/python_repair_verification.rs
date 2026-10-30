@@ -1668,16 +1668,8 @@ pub(crate) fn run_verification_phase(options: VerificationOptions<'_>) -> Result
 
     // Analyzer identity: the running binary's digest — the same real
     // producer the binding records.
-    let driver_exe = std::env::current_exe().map_err(|error| {
-        format!(
-            "python repair verification could not identify the running analyzer binary: {error}"
-        )
-    })?;
-    let driver_bytes = std::fs::read(&driver_exe).map_err(|error| {
-        format!(
-            "python repair verification could not read the running analyzer binary {}: {error}",
-            driver_exe.display()
-        )
+    let driver_bytes = super::running_binary::read().map_err(|error| {
+        format!("python repair verification could not read the running analyzer binary: {error}")
     })?;
     let analyzer_binary_sha256 = sha256_hex(&driver_bytes);
 

@@ -424,12 +424,12 @@ fn usage() -> &'static str {
     "usage: cargo xtask termination-removal-builds [--source <repo>] [--out <dir>] [--profile release|dev]"
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(super) fn rust_nesting_digest() -> String {
     edits_digest(&PATCHES[0])
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(super) fn finish_for_test(build_ok: bool, removed_ok: bool) -> Result<(), String> {
     let built = if build_ok {
         Ok(json!({}))

@@ -3785,6 +3785,21 @@ pub(crate) fn seam_kind_for_probe_family(family: &str) -> Option<SeamKind> {
     .and_then(seam_kind_from_probe_shape)
 }
 
+/// The `ripr agent stub --kind` probe family a seam of `kind` answers to: the
+/// inverse of [`seam_kind_for_probe_family`], so a printed stub command
+/// selects the seam it was printed for (#10978).
+pub(crate) fn probe_family_for_seam_kind(kind: SeamKind) -> &'static str {
+    match kind {
+        SeamKind::PredicateBoundary => ProbeShapeKind::Predicate.as_str(),
+        SeamKind::ReturnValue => ProbeShapeKind::ReturnValue.as_str(),
+        SeamKind::ErrorVariant => ProbeShapeKind::ErrorPath.as_str(),
+        SeamKind::FieldConstruction => ProbeShapeKind::FieldConstruction.as_str(),
+        SeamKind::SideEffect => ProbeShapeKind::SideEffect.as_str(),
+        SeamKind::MatchArm => ProbeShapeKind::MatchArm.as_str(),
+        SeamKind::CallPresence => ProbeShapeKind::CallDeletion.as_str(),
+    }
+}
+
 fn seam_kind_from_probe_shape(kind: ProbeShapeKind) -> Option<SeamKind> {
     match kind {
         ProbeShapeKind::Predicate => Some(SeamKind::PredicateBoundary),

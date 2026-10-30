@@ -433,6 +433,11 @@ mod tests {
             "{bounded}"
         );
         assert!(bounded.contains("(MAX_PATH)"), "{bounded}");
+        assert_eq!(
+            bounded.chars().count(),
+            super::CLIENT_VISIBLE_MESSAGE_CHAR_BOUND,
+            "{bounded}"
+        );
     }
 
     #[test]
@@ -519,6 +524,44 @@ mod tests {
             "{bounded}"
         );
         assert!(bounded.starts_with("cargo metadata failed: "), "{bounded}");
+    }
+
+    /// #8584: the 240 bound counts Unicode scalars, not bytes. A
+    /// multi-byte scalar at the retained edge must survive whole, and
+    /// the marker replaces scalar 240. No grapheme claim is made.
+    #[test]
+    fn bounded_message_bounds_unicode_scalars_not_bytes() {
+        // Exact scalar boundaries, multi-byte scalar at the edge.
+        let at_239 = format!("{}é", "a".repeat(238)); // 239 scalars
+        assert_eq!(super::bounded_message(&at_239), at_239);
+        let at_240 = format!("{}€", "a".repeat(239)); // 240 scalars
+        assert_eq!(super::bounded_message(&at_240), at_240);
+        assert!(!super::bounded_message(&at_240).ends_with('…'));
+        let at_241 = format!("{}€x", "a".repeat(239)); // 241 scalars
+        let bounded_241 = super::bounded_message(&at_241);
+        assert_eq!(
+            bounded_241.chars().count(),
+            super::CLIENT_VISIBLE_MESSAGE_CHAR_BOUND
+        );
+        assert!(bounded_241.ends_with("a…"), "{bounded_241}");
+
+        // Straddle: 238 ASCII + 'é' (U+00E9, 2 bytes) is scalar 239,
+        // followed by 10 ASCII scalars (249 scalars, 250 bytes total).
+        let message = format!("{}é{}", "a".repeat(238), "b".repeat(10));
+        assert_eq!(message.chars().count(), 249);
+        assert_eq!(message.len(), 250);
+        let bounded = super::bounded_message(&message);
+        assert_eq!(
+            bounded.chars().count(),
+            super::CLIENT_VISIBLE_MESSAGE_CHAR_BOUND,
+            "{bounded}"
+        );
+        assert!(bounded.ends_with("é…"), "{bounded}");
+        // Negative control vs byte truncation: a 239-BYTE cut lands
+        // inside 'é' (panic on str slicing, or a lost/replaced scalar),
+        // and a byte-count bound cannot satisfy the scalar count above.
+        // Byte length proves the bound is not a byte bound:
+        assert_eq!(bounded.len(), 238 + 2 + 3, "{bounded}");
     }
 
     #[test]

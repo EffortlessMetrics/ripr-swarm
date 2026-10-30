@@ -1,0 +1,1 @@
+xtask/src/reports/verdict_corpus_known_false.rs|Command::new|1|verdict-corpus/known-false-growth|#10986: the known-false growth gate reads the merge base's `known-false/<case>.toml` and `expected/rows/<case>.json` through `git cat-file` and `git show`, and resolves the merge base with `git merge-base`. Read-only, no shell, output captured and bounded by the file size.

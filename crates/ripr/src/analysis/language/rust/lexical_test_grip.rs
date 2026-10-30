@@ -450,6 +450,7 @@ mod tests {
         let stage = |state| StageEvidence::new(state, Confidence::Low, "stage");
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: "probe:src_lib.rs:predicate:price".to_string(),
             canonical_gap: None,
             probe: Probe {

@@ -308,12 +308,33 @@ fn removed_type_guard_ignores_a_decoy_class_header_in_a_comment() -> Check {
         "# class Money:\n{}",
         money_without_guard().replace("class Money:", "class Money(int):")
     );
-    let finding = classify_guard_removal(
-        &source,
-        NEW_GUARD_LINE,
-        &money_test("    assert Money(1) != 2"),
-    )?;
-    assert_ne!(finding.class, ExposureClass::Exposed);
+    // The equality supplies the protocol relation the historical bug borrowed.
+    let test = money_test("    assert Money(1) == Money(1)\n    assert Money(1) != 2");
+    let owners = owners_of(&source, "shapes/money.py");
+    assert_eq!(
+        relation(&owners, "__eq__", &test)?,
+        Some("protocol_entry_call")
+    );
+    let finding = classify_guard_removal(&source, NEW_GUARD_LINE, &test)?;
+    assert_eq!(finding.class, ExposureClass::StaticUnknown);
+    Ok(())
+}
+
+/// A module docstring must not stand in for the actual parsed class either.
+#[test]
+fn removed_type_guard_ignores_a_decoy_class_header_in_a_docstring() -> Check {
+    let source = format!(
+        "\"\"\"class Money:\n\"\"\"\n{}",
+        money_without_guard().replace("class Money:", "class Money(int):")
+    );
+    let test = money_test("    assert Money(1) == Money(1)\n    assert Money(1) != 2");
+    let owners = owners_of(&source, "shapes/money.py");
+    assert_eq!(
+        relation(&owners, "__eq__", &test)?,
+        Some("protocol_entry_call")
+    );
+    let finding = classify_guard_removal(&source, NEW_GUARD_LINE, &test)?;
+    assert_eq!(finding.class, ExposureClass::StaticUnknown);
     Ok(())
 }
 

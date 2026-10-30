@@ -1,0 +1,79 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/inherent_receiver_operand_item_shadow/input
+
+Summary: 2 changed behavior(s) checked: 0 exposed, 0 weakly_exposed, 2 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
+
+Shared evidence and guidance
+  E1 [findings 1, 2]: reach weak: No test is seen calling as_object; tests share only its file or a name token: operand_constructor_is_not_the_outer_receiver
+  E2 [findings 1, 2]: infection yes: Reachable tests can plausibly activate this changed behavior
+  E3 [findings 1, 2]: observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect
+  E4 [findings 1, 2]: discriminator no: No assertion found on related tests
+  E5 [findings 1, 2]: related test src/lib.rs:24 operand_constructor_is_not_the_outer_receiver uses strong whole object equality oracle: assert_eq!({ struct value; value.as_object() }, None); misses: no established call path to the changed code; linked by name only
+  N1 [findings 1, 2]: The indexed related tests do not establish a call to the changed owner. Inspect existing tests, doctests and examples before changing assertions; they may already constrain the changed behavior. Add or strengthen a test only if that inspection finds a gap
+
+Finding 1: WARNING ./src/lib.rs:11
+  id: probe:src_lib.rs:match_arm:f9032269
+Changed
+  before: Self::Object(_) => None,
+  after:  Self::Object(value) =>
+Change type
+  a match arm changed
+  family: match_arm
+  delta:  control (changes which code path runs)
+  owner:  src/lib.rs::impl JsonValue::as_object
+  gap id (for scripts): gap:rust:src/lib.rs:impl JsonValue::as_object:match_arm:match_arm:self_object_value
+Static exposure
+  reachable_unrevealed (warning, confidence 0.66)
+Evidence
+  shared evidence: E1, E2
+  - propagation yes: Changed behavior appears to influence match arm result: Self::Object(value) =>
+  shared evidence: E3, E4
+  - local flow reaches match arm result: Self::Object(value) => (line 11)
+  shared evidence: E5
+Weakness
+  - No detected assertion observes the changed value, error, field, or effect
+  - No relevant oracle was detected
+  - No strong discriminator was detected
+Next step
+  shared guidance: N1
+Drill in:
+  ripr explain --root <cwd>/fixtures/inherent_receiver_operand_item_shadow/input --diff <cwd>/fixtures/inherent_receiver_operand_item_shadow/diff.patch --mode fast probe:src_lib.rs:match_arm:f9032269
+  ripr context --root <cwd>/fixtures/inherent_receiver_operand_item_shadow/input --diff <cwd>/fixtures/inherent_receiver_operand_item_shadow/diff.patch --mode fast --at probe:src_lib.rs:match_arm:f9032269
+
+Finding 2: WARNING ./src/lib.rs:11
+  id: probe:src_lib.rs:return_value:3a600794
+Changed
+  before: Self::Object(_) => None,
+  after:  Some(value)
+Change type
+  a returned value changed
+  family: return_value
+  delta:  value (changes a computed value)
+  owner:  src/lib.rs::impl JsonValue::as_object
+  gap id (for scripts): gap:rust:src/lib.rs:impl JsonValue::as_object:return_value:return_value:some_value
+Static exposure
+  reachable_unrevealed (warning, confidence 0.63)
+Evidence
+  shared evidence: E1, E2
+  - propagation weak: No complete owner-bound propagation witness found for returned value: Self::Object(value) => Some(value)
+  shared evidence: E3, E4
+  - local flow reaches returned value: Self::Object(value) => Some(value) (line 11)
+  shared evidence: E5
+Weakness
+  - No detected assertion observes the changed value, error, field, or effect
+  - No relevant oracle was detected
+  - No strong discriminator was detected
+Next step
+  shared guidance: N1
+Drill in:
+  ripr explain --root <cwd>/fixtures/inherent_receiver_operand_item_shadow/input --diff <cwd>/fixtures/inherent_receiver_operand_item_shadow/diff.patch --mode fast probe:src_lib.rs:return_value:3a600794
+  ripr context --root <cwd>/fixtures/inherent_receiver_operand_item_shadow/input --diff <cwd>/fixtures/inherent_receiver_operand_item_shadow/diff.patch --mode fast --at probe:src_lib.rs:return_value:3a600794
