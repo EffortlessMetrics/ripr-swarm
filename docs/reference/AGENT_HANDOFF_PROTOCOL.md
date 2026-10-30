@@ -101,8 +101,10 @@ Verify inherited plans against current source and native issue/PR evidence.
 Preserve the existing candidate owner, valid proof, and surviving user limits,
 then resume at the earliest missing judgment. Correct a stale premise and
 continue within the authorized scope; a stale brief alone does not require the
-owner to restate recoverable context. Surface a genuinely missing authority or
-non-derivable decision to the delivery owner instead of silently expanding scope.
+owner to restate recoverable context. Evidence that disproves the plan itself
+remains an ask-back trigger in the table below. Surface a genuinely missing
+authority or non-derivable decision to the delivery owner instead of silently
+expanding scope.
 
 ## "If authorized, proceed without re-asking"
 
