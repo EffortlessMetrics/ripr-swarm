@@ -609,6 +609,38 @@ line continuation cannot hide a table from the foreign-store scan.
 Preceding assertions must evaluate true under the same bounded old/new scope
 before a later assertion can supply the value-flip credit.
 
+A scalar or table constant's reader may also be reached through one forwarding
+hop in a sibling module (#9619): a test that imports `quote` from
+`pkg/quote.py`, whose body is one `return` calling `lookup` bound by `from
+.table import lookup [as local]`, relates as `module_value_call` when the
+assertion holds through the old reader and fails through the new one. The
+owner module is not `__init__.py` and sits in a regular package (its
+`__init__.py` is a workspace source); the forwarder module is a non-test
+sibling in the same directory (not `__init__.py` or `conftest.py`) whose
+source spells `from .<stem> import`, and at most 16 such siblings are read per
+changed file (more reads none). The import is top-level with level 1; the
+local name and the forwarder are each bound once in that module, the
+forwarder is an undecorated top-level `def` with positional parameters and no
+defaults whose body is one `return`, and it calls the local name with
+positional arguments only. The forwarder module gets its own write view of
+every other workspace file: a write of the forwarder or the local name, a
+code-slot or dunder write, reflection or a non-byte-exact name anywhere, and
+another file, extension module or compiled package sharing the forwarder
+module's name each withhold credit, as do reflection, a dynamic writer or a
+dunder assignment in the forwarder module's own source, and a test import of
+the forwarder whose module path starts with a standard-library name, and any
+other file or compiled module sharing the owner module's name. Along a module's
+whole dotted path from any import root, a package with an initializer of any
+kind or a source module named for a leading component that is not the module's
+own ancestor (`tests/shapes/__init__.py` or `tests/shapes.py` beside a test
+that imports `shapes.rates.quote`) shadows the module's package under pytest's
+prepend mode, so it withholds the credit of every pass that refuses a shared
+module name; a shadow reached only through a shorter suffix of the path is not
+checked. Inside
+the forwarder only its parameters are bound (the owner's constant is not), and
+the reader it calls is evaluated with no forwarder of its own, so a second hop
+decides nothing.
+
 A change to the single `return` of an undecorated module function or method
 that no test calls directly (#9226) relates as `module_value_call` to a test
 whose straight-line `assert <entry> == <literal>` holds with the old body and

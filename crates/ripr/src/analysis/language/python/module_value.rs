@@ -104,6 +104,66 @@ pub(super) struct ForeignWrites {
     /// A workspace file could not be read or the scan hit its bound, so the
     /// absence of a write is unknown.
     unknown: bool,
+    /// Sibling modules of the module's regular package that may forward a
+    /// call to one of its readers (#9619). Filled per run, never cached.
+    #[serde(skip)]
+    forwarders: Vec<ForwarderModule>,
+}
+
+/// A sibling module of a changed module's regular package whose source names
+/// `from .<stem> import`, with the writes of every other workspace file
+/// (#9619).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct ForwarderModule {
+    pub(super) file: std::path::PathBuf,
+    pub(super) source: String,
+    pub(super) foreign: ForeignWrites,
+}
+
+/// The most sibling modules read as forwarders of one changed module; more
+/// reads none, so the scan stays bounded.
+const MAX_FORWARDER_MODULES: usize = 16;
+
+/// The sibling modules that may forward a call to a reader of `owner`
+/// through `from .<stem> import ...`: the same regular package (its
+/// `__init__.py` is a workspace source), not a test, `__init__.py` or
+/// `conftest.py`, whose source spells that import. More than
+/// [`MAX_FORWARDER_MODULES`] reads none.
+pub(super) fn forwarder_candidates<'s>(
+    owner: &Path,
+    sources: impl Iterator<Item = (&'s Path, &'s str)>,
+    is_source: impl Fn(&Path) -> bool,
+) -> Vec<(&'s Path, &'s str)> {
+    let (Some(directory), Some(stem)) = (
+        owner.parent(),
+        owner.file_stem().and_then(|stem| stem.to_str()),
+    ) else {
+        return Vec::new();
+    };
+    if is_test_file(owner)
+        || owner.file_name().is_some_and(|name| name == "__init__.py")
+        || !is_source(&directory.join("__init__.py"))
+    {
+        return Vec::new();
+    }
+    let needle = format!("from .{stem} import");
+    let mut out: Vec<(&Path, &str)> = sources
+        .filter(|(file, source)| {
+            file.parent() == Some(directory)
+                && *file != owner
+                && file.extension().is_some_and(|extension| extension == "py")
+                && !is_test_file(file)
+                && !file
+                    .file_name()
+                    .is_some_and(|name| name == "__init__.py" || name == "conftest.py")
+                && source.contains(&needle)
+        })
+        .collect();
+    if out.len() > MAX_FORWARDER_MODULES {
+        return Vec::new();
+    }
+    out.sort();
+    out
 }
 
 /// Most distinct words retained in the workspace reference index.
@@ -594,6 +654,7 @@ impl<'a> ForeignIndex<'a> {
             shares_module_name,
             names_may_differ_elsewhere,
             unknown,
+            forwarders: Vec::new(),
         }
     }
 
@@ -979,10 +1040,14 @@ pub(super) fn shadowed_by_extension(
 /// source is what `import reach.ledger` loads. A directory named for the
 /// whole path with an initializer of any kind (`tests/reach/ledger/
 /// __init__.pyc`) is a package that wins over the module the same way,
-/// unless it is the owner's own package. `roots` are every directory
-/// holding a source or above one; their own entries are left to
-/// `extension_names`. An unreadable directory or name counts as one
-/// (#9226).
+/// unless it is the owner's own package. Along the owner's whole dotted
+/// path from a root, a package of any initializer or a source module named
+/// for a leading component that is not the owner's own ancestor shadows the
+/// owner's package (`tests/shapes/__init__.py` or `tests/shapes.py` for
+/// `shapes.rates.table`): the import then fails or loads another module
+/// (#9619). `roots` are every directory holding a source or above one; their
+/// own compiled entries are left to `extension_names`. An unreadable
+/// directory or name counts as one (#9226).
 pub(super) fn compiled_package_shadow(
     root: &Path,
     roots: &std::collections::BTreeSet<&Path>,
@@ -1002,11 +1067,24 @@ pub(super) fn compiled_package_shadow(
     } else {
         None
     };
+    let own_ancestors: Vec<std::path::PathBuf> = file
+        .ancestors()
+        .skip(1)
+        .map(|ancestor| root.join(ancestor))
+        .collect();
     roots.iter().any(|base| {
         (0..parts.len()).any(|start| {
             let mut directory = root.join(base);
             for (depth, name) in parts[start..].iter().enumerate() {
                 if depth > 0 && compiled_entry(&directory, name) {
+                    return true;
+                }
+                let leading = start == 0 && depth + 1 < parts.len();
+                if leading
+                    && !own_ancestors.contains(&directory.join(name))
+                    && (directory.join(format!("{name}.py")).is_file()
+                        || initializer_in_package(&directory.join(name)))
+                {
                     return true;
                 }
                 directory.push(name);
@@ -1017,6 +1095,12 @@ pub(super) fn compiled_package_shadow(
             own_package.as_ref() != Some(&directory) && initializer_in(&directory)
         })
     })
+}
+
+/// Whether `directory` is a directory holding a package initializer of any
+/// kind; a path that is not a directory holds none.
+fn initializer_in_package(directory: &Path) -> bool {
+    directory.is_dir() && initializer_in(directory)
 }
 
 /// Whether `directory` holds a package initializer of any kind (`__init__`
@@ -1200,6 +1284,11 @@ impl ForeignWrites {
     /// in the workspace ([`unchecked_bytecode`]).
     pub(super) fn mark_compiled_shadow(&mut self) {
         self.shares_module_name = true;
+    }
+
+    /// Records the sibling modules that may forward to the module's readers.
+    pub(super) fn set_forwarders(&mut self, forwarders: Vec<ForwarderModule>) {
+        self.forwarders = forwarders;
     }
 
     /// Whether some other workspace file may bind names it does not spell
@@ -1600,6 +1689,18 @@ pub(super) struct Scope<'a> {
     pub(super) receiver: Option<(&'a str, &'a [(String, Value)])>,
     /// Floats and `round` are modelled: a dataclass default read only.
     pub(super) floats: bool,
+    /// A forwarder's call scope (#9619): its local name for an owner-module
+    /// reader, which runs with the owner's constant in scope.
+    pub(super) callee: Option<Callee<'a>>,
+}
+
+/// An owner-module reader a forwarder binds under `local` through `from
+/// .<stem> import`, and the owner's constant that reader sees.
+#[derive(Clone, Copy)]
+pub(super) struct Callee<'a> {
+    pub(super) local: &'a str,
+    pub(super) constant: &'a str,
+    pub(super) reader: &'a Reader,
 }
 
 impl Scope<'_> {
@@ -1737,6 +1838,8 @@ fn credits<'a>(
         readers.push((owner, old_reader, new_reader));
     }
 
+    let forwarders = forwarders_of(module_owner, file, &readers, owners);
+
     let mut out = Vec::new();
     for test in all_tests {
         // A test file edited in the same diff may assert the new value; only
@@ -1777,7 +1880,7 @@ fn credits<'a>(
                     (&old_value, &new_value),
                     &constant_spellings,
                     &[],
-                    (None, None),
+                    [(None, None), (None, None)],
                     &preceding,
                 )
             {
@@ -1804,7 +1907,7 @@ fn credits<'a>(
                         (&old_value, &new_value),
                         &constant_spellings,
                         &spellings,
-                        (Some(old_reader), Some(new_reader)),
+                        [(Some(old_reader), None), (Some(new_reader), None)],
                         &preceding,
                     )
                 {
@@ -1823,9 +1926,169 @@ fn credits<'a>(
             if credited {
                 break;
             }
+            // The constant read through a reader a sibling module's function
+            // forwards to (#9619).
+            for forwarder in &forwarders {
+                let (_, old_reader, new_reader) = &readers[forwarder.reader];
+                if test
+                    .constant_rebinding
+                    .assigns_attribute(&forwarder.owner.name)
+                    || test.imports.iter().any(|import| {
+                        names_stdlib_module(&import.source_module)
+                            && import_source_module_matches_owner(
+                                import,
+                                forwarder.owner,
+                                &test.file,
+                            )
+                    })
+                {
+                    continue;
+                }
+                let spellings = reader_spellings(test, forwarder.owner);
+                let callee = |reader| Callee {
+                    local: &forwarder.local,
+                    constant: &name,
+                    reader,
+                };
+                if spellings.is_empty()
+                    || !flips(
+                        &expression,
+                        "",
+                        (&old_value, &new_value),
+                        &[],
+                        &spellings,
+                        [
+                            (Some(&forwarder.body), Some(callee(old_reader))),
+                            (Some(&forwarder.body), Some(callee(new_reader))),
+                        ],
+                        &preceding,
+                    )
+                {
+                    continue;
+                }
+                out.push(credit(
+                    test,
+                    assertion,
+                    &name,
+                    (&old_value, &new_value),
+                    Some(forwarder.owner.name.clone()),
+                ));
+                credited = true;
+                break;
+            }
+            if credited {
+                break;
+            }
         }
     }
     Some(out)
+}
+
+/// A sibling module's function that forwards to a reader of the constant:
+/// `def quote(tier, units): return lookup(tier) * units` beside `from .table
+/// import lookup` (#9619).
+struct Forwarder<'o> {
+    owner: &'o PythonOwner,
+    body: Reader,
+    /// The forwarder module's name for the reader.
+    local: String,
+    /// The reader's index in the owner module's readers.
+    reader: usize,
+}
+
+/// The forwarders of `readers` in the sibling modules the workspace pass
+/// recorded for the owner module at `file`. A module counts only when its
+/// own source and every other file's writes leave its bindings certain: no
+/// reflection, dynamic writer, code-slot or dunder write, non-byte-exact
+/// name, or other file or compiled module of its module name. The reader is
+/// bound by one level-1 `from .<stem> import reader [as local]`, and both
+/// names are bound once and rebound by no other file.
+fn forwarders_of<'o>(
+    module_owner: &PythonOwner,
+    file: &Path,
+    readers: &[(&PythonOwner, Reader, Reader)],
+    owners: &'o [PythonOwner],
+) -> Vec<Forwarder<'o>> {
+    let Some(stem) = file.file_stem().and_then(|stem| stem.to_str()) else {
+        return Vec::new();
+    };
+    // The forwarder's relative import loads the owner's file only while no
+    // other file or compiled module shares its name.
+    if module_owner.foreign_writes.shares_module_name() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for module in &module_owner.foreign_writes.forwarders {
+        let foreign = &module.foreign;
+        let source = module.source.as_str();
+        if foreign.may_replace_reader_code()
+            || foreign.writes_dunder()
+            || foreign.reflection_elsewhere()
+            || foreign.shares_module_name()
+            || foreign.names_may_differ_elsewhere()
+            || mentions_reflection(source)
+            || names_may_differ(source)
+            || super::call_chain::has_dynamic_word(source)
+            || DYNAMIC_WRITERS
+                .iter()
+                .any(|word| mentions_identifier(source, word))
+        {
+            continue;
+        }
+        let Ok(Mod::Module(parsed)) = parse_module_result(&module.file, source) else {
+            continue;
+        };
+        let facts = ModuleBindingFacts::of(source, &parsed.body);
+        if facts.assigns_dunder() {
+            continue;
+        }
+        let mut callees: Vec<(String, usize)> = Vec::new();
+        for statement in &parsed.body {
+            let Stmt::ImportFrom(import) = statement else {
+                continue;
+            };
+            if import.level.map(|level| level.to_u32()) != Some(1)
+                || import.module.as_deref() != Some(stem)
+            {
+                continue;
+            }
+            for alias in &import.names {
+                let local = alias.asname.as_ref().unwrap_or(&alias.name).to_string();
+                let Some(index) = readers
+                    .iter()
+                    .position(|(reader, _, _)| reader.name == alias.name.as_str())
+                else {
+                    continue;
+                };
+                if facts.bound_once(&local) && !foreign.may_rebind(&local, &module.file) {
+                    callees.push((local, index));
+                }
+            }
+        }
+        for (local, index) in callees {
+            for owner in owners.iter().filter(|owner| {
+                owner.file == module.file
+                    && owner.owner_kind == Some(OwnerKind::Function)
+                    && owner.qualified_name == owner.name
+                    && owner.class_path.is_empty()
+                    && owner.decorators.is_empty()
+            }) {
+                if !facts.bound_once(&owner.name) || foreign.may_rebind(&owner.name, &module.file) {
+                    continue;
+                }
+                let Some(body) = reader_of(&parsed.body, &owner.name, &local) else {
+                    continue;
+                };
+                out.push(Forwarder {
+                    owner,
+                    body,
+                    local: local.clone(),
+                    reader: index,
+                });
+            }
+        }
+    }
+    out
 }
 
 /// The credits for a body-only edit of a top-level `NAME = lambda ...`
@@ -1926,7 +2189,7 @@ fn lambda_credits<'a>(
                 (&unused, &unused),
                 &[],
                 &spellings,
-                (Some(&old_reader), Some(&new_reader)),
+                [(Some(&old_reader), None), (Some(&new_reader), None)],
                 &preceding,
             ) {
                 out.push(ModuleValueCredit {
@@ -2032,10 +2295,10 @@ fn flips(
     values: (&Value, &Value),
     constant_spellings: &[String],
     reader_spellings: &[String],
-    readers: (Option<&Reader>, Option<&Reader>),
+    sides: [(Option<&Reader>, Option<Callee<'_>>); 2],
     preceding: &[Expr],
 ) -> bool {
-    let outcome = |value: &Value, reader: Option<&Reader>| {
+    let outcome = |value: &Value, reader: Option<&Reader>, callee: Option<Callee<'_>>| {
         let scope = Scope {
             constant: name,
             value,
@@ -2046,6 +2309,7 @@ fn flips(
             model: None,
             receiver: None,
             floats: false,
+            callee,
         };
         if !preceding
             .iter()
@@ -2055,7 +2319,9 @@ fn flips(
         }
         evaluate(expression, &scope).map(|result| result.truthy())
     };
-    outcome(values.0, readers.0) == Some(true) && outcome(values.1, readers.1) == Some(false)
+    let [(old_reader, old_callee), (new_reader, new_callee)] = sides;
+    outcome(values.0, old_reader, old_callee) == Some(true)
+        && outcome(values.1, new_reader, new_callee) == Some(false)
 }
 
 fn constant_line(text: &str) -> Option<(String, Value)> {
@@ -2089,6 +2355,7 @@ fn constant_line(text: &str) -> Option<(String, Value)> {
         model: None,
         receiver: None,
         floats: false,
+        callee: None,
     };
     if let Expr::Dict(dict) = value {
         return Some((name.id.to_string(), table_of(dict, &empty)?));
@@ -2573,8 +2840,14 @@ pub(super) fn evaluate(expr: &Expr, scope: &Scope<'_>) -> Option<Value> {
                 .zip(&call.args)
                 .map(|(parameter, argument)| Some((parameter.clone(), evaluate(argument, scope)?)))
                 .collect::<Option<_>>()?;
+            // A forwarder's names are its own module's: the owner's constant
+            // is visible only inside the reader it calls.
             let inner = Scope {
-                constant: scope.constant,
+                constant: if scope.callee.is_some() {
+                    ""
+                } else {
+                    scope.constant
+                },
                 value: scope.value,
                 parameters: Some(&arguments),
                 constant_spellings: &[],
@@ -2583,8 +2856,43 @@ pub(super) fn evaluate(expr: &Expr, scope: &Scope<'_>) -> Option<Value> {
                 model: None,
                 receiver: None,
                 floats: false,
+                callee: scope.callee,
             };
             evaluate(&reader.expression, &inner)
+        }
+        // A forwarder's call of the reader it imported, by its local name
+        // and positional arguments only (#9619). One hop: the reader runs
+        // with no callee of its own.
+        Expr::Call(call)
+            if scope.parameters.is_some()
+                && scope.callee.is_some_and(|callee| {
+                    matches!(call.func.as_ref(), Expr::Name(name) if name.id.as_str() == callee.local)
+                }) =>
+        {
+            let callee = scope.callee?;
+            if !call.keywords.is_empty() || call.args.len() != callee.reader.parameters.len() {
+                return None;
+            }
+            let arguments: Vec<(String, Value)> = callee
+                .reader
+                .parameters
+                .iter()
+                .zip(&call.args)
+                .map(|(parameter, argument)| Some((parameter.clone(), evaluate(argument, scope)?)))
+                .collect::<Option<_>>()?;
+            let inner = Scope {
+                constant: callee.constant,
+                value: scope.value,
+                parameters: Some(&arguments),
+                constant_spellings: &[],
+                reader_spellings: &[],
+                reader: None,
+                model: None,
+                receiver: None,
+                floats: false,
+                callee: None,
+            };
+            evaluate(&callee.reader.expression, &inner)
         }
         // A dict constant read inside a module function (#9619): `NAME[key]`.
         // A missing key raises, which decides nothing.
