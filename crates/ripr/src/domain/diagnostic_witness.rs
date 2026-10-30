@@ -721,6 +721,7 @@ mod tests {
     fn sample_finding() -> Finding {
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: "probe:pricing:88:error_path".to_string(),
             canonical_gap: None,
             probe: Probe {

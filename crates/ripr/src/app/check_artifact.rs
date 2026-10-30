@@ -612,6 +612,7 @@ mod raw_path_tests {
         let raw = PathBuf::from(OsStr::from_bytes(b"pricing_\xff.rs"));
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: "probe:pricing:1:error_path".to_string(),
             canonical_gap: None,
             probe: Probe {

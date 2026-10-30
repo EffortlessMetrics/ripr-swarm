@@ -4586,7 +4586,11 @@ fn editor_first_run_usability_fixture_corpus_validator_reports_unsafe_states() -
         write_editor_first_run_status(root, "server_missing", "active", None);
         write_editor_first_run_actions(root, "setup_ok", &[]);
         write_editor_first_run_actions(root, "receipt_found", &[]);
-        write_editor_first_run_actions(root, "artifact_missing", &["Copy first repair packet"]);
+        write_editor_first_run_actions(
+            root,
+            "artifact_missing",
+            &["Copy repair instructions for an AI agent"],
+        );
         write(
             &root.join(
                 "fixtures/editor_first_run_usability/artifact_stale/expected/receipt-status.json",
@@ -4607,12 +4611,12 @@ fn editor_first_run_usability_fixture_corpus_validator_reports_unsafe_states() -
         }));
         assert!(violations.iter().any(|violation| {
             violation.contains(
-                "editor first-run usability case setup_ok must include Copy first repair packet",
+                "editor first-run usability case setup_ok must include Copy repair instructions for an AI agent",
             )
         }));
         assert!(violations.iter().any(|violation| {
                 violation.contains(
-                    "editor first-run usability case receipt_found must include Copy first repair packet",
+                    "editor first-run usability case receipt_found must include Copy repair instructions for an AI agent",
                 )
             }));
         assert!(violations.iter().any(|violation| {
@@ -4999,7 +5003,7 @@ fn editor_first_run_actions(case: &str) -> Vec<&'static str> {
     match case {
         "setup_ok" | "receipt_found" | "receipt_improved" | "receipt_unchanged" => {
             vec![
-                "Copy first repair packet",
+                "Copy repair instructions for an AI agent",
                 "Refresh Analysis - Saved Workspace Check",
             ]
         }
@@ -5046,12 +5050,12 @@ fn write_editor_first_run_actions(root: &Path, case: &str, titles: &[&str]) {
             .map(|title| {
                 serde_json::json!({
                     "title": title,
-                    "command": if *title == "Copy first repair packet" {
+                    "command": if *title == "Copy repair instructions for an AI agent" {
                         "ripr.copyContext"
                     } else {
                         "ripr.refresh"
                     },
-                    "arguments": if *title == "Copy first repair packet" {
+                    "arguments": if *title == "Copy repair instructions for an AI agent" {
                         serde_json::json!([{
                             "packet": "RIPR first repair packet\nGap identity: gap:test\nSuggested action:\n- Add one focused assertion.\nVerify command:\nripr agent verify --root <root> --json\nReceipt command:\nripr agent receipt --root <root> --json\nLimits and non-claims:\n- Static editor evidence only."
                         }])
@@ -51936,7 +51940,7 @@ fn editor_lsp_workflow_fixture_pins_saved_workspace_loop() -> Result<(), String>
         .map_err(|err| format!("failed to read editor hover fixture: {err}"))?;
     for needle in [
         "## Evidence Path",
-        "## Missing discriminator",
+        "## Missing value or check",
         "## Suggested test shape",
         "## Handoff, verify, and receipt commands",
         "## Status projection",

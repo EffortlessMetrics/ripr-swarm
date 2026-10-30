@@ -63,6 +63,28 @@ static REPO_AGGREGATES: std::sync::Mutex<
     std::collections::BTreeMap<std::path::PathBuf, DiffLanguageAggregate>,
 > = std::sync::Mutex::new(std::collections::BTreeMap::new());
 
+/// Changed-file counts per routed language wire label, JavaScript-family
+/// files counted apart from TypeScript. Path routing only: it needs no
+/// adapter, so it names the languages a diff touched whether or not their
+/// adapter ran.
+fn routed_changed_file_counts(
+    files: &[diff::ChangedFile],
+) -> std::collections::BTreeMap<&'static str, usize> {
+    let mut counts = std::collections::BTreeMap::new();
+    for file in files {
+        let Some(language) = route(&file.path) else {
+            continue;
+        };
+        let label = if language == LanguageId::TypeScript && is_javascript_family_path(&file.path) {
+            LanguageId::JavaScript.as_str()
+        } else {
+            language.as_str()
+        };
+        *counts.entry(label).or_insert(0) += 1;
+    }
+    counts
+}
+
 /// Language labels the changed files route to, with JavaScript-family files
 /// kept apart from TypeScript (the one adapter reads both, the outcomes do
 /// not fold them).
@@ -2005,6 +2027,28 @@ fn run_pipeline_for_diff_text_with_language_config(
     let mut summary_result = summary::summarize_findings(rust_changed_files, &findings);
     for (language, files) in changed_files_by_language {
         summary_result.record_changed_files_by_language(language.as_str(), files);
+    }
+    // #10719: a routed language whose adapter produced no count (not enabled,
+    // not compiled in, or it errored) still changed files. The summary must
+    // list them, so a consumer reading `summary` alone never sees "no files
+    // changed" for a diff that `analysis_outcome` reports as skipped or
+    // failed. An adapter that returned a result keeps its own count
+    // (including an honest zero and its own generated/excluded-path
+    // denominator), so only labels outside every recorded adapter family are
+    // added here.
+    let family = |label: &str| match LanguageId::from_wire(label) {
+        Some(LanguageId::JavaScript) => Some(LanguageId::TypeScript),
+        other => other,
+    };
+    let recorded: Vec<LanguageId> = summary_result
+        .changed_files_by_language
+        .iter()
+        .filter_map(|count| family(&count.language))
+        .collect();
+    for (label, files) in routed_changed_file_counts(&analysis_changed_files) {
+        if !family(label).is_some_and(|family| recorded.contains(&family)) {
+            summary_result.record_changed_files_by_language(label, files);
+        }
     }
 
     limitations.extend(limitations_from_language_runs(&language_runs)?);
@@ -6914,6 +6958,141 @@ index 0000000..1111111 100644
         if !advisory.enabled {
             return Err("expected enabled=true when TypeScript is in the enabled list".to_string());
         }
+        Ok(())
+    }
+
+    /// #10719: an adapter that errored on the diff produced no count, so its
+    /// language is still listed from the routed files instead of being
+    /// omitted from the summary.
+    #[cfg(feature = "lang-perl")]
+    #[test]
+    fn diff_pipeline_summary_lists_changed_files_of_a_language_whose_adapter_errored()
+    -> Result<(), String> {
+        let root = temp_root("summary-errored-adapter")?;
+        let diff_file = root.join("perl.diff");
+        write(
+            &diff_file,
+            "diff --git a/lib/App.pm b/lib/App.pm\n\
+             --- /dev/null\n\
+             +++ b/lib/App.pm\n\
+             @@ -0,0 +1 @@\n\
+             +sub discount { return 0 }\n",
+        )?;
+        let result = run_diff_pipeline_with_oracle_policy(
+            &AnalysisOptions {
+                root: root.clone(),
+                base: None,
+                diff_file: Some(diff_file),
+                mode: AnalysisMode::Draft,
+                resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
+                include_unchanged_tests: false,
+                resolve_tsconfig_paths: false,
+                perl_facts_path: None,
+                perl_producer_failure: Some("Perl facts exporter exited non-zero".to_string()),
+                git_timeout: None,
+                git_candidate: None,
+                production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
+            },
+            &OraclePolicy::default(),
+            &[LanguageId::Rust, LanguageId::Perl],
+        )?;
+        assert!(
+            result
+                .language_runs
+                .iter()
+                .any(|run| run.language == "perl"
+                    && run.status == super::LanguageRunStatus::Failed),
+            "precondition: the Perl adapter failed: {:?}",
+            result.language_runs
+        );
+        let per_language: Vec<(&str, usize)> = result
+            .summary
+            .changed_files_by_language
+            .iter()
+            .map(|count| (count.language.as_str(), count.files))
+            .collect();
+        assert_eq!(per_language, vec![("perl", 1), ("rust", 0)]);
+        Ok(())
+    }
+
+    /// #10719: a diff touching languages whose adapters are not enabled must
+    /// still list them in `summary.changed_files_by_language`, so the summary
+    /// agrees with the routed `analysis_outcome` file counts. An adapter that
+    /// ran keeps its own count (here the Rust adapter's honest zero).
+    #[test]
+    fn diff_pipeline_summary_lists_changed_files_of_languages_without_an_adapter()
+    -> Result<(), String> {
+        let root = temp_root("summary-disabled-languages")?;
+        let diff_file = root.join("mixed.diff");
+        write(
+            &diff_file,
+            r#"diff --git a/src/a.ts b/src/a.ts
+index 0000000..1111111 100644
+--- a/src/a.ts
++++ b/src/a.ts
+@@ -1,0 +1,1 @@
++export const a = 1;
+diff --git a/src/b.tsx b/src/b.tsx
+index 0000000..1111111 100644
+--- a/src/b.tsx
++++ b/src/b.tsx
+@@ -1,0 +1,1 @@
++export const b = 1;
+diff --git a/src/c.js b/src/c.js
+index 0000000..1111111 100644
+--- a/src/c.js
++++ b/src/c.js
+@@ -1,0 +1,1 @@
++exports.c = 1;
+diff --git a/app/main.py b/app/main.py
+index 0000000..1111111 100644
+--- a/app/main.py
++++ b/app/main.py
+@@ -1,0 +1,1 @@
++VALUE = 1
+"#,
+        )?;
+
+        let result = run_diff_pipeline_with_oracle_policy(
+            &AnalysisOptions {
+                root: root.clone(),
+                base: None,
+                diff_file: Some(diff_file),
+                mode: AnalysisMode::Draft,
+                resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
+                include_unchanged_tests: true,
+                resolve_tsconfig_paths: false,
+                perl_facts_path: None,
+                perl_producer_failure: None,
+                git_timeout: None,
+                git_candidate: None,
+                production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
+            },
+            &OraclePolicy::default(),
+            &[LanguageId::Rust],
+        )?;
+
+        let per_language: Vec<(&str, usize)> = result
+            .summary
+            .changed_files_by_language
+            .iter()
+            .map(|count| (count.language.as_str(), count.files))
+            .collect();
+        assert_eq!(
+            per_language,
+            vec![
+                ("javascript", 1),
+                ("python", 1),
+                ("rust", 0),
+                ("typescript", 2)
+            ],
+            "every routed language must be listed even when its adapter did not run"
+        );
+        assert_eq!(result.summary.changed_rust_files, 0);
         Ok(())
     }
 
