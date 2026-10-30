@@ -473,6 +473,7 @@ Updated:
 
 Reason:
 RIPR-SPEC-0122: the hand-written step respects a field-not-returned or no-return-value stub refusal, and a lone validated stub the changed expression did not pick stays a choice (#10710)
+RIPR-SPEC-0122: incomplete evidence stage tokens render as plain words in the human repair advisory (#11025)
 
 Command:
 `cargo xtask goldens bless assertion_shaped_oracle_test_file --reason "..."`

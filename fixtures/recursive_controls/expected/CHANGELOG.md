@@ -419,3 +419,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — recursive_controls (34)
+
+Reason:
+RIPR-SPEC-0122: incomplete evidence stage tokens render as plain words in the human repair advisory (#11025)
+
+Command:
+`cargo xtask goldens bless recursive_controls --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

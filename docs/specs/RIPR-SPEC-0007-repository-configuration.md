@@ -384,6 +384,15 @@ Operational failures before a report exists stay exit 2.
 `ripr help --json` projects this as the `doctor_findings` exit kind for
 `cmd:doctor`.
 
+The `git_head` diagnosis shares RIPR-SPEC-0084's HEAD discriminator. A quiet
+failed lookup alone is not an unborn branch: corrupt packed/loose refs,
+recursive ref cycles and inaccessible refs retain Git's reason and a repair
+for the metadata or its read access. Doctor records a failed `git_head` check,
+renders `!`, exits 3, and emits a `doctor_recovery` canonical action naming
+`git_head`; it recommends neither a first commit nor a check command. A
+genuine unborn branch retains the advisory and first-commit guidance, with
+exit 0 when the other checks pass. An unanswered probe never claims unborn.
+
 ### Doctor separates analysis readiness from source-build prerequisites
 
 ```text
@@ -502,6 +511,13 @@ not the symlink spelling.
 ```
 
 ## Test Mapping
+
+- `hostile_repos::doctor_distinguishes_healthy_and_unborn_heads`
+- `hostile_repos::corrupt_packed_refs_without_base_is_not_reported_as_unborn`
+- `hostile_repos::corrupt_loose_refs_without_base_are_not_reported_as_unborn`
+- `hostile_repos::looping_ref_without_base_is_not_reported_as_unborn`
+- `hostile_repos::unreadable_ref_without_base_is_not_reported_as_unborn`
+- `output::doctor::tests::unborn_head_verdict_claims_nothing_when_the_probe_never_answered`
 
 - `crates/ripr/src/analysis/diff/path.rs::tests::artifact_root_gitignore_entry_escapes_patterns_separately_from_paths`
   pins literal rule escaping and unchanged raw path spelling.

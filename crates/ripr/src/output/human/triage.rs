@@ -1466,6 +1466,7 @@ mod tests {
     fn test_finding(id: &str) -> Finding {
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: id.to_string(),
             canonical_gap: None,
             probe: Probe {

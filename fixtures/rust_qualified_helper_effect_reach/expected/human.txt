@@ -40,7 +40,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_qualified_helper_effect_reach/input --diff <cwd>/fixtures/rust_qualified_helper_effect_reach/diff.patch --mode fast probe:src_lib.rs:call_deletion:05331642
   ripr context --root <cwd>/fixtures/rust_qualified_helper_effect_reach/input --diff <cwd>/fixtures/rust_qualified_helper_effect_reach/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:05331642
-  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: producer-owned test symbol; direct owner relationship; a way to follow the changed value to something a test can check; incomplete evidence stage: activation; follow the Next step above, then rerun `ripr check`
+  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: producer-owned test symbol; direct owner relationship; a way to follow the changed value to something a test can check; a test input that reaches the changed code; follow the Next step above, then rerun `ripr check`
 No test stub here: the change shows up as a side effect or call, which needs an observer or mock ripr cannot write
 Write this test by hand: call the function, then assert the visible change the changed call makes (a changed value, state, or output). ripr has no repair route for this kind of change yet, so there is no command to run; add the test, then rerun `ripr check`.
 

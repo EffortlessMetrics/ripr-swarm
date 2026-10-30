@@ -570,7 +570,7 @@ the `ripr check` rerun; a finding no seam binds to says ripr found no seam in
 its file to bind it to and sends the reader to the Next step above; several binding seams say `ripr repair` needs the ID of
 the chosen seam without promising a listing; a repair route that is not ready
 says ripr cannot build a repair packet for the finding yet, lists the
-producer-owned missing evidence (or says the static evidence is not complete
+producer-owned missing evidence in plain words (an `incomplete evidence stage: <stage>` code reads as the test evidence that stage still needs, #11025; or says the static evidence is not complete
 enough to name a safe test target when the list is empty; when the
 finding is a weakly exposed predicate whose infection stage detected a related
 test input at the changed boundary, whose own credited oracle is a weak one
