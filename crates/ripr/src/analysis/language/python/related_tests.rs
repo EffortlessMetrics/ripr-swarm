@@ -624,8 +624,14 @@ pub(super) fn related_test_relation(
     // them the full scan below (route parsing, fixture views, import
     // matching) is pure cost (#10914: pandas scans ~23k tests per changed
     // owner).
+    // A click subcommand is reached through its group, so the test spells the
+    // group instead (`cli_subcommand.rs`).
     if let Some(name) = name_anchor(owner)
         && !test_text_mentions(test, name)
+        && !owner
+            .cli_subcommand
+            .as_ref()
+            .is_some_and(|subcommand| test_text_mentions(test, &subcommand.group))
     {
         debug_assert_eq!(
             related_test_relation_scan(test, owner),
@@ -964,6 +970,7 @@ fn is_case_capture(body: &str, idx: usize, after: &str) -> bool {
 /// `r: list = ...`). Any `var,` / `, var` / `var:` occurrence counts, which
 /// also demotes some reads (`f(r, 1)`); that only fails closed.
 pub(super) fn binds_in_target_list(body: &str, var: &str) -> bool {
+    let mut parsed_target_line = None;
     body.match_indices(var).any(|(idx, _)| {
         let end = idx + var.len();
         python_callee_start_has_boundary(body, idx)
@@ -983,7 +990,69 @@ pub(super) fn binds_in_target_list(body: &str, var: &str) -> bool {
                     || (continued && (plain_assign(after) || augmented_assign_op(after)))
                     || is_case_capture(body, idx, after)
                     || chained_or_bracketed_target(body, idx, before, after)
+                    || enclosing_bracketed_target_binds(body, idx, var, &mut parsed_target_line)
             }
+    })
+}
+
+/// A complete single-line target can enclose the name without every bracket
+/// touching it (`(x, (r)) = ...`, `[a, [r]] = ...`). Read the target tree rather
+/// than treating every surrounding bracket as a binding: `values[(r)]` still
+/// reads `r`, including when it occurs inside a tuple assignment target.
+fn enclosing_bracketed_target_binds(
+    body: &str,
+    idx: usize,
+    var: &str,
+    parsed_target_line: &mut Option<usize>,
+) -> bool {
+    use rustpython_parser::ast::{Expr, Mod, Stmt};
+
+    // Only a bracketed occurrence needs this fallback. In particular the
+    // original `r = Owner(...)` initializer must not count as a rebind.
+    if !body[..idx]
+        .trim_end_matches([' ', '\t'])
+        .ends_with(['(', '['])
+        || !body[idx + var.len()..]
+            .trim_start_matches([' ', '\t'])
+            .starts_with([')', ']'])
+    {
+        return false;
+    }
+    let line_start = body[..idx].rfind('\n').map_or(0, |at| at + 1);
+    // A failed lookup applies to every occurrence of this name on the line.
+    // Do not repeatedly parse wide tuple expressions containing many reads.
+    if *parsed_target_line == Some(line_start) {
+        return false;
+    }
+    *parsed_target_line = Some(line_start);
+    let line = body[line_start..].lines().next().unwrap_or_default().trim();
+    let path = Path::new("<protocol-entry-target>");
+    // Preserve inline suites by parsing the actual line first. Only an
+    // incomplete header needs a synthetic suite. Both attempts keep the
+    // common parser's nesting/tree budget and never execute user code.
+    let parsed = super::source_facts::parse_module_result(path, line).or_else(|_| {
+        super::source_facts::parse_module_result(path, &format!("{line}\n    pass\n"))
+    });
+    let Ok(Mod::Module(module)) = parsed else {
+        return false;
+    };
+    let binds = |target: &Expr| {
+        matches!(target, Expr::Tuple(_) | Expr::List(_) | Expr::Starred(_))
+            && super::sink_alignment::target_binds_name(target, var)
+    };
+    module.body.iter().any(|stmt| match stmt {
+        Stmt::Assign(assign) => assign.targets.iter().any(binds),
+        Stmt::For(loop_) => binds(&loop_.target),
+        Stmt::AsyncFor(loop_) => binds(&loop_.target),
+        Stmt::With(with) => with
+            .items
+            .iter()
+            .any(|item| item.optional_vars.as_deref().is_some_and(binds)),
+        Stmt::AsyncWith(with) => with
+            .items
+            .iter()
+            .any(|item| item.optional_vars.as_deref().is_some_and(binds)),
+        _ => false,
     })
 }
 
@@ -1807,6 +1876,19 @@ fn import_alias_calls_owner(test: &PythonTest, owner: &PythonOwner) -> bool {
 /// ([`submodule_receivers`]), or a re-exporting package alias. A local that
 /// shadows the import is not a spelling. Methods have none.
 pub(super) fn owner_module_callees(test: &PythonTest, owner: &PythonOwner) -> Vec<String> {
+    module_callees_named(test, owner, &owner.name, true)
+}
+
+/// The spellings a test uses for the top-level function `name` of the owner's
+/// module, through the same provenance checks as [`owner_module_callees`].
+/// `reexported` also accepts the owner's package re-exports, which only hold
+/// when `name` is the owner's own name.
+pub(super) fn module_callees_named(
+    test: &PythonTest,
+    owner: &PythonOwner,
+    name: &str,
+    reexported: bool,
+) -> Vec<String> {
     if matches!(
         owner.owner_kind,
         Some(OwnerKind::Method | OwnerKind::ClassMethod)
@@ -1819,18 +1901,18 @@ pub(super) fn owner_module_callees(test: &PythonTest, owner: &PythonOwner) -> Ve
         if test_rebinds_import_alias(test, &import.alias) {
             continue;
         }
-        if import.imported == owner.name
-            && import_source_module_matches_owner(import, owner, &test.file)
+        if import.imported == name && import_source_module_matches_owner(import, owner, &test.file)
         {
             callees.push(import.alias.clone());
         }
-        let reexporting_package =
-            import.source_module.is_empty() && owner.reexport_modules.contains(&import.imported);
+        let reexporting_package = reexported
+            && import.source_module.is_empty()
+            && owner.reexport_modules.contains(&import.imported);
         let receivers = submodule_receivers(import, owner, &test.file)
             .into_iter()
             .chain(reexporting_package.then(|| import.alias.clone()));
         for receiver in receivers {
-            callees.push(format!("{receiver}.{}", owner.name));
+            callees.push(format!("{receiver}.{name}"));
         }
     }
     callees.sort();
@@ -2076,6 +2158,26 @@ pub(super) fn submodule_receivers(
     owner: &PythonOwner,
     test_file: &Path,
 ) -> Vec<String> {
+    // Every owner module path joins segments of the owner's file path, so a
+    // bound name whose last segment that path never spells reaches none of
+    // them; this skips the allocations below for most imports (#10914).
+    let last = import.imported.rsplit('.').next().unwrap_or_default();
+    if !last.is_empty() && owner.file.to_str().is_some_and(|file| !file.contains(last)) {
+        debug_assert!(
+            submodule_receivers_scan(import, owner, test_file).is_empty(),
+            "`{last}` is absent from {} yet reaches it",
+            owner.file.display()
+        );
+        return Vec::new();
+    }
+    submodule_receivers_scan(import, owner, test_file)
+}
+
+fn submodule_receivers_scan(
+    import: &PythonImport,
+    owner: &PythonOwner,
+    test_file: &Path,
+) -> Vec<String> {
     if !import_module_may_be_owners(import, owner, test_file) {
         return Vec::new();
     }
@@ -2127,6 +2229,11 @@ pub(super) fn import_module_may_be_owners(
     owner: &PythonOwner,
     test_file: &Path,
 ) -> bool {
+    // Without an ambiguous src-layout name every module identifies the owner;
+    // answer before formatting the dotted submodule name.
+    if owner.ambiguous_src_modules.is_empty() {
+        return true;
+    }
     if import.source_module.is_empty() {
         return module_name_identifies_owner_for(owner, &import.imported, test_file);
     }
@@ -2453,6 +2560,11 @@ enum ClientRoute {
 }
 
 fn api_client_route_calls_owner(test: &PythonTest, owner: &PythonOwner) -> Option<ClientRoute> {
+    // Only a routed owner has a route to match; skip parsing the body's
+    // client receivers for every other owner (#10914).
+    if owner.route_paths.is_empty() {
+        return None;
+    }
     let receivers = super::route_client::client_receivers(&test.body_text);
     let mut found = None;
     for (index, route) in owner.route_paths.iter().enumerate() {

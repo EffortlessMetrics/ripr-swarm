@@ -1,0 +1,57 @@
+{
+  "case_id": "perl-testexception-class-then-message",
+  "subject_id": "authored-perl-testexception-forms",
+  "diff": "cases/perl-testexception-class-then-message.diff",
+  "anchor": {
+    "file": "lib/Forms.pm",
+    "line": 32
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "error_message",
+  "test_shape": "testexception_throws_ok_then_is_on_dollar_at",
+  "hard_case": "A throws_ok on the class is followed by is() on $@->message, which pins the text.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "prove -l t",
+    "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test::Exception 0.43",
+    "mutants": [
+      {
+        "replacement": "die Forms::Error->new(message => \"bad \" . \"limit: $n\") if $n > 100;",
+        "mutated_line": "die Forms::Error->new(message => \"bad \" . \"limit: $n\") if $n > 100;",
+        "outcome": "tests_failed",
+        "failing_test": "t/forms.t: the message names the input",
+        "equivalence_review": "not equivalent: the error message changes"
+      },
+      {
+        "replacement": "die Forms::Error->new(message => \"bad \" . \"range: $n\") if $n > 1000;",
+        "mutated_line": "die Forms::Error->new(message => \"bad \" . \"range: $n\") if $n > 1000;",
+        "outcome": "tests_failed",
+        "failing_test": "t/forms.t: an out of range input raises the error class",
+        "equivalence_review": "not equivalent: 101 no longer dies"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The is($@->message, 'bad range: 101') after throws_ok fails when the message changes, and throws_ok fails when the guard stops firing. Spec cells: RIPR-SPEC-0064 Test::Exception.",
+  "labeling_observation": {
+    "ripr_commit": "ab269548",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "perl_facts": {
+    "packet": "packets/perl-testexception-class-then-message.json",
+    "sha256": "f687a3011e002e02bd3038a7811e33905979c4c6ef8b512871299890a5a2f7d4",
+    "provenance": "producer"
+  }
+}

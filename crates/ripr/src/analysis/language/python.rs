@@ -198,6 +198,7 @@ use static_limits::{
     python_callee_start_has_boundary, python_prefix_hides_code,
 };
 mod cli_runner;
+mod cli_subcommand;
 mod transitive_reach;
 #[cfg(test)]
 use static_limits::{
@@ -346,6 +347,10 @@ struct PythonOwner {
     foreign_writes: module_value::ForeignWrites,
     /// Owner admitted through a decided interpreter-version condition.
     version_conditional: bool,
+    /// The click group this top-level function is registered on as a
+    /// subcommand, and the name a test passes to the group to reach it
+    /// (`cli_subcommand.rs`, #9226). `None` unless the file proves it.
+    cli_subcommand: Option<cli_subcommand::CliSubcommand>,
 }
 
 /// One declared parameter of a Python function owner.
@@ -1465,20 +1470,50 @@ impl PythonAdapter {
             .keys()
             .flat_map(|file| file.ancestors().skip(1))
             .collect();
-        for changed in &python_changed_files {
-            let mut foreign = foreign_index.excluding(&changed.path);
+        let foreign_of = |file: &Path| {
+            let mut foreign = foreign_index.excluding(file);
             if shadowed_import
-                || module_value::extension_beside(&options.root, &changed.path)
-                || module_value::compiled_package_shadow(
-                    &options.root,
-                    &import_roots,
-                    &changed.path,
-                )
+                || module_value::extension_beside(&options.root, file)
+                || module_value::compiled_package_shadow(&options.root, &import_roots, file)
                 || extension_names
                     .as_ref()
-                    .is_none_or(|names| module_value::shadowed_by_extension(names, &changed.path))
+                    .is_none_or(|names| module_value::shadowed_by_extension(names, file))
             {
                 foreign.mark_compiled_shadow();
+            }
+            foreign
+        };
+        for changed in &python_changed_files {
+            let mut foreign = foreign_of(&changed.path);
+            // A sole top-level line replacement may be a module constant a
+            // sibling module reads through a relative import of one of its
+            // readers (#9619); each such module gets its own write view.
+            if let ([added], [_]) = (
+                changed.added_lines.as_slice(),
+                changed.removed_lines.as_slice(),
+            ) && added
+                .text
+                .chars()
+                .next()
+                .is_some_and(|first| first.is_alphabetic() || first == '_')
+            {
+                foreign.set_forwarders(
+                    module_value::forwarder_candidates(
+                        &changed.path,
+                        workspace_read
+                            .sources
+                            .iter()
+                            .map(|(file, source)| (file.as_path(), source.as_str())),
+                        |file| workspace_read.sources.contains_key(file),
+                    )
+                    .into_iter()
+                    .map(|(file, source)| module_value::ForwarderModule {
+                        file: file.to_path_buf(),
+                        source: source.to_string(),
+                        foreign: foreign_of(file),
+                    })
+                    .collect(),
+                );
             }
             conditional_defs::retain_workspace_certain(&mut all_owners, &changed.path, &foreign);
             for owner in all_owners
@@ -1818,6 +1853,8 @@ mod literal_patch_tests;
 #[cfg(test)]
 mod cli_runner_tests;
 #[cfg(test)]
+mod cli_subcommand_tests;
+#[cfg(test)]
 mod helper_owner_call_tests;
 #[cfg(test)]
 mod imported_literal_tests;
@@ -1826,6 +1863,8 @@ mod test_body_writer_tests;
 
 #[cfg(test)]
 mod call_chain_tests;
+#[cfg(test)]
+mod forwarder_tests;
 #[cfg(test)]
 mod imported_call_operator_tests;
 #[cfg(test)]

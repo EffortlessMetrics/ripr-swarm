@@ -660,6 +660,11 @@ fn python_flat_layout_journey_runs_the_gap_bound_loop_from_the_printed_start() -
         ],
     )?;
     expect_exit(before_ok, true, "agent repair --gap-id --phase before")?;
+    if before.contains("Some TypeScript test runners write ignored cache files") {
+        return Err(format!(
+            "Python repair received TypeScript cache guidance:\n{before}"
+        ));
+    }
     need(
         &before,
         "tests/test_pricing.py",
@@ -829,6 +834,129 @@ fn python_status_after_pilot_names_the_gap_bound_start() -> Result<(), String> {
     }
     if status.contains("offers no `ripr agent repair` start") {
         return Err(format!("status kept the no-start claim:\n{status}"));
+    }
+    decoy_untouched(&decoy)
+}
+
+/// #11136: a TypeScript finding whose test sits under a condition static
+/// analysis cannot evaluate leaves the run's analysis incomplete. The after
+/// phase refuses a before artifact like that, so `ripr check` must not print a
+/// gap-bound start (and must say why) instead of offering a repair that cannot
+/// finish. Negative control: the same fixture with an evaluable test, and so a
+/// complete analysis, still prints its start.
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn typescript_incomplete_analysis_withholds_the_gap_bound_start() -> Result<(), String> {
+    let toml = "[languages]\nenabled = [\"typescript\"]\n";
+    let (_guard, root, decoy) = materialize(
+        "blind_journey_installed_typescript",
+        "head",
+        "tsi",
+        Some(toml),
+    )?;
+    let root_arg = root.to_string_lossy().into_owned();
+
+    // Control first: the unmodified fixture is complete and offers the start.
+    let (ok, control) = ripr(&decoy, &["check", "--root", &root_arg, "--base", "HEAD~1"])?;
+    expect_exit(ok, true, "check of the complete fixture")?;
+    if gap_start_tokens(&control).is_none() {
+        return Err(format!(
+            "control: a complete analysis lost its start:\n{control}"
+        ));
+    }
+    if control.contains("analysis incomplete") {
+        return Err(format!("control: the fixture is not complete:\n{control}"));
+    }
+
+    // Scule-shaped: the finding's own tests stay evaluable (its packet is
+    // complete), while one of its credited assertions sits under an unevaluable
+    // condition, so the run discloses an incomplete analysis.
+    let test_path = root.join("test/pricing.test.ts");
+    let test_text = std::fs::read_to_string(&test_path)
+        .map_err(|error| format!("read {}: {error}", test_path.display()))?;
+    let guarded = test_text.replace(
+        "    expect(discountedTotal(9999)).toBe(9999);",
+        "    if (process.env.RIPR_FIXTURE_FLAG) {\n      expect(discountedTotal(9999)).toBe(9999);\n    }",
+    );
+    if guarded == test_text {
+        return Err("fixture construction: the guarded assertion was not applied".to_string());
+    }
+    std::fs::write(&test_path, guarded).map_err(|error| format!("write test: {error}"))?;
+    fixture_git_ok(&root, &["add", "-A"])?;
+    fixture_git_ok(&root, &["commit", "-q", "-m", "guard the test"])?;
+
+    let (ok, check) = ripr(&decoy, &["check", "--root", &root_arg, "--base", "HEAD~2"])?;
+    expect_exit(ok, true, "check of the guarded-test variant")?;
+    need(
+        &check,
+        "analysis incomplete",
+        "the variant's analysis is incomplete",
+    )?;
+    if check.contains("ripr agent repair --gap-id") {
+        return Err(format!(
+            "an incomplete analysis was offered a gap-bound start:\n{check}"
+        ));
+    }
+    need(
+        &check,
+        "no repair start offered: the analysis is incomplete",
+        "the withheld start names the incomplete analysis",
+    )?;
+    need(
+        &check,
+        "cannot evaluate",
+        "the withheld start names the limitation",
+    )?;
+
+    // The after phase's refusal of the same incomplete run names the
+    // limitation and the next step, not "regenerate it".
+    let findings = ripr_output(
+        &decoy,
+        &[
+            "check",
+            "--root",
+            &root_arg,
+            "--base",
+            "HEAD~2",
+            "--mode",
+            "draft",
+            "--format",
+            "check-findings-json",
+        ],
+    )?;
+    expect_exit(findings.status.success(), true, "check-findings-json")?;
+    let artifact = root.join("incomplete-findings.json");
+    std::fs::write(&artifact, &findings.stdout).map_err(|error| format!("write: {error}"))?;
+    let artifact_arg = artifact.to_string_lossy().into_owned();
+    let verify = ripr_output(
+        &decoy,
+        &[
+            "agent",
+            "verify",
+            "--json",
+            "--root",
+            &root_arg,
+            "--before",
+            &artifact_arg,
+            "--after",
+            &artifact_arg,
+        ],
+    )?;
+    expect_exit(
+        verify.status.success(),
+        false,
+        "verify of an incomplete run",
+    )?;
+    let (_, refusal) = text_of(&verify);
+    need(&refusal, "is incomplete", "verify names the incompleteness")?;
+    need(
+        &refusal,
+        "unevaluated_condition",
+        "verify names the limitation",
+    )?;
+    need(&refusal, "test/pricing.test.ts", "verify names the file")?;
+    if refusal.contains("regenerate it before verifying") {
+        return Err(format!("verify still says regenerate:\n{refusal}"));
     }
     decoy_untouched(&decoy)
 }
@@ -1069,11 +1197,7 @@ fn typescript_literal_threshold_packet_is_complete_and_controls_fail_closed() ->
         "check names the commit step on a dirty tree",
     )?;
     expect_exit(dirty_ok, false, "dirty production start")?;
-    need(
-        &dirty,
-        "outside the allowed test surface already differ from HEAD",
-        "dirty premise",
-    )?;
+    need(&dirty, "Uncommitted:", "dirty premise")?;
     need(&dirty, "--gap-id", "gap-specific restart")?;
     if dirty.contains("--seam-id") {
         return Err(format!("dirty refusal names --seam-id:\n{dirty}"));
@@ -1144,11 +1268,7 @@ fn typescript_literal_threshold_packet_is_complete_and_controls_fail_closed() ->
     std::fs::write(&production, &original)
         .map_err(|error| format!("restore production: {error}"))?;
     expect_exit(dirty_ok, false, "dirty premise with sentinels")?;
-    need(
-        &dirty,
-        "outside the allowed test surface already differ from HEAD",
-        "dirty premise",
-    )?;
+    need(&dirty, "Uncommitted:", "dirty premise")?;
     sentinels_intact("dirty premise refusal", &all_names)?;
     // Accepted gap whose publication fails after the snapshot and packet were
     // rewritten: their prior bytes return.
@@ -1181,12 +1301,28 @@ fn typescript_literal_threshold_packet_is_complete_and_controls_fail_closed() ->
     if !repair_ok {
         return Err(format!("gap-bound before phase was refused:\n{repair}"));
     }
+    need(&repair, "waiting for your test", "attempt published")?;
+    need(&repair, "test/pricing.test.ts", "edit target is the test")?;
     need(
         &repair,
-        "awaiting the focused test edit",
-        "attempt published",
+        "Some TypeScript test runners write ignored cache files",
+        "cache warning",
     )?;
-    need(&repair, "test/pricing.test.ts", "edit target is the test")?;
+    need(
+        &repair,
+        "run the focused test after continue",
+        "safe test order",
+    )?;
+    need(
+        &repair,
+        "record its result separately",
+        "runtime evidence remains separate",
+    )?;
+    need(
+        &repair,
+        "may make that receipt stale",
+        "currentness limitation",
+    )?;
     if repair.contains("--seam-id") {
         return Err(format!("gap-bound output leaks --seam-id:\n{repair}"));
     }
@@ -2021,6 +2157,60 @@ struct GapAttempt {
     attempt_id: String,
 }
 
+/// The cache limitation must be visible to consumers that capture only stdout.
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn gap_before_stdout_discloses_test_runner_cache_limit_in_both_modes() -> Result<(), String> {
+    for json in [true, false] {
+        let (_guard, root, decoy) = materialize(
+            "blind_journey_installed_typescript",
+            "head",
+            "ts-cache-stdout",
+            Some("[languages]\nenabled = [\"typescript\"]\n"),
+        )?;
+        let root_arg = root.to_string_lossy().into_owned();
+        let (ok, check) = ripr(&decoy, &["check", "--root", &root_arg, "--base", "HEAD~1"])?;
+        expect_exit(ok, true, "check")?;
+        let (gap, base) = gap_start_tokens(&check).ok_or("missing gap start")?;
+        let mut args = vec![
+            "agent", "repair", "--gap-id", &gap, "--base", &base, "--root", &root_arg, "--phase",
+            "before",
+        ];
+        if json {
+            args.push("--json");
+        }
+        let output = ripr_output(&decoy, &args)?;
+        expect_exit(output.status.success(), true, "gap before")?;
+        let stdout = String::from_utf8(output.stdout).map_err(|error| error.to_string())?;
+        let guidance = if json {
+            let value: serde_json::Value =
+                serde_json::from_str(&stdout).map_err(|error| error.to_string())?;
+            value["repair_attempt"]["test_runner_cache_guidance"]
+                .as_str()
+                .ok_or("missing JSON cache guidance")?
+                .to_string()
+        } else {
+            stdout
+        };
+        need(
+            &guidance,
+            "run the focused test after continue succeeds",
+            "stdout cache order",
+        )?;
+        need(
+            &guidance,
+            "record its result separately",
+            "stdout evidence boundary",
+        )?;
+        need(
+            &guidance,
+            "may make that receipt stale",
+            "stdout currentness limitation",
+        )?;
+    }
+    Ok(())
+}
+
 #[cfg(feature = "lang-typescript")]
 impl GapAttempt {
     fn start(label: &str) -> Result<Self, String> {
@@ -2110,6 +2300,12 @@ impl GapAttempt {
         )
     }
 
+    fn edit_closing_test(&self) -> Result<(), String> {
+        self.write_test_edit(
+            "  it(\"discounts exactly at the threshold\", () => {\n    expect(discountedTotal(10000)).toBe(9500);\n  });\n\n  it(\"discounts an above-threshold subtotal\"",
+        )
+    }
+
     /// Commit a focused-test edit that leaves the boundary unpinned.
     fn commit_non_discriminating_test(&self, label: &str) -> Result<(), String> {
         self.commit_test_edit(
@@ -2121,6 +2317,17 @@ impl GapAttempt {
     }
 
     fn commit_test_edit(&self, insertion: &str, message: &str) -> Result<(), String> {
+        self.write_test_edit(insertion)?;
+        // Only the paths the edit touched: `target/ripr` artifacts and the
+        // untracked `ripr.toml` are not part of the committed edit.
+        fixture_git_ok(&self.root, &["add", "test/pricing.test.ts"])?;
+        if self.root.join("src/extra.ts").is_file() {
+            fixture_git_ok(&self.root, &["add", "src/extra.ts"])?;
+        }
+        fixture_git_ok(&self.root, &["commit", "-q", "-m", message])
+    }
+
+    fn write_test_edit(&self, insertion: &str) -> Result<(), String> {
         let test_file = self.root.join("test/pricing.test.ts");
         let original =
             std::fs::read_to_string(&test_file).map_err(|error| format!("read test: {error}"))?;
@@ -2132,14 +2339,7 @@ impl GapAttempt {
         if edited == original {
             return Err("test edit did not apply".to_string());
         }
-        std::fs::write(&test_file, edited).map_err(|error| format!("write test: {error}"))?;
-        // Only the paths the edit touched: `target/ripr` artifacts and the
-        // untracked `ripr.toml` are not part of the committed edit.
-        fixture_git_ok(&self.root, &["add", "test/pricing.test.ts"])?;
-        if self.root.join("src/extra.ts").is_file() {
-            fixture_git_ok(&self.root, &["add", "src/extra.ts"])?;
-        }
-        fixture_git_ok(&self.root, &["commit", "-q", "-m", message])
+        std::fs::write(&test_file, edited).map_err(|error| format!("write test: {error}"))
     }
 
     fn state(&self) -> Result<String, String> {
@@ -2156,6 +2356,175 @@ fn text_of(output: &std::process::Output) -> (String, String) {
         String::from_utf8_lossy(&output.stdout).into_owned(),
         String::from_utf8_lossy(&output.stderr).into_owned(),
     )
+}
+
+/// A second edit to the *same* bound test must invalidate the receipt, even
+/// though the changed path and its kind remain unchanged (#11005).
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn finished_gap_attempt_detects_changed_bound_test_bytes() -> Result<(), String> {
+    for committed in [false, true] {
+        check_bound_test_drift(committed)?;
+    }
+    Ok(())
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn finished_attempt_keeps_non_owned_operational_directory_bytes_bound() -> Result<(), String> {
+    let attempt = GapAttempt::start("ts-bound-operational-neighbors")?;
+    let directories = [
+        "target/ripr/repair-attempts",
+        "target/ripr/workflow",
+        "target/ripr/reports",
+        "target/ripr/cache",
+    ];
+    let mut paths = Vec::new();
+    for directory in directories {
+        let directory = attempt.root.join(directory);
+        std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+        let path = directory.join("not-owned-by-this-invocation.dat");
+        std::fs::write(&path, b"bound non-owned file\n").map_err(|error| error.to_string())?;
+        paths.push(path);
+    }
+    attempt.edit_closing_test()?;
+    let output = attempt.after(true)?;
+    expect_exit(
+        output.status.success(),
+        true,
+        "finish with operational neighbors",
+    )?;
+    let current = || -> Result<Option<bool>, String> {
+        let (ok, text) = ripr(
+            &attempt.decoy,
+            &["agent", "status", "--root", &attempt.root_arg, "--json"],
+        )?;
+        expect_exit(ok, true, "status with operational neighbors")?;
+        let doc: serde_json::Value = serde_json::from_str(&text)
+            .map_err(|error| format!("parse status: {error}: {text}"))?;
+        let row = doc["repair_attempts"]
+            .as_array()
+            .ok_or("missing attempts")?
+            .iter()
+            .find(|row| row["attempt_id"] == attempt.attempt_id)
+            .ok_or("selected attempt missing")?;
+        if row["disposition"] != "finished" {
+            return Err(format!("attempt not finished: {row}"));
+        }
+        Ok(row["head_current"].as_bool())
+    };
+    assert_eq!(current()?, Some(true), "nonempty finished positive control");
+    for path in paths {
+        std::fs::write(&path, b"changed non-owned file\n").map_err(|error| error.to_string())?;
+        assert_eq!(
+            current()?,
+            Some(false),
+            "directory membership hid drift in {}",
+            path.display()
+        );
+        std::fs::write(&path, b"bound non-owned file\n").map_err(|error| error.to_string())?;
+        assert_eq!(
+            current()?,
+            Some(true),
+            "exact restoration did not restore {}",
+            path.display()
+        );
+    }
+    decoy_untouched(&attempt.decoy)
+}
+
+#[cfg(feature = "lang-typescript")]
+fn check_bound_test_drift(committed: bool) -> Result<(), String> {
+    let attempt = GapAttempt::start(if committed {
+        "ts-bound-committed"
+    } else {
+        "ts-bound-uncommitted"
+    })?;
+    if committed {
+        attempt.commit_closing_test()?;
+    } else {
+        attempt.edit_closing_test()?;
+    }
+    let output = attempt.after(true)?;
+    expect_exit(output.status.success(), true, "finish gap attempt")?;
+    let current = || -> Result<Option<bool>, String> {
+        let (ok, text) = ripr(
+            &attempt.decoy,
+            &["agent", "status", "--root", &attempt.root_arg, "--json"],
+        )?;
+        expect_exit(ok, true, "status")?;
+        let doc: serde_json::Value = serde_json::from_str(&text)
+            .map_err(|error| format!("parse status: {error}: {text}"))?;
+        let rows = doc["repair_attempts"]
+            .as_array()
+            .ok_or("missing attempts")?;
+        let row = rows
+            .iter()
+            .find(|row| row["attempt_id"] == attempt.attempt_id)
+            .ok_or("selected attempt missing")?;
+        if row["disposition"] != "finished" {
+            return Err(format!("attempt not finished: {row}"));
+        }
+        Ok(row["head_current"].as_bool())
+    };
+    if current()? != Some(true) {
+        return Err("finished attempt was not initially current".to_string());
+    }
+    let file = attempt.root.join("test/pricing.test.ts");
+    let original = std::fs::read_to_string(&file).map_err(|error| error.to_string())?;
+    let wrong = original.replace(
+        "expect(discountedTotal(10000)).toBe(9500)",
+        "expect(discountedTotal(10000)).toBe(10000)",
+    );
+    if wrong == original {
+        return Err("focused assertion not found".to_string());
+    }
+    std::fs::write(&file, wrong).map_err(|error| error.to_string())?;
+    if current()? == Some(true) {
+        return Err("changed bound test bytes stayed current".to_string());
+    }
+    for json in [false, true] {
+        let mut args = vec!["agent", "status", "--root", &attempt.root_arg];
+        if json {
+            args.push("--json");
+        }
+        let (ok, status) = ripr(&attempt.decoy, &args)?;
+        expect_exit(ok, true, "same-HEAD drift status")?;
+        need(
+            &status,
+            "bound inputs no longer match",
+            "same-HEAD drift warning",
+        )?;
+        if status.contains("the repository HEAD is now") {
+            return Err(format!(
+                "same-HEAD drift misreported a moved HEAD: {status}"
+            ));
+        }
+        if status.contains("stale against HEAD") {
+            return Err(format!("same-HEAD drift blamed HEAD in status: {status}"));
+        }
+    }
+    std::fs::write(&file, original).map_err(|error| error.to_string())?;
+    if current()? != Some(true) {
+        return Err("exact restoration did not recover currentness".to_string());
+    }
+    fixture_git_ok(
+        &attempt.root,
+        &["commit", "--allow-empty", "-q", "-m", "move HEAD"],
+    )?;
+    if current()? != Some(false) {
+        return Err("moved HEAD was not stale".to_string());
+    }
+    for json in [false, true] {
+        let mut args = vec!["agent", "status", "--root", &attempt.root_arg];
+        if json {
+            args.push("--json");
+        }
+        let (ok, status) = ripr(&attempt.decoy, &args)?;
+        expect_exit(ok, true, "moved-HEAD status")?;
+        need(&status, "the repository HEAD is now", "moved-HEAD warning")?;
+    }
+    decoy_untouched(&attempt.decoy)
 }
 
 /// #9103 (RIPR-SPEC-0311): the gap-bound after phase closes a gap only on
@@ -2602,6 +2971,73 @@ fn gap_bound_after_phase_enforces_the_edit_cage() -> Result<(), String> {
         .exists()
     {
         return Err("a receipt was issued for a gap that the cage refused".to_string());
+    }
+    Ok(())
+}
+
+/// An ignored transformed module is executable test input, not a safe edit.
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn gap_bound_after_phase_still_refuses_ignored_vitest_module_cache() -> Result<(), String> {
+    let attempt = GapAttempt::start("ts-cage-vitest-cache")?;
+    std::fs::write(attempt.root.join(".git/info/exclude"), "node_modules/\n")
+        .map_err(|error| format!("exclude cache: {error}"))?;
+    attempt.commit_closing_test()?;
+    let cache = attempt.root.join("node_modules/.vitest-cache");
+    std::fs::create_dir_all(&cache).map_err(|error| format!("cache directory: {error}"))?;
+    std::fs::write(cache.join("transformed"), "transformed test code")
+        .map_err(|error| format!("cache file: {error}"))?;
+    let output = attempt.after(false)?;
+    let (_, stderr) = text_of(&output);
+    expect_exit(output.status.success(), false, "ignored module cache")?;
+    need(
+        &stderr,
+        "node_modules/.vitest-cache/transformed",
+        "refused cache",
+    )?;
+    need(&stderr, "terminal", "attempt remains fail-closed")?;
+    if attempt
+        .root
+        .join("target/ripr/reports/agent-receipt.json")
+        .exists()
+    {
+        return Err("receipt issued after cache violation".to_string());
+    }
+    Ok(())
+}
+
+/// The alternative ordering avoids a terminal refusal but does not keep the
+/// receipt current after a test runner changes the observed cache.
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn gap_bound_status_reports_cache_drift_after_receipt() -> Result<(), String> {
+    let attempt = GapAttempt::start("ts-status-vitest-cache")?;
+    std::fs::write(attempt.root.join(".git/info/exclude"), "node_modules/\n")
+        .map_err(|error| format!("exclude cache: {error}"))?;
+    attempt.commit_closing_test()?;
+    let after = attempt.after(false)?;
+    expect_exit(after.status.success(), true, "after before cache write")?;
+    let cache = attempt.root.join("node_modules/.vitest-cache");
+    std::fs::create_dir_all(&cache).map_err(|error| format!("cache directory: {error}"))?;
+    std::fs::write(cache.join("transformed"), "transformed test code")
+        .map_err(|error| format!("cache file: {error}"))?;
+    let output = ripr_output(
+        &attempt.decoy,
+        &["agent", "status", "--root", &attempt.root_arg, "--json"],
+    )?;
+    expect_exit(output.status.success(), true, "status after cache write")?;
+    let (stdout, _) = text_of(&output);
+    let status: serde_json::Value =
+        serde_json::from_str(&stdout).map_err(|error| error.to_string())?;
+    let attempts = status["repair_attempts"]
+        .as_array()
+        .ok_or("missing attempts")?;
+    let recorded = attempts
+        .iter()
+        .find(|entry| entry["attempt_id"] == attempt.attempt_id)
+        .ok_or("missing recorded attempt")?;
+    if recorded["head_current"] != false {
+        return Err(format!("cache drift did not stale the attempt: {stdout}"));
     }
     Ok(())
 }

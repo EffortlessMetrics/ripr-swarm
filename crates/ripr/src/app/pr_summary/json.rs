@@ -21,7 +21,7 @@ use std::path::Path;
 ///
 /// Without a selected root the reproduction commands it derives keep the
 /// portable `--root .` form; `ripr pr-summary` uses
-/// [`build_pr_evidence_summary_for_root`] so they name the repository it read.
+/// `build_pr_evidence_summary_for_root` so they name the repository it read.
 pub fn build_pr_evidence_summary(
     start_here_value: Option<&Value>,
     gap_ledger_value: Option<&Value>,

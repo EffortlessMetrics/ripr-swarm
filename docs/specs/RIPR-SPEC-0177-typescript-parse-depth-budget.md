@@ -16,6 +16,8 @@ Linked issues:
 
 - #4101 (CRITICAL stack-overflow abort from deep expression nesting in any
   discovered workspace file)
+- #11132 (a panic in a parse worker or AST consumer is a typed limitation,
+  never the end of `check`, `pilot`, the LSP sidecar or the MCP server)
 
 Linked PRs:
 
@@ -77,7 +79,15 @@ a hard abort.
    adapter parses workspace files sequentially. A worker that cannot spawn
    or dies (for example an oxc panic) is disclosed as a typed
    `parse_worker_unavailable` / `parse_worker_failed` static-limit reason,
-   never retried by re-parsing on the small stack.
+   never retried by re-parsing on the small stack. A worker failure while
+   extracting an unchanged test file is disclosed as the typed
+   `typescript_test_extraction_partial` limitation, not served as "no tests".
+   Panics outside the worker (a language adapter or an AST consumer it
+   drives) are contained at the pipeline's adapter boundary (#11132): a
+   preview adapter becomes a `Failed` language run with an `adapter_panicked`
+   reason and contributes no finding; a Rust adapter panic is the typed
+   analysis failure. Stack exhaustion is a signal, not an unwind, and is not
+   caught; the nesting budgets remain its only defense.
 3. Both oxc parse sites in the adapter (`parse_error_reason` and
    `extract_owners`) go through the guarded worker, so a changed file under
    the budget cannot abort during extraction either.
