@@ -3782,6 +3782,21 @@ mod tests {
     }
 
     #[test]
+    fn header_labels_msrv_as_ripr_own_build_msrv() {
+        // #11114: the header MSRV is ripr's own build MSRV, not the analyzed
+        // workspace's, and the label must say so.
+        let report = passing_report();
+        let environment = empty_environment();
+        let lines = render_screen(&report, &environment, false, true);
+        let expected = format!("Root: . · ripr MSRV: Rust {}", report.ripr_build_msrv);
+        assert_eq!(lines.get(1), Some(&expected), "{lines:?}");
+        assert!(
+            !lines.iter().any(|line| line.contains("· MSRV")),
+            "{lines:?}"
+        );
+    }
+
+    #[test]
     fn default_screen_warns_when_config_launches_ripr_missing_from_path() {
         // #10347: advisory `~` line on the default screen, quiet without a
         // dependent config, and the exit decision (`passed`) is untouched.
