@@ -3109,7 +3109,7 @@ fn contains_member_reference(body_text: &str, object_name: &str, property_name: 
     })
 }
 
-fn is_object_literal_key(body_text: &str, start: usize, end: usize) -> bool {
+pub(super) fn is_object_literal_key(body_text: &str, start: usize, end: usize) -> bool {
     let next_is_colon = body_text[end..]
         .trim_start()
         .strip_prefix(':')
@@ -3773,6 +3773,37 @@ struct RunResolverCache {
     config_directories: HashMap<(PathBuf, bool), Option<bool>>,
     /// Tracked `*.snap` files per analysis root (`None`: unknown).
     tracked_snapshots: HashMap<PathBuf, Option<std::sync::Arc<HashSet<String>>>>,
+    /// Per-body shadow indexes (#10925), keyed by the body text itself so a
+    /// hit can never answer for different source. Bounded by
+    /// `MAX_RUN_SHADOW_INDEXES`; past it bodies fall back to the exact
+    /// per-identifier path.
+    shadow_indexes: HashMap<String, std::rc::Rc<super::shadow_index::BodyShadowIndex>>,
+}
+
+const MAX_RUN_SHADOW_INDEXES: usize = 4096;
+
+/// The per-body shadow index for `body_text`, built once per analysis run
+/// (#10925). `None` outside a [`DirectoryModuleCacheScope`] or past the
+/// bound: the caller then runs the exact per-identifier scan, so no index
+/// outlives the run that built it.
+fn run_cached_shadow_index(
+    body_text: &str,
+) -> Option<std::rc::Rc<super::shadow_index::BodyShadowIndex>> {
+    RUN_RESOLVER_CACHE.with(|cache| {
+        let mut cache = cache.try_borrow_mut().ok()?;
+        let cache = cache.as_mut()?;
+        if let Some(index) = cache.shadow_indexes.get(body_text) {
+            return Some(std::rc::Rc::clone(index));
+        }
+        if cache.shadow_indexes.len() >= MAX_RUN_SHADOW_INDEXES {
+            return None;
+        }
+        let index = std::rc::Rc::new(super::shadow_index::BodyShadowIndex::build(body_text));
+        cache
+            .shadow_indexes
+            .insert(body_text.to_string(), std::rc::Rc::clone(&index));
+        Some(index)
+    })
 }
 
 /// Memoize `compute` for one analysis run, keyed by `key`, in the field
@@ -4185,6 +4216,14 @@ pub(crate) fn local_identifier_declared_in_test_body(body_text: &str, identifier
     if !body_text.contains(identifier) {
         return false;
     }
+    // #10925: inside an analysis run, answer from the body's once-built
+    // shadow index; the index returns `None` for names outside its exact
+    // domain, and those (and any out-of-run call) keep the per-identifier scan.
+    if let Some(index) = run_cached_shadow_index(body_text)
+        && let Some(shadowed) = index.shadows(body_text, identifier)
+    {
+        return shadowed;
+    }
     local_identifier_declared_in_test_body_scanned(body_text, identifier)
 }
 
@@ -4445,7 +4484,7 @@ fn body_has_arrow_or_function_param_binding(masked: &str, identifier: &str) -> b
 /// not a binding: `((f = price) => ...)` reads `price` and
 /// `((x): typeof price => ...)` names a type; neither rebinds it
 /// (PR #7651 review).
-fn params_bind_identifier(masked_params: &str, identifier: &str) -> bool {
+pub(super) fn params_bind_identifier(masked_params: &str, identifier: &str) -> bool {
     // The pattern is everything before the element's first top-level `=`
     // (default) or `:` (type annotation); both are depth-aware so braces and
     // brackets inside destructuring patterns never cut the pattern.
@@ -4557,7 +4596,7 @@ fn body_has_loop_header_binding(masked: &str, identifier: &str) -> bool {
 /// a `let|var|const` declarator in the C-style init clause, or the left side
 /// of `for-of`/`for-in`/`for-await`. References in the condition or update
 /// clause are uses, never bindings.
-fn header_declares_identifier(header: &str, identifier: &str) -> bool {
+pub(super) fn header_declares_identifier(header: &str, identifier: &str) -> bool {
     // Top-level `;` separates the C-style init clause (depth-aware; the
     // header is already literal/comment-masked).
     let mut depth = 0usize;
@@ -4662,13 +4701,74 @@ pub(crate) fn innermost_scope_containing(
 /// every local declaration of `identifier`, and every use of it. See
 /// `local_identifier_declared_in_test_body` for the full lexical contract.
 pub(crate) fn scan_body_lexical_facts(body_text: &str, identifier: &str) -> BodyLexicalScan {
+    let mut uses: Vec<usize> = Vec::new();
+    let mut declarations: Vec<BodyDeclaration> = Vec::new();
+    let scopes = walk_body_lexical(body_text, |event| match event {
+        BodyWalkEvent::DeclarationLine {
+            line,
+            name_start,
+            scope,
+        } => {
+            if declaration_line_declares_identifier(line, identifier) {
+                declarations.push(BodyDeclaration { name_start, scope });
+            }
+        }
+        BodyWalkEvent::CodePosition { idx } => {
+            // A use of the identifier: a call or bare reference with the
+            // module's reference boundaries — never a member access
+            // (`x.owner`), object-literal key, or the declared name token
+            // itself. Comment/string occurrences cannot reach this event
+            // (the state machine skips them).
+            if body_text[idx..].starts_with(identifier)
+                && has_member_call_boundary(body_text, idx)
+                && body_text[idx + identifier.len()..]
+                    .chars()
+                    .next()
+                    .is_none_or(|ch| !is_javascript_identifier_char(ch))
+                && !is_object_literal_key(body_text, idx, idx + identifier.len())
+                && declarations
+                    .last()
+                    .is_none_or(|declaration| declaration.name_start != idx)
+            {
+                uses.push(idx);
+            }
+        }
+    });
+    BodyLexicalScan {
+        scopes,
+        declarations,
+        uses,
+    }
+}
+
+/// An identifier-independent event from [`walk_body_lexical`].
+pub(super) enum BodyWalkEvent<'a> {
+    /// A line-leading `const|let|var|function` declaration line.
+    /// `name_start` is the first non-blank offset after the keyword.
+    DeclarationLine {
+        line: &'a str,
+        name_start: usize,
+        scope: Option<usize>,
+    },
+    /// A byte offset the walk visited in plain code (not a comment, string
+    /// or template text, and not a brace).
+    CodePosition { idx: usize },
+}
+
+/// The conservative lexer shared by the per-identifier scan and the
+/// per-body shadow index (#10925): one definition of comments, strings,
+/// templates, brace scopes and line-start declarations, with the identifier
+/// left to the visitor. `DeclarationLine` fires before `CodePosition` for the
+/// same offset. Returns the scope table (see [`BodyLexicalScan::scopes`]).
+pub(super) fn walk_body_lexical<'a>(
+    body_text: &'a str,
+    mut visit: impl FnMut(BodyWalkEvent<'a>),
+) -> Vec<(usize, usize)> {
     // Scope table: (open-brace offset, close-brace offset; `usize::MAX` while
     // the scope is still open). Entries are kept after closing so a nested
     // declaration can be tested for enclosing a specific use.
     let mut scopes: Vec<(usize, usize)> = Vec::new();
     let mut open_scopes: Vec<usize> = Vec::new();
-    let mut uses: Vec<usize> = Vec::new();
-    let mut declarations: Vec<BodyDeclaration> = Vec::new();
     let mut state = BodyScanState::Code;
     // Depths whose closing `}` returns the walk from a template
     // interpolation (which opened a pseudo-scope) to its template literal.
@@ -4734,41 +4834,22 @@ pub(crate) fn scan_body_lexical_facts(body_text: &str, identifier: &str) -> Body
                         let line_end = body_text[idx..]
                             .find('\n')
                             .map_or(body_text.len(), |relative| idx + relative);
-                        let line = &body_text[idx..line_end];
-                        if declaration_line_declares_identifier(line, identifier) {
-                            // Skip the declaration's own name token when
-                            // collecting uses (leading whitespace after the
-                            // keyword included).
-                            let name_start = body_text[idx + keyword.len()..]
-                                .char_indices()
-                                .find(|(_, ch)| !ch.is_whitespace())
-                                .map_or(idx + keyword.len(), |(relative, _)| {
-                                    idx + keyword.len() + relative
-                                });
-                            declarations.push(BodyDeclaration {
-                                name_start,
-                                scope: open_scopes.last().copied(),
+                        // Skip the declaration's own name token when
+                        // collecting uses (leading whitespace after the
+                        // keyword included).
+                        let name_start = body_text[idx + keyword.len()..]
+                            .char_indices()
+                            .find(|(_, ch)| !ch.is_whitespace())
+                            .map_or(idx + keyword.len(), |(relative, _)| {
+                                idx + keyword.len() + relative
                             });
-                        }
+                        visit(BodyWalkEvent::DeclarationLine {
+                            line: &body_text[idx..line_end],
+                            name_start,
+                            scope: open_scopes.last().copied(),
+                        });
                     }
-                    // A use of the identifier: a call or bare reference with
-                    // the module's reference boundaries — never a member
-                    // access (`x.owner`), object-literal key, or the declared
-                    // name token itself. Comment/string occurrences cannot
-                    // reach this arm (the state machine skips them).
-                    if body_text[idx..].starts_with(identifier)
-                        && has_member_call_boundary(body_text, idx)
-                        && body_text[idx + identifier.len()..]
-                            .chars()
-                            .next()
-                            .is_none_or(|ch| !is_javascript_identifier_char(ch))
-                        && !is_object_literal_key(body_text, idx, idx + identifier.len())
-                        && declarations
-                            .last()
-                            .is_none_or(|declaration| declaration.name_start != idx)
-                    {
-                        uses.push(idx);
-                    }
+                    visit(BodyWalkEvent::CodePosition { idx });
                     at_line_start = false;
                 }
             },
@@ -4813,14 +4894,18 @@ pub(crate) fn scan_body_lexical_facts(body_text: &str, identifier: &str) -> Body
             }
         }
     }
-    BodyLexicalScan {
-        scopes,
-        declarations,
-        uses,
-    }
+    scopes
 }
 
 fn declaration_line_declares_identifier(line: &str, identifier: &str) -> bool {
+    declaration_line_declared_names(line).contains(&identifier)
+}
+
+/// Every name a declaration line declares through a PLAIN declarator;
+/// `declaration_line_declares_identifier` is membership in this list, and the
+/// per-body shadow index (#10925) reads it once per line instead of once per
+/// candidate identifier.
+pub(super) fn declaration_line_declared_names(line: &str) -> Vec<&str> {
     // #7507: every PLAIN declarator of the list counts, not just the first:
     // `const x = 1, cost = (a) => 140` rebinds `cost` exactly like a
     // single-declarator `const cost = ...`. Destructuring patterns
@@ -4833,34 +4918,37 @@ fn declaration_line_declares_identifier(line: &str, identifier: &str) -> bool {
     ["const ", "let ", "var ", "function "]
         .into_iter()
         .filter_map(|keyword| line.strip_prefix(keyword))
-        .any(|after| {
+        .flat_map(|after| {
             // A pattern-led declaration (`{ cost } = ...`, `[cost] = ...`)
             // belongs to the source-aware destructure checks, not here.
             if after.trim_start().starts_with(['{', '[']) {
-                return false;
+                return Vec::new();
             }
-            split_top_level_declarators(after).iter().any(|declarator| {
-                // A declarator whose own pattern opens a destructuring
-                // (`x = 1, { cost } = h`) is source-aware too; only a plain
-                // leading identifier counts here. Cut at `(` as well so a
-                // `function price(a) {` declarator is not mistaken for a
-                // destructuring because of its body brace.
-                let pattern = declarator
-                    .split(['=', ':', '('])
-                    .next()
-                    .unwrap_or("")
-                    .trim();
-                if pattern.starts_with(['{', '[']) {
-                    return false;
-                }
-                declarator
-                    .split(|ch: char| {
-                        ch == ':' || ch == '=' || ch == '(' || ch == ';' || ch.is_whitespace()
-                    })
-                    .find(|part| !part.is_empty())
-                    .is_some_and(|declared| declared == identifier)
-            })
+            split_top_level_declarators(after)
+                .into_iter()
+                .filter_map(|declarator| {
+                    // A declarator whose own pattern opens a destructuring
+                    // (`x = 1, { cost } = h`) is source-aware too; only a
+                    // plain leading identifier counts here. Cut at `(` as
+                    // well so a `function price(a) {` declarator is not
+                    // mistaken for a destructuring because of its body brace.
+                    let pattern = declarator
+                        .split(['=', ':', '('])
+                        .next()
+                        .unwrap_or("")
+                        .trim();
+                    if pattern.starts_with(['{', '[']) {
+                        return None;
+                    }
+                    declarator
+                        .split(|ch: char| {
+                            ch == ':' || ch == '=' || ch == '(' || ch == ';' || ch.is_whitespace()
+                        })
+                        .find(|part| !part.is_empty())
+                })
+                .collect::<Vec<_>>()
         })
+        .collect()
 }
 
 /// Split a `const|let|var` declaration remainder (`x = 1, cost = f, ...`)
