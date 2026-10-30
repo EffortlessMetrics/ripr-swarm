@@ -992,26 +992,27 @@ fn deleted_type_only_declaration_records_nothing() -> Result<(), String> {
 /// over the run, not a walk back from each line.
 #[test]
 fn long_deleted_function_records_nothing() -> Result<(), String> {
-    let body: Vec<String> = (0..20_000)
-        .map(|index| format!("-  total = total + {index};"))
-        .collect();
-    let mut lines: Vec<&str> = vec!["-export function clamp(total: number): number {"];
-    lines.extend(body.iter().map(String::as_str));
-    lines.extend([
-        "-  return total;",
-        "-}",
-        " export function cappedTotal(items: number[]): number {",
-        "   return items.length;",
-        " }",
-    ]);
-    let started = std::time::Instant::now();
-    let findings = analyze("long-deleted-function", &lines)?;
-    assert_eq!(base_side(&findings), Vec::new());
-    assert!(
-        started.elapsed() < std::time::Duration::from_secs(30),
-        "a 20,000-line deletion took {:?}",
-        started.elapsed()
-    );
+    // Compare 10,000 with 20,000 deleted lines on the same runner: one pass
+    // roughly doubles, a walk back from each line quadruples.
+    crate::testing::scale::assert_growth_within("long deletion", 10_000, 20_000, 3, |count| {
+        let body: Vec<String> = (0..count)
+            .map(|index| format!("-  total = total + {index};"))
+            .collect();
+        let mut lines: Vec<&str> = vec!["-export function clamp(total: number): number {"];
+        lines.extend(body.iter().map(String::as_str));
+        lines.extend([
+            "-  return total;",
+            "-}",
+            " export function cappedTotal(items: number[]): number {",
+            "   return items.length;",
+            " }",
+        ]);
+        let findings = analyze("long-deleted-function", &lines);
+        assert!(findings.is_ok(), "{findings:?}");
+        if let Ok(findings) = findings {
+            assert_eq!(base_side(&findings), Vec::new());
+        }
+    });
     Ok(())
 }
 

@@ -201,7 +201,7 @@ classification to pick the seam; after selection it looks up the inventory
 grip so the stub can disclose it. A strongly_gripped seam is still a
 scaffold (`state: ready`, exit 0): nothing is "configured off" — the seam is
 exposed because existing tests already discriminate it, so the disclosure
-says a stub would add nothing (only a class a user severity actually
+says the stub is an optional scaffold, not evidence of a missing discriminator (only a class a user severity actually
 disables is described as "configured off"). Side-effect and call-presence
 gaps, async, unsafe, and generic owners are refused with a named reason
 (exit `3`); under `--json` stdout

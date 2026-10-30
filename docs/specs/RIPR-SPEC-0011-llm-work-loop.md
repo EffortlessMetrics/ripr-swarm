@@ -473,16 +473,18 @@ after phase applies) and selects `next_command` in this order:
    required` with a recorded route command) and recorded no repair start
    selects nothing and warns `pilot_routed_to_check_no_repair_target`, for
    any routed language. For an enabled route the warning names the recorded
-   check command and the hand step (add or strengthen a test, then rerun
-   that check); for a route with `enabled: false` it names the enable step
+   check command; for a route with `enabled: false` it names the enable step
    (add the language to `[languages] enabled` in `ripr.toml`) instead. It
    also says to rerun pilot if the workspace changed since that run. For an
-   enabled TypeScript-family route, whether the warning says `ripr check`
-   "offers no `ripr agent repair` start" is derived from the same gap-start
-   admission the routed `ripr check` uses (#10001): when check would print a
-   gap-bound start, the warning names that start instead, and a refused or
-   undecidable admission keeps the "offers no start" wording. A
-   timed-out, missing or unreadable summary still routes to pilot. When the
+   enabled TypeScript-family route, the warning uses the same gap-start
+   admission as the routed `ripr check` (#10001): when `ripr check` would print
+   a gap-bound start, the warning names that start and offers adding or
+   strengthening a test by hand, then rerunning the check, as an alternative.
+   For a refused or undecidable admission, it reports "status could not
+   confirm a gap-bound start" and directs the user to the routed check for
+   the current finding and any reason a start is unavailable, without claiming
+   that no start exists.
+   A timed-out, missing or unreadable summary still routes to pilot. When the
    first missing artifact's directory does not exist and the seam is known,
    the next command starts a repair attempt, which writes the workflow
    artifacts itself, instead of redirecting into the missing directory.
@@ -502,9 +504,9 @@ interprets it through the receipt owner (`output::agent_receipt`):
 
 - `advisory` with movement `improved`: `finished`. Status words it as static
   grip improved (receipt advisory), not as a closed gap. The loop is
-  `complete` only when the current `HEAD` is the head the attempt's after
-  phase recorded (which may descend from its prepared head); otherwise a
-  `repair_receipt_stale` warning names both heads.
+  `complete` only when the head and worktree binding still match the after
+  phase (the after head may descend from the prepared head). A stale reading
+  produces a `repair_receipt_stale` warning.
 - movement `unchanged`, `changed`, or `regressed`, whatever the receipt
   status: `gap_open`. The seam is open, and rule 5 starts a new attempt whose
   reason names the receipt status, movement, staleness, and the receipt's own
@@ -536,6 +538,45 @@ status call captures again, and an edit made between two readings inside one cal
 is retained outside that call's shared observation until the next call. Each
 attempt keeps its own baseline, delta and verdict authority; receipt issuance,
 the after phase and MCP reads capture afresh.
+
+The finished attempt's delta commitment includes the captured post-change
+index and worktree identities of changed paths, including non-owned paths
+inside operational directories. The selected attempt manifest's identity is
+omitted to avoid hashing the digest into itself; its path and kind remain bound,
+and tracked or authored paths do not receive that exception. The producer also
+omits newly added, untracked workflow backup copies only when this invocation
+exclusively created them and their captured bytes and executable state still
+match its receipt. Baseline, authored, forbidden, and non-operational paths
+never receive this backup exception. Cleanup of these exact temporary copies
+must not invalidate the just-finished attempt; another attempt's bound manifest
+remains identity-sensitive. One bound compatibility receipt may be replaced
+by the next issued receipt without staling that producer: an optional
+`receipt_projection_predecessor` records only a different, validated issued
+attempt in the same store, plus the captured path kind and executable state.
+The read-only currentness owner validates both retained terminal pairs and the
+exact live replacement bytes, reconstructs only this fixed receipt slot, and
+requires the original whole-delta digest and verdict. Unowned or modified
+bytes, missing predecessor evidence, tracked/authored/forbidden paths and
+neighbor or sibling drift receive no exception. The predecessor can remain
+historical; this does not recurse through or grant it currentness. Legacy
+attempts without this optional witness retain their existing behavior. This
+does not authorize reconstructing missing gap projections or ignoring present
+projection drift.
+The same HEAD and the same changed path and kind do not establish
+the same bytes: changing an already-bound boundary assertion after finish must
+make both status currentness and receipt issuance refuse or remain unknown;
+restoring the recorded state may restore currentness. Legacy path-only
+commitments cannot establish this identity and read as unknown. The
+`finished_attempt_currentness_follows_worktree_drift_like_the_receipt` and
+`finished_gap_attempt_detects_changed_bound_test_bytes` tests exercise the
+shared attempt owner and the gap-bound CLI respectively.
+
+The attempt's own mutable operational scaffolding cannot be bound as if it
+were authored input: a finished receipt must remain comparable after its
+producer cleans up transient rollback or compatibility scaffolding, without
+exempting arbitrary files or treating names as proof of ownership. The
+repeat-attempt custody and cleanup defect is tracked in #10988; this identity
+refinement does not claim it is repaired.
 
 Repair inventories and Git currentness probes ignore the user's
 `diff.orderFile`: a dangling orderfile must not abort the before phase or the

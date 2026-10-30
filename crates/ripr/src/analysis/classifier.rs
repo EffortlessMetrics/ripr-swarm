@@ -11,12 +11,13 @@ use self::owner::resolve_owner_function;
 use super::classify::{
     DependencyEdgeContext, HelperChain, NO_REACHABLE_TEST_DISCRIMINATE_SUMMARY,
     NO_REACHABLE_TEST_OBSERVE_SUMMARY, ProbeContext, RelatedTestCandidateIndex,
-    TransitiveReachIndex, ambiguous_helper_entry_called_by_tests, confidence_score,
-    find_related_tests_with_candidate_index, is_assertion_shaped_owner, relation_establishes_reach,
-    same_file_const_readers,
+    TransitiveReachIndex, ambiguous_helper_entry_called_by_tests, associated_const_binding,
+    confidence_score, evaluate_const_flow, find_related_tests_with_candidate_index,
+    is_assertion_shaped_owner, relation_establishes_reach, same_file_const_readers,
+    shares_module_scope,
 };
 use super::probes::parser_expression_for_probe;
-use super::rust_index::{RustIndex, TestSummary};
+use super::rust_index::{RustIndex, TestSummary, find_file_facts};
 use crate::domain::*;
 
 #[cfg(test)]
@@ -125,13 +126,42 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins(
     // same-file reader. The probe family is unchanged (`static_unknown`), so
     // this only corrects the reach evidence; it cannot promote a verdict.
     let mut const_readers = Vec::new();
+    let mut const_flow = None;
     if owner_fn.is_none() {
         let mut through_readers: Vec<_> = Vec::new();
         let probe_file = candidate_index.probe_index_file(probe, index);
-        let readers = probe_file
+        let mut readers = probe_file
             .as_deref()
             .map(|file| same_file_const_readers(probe, file, index))
             .unwrap_or_default();
+        // RIPR-SPEC-0048 associated-constant extension: a constant declared
+        // inside `impl Trait for Type` is read by the trait's default
+        // methods, not by a same-file reader of a unique name.
+        let mut assoc_type: Option<String> = None;
+        if readers.is_empty()
+            && let (Some(file), Some(name)) = (probe_file.as_deref(), probe.changed_const_name())
+            && let Some(facts) = find_file_facts(index, file)
+            && let Some(binding) = associated_const_binding(
+                &facts.source,
+                probe.location.line,
+                name,
+                facts.functions.iter(),
+            )
+            // `Type::name(` resolves to an inherent method of that name before
+            // a trait default one, wherever it is defined: a reader name any
+            // other workspace function shares is not bound.
+            && binding.readers.iter().all(|reader| {
+                index
+                    .functions()
+                    .iter()
+                    .filter(|function| function.name == reader.name)
+                    .count()
+                    == 1
+            })
+        {
+            assoc_type = Some(binding.self_type);
+            readers = binding.readers;
+        }
         for reader in readers {
             let mut reached = false;
             for (test, reason) in find_related_tests_with_candidate_index(
@@ -157,6 +187,44 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins(
             if reached {
                 const_readers.push(reader);
             }
+        }
+        // RIPR-SPEC-0048: evaluate the constant through those readers and
+        // the tests that reach them. Unreadable in any part: no flow.
+        if !through_readers.is_empty()
+            && let Some(change) = probe_file.as_deref().and_then(|file| {
+                candidate_index
+                    .changed_consts()
+                    .lookup(file, probe.location.line)
+            })
+        {
+            let reader_tests: Vec<&TestSummary> =
+                through_readers.iter().map(|(test, _)| *test).collect();
+            const_flow = probe_file
+                .as_deref()
+                .and_then(|file| find_file_facts(index, file))
+                .and_then(|facts| {
+                    // Spelling cannot tell an imported or sibling-module
+                    // constant from the edited one: the declaration and every
+                    // reader must share one module scope.
+                    let lines: Vec<usize> = const_readers
+                        .iter()
+                        .map(|reader| reader.start_line)
+                        .collect();
+                    // The associated-constant binding checked its own module
+                    // chain; a free constant checks it here.
+                    if assoc_type.is_none()
+                        && !shares_module_scope(&facts.source, probe.location.line, &lines)
+                    {
+                        return None;
+                    }
+                    evaluate_const_flow(
+                        change,
+                        &const_readers,
+                        &reader_tests,
+                        &|name| facts.functions.iter().filter(|f| f.name == name).count(),
+                        assoc_type.as_deref(),
+                    )
+                });
         }
         if !through_readers.is_empty() {
             related_tests.retain(|(existing, _)| {
@@ -191,6 +259,7 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins(
     .with_diff_touched(candidate_index.diff_touched());
     context.propagation_origin = propagation_origin;
     context.const_readers = const_readers;
+    context.const_flow = const_flow;
     context.unmounted_build_script =
         candidate_index.probe_in_unmounted_build_script(probe, owner_fn, index);
     let reveal_expression = parser_expression_for_probe(
@@ -201,8 +270,14 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins(
         &probe.expression,
     )
     .unwrap_or(&probe.expression);
-    let evidence = ClassifiedProbeEvidence::gather(&context, reveal_expression, transitive_reach);
-    let class = evidence.classify(context.probe);
+    let mut evidence =
+        ClassifiedProbeEvidence::gather(&context, reveal_expression, transitive_reach);
+    // RIPR-SPEC-0048: a changed constant decided by evaluation takes its class
+    // from the evaluation; every other probe is classified as before.
+    let class = match context.const_flow.as_ref() {
+        Some(flow) => evidence.apply_const_flow(flow),
+        None => evidence.classify(context.probe),
+    };
     // #7532: `build_finding` rewrites a `no_static_path` finding's misses;
     // keep reveal's so a withheld finding can report them again.
     let reveal_misses: Vec<Option<RelatedTestMiss>> = evidence
@@ -3088,7 +3163,7 @@ fn far_above_threshold_discounts() {
             )
             .as_deref(),
             Some(
-                "Open the related test and trace its input through the local or computed operand (including default and empty cases) to see which side of the changed condition it exercises, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown."
+                "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown."
             )
         );
         assert_eq!(

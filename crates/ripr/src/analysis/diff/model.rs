@@ -639,30 +639,30 @@ mod tests {
 
     #[test]
     fn added_run_start_on_a_long_run_is_bounded() {
-        // One contiguous 20_000-line added run: the start map is built once
-        // and every lookup is log time. The previous walk scanned every
-        // added line at every step of the run, once per call.
-        let n = 20_000;
-        let changed = ChangedFile {
-            path: PathBuf::from("src/long.rs"),
-            added_lines: (1..=n).map(|i| line(i, i, "x();")).collect(),
-            removed_lines: Vec::new(),
-        };
-        let started = std::time::Instant::now();
-        let starts = changed.added_run_starts();
-        assert_eq!(starts.len(), n);
-        for i in 1..=n {
-            assert_eq!(starts.get(&i).copied(), Some(1));
-            assert_eq!(ChangedFile::added_run_start_from(&starts, i), 1);
-        }
-        assert_eq!(changed.added_run_start(n), 1);
-        assert_eq!(changed.added_run_start(1), 1);
-        // Walking back from the first line after the run still lands at the
-        // run start; a further gap does not.
-        assert_eq!(ChangedFile::added_run_start_from(&starts, n + 1), 1);
-        assert_eq!(changed.added_run_start(n + 2), n + 2);
-        assert_eq!(changed.added_run_start(0), 0);
-        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+        // One contiguous added run: the start map is built once and every
+        // lookup is log time. The previous walk scanned every added line at
+        // every step of the run, once per call, so doubling the run
+        // quadrupled the time instead of roughly doubling it.
+        crate::testing::scale::assert_growth_within("added run starts", 10_000, 20_000, 3, |n| {
+            let changed = ChangedFile {
+                path: PathBuf::from("src/long.rs"),
+                added_lines: (1..=n).map(|i| line(i, i, "x();")).collect(),
+                removed_lines: Vec::new(),
+            };
+            let starts = changed.added_run_starts();
+            assert_eq!(starts.len(), n);
+            for i in 1..=n {
+                assert_eq!(starts.get(&i).copied(), Some(1));
+                assert_eq!(ChangedFile::added_run_start_from(&starts, i), 1);
+            }
+            assert_eq!(changed.added_run_start(n), 1);
+            assert_eq!(changed.added_run_start(1), 1);
+            // Walking back from the first line after the run still lands at
+            // the run start; a further gap does not.
+            assert_eq!(ChangedFile::added_run_start_from(&starts, n + 1), 1);
+            assert_eq!(changed.added_run_start(n + 2), n + 2);
+            assert_eq!(changed.added_run_start(0), 0);
+        });
     }
 
     #[test]
@@ -1024,43 +1024,52 @@ mod tests {
     fn a_very_long_line_does_not_pair_by_content() {
         // A minified bundle line rebuilt with a source-map comment added: the
         // lines are over the token cap, so content pairs nothing and the
-        // first added line keeps its coordinate match, quickly.
-        let bundle: String = (0..50_000).map(|n| format!("a{n}+")).collect();
-        let rebuilt: String = (0..50_000).map(|n| format!("b{n}+")).collect();
-        let changed = ChangedFile {
-            path: PathBuf::from("dist/app.js"),
-            added_lines: vec![
-                line(1, 1, &rebuilt),
-                line(2, 2, "//# sourceMappingURL=app.js.map"),
-            ],
-            removed_lines: vec![line(1, 1, &bundle)],
-        };
-        let started = std::time::Instant::now();
-        let map = changed.aligned_counterparts();
-        assert!(started.elapsed() < std::time::Duration::from_secs(10));
-        assert_eq!(map.len(), 1);
-        assert!(!lines_look_alike(&bundle, &rebuilt));
+        // first added line keeps its coordinate match in work that grows
+        // with the line, not with its square.
+        crate::testing::scale::assert_growth_within(
+            "long minified line",
+            25_000,
+            50_000,
+            3,
+            |tokens| {
+                let bundle: String = (0..tokens).map(|n| format!("a{n}+")).collect();
+                let rebuilt: String = (0..tokens).map(|n| format!("b{n}+")).collect();
+                let changed = ChangedFile {
+                    path: PathBuf::from("dist/app.js"),
+                    added_lines: vec![
+                        line(1, 1, &rebuilt),
+                        line(2, 2, "//# sourceMappingURL=app.js.map"),
+                    ],
+                    removed_lines: vec![line(1, 1, &bundle)],
+                };
+                let map = changed.aligned_counterparts();
+                assert_eq!(map.len(), 1);
+                assert!(!lines_look_alike(&bundle, &rebuilt));
+            },
+        );
     }
 
     #[test]
     fn a_long_first_line_beside_many_removed_lines_stays_bounded() {
-        // One 1 MB string-literal line against 1,000 removed lines: the
-        // block exceeds the cell cap, and the first-line fallback tokenizes
-        // each line once.
-        let literal = format!("const s = \"{}\";", "x".repeat(1_000_000));
-        let changed = ChangedFile {
-            path: PathBuf::from("src/big.ts"),
-            added_lines: (1..=70)
-                .map(|n| line(n, n, if n == 1 { &literal } else { "y();" }))
-                .collect(),
-            removed_lines: (1..=1_000)
-                .map(|n| line(n, 1, &format!("let v{n} = 0;")))
-                .collect(),
-        };
-        let started = std::time::Instant::now();
-        let map = changed.aligned_counterparts();
-        assert!(started.elapsed() < std::time::Duration::from_secs(10));
-        assert_eq!(map.len(), 1);
+        // One string-literal line (1 MB at the large size) against 1,000
+        // removed lines: the block exceeds the cell cap, and the first-line
+        // fallback tokenizes each line once. Both dimensions double between
+        // sizes, so linear work doubles and a per-pair tokenize quadruples.
+        crate::testing::scale::assert_growth_within("long first line", 500, 1_000, 3, |k| {
+            let literal = format!("const s = \"{}\";", "x".repeat(1_000 * k));
+            let changed = ChangedFile {
+                path: PathBuf::from("src/big.ts"),
+                added_lines: (1..=140)
+                    .map(|n| line(n, n, if n == 1 { &literal } else { "y();" }))
+                    .collect(),
+                removed_lines: (1..=k)
+                    .map(|n| line(n, 1, &format!("let v{n} = 0;")))
+                    .collect(),
+            };
+            assert!(changed.added_lines.len() * changed.removed_lines.len() > MAX_ALIGNED_CELLS);
+            let map = changed.aligned_counterparts();
+            assert_eq!(map.len(), 1);
+        });
     }
 
     #[test]

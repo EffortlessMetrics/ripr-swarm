@@ -1248,6 +1248,7 @@ fn body_calls_owner_filters_comments_and_string_mentions() {
         class_facts: Default::default(),
         foreign_writes: Default::default(),
         version_conditional: false,
+        cli_subcommand: None,
     };
 
     let comment_only = "    # apply_discount(100)\n    other()\n";
@@ -1476,39 +1477,42 @@ fn generated_large_python_module(functions: usize) -> String {
 
 #[test]
 fn source_fact_extraction_stays_linear_on_a_large_module() {
-    let functions = 5_000;
-    let source = generated_large_python_module(functions);
-    assert_eq!(source.lines().count(), 20_000);
-    let started = std::time::Instant::now();
-    let facts = extract_source_facts(Path::new("src/large.py"), &source);
-    let elapsed = started.elapsed();
-    // The fixture parsed and produced per-function facts with late lines.
-    assert!(facts.limitations.is_empty(), "{:?}", facts.limitations);
-    assert_eq!(
-        facts
-            .owners
-            .iter()
-            .filter(|owner| !owner.is_module_owner())
-            .count(),
-        functions
-    );
-    let last_start = facts
-        .owners
-        .iter()
-        .find(|owner| owner.name == "f4999")
-        .map(|owner| owner.start_line);
-    assert_eq!(last_start, Some(19_997));
-    assert!(
-        facts.facts.len() > functions * 4,
-        "facts: {}",
-        facts.facts.len()
-    );
-    // Generous bound. In a debug build on this fixture the per-lookup
-    // rescan took about 249s (quadratic: 15s at 5k lines, 62s at 10k) and
-    // the indexed path about 1.3s (#4495).
-    assert!(
-        elapsed < std::time::Duration::from_secs(20),
-        "extraction took {elapsed:?}"
+    // In a debug build the per-lookup rescan took about 249s at 20k lines
+    // (quadratic: 15s at 5k lines, 62s at 10k) and the indexed path about
+    // 1.3s (#4495). Compare 2,500 with 5,000 functions on the same runner
+    // instead of bounding seconds, so runner speed cancels out.
+    crate::testing::scale::assert_growth_within(
+        "python extraction",
+        2_500,
+        5_000,
+        3,
+        |functions| {
+            let source = generated_large_python_module(functions);
+            assert_eq!(source.lines().count(), 4 * functions);
+            let facts = extract_source_facts(Path::new("src/large.py"), &source);
+            // The fixture parsed and produced per-function facts with late lines.
+            assert!(facts.limitations.is_empty(), "{:?}", facts.limitations);
+            assert_eq!(
+                facts
+                    .owners
+                    .iter()
+                    .filter(|owner| !owner.is_module_owner())
+                    .count(),
+                functions
+            );
+            let last_name = format!("f{}", functions - 1);
+            let last_start = facts
+                .owners
+                .iter()
+                .find(|owner| owner.name == last_name)
+                .map(|owner| owner.start_line);
+            assert_eq!(last_start, Some(4 * functions - 3));
+            assert!(
+                facts.facts.len() > functions * 4,
+                "facts: {}",
+                facts.facts.len()
+            );
+        },
     );
 }
 
@@ -1517,44 +1521,46 @@ fn source_fact_extraction_stays_linear_on_a_large_module() {
 /// scan (once per module constant) each ran over the whole source.
 #[test]
 fn typer_receivers_and_constant_walrus_checks_stay_linear() {
-    let functions = 5_000;
-    let mut typer = String::from("import typer\napp = typer.Typer()\n");
-    for index in 0..functions {
-        typer.push_str(&format!("def f{index}(x):\n    return x + {index}\n"));
-    }
-    let constants = 20_000;
-    let mut constant_module = String::new();
-    for index in 0..constants {
-        constant_module.push_str(&format!("C{index} = {index}\n"));
-    }
-    constant_module.push_str("def f(x):\n    return x + C19999\n");
+    crate::testing::scale::assert_growth_within(
+        "typer and constant scans",
+        2_500,
+        5_000,
+        3,
+        |functions| {
+            let mut typer = String::from("import typer\napp = typer.Typer()\n");
+            for index in 0..functions {
+                typer.push_str(&format!("def f{index}(x):\n    return x + {index}\n"));
+            }
+            let constants = 4 * functions;
+            let mut constant_module = String::new();
+            for index in 0..constants {
+                constant_module.push_str(&format!("C{index} = {index}\n"));
+            }
+            constant_module.push_str(&format!("def f(x):\n    return x + C{}\n", constants - 1));
 
-    let started = std::time::Instant::now();
-    let typer_facts = extract_source_facts(Path::new("src/cli.py"), &typer);
-    let constant_facts = extract_source_facts(Path::new("src/limits.py"), &constant_module);
-    let elapsed = started.elapsed();
+            let typer_facts = extract_source_facts(Path::new("src/cli.py"), &typer);
+            let constant_facts = extract_source_facts(Path::new("src/limits.py"), &constant_module);
 
-    let last = typer_facts
-        .owners
-        .iter()
-        .find(|owner| owner.name == "f4999")
-        .ok_or("f4999 owner");
-    assert_eq!(
-        last.map(|owner| owner.cli_receiver_names.clone()),
-        Ok(vec!["app".to_string()])
-    );
-    let owner = constant_facts
-        .owners
-        .iter()
-        .find(|owner| owner.name == "f")
-        .ok_or("f owner");
-    assert_eq!(
-        owner.map(|owner| owner.module_constants.len()),
-        Ok(constants)
-    );
-    assert!(
-        elapsed < std::time::Duration::from_secs(20),
-        "extraction took {elapsed:?}"
+            let last_name = format!("f{}", functions - 1);
+            let last = typer_facts
+                .owners
+                .iter()
+                .find(|owner| owner.name == last_name)
+                .ok_or("last owner");
+            assert_eq!(
+                last.map(|owner| owner.cli_receiver_names.clone()),
+                Ok(vec!["app".to_string()])
+            );
+            let owner = constant_facts
+                .owners
+                .iter()
+                .find(|owner| owner.name == "f")
+                .ok_or("f owner");
+            assert_eq!(
+                owner.map(|owner| owner.module_constants.len()),
+                Ok(constants)
+            );
+        },
     );
 }
 
@@ -1753,6 +1759,7 @@ fn imported_module_matches_owner_compares_last_segment_to_owner_stem() {
         class_facts: Default::default(),
         foreign_writes: Default::default(),
         version_conditional: false,
+        cli_subcommand: None,
     };
     let dotted = PythonImport {
         imported: "src.pricing".to_string(),
@@ -1819,6 +1826,7 @@ fn shared_src_layout_module_name_identifies_owner_only_from_its_project() -> Res
         class_facts: Default::default(),
         foreign_writes: Default::default(),
         version_conditional: false,
+        cli_subcommand: None,
     };
     let sources = [
         PathBuf::from("a/src/shared/calc.py"),
@@ -1907,6 +1915,7 @@ fn nested_src_layout_rival_claims_tests_under_its_own_root() {
         class_facts: Default::default(),
         foreign_writes: Default::default(),
         version_conditional: false,
+        cli_subcommand: None,
     };
     let sources = [
         PathBuf::from("src/shared/calc.py"),
@@ -1962,6 +1971,7 @@ fn same_stem_related_handles_missing_stems() {
         class_facts: Default::default(),
         foreign_writes: Default::default(),
         version_conditional: false,
+        cli_subcommand: None,
     };
     let test = PythonTest {
         setup_receivers: Vec::new(),
@@ -4373,6 +4383,7 @@ fn strong_oracle_observes_owner_distinguishes_aligned_from_orthogonal() {
         class_facts: Default::default(),
         foreign_writes: Default::default(),
         version_conditional: false,
+        cli_subcommand: None,
     };
     let line = "return retry_state.attempt_number > self.max_attempt_number";
     let strong = |oracle: &str| RelatedTest {
@@ -4456,6 +4467,7 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
         class_facts: Default::default(),
         foreign_writes: Default::default(),
         version_conditional: false,
+        cli_subcommand: None,
     };
     let line = "return amount + 2";
     let related = [RelatedTest {
@@ -4543,6 +4555,7 @@ fn align_owner(name: &str, qualified: &str) -> PythonOwner {
         class_facts: Default::default(),
         foreign_writes: Default::default(),
         version_conditional: false,
+        cli_subcommand: None,
     }
 }
 

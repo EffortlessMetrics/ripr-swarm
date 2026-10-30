@@ -373,6 +373,13 @@ async fn completed_saved_analysis_keeps_consumed_a_when_disk_and_buffer_become_b
         if !backend.is_current_refresh_generation(generation) {
             return Err("SETUP: A generation was not current at barrier".to_string());
         }
+        // The editor buffer reaches B while disk still holds A: a buffer equal
+        // to disk is saved content (#11153) and would legitimately supersede
+        // this generation, which is not the race under test. Disk becomes B
+        // right after, before the refresh commits.
+        backend
+            .did_change(quarantine_change_params(&uri, 2, SOURCE_B))
+            .await;
         fs::write(&path, SOURCE_B).map_err(|err| format!("write B failed: {err}"))?;
         let actual_b =
             fs::read(&path).map_err(|err| format!("SETUP: read actual disk B failed: {err}"))?;
@@ -380,9 +387,6 @@ async fn completed_saved_analysis_keeps_consumed_a_when_disk_and_buffer_become_b
         if actual_b_digest != content_digest(SOURCE_B.as_bytes()) {
             return Err("SETUP: actual disk B does not match intended B".to_string());
         }
-        backend
-            .did_change(quarantine_change_params(&uri, 2, SOURCE_B))
-            .await;
         if !backend.is_current_refresh_generation(generation) {
             return Err(
                 "SETUP: didChange superseded A; attribution oracle was not reached".to_string(),
@@ -735,10 +739,12 @@ async fn real_saved_refresh_admits_canonical_uri_under_symlinked_root() -> Resul
             "BEHAVIORAL: fresh canonical document under symlinked root stayed quarantined".into(),
         );
     }
-    fs::write(&fixture.file, SOURCE_B).map_err(|error| format!("write aliased B: {error}"))?;
+    // Buffer reaches B while disk still holds A (a buffer equal to disk is
+    // saved content, #11153); disk becomes B before the explicit refresh.
     backend
         .did_change(quarantine_change_params(&uri, 2, SOURCE_B))
         .await;
+    fs::write(&fixture.file, SOURCE_B).map_err(|error| format!("write aliased B: {error}"))?;
     if backend
         .document_state_for_test(&uri)
         .is_none_or(|state| !state.is_quarantined())

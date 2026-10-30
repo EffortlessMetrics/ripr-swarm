@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 fn main() {
     let command: Option<fn() -> Result<(), String>> = match std::env::args().nth(1).as_deref() {
         Some("python-wheel-applicability") => Some(repo_policy::python_wheel::command),

@@ -7,7 +7,7 @@
 //!
 //! Deserialization performs **no** validation: every invariant (snapshot
 //! digest binding, completeness rules, closed vocabularies) lives in
-//! [`validate`], and a consumer that skips it has no contract. A document
+//! `validate`, and a consumer that skips it has no contract. A document
 //! that parses can still be wrong — an uppercase git object id in a
 //! `snapshot_id` deserializes cleanly and is rejected only by
 //! `validate()`. Always deserialize **and** validate before acting on a

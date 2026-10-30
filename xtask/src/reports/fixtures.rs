@@ -1257,7 +1257,9 @@ pub(crate) fn run_fixture_check(
     ];
     match format {
         FixtureCheckFormat::Json => args.push("--json".to_string()),
-        FixtureCheckFormat::Human => {}
+        // Goldens are one deterministic projection: pin the Evidence legend
+        // that the CLI collapses after the first run in a build tree.
+        FixtureCheckFormat::Human => args.push("--legend".to_string()),
         FixtureCheckFormat::HumanFull => {
             args.push("--format".to_string());
             args.push("human-full".to_string());
@@ -1322,6 +1324,11 @@ fn compare_golden(
     actual: &Path,
 ) -> Result<GoldenComparison, String> {
     let expected_text = read_text_lossy(expected)?;
+    let expected_text = if surface != "check.json" {
+        project_windows_python_verify_expected(fixture, &expected_text, cfg!(windows))
+    } else {
+        expected_text
+    };
     let actual_text = read_text_lossy(actual)?;
     let (expected_text, actual_text) = if surface == "check.json" {
         (
@@ -1350,6 +1357,51 @@ fn compare_golden(
         matches: aliased || normalized_expected == normalized_actual,
         first_difference: first_line_difference(&normalized_expected, &normalized_actual),
     })
+}
+
+/// Fixture goldens pin the Bash action. On Windows the product instead gives
+/// manual guidance; project only exact, simple fixture-owned actions, keeping
+/// the selected test token and requiring the expected fixture root.
+fn project_windows_python_verify_expected(fixture: &str, text: &str, windows: bool) -> String {
+    if !windows {
+        return text.to_string();
+    }
+    let root = format!("<cwd>/fixtures/{fixture}/input");
+    text.split_inclusive('\n')
+        .map(|line| {
+            let (body, newline) = line.strip_suffix('\n').map_or((line, ""), |s| (s, "\n"));
+            let (prefix, replacement) = if let Some(rest) =
+                body.strip_prefix("  Verify command (Bash): (cd -P -- ")
+            {
+                (
+                    rest,
+                    "  Suggested command (unverified; inspect and run from the selected root): ",
+                )
+            } else if let Some(rest) = body.strip_prefix("  verify (Bash): (cd -P -- ") {
+                (
+                    rest,
+                    "  suggested command (unverified; inspect and run from the selected root): ",
+                )
+            } else {
+                return line.to_string();
+            };
+            let Some((declared_root, selector)) = prefix.split_once(" && python -m pytest ") else {
+                return line.to_string();
+            };
+            let Some(selector) = selector.strip_suffix(") (high)") else {
+                return line.to_string();
+            };
+            if declared_root != root
+                || selector.is_empty()
+                || !selector
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '/' | ':' | '-'))
+            {
+                return line.to_string();
+            }
+            format!("{replacement}python -m pytest {selector}{newline}")
+        })
+        .collect()
 }
 
 pub(crate) fn normalize_golden_text(value: &str) -> String {
@@ -1677,48 +1729,74 @@ fn project_json_cwd_prefix(text: &str) -> String {
 }
 
 pub(crate) fn normalize_fixture_json_output(value: &str) -> String {
+    normalize_fixture_json_output_for_host(value, cfg!(windows))
+}
+
+/// [`normalize_fixture_json_output`] with the host explicit.
+///
+/// Only a Windows-produced document carries path separators as backslashes
+/// (#2337), so only a Windows host projects them to `/`. Elsewhere a JSON
+/// `\\` is a literal backslash of source text (an escaped quote `\"`, a
+/// `\u{7b}` escape, a `\n` in an asserted string literal) and must reach
+/// the golden unchanged: the former blanket `\\` to `/` rewrote
+/// `quoted\"marker\"` to `quoted/"marker/"` in checked-in goldens (#11119).
+/// On Windows only string values under a path-bearing key (see
+/// [`is_path_bearing_json_key`]) have their separators projected; every
+/// other string (an asserted `"a\\nb"`, a `\\u{7b}` escape, a `\\"` quote)
+/// is source text and stays byte-identical, so the fold no longer guesses
+/// from neighbouring characters.
+fn normalize_fixture_json_output_for_host(value: &str, windows: bool) -> String {
     let value = normalize_check_json_golden_document(value);
-    // #2337: match the human normalizer's approach — replace ALL backslashes
-    // with forward slashes, not just the escaped double-backslash form. On
-    // Windows, ripr check --json can emit single-backslash paths inside
-    // free-text string values (error messages, code excerpts). The previous
-    // normalizer only handled the `\\` (JSON-escaped) form, missing these.
-    // First replace `\\` (the JSON-escaped form), then replace any remaining
-    // single `\` — matching the human normalizer at line 737.
-    //
-    // BUT: JSON escape sequences like `\"`, `\n`, `\t`, `\r`, `\/` must be
-    // preserved — they are valid JSON string content, not path separators.
-    // The previous blanket `.replace('\\', "/")` corrupted these by turning
-    // `\"` into `/"`, breaking the expected golden output (#2522 regression).
-    //
-    // Strategy: replace `\\` → `/` first (the JSON-escaped backslash, which
-    // represents a literal backslash in the source text). Then replace any
-    // remaining single `\` that is NOT part of a JSON escape sequence.
-    let after_double = value.replace("\\\\", "/");
-    // #2556: operate on CHARS, not bytes — byte-wise push corrupts multi-byte
-    // UTF-8 sequences (e.g. é = 0xC3 0xA9 becomes two wrong chars).
-    let mut result = String::with_capacity(after_double.len());
-    let chars: Vec<char> = after_double.chars().collect();
+    if !windows {
+        return project_json_cwd_prefix(&value);
+    }
+    // #2556: operate on CHARS, not bytes, so multi-byte UTF-8 survives.
+    let chars: Vec<char> = value.chars().collect();
+    let mut result = String::with_capacity(value.len());
+    let mut current_key = String::new();
     let mut i = 0;
     while i < chars.len() {
-        if chars[i] == '\\' && i + 1 < chars.len() {
-            let next = chars[i + 1];
-            // Preserve JSON escape sequences: \" \\ \n \t \r \uXXXX
-            if matches!(next, '"' | '\\' | 'n' | 't' | 'r' | 'u') {
-                result.push('\\');
-                result.push(next);
-                i += 2;
-                continue;
-            }
-            // Not a JSON escape — treat as a path separator
-            result.push('/');
+        if chars[i] != '"' {
+            result.push(chars[i]);
             i += 1;
             continue;
         }
-        result.push(chars[i]);
+        // Scan one JSON string token, honoring escapes.
+        let start = i;
         i += 1;
+        while i < chars.len() && chars[i] != '"' {
+            i += if chars[i] == '\\' { 2 } else { 1 };
+        }
+        let end = i.min(chars.len().saturating_sub(1));
+        let token: String = chars[start..=end].iter().collect();
+        i = end + 1;
+        let mut after = i;
+        while chars.get(after).is_some_and(|c| c.is_whitespace()) {
+            after += 1;
+        }
+        if chars.get(after) == Some(&':') {
+            current_key = token.trim_matches('"').to_string();
+            result.push_str(&token);
+        } else if is_path_bearing_json_key(&current_key) {
+            result.push_str(&token.replace("\\\\", "/"));
+        } else {
+            result.push_str(&token);
+        }
     }
     project_json_cwd_prefix(&result)
+}
+
+/// Keys whose string values are filesystem paths in the check/gate JSON.
+///
+/// `evidence_path` names the reach/infect/propagate/observe trail, not a
+/// filesystem path: its strings quote asserted source text (`\"`, `\u{..}`),
+/// so matching its `path` substring would fold source backslashes on Windows
+/// and fork the goldens between hosts (#11119).
+fn is_path_bearing_json_key(key: &str) -> bool {
+    key != "evidence_path"
+        && ["path", "file", "root", "dir"]
+            .iter()
+            .any(|needle| key.contains(needle))
 }
 
 pub(crate) fn normalize_fixture_human_output(value: &str) -> String {
@@ -2842,6 +2920,39 @@ fn fixtures_new(name: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
 
+    #[test]
+    fn windows_python_golden_projection_keeps_fixture_and_selector_identity() {
+        let bash = "  Verify command (Bash): (cd -P -- <cwd>/fixtures/py/input && python -m pytest tests/test_a.py::test_one) (high)\n";
+        let manual = "  Suggested command (unverified; inspect and run from the selected root): python -m pytest tests/test_a.py::test_one\n";
+        assert_eq!(
+            super::project_windows_python_verify_expected("py", bash, true),
+            manual
+        );
+        assert_eq!(
+            super::project_windows_python_verify_expected("py", bash, false),
+            bash
+        );
+        assert_eq!(
+            super::project_windows_python_verify_expected("other", bash, true),
+            bash
+        );
+        let hostile = bash.replace("test_one", "$(touch x)");
+        assert_eq!(
+            super::project_windows_python_verify_expected("py", &hostile, true),
+            hostile
+        );
+        let other = bash.replace("test_one", "test_two");
+        assert_ne!(
+            super::project_windows_python_verify_expected("py", &other, true),
+            manual
+        );
+        let full = bash.replace("Verify command (Bash)", "verify (Bash)");
+        assert_eq!(
+            super::project_windows_python_verify_expected("py", &full, true),
+            manual.replace("Suggested command", "suggested command")
+        );
+    }
+
     // #8421: the precommit goldens trigger and gap classification.
 
     #[test]
@@ -3200,7 +3311,7 @@ mod tests {
     #[test]
     fn normalize_json_handles_double_backslash() {
         let input = r#"{"path":"crates\\ripr\\src\\lib.rs"}"#;
-        let out = normalize_fixture_json_output(input);
+        let out = normalize_fixture_json_output_for_host(input, true);
         assert!(
             !out.contains('\\'),
             "double backslash must be normalized: {out}"
@@ -3208,23 +3319,74 @@ mod tests {
     }
 
     #[test]
-    fn normalize_json_handles_single_backslash() {
-        // #2337: single backslash in free-text fields (code excerpts, error
-        // messages) must also be normalized. But JSON escape sequences
-        // (\" \\ \n etc) must be preserved.
-        // Here `\b` and `\c` are NOT valid JSON escapes, so they should
-        // be treated as path separators and normalized.
-        // Note: in the raw string, `\b` is a single backslash + 'b'.
-        let input = r#"{"expression":"a\b\c"}"#;
-        let out = normalize_fixture_json_output(input);
-        // After normalization: the `\b` becomes `/b` (not a JSON escape
-        // since \b in JSON is backspace U+0008, but in this context it's
-        // a raw backslash in the Rust string). The key assertion is that
-        // the output does not contain a bare backslash that is NOT part of
-        // a JSON escape.
-        assert!(
-            !out.contains(r#"\b"#) && !out.contains(r#"\c"#),
-            "single backslash before non-escape char must be normalized: {out}"
+    fn normalize_json_keeps_source_text_backslashes_off_windows() -> Result<(), String> {
+        // #11119: a JSON `\\` is a literal backslash of asserted source text.
+        // Source `"read \"error\"", "\u{7b}", "a\nb"` renders as the JSON below.
+        let input =
+            r#"{"oracle":"assert_eq!(x, \"read \\\"error\\\"\", \"\\u{7b}\", \"a\\nb\");"}"#;
+        assert_eq!(normalize_fixture_json_output_for_host(input, false), input);
+        let parsed: serde_json::Value =
+            serde_json::from_str(input).map_err(|error| error.to_string())?;
+        assert_eq!(
+            parsed["oracle"],
+            "assert_eq!(x, \"read \\\"error\\\"\", \"\\u{7b}\", \"a\\nb\");"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn normalize_json_windows_keeps_quote_and_unicode_escapes_but_folds_paths() {
+        let source =
+            r#"{"oracle":"\"read \\\"error\\\"\" \\u{7b}","file":"crates\\ripr\\src\\lib.rs"}"#;
+        let out = normalize_fixture_json_output_for_host(source, true);
+        assert_eq!(
+            out,
+            r#"{"oracle":"\"read \\\"error\\\"\" \\u{7b}","file":"crates/ripr/src/lib.rs"}"#
+        );
+    }
+
+    #[test]
+    fn normalize_json_windows_folds_parenthesized_program_files_path() {
+        let source = r#"{"root":"vendor (x86)\\ripr\\src"}"#;
+        let out = normalize_fixture_json_output_for_host(source, true);
+        assert_eq!(out, r#"{"root":"vendor (x86)/ripr/src"}"#);
+    }
+
+    #[test]
+    fn normalize_json_windows_keeps_evidence_path_source_text() {
+        // `evidence_path` contains "path" but is a text trail quoting asserted
+        // source, so Windows must leave it identical to the other hosts while
+        // the sibling `sample_paths` array still folds (#11119).
+        let source =
+            r#"{"evidence_path":["a \"r \\\"e\\\"\"","u \\u{7b}"],"sample_paths":["s\\a.rs"]}"#;
+        let out = normalize_fixture_json_output_for_host(source, true);
+        assert_eq!(
+            out,
+            r#"{"evidence_path":["a \"r \\\"e\\\"\"","u \\u{7b}"],"sample_paths":["s/a.rs"]}"#
+        );
+    }
+
+    #[test]
+    fn normalize_json_windows_tokenizer_handles_trailing_backslash_and_nesting() {
+        // A string ending in an escaped backslash must close at its quote, and
+        // nested values resolve against their own keys.
+        let source = r#"{"root":"r\\s\\","n":{"note":"a\\b","dir":["x\\y"]},"k\"q":"v\\w"}"#;
+        let out = normalize_fixture_json_output_for_host(source, true);
+        assert_eq!(
+            out,
+            r#"{"root":"r/s/","n":{"note":"a\\b","dir":["x/y"]},"k\"q":"v\\w"}"#
+        );
+    }
+
+    #[test]
+    fn normalize_json_windows_keeps_newline_source_text_beside_path_fields() {
+        // `a\nb` has path-character neighbours but lives under a source-text
+        // key, so it must survive while the sibling path field folds (#11119).
+        let source = r#"{"oracle":"a\\nb","files":["src\\a.rs","src\\b.rs"],"text":"x\\y"}"#;
+        let out = normalize_fixture_json_output_for_host(source, true);
+        assert_eq!(
+            out,
+            r#"{"oracle":"a\\nb","files":["src/a.rs","src/b.rs"],"text":"x\\y"}"#
         );
     }
 
@@ -3517,7 +3679,9 @@ mod tests {
         let no_seam_untied = "assertion_shaped_control_production_caller";
         let missing_exposed = "assertion_shaped_control_production_owner";
         let inventory_exposed = "currentness_matrix_python_deleted_statement";
-        let no_gap_exposed = "currentness_matrix_typescript_deleted_statement";
+        // Retired by the TypeScript/JavaScript re-bless (#10700, #10885): the
+        // no-gap-ID -> exposed entries were deleted, so it no longer aliases.
+        let retired_no_gap = "currentness_matrix_typescript_deleted_statement";
         assert!(compare(
             no_seam_exposed,
             &old_no_seam,
@@ -3542,8 +3706,8 @@ mod tests {
             "this finding has no gap ID, so there is no seam",
         )?;
         assert!(
-            compare(no_gap_exposed, &no_gap, &exposed, "human.txt")?,
-            "no gap ID -> exposed"
+            !compare(retired_no_gap, &no_gap, &exposed, "human.txt")?,
+            "retired no gap ID -> exposed migration is drift again"
         );
         let missing = write_exposed(
             "missing.txt",

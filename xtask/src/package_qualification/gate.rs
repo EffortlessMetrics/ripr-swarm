@@ -42,6 +42,12 @@ pub(crate) fn evaluate(input: &GateInput<'_>) -> PackageQualificationGate {
     if receipt.subjects.selected == 0 || receipt.subjects.executed == 0 {
         failures.push("zero-subject receipt cannot pass".to_string());
     }
+    if receipt.subjects.failed > 0 {
+        failures.push(format!(
+            "subjects.failed is {}; a pass requires zero failed subjects",
+            receipt.subjects.failed
+        ));
+    }
     if receipt.cleanup.status != RowStatus::Passed {
         failures.push(format!(
             "cleanup.status is {}; a pass requires cleanup passed",
@@ -72,6 +78,24 @@ pub(crate) fn evaluate(input: &GateInput<'_>) -> PackageQualificationGate {
 
     let mut required_row_results = Vec::new();
     for key in &receipt.required_rows {
+        let channel_matches = key.channel == receipt.package.channel;
+        if !channel_matches {
+            failures.push(format!(
+                "required row {}/{} does not match package channel {}",
+                key.channel.as_str(),
+                key.target,
+                receipt.package.channel.as_str()
+            ));
+        }
+        let target_matches = key.target == receipt.payload.target;
+        if !target_matches {
+            failures.push(format!(
+                "required row {}/{} does not match payload target {}",
+                key.channel.as_str(),
+                key.target,
+                receipt.payload.target
+            ));
+        }
         let row = receipt
             .rows
             .iter()
@@ -121,7 +145,14 @@ pub(crate) fn evaluate(input: &GateInput<'_>) -> PackageQualificationGate {
                 (
                     Some(row.status),
                     Some(row.subject_count),
-                    "passed".to_string(),
+                    if !channel_matches {
+                        "channel_mismatch"
+                    } else if !target_matches {
+                        "target_mismatch"
+                    } else {
+                        "passed"
+                    }
+                    .to_string(),
                 )
             }
         };

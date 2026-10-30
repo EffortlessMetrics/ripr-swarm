@@ -27,7 +27,7 @@ Start here:
   Suggested test file: tests/test_noter.py
   Suggested test: test_note
   Test node: tests/test_noter.py::test_note
-  Verify command: python -m pytest tests/test_noter.py::test_note (high)
+  Verify command (Bash): (cd -P -- <cwd>/fixtures/python_guarded_write_fstring_escape/input && python -m pytest tests/test_noter.py::test_note) (high)
   Next step — Python preview: strengthen the existing related test with a field/object assertion for missing discriminator `self.last == "fault"`
   Evidence: reach yes · infection yes · propagation weak · observation weak · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;

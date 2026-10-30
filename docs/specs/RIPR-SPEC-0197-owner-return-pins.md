@@ -589,6 +589,12 @@ wrong credits.
        may not bind it itself (a `mod`, `struct`, `enum`, `union`, `trait`
        or `type` of the name, a `use` of the name, or any glob, in a file of
        the test's crate).
+       A file that composes only under another explicitly declared Cargo
+       target (a manifest `[[bin]]`, `[[example]]`, `[[test]]` or `[[bench]]`
+       `path` other than the test's own root) is not a file of the test's
+       crate (#11123); a file whose placement is unestablished still is
+       (fixtures `declared_target_glob_public_call` and
+       `undeclared_target_glob_public_call`).
      The owner must sit directly in a module (not a fn body or an `impl`)
      that ripr can place by parsing its file. Neither the owner nor any
      enclosing inline module may carry a `cfg` or `cfg_attr` attribute,
@@ -1641,6 +1647,13 @@ activation facts and preserving its complete assertion set. An unasserted
 `is_adult(18)` beside `assert!(is_adult(30))`, an early-return mask, a
 deciding disjunction or an assertion on another owner cannot borrow this
 credit. Static movement remains independent of focused test execution.
+
+The same owner's `return_value` seam over that whole boolean tail consumes
+the identical admission (#11111): it observes the same returned value, and
+the diff-mode return-value finding already credits the pinned assertion,
+so `ripr check` and `ripr repair` read one verdict for the change. Every
+gate above applies unchanged; a return-value seam whose owner tail is not
+the admitted comparison gains nothing.
 
 ### Lone-equality pins
 

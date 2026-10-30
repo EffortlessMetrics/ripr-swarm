@@ -71,6 +71,11 @@ pub(super) fn is_fmt_dispatch_owner(owner: &FunctionSummary) -> bool {
     fmt_owner(owner).is_some()
 }
 
+/// Display owner identity shared by pin admission and its fallback refusal.
+pub(in crate::analysis) fn is_display_fmt_owner(owner: &FunctionSummary) -> bool {
+    matches!(fmt_owner(owner), Some((FmtTrait::Display, _)))
+}
+
 /// Cheap lexical prefilter for the candidate index: the body may format.
 pub(super) fn body_may_dispatch_fmt(body: &str) -> bool {
     ["format", "write", "print", "to_string"]
@@ -89,6 +94,9 @@ pub(super) struct FmtContext {
     competing_to_string: bool,
     /// Formatting macros a `macro_rules!` or non-std `use` can rebind.
     shadowed_macros: Vec<&'static str>,
+    /// Inherent associated fns of the self type whose only indexed
+    /// declaration returns `Self` or the type: `T::name(..)` builds a `T`.
+    constructors: Vec<String>,
 }
 
 impl FmtContext {
@@ -123,6 +131,7 @@ impl FmtContext {
             type_declared_once: declared == 1,
             competing_to_string,
             shadowed_macros,
+            constructors: super::inherent_constructor_names(index, &self_type),
         })
     }
 }
@@ -274,17 +283,17 @@ pub(super) fn test_dispatches_to_fmt(
     let masked = mask_comments_and_strings(&test.body);
     (fmt_trait == FmtTrait::Display
         && !context.competing_to_string
-        && to_string_dispatch(&masked, &self_type))
+        && to_string_dispatch(&masked, &self_type, &context.constructors))
         || macro_dispatch(&test.body, &masked, fmt_trait, &self_type, context)
 }
 
 /// `value.to_string()` where `value` is typed as `self_type` by the strict
 /// rule below (constructor literal or typed `let`).
-fn to_string_dispatch(masked: &str, self_type: &str) -> bool {
+fn to_string_dispatch(masked: &str, self_type: &str, constructors: &[String]) -> bool {
     let mut search = 0usize;
     while let Some(at) = masked[search..].find(".to_string").map(|at| search + at) {
         search = at + 1;
-        if to_string_dispatch_at(masked, at, self_type) {
+        if to_string_dispatch_at(masked, at, self_type, constructors) {
             return true;
         }
     }
@@ -292,7 +301,12 @@ fn to_string_dispatch(masked: &str, self_type: &str) -> bool {
 }
 
 /// The `.to_string` at `at` is a call whose receiver is typed `self_type`.
-fn to_string_dispatch_at(masked: &str, at: usize, self_type: &str) -> bool {
+fn to_string_dispatch_at(
+    masked: &str,
+    at: usize,
+    self_type: &str,
+    constructors: &[String],
+) -> bool {
     let after = masked[at + ".to_string".len()..].trim_start();
     if !after.starts_with("()") {
         return false;
@@ -304,15 +318,17 @@ fn to_string_dispatch_at(masked: &str, at: usize, self_type: &str) -> bool {
         Scope {
             lets: &lets,
             body: masked,
+            constructors,
         },
         self_type,
     )
 }
 
-/// Whether the changed expression differs from its prior text only inside
-/// string literals. A literal fragment of a `write!` is written whatever the
-/// test passes in, so an exact pin sees it; a changed argument may leave the
-/// output equal for the one value the test chose (`self.0 * 2` at `0`).
+/// Whether one fixed output fragment of an ordinary format template changed.
+/// The original lexical admission stays the withholding ceiling for placeholder,
+/// argument and cancelling-fragment edits. Token validation prevents quotes in
+/// raw strings, characters or comments from hiding them, and also admits a real
+/// fixed-fragment edit the lexical scanner mis-parsed (a `'"'` argument).
 pub(in crate::analysis) fn changes_only_string_literals(
     before: Option<&str>,
     after: Option<&str>,
@@ -320,30 +336,195 @@ pub(in crate::analysis) fn changes_only_string_literals(
     let (Some(before), Some(after)) = (before, after) else {
         return false;
     };
-    let outside = |text: &str| {
-        let mut kept = String::new();
-        let mut in_string = false;
-        let mut escaped = false;
-        for c in text.chars() {
-            if in_string {
-                if escaped {
-                    escaped = false;
-                } else if c == '\\' {
-                    escaped = true;
-                } else if c == '"' {
-                    in_string = false;
-                    kept.push('"');
+    let (Some(outside_before), Some(outside_after)) =
+        (outside_strings(before), outside_strings(after))
+    else {
+        return false;
+    };
+    if before == after || outside_before != outside_after {
+        return false;
+    }
+    let (Some((kept_before, template_before)), Some((kept_after, template_after))) =
+        (format_template(before), format_template(after))
+    else {
+        return false;
+    };
+    let (Some((groups_before, text_before)), Some((groups_after, text_after))) = (
+        format_fragments(&template_before),
+        format_fragments(&template_after),
+    ) else {
+        return false;
+    };
+    if kept_before != kept_after
+        || groups_before != groups_after
+        || text_before.len() != text_after.len()
+    {
+        return false;
+    }
+    // Exactly one fixed fragment differs by written source. A change confined
+    // to line-continuation bytes rides the fragment it joins, so it counts as a
+    // spelling-only edit of that fragment.
+    text_before
+        .iter()
+        .zip(&text_after)
+        .filter(|(a, b)| a != b)
+        .count()
+        == 1
+}
+
+/// Original literal-only lexical boundary, retained as an admission ceiling.
+fn outside_strings(text: &str) -> Option<String> {
+    let mut kept = String::new();
+    let mut in_string = false;
+    let mut escaped = false;
+    for c in text.chars() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                in_string = false;
+                kept.push('"');
+            }
+        } else {
+            kept.push(c);
+            in_string = c == '"';
+        }
+    }
+    (!in_string).then_some(kept)
+}
+
+/// Decode the first ordinary string token (the eligible tail's template) into
+/// characters paired with their source spelling, validating every string
+/// literal and preserving all other source bytes. In particular, argument-string
+/// edits are not a fixed-output witness: precision can suppress their change.
+/// Raw strings stay outside this bounded reading.
+fn format_template(text: &str) -> Option<(String, Vec<(char, String)>)> {
+    use ra_ap_syntax::{
+        AstNode,
+        ast::{self, AstToken, IsString},
+    };
+    let parsed = crate::analysis::syntax::parse_clean_source_file(&format!(
+        "fn ripr_format_edit() {{ {text}; }}"
+    ))?;
+    let mut kept = String::new();
+    let mut template = None;
+    for element in parsed.tree().syntax().descendants_with_tokens() {
+        let Some(token) = element.into_token() else {
+            continue;
+        };
+        if let Some(string) = ast::String::cast(token.clone()) {
+            // Token-tree literals need explicit escape validation even when
+            // the outer macro parses cleanly. Reject suffixes and raw forms.
+            if !token.text().starts_with('"') || !token.text().ends_with('"') {
+                return None;
+            }
+            let value = string.value().ok()?;
+            if template.is_none() {
+                let text = token.text();
+                let mut chars: Vec<(char, String)> = Vec::new();
+                let mut valid = true;
+                let mut at = None;
+                string.escaped_char_ranges(&mut |range, decoded| {
+                    let (start, end) = (usize::from(range.start()), usize::from(range.end()));
+                    let (Ok(c), Some(source)) = (decoded, text.get(start..end)) else {
+                        valid = false;
+                        return;
+                    };
+                    // Skipped bytes (a line continuation) stay with the enclosing
+                    // item; a leading one has no item to join and fails closed.
+                    let previous = at.unwrap_or(1);
+                    if previous < start {
+                        match (chars.last_mut(), text.get(previous..start)) {
+                            (Some(last), Some(gap)) => last.1.push_str(gap),
+                            _ => valid = false,
+                        }
+                    }
+                    at = Some(end);
+                    chars.push((c, source.to_owned()));
+                });
+                if let (Some(end), Some(close)) = (at, text.len().checked_sub(1))
+                    && end < close
+                    && let (Some(last), Some(gap)) = (chars.last_mut(), text.get(end..close))
+                {
+                    last.1.push_str(gap);
                 }
-            } else {
-                kept.push(c);
-                in_string = c == '"';
+                let decoded: String = chars.iter().map(|(c, _)| *c).collect();
+                if !valid || decoded != value {
+                    return None;
+                }
+                template = Some(chars);
+                kept.push_str("\"\"");
+                continue;
             }
         }
-        (kept, in_string)
-    };
-    let (kept_before, open_before) = outside(before);
-    let (kept_after, open_after) = outside(after);
-    !open_before && !open_after && kept_before == kept_after && before != after
+        kept.push_str(token.text());
+    }
+    Some((kept, template?))
+}
+
+/// Ordered groups and fixed fragments as source spellings, with doubled braces
+/// reading as literal braces. A group or fragment is compared by the source it
+/// is written in, so re-spelling a placeholder (`{}` as `\u{7b}\u{7d}`) is an
+/// edit to the group while re-spelling a fixed character is an edit to its
+/// fragment. Comparing one changed fragment avoids cancellation across
+/// placeholders (e.g. `1{}` to `{}1` for the value 1). This does not interpret
+/// the full Rust format-specifier grammar.
+fn format_fragments(template: &[(char, String)]) -> Option<(Vec<String>, Vec<String>)> {
+    let mut groups = Vec::new();
+    let mut fragments = Vec::new();
+    let mut fragment = String::new();
+    let mut at = 0;
+    while at < template.len() {
+        let (c, source) = (&template[at].0, &template[at].1);
+        at += 1;
+        match c {
+            '{' if template.get(at).map(|next| next.0) == Some('{') => {
+                fragment.push_str(source);
+                fragment.push_str(&template[at].1);
+                at += 1;
+            }
+            '{' => {
+                fragments.push(std::mem::take(&mut fragment));
+                let mut group = source.clone();
+                let mut spec = false;
+                loop {
+                    let (next, next_source) = template.get(at)?;
+                    at += 1;
+                    if *next == '{' {
+                        return None;
+                    }
+                    group.push_str(next_source);
+                    if *next == ':' && !spec {
+                        spec = true;
+                        // a fill character may be a brace: `{:{<3}` is one group
+                        if let (Some(fill), Some(align)) = (template.get(at), template.get(at + 1))
+                            && matches!(align.0, '<' | '^' | '>')
+                        {
+                            group.push_str(&fill.1);
+                            group.push_str(&align.1);
+                            at += 2;
+                        }
+                        continue;
+                    }
+                    if *next == '}' {
+                        break;
+                    }
+                }
+                groups.push(group);
+            }
+            '}' if template.get(at).map(|next| next.0) == Some('}') => {
+                fragment.push_str(source);
+                fragment.push_str(&template[at].1);
+                at += 1;
+            }
+            '}' => return None,
+            _ => fragment.push_str(source),
+        }
+    }
+    fragments.push(fragment);
+    Some((groups, fragments))
 }
 
 /// RIPR-SPEC-0297: `assert_eq!(value.to_string(), "literal")` pins the whole
@@ -423,7 +604,7 @@ pub(in crate::analysis) fn assertion_pins_display_string(
     masked
         .get(at..)
         .is_some_and(|rest| rest.starts_with(".to_string"))
-        && to_string_dispatch_at(&masked, at, &self_type)
+        && to_string_dispatch_at(&masked, at, &self_type, &context.constructors)
 }
 
 /// The receiver expression ending at `dot`: an identifier or a bracketed
@@ -535,6 +716,7 @@ fn macro_dispatch(
         let scope = Scope {
             lets: &lets,
             body: masked,
+            constructors: &context.constructors,
         };
         if args_dispatch(&args, format_index, scope, fmt_trait, self_type) {
             return true;
@@ -720,7 +902,9 @@ fn string_literal_content(raw: &str) -> Option<&str> {
 /// that constructs `Self` itself: the bare type name, a struct literal,
 /// tuple struct or enum variant, or a `let` binding initialized so (or
 /// annotated `: self_type`) before the macro. Associated consts and factory
-/// functions (`T::LABEL`, `T::make()`) may have another type and are refused.
+/// functions (`T::LABEL`, `T::make()`) may have another type and are refused,
+/// unless the index shows `make` is the type's only inherent associated fn of
+/// that name and its declared return is exactly `Self` or the type.
 fn expr_has_type(expr: &str, scope: Scope<'_>, self_type: &str) -> bool {
     let mut expr = expr.trim();
     loop {
@@ -739,30 +923,36 @@ fn expr_has_type(expr: &str, scope: Scope<'_>, self_type: &str) -> bool {
     if expr.bytes().all(is_ident_byte) {
         return expr == self_type || binding_has_type(scope, expr, self_type);
     }
-    initializer_is_one_head_expr(expr) && constructs_self(expr, self_type)
+    initializer_is_one_head_expr(expr) && constructs_self(expr, self_type, scope.constructors)
 }
 
-fn constructs_self(expr: &str, self_type: &str) -> bool {
+fn constructs_self(expr: &str, self_type: &str, constructors: &[String]) -> bool {
     let Some((segments, next)) = type_head(expr) else {
         return false;
     };
     let opens = matches!(next, Some(b'(' | b'{'));
     match segments.as_slice() {
-        // `Site(..)` / `m::Site { .. }`: only module (lowercase) prefixes may
+        // `Site(..)` / `crate::Site { .. }`: only an in-crate prefix may
         // precede the type, so `Error::Site(..)` (a variant named like the
-        // type) is not a `Site`.
-        [prefix @ .., last]
-            if opens
-                && *last == self_type
-                && prefix
-                    .iter()
-                    .all(|segment| segment.starts_with(|c: char| c.is_ascii_lowercase())) =>
-        {
-            true
+        // type) and `other_crate::Site { .. }` (a foreign type sharing the
+        // name) are not a `Site`.
+        [prefix @ .., last] if opens && *last == self_type && in_crate_prefix(prefix) => true,
+        [prefix @ .., ty, name] => {
+            *ty == self_type
+                && in_crate_prefix(prefix)
+                && (is_variant_name(name) || (opens && constructors.iter().any(|c| c == name)))
         }
-        [.., ty, variant] => *ty == self_type && is_variant_name(variant),
         _ => false,
     }
+}
+
+/// Whether a path prefix keeps naming the local type: empty, or only
+/// `crate`, `self` or `super` (the rule `binding_has_type` applies to
+/// annotations).
+fn in_crate_prefix(prefix: &[&str]) -> bool {
+    prefix
+        .iter()
+        .all(|segment| matches!(*segment, "crate" | "self" | "super"))
 }
 
 /// What a macro argument can be typed from: the statements finished before
@@ -771,6 +961,7 @@ fn constructs_self(expr: &str, self_type: &str) -> bool {
 struct Scope<'a> {
     lets: &'a str,
     body: &'a str,
+    constructors: &'a [String],
 }
 
 /// Whether `binding` is confined to the shapes that keep its type known:
@@ -869,10 +1060,7 @@ fn binding_has_type(scope: Scope<'_>, binding: &str, self_type: &str) -> bool {
         // of another crate or module that merely shares the local type's
         // name; only an in-crate prefix keeps the annotation the local type.
         return type_head(&pattern[colon + 1..]).is_some_and(|(segments, _)| {
-            segments.last() == Some(&self_type)
-                && segments[..segments.len() - 1]
-                    .iter()
-                    .all(|segment| matches!(*segment, "crate" | "self" | "super"))
+            segments.last() == Some(&self_type) && in_crate_prefix(&segments[..segments.len() - 1])
         });
     }
     let init = statement[eq + 1..].trim();
@@ -882,6 +1070,7 @@ fn binding_has_type(scope: Scope<'_>, binding: &str, self_type: &str) -> bool {
                 .trim_start()
                 .trim_start_matches("mut "),
             self_type,
+            scope.constructors,
         )
 }
 
@@ -1260,6 +1449,14 @@ mod tests {
                 "let merge = Merge;\nassert_eq!(format!(\"{:?}\", merge), \"a\");",
                 "let merge = Merge::new(vec![]);\nassert_eq!(merge.to_string(), \"a\");",
                 "let merge = Merge;\nassert_eq!(merge.len(), 0);",
+                // A path-qualified initializer names the local type only
+                // with an in-crate prefix, like an annotation.
+                "let merge = crate::Merge { labels: vec![] };\nassert_eq!(merge.to_string(), \"a\");",
+                "let merge = self::Merge { labels: vec![] };\nassert_eq!(merge.to_string(), \"a\");",
+                "let merge = super::Merge { labels: vec![] };\nassert_eq!(merge.to_string(), \"a\");",
+                "let merge = other_crate::Merge { labels: vec![] };\nassert_eq!(merge.to_string(), \"a\");",
+                "let merge = other_crate::Merge(vec![]);\nassert_eq!(merge.to_string(), \"a\");",
+                "let merge = other_crate::Merge::Variant;\nassert_eq!(merge.to_string(), \"a\");",
                 // A path-qualified annotation names the local type only with
                 // an in-crate prefix.
                 "let merge: crate::Merge = Merge;\nassert_eq!(merge.to_string(), \"a\");",
@@ -1272,7 +1469,11 @@ mod tests {
             .filter(|(_, reason)| *reason == RelationReason::HelperOwnerCall)
             .map(|(name, _)| name.as_str())
             .collect();
-        assert_eq!(helper_calls, ["t0", "t1", "t6"], "{reasons:?}");
+        assert_eq!(
+            helper_calls,
+            ["t0", "t1", "t12", "t6", "t7", "t8"],
+            "{reasons:?}"
+        );
         assert!(
             !reasons
                 .iter()
@@ -1520,6 +1721,80 @@ mod tests {
             "write!(f, \"{}C\", self.0)",
             "write!(f, \"{}F\", self.1)"
         ));
+        // A changed placeholder is an argument edit in disguise (#9836): the
+        // same value may print the same under `{}`, `{:?}` and `{0}`.
+        assert!(!same(
+            "write!(f, \"{}\u{b0}C\", self.0)",
+            "write!(f, \"{:?}\u{b0}C\", self.0)"
+        ));
+        assert!(!same(
+            "write!(f, \"{}\u{b0}C\", self.0)",
+            "write!(f, \"{0}\u{b0}C\", self.0)"
+        ));
+        // An added or removed group, and an escape traded for a group.
+        assert!(!same("write!(f, \"C\")", "write!(f, \"{}C\", self.0)"));
+        assert!(!same("write!(f, \"{{}}\")", "write!(f, \"{}\", self.0)"));
+        // Text beside identical groups stays text; multiple changed fragments refuse.
+        assert!(same(
+            "write!(f, \"{} C\", self.0)",
+            "write!(f, \"{} F\", self.0)"
+        ));
+        assert!(!same(
+            "write!(f, \"{{{}}}\", self.0)",
+            "write!(f, \"[{}]\", self.0)"
+        ));
+        // Argument-string edits conservatively refuse: precision may hide them.
+        assert!(!same(
+            "write!(f, \"{}\", \"a}\")",
+            "write!(f, \"{}\", \"b}\")"
+        ));
+        assert!(!same(
+            "write!(f, \"{}\", \"a}\")",
+            "write!(f, \"{:?}\", \"a}\")"
+        ));
+        // Unchanged argument braces cannot hide a real template-fragment edit.
+        assert!(same(
+            r#"write!(f, "{} C", "a}")"#,
+            r#"write!(f, "{} F", "a}")"#
+        ));
+        // Nested width/precision arguments (`{:{}}`) are valid syntax this reader
+        // does not interpret: a named conservative gap that withholds credit.
+        assert!(!same(
+            r#"write!(f, "{:{}}C", self.0, w)"#,
+            r#"write!(f, "{:{}}F", self.0, w)"#
+        ));
+        assert!(!same(
+            r#"write!(f, "{:.{}}C", self.0, w)"#,
+            r#"write!(f, "{:.{}}F", self.0, w)"#
+        ));
+        // A lone brace is not format text ripr reads.
+        assert!(!same("write!(f, \"a}\")", "write!(f, \"b}\")"));
+        // A brace is a valid fill character before an alignment marker (#9836).
+        assert!(same(
+            r#"write!(f, "{:{<3}C", self.0)"#,
+            r#"write!(f, "{:{<3}F", self.0)"#
+        ));
+        assert!(same(
+            r#"write!(f, "{:}>3}C", self.0)"#,
+            r#"write!(f, "{:}>3}F", self.0)"#
+        ));
+        assert!(same(
+            r#"write!(f, "{:x<3}C", self.0)"#,
+            r#"write!(f, "{:x<3}F", self.0)"#
+        ));
+        // Changing the fill, or dropping the alignment so the brace is no fill, is a group edit.
+        assert!(!same(
+            r#"write!(f, "{:{<3}C", self.0)"#,
+            r#"write!(f, "{:}<3}F", self.0)"#
+        ));
+        assert!(!same(
+            r#"write!(f, "{:{<3}C", self.0)"#,
+            r#"write!(f, "{:{3}F", self.0)"#
+        ));
+        assert!(!same(
+            r#"write!(f, "{:{{}}C", self.0)"#,
+            r#"write!(f, "{:{{}}F", self.0)"#
+        ));
         // Nothing changed, or no prior text.
         assert!(!same("write!(f, \"x\")", "write!(f, \"x\")"));
         assert!(!super::changes_only_string_literals(
@@ -1528,6 +1803,92 @@ mod tests {
         ));
         // An unterminated literal is not read.
         assert!(!same("write!(f, \"x)", "write!(f, \"y)"));
+    }
+
+    #[test]
+    fn line_continuations_stay_with_their_enclosing_fragment_or_group() {
+        let same = |before: &str, after: &str| {
+            super::changes_only_string_literals(Some(before), Some(after))
+        };
+        // Fixed output sits beside the skipped bytes: a spelling-only edit.
+        assert!(same(
+            "write!(f, \"x\\\n   y{}\", self.0)",
+            "write!(f, \"xy{}\", self.0)"
+        ));
+        // Skipped bytes inside a group belong to that group, so editing them
+        // edits the placeholder.
+        assert!(!same(
+            "write!(f, \"{\\\n   }C\", self.0)",
+            "write!(f, \"{}F\", self.0)"
+        ));
+        // A leading continuation has no item to join and is not read.
+        assert!(!same(
+            "write!(f, \"\\\n   {}C\", self.0)",
+            "write!(f, \"{}F\", self.0)"
+        ));
+    }
+
+    #[test]
+    fn literal_only_credit_refuses_hidden_or_unchanged_runtime_edits() {
+        let same = |before: &str, after: &str| {
+            super::changes_only_string_literals(Some(before), Some(after))
+        };
+        for (before, after) in [
+            (
+                r#"write!(f, "\u{7b}\u{7d}C", self.0)"#,
+                r#"write!(f, "\u{7b}:?\u{7d}C", self.0)"#,
+            ),
+            (
+                r#"write!(f, "\x7b\x7dC", self.0)"#,
+                r#"write!(f, "\x7b0\x7dC", self.0)"#,
+            ),
+            (
+                r##"write!(f, r#"quoted"marker"{}C"#, self.0)"##,
+                r##"write!(f, r#"quoted"marker"{:?}C"#, self.0)"##,
+            ),
+            (
+                r#"write!(f, "{}\qC", self.0)"#,
+                r#"write!(f, "{}\qF", self.0)"#,
+            ),
+            (
+                r#"write!(f, "{}\u{zz}C", self.0)"#,
+                r#"write!(f, "{}\u{zz}F", self.0)"#,
+            ),
+            (
+                r#"write!(f, "{}\u{110000}C", self.0)"#,
+                r#"write!(f, "{}\u{110000}F", self.0)"#,
+            ),
+            (
+                r#"write!(f, "{}\u{C", self.0)"#,
+                r#"write!(f, "{}\u{F", self.0)"#,
+            ),
+            (
+                r#"write!(f, "{}{}{}", '"', self.0, '"')"#,
+                r#"write!(f, "{}{}{}", '"', self.1, '"')"#,
+            ),
+            (
+                r#"write!(f, "{}x{}", "", "")"#,
+                r#"write!(f, "{}{}x", "", "")"#,
+            ),
+            (r#"write!(f, "{:.0}", "a}")"#, r#"write!(f, "{:.0}", "b}")"#),
+        ] {
+            assert!(!same(before, after), "{before} -> {after}");
+        }
+        assert!(same(
+            r#"write!(f, "{}°C", self.0)"#,
+            r#"write!(f, "{}\u{b0}F", self.0)"#
+        ));
+        // Re-spelling a placeholder edits no fixed fragment: not literal-only.
+        assert!(!same(
+            r#"write!(f, "{}C", self.0)"#,
+            r#"write!(f, "\u{7b}\u{7d}C", self.0)"#
+        ));
+        // A spelling-only rewrite of fixed text prints the same output: the pin
+        // stays valid (corpus row `idiom-display-string-pin`), so it is not withheld.
+        assert!(same(
+            r#"write!(f, "{}°C", self.0)"#,
+            r#"write!(f, "{}\u{b0}C", self.0)"#
+        ));
     }
 
     #[test]
@@ -1704,6 +2065,142 @@ mod tests {
         assert!(direct(&reasons(&owner, 0, &[unit_variant]), "t0"));
     }
 
+    /// An inherent `impl DecodeError` fn declared on line `line` of the extra
+    /// source `src/extra0.rs`, as the index records it.
+    fn inherent_fn(name: &str, line: usize, source: &str) -> FunctionSummary {
+        let mut function = fmt_function("src/extra0.rs", "DecodeError");
+        function.name = name.to_string();
+        function.id = SymbolId(format!("src/extra0.rs::impl DecodeError::{name}"));
+        function.start_line = line;
+        function.end_line = line;
+        function.item.container = crate::analysis::facts::FunctionContainer::Inherent {
+            self_ty: "DecodeError".to_string(),
+        };
+        function.item.has_body = true;
+        function.body = source
+            .lines()
+            .nth(line - 1)
+            .and_then(|text| {
+                text.find("fn ").map(|at| {
+                    text[at..]
+                        .trim_end()
+                        .strip_suffix('}')
+                        .unwrap_or(&text[at..])
+                        .trim_end()
+                })
+            })
+            .unwrap_or_default()
+            .into();
+        function
+    }
+
+    /// Whether the tests relate, with one indexed inherent `make` per source
+    /// line that declares it (none when the source declares no `make`).
+    fn ctor_reasons(source: &str, body: &str, owner: &str) -> bool {
+        let functions = source
+            .lines()
+            .enumerate()
+            .filter(|(_, text)| text.contains("fn make("))
+            .map(|(at, text)| {
+                let mut function = inherent_fn("make", at + 1, source);
+                function.item.has_self_param = text.contains("(self");
+                function
+            })
+            .collect();
+        direct(
+            &reasons_full(&[owner], 0, &[body], &[source], functions),
+            "t0",
+        )
+    }
+
+    #[test]
+    fn a_path_call_to_a_self_returning_inherent_constructor_types_the_receiver() {
+        let debug = "fmt::Debug for DecodeError";
+        let source = "impl DecodeError { pub fn make(n: u8) -> Self { DecodeError::Overflow } }\n";
+        for body in [
+            "let e = DecodeError::make(3);\nformat!(\"{:?}\", e);",
+            "let e = crate::DecodeError::make(3);\nformat!(\"{:?}\", e);",
+            "format!(\"{:?}\", DecodeError::make(3));",
+            "let mut e = DecodeError::make(3);\nassert_eq!(format!(\"{e:?}\"), \"x\");",
+        ] {
+            assert!(ctor_reasons(source, body, debug), "{body}");
+        }
+        let display = "fmt::Display for DecodeError";
+        let to_string = "let e = DecodeError::make(3);\nassert_eq!(e.to_string(), \"x\");";
+        assert!(ctor_reasons(source, to_string, display));
+        // A return of the type name, with generics, is the same type.
+        let named =
+            "impl DecodeError { pub fn make(n: u8) -> DecodeError { DecodeError::Overflow } }\n";
+        let body = "let e = DecodeError::make(3);\nformat!(\"{:?}\", e);";
+        assert!(ctor_reasons(named, body, debug));
+    }
+
+    #[test]
+    fn constructor_receivers_fail_closed_unless_the_index_proves_the_return() {
+        let debug = "fmt::Debug for DecodeError";
+        let body = "let e = DecodeError::make(3);\nformat!(\"{:?}\", e);";
+        let rows: [(&str, &str); 7] = [
+            (
+                "a Result wrapper",
+                "impl DecodeError { pub fn make(n: u8) -> Result<Self, ()> { Ok(DecodeError::Overflow) } }\n",
+            ),
+            (
+                "another type",
+                "impl DecodeError { pub fn make(n: u8) -> Other { Other } }\n",
+            ),
+            (
+                "no declared return",
+                "impl DecodeError { pub fn make(n: u8) { } }\n",
+            ),
+            (
+                "a method taking self",
+                "impl DecodeError { pub fn make(self) -> Self { self } }\n",
+            ),
+            (
+                "two declarations of the name",
+                "impl DecodeError { pub fn make(n: u8) -> Self { DecodeError::Overflow } }\nimpl DecodeError { pub fn make(n: u8) -> Self { DecodeError::Overflow } }\n",
+            ),
+            (
+                "an async constructor",
+                "impl DecodeError { pub async fn make(n: u8) -> Self { DecodeError::Overflow } }\n",
+            ),
+            ("no indexed declaration", "impl DecodeError { }\n"),
+        ];
+        for (label, source) in rows {
+            assert!(!ctor_reasons(source, body, debug), "{label}");
+        }
+        let source = "impl DecodeError { pub fn make(n: u8) -> Self { DecodeError::Overflow } }\n";
+        for body in [
+            "let e = DecodeError::make(3).unwrap();\nformat!(\"{:?}\", e);",
+            "let e = other::DecodeError::make(3);\nformat!(\"{:?}\", e);",
+            "let e = DecodeError::make(3);\nlet f = move || e;\nformat!(\"{:?}\", e);",
+            "format!(\"{:?}\", DecodeError::make);",
+            "format!(\"{:?}\", DecodeError::other(3));",
+        ] {
+            assert!(!ctor_reasons(source, body, debug), "{body}");
+        }
+    }
+
+    #[test]
+    fn a_trait_only_constructor_does_not_type_the_receiver() {
+        let source =
+            "impl Make for DecodeError { fn make(n: u8) -> Self { DecodeError::Overflow } }\n";
+        let mut make = inherent_fn("make", 1, source);
+        make.item.container = crate::analysis::facts::FunctionContainer::TraitImpl {
+            trait_path: "Make".to_string(),
+            self_ty: "DecodeError".to_string(),
+        };
+        let body = "let e = DecodeError::make(3);\nformat!(\"{:?}\", e);";
+        let related = reasons_full(
+            &["fmt::Debug for DecodeError"],
+            0,
+            &[body],
+            &[source],
+            vec![make],
+        );
+        assert!(related.is_empty(), "{related:?}");
+    }
+
     #[test]
     fn inherent_to_string_wins_over_display() {
         let body = format!("{CTOR}assert_eq!(e.to_string(), \"x\");");
@@ -1753,13 +2250,17 @@ mod tests {
         for body in [
             "format!(\"{:?}\", Error::DecodeError(inner));".to_string(),
             "let e = Error::DecodeError(inner);\nformat!(\"{:?}\", e);".to_string(),
+            // A module prefix may be another crate's module (#8999): only
+            // bare, `crate`, `self` and `super` prefixes name the local type.
+            "format!(\"{:?}\", m::DecodeError(inner));".to_string(),
+            "let e = crate::m::DecodeError(inner);\nformat!(\"{:?}\", e);".to_string(),
         ] {
             assert!(reasons(&owner, 0, &[&body]).is_empty(), "{body}");
         }
         for body in [
             "format!(\"{:?}\", DecodeError(inner));",
-            "format!(\"{:?}\", m::DecodeError(inner));",
-            "let e = crate::m::DecodeError(inner);\nformat!(\"{:?}\", e);",
+            "format!(\"{:?}\", crate::DecodeError(inner));",
+            "let e = super::DecodeError(inner);\nformat!(\"{:?}\", e);",
         ] {
             assert!(direct(&reasons(&owner, 0, &[body]), "t0"), "{body}");
         }

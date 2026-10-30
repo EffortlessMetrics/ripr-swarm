@@ -145,8 +145,11 @@ Warm draft work and repeated focused review/repair
   -> landed-state reconciliation
 ```
 
-No native merge queue or automatic merge belongs to that target. One late run
-is the normal path, not a ban on justified repair/rerun. Available checks,
+The accepted destination under #4984 is native merge-queue qualification of
+the actual merge composition; generic automatic merge is not a substitute for
+the installed legacy final judgment. Until verified migration, the installed
+`merge-ready` label route above remains operative (see [merge flow](MERGE_FLOW.md)).
+One late run is the normal legacy path, not a ban on justified repair/rerun. Available checks,
 mandatory obligations and selected additional checks are different sets.
 Evidence reuse needs a reviewed applicability decision; static output cannot
 silently waive a required check.
