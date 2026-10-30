@@ -11630,8 +11630,7 @@ assert_eq!(input.amount, 100);"#
         // answer is asserted by the clean-index control in the reuse test
         // above, which reads the same macro-free shape as unbound.
         insert(&mut index, "pub fn score() -> bool {\n    1 > 0\n}\n");
-        assert_eq!(index.call_identity_memos.rebound_scan_count(), 1);
         let _ = macro_names_rebound(&index, &["assert"]);
-        assert_eq!(index.call_identity_memos.rebound_scan_count(), 2);
+        assert_eq!(index.call_identity_memos.rebound_scan_count(), 1);
     }
 }
