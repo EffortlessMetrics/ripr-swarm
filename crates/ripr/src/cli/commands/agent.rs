@@ -1876,11 +1876,8 @@ fn run_agent_repair_phase(
                 &root,
                 store_ref,
             )?;
-            crate::edit_cage::validate_build_output_precondition(&root, &policy).map_err(
-                |error| {
-                    format!("{error} No workflow was prepared and no repair attempt was started.")
-                },
-            )?;
+            crate::edit_cage::validate_build_output_precondition(&root, &policy)
+                .map_err(|error| format!("{error} Nothing was started."))?;
 
             // Fail early on a dirty production premise (#5262): the repair
             // loop pins the repository at its before phase, so tracked
@@ -2356,13 +2353,10 @@ fn run_agent_repair_phase(
                     && cage_after.verdict.status
                         != crate::edit_cage::EditCageVerdictStatus::Compliant
                 {
-                    Err(format!(
-                        "repair attempt `{}` ended `{}` because it edited files outside the test files ({}); gap `{}` is not reported closed for an attempt ripr rejected",
+                    Err(gap_bound_rejected_attempt_message(
                         cage_after.attempt_id.as_str(),
-                        crate::app::repair_attempt::repair_attempt_state_for_finish(&cage_after)
-                            .as_label(),
-                        cage_after.verdict.status.as_label(),
-                        attempt.seam_id
+                        cage_after.verdict.status,
+                        &attempt.seam_id,
                     ))
                 } else {
                     run_agent_receipt_for_attempt(
@@ -3133,7 +3127,7 @@ fn repair_after_input_drift_lines(
                 paths.join(", ")
             ));
             lines.push(format!(
-                "attempt `{}` was not finished and is still awaiting the focused test edit.",
+                "attempt `{}` was not finished and is still waiting for your test.",
                 attempt.attempt_id.as_str()
             ));
             // A committed input change cannot be restored in the worktree
@@ -3247,6 +3241,28 @@ fn before_phase_dirty_premise_refusal_with_restart(restart: &str, violations: &[
     )
 }
 
+/// Why a gap-bound attempt gets no receipt when ripr did not accept its
+/// changes. A violation and an incomparable measurement are different facts, so
+/// the wording branches instead of claiming an edit that was never observed.
+fn gap_bound_rejected_attempt_message(
+    attempt_id: &str,
+    status: crate::edit_cage::EditCageVerdictStatus,
+    gap_id: &str,
+) -> String {
+    let why = match status {
+        crate::edit_cage::EditCageVerdictStatus::Violated => {
+            "it edited files outside the test files"
+        }
+        crate::edit_cage::EditCageVerdictStatus::Incomparable => {
+            "ripr could not compare the files before and after it"
+        }
+        crate::edit_cage::EditCageVerdictStatus::Compliant => "ripr did not accept its changes",
+    };
+    format!(
+        "repair attempt `{attempt_id}` was rejected because {why}; gap `{gap_id}` is not reported closed for a rejected attempt"
+    )
+}
+
 /// The gap-bound before phase (#9103, RIPR-SPEC-0311): resolve the canonical
 /// TypeScript gap among the findings of the same diff-scoped check
 /// `ripr check --base <base>` runs, admit it only through the shared
@@ -3340,9 +3356,8 @@ fn run_gap_bound_before_phase(
         root,
         store_ref,
     )?;
-    crate::edit_cage::validate_build_output_precondition(root, &policy).map_err(|error| {
-        format!("{error} No workflow was prepared and no repair attempt was started.")
-    })?;
+    crate::edit_cage::validate_build_output_precondition(root, &policy)
+        .map_err(|error| format!("{error} Nothing was started."))?;
     let premise_head = crate::agent::artifact::current_git_head(root)?;
     let premise_violations = crate::app::repair_attempt::trusted_head_surface_violations(
         root,
@@ -3644,6 +3659,30 @@ mod root_tests;
 
 #[cfg(test)]
 mod tests {
+    use super::gap_bound_rejected_attempt_message as rejected;
+    use crate::edit_cage::EditCageVerdictStatus as Status;
+
+    /// A violated verdict may claim an out-of-surface edit; an incomparable
+    /// one never observed an edit and must not claim it.
+    #[test]
+    fn gap_bound_rejection_wording_branches_on_the_verdict() {
+        let violated = rejected("a1", Status::Violated, "g1");
+        assert!(
+            violated.contains("edited files outside the test files"),
+            "{violated}"
+        );
+        let incomparable = rejected("a1", Status::Incomparable, "g1");
+        assert!(incomparable.contains("could not compare"), "{incomparable}");
+        assert!(!incomparable.contains("edited files"), "{incomparable}");
+        for text in [&violated, &incomparable] {
+            assert!(
+                !text.contains("violated") && !text.contains("incomparable"),
+                "{text}"
+            );
+            assert!(text.contains("gap `g1` is not reported closed"), "{text}");
+        }
+    }
+
     use super::super::tests::{
         args, outcome_after_json, outcome_before_json, unique_command_test_dir,
         unique_repo_relative_test_dir,

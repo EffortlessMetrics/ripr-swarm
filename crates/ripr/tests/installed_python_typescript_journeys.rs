@@ -835,11 +835,7 @@ fn typescript_literal_threshold_packet_is_complete_and_controls_fail_closed() ->
     if !repair_ok {
         return Err(format!("gap-bound before phase was refused:\n{repair}"));
     }
-    need(
-        &repair,
-        "awaiting the focused test edit",
-        "attempt published",
-    )?;
+    need(&repair, "waiting for your test", "attempt published")?;
     need(&repair, "test/pricing.test.ts", "edit target is the test")?;
     if repair.contains("--seam-id") {
         return Err(format!("gap-bound output leaks --seam-id:\n{repair}"));

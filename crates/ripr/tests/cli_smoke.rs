@@ -6707,7 +6707,7 @@ fn agent_card_readiness_agrees_with_repair_target_admission()
             assert_eq!(card["forbidden_files"], serde_json::json!(["src/lib.rs"]));
             assert!(card["next_action"].is_null());
             assert!(before.stdout.is_empty());
-            assert!(!String::from_utf8_lossy(&before.stderr).contains("before phase complete"));
+            assert!(!String::from_utf8_lossy(&before.stderr).contains("repair started"));
             // #10712: `agent start` applies the same admission gate, so the
             // seam `repair` and `card` call not repair-ready is a typed
             // refusal (exit 3) and writes no workflow.
@@ -8787,19 +8787,14 @@ fn agent_repair_before_requires_effective_cargo_build_directory_ignore()
             ).into());
         }
         let stderr = String::from_utf8_lossy(&before.stderr);
-        for required in [
-            "target/",
-            "Git-ignored",
-            "/target/",
-            "no repair attempt was started",
-        ] {
+        for required in ["target/", "Git-ignored", "/target/", "Nothing was started."] {
             if !stderr.contains(required) {
                 return Err(
                     format!("missing actionable precondition {required:?}: {stderr}").into(),
                 );
             }
         }
-        if !before.stdout.is_empty() || stderr.contains("before phase complete") {
+        if !before.stdout.is_empty() || stderr.contains("repair started") {
             return Err(format!(
                 "refused before phase must not publish a packet or completion: {before:?}"
             )
@@ -9761,7 +9756,7 @@ fn agent_repair_before_inline_only_seam(ambiguous: bool) -> Result<(), Box<dyn s
         "the refusal must state both packet states:\n{stderr}"
     );
     assert!(
-        !stderr.contains("before phase complete"),
+        !stderr.contains("repair started"),
         "a refused before phase must not claim completion:\n{stderr}"
     );
     for artifact in [
@@ -27589,7 +27584,7 @@ fn agent_status_names_a_refused_after_phase_before_repeating_it()
         markdown.contains("was refused: agent verify no repository movement"),
         "{markdown}"
     );
-    assert!(markdown.contains("last after phase refused"), "{markdown}");
+    assert!(markdown.contains("last step refused"), "{markdown}");
 
     // The focused edit resolves the cause; the retry finishes and the
     // refusal no longer describes the attempt.

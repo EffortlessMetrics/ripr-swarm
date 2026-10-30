@@ -3001,7 +3001,7 @@ impl DivergedHeadRecovery {
     pub(crate) fn lines(&self) -> Vec<String> {
         vec![
             self.cause.clone(),
-            "the attempt was not finished and is still awaiting the focused test edit.".to_string(),
+            "the attempt was not finished and is still waiting for your test.".to_string(),
             self.reset.clone(),
             self.restart.clone(),
         ]

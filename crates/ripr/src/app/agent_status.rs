@@ -2331,7 +2331,7 @@ fn attempt_outcome(attempt: &AgentStatusRepairAttempt) -> String {
         }
     }
     if attempt.last_after_refusal.is_some() {
-        parts.push("last after phase refused".to_string());
+        parts.push("last step refused".to_string());
     }
     if parts.is_empty() {
         "-".to_string()
@@ -3308,10 +3308,10 @@ fn restart_attempt_command(
             "repair attempt `{id}` for seam `{seam}` ended incomparable; start a new attempt while the gap is still open"
         )),
         "failed" => restart(format!(
-            "repair attempt `{id}` for seam `{seam}` ended failed; start a new attempt while the gap is still open"
+            "repair `{id}` for gap `{seam}` ended failed; start a new repair while the gap is still open"
         )),
         "limited" if view.disposition == "retry_budget_spent" => restart(format!(
-            "repair attempt `{id}` for seam `{seam}` spent its after-phase retry budget, so its after phase now refuses without running; start a new attempt while the gap is still open"
+            "repair `{id}` for gap `{seam}` used up its retry limit, so it now refuses without running; start a new repair while the gap is still open"
         )),
         "limited" => match &view.receipt {
             AgentStatusAttemptReceipt::Issued { reading, .. } if reading.leaves_gap_open() => {
