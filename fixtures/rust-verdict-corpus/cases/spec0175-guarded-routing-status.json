@@ -1,0 +1,55 @@
+{
+  "case_id": "spec0175-guarded-routing-status",
+  "subject_id": "authored-spec-results",
+  "diff": "cases/spec0175-guarded-routing-status.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 64
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "error_path",
+  "test_shape": "guarded_routing_no_ok_arm",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "return Err(StatusError::Reserved);",
+        "mutated_line": "return Err(StatusError::Reserved);",
+        "outcome": "tests_failed",
+        "failing_test": "tests::empty_frame_routes_to_empty",
+        "equivalence_review": "not equivalent: an empty frame reports Reserved"
+      },
+      {
+        "replacement": "return Ok(0);",
+        "mutated_line": "return Ok(0);",
+        "outcome": "tests_failed",
+        "failing_test": "tests::empty_frame_routes_to_empty",
+        "equivalence_review": "not equivalent: an empty frame reads status 0"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "empty_frame_routes_to_empty accepts only Err(error) if error == StatusError::Empty and routes every other result to bail!, with no Ok arm, so a sibling variant or an Ok fails it. Spec cells: RIPR-SPEC-0175 example 2 (error-path seam).",
+  "labeling_observation": {
+    "ripr_commit": "2939c0d",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0175#2"
+  ]
+}

@@ -1,0 +1,45 @@
+{
+  "case_id": "py-shapes-context-exit-record",
+  "subject_id": "authored-py-pytest-shapes",
+  "diff": "cases/py-shapes-context-exit-record.diff",
+  "anchor": {
+    "file": "shapes/ctx.py",
+    "line": 13
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "collection_element",
+  "test_shape": "pytest_context_manager_events_pinned",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, Hypothesis 6.168.3, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "self.events.append(\"leave\")",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests/test_ctx.py::test_recorder_notes_enter_and_exit",
+        "equivalence_review": "not equivalent: the exit marker changes"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The test reads rec.events after the with block and compares both entries.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -1,0 +1,9 @@
+diff --git a/src/kind.py b/src/kind.py
+--- a/src/kind.py
++++ b/src/kind.py
+@@ -5,4 +5,4 @@
+         case int():
+             return "int"
+         case _:
+-            return "other"
++            return "misc"

@@ -37,6 +37,7 @@ use ra_ap_syntax::ast::{
 use ra_ap_syntax::{AstNode, SyntaxKind, SyntaxNode, ast};
 
 pub(super) mod guard;
+pub(super) mod mock_count;
 
 pub(super) const QUESTION_MARK_SIDE_FLIP: &str = "Result-side oracle observes the `?` side flip: this `?` is the owner's only source of `Err`, and a test asserts the owner call returns `Err` (RIPR-SPEC-0227 rule 3b)";
 
@@ -280,6 +281,58 @@ fn test_file_macros_and_inner_cfg_are_plain(root: &SyntaxNode) -> bool {
     })
 }
 
+/// Whether test code in the file calls something that can end the test run
+/// without a failure: `process::exit`, `process::abort` or `exec`. Such a
+/// call in a helper, a table loop or an owner-call argument keeps the
+/// assertion after it from running while the test still passes (#8015), and
+/// no scan of the test body alone sees a callee's body. Fail closed on any
+/// path ending in `exit`/`abort`, and on a `.exec()` method call; a user
+/// function of that name refuses too. `whole_file` reads every item (a test
+/// file of its own); otherwise only `#[test]` functions and `#[cfg(test)]`
+/// modules, since the file also holds production code.
+fn diverging_call_in_test_code(root: &SyntaxNode, whole_file: bool) -> bool {
+    let test_only = |node: &SyntaxNode| {
+        node.ancestors().any(|ancestor| {
+            ast::Fn::cast(ancestor.clone()).is_some_and(|function| {
+                function
+                    .attrs()
+                    .any(|attribute| attribute.syntax().text() == "#[test]")
+            }) || ast::Module::cast(ancestor).is_some_and(|module| {
+                module
+                    .attrs()
+                    .any(|attribute| is_test_build_gate(&attribute.syntax().text().to_string()))
+            })
+        })
+    };
+    // Tokens, not call nodes: an assertion macro's arguments are a token
+    // tree (`assert_eq!(total(std::process::exit(0)).ok(), None)`) that the
+    // syntax tree does not parse into calls.
+    let next_is_call = |token: &ra_ap_syntax::SyntaxToken| {
+        std::iter::successors(token.next_token(), |t| t.next_token())
+            .find(|next| !next.kind().is_trivia())
+            .is_some_and(|next| next.kind() == SyntaxKind::L_PAREN)
+    };
+    let after_dot = |token: &ra_ap_syntax::SyntaxToken| {
+        std::iter::successors(token.prev_token(), |t| t.prev_token())
+            .find(|previous| !previous.kind().is_trivia())
+            .is_some_and(|previous| previous.kind() == SyntaxKind::DOT)
+    };
+    root.descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| token.kind() == SyntaxKind::IDENT)
+        .any(|token| {
+            let diverges = match token.text() {
+                "exit" | "abort" => next_is_call(&token),
+                "exec" => after_dot(&token) && next_is_call(&token),
+                _ => false,
+            };
+            diverges
+                && token
+                    .parent()
+                    .is_some_and(|parent| whole_file || test_only(&parent))
+        })
+}
+
 /// The only function of this name anywhere in the file.
 fn unique_function(root: &SyntaxNode, name: &str) -> Option<ast::Fn> {
     let mut functions = root
@@ -357,6 +410,14 @@ fn plain_related_tests<'c>(
             }
             let test_root = parsed(&test_facts.source)?;
             if !test_file_macros_and_inner_cfg_are_plain(test_root.syntax()) {
+                return None;
+            }
+            // In the owner's own file only test-only code counts: a
+            // production `process::exit` there says nothing about the test.
+            let shares_owner_file = context
+                .owner_fn
+                .is_some_and(|owner_fn| owner_fn.file == test.file);
+            if diverging_call_in_test_code(test_root.syntax(), !shares_owner_file) {
                 return None;
             }
             unique_function(test_root.syntax(), &test.name)

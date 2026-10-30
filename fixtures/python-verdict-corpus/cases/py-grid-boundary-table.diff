@@ -1,0 +1,12 @@
+diff --git a/grid_boundary/core.py b/grid_boundary/core.py
+--- a/grid_boundary/core.py
++++ b/grid_boundary/core.py
+@@ -6,7 +6,7 @@
+ 
+ 
+ def free_shipping(cents):
+-    return cents >= 5000
++    return 5000 <= cents
+ 
+ 
+ def can_retire(age):

@@ -1,0 +1,22 @@
+{
+  "case_id": "pw-expect-tobe-exact",
+  "subject_id": "authored-ts-playwright-units",
+  "origin": "authored",
+  "anchor": "src/slug.ts:2",
+  "behavior_family": "return_value",
+  "test_shape": "playwright_test_expect_tobe",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

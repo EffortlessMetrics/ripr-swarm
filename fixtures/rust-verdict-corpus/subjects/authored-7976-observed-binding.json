@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-7976-observed-binding",
+  "origin": "authored",
+  "version_label": "authored 2026-10-19; paired guard evidence for #7976 / #8866",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "166b03001f2559bd26b3806dcdd6d2bff1d50b84b8a2e5d43374d9538342cdaa"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "81d44221de7718f9115281f77e9fe3d2940163093f3db96e9df9afc94f867d16"
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+diff --git a/src/sign.py b/src/sign.py
+--- a/src/sign.py
++++ b/src/sign.py
+@@ -1,5 +1,5 @@
+ def sign(x):
+     if x > 0:
+         return 1
+     else:
+-        return -1
++        return -2

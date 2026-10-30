@@ -1,0 +1,50 @@
+{
+  "kind": "result_map_callback_candidate_current_projection",
+  "producer_commit": "4b2b641c0f8386db473439e572e619e321fd7ae0",
+  "producer_executable_sha256": "ffbf97300047c16280c87182472e57f5ade7a74bce83c1235a5a823d5d15849e",
+  "selection": "exact candidate_current return_value map-tail finding; base_deleted findings excluded",
+  "subject_source": "#[derive(Debug, PartialEq)] struct E;\nstruct Reader { fail: bool }\nimpl Reader {\n    fn read(&mut self) -> Result<u64,E> { Ok(7) }\n    fn mapped(&self) -> Result<u64,E> {\n        self.read().map(|v| v + 1)\n    }\n}\ntrait ReadFuture { async fn read(&self) -> Result<u64,E>; }\nimpl ReadFuture for Reader { async fn read(&self) -> Result<u64,E> { Ok(7) } }\ntrait FutureMap { fn map<F: FnOnce(u64)->u64>(self, ignored:F)->Result<u64,E>; }\nimpl<T: core::future::Future<Output=Result<u64,E>>> FutureMap for T { fn map<F: FnOnce(u64)->u64>(self, _ignored:F)->Result<u64,E> { Ok(8) } }\n#[test] fn direct_ok() { let r = Reader { fail: false }; assert_eq!(r.mapped(), Ok(8)); }\n",
+  "subject_source_sha256": "17c5b2638f5a0e9c46f1ef76082d1bac079ad56df0b06be319d0b8b615658eea",
+  "subject_diff": "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -6,1 +6,1 @@\n-        Ok(self.read()? + 1)\n+        self.read().map(|v| v + 1)\n",
+  "baseline_limit": "old expression is synthetic diff input, not a compiled baseline",
+  "summary": {
+    "findings": 1
+  },
+  "findings": [
+    {
+      "classification": "weakly_exposed",
+      "source_currentness": "candidate_current",
+      "ripr": {
+        "reach": {
+          "state": "yes",
+          "confidence": "medium",
+          "summary": "Related tests appear to reach mapped: direct_ok"
+        },
+        "infect": {
+          "state": "yes",
+          "confidence": "medium",
+          "summary": "Reachable tests can plausibly activate this changed behavior"
+        },
+        "propagate": {
+          "state": "weak",
+          "confidence": "low",
+          "summary": "No complete owner-bound propagation witness found for returned value: self.read().map(|v| v + 1)"
+        },
+        "observe": {
+          "state": "yes",
+          "confidence": "medium",
+          "summary": "A related test observes a value or effect near the changed behavior"
+        },
+        "discriminate": {
+          "state": "weak",
+          "confidence": "medium",
+          "summary": "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"
+        }
+      },
+      "probe": {
+        "family": "return_value",
+        "expression": "self.read().map(|v| v + 1)"
+      }
+    }
+  ]
+}

@@ -22,14 +22,13 @@ const PORTFOLIO: &[&str] = &[
     "Dependency policy",
     "Process policy",
     "Network policy",
-    "Workspace and all-target check",
     "All-features ripr target check",
     "Strict workspace Clippy",
-    "Required Rust tests",
-    "Required Rust doctests",
     "Golden output contracts",
     "Fixture contracts",
     "Verdict corpora",
+    "Required Rust tests",
+    "Required Rust doctests",
     "PR evidence",
 ];
 
@@ -67,7 +66,16 @@ fn portfolio(source: &str) -> Result<Vec<Step>, String> {
             {
                 continue;
             }
-            if *name == "PR evidence" && field == "if: github.event_name == 'pull_request'" {
+            if *name == "PR evidence"
+                && field
+                    == "if: github.event_name == 'pull_request' || github.event_name == 'merge_group'"
+            {
+                continue;
+            }
+            // The importer rehearses the unpartitioned form: `test-shards` defaults
+            // to 1 on the self-hosted routes it models, so this one condition (#10507)
+            // is true there. Any other condition, or this one elsewhere, refuses.
+            if *name == "Required Rust tests" && field == "if: inputs.test-shards == 1" {
                 continue;
             }
             return Err(format!(
@@ -105,10 +113,14 @@ fn portfolio(source: &str) -> Result<Vec<Step>, String> {
             // integration rehearsal; every other expression is unsupported.
             if value.contains("${{") {
                 let supported = match key {
-                    "BASE_SHA" => "${{ github.event.pull_request.base.sha }}",
-                    "HEAD_SHA" => "${{ github.event.pull_request.head.sha }}",
+                    "BASE_SHA" => {
+                        "${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}"
+                    }
+                    "HEAD_SHA" => {
+                        "${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}"
+                    }
                     "GITHUB_PR_LABELS" => {
-                        "${{ join(github.event.pull_request.labels.*.name, ',') }}"
+                        "${{ inputs.pr-labels || join(github.event.pull_request.labels.*.name, ',') }}"
                     }
                     _ => "",
                 };
@@ -453,7 +465,7 @@ mod tests {
         result
     }
     #[test]
-    fn terminal_success_requires_all_seventeen_native_command_rows() -> Result<(), String> {
+    fn terminal_success_requires_all_sixteen_native_command_rows() -> Result<(), String> {
         let root = env::temp_dir().join(format!("contabo-complete-{}", std::process::id()));
         fs::create_dir(&root).map_err(|error| error.to_string())?;
         let result = (|| {
@@ -469,7 +481,7 @@ mod tests {
                 rows.push(command_row(&step, code, 1));
             }
             let incomplete = root.join("incomplete.json");
-            assert!(retain_terminal_commands(&json!({}), &rows[..16], 0, &incomplete).is_err());
+            assert!(retain_terminal_commands(&json!({}), &rows[..15], 0, &incomplete).is_err());
             assert!(!incomplete.exists());
             let complete = root.join("complete.json");
             retain_terminal_commands(&json!({"subject":"fixture"}), &rows, 0, &complete)?;
@@ -477,7 +489,7 @@ mod tests {
                 serde_json::from_slice(&fs::read(&complete).map_err(|error| error.to_string())?)
                     .map_err(|error| error.to_string())?;
             assert_eq!(receipt["disposition"], "product_pass");
-            assert_eq!(receipt["steps"].as_array().map(Vec::len), Some(17));
+            assert_eq!(receipt["steps"].as_array().map(Vec::len), Some(16));
             assert!(
                 receipt["steps"]
                     .as_array()
@@ -565,7 +577,7 @@ mod tests {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
         let source = fs::read_to_string(root.join(OWNER)).map_err(|e| e.to_string())?;
         let steps = portfolio(&source)?;
-        assert_eq!(steps.len(), 17);
+        assert_eq!(steps.len(), 16);
         assert!(
             steps
                 .iter()
@@ -616,7 +628,7 @@ mod tests {
         let source = fs::read_to_string(root.join(OWNER)).map_err(|e| e.to_string())?;
         for changed in [
             source.replace(
-                "BASE_SHA: ${{ github.event.pull_request.base.sha }}",
+                "BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}",
                 "BASE_SHA: ${{ secrets.UNKNOWN }}",
             ),
             source.replace("id: formatting", "id: formatting\n        shell: pwsh"),
@@ -625,11 +637,39 @@ mod tests {
                 "id: formatting\n        working-directory: other",
             ),
             source.replace("id: formatting", "id: formatting\n        if: false"),
-            source.replace("if: github.event_name == 'pull_request'", "if: false"),
+            source.replace(
+                "if: inputs.test-shards == 1",
+                "if: inputs.test-shards == 4",
+            ),
+            source.replace(
+                "id: formatting",
+                "id: formatting\n        if: inputs.test-shards == 1",
+            ),
+            source.replace(
+                "if: github.event_name == 'pull_request' || github.event_name == 'merge_group'",
+                "if: false",
+            ),
         ] {
             assert_ne!(source, changed);
             assert!(portfolio(&changed).is_err());
         }
+        Ok(())
+    }
+    #[test]
+    fn the_shard_condition_on_the_required_tests_step_still_imports() -> Result<(), String> {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let source = fs::read_to_string(root.join(OWNER)).map_err(|e| e.to_string())?;
+        assert!(source.contains("if: inputs.test-shards == 1"));
+        let steps = portfolio(&source)?;
+        let tests = steps
+            .iter()
+            .find(|step| step.name == "Required Rust tests")
+            .ok_or("Required Rust tests step missing")?;
+        assert!(
+            tests
+                .script
+                .contains("cargo nextest run --workspace --profile ci")
+        );
         Ok(())
     }
     #[test]

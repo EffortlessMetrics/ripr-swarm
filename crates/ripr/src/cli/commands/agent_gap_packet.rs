@@ -73,7 +73,7 @@ mod tests {
         assert_eq!(
             render_agent_packet_from_gap_ledger(&root, &gap_ledger, "gap:no-action"),
             Err(
-                "agent packet gap_id gap:no-action is not agent-packet eligible: already_observed"
+                "agent packet gap_id gap:no-action is not agent-packet eligible: a test already observes this gap, so there is no repair to drive"
                     .to_string()
             )
         );

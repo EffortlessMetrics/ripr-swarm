@@ -1,0 +1,22 @@
+{
+  "case_id": "shape-enum-branch-weight",
+  "subject_id": "authored-ts-vitest-shapes",
+  "origin": "authored",
+  "anchor": "src/level.ts:7",
+  "behavior_family": "arithmetic_constant",
+  "test_shape": "vitest_enum_member_tobe",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": true,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

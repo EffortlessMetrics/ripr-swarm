@@ -1,0 +1,7 @@
+--- a/src/cmp.rs
++++ b/src/cmp.rs
+@@ -1,3 +1,3 @@
+ fn is_bulk(qty: u32) -> bool {
+-    qty >= 10
++    10 <= qty
+ }

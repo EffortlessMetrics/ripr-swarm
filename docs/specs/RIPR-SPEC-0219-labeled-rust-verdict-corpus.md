@@ -305,14 +305,15 @@ twice by one case.
   examples are prose, not numbered, reported as `unmeasured_specs` rather
   than counted. The list is maintained by hand: nothing detects an in-scope
   prose spec that is missing from it.
-- `floor` is the covered-example count the gate protects.
+- `spec-examples.lock`, beside the ledger, lists the covered examples the gate protects: one `RIPR-SPEC-NNNN#<number or slug>` per line, sorted and unique (the loader rejects anything else). It replaced a single `floor` count, which every corpus PR edited and which could not tell a swap (one example lost, another gained) from no change (#9859).
+- `spec-scopes/<RIPR-SPEC-NNNN>.toml`, beside the ledger, holds one spec entry per file (`id`, `scope`, `reason`, `waived`, or `unmeasured = true` with a `reason`), merged with the inline entries. New specs add a file instead of appending to the ledger tail, which parallel corpus PRs all edited. A file whose name differs from its `id`, a missing field, a non-`.toml` entry, or a spec named both inline and in a file fails `validate`; only an absent directory is optional (#9859).
 
 `validate` fails when a spec with numbered examples is missing from the
 ledger (a new spec cannot leave the denominator silently), when the ledger
 names a spec that does not exist, scopes a spec with no numbered examples,
 lists as unmeasured a spec that now has numbered examples, waives an
 example that does not exist or without a reason, or waives an example a
-case covers, and when `floor` exceeds the coverable examples.
+case covers, and when the lock names an example no spec carries.
 
 Covered examples are the in-scope, non-waived examples at least one case
 cites. The report's `spec_example_coverage` section gives `coverage` as
@@ -332,13 +333,15 @@ instrument rather than a measured score. Specs come from the repository
 that owns `fixtures/<corpus>/`; a corpus without that tree does not fall
 back to CWD `docs/specs`.
 
-`check` fails before running ripr when covered is below `floor`, naming the
-fall and the fix (restore the lost citation, or lower the floor with a
-reason when a case was deliberately retired). When covered is above `floor`
-it passes and prints that the floor can be raised. `validate` applies the
-same floor gate without running ripr; `report` prints the coverage without
-gating it. In CI the floor is enforced by the xtask unit test
-`committed_ledger_is_valid_and_meets_its_floor`, which the Rust gates
+`check` fails before running ripr when a locked example is no longer covered,
+naming each lost example and the fix (restore the lost citation, or drop the
+line from the lock with a reason when a case was deliberately retired). A
+covered example the lock lacks passes and prints the lines to add, so a PR
+that covers a new example adds one line at its sorted place and two such PRs
+rarely touch the same line. `validate` applies the same lock gate without
+running ripr; `report` prints the coverage without gating it. In CI the lock
+is enforced by the xtask unit test
+`committed_ledger_is_valid_and_locks_every_covered_example`, which the Rust gates
 workflow's workspace nextest run executes.
 
 Decisions:
@@ -416,6 +419,31 @@ each labeled row carries an `oracle` object (expected, `observed_kind`,
 `observed_strength`, `observed_all`, `outcome`). These never enter
 `false_verdict_rate` or any verdict rate.
 
+The `known-false/<case>.toml` files of a corpus directory (`case`, `issue`,
+`reason`; the file name is the case id, and an inline `[[known_false]]` table
+in `spec-coverage.toml` is rejected so parallel fixes never share lines) list every false verdict the corpus still scores with its owning
+issue. A whole-corpus `check` fails on a false row that is not listed and on a
+listed row that is no longer false, so a bless cannot absorb a new false
+verdict and a fixed row cannot return unnoticed. A `--case` subset is never
+gated on it.
+
+Missed credit, an `abstained` row whose truth is `discriminated` (tests that
+catch the change while ripr says unknown), is accepted one row per block:
+`missed-credit.toml` in the corpus directory holds `[[entry]]` blocks (`case`
+and a `reason`), sorted by case and unique, with a blank line between blocks.
+The count is derived from the entries, never stored, so PRs that add or
+remove rows far apart in the sorted list touch different hunks and merge
+cleanly; edits to adjacent blocks can still conflict, which is a bounded
+reduction of the old shared-line hotspot, not its elimination (a
+`missed_credit_ceiling` line in `spec-coverage.toml` is rejected). A
+whole-corpus `check` fails on a missed-credit row without an entry, naming it
+(a swap that keeps the count still fails), and equally fails when an
+accepted row no longer misses credit, naming the entry to delete: the entries
+must equal the blessed missed rows, so a stale entry fails early in `check-all`
+rather than after the full test step (#10341). A fix deletes its own block,
+which does not collide with concurrent fixes deleting other blocks. A `--case`
+subset is never gated on it.
+
 The `[oracle]` table of `spec-coverage.toml` holds `match_floor` and
 `overclaim_ceiling`. `validate` requires the table once any case is
 labeled and refuses a floor or ceiling above the labeled count. `check`
@@ -471,6 +499,19 @@ Decisions:
   Other specs' examples do not state a related-test kind and strength, so
   their cases stay unlabeled.
 
+### Operator grid and false-credit traps
+
+The `[grid]` table of `spec-coverage.toml` scores seven operator classes
+(boundary, equality, logical, arithmetic, constant, return value, deletion)
+against three truth states (credited, gap, partial). An operator comes from
+a case's `behavior_family`; `[grid.operators]` names the cases whose family
+describes a different edit than the one made. A case is a trap when its
+subject or case id carries `trap` and runtime truth is not `discriminated`;
+the same name with `discriminated` truth is its control. `check` fails when
+covered cells fall below `cell_floor`, trap cases below `trap_floor`, or
+ripr credits more traps than `false_credit_ceiling`. A `--cases` subset is
+reported but never gated. `validate` does not run the grid.
+
 ## Required Evidence
 
 - The committed corpus validates and contains both a `discriminated` and a
@@ -494,10 +535,12 @@ Decisions:
 
 - Each spec-coverage validation rule rejects a tampered ledger or
   citation, the numbered-example reader handles continued and indented
-  lines and specs without numbered items, and the floor gate fails below,
-  passes at, and invites a raise above the floor.
-- The committed ledger validates against `docs/specs` and its floor equals
-  the covered count.
+  lines and specs without numbered items, and the lock gate fails on a lost
+  example (including a swap that keeps the count), passes when every covered
+  example is locked, and names the line to add for a new one; the lock file
+  parser rejects unsorted, repeated and malformed lines.
+- The committed ledger validates against `docs/specs` and its lock lists
+  every covered example.
 - Oracle outcome classification yields each of the five outcomes, the
   claim is the strongest entry, validation rejects unknown kinds and
   strengths and malformed labels, the oracle gate fails below the floor and
@@ -669,8 +712,9 @@ Spec-example coverage tests live in
 - `an_example_both_waived_and_covered_is_rejected`
 - `ledger_must_name_every_spec_with_numbered_examples_and_only_real_ones`
 - `coverage_counts_cited_in_scope_examples_over_the_unwaived_ones`
-- `floor_gate_fails_below_passes_at_and_invites_a_raise_above`
-- `committed_ledger_is_valid_and_meets_its_floor`
+- `lock_gate_fails_on_a_lost_example_and_invites_a_line_for_a_new_one`
+- `lock_files_parse_sorted_unique_entries_and_reject_the_rest`
+- `committed_ledger_is_valid_and_locks_every_covered_example`
 - `spec_example_coverage_for_a_tempdir_does_not_scan_the_repo_specs`
 - `spec_example_coverage_for_corpus_fails_when_the_ledger_omits_a_numbered_spec`
 - `spec_example_coverage_for_corpus_fails_when_a_citing_case_names_no_subject`
@@ -706,7 +750,9 @@ Oracle-accuracy tests live in
   label law, the observed-oracle read, outcome classification, the
   `oracle_accuracy` section and the oracle gate.
 - `fixtures/rust-verdict-corpus/spec-coverage.toml` is the ledger,
-  including the `[oracle]` gate table.
+  including the `[oracle]` gate table and the `[grid]` gate table.
+- `xtask/src/reports/verdict_corpus_grid.rs` owns the operator grid, the
+  trap table and the grid gate.
 - `fixtures/rust-verdict-corpus/` holds the corpus, retained upstream and
   authored subjects, case diffs, and the expected report.
 

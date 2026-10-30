@@ -1,0 +1,12 @@
+diff --git a/hostile/dynamic.py b/hostile/dynamic.py
+--- a/hostile/dynamic.py
++++ b/hostile/dynamic.py
+@@ -3,7 +3,7 @@
+ 
+ 
+ def _op_add(a, b):
+-    return a + b
++    return a - b
+ 
+ 
+ def _op_sub(a, b):

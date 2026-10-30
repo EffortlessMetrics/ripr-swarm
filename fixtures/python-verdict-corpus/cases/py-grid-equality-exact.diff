@@ -1,0 +1,12 @@
+diff --git a/grid_equality/core.py b/grid_equality/core.py
+--- a/grid_equality/core.py
++++ b/grid_equality/core.py
+@@ -2,7 +2,7 @@
+ 
+ 
+ def is_admin(role):
+-    return role == "admin"
++    return "admin" == role
+ 
+ 
+ def is_saturday(day):

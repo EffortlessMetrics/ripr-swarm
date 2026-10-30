@@ -1,0 +1,11 @@
+diff --git a/src/shipping.ts b/src/shipping.ts
+index 0000000..1111111 100644
+--- a/src/shipping.ts
++++ b/src/shipping.ts
+@@ -1,5 +1,5 @@
+ export function shippingCents(weightGrams: number): number {
+-  if (weightGrams <= 500) {
++  if (weightGrams < 500) {
+     return 399;
+   }
+   return 899;

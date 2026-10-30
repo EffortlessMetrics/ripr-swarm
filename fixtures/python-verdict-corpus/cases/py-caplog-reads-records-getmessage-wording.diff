@@ -1,0 +1,12 @@
+diff --git a/reads/audit.py b/reads/audit.py
+--- a/reads/audit.py
++++ b/reads/audit.py
+@@ -26,7 +26,7 @@ def overdrawn(balance):
+ 
+ def frozen(account):
+     if account == "frozen":
+-        log.warning("account frozen: %s", account)
++        log.warning("account suspended: %s", account)
+         return False
+     return True
+ 

@@ -1,16 +1,25 @@
 use crate::domain::{Finding, MissingDiscriminatorFact, ValueFact, context_packet::ContextPacket};
 use std::path::Path;
 
-use super::{array_field, escape, field, number_field};
+use super::{array_field, escape, field, float_field, number_field};
+use crate::config::RiprConfig;
 use crate::output::json::report::{related_test_json, stop_reason_values};
 use crate::output::next_step::reconcile_next_step;
 
 // Keep the registered packet version literal in this renderer path so the
 // output-contract check can verify the JSON surface while the DTO owns values.
-pub(crate) const CONTEXT_PACKET_VERSION_CONTRACT: &str = "1.0";
+// 1.1 (#8743): the packet now carries the finding's `classification`,
+// `severity`, and `confidence`, mirroring the `ripr check --json` finding
+// shape so packet consumers can state the verdict without a second command.
+pub(crate) const CONTEXT_PACKET_VERSION_CONTRACT: &str = "1.1";
 
-pub fn render_context_packet(finding: &Finding, max_related_tests: usize, root: &Path) -> String {
-    render_context_packet_with_explain_command(finding, max_related_tests, None, root)
+pub fn render_context_packet(
+    finding: &Finding,
+    max_related_tests: usize,
+    config: &RiprConfig,
+    root: &Path,
+) -> String {
+    render_context_packet_with_explain_command(finding, max_related_tests, config, None, root)
 }
 
 /// Render the packet with the witness's `explain_command` replaced by one
@@ -21,11 +30,17 @@ pub fn render_context_packet(finding: &Finding, max_related_tests: usize, root: 
 pub(crate) fn render_context_packet_with_explain_command(
     finding: &Finding,
     max_related_tests: usize,
+    config: &RiprConfig,
     explain_command: Option<String>,
     root: &Path,
 ) -> String {
     let stop_reasons = stop_reason_values(finding);
     let mut packet = ContextPacket::from_finding(finding, max_related_tests, stop_reasons, root);
+    // #8743: resolve severity through the caller's config so the packet
+    // matches `ripr check --json` exactly, including user overrides. The
+    // DTO's `from_finding` seed is the class profile default for callers
+    // that hold no config.
+    packet.severity = config.severity().for_exposure(&finding.class).as_str();
     if let (Some(witness), Some(command)) = (packet.witness.as_mut(), explain_command) {
         witness.explain_command = command;
     }
@@ -59,6 +74,12 @@ pub(crate) fn render_context_packet_dto(packet: &ContextPacket) -> String {
         packet.source_currentness,
         true,
     );
+    // #8743: the headline verdict facts, wire-identical to the `ripr check
+    // --json` finding fields of the same names. Consumers must not have to
+    // reverse-engineer the class from the underdetermined stage states.
+    field(&mut out, 1, "classification", packet.classification, true);
+    field(&mut out, 1, "severity", packet.severity, true);
+    float_field(&mut out, 1, "confidence", packet.confidence, true);
     out.push_str("  \"probe\": {\n");
     field(&mut out, 2, "id", &packet.probe.id, true);
     field(&mut out, 2, "family", &packet.probe.family, true);
@@ -96,9 +117,20 @@ pub(crate) fn render_context_packet_dto(packet: &ContextPacket) -> String {
     );
     out.push_str("  },\n");
     let related_test_count = packet.related_tests.len();
+    number_field(
+        &mut out,
+        1,
+        "related_tests_total",
+        packet.related_tests_total,
+        true,
+    );
+    // An unrecognized token falls back to `static_unknown`, whose rows keep
+    // generic miss wording.
+    let packet_family = &crate::domain::ProbeFamily::from_wire(&packet.probe.family)
+        .unwrap_or(crate::domain::ProbeFamily::StaticUnknown);
     out.push_str("  \"related_tests\": [\n");
     for (idx, test) in packet.related_tests.iter().enumerate() {
-        related_test_json(&mut out, test, &packet.missing_discriminators, 2);
+        related_test_json(&mut out, test, packet_family, 2);
         if idx + 1 != related_test_count {
             out.push(',');
         }
@@ -117,10 +149,22 @@ pub(crate) fn render_context_packet_dto(packet: &ContextPacket) -> String {
     match &packet.witness {
         Some(witness) => {
             out.push_str("  \"witness\": ");
-            if let Ok(serialized) = serde_json::to_string(witness) {
-                out.push_str(&serialized);
-            } else {
-                out.push_str("null");
+            // Pretty-print the serde-owned DTO and re-indent it to the
+            // packet's two-space base so the field nests like the
+            // hand-rendered fields around it; the compact form used to
+            // land as one long line in an otherwise expanded packet.
+            match serde_json::to_string_pretty(witness) {
+                Ok(pretty) => {
+                    let mut lines = pretty.lines();
+                    if let Some(first) = lines.next() {
+                        out.push_str(first);
+                        for line in lines {
+                            out.push_str("\n  ");
+                            out.push_str(line);
+                        }
+                    }
+                }
+                Err(_) => out.push_str("null"),
             }
             out.push_str(",\n");
         }
@@ -177,21 +221,52 @@ fn discriminator_array(
 
 #[cfg(test)]
 mod tests {
-    use super::render_context_packet;
+    use super::{render_context_packet, render_context_packet_dto};
+    use crate::domain::context_packet::ContextPacket;
     use crate::domain::{
-        ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding, FindingCanonicalGap,
-        MissingDiscriminatorFact, OracleKind, OracleStrength, Probe, ProbeFamily, ProbeId,
-        RelatedTest, RevealEvidence, RiprEvidence, SourceLocation, StageEvidence, StageState,
-        SymbolId, ValueContext, ValueFact,
+        ActivationEvidence, Confidence, DeltaKind, DiagnosticConfidence, DiagnosticWitness,
+        ExposureClass, Finding, FindingCanonicalGap, MissingDiscriminatorFact, OracleKind,
+        OracleStrength, Probe, ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence,
+        SourceLocation, StageEvidence, StageState, SymbolId, ValueContext, ValueFact,
     };
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn context_packet_states_verdict_fields_for_packet_consumers() {
+        // #8743: the packet must state the verdict itself; the five stage
+        // states are documented as underdetermined, so consumers cannot
+        // derive the class from them.
+        let finding = sample_finding();
+
+        let packet = render_context_packet(&finding, 5, &test_config(), Path::new("."));
+
+        assert!(packet.contains("\"version\": \"1.1\""));
+        assert!(packet.contains("\"classification\": \"weakly_exposed\""));
+        assert!(packet.contains("\"severity\": \"warning\""));
+        assert!(packet.contains("\"confidence\": 0.5"));
+    }
+
+    #[test]
+    fn context_packet_severity_follows_caller_config_override() {
+        // #8743: the packet resolves severity through the caller's config so
+        // it stays wire-identical to the `ripr check --json` finding even
+        // when the user overrides the class default.
+        let finding = sample_finding();
+        let mut config = test_config();
+        config.severity.findings.weakly_exposed = crate::config::ConfigSeverity::Note;
+
+        let packet = render_context_packet(&finding, 5, &config, Path::new("."));
+
+        assert!(packet.contains("\"severity\": \"note\""));
+        assert!(packet.contains("\"classification\": \"weakly_exposed\""));
+    }
 
     #[test]
     fn context_packet_limits_related_tests_to_max() {
         let mut finding = sample_finding();
         finding.related_tests = vec![related("t1"), related("t2"), related("t3")];
 
-        let packet = render_context_packet(&finding, 2, Path::new("."));
+        let packet = render_context_packet(&finding, 2, &test_config(), Path::new("."));
 
         assert!(packet.contains("\"name\": \"t1\""));
         assert!(packet.contains("\"name\": \"t2\""));
@@ -216,10 +291,57 @@ mod tests {
                 flow_sink: None,
             });
 
-        let packet = render_context_packet(&finding, 5, Path::new("."));
+        let packet = render_context_packet(&finding, 5, &test_config(), Path::new("."));
 
         assert!(packet.contains("line \\\"a\\\"\\nnext"));
         assert!(packet.contains("No test checks \\\"boundary\\\"\\ncase"));
+    }
+
+    #[test]
+    fn context_packet_witness_nests_at_the_packet_indent() -> Result<(), String> {
+        // The witness is a serde-owned DTO; it must expand at the
+        // packet's two-space nesting like the hand-rendered fields
+        // around it, not land as one compact line.
+        let finding = sample_finding();
+        let mut packet = ContextPacket::from_finding(&finding, 5, Vec::new(), Path::new("."));
+        packet.witness = Some(DiagnosticWitness {
+            kind: "static_discriminator_gap".to_string(),
+            probe_family: "predicate".to_string(),
+            changed_expression: "x >= 0".to_string(),
+            before: None,
+            after: Some("x >= 0".to_string()),
+            expected_sink: None,
+            missing_discriminators: Vec::new(),
+            fix_site: None,
+            suggested_assertion: None,
+            explain_command: "ripr explain probe:src_lib_rs:9:error_path".to_string(),
+            confidence: DiagnosticConfidence {
+                value: Some(0.5),
+                basis: "static_only".to_string(),
+            },
+            limitations: Vec::new(),
+        });
+
+        let rendered = render_context_packet_dto(&packet);
+
+        assert!(
+            rendered.contains("\n    \"probe_family\": \"predicate\""),
+            "witness fields must render one per line at the packet's indent:\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("\"witness\": {\"kind\""),
+            "the witness must not render as a single compact line:\n{rendered}"
+        );
+        // Whitespace changed, the wire value must not: the packet still
+        // parses and the witness round-trips.
+        let parsed: serde_json::Value =
+            serde_json::from_str(&rendered).map_err(|err| err.to_string())?;
+        assert_eq!(parsed["witness"]["kind"], "static_discriminator_gap");
+        assert_eq!(
+            parsed["witness"]["explain_command"],
+            "ripr explain probe:src_lib_rs:9:error_path"
+        );
+        Ok(())
     }
 
     #[test]
@@ -239,7 +361,7 @@ mod tests {
         let mut finding = sample_finding();
         finding.probe.location = SourceLocation::new("src/lib.rs", 2, 1);
 
-        let packet = render_context_packet(&finding, 5, &root);
+        let packet = render_context_packet(&finding, 5, &test_config(), &root);
 
         let _ = std::fs::remove_dir_all(&root);
         assert!(packet.contains("\"owner_signature\": \"greet(name: &str) -> String\""));
@@ -251,7 +373,7 @@ mod tests {
         let mut finding = sample_finding();
         finding.probe.location = SourceLocation::new("src/missing.rs", 2, 1);
 
-        let packet = render_context_packet(&finding, 5, Path::new("."));
+        let packet = render_context_packet(&finding, 5, &test_config(), Path::new("."));
 
         assert!(!packet.contains("owner_signature"));
     }
@@ -270,7 +392,7 @@ mod tests {
             normalized_discriminator: "amount>=threshold".to_string(),
         });
 
-        let packet = render_context_packet(&finding, 5, Path::new("."));
+        let packet = render_context_packet(&finding, 5, &test_config(), Path::new("."));
 
         assert!(packet.contains(
             "\"canonical_gap_id\": \"gap:python:src/pricing.py:discount:predicate_boundary:predicate:amount>=threshold\""
@@ -279,6 +401,7 @@ mod tests {
 
     fn sample_finding() -> Finding {
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: "probe:src_lib_rs:9:error_path".to_string(),
             canonical_gap: None,
             probe: Probe {
@@ -324,6 +447,10 @@ mod tests {
         }
     }
 
+    fn test_config() -> crate::config::RiprConfig {
+        crate::config::RiprConfig::default()
+    }
+
     fn related(name: &str) -> RelatedTest {
         RelatedTest {
             name: name.to_string(),
@@ -335,6 +462,8 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
         }
     }
 

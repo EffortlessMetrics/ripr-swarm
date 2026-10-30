@@ -1,3 +1,8 @@
+mod function_alias;
+
+use function_alias::add_local_alias_calls;
+pub(crate) use function_alias::local_fn_pointer_call;
+
 use super::mask_comments_and_strings;
 use crate::analysis::facts::{CallFact, CallText};
 
@@ -126,6 +131,7 @@ pub(crate) fn extract_call_facts(body: &str, start_line: usize) -> Vec<CallFact>
         }
         line_offset += masked_line.len();
     }
+    add_local_alias_calls(&masked, body, start_line, &mut calls);
     calls.sort_by(|a, b| a.line.cmp(&b.line).then(a.name.cmp(&b.name)));
     calls.dedup_by(|a, b| a.line == b.line && a.name == b.name);
     calls
@@ -302,6 +308,218 @@ fn call_names(calls: &[CallFact]) -> Vec<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn alias_call_names(body: &str) -> Vec<(usize, String)> {
+        extract_call_facts(body, 1)
+            .into_iter()
+            .map(|call| (call.line, call.name))
+            .collect()
+    }
+
+    #[test]
+    fn local_function_alias_call_also_reads_as_call_to_the_aliased_function() {
+        // chrono 6adaa52: the test calls the changed `from_isoywd_opt`
+        // only through a `let` alias.
+        let body = "fn t() {\n    let from_isoywd = NaiveDate::from_isoywd_opt;\n    assert_eq!(from_isoywd(i32::MIN, 1, Weekday::Mon), None);\n}\n";
+        let names = alias_call_names(body);
+        assert!(names.contains(&(3, "from_isoywd".to_string())), "{names:?}");
+        assert!(
+            names.contains(&(3, "from_isoywd_opt".to_string())),
+            "{names:?}"
+        );
+        // The binding line itself is not a call.
+        assert!(!names.iter().any(|(line, _)| *line == 2), "{names:?}");
+    }
+
+    fn alias_fact_text(body: &str, name: &str) -> Vec<String> {
+        extract_call_facts(body, 1)
+            .into_iter()
+            .filter(|call| call.name == name)
+            .map(|call| call.text.to_string())
+            .collect()
+    }
+
+    #[test]
+    fn alias_fact_text_is_the_aliased_path_call_not_the_whole_line() {
+        // The fact reads as if the test spelled `Gate::target(0)`: a
+        // target-looking substring in a string on the same line lends neither
+        // arguments (activation `call_arguments`) nor a bare free-call spelling.
+        let body = "fn t() {\n let f = Gate::target;\n assert_eq!(f(0), \"target(100)\");\n}\n";
+        assert_eq!(alias_fact_text(body, "target"), vec!["Gate::target(0)"]);
+        // A module-qualified free function keeps its qualifier.
+        let body =
+            "fn t() {\n let f = crate::util::parse_value;\n assert_eq!(f (1, g(2)), 3);\n}\n";
+        assert_eq!(
+            alias_fact_text(body, "parse_value"),
+            vec!["crate::util::parse_value(1, g(2))"]
+        );
+    }
+
+    #[test]
+    fn single_segment_alias_is_not_resolved() {
+        // `target` may be a local closure or fn-pointer parameter, not a
+        // function item, so a bare right-hand side proves nothing.
+        for body in [
+            "fn t() {\n let target = |x: u8| x + 1;\n let f = target;\n f(1);\n}\n",
+            "fn t(target: fn(u8) -> u8) {\n let f = target;\n f(1);\n}\n",
+            "fn t() {\n let f = parse_value;\n f(1);\n}\n",
+        ] {
+            let names = alias_call_names(body);
+            assert!(
+                !names
+                    .iter()
+                    .any(|(_, name)| name == "target" || name == "parse_value"),
+                "{body}: {names:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn safe_typed_function_pointer_calls_keep_their_target_and_arguments() {
+        for target in ["target", "crate::real::target"] {
+            let body = format!(
+                "fn t() {{\n let f: fn(u32) -> u32 = {target};\n assert_eq!(f (2), 6);\n}}"
+            );
+            assert_eq!(alias_fact_text(&body, "target"), [format!("{target}(2)")]);
+            assert_eq!(
+                local_fn_pointer_call(&body, "f (2)", "assert_eq!(f (2), 6)", 2),
+                Some(format!("{target}(2)"))
+            );
+        }
+    }
+
+    #[test]
+    fn typed_pointer_resolution_refuses_local_targets_and_ambiguous_uses() {
+        for body in [
+            "fn t(target: fn(u32) -> u32) { let f: fn(u32) -> u32 = target; f(2); }",
+            "fn t() { let target = |x| x; let f: fn(u32) -> u32 = target; f(2); }",
+            "fn t() { fn target(x: u32) -> u32 { x } let f: fn(u32) -> u32 = target; f(2); }",
+            "fn t() { let mut f: fn(u32) -> u32 = target; f(2); }",
+            "fn t() { let f: fn(u32) -> u32 = target; let f = other; f(2); }",
+            "fn t() { let f: fn(u32) -> u32 = target; pass(f); f(2); }",
+            "fn t() { let f: unsafe fn(u32) -> u32 = target; f(2); }",
+            "fn t() { let f: extern \"C\" fn(u32) -> u32 = target; f(2); }",
+            "fn t() { let f: Callable = target; f(2); }",
+            "fn t() { ignored! { let f: fn(u32) -> u32 = target; f(2); } }",
+            "fn t() { let _: fn(u32) -> u32 = target; _(2); }",
+        ] {
+            let body = body.replace("f(2);", "assert_eq!(f(2), 6);");
+            // The general lexical scanner may also record the declaration
+            // `fn target(..)`. This refusal is about added alias projections.
+            let mut projected = Vec::new();
+            function_alias::add_local_alias_calls(
+                &mask_comments_and_strings(&body),
+                &body,
+                1,
+                &mut projected,
+            );
+            assert!(projected.is_empty(), "{body}: {projected:?}");
+            assert!(
+                local_fn_pointer_call(&body, "f(2)", "assert_eq!(f(2), 6)", 0).is_none(),
+                "{body}"
+            );
+        }
+    }
+
+    #[test]
+    fn typed_pointer_refuses_scope_escape_attributes_and_shadowing() {
+        for body in [
+            "fn t() { if false { let f: fn(u32) -> u32 = target; f(0); } assert_eq!(f(2), 6); }",
+            "fn t() { let f: fn(u32) -> u32 = crate::target; { fn r#f(_: u32) -> u32 { 6 } assert_eq!(f(2), 6); } }",
+            "fn t() { let f: fn(u32) -> u32 = crate::target; { use decoy::*; assert_eq!(f(2), 6); } }",
+            "fn t() { #[cfg(any())] let f: fn(u32) -> u32 = crate::target; assert_eq!(f(2), 6); }",
+            "fn t() { let f: fn(u32) -> u32 = crate::target; { struct f(u32); let _ = f(2); } }",
+        ] {
+            assert!(alias_fact_text(body, "target").is_empty(), "{body}");
+            assert!(
+                local_fn_pointer_call(body, "f(2)", "assert_eq!(f(2), 6)", 0).is_none(),
+                "{body}"
+            );
+        }
+    }
+
+    #[test]
+    fn typed_pointer_pin_requires_the_adjacent_original_assertion() {
+        let body = "fn t() {\n let f: fn(u32) -> u32 = target;\n assert_eq!(f(2), 6);\n { assert_eq!(f(2), 6); }\n}";
+        assert!(local_fn_pointer_call(body, "f(2)", "assert_eq!(f(2), 6)", 2).is_some());
+        assert!(local_fn_pointer_call(body, "f(2)", "assert_eq!(f(2), 6)", 3).is_none());
+        let body = "fn t() { let f: fn(u32) -> u32 = target; let _ = f(0); assert_eq!(f(2), 6); }";
+        assert!(local_fn_pointer_call(body, "f(2)", "assert_eq!(f(2), 6)", 0).is_none());
+    }
+
+    #[test]
+    fn refused_annotations_consume_the_typed_alias_budget() {
+        for (refused, accepted) in [(63, true), (64, false)] {
+            let mut body = String::from("fn t() {\n");
+            for at in 0..refused {
+                body.push_str(&format!("let _discard{at}: Callable = other;\n"));
+            }
+            body.push_str("let f: fn(u32) -> u32 = target;\nassert_eq!(f(2), 6);\n}");
+            assert_eq!(!alias_fact_text(&body, "target").is_empty(), accepted);
+        }
+    }
+
+    #[test]
+    fn alias_bound_inside_a_macro_token_tree_is_not_resolved() {
+        for body in [
+            "fn t() {\n let s = stringify!(let f = Type::target; f(1));\n}\n",
+            "fn t() {\n m! { let f = Type::target; f(1); }\n}\n",
+        ] {
+            let names = alias_call_names(body);
+            assert!(!names.iter().any(|(_, name)| name == "target"), "{names:?}");
+        }
+        // The same binding outside a macro still resolves.
+        let names = alias_call_names("fn t() {\n let f = Type::target;\n f(1);\n}\n");
+        assert!(names.contains(&(3, "target".to_string())), "{names:?}");
+    }
+
+    #[test]
+    fn ambiguous_or_non_function_aliases_are_not_resolved() {
+        let cases = [
+            // reassigned / shadowed by a second binding
+            "fn t() {\n let f = real::target;\n f(1);\n let f = other;\n f(2);\n}\n",
+            // mutable binding can be reassigned
+            "fn t() {\n let mut f = real::target;\n f(1);\n}\n",
+            // A type alias does not establish a function-pointer annotation.
+            "fn t() {\n let f: Callable = real::target;\n f(1);\n}\n",
+            // alias passed along or captured: not only direct calls
+            "fn t() {\n let f = real::target;\n run(f);\n f(1);\n}\n",
+            // closure parameter reuses the name
+            "fn t() {\n let f = real::target;\n let g = |f: u8| f(1);\n f(2);\n}\n",
+            // nested fn shadows the alias
+            "fn t() {\n let f = real::target;\n fn f() {}\n f();\n}\n",
+            // used before the binding
+            "fn t() {\n f(1);\n let f = real::target;\n}\n",
+            // right side is a call result, not a function path
+            "fn t() {\n let f = real::target(1);\n f(2);\n}\n",
+            // method path, not a plain function path
+            "fn t() {\n let f = value.target;\n f(2);\n}\n",
+            // type-like final segment (unit struct or variant), not a function
+            "fn t() {\n let f = real::Target;\n f(2);\n}\n",
+            // fn parameter reuses the name
+            "fn t() {\n let f = real::target;\n fn inner(f: fn()) { f(); }\n f(2);\n}\n",
+            // pattern binding reuses the name
+            "fn t() {\n let f = real::target;\n if let Some(f) = x { f(1); }\n f(2);\n}\n",
+            // loop binding reuses the name
+            "fn t() {\n let f = real::target;\n for f in xs { f(1); }\n f(2);\n}\n",
+            // macro mention of the name
+            "fn t() {\n let f = real::target;\n f!(1);\n f(2);\n}\n",
+            // struct field mention of the name
+            "fn t() {\n let f = real::target;\n let s = S { f: 1 };\n f(2);\n}\n",
+            // alias inside a string or comment
+            "fn t() {\n // let f = real::target;\n f(2);\n}\n",
+        ];
+        for body in cases {
+            // An alias credit is a fact spelled as the aliased path call
+            // (`real::target(..)`); `target(1)` on the binding line is a
+            // real call and reads as `let f = ..`.
+            let credited = extract_call_facts(body, 1).into_iter().any(|call| {
+                matches!(call.name.as_str(), "target" | "Target" | "other")
+                    && (call.text.starts_with("real::") || call.text.starts_with("other("))
+            });
+            assert!(!credited, "{body}");
+        }
+    }
 
     #[test]
     fn lifetimes_and_labels_do_not_mask_call_and_literal_facts() {

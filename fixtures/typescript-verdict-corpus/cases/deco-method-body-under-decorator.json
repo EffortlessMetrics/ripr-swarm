@@ -1,0 +1,45 @@
+{
+  "case_id": "deco-method-body-under-decorator",
+  "subject_id": "authored-ts-jest-decorators",
+  "diff": "cases/deco-method-body-under-decorator.diff",
+  "anchor": {
+    "file": "src/memoize.ts",
+    "line": 15
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "jest_decorated_method_tobe",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx jest --ci --runInBand",
+    "toolchain": "Node.js v22.22.0, jest 30.5.2, ts-jest 29.4.14, typescript 5.9, x86_64-linux; edit applied by hand to the whole package",
+    "mutants": [
+      {
+        "replacement": "return n * (n + 1);",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "repeated calls agree",
+        "equivalence_review": "the edit itself: The decorated method body is what the decorator wraps, and the test pins its exact result."
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The decorated method body is what the decorator wraps, and the test pins its exact result. The edited package's test command fails, so a discriminator exists and the credit is deserved.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

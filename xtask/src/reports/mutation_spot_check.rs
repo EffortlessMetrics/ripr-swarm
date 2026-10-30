@@ -49,9 +49,14 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 const SCHEMA_VERSION: &str = "ripr-mutation-spot-check-v2";
-/// Calibration schema that carries the span-containment join and explicit
-/// span-overlap and unmatched reasons.
-const CALIBRATION_SCHEMA_VERSION: &str = "0.2";
+/// Calibration schemas whose joined-record shape the spot check classifies.
+/// The renderer owns its version at `MUTATION_CALIBRATION_SCHEMA_VERSION` in
+/// `crates/ripr/src/output/mutation_calibration.rs`; xtask is a separate crate
+/// and cannot import it, so the supported set is duplicated here with this
+/// pointer at the owner (RIPR-SPEC-0292). 0.2 carries the span-containment
+/// join and explicit span-overlap and unmatched reasons; 0.3 (RIPR-SPEC-0294,
+/// PR #8988) adds provenance and how_to_read without changing that shape.
+const SUPPORTED_CALIBRATION_SCHEMA_VERSIONS: &[&str] = &["0.2", "0.3"];
 const CANONICAL_PRECISE: &str = "canonical_precise";
 const CANONICAL_JOIN_METHODS: &[&str] = &["seam_id", "span_containment"];
 const SUPPORTED_GENRES: &[&str] = &["BinaryOperator", "UnaryOperator"];
@@ -791,9 +796,10 @@ fn classify_records(
         .get("schema_version")
         .and_then(Value::as_str)
         .unwrap_or("missing");
-    if schema != CALIBRATION_SCHEMA_VERSION {
+    if !SUPPORTED_CALIBRATION_SCHEMA_VERSIONS.contains(&schema) {
         return Err(format!(
-            "mutation calibration schema {schema} has no span-containment join; the spot check needs calibration schema {CALIBRATION_SCHEMA_VERSION}"
+            "mutation calibration schema `{schema}` is not one the spot check classifies; supported calibration schema versions: {}. The renderer's current schema version is owned by `MUTATION_CALIBRATION_SCHEMA_VERSION` in crates/ripr/src/output/mutation_calibration.rs (0.2 before RIPR-SPEC-0294, 0.3 after it); rebuild ripr and re-run `cargo xtask mutation-spot-check` so the calibration JSON it feeds the harness carries a supported schema",
+            SUPPORTED_CALIBRATION_SCHEMA_VERSIONS.join(", ")
         ));
     }
     let expressions: BTreeMap<&str, &str> = exposure
@@ -1688,6 +1694,14 @@ mod tests {
             "BinaryOperator".to_string(),
         )]);
         let records = classify_records(&calibration, &exposure, &genres)?;
+        let mut v3 = calibration.clone();
+        v3["schema_version"] = json!("0.3");
+        v3["provenance"] = json!({
+            "repo_exposure_head": null, "mutants_head": null, "verdict": "no_head_recorded",
+            "disclosure": "Neither artifact names a head; qualification remains advisory."
+        });
+        let v3_records = classify_records(&v3, &exposure, &genres)?;
+        assert_eq!(v3_records, records);
         assert_eq!(records[0].disposition, "canonical_precise");
         assert_eq!(records[0].operator_token, "absent");
         let report = build_report(&[repo_run(records)], 5, TEST_ANALYZER);
@@ -1722,7 +1736,9 @@ mod tests {
         v1["schema_version"] = json!("0.1");
         assert!(
             classify_records(&v1, &Value::Null, &genres)
-                .is_err_and(|err| err.contains("calibration schema 0.2"))
+                .is_err_and(|err| err.contains("schema `0.1`")
+                    && err.contains("supported calibration schema versions: 0.2, 0.3")
+                    && err.contains("MUTATION_CALIBRATION_SCHEMA_VERSION"))
         );
         // mutants_total counts a record the lists do not carry.
         let mut partial = calibration_v2(
@@ -1736,12 +1752,77 @@ mod tests {
             classify_records(&partial, &Value::Null, &genres).map(|records| records.len()),
             Ok(1)
         );
+        let mut v3 = partial.clone();
+        v3["schema_version"] = json!("0.3");
+        v3["provenance"] = json!({"repo_exposure_head": null, "mutants_head": null, "verdict": "no_head_recorded", "disclosure": "No recorded heads."});
+        assert_eq!(
+            classify_records(&v3, &Value::Null, &genres),
+            classify_records(&partial, &Value::Null, &genres)
+        );
+        v3["metrics"]["mutants_total"] = json!(2);
+        assert!(
+            classify_records(&v3, &Value::Null, &genres).is_err_and(
+                |err| err.contains("lists 1 runtime records but reports mutants_total 2")
+            )
+        );
+        v3["schema_version"] = json!("0.4");
+        assert!(
+            classify_records(&v3, &Value::Null, &genres)
+                .is_err_and(|err| err.contains("schema `0.4`")
+                    && err.contains("supported calibration schema versions: 0.2, 0.3")
+                    && err.contains("MUTATION_CALIBRATION_SCHEMA_VERSION"))
+        );
         partial["metrics"]["mutants_total"] = json!(2);
         assert!(
             classify_records(&partial, &Value::Null, &genres).is_err_and(
                 |err| err.contains("lists 1 runtime records but reports mutants_total 2")
             )
         );
+    }
+
+    #[test]
+    fn calibration_schema_0_3_classifies_and_unknown_versions_are_refused() -> Result<(), String> {
+        let mut v3 = calibration_v2(
+            json!([
+                {"join_method": "seam_id",
+                 "static": {"seam_id": "s1", "seam_kind": "predicate_boundary", "seam_grip_class": "strongly_gripped", "file": "src/a.rs", "line": 3},
+                 "runtime": {"mutant_id": "src/a.rs:3:9: replace > with < in f", "runtime_outcome": "caught"}}
+            ]),
+            json!([]),
+            json!([]),
+            json!([]),
+        );
+        v3["schema_version"] = json!("0.3");
+        let exposure = json!({"seams": [{"seam_id": "s1", "expression": "i > 0"}]});
+        let genres = BTreeMap::from([(
+            "src/a.rs:3:9: replace > with < in f".to_string(),
+            "BinaryOperator".to_string(),
+        )]);
+        let records = classify_records(&v3, &exposure, &genres)?;
+        if records.len() != 1 || records[0].disposition != CANONICAL_PRECISE {
+            return Err(format!(
+                "schema 0.3 classified {} records with disposition `{}`, expected one canonical_precise",
+                records.len(),
+                records
+                    .first()
+                    .map_or("none", |record| record.disposition.as_str())
+            ));
+        }
+        // A version newer than the supported set is refused with the same
+        // actionable message, naming the unsupported version, the supported
+        // set, and the renderer's version owner.
+        v3["schema_version"] = json!("0.4");
+        match classify_records(&v3, &exposure, &genres) {
+            Err(err)
+                if err.contains("schema `0.4`")
+                    && err.contains("supported calibration schema versions: 0.2, 0.3")
+                    && err.contains("MUTATION_CALIBRATION_SCHEMA_VERSION") =>
+            {
+                Ok(())
+            }
+            Err(err) => Err(format!("unexpected refusal for schema 0.4: {err}")),
+            Ok(_) => Err("schema 0.4 was classified but is not in the supported set".to_string()),
+        }
     }
 
     #[test]

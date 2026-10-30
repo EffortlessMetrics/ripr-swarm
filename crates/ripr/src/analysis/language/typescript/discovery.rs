@@ -182,6 +182,7 @@ pub(crate) fn visit_workspace_with_handwritten(
     let mut visited = 0usize;
     let mut truncated = false;
     let mut skipped_links = 0usize;
+    let mut alias_links: Vec<PathBuf> = Vec::new();
     let mut stack: Vec<PathBuf> = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -219,8 +220,20 @@ pub(crate) fn visit_workspace_with_handwritten(
                 // Symlinks and NTFS junctions are NOT followed (fail-closed:
                 // following them risks cycles and outside-root reads), but
                 // the skip is counted so the adapter can disclose that
-                // link-hidden tests/sources were not seen (#4104-D).
-                skipped_links += 1;
+                // link-hidden tests/sources were not seen (#4104-D). A link
+                // that is itself a regular file under a name the adapter
+                // would never index (a docs `0.index.md -> README.md`) hides
+                // no test or source: the walk indexes by the entry's own
+                // path, so it is skipped without a disclosure. Anything
+                // else (a directory, a source-named link, a dangling or
+                // unreadable target) stays counted.
+                match classify_symlink(&path, root) {
+                    LinkKind::Harmless => {}
+                    LinkKind::DirectoryAlias => {
+                        alias_links.push(path.strip_prefix(root).unwrap_or(&path).to_path_buf());
+                    }
+                    LinkKind::MayHideSources => skipped_links += 1,
+                }
                 continue;
             }
             if file_type.is_dir() {
@@ -238,6 +251,10 @@ pub(crate) fn visit_workspace_with_handwritten(
                         out.push(relative);
                     }
                 }
+            } else if file_type.is_file() {
+                // A regular file the filters above refused (a `*.generated.*`
+                // source): excluded by policy, not a link-hidden entry, so it
+                // must not inflate the skipped-link disclosure.
             } else if is_special_non_link_file(&file_type) {
                 // FIFOs, sockets and devices (Unix) are neither directories,
                 // regular files, nor links and cannot carry TypeScript
@@ -260,11 +277,215 @@ pub(crate) fn visit_workspace_with_handwritten(
         }
     }
     out.sort();
+    if !alias_links.is_empty() {
+        skipped_links += alias_links
+            .iter()
+            .filter(|alias| any_file_imports_through(root, &out, alias))
+            .count();
+    }
     WorkspaceScan {
         files: out,
         truncated,
         skipped_links,
     }
+}
+
+/// Largest indexed file read when checking for imports through an alias; a
+/// bigger file cannot be shown free of one, so it counts as traversing.
+const ALIAS_IMPORT_SCAN_MAX_BYTES: u64 = 4 * 1024 * 1024;
+
+/// `true` when an indexed file may name a path through the alias link.
+///
+/// A parsed file counts when one of its string or template literals is a
+/// relative specifier (`./x`, `../x`) that resolves, lexically from the
+/// importing file's directory, to the link or a path beneath it. Resolving
+/// the specifier decides which directory it names, so no character of the
+/// link's or its target's name can be mistaken for a component boundary, and
+/// prose, comments and bare specifiers (resolved through disclosed
+/// resolution config) do not count. An absolute-looking literal (`/...`)
+/// cannot be resolved lexically and counts when it spells `/<name>` as a path
+/// component. A file that does not parse cleanly, an unreadable file and an
+/// oversized file cannot be ruled out: the first counts on a raw-text
+/// `/<name>` match or any character escape, the others always count. Decoded
+/// literal values are used, so `'../al\u0069as/lib'` and `'..\u002falias/lib'`
+/// match.
+fn any_file_imports_through(root: &Path, files: &[PathBuf], alias: &Path) -> bool {
+    let Some(name) = alias.file_name().and_then(|name| name.to_str()) else {
+        return true;
+    };
+    let needle = format!("/{name}");
+    let alias_parts = path_parts(alias);
+    files.iter().any(|file| {
+        let full = root.join(file);
+        let Ok(metadata) = std::fs::metadata(&full) else {
+            return true;
+        };
+        if metadata.len() > ALIAS_IMPORT_SCAN_MAX_BYTES {
+            return true;
+        }
+        let Ok(text) = std::fs::read_to_string(&full) else {
+            return true;
+        };
+        literal_reaches_alias(&text, file, &needle, &alias_parts)
+    })
+}
+
+/// Normal components of a root-relative path as strings.
+fn path_parts(path: &Path) -> Vec<String> {
+    path.components()
+        .filter_map(|component| match component {
+            std::path::Component::Normal(part) => Some(part.to_string_lossy().into_owned()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Resolve the relative specifier `value` lexically from the directory of the
+/// root-relative `file`, returning its root-relative components, or `None`
+/// when it is not relative or leaves the root.
+fn resolve_relative_specifier(file: &Path, value: &str) -> Option<Vec<String>> {
+    if !(value == "." || value == ".." || value.starts_with("./") || value.starts_with("../")) {
+        return None;
+    }
+    let mut parts = path_parts(file.parent().unwrap_or(Path::new("")));
+    for part in value.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                parts.pop()?;
+            }
+            other => parts.push(other.to_string()),
+        }
+    }
+    Some(parts)
+}
+
+/// Whether one decoded literal value reaches the alias (see
+/// [`any_file_imports_through`]).
+fn value_reaches_alias(value: &str, file: &Path, needle: &str, alias_parts: &[String]) -> bool {
+    if value.starts_with('/') {
+        return names_alias_component(value, needle);
+    }
+    resolve_relative_specifier(file, value)
+        .is_some_and(|resolved| resolved.starts_with(alias_parts))
+}
+
+/// `true` when `needle` (`/<name>`) is a path component of `haystack`, not
+/// continued by another name character.
+fn names_alias_component(haystack: &str, needle: &str) -> bool {
+    haystack.match_indices(needle).any(|(start, _)| {
+        haystack[start + needle.len()..]
+            .chars()
+            .next()
+            .is_none_or(|next| !(next.is_alphanumeric() || matches!(next, '_' | '-' | '$' | '@')))
+    })
+}
+
+/// Whether a literal of the parsed file reaches the alias. A file that does
+/// not parse cleanly cannot be ruled out: it counts on a raw-text
+/// `/<name>` match or any character escape.
+fn literal_reaches_alias(text: &str, file: &Path, needle: &str, alias_parts: &[String]) -> bool {
+    struct Finder<'n> {
+        file: &'n Path,
+        needle: &'n str,
+        alias_parts: &'n [String],
+        found: bool,
+    }
+    impl<'a> oxc_ast_visit::Visit<'a> for Finder<'_> {
+        fn visit_string_literal(&mut self, literal: &oxc_ast::ast::StringLiteral<'a>) {
+            self.found |= value_reaches_alias(
+                literal.value.as_str(),
+                self.file,
+                self.needle,
+                self.alias_parts,
+            );
+        }
+        fn visit_template_element(&mut self, element: &oxc_ast::ast::TemplateElement<'a>) {
+            self.found |= match element.value.cooked.as_deref() {
+                Some(cooked) => {
+                    value_reaches_alias(cooked, self.file, self.needle, self.alias_parts)
+                }
+                None => true,
+            };
+        }
+    }
+    let allocator = oxc_allocator::Allocator::default();
+    let parsed = oxc_parser::Parser::new(&allocator, text, source_type_for(file)).parse();
+    if parsed.panicked || !parsed.errors.is_empty() {
+        return names_alias_component(text, needle) || has_character_escape(text);
+    }
+    let mut finder = Finder {
+        file,
+        needle,
+        alias_parts,
+        found: false,
+    };
+    oxc_ast_visit::Visit::visit_program(&mut finder, &parsed.program);
+    finder.found
+}
+
+/// `true` when `text` has a backslash followed by `u`, `x` or an octal digit.
+fn has_character_escape(text: &str) -> bool {
+    text.match_indices('\\').any(|(start, _)| {
+        text[start + 1..]
+            .chars()
+            .next()
+            .is_some_and(|next| matches!(next, 'u' | 'x' | '0'..='7'))
+    })
+}
+
+/// `true` when the symlink at `path` hides nothing the walk would index.
+///
+/// A file link whose own name the TypeScript adapter does not index (not a
+/// source extension, or a generated or minified name the walk refuses) has
+/// nothing indexable behind it (h3's `docs/5.migration/0.index.md` link made
+/// every h3 analysis partial). Only the target's file-ness is read, never its
+/// content.
+///
+/// A directory link is an alias when its canonical target is a directory
+/// inside the canonical root with no excluded component: the walk visits
+/// the target under its real path, so the link adds no file (zod's
+/// `.tools/skills -> ../.agent/skills`). A target outside the root, in an
+/// excluded directory, a dangling link or a failed stat is "could hide
+/// sources" and stays disclosed.
+fn classify_symlink(path: &Path, root: &Path) -> LinkKind {
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return LinkKind::MayHideSources;
+    };
+    if metadata.is_file() {
+        return if !TypeScriptAdapter.accepts_path(path)
+            || is_detectable_generated_typescript_path(path)
+        {
+            LinkKind::Harmless
+        } else {
+            LinkKind::MayHideSources
+        };
+    }
+    if metadata.is_dir() && directory_link_aliases_walked_directory(path, root) {
+        LinkKind::DirectoryAlias
+    } else {
+        LinkKind::MayHideSources
+    }
+}
+
+enum LinkKind {
+    Harmless,
+    /// Aliases a directory the walk indexes under its real path; hides
+    /// nothing unless an indexed file imports through the link.
+    DirectoryAlias,
+    MayHideSources,
+}
+
+fn directory_link_aliases_walked_directory(path: &Path, root: &Path) -> bool {
+    let (Ok(target), Ok(root)) = (std::fs::canonicalize(path), std::fs::canonicalize(root)) else {
+        return false;
+    };
+    // The walk silently skips a directory it cannot list, so an alias of one
+    // would hide sources the walk never saw.
+    std::fs::read_dir(&target).is_ok()
+        && target
+            .strip_prefix(&root)
+            .is_ok_and(|relative| !crate::config::is_detectable_excluded_typescript_path(relative))
 }
 
 /// `true` for directory entry types that are neither directories, regular
@@ -637,8 +858,9 @@ mod tests {
             "tests/sum.test.ts",
             "import { sum } from '../src/sum';\n\ntest('adds', () => {\n  expect(sum(2, 3)).toBe(5);\n});\n",
         );
-        // A real directory holding a linked test file...
-        workspace.write(
+        // A real directory outside the root holding a linked test file...
+        let outside = TempWorkspace::new("link-skip-outside");
+        outside.write(
             "real_tests/linked.test.ts",
             "import { sum } from '../src/sum';\n\ntest('linked adds', () => {\n  expect(sum(4, 1)).toBe(5);\n});\n",
         );
@@ -646,7 +868,7 @@ mod tests {
         #[cfg(unix)]
         let linked = {
             use std::os::unix::fs::symlink;
-            let target = workspace.0.join("real_tests");
+            let target = outside.0.join("real_tests");
             let link = workspace.0.join("tests_linked");
             if symlink(&target, &link).is_err() {
                 return; // platform refused; nothing to assert here
@@ -656,7 +878,7 @@ mod tests {
         #[cfg(windows)]
         let linked = {
             use std::os::windows::fs::symlink_dir;
-            let target = workspace.0.join("real_tests");
+            let target = outside.0.join("real_tests");
             let link = workspace.0.join("tests_linked");
             if symlink_dir(&target, &link).is_err() {
                 return; // privilege missing; nothing to assert here
@@ -687,6 +909,403 @@ mod tests {
             scan.files
         );
         let _ = linked;
+    }
+
+    /// A file symlink under a non-source name (a docs link such as h3's
+    /// `docs/5.migration/0.index.md`) hides nothing the walk would index, so it
+    /// is not disclosed; a source-named file link, a directory link and a
+    /// dangling link all still are.
+    #[cfg(unix)]
+    #[test]
+    fn discovery_does_not_count_non_source_file_links_but_counts_every_other_link()
+    -> std::io::Result<()> {
+        use std::os::unix::fs::symlink;
+        let workspace = TempWorkspace::new("link-nonsource");
+        workspace.write("src/sum.ts", "export const sum = 1;\n");
+        workspace.write("README.md", "# docs\n");
+        workspace.write("real/linked.test.ts", "test('x', () => {});\n");
+        let root = &workspace.0;
+        workspace.write("docs/guide.md", "# guide\n");
+        symlink(root.join("README.md"), root.join("docs/index.md"))?;
+        let scan = visit_workspace_with_handwritten(root, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        assert_eq!(
+            scan.skipped_links, 0,
+            "a markdown file link hides no source and must not be disclosed"
+        );
+
+        symlink(
+            root.join("README.md"),
+            root.join("docs/bundle.generated.ts"),
+        )?;
+        let scan = visit_workspace_with_handwritten(root, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        assert_eq!(
+            scan.skipped_links, 0,
+            "a generated-named file link is a name the walk never indexes"
+        );
+
+        symlink(
+            root.join("real/linked.test.ts"),
+            root.join("linked.test.ts"),
+        )?;
+        let scan = visit_workspace_with_handwritten(root, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        assert_eq!(scan.skipped_links, 1, "a source-named file link is counted");
+
+        symlink(root.join("real"), root.join("docs/real.md"))?;
+        let scan = visit_workspace_with_handwritten(root, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        assert_eq!(
+            scan.skipped_links, 1,
+            "a link to a walked in-root directory is an alias and adds no file"
+        );
+
+        let outside = TempWorkspace::new("link-nonsource-outside");
+        outside.write("pkg/other.test.ts", "test('y', () => {});\n");
+        symlink(outside.0.join("pkg"), root.join("docs/outside.md"))?;
+        let scan = visit_workspace_with_handwritten(root, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        assert_eq!(
+            scan.skipped_links, 2,
+            "a directory link leaving the root is counted even under a non-source name"
+        );
+
+        workspace.write("node_modules/pkg/index.test.ts", "test('z', () => {});\n");
+        symlink(root.join("node_modules/pkg"), root.join("docs/vendored.md"))?;
+        let scan = visit_workspace_with_handwritten(root, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        assert_eq!(
+            scan.skipped_links, 3,
+            "a link into an excluded directory is not a walked alias and is counted"
+        );
+
+        symlink(root.join("missing.md"), root.join("docs/dangling.md"))?;
+        let scan = visit_workspace_with_handwritten(root, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        assert_eq!(
+            scan.skipped_links, 4,
+            "a dangling link cannot be shown harmless and is counted"
+        );
+        Ok(())
+    }
+
+    /// zod's agent-tooling alias `.tools/skills -> ../.agent/skills`
+    /// (relative target, hidden directories) is a walked directory under a
+    /// second name, so it is not a skipped link (#10829).
+    #[cfg(unix)]
+    #[test]
+    fn discovery_does_not_count_a_relative_alias_of_a_walked_directory() -> std::io::Result<()> {
+        use std::os::unix::fs::symlink;
+        let workspace = TempWorkspace::new("link-alias");
+        workspace.write("src/sum.ts", "export const sum = 1;\n");
+        workspace.write(".agent/skills/triage/helper.mjs", "export const t = 1;\n");
+        workspace.write(".tools/README.md", "# codex\n");
+        symlink("../.agent/skills", workspace.0.join(".tools/skills"))?;
+        let scan =
+            visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        assert_eq!(scan.skipped_links, 0, "{:?}", scan.files);
+        assert!(
+            scan.files.iter().any(|file| file.ends_with("src/sum.ts")),
+            "the real source is still indexed: {:?}",
+            scan.files
+        );
+        assert!(
+            !scan
+                .files
+                .iter()
+                .any(|file| file.starts_with(".tools/skills")),
+            "the alias is not followed into the index: {:?}",
+            scan.files
+        );
+        Ok(())
+    }
+
+    /// An alias an indexed file imports through (`../alias/sum`) names a path
+    /// the walk never indexes, so it is counted; the same alias that nothing
+    /// imports through is not (#10829 review).
+    #[cfg(unix)]
+    #[test]
+    fn discovery_counts_an_alias_that_an_indexed_file_imports_through() -> std::io::Result<()> {
+        use std::os::unix::fs::symlink;
+        let workspace = TempWorkspace::new("link-alias-import");
+        workspace.write("src/sum.ts", "export const sum = 1;\n");
+        workspace.write(
+            "tests/sum.test.ts",
+            "import { sum } from '../alias/sum';\ntest('s', () => { expect(sum).toBe(1); });\n",
+        );
+        symlink("src", workspace.0.join("alias"))?;
+        assert_eq!(
+            std::fs::canonicalize(workspace.0.join("alias"))?,
+            std::fs::canonicalize(workspace.0.join("src"))?,
+            "the alias must resolve to the real indexed directory, not dangle"
+        );
+        let scan =
+            visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        assert!(scan.files.iter().any(|file| file.ends_with("src/sum.ts")));
+        assert_eq!(scan.skipped_links, 1, "{:?}", scan.files);
+
+        // Control: the same real alias that nothing imports through is not
+        // counted, so the count above comes from the import scan alone.
+        workspace.write(
+            "tests/sum.test.ts",
+            "import { sum } from '../src/sum';\ntest('s', () => { expect(sum).toBe(1); });\n",
+        );
+        let scan =
+            visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        assert_eq!(scan.skipped_links, 0, "{:?}", scan.files);
+
+        // A comment quote before the real import must not hide it.
+        workspace.write(
+            "tests/sum.test.ts",
+            "/* \" */ import { sum } from \"../alias/sum\";\ntest('s', () => {});\n",
+        );
+        let scan =
+            visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        assert_eq!(scan.skipped_links, 1, "{:?}", scan.files);
+        Ok(())
+    }
+
+    /// A file that spells the alias's real path (`real/skills`) is not an
+    /// import through `link/skills`; an import through the link still counts
+    /// (a real repository's triage script mentions its own tooling path, #10899).
+    #[cfg(unix)]
+    #[test]
+    fn discovery_ignores_the_real_spelling_of_an_alias_target() -> std::io::Result<()> {
+        use std::os::unix::fs::symlink;
+        let workspace = TempWorkspace::new("link-alias-real-spelling");
+        workspace.write(
+            "real/skills/run.ts",
+            "// usage: run real/skills/run.ts\nexport const real = 'real/skills/run';\n",
+        );
+        std::fs::create_dir_all(workspace.0.join("link"))?;
+        symlink("../real/skills", workspace.0.join("link/skills"))?;
+        assert_eq!(
+            std::fs::canonicalize(workspace.0.join("link/skills"))?,
+            std::fs::canonicalize(workspace.0.join("real/skills"))?,
+            "the alias must resolve to the real indexed directory, not dangle"
+        );
+        let scan =
+            visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        assert!(
+            scan.files
+                .iter()
+                .any(|file| file.ends_with("real/skills/run.ts"))
+        );
+        assert_eq!(scan.skipped_links, 0, "{:?}", scan.files);
+
+        // The same file also importing through the link is still counted.
+        workspace.write(
+            "real/skills/run.ts",
+            "// real/skills/run.ts\nimport { x } from '../../link/skills/x';\n",
+        );
+        let scan =
+            visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        assert_eq!(scan.skipped_links, 1, "{:?}", scan.files);
+        Ok(())
+    }
+
+    /// The real-spelling exemption matches whole path components: a link
+    /// under `unreal/` is not mistaken for a spelling under `real/`, in raw
+    /// text or in a decoded literal (#10901 review).
+    #[cfg(unix)]
+    #[test]
+    fn discovery_does_not_exempt_a_parent_that_only_ends_with_the_target_parent()
+    -> std::io::Result<()> {
+        use std::os::unix::fs::symlink;
+        let workspace = TempWorkspace::new("link-alias-suffix-parent");
+        workspace.write("real/skills/x.ts", "export const x = 1;\n");
+        std::fs::create_dir_all(workspace.0.join("unreal"))?;
+        symlink("../real/skills", workspace.0.join("unreal/skills"))?;
+        assert_eq!(
+            std::fs::canonicalize(workspace.0.join("unreal/skills"))?,
+            std::fs::canonicalize(workspace.0.join("real/skills"))?,
+            "the alias must resolve to the real indexed directory, not dangle"
+        );
+        for import in [
+            "import { x } from '../unreal/skills/x';\n",
+            "import { x } from '../unreal\\u002fskills/x';\n",
+        ] {
+            workspace.write("tests/x.test.ts", import);
+            let scan =
+                visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+            assert_eq!(scan.skipped_links, 1, "{import}: {:?}", scan.files);
+        }
+
+        // Control: a spelling through the real parent is still the real path.
+        workspace.write("tests/x.test.ts", "import { x } from '../real/skills/x';\n");
+        let scan =
+            visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        assert_eq!(scan.skipped_links, 0, "{:?}", scan.files);
+        Ok(())
+    }
+
+    /// Which directory a relative specifier names is decided by resolving it,
+    /// not by characters around the target's name: a link under `my.real`,
+    /// `my:real`, `my real`, `my[real` or `a+real` is reached by its own
+    /// spelling in raw text and in a decoded literal, while the real spelling
+    /// and a bare or prose mention are not imports through the link
+    /// (#10901 review).
+    #[cfg(unix)]
+    #[test]
+    fn discovery_resolves_specifiers_instead_of_guessing_component_boundaries()
+    -> std::io::Result<()> {
+        use std::os::unix::fs::symlink;
+        for (index, parent) in ["my.real", "my:real", "my real", "my[real", "a+real"]
+            .into_iter()
+            .enumerate()
+        {
+            let workspace = TempWorkspace::new(&format!("link-alias-resolve-{index}"));
+            workspace.write("real/skills/x.ts", "export const x = 1;\n");
+            std::fs::create_dir_all(workspace.0.join(parent))?;
+            symlink("../real/skills", workspace.0.join(parent).join("skills"))?;
+            assert_eq!(
+                std::fs::canonicalize(workspace.0.join(parent).join("skills"))?,
+                std::fs::canonicalize(workspace.0.join("real/skills"))?,
+                "the alias must resolve to the real indexed directory, not dangle"
+            );
+            let escaped = parent.replace('/', "");
+            for (import, expected) in [
+                (format!("import {{ x }} from '../{parent}/skills/x';\n"), 1),
+                (
+                    format!("import {{ x }} from '../{escaped}\\u002fskills/x';\n"),
+                    1,
+                ),
+                ("import { x } from '../real/skills/x';\n".to_string(), 0),
+                (
+                    "import { x } from '..\\u002freal/skills/x';\n".to_string(),
+                    0,
+                ),
+                (
+                    format!(
+                        "// {parent}/skills is a tooling path\nexport const note = 'see {parent}/skills';\n"
+                    ),
+                    0,
+                ),
+            ] {
+                workspace.write("tests/x.test.ts", &import);
+                let scan = visit_workspace_with_handwritten(
+                    &workspace.0,
+                    DEFAULT_TS_MAX_WORKSPACE_FILES,
+                    &[],
+                );
+                assert_eq!(
+                    scan.skipped_links, expected,
+                    "{parent}: {import}: {:?}",
+                    scan.files
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// The alias name is not limited to a restricted character set: `a$b`
+    /// imported as `../a$b/sum` is still matched (#10829 review).
+    #[cfg(unix)]
+    #[test]
+    fn discovery_counts_an_alias_whose_name_has_shell_characters() -> std::io::Result<()> {
+        use std::os::unix::fs::symlink;
+        let workspace = TempWorkspace::new("link-alias-dollar");
+        workspace.write("src/sum.ts", "export const sum = 1;\n");
+        workspace.write(
+            "tests/sum.test.ts",
+            "import { sum } from '../a$b/sum';\ntest('s', () => { expect(sum).toBe(1); });\n",
+        );
+        symlink("src", workspace.0.join("a$b"))?;
+        let scan =
+            visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        assert_eq!(scan.skipped_links, 1, "{:?}", scan.files);
+        Ok(())
+    }
+
+    /// A space in the alias name is ordinary import spelling: `'../my lib/sum'`
+    /// is matched, and the same alias with no importer is not counted.
+    #[cfg(unix)]
+    #[test]
+    fn discovery_counts_an_alias_whose_name_has_a_space_only_when_imported() -> std::io::Result<()>
+    {
+        use std::os::unix::fs::symlink;
+        let workspace = TempWorkspace::new("link-alias-space");
+        workspace.write("src/sum.ts", "export const sum = 1;\n");
+        workspace.write(
+            "tests/sum.test.ts",
+            "import { sum } from '../src/sum';\ntest('s', () => { expect(sum).toBe(1); });\n",
+        );
+        symlink("src", workspace.0.join("my lib"))?;
+        let scan =
+            visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        assert_eq!(scan.skipped_links, 0, "{:?}", scan.files);
+        workspace.write(
+            "tests/sum.test.ts",
+            "import { sum } from '../my lib/sum';\ntest('s', () => { expect(sum).toBe(1); });\n",
+        );
+        let scan =
+            visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        assert_eq!(scan.skipped_links, 1, "{:?}", scan.files);
+        Ok(())
+    }
+
+    /// An escaped spelling (`'../al\u0069as/lib'`) decodes to the alias name
+    /// without the raw text containing it, so it is counted; an unrelated
+    /// escape (`\n`) beside a direct import is not.
+    #[cfg(unix)]
+    #[test]
+    fn discovery_counts_an_alias_named_through_a_character_escape() -> std::io::Result<()> {
+        use std::os::unix::fs::symlink;
+        let workspace = TempWorkspace::new("link-alias-escape");
+        workspace.write("src/sum.ts", "export const sum = 1;\n");
+        symlink("src", workspace.0.join("alias"))?;
+        workspace.write(
+            "tests/sum.test.ts",
+            "import { sum } from '../src/sum';\nconst note = 'a\\nb';\ntest('s', () => { expect(sum).toBe(1); });\n",
+        );
+        let scan =
+            visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        assert_eq!(scan.skipped_links, 0, "{:?}", scan.files);
+        workspace.write(
+            "tests/sum.test.ts",
+            "import { sum } from '../al\\u0069as/sum';\ntest('s', () => { expect(sum).toBe(1); });\n",
+        );
+        let scan =
+            visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        assert_eq!(scan.skipped_links, 1, "{:?}", scan.files);
+
+        // An escaped separator leaves neither `./` nor `/alias` in the raw
+        // text; the decoded literal still names the link.
+        workspace.write(
+            "tests/sum.test.ts",
+            "import { sum } from '..\\u002falias/sum';\ntest('s', () => { expect(sum).toBe(1); });\n",
+        );
+        let scan =
+            visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        assert_eq!(scan.skipped_links, 1, "{:?}", scan.files);
+
+        // Escapes beside an unrelated, cleanly parsed import do not count
+        // (zod's unicode-heavy tests must keep the tooling alias exempt).
+        workspace.write(
+            "tests/sum.test.ts",
+            "import { sum } from '../src/sum';\nconst snow = '\\u2603';\ntest('s', () => { expect(sum).toBe(1); });\n",
+        );
+        let scan =
+            visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        assert_eq!(scan.skipped_links, 0, "{:?}", scan.files);
+        Ok(())
+    }
+
+    /// A directory the walk cannot list hides its sources, so a link aliasing
+    /// it stays counted (#10829). Skipped when the process can read it anyway
+    /// (running as root).
+    #[cfg(unix)]
+    #[test]
+    fn discovery_counts_an_alias_of_a_directory_it_cannot_list() -> std::io::Result<()> {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        let workspace = TempWorkspace::new("link-unlistable");
+        workspace.write("src/keep.ts", "export const keep = 1;\n");
+        workspace.write("private/lost.test.ts", "test('x', () => {});\n");
+        let private = workspace.0.join("private");
+        fs::set_permissions(&private, fs::Permissions::from_mode(0o300))?;
+        symlink(&private, workspace.0.join("alias.md"))?;
+        let unlistable = fs::read_dir(&private).is_err();
+        let scan =
+            visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        fs::set_permissions(&private, fs::Permissions::from_mode(0o700))?;
+        if unlistable {
+            assert_eq!(scan.skipped_links, 1, "{:?}", scan.files);
+        }
+        Ok(())
     }
 
     /// A Unix socket is neither dir, file, nor link, so before the

@@ -296,6 +296,8 @@ PROOF_INPUTS_JSON="${PROOF_INPUTS_JSON:?set accepted proof-input reference list}
 # Supplied by the trusted controller from exact native owner decisions, not generated here.
 OWNER_ACCEPTANCE_JSON="${OWNER_ACCEPTANCE_JSON:?set reviewed selection/denominator/audit acceptance envelopes}"
 CONTROLLER_ROOT="${CONTROLLER_ROOT:?set absolute independent controller root}"
+# The producer resolves --input against CONTROLLER_ROOT, so jq writes there.
+MANIFEST_INPUT="${MANIFEST_INPUT:-live-head-selection-input.json}"
 CANDIDATE_TREE="$(git -C "$SWARM_ROOT" rev-parse "$SWARM_PARENT^{tree}")"
 test "$(git -C "$SWARM_ROOT" rev-parse HEAD)" = "$SWARM_PARENT"
 test -z "$(git -C "$SWARM_ROOT" status --porcelain=v1 --untracked-files=all)"
@@ -323,16 +325,19 @@ jq --arg sha "$SWARM_PARENT" --arg tree "$CANDIDATE_TREE" --arg ref "$SWARM_REF"
   .pin = {remote_ref_readback: {owner_issue: 1609, path: $readback, sha256: $readback_sha},
     ruleset: {owner_issue: 1609, path: $ruleset, sha256: $ruleset_sha}} |
   .qualification.proof_inputs = $proof[0] |
-  .source_parent = null' "$PACKET_ROOT/live-head-selection-template.json" > "$PACKET_ROOT/live-head-selection.json"
-# Generate the handoff from this same DTO; no independent hand-authored identity projection.
-jq -r '["# Swarm candidate manifest", "", ("Candidate: " + .candidate.repository + "@" + .candidate.sha),
-  ("Tree: " + .candidate.tree), ("Ref: " + .candidate.ref),
-  ("Qualification: " + .qualification.state), "Source parent: unbound until source #1769", "", "Non-claims:"]
-  + (.non_claims | map("- " + .)) | .[]' "$PACKET_ROOT/live-head-selection.json" > "$PACKET_ROOT/live-head-selection.md"
+  .source_parent = null' "$PACKET_ROOT/live-head-selection-template.json" > "$CONTROLLER_ROOT/$MANIFEST_INPUT"
+# jq only assembles proposed inputs. The existing Rust DTO validates all typed
+# fields and retained owner/pin bytes, then emits both projections. OUT must be
+# a new directory below CONTROLLER_ROOT; it is not a standalone controller root.
+MANIFEST_OUTPUT="${MANIFEST_OUTPUT:?set new controller-relative proposal directory}"
+cargo xtask release-manifest-proposal --controller-root "$CONTROLLER_ROOT" \
+  --version 0.11.0 --input "$MANIFEST_INPUT" --out "$MANIFEST_OUTPUT"
+# Keep the original controller root for consumers: evidence paths are unchanged.
+PACKET_MANIFEST="$CONTROLLER_ROOT/$MANIFEST_OUTPUT/manifest.json"
 # STOP: retain this proposed output for #1609 acceptance. Hashing it is not approval.
 # Only after independent #1609 review, the trusted release operator supplies the accepted digest.
 ACCEPTED_MANIFEST_SHA256="${ACCEPTED_MANIFEST_SHA256:?obtain from the reviewed #1609 handoff, not this producer}"
-test "$(sha256sum "$PACKET_ROOT/live-head-selection.json" | awk '{print $1}')" = "$ACCEPTED_MANIFEST_SHA256"
+test "$(sha256sum "$PACKET_MANIFEST" | awk '{print $1}')" = "$ACCEPTED_MANIFEST_SHA256"
 ```
 
 At every later receipt, read `refs/tags/$PIN_TAG` again and require the
@@ -417,7 +422,7 @@ assert_live_pin_guard
   --swarm-ref "$SWARM_REF" --source-repo "$SOURCE_ROOT" --swarm-repo "$SWARM_ROOT" \
   --source-main "$SOURCE_PARENT" --swarm-main "$SWARM_PARENT" \
   --version "$VERSION" --resolved-tree "$JOIN_TREE" \
-  --controller-root "$PACKET_ROOT" --candidate-manifest live-head-selection.json \
+  --controller-root "$CONTROLLER_ROOT" --candidate-manifest "$MANIFEST_OUTPUT/manifest.json" \
   --selection-decision "$SELECTION_DECISION" \
   --qualification-bundle "$QUALIFICATION_BUNDLE" \
   --qualification-decision "$QUALIFICATION_DECISION" \
@@ -574,12 +579,24 @@ test "$(git -C "$SOURCE_ROOT" rev-parse "$SOURCE_RELEASE_HEAD^{commit}")" = "$SO
 git -C "$SOURCE_ROOT" switch --detach "$SOURCE_RELEASE_HEAD"
 test -z "$(git -C "$SOURCE_ROOT" status --short)"
 (cd "$SOURCE_ROOT" && cargo xtask release-readiness --version "$VERSION")
+(cd "$SOURCE_ROOT" && cargo xtask release-negative-corpus --version "$VERSION")
+# zero-case guard: a green exit with no executed or with failed cases is not proof
+jq -e '.summary.total_cases > 0 and .summary.failed == 0' \
+  "$SOURCE_ROOT/target/ripr/reports/release-negative-corpus.json"
 ```
+
+The version-only `release-negative-corpus` run is legacy smoke
+(`qualification_mode: legacy_smoke_unqualified`). For the #1609-qualified path
+add the complete `--controller-root`, `--candidate-source-root`,
+`--candidate-artifact` group described in [`RELEASE.md`](RELEASE.md) and record
+`qualification_mode` in the packet; the qualified form writes the report under `<controller-root>/target/ripr/reports/`, so point the `jq` guard there. Do not claim controlled negative injections
+for the candidate from the unqualified form (#2792).
 
 | Surface | Repository/worktree and mode | Proof | Boundary |
 | Crate | source exact release checkout, **[LOCAL-MUTATING]** for package output; **[READ-ONLY]** dry-run query | `(cd "$SOURCE_ROOT" && cargo package -p ripr --list)`; `(cd "$SOURCE_ROOT" && cargo publish -p ripr --dry-run)` | Package/publishability, not publication |
 | Installed CLI | source exact release checkout, **[LOCAL-MUTATING]** | `(cd "$SOURCE_ROOT" && cargo install --path crates/ripr --locked --force --root target/ripr/install-smoke)` plus version/doctor/fixture smoke | Local installed binary |
 | Readiness/consumer | source exact release checkout, **[LOCAL-MUTATING]** | `(cd "$SOURCE_ROOT" && cargo xtask release-readiness --version <VERSION>)` | Version alignment and journey receipt |
+| Negative corpus | source exact release checkout, **[LOCAL-MUTATING]** | `(cd "$SOURCE_ROOT" && cargo xtask release-negative-corpus --version <VERSION>)` plus the `summary` guard above | Controlled negative injections fail for intended reasons and restoration passes (#2792); smoke unless the qualified group is passed |
 | Linux/Windows | source release workflow artifacts, **[READ-ONLY]** when inspecting exact `SOURCE_RELEASE_HEAD` outputs | Workflow artifacts bound to `SOURCE_RELEASE_HEAD` | Platform proof; one OS is not the other |
 | Server | source exact release checkout, **[LOCAL-MUTATING]** | `(cd "$SOURCE_ROOT" && cargo xtask release-server-archive ...)`; `(cd "$SOURCE_ROOT" && cargo xtask release-server-manifest ...)` | Archive, manifest, checksum shape |
 | VSIX | source exact release checkout, **[LOCAL-MUTATING]** | `npm --prefix editors/vscode ci`, compile, package | Local package/version proof |
@@ -686,10 +703,31 @@ jq -e --arg sha "$SOURCE_RELEASE_HEAD" '.headSha == $sha and .status == "complet
 
 ```bash
 set -euo pipefail
+# [LOCAL-MUTATING] repo=packet; record the published server manifest's raw-byte digest before any extension dispatch
+curl -fsSL "https://github.com/EffortlessMetrics/ripr/releases/download/v${VERSION}/ripr-server-manifest-v${VERSION}.json" -o "$PACKET_ROOT/ripr-server-manifest-v${VERSION}.json"
+SERVER_MANIFEST_SHA256="$(sha256sum "$PACKET_ROOT/ripr-server-manifest-v${VERSION}.json" | cut -d' ' -f1)"
+printf '%s\n' "$SERVER_MANIFEST_SHA256" > "$PACKET_ROOT/server-manifest.sha256"
+```
+
+`publish-extension.yml` refuses a dispatch whose run commit is not `source_sha`
+or whose `v$VERSION` tag does not peel to it, re-downloads the manifest and
+every archive it names and compares them with `manifest_sha256`, requires
+`package.json` to equal the version, binds that digest into the VSIX through
+`cargo xtask release-bind-server-descriptor`, runs `npm run package` plus
+`cargo xtask vscode-verify-vsix`, and attaches one VSIX to the Release before
+either marketplace publish. The second channel's dispatch must pass the attached
+VSIX's digest as `vsix_sha256` (recorded below before that dispatch); it
+downloads the attached bytes, checks them against it, and each publish job
+re-checks their SHA-256 against the Release asset. The workflow cannot prove
+equivalence with the swarm qualification archives, whose commit and URLs
+differ; that remains outside this control (#3807 R8-F2).
+
+```bash
+set -euo pipefail
 # [EXTERNAL-PUBLISHING] repo=source; explicit #1470 VS Marketplace authorization only
 DISPATCHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 gh api --paginate --slurp "repos/EffortlessMetrics/ripr/actions/workflows/publish-extension.yml/runs?per_page=100&event=workflow_dispatch" | jq '[.[] | .workflow_runs[]]' > "$PACKET_ROOT/extension-runs-before.json"
-gh workflow run publish-extension.yml --repo EffortlessMetrics/ripr --ref "$RELEASE_REF" -f version="$VERSION" -f publish_vs_marketplace=true -f publish_open_vsx=false
+gh workflow run publish-extension.yml --repo EffortlessMetrics/ripr --ref "$RELEASE_REF" -f version="$VERSION" -f source_sha="$SOURCE_RELEASE_HEAD" -f manifest_sha256="$SERVER_MANIFEST_SHA256" -f publish_vs_marketplace=true -f publish_open_vsx=false
 ```
 
 ```bash
@@ -704,10 +742,18 @@ jq -e --arg sha "$SOURCE_RELEASE_HEAD" '.headSha == $sha and .status == "complet
 
 ```bash
 set -euo pipefail
+# [LOCAL-MUTATING] repo=packet; record the digest of the VSIX the first dispatch attached to the Release
+gh release download "v${VERSION}" --repo EffortlessMetrics/ripr --pattern "ripr-${VERSION}.vsix" --dir "$PACKET_ROOT"
+VSIX_SHA256="$(sha256sum "$PACKET_ROOT/ripr-${VERSION}.vsix" | cut -d' ' -f1)"
+printf '%s\n' "$VSIX_SHA256" > "$PACKET_ROOT/vsix.sha256"
+```
+
+```bash
+set -euo pipefail
 # [EXTERNAL-PUBLISHING] repo=source; explicit #1470 Open VSX authorization only
 DISPATCHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 gh api --paginate --slurp "repos/EffortlessMetrics/ripr/actions/workflows/publish-extension.yml/runs?per_page=100&event=workflow_dispatch" | jq '[.[] | .workflow_runs[]]' > "$PACKET_ROOT/extension-runs-open-vsx-before.json"
-gh workflow run publish-extension.yml --repo EffortlessMetrics/ripr --ref "$RELEASE_REF" -f version="$VERSION" -f publish_vs_marketplace=false -f publish_open_vsx=true
+gh workflow run publish-extension.yml --repo EffortlessMetrics/ripr --ref "$RELEASE_REF" -f version="$VERSION" -f source_sha="$SOURCE_RELEASE_HEAD" -f manifest_sha256="$SERVER_MANIFEST_SHA256" -f vsix_sha256="$VSIX_SHA256" -f publish_vs_marketplace=false -f publish_open_vsx=true
 ```
 
 ```bash

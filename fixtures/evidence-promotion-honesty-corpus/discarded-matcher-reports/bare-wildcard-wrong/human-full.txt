@@ -30,7 +30,7 @@ Evidence
   - observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect
   - discriminator no: No assertion found on related tests
   - local flow reaches returned value: value + 2 (line 2)
-  - related test src/lib.rs:8 observes_score uses none unknown oracle; misses: has no assertion
+  - related test src/lib.rs:8 observes_score uses no oracle; misses: has no assertion
   - source function argument value value = 1 at line 9
 
 Weakness

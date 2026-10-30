@@ -1,0 +1,12 @@
+diff --git a/lits/cfg.py b/lits/cfg.py
+--- a/lits/cfg.py
++++ b/lits/cfg.py
+@@ -28,7 +28,7 @@ def whole_config():
+ 
+ def roles():
+     return [
+-        "admin",
++        "root",
+         "user",
+     ]
+ 

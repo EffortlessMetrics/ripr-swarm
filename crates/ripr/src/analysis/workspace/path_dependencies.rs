@@ -31,7 +31,7 @@
 //! Rust adapter feeds into the Draft/Fast package selection. Dep-driven
 //! impact analysis beyond scope expansion is still future work.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::Path;
 
 use crate::analysis::seam_cache::{
@@ -66,8 +66,9 @@ impl PathDependencyGraphStatus {
 /// One reachability walk result: the transitively reachable manifests plus
 /// the cycle markers cut to keep the walk finite.
 ///
-/// #2970 slice C consumes reverse walks for diff-scope expansion; the
-/// forward direction has no production consumer yet.
+/// Single-root reference for adjacency/cycle tests. Production scope
+/// expansion uses the shared reverse union instead.
+#[cfg(test)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PathDependencyWalk {
     /// Manifest identities reached from the start node, sorted, excluding the
@@ -84,6 +85,7 @@ pub(crate) struct PathDependencyWalk {
     cycle_manifests: Vec<String>,
 }
 
+#[cfg(test)]
 impl PathDependencyWalk {
     /// Manifests reached from the start node, sorted, start excluded.
     pub(crate) fn reachable(&self) -> &[String] {
@@ -294,9 +296,52 @@ impl PathDependencyAdjacency {
         self.walk(&self.forward, manifest)
     }
 
-    /// Transitive reverse reach: every manifest that reaches `manifest`
+    /// Union of the single-root reverse walks, each excluding its own seed.
+    /// A seed reached from another seed must still be included, even when
+    /// their paths meet before cycling back to it. Retain up to two distinct
+    /// origins per node: if further origins meet here, every descendant is
+    /// already reachable from two seeds, at least one different from itself.
+    /// Thus each node/edge expands at most twice, independent of seed count
+    /// (ordered-map lookups still cost O(log nodes)). Borrow canonical names
+    /// from the graph instead of cloning neighbor lists for every walk.
+    fn reverse_reachable_union(&self, starts: impl IntoIterator<Item = String>) -> BTreeSet<&str> {
+        let mut pending = VecDeque::new();
+        for start in starts {
+            if let Some(node) = self.nodes.get(start.as_str()) {
+                pending.push_back((node.as_str(), node.as_str()));
+            }
+        }
+        let mut sources = BTreeMap::<&str, (&str, Option<&str>)>::new();
+        let mut reached = BTreeSet::new();
+        while let Some((node, origin)) = pending.pop_front() {
+            match sources.entry(node) {
+                std::collections::btree_map::Entry::Vacant(entry) => {
+                    entry.insert((origin, None));
+                }
+                std::collections::btree_map::Entry::Occupied(mut entry) => {
+                    let (first, second) = entry.get_mut();
+                    if *first == origin || second.is_some() {
+                        continue;
+                    }
+                    *second = Some(origin);
+                }
+            }
+            if node != origin {
+                reached.insert(node);
+            }
+            for neighbor in self.reverse.get(node).into_iter().flatten() {
+                #[cfg(test)]
+                tests::WALK_EDGE_VISITS.with(|count| count.set(count.get() + 1));
+                pending.push_back((neighbor.as_str(), origin));
+            }
+        }
+        reached
+    }
+
+    /// Reference reverse reach: every manifest that reaches `manifest`
     /// through path dependencies, with cycles cut and disclosed. `None` when
     /// the manifest is not a graph node.
+    #[cfg(test)]
     pub(crate) fn reverse_walk(&self, manifest: &str) -> Option<PathDependencyWalk> {
         self.walk(&self.reverse, manifest)
     }
@@ -306,6 +351,7 @@ impl PathDependencyAdjacency {
     /// already on the current path is a cycle back-edge: disclosed, never
     /// recursed. Together the two guards bound the walk to O(nodes + edges)
     /// steps on any input, cyclic or not.
+    #[cfg(test)]
     fn walk(
         &self,
         adjacency: &BTreeMap<String, BTreeSet<String>>,
@@ -333,6 +379,8 @@ impl PathDependencyAdjacency {
                 .and_then(|(_node, children)| children.next());
             match advance {
                 Some(child) => {
+                    #[cfg(test)]
+                    tests::WALK_EDGE_VISITS.with(|count| count.set(count.get() + 1));
                     if on_path.contains(&child) {
                         #[cfg(test)]
                         cycles.insert(child);
@@ -430,6 +478,49 @@ impl PathDependencyScopeExpansion {
         }
     }
 
+    /// Typed form of [`Self::scope_disclosure`] for the analysis outcome, so
+    /// consumers that read the report instead of stderr (CI summaries, LSP,
+    /// MCP, agents) see why dependents may be missing and what to do next.
+    /// `None` exactly when the graph is `complete` (#10182).
+    pub(crate) fn scope_limitation(
+        &self,
+    ) -> Result<Option<crate::analysis_outcome::AnalysisLimitation>, String> {
+        use crate::analysis_outcome::{
+            AnalysisLimitation, AnalysisLimitationKind, AnalysisRecovery, AnalysisRecoveryKind,
+            AnalysisStage,
+        };
+        let (detail, recovery) = match self.status {
+            PathDependencyGraphStatus::Complete => return Ok(None),
+            PathDependencyGraphStatus::Limited => (
+                "The path-dependency graph is limited: at least one Cargo.toml could not be \
+                 parsed, followed or read, so reverse-dependency scope expansion used a partial edge inventory \
+                 and may have missed crates that depend on the changed packages, along with \
+                 their tests.",
+                "Fix any Cargo.toml that fails to parse (`cargo metadata` only lists workspace \
+                 members, so check stray manifests too). ripr does not follow `[package] \
+                 workspace = ...` redirects: inline or remove that package's `workspace = \
+                 true` dependencies, or drop the redirect, and use UTF-8 manifest paths. \
+                 Then re-run the analysis.",
+            ),
+            PathDependencyGraphStatus::Unavailable => (
+                "The path-dependency graph is unavailable: no local Cargo.toml manifest was \
+                 found, so reverse-dependency scope expansion did not run and the diff scope \
+                 stays the changed packages; crates that depend on them, and their tests, were \
+                 not searched.",
+                "Run ripr from a Cargo workspace root (or restore the missing Cargo.toml), \
+                 then re-run the analysis.",
+            ),
+        };
+        Ok(Some(
+            AnalysisLimitation::new(
+                AnalysisLimitationKind::ProducerFailure,
+                AnalysisStage::LanguageAdapter,
+                AnalysisRecovery::new(AnalysisRecoveryKind::InspectFailure, recovery)?,
+            )
+            .with_detail(detail)?,
+        ))
+    }
+
     /// The computed dependent package roots, consuming the expansion.
     pub(crate) fn into_dependent_package_roots(self) -> BTreeSet<String> {
         self.dependent_package_roots
@@ -511,14 +602,13 @@ pub(crate) fn expansion_from_provenance(
             .insert(edge.from_manifest.clone());
     }
 
-    let mut dependent_package_roots = BTreeSet::new();
+    let mut dependent_package_roots = adjacency
+        .reverse_reachable_union(seed_roots.iter().map(|root| manifest_of_package_root(root)))
+        .into_iter()
+        .map(package_root_of_manifest)
+        .collect::<BTreeSet<_>>();
     for changed in &seed_roots {
         let manifest = manifest_of_package_root(changed);
-        if let Some(walk) = adjacency.reverse_walk(&manifest) {
-            for reached in walk.reachable() {
-                dependent_package_roots.insert(package_root_of_manifest(reached));
-            }
-        }
         if let Some(declarers) = declared_dependents.get(&manifest) {
             for declarer in declarers {
                 dependent_package_roots.insert(package_root_of_manifest(declarer));
@@ -607,6 +697,164 @@ mod tests {
         workspace_graph_provenance,
     };
     use std::path::{Path, PathBuf};
+
+    std::thread_local! {
+        pub(super) static WALK_EDGE_VISITS: std::cell::Cell<usize> = const {
+            std::cell::Cell::new(0)
+        };
+    }
+
+    /// Exercise the production expansion, including graph construction and
+    /// the declared-target fallback. Each changed root reaches one shared
+    /// tail; the fallback alone reaches only c0, not the rest of that tail.
+    #[test]
+    fn expansion_shared_tail_visits_each_edge_at_most_twice() {
+        let mut samples = Vec::new();
+        for width in [16, 32, 64] {
+            let changed = (0..width).map(|n| format!("r{n}/")).collect();
+            let mut edges = (0..width)
+                .map(|n| {
+                    edge_from_manifest(
+                        "c0/Cargo.toml",
+                        PathDependencyResolution::Resolved,
+                        Some(&format!("r{n}")),
+                    )
+                })
+                .collect::<Vec<_>>();
+            for n in 1..width {
+                edges.push(edge_from_manifest(
+                    &format!("c{n}/Cargo.toml"),
+                    PathDependencyResolution::Resolved,
+                    Some(&format!("c{}", n - 1)),
+                ));
+            }
+            let edge_count = edges.len();
+            let provenance = WorkspaceGraphProvenance {
+                package_graph_status: "complete".to_string(),
+                path_dependency_edges: edges,
+                ..WorkspaceGraphProvenance::default()
+            };
+            WALK_EDGE_VISITS.with(|count| count.set(0));
+            let expansion = expansion_from_provenance(&provenance, &[], &changed, &BTreeSet::new());
+            let visits = WALK_EDGE_VISITS.with(std::cell::Cell::get);
+            assert_eq!(expansion.status(), PathDependencyGraphStatus::Complete);
+            assert_eq!(
+                expansion.into_dependent_package_roots(),
+                (0..width).map(|n| format!("c{n}/")).collect(),
+                "all shared-tail packages must be reached, with no changed roots added"
+            );
+            eprintln!("shared-tail seeds={width} edges={edge_count} visits={visits}");
+            samples.push((width, edge_count, visits));
+        }
+        for (width, edges, visits) in samples {
+            assert!(visits >= edges, "the nonempty traversal must actually run");
+            assert!(
+                visits <= 2 * edges,
+                "{width} roots repeated shared graph work: {visits} visits for {edges} edges"
+            );
+        }
+    }
+
+    fn provenance_for_reverse_edges(edges: &[(&str, &str)]) -> WorkspaceGraphProvenance {
+        WorkspaceGraphProvenance {
+            package_graph_status: "complete".to_string(),
+            path_dependency_edges: edges
+                .iter()
+                .map(|(dependency, dependent)| {
+                    edge_from_manifest(
+                        &format!("{dependent}/Cargo.toml"),
+                        PathDependencyResolution::Resolved,
+                        Some(dependency),
+                    )
+                })
+                .collect(),
+            ..WorkspaceGraphProvenance::default()
+        }
+    }
+
+    #[test]
+    fn expansion_preserves_overlapping_seeds_and_cycle_roots() {
+        let expand = |edges: &[(&str, &str)], changed: &[&str]| {
+            expansion_from_provenance(
+                &provenance_for_reverse_edges(edges),
+                &[],
+                &roots(changed),
+                &BTreeSet::new(),
+            )
+            .into_dependent_package_roots()
+        };
+        assert_eq!(
+            expand(&[("b", "a"), ("a", "c")], &["b/", "c/"]),
+            roots(&["a/", "c/"]),
+            "a changed seed still belongs in the union when another seed reaches it"
+        );
+        assert_eq!(
+            expand(
+                &[("a", "x"), ("b", "x"), ("c", "x"), ("x", "a")],
+                &["a/", "b/", "c/"]
+            ),
+            roots(&["a/", "x/"]),
+            "shared origins must propagate through a cycle back to another seed"
+        );
+        assert_eq!(
+            expand(&[("a", "x"), ("x", "a")], &["a/"]),
+            roots(&["x/"]),
+            "a cycle alone does not put its sole seed in its own walk result"
+        );
+        assert_eq!(
+            expand(&[("a", "a")], &["a/"]),
+            roots(&["a/"]),
+            "the unchanged declared-target fallback includes a directly self-dependent seed"
+        );
+    }
+
+    /// The original per-root DFS is an independent oracle for every directed
+    /// three-node graph (including self edges) and every seed subset. Always
+    /// add an unknown seed, and account independently for the one-hop index.
+    #[test]
+    fn expansion_matches_per_seed_walks_on_all_three_node_graphs() {
+        let names = ["a", "b", "c"];
+        for graph_mask in 0..(1_usize << 9) {
+            let mut edges = Vec::new();
+            for (from, dependency) in names.iter().enumerate() {
+                for (to, dependent) in names.iter().enumerate() {
+                    if graph_mask & (1 << (3 * from + to)) != 0 {
+                        edges.push((*dependency, *dependent));
+                    }
+                }
+            }
+            let provenance = provenance_for_reverse_edges(&edges);
+            let adjacency = PathDependencyAdjacency::build(&provenance);
+            for seed_mask in 0..8 {
+                let mut changed = roots(&["ghost/"]);
+                let mut expected = BTreeSet::new();
+                for (seed, name) in names.iter().enumerate() {
+                    if seed_mask & (1 << seed) == 0 {
+                        continue;
+                    }
+                    changed.insert(format!("{name}/"));
+                    if let Some(walk) = adjacency.reverse_walk(&format!("{name}/Cargo.toml")) {
+                        expected
+                            .extend(walk.reachable().iter().map(|m| package_root_of_manifest(m)));
+                    }
+                    // Every captured edge here is resolved. The secondary
+                    // index contributes exactly the seed's direct callers.
+                    for &(dependency, dependent) in &edges {
+                        if dependency == *name {
+                            expected.insert(format!("{dependent}/"));
+                        }
+                    }
+                }
+                let actual =
+                    expansion_from_provenance(&provenance, &[], &changed, &BTreeSet::new());
+                assert_eq!(
+                    actual.into_dependent_package_roots(),
+                    expected,
+                    "graph={graph_mask}, seeds={seed_mask}"
+                );
+            }
+        }
+    }
 
     fn unique_dir(label: &str) -> PathBuf {
         use std::time::{SystemTime, UNIX_EPOCH};
@@ -1398,6 +1646,49 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&missing_root);
         let _ = std::fs::remove_dir_all(&limited_root);
+        Ok(())
+    }
+
+    /// #10182: the typed twin of the stderr disclosure exists exactly when
+    /// the disclosure does, and names the right state and a next step.
+    #[test]
+    fn scope_limitation_is_typed_for_limited_and_unavailable_only() -> Result<(), String> {
+        let missing_root = unique_dir("limitation-missing");
+        let _ = std::fs::remove_dir_all(&missing_root);
+        let unavailable = expansion_for(&missing_root, &roots(&["a/"]))
+            .scope_limitation()?
+            .ok_or_else(|| "unavailable must be a limitation".to_string())?;
+        let detail = unavailable.bounded_detail.unwrap_or_default();
+        assert!(detail.contains("unavailable") && !detail.contains("is limited"));
+        assert!(unavailable.recovery.detail.contains("workspace root"));
+
+        let limited_root = unique_dir("limitation-limited");
+        let _ = std::fs::remove_dir_all(&limited_root);
+        write_manifest(&limited_root, "Cargo.toml", "[package\nname = \"broken\"\n")?;
+        chain_dependents_under_broken_root(&limited_root)?;
+        let limited = expansion_for(&limited_root, &roots(&["a/"]))
+            .scope_limitation()?
+            .ok_or_else(|| "limited must be a limitation".to_string())?;
+        let detail = limited.bounded_detail.unwrap_or_default();
+        assert!(detail.contains("is limited") && !detail.contains("unavailable"));
+        assert!(limited.recovery.detail.contains("fails to parse"));
+        assert!(limited.recovery.detail.contains("does not follow"));
+
+        let complete_root = unique_dir("limitation-complete");
+        let _ = std::fs::remove_dir_all(&complete_root);
+        chain_dependents_under_broken_root(&complete_root)?;
+        write_manifest(
+            &complete_root,
+            "Cargo.toml",
+            "[workspace]\nmembers = [\"a\", \"b\"]\n",
+        )?;
+        let complete = expansion_for(&complete_root, &roots(&["a/"]));
+        assert_eq!(complete.status(), PathDependencyGraphStatus::Complete);
+        assert_eq!(complete.scope_limitation()?, None);
+
+        let _ = std::fs::remove_dir_all(&missing_root);
+        let _ = std::fs::remove_dir_all(&limited_root);
+        let _ = std::fs::remove_dir_all(&complete_root);
         Ok(())
     }
 

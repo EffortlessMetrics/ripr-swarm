@@ -1,0 +1,51 @@
+{
+  "case_id": "py-trap-truthy-only",
+  "subject_id": "authored-py-trap-kit",
+  "diff": "cases/py-trap-truthy-only.diff",
+  "anchor": {
+    "file": "trapkit/core.py",
+    "line": 81
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "assert_result_truthy",
+  "hard_case": "False-credit trap: the test looks like it checks the owner but cannot notice a change to it.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return b + a",
+        "mutated_line": "return b + a",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: 7 + 3 is 10, not 21"
+      },
+      {
+        "replacement": "return b / a",
+        "mutated_line": "return b / a",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: 7 / 3 is not 21"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "Trap: a bare truthiness check passes for 21, 10 and 2.33 alike.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

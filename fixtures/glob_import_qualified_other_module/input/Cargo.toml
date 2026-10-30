@@ -1,0 +1,4 @@
+[package]
+name = "glob_import_qualified_other_module_fixture"
+version = "0.0.0"
+edition = "2024"

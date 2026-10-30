@@ -140,6 +140,17 @@ configuration (a remote-qualified ref names its configured remote, a
 remote-less repo gets the add-remote step) instead of prescribing `origin`
 (#5252 item 8).
 
+When the missing ref already exists locally as a remote-tracking ref, the
+repair names that ref instead of re-prescribing the fetch that created it
+(#8652). Every configured remote is probed locally (no network) as the full
+`refs/remotes/<remote>/<ref>` ref — never the short `<remote>/<ref>`
+spelling, which a tag or local branch of that name can shadow — and the
+full ref is the suggested `--base`/`--head` value. Exactly one candidate
+is named as the followable advice; several candidates are all named
+without picking one. A nested branch name (`feature/topic`) probes the
+same tracking forms before its first segment is treated as a remote
+qualifier; explicit `refs/...` paths and rev expressions never probe.
+
 Commands that take both revisions (`diff`, `review-comments`) verify the
 head the same way: an unresolvable `--head` fails with ripr's named message
 and a `--head <ref>` repair, never git's `ambiguous argument` advice. They
@@ -303,6 +314,12 @@ Start-here action owns the remediation instead.
 - `crates/ripr/tests/cli_smoke.rs::check_diff_stdin_from_a_pipe_stays_silent_about_terminal_disclosure`
 - `crates/ripr/tests/cli_smoke.rs::stdin_probe_stalled_child_returns_bounded_timeout`
 - `crates/ripr/tests/cli_smoke.rs::stdin_probe_early_exit_returns_write_error`
+- `crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_names_the_remote_tracking_form_it_can_resolve`
+- `crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_no_remote_arm_names_remote_tracking_refs`
+- `crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_tracking_advice_is_not_shadowed_by_a_tag`
+- `crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_probes_every_configured_remote`
+- `crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_probes_nested_branch_names`
+- `crates/ripr/tests/cli_smoke.rs::check_missing_base_advice_names_the_resolvable_remote_tracking_ref`
 
 ## Implementation Mapping
 

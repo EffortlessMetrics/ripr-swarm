@@ -52,7 +52,9 @@ parent acceptance remain open.
 
 A bounded npm prerelease need not wait for PyPI. It must publish genuine native
 payload packages before the launcher that references them, use one exact version
-throughout the selected package family, keep prereleases off `latest`, and
+throughout the selected package family, keep prereleases off `latest` (`cargo xtask check-release-targets` fails a
+prerelease launcher without an explicit non-`latest` `publishConfig.tag`, and any
+workflow `npm publish` without a non-`latest` `--tag`), and
 independently install the public bytes. A selected target subset is acceptable
 only when package metadata and public documentation cannot imply absent targets
 are supported.

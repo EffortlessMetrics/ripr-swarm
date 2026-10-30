@@ -101,7 +101,9 @@
           "line": 8,
           "oracle_strength": "strong",
           "oracle_kind": "exact_value",
-          "oracle": "assert discounted_total(20000) == 18000"
+          "oracle": "assert discounted_total(20000) == 18000",
+          "miss": "missing_input",
+          "why": "no test input reaches `amount == DISCOUNT_THRESHOLD`"
         },
         {
           "name": "test_no_discount_below_threshold",
@@ -109,7 +111,9 @@
           "line": 4,
           "oracle_strength": "strong",
           "oracle_kind": "exact_value",
-          "oracle": "assert discounted_total(5000) == 5000"
+          "oracle": "assert discounted_total(5000) == 5000",
+          "miss": "missing_input",
+          "why": "no test input reaches `amount == DISCOUNT_THRESHOLD`"
         }
       ],
       "repair_placement": {
@@ -221,8 +225,8 @@
       "stop_reasons": [],
       "oracle_kind": "unknown",
       "oracle_strength": "none",
-      "recommended_next_step": "",
-      "suggested_next_action": "",
+      "recommended_next_step": "Python preview: no statically linked test calls `loyalty_price(`; add a test that calls the changed owner with a focused boundary assertion, run the project's native Python test command, then rerun `ripr check` to refresh the finding.",
+      "suggested_next_action": "Python preview: no statically linked test calls `loyalty_price(`; add a test that calls the changed owner with a focused boundary assertion, run the project's native Python test command, then rerun `ripr check` to refresh the finding.",
       "language": "python",
       "language_status": "preview",
       "owner_kind": "function",
@@ -288,8 +292,8 @@
       "stop_reasons": [],
       "oracle_kind": "unknown",
       "oracle_strength": "none",
-      "recommended_next_step": "",
-      "suggested_next_action": "",
+      "recommended_next_step": "Python preview: no statically linked test calls `loyalty_price(`; add a test that calls the changed owner with an exact return-value assertion, run the project's native Python test command, then rerun `ripr check` to refresh the finding.",
+      "suggested_next_action": "Python preview: no statically linked test calls `loyalty_price(`; add a test that calls the changed owner with an exact return-value assertion, run the project's native Python test command, then rerun `ripr check` to refresh the finding.",
       "language": "python",
       "language_status": "preview",
       "owner_kind": "function",
@@ -355,8 +359,8 @@
       "stop_reasons": [],
       "oracle_kind": "unknown",
       "oracle_strength": "none",
-      "recommended_next_step": "",
-      "suggested_next_action": "",
+      "recommended_next_step": "Python preview: no statically linked test calls `loyalty_price(`; add a test that calls the changed owner with an exact return-value assertion, run the project's native Python test command, then rerun `ripr check` to refresh the finding.",
+      "suggested_next_action": "Python preview: no statically linked test calls `loyalty_price(`; add a test that calls the changed owner with an exact return-value assertion, run the project's native Python test command, then rerun `ripr check` to refresh the finding.",
       "language": "python",
       "language_status": "preview",
       "owner_kind": "function",

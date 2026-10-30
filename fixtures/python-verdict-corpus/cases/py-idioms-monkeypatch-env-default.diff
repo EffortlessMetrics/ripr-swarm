@@ -1,0 +1,9 @@
+diff --git a/idioms/env.py b/idioms/env.py
+--- a/idioms/env.py
++++ b/idioms/env.py
+@@ -2,4 +2,4 @@
+ 
+ 
+ def home_dir():
+-    return os.environ.get("HOME_DIR", "/tmp")
++    return os.environ.get("HOME_DIR", "/var")

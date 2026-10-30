@@ -1,0 +1,12 @@
+diff --git a/src/results.rs b/src/results.rs
+--- a/src/results.rs
++++ b/src/results.rs
+@@ -11,7 +11,7 @@
+     let mut total = 0;
+     for part in text.split(',') {
+         let n: u32 = part.trim().parse().map_err(|_| ParseError::NotNumber)?;
+-        total += n;
++        total = total + n;
+     }
+     Ok(total)
+ }

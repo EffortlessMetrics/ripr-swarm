@@ -201,12 +201,40 @@ impl ParsedTestFile {
     }
 
     /// The only `fn` named `name` whose `fn` token starts on `start_line`.
-    fn unique_test_fn(&self, name: &str, start_line: usize) -> Option<ast::Fn> {
+    pub(in crate::analysis::test_grip_evidence) fn unique_test_fn(
+        &self,
+        name: &str,
+        start_line: usize,
+    ) -> Option<ast::Fn> {
         let ptr = self
             .functions
             .get(&(name.to_string(), start_line))?
             .as_ref()?;
         Some(ptr.to_node(&self.parse.syntax_node()))
+    }
+
+    /// Exact top-level out-of-line declaration for the resolved module
+    /// provenance consumer. Multiple declarations sharing the key are unknown.
+    pub(in crate::analysis::test_grip_evidence) fn unique_module_declaration(
+        &self,
+        name: &str,
+        line: usize,
+    ) -> Option<ast::Module> {
+        let mut matches = self
+            .parse
+            .tree()
+            .syntax()
+            .children()
+            .filter_map(ast::Module::cast)
+            .filter(|module| {
+                module.item_list().is_none()
+                    && module.name().is_some_and(|item| item.text() == name)
+                    && module
+                        .mod_token()
+                        .is_some_and(|token| self.lines.line(token.text_range().start()) == line)
+            });
+        let module = matches.next()?;
+        matches.next().is_none().then_some(module)
     }
 }
 

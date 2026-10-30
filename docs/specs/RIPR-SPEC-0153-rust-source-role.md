@@ -154,6 +154,28 @@ not establish test-only role.
 Attribute-driven membership is authoritative; filenames, imports,
 and macro suffixes never classify.
 
+For the existing workspace wrapper-macro alias rule, a direct automatic
+`src/bin/<name>.rs` target uses its own root alias for `#[crate::test]`
+(#10141). Manifest authority must confirm automatic binary discovery and
+the existing default-target constraints, including Cargo's edition-specific
+automatic-discovery default. The new route refuses missing
+manifest authority, local reexport prefixes, shadowed macro-crate prefixes,
+globs, and packages with indexed module/include edges or an incomplete
+module scan. Nested binary helpers and explicit targets with automatic
+discovery disabled remain unresolved. Library and sibling-binary aliases
+cannot supply the binary's binding. Existing unique proc-macro and cfg
+checks still apply; this does not trace a macro expansion or resolve an
+unchanged dependency outside the index.
+
+For a binary-root alias, manifest dependency authority must bind the imported
+crate name to the indexed proc-macro library; a registry, wrong-path, missing,
+or ambiguous dependency does not gain credit from a workspace namesake. In a
+committed-history analysis, Cargo manifest authority comes from the committed
+snapshot. A changed Cargo configuration that cannot be resolved against that
+snapshot, including a symlinked manifest or Cargo configuration, refuses the
+new binary route. The alias must directly name the macro in the dependency;
+intermediate paths remain unresolved rather than assuming a reexport.
+
 Diff lines without a function owner consume the composer's existing
 `SourceRoleProvenance` (#3695). They are evidence-only when the provenance
 has no unresolved edge and contains a test-required edge, and the child
@@ -244,6 +266,19 @@ hashes the `ripr.toml` text, so no generation bump is required for it.
 The #3532 harness registry joined the same identity as FindingAffecting
 (2 → 3, canonical length-prefixed encoding pinned byte-for-byte).
 
+### Shared-line eligibility
+
+Function ownership is line-granular. When a production fn and an
+evidence-role fn open on one physical line, that opening line stays
+production-eligible (fail closed, no column attribution); later lines inside
+the evidence fn's body remain test evidence.
+
+A helper `fn` declared inside an evidence-role (`#[test]`) function is indexed
+with a production role of its own. It is still part of the test: a strictly
+enclosing evidence-role function makes its lines test evidence, so a diff that
+only adds such a helper yields no probe (#9177). A same-start-line sibling is
+not enclosing.
+
 ### Index normalization ownership
 
 Whole-index source-role normalization borrows its exact identity keys
@@ -297,6 +332,17 @@ is not a measured throughput, peak-RSS, constant-memory, or reduced-coverage cla
 - Manifest parsing pins: explicit paths extracted, entries without
   `path` contribute nothing, malformed TOML yields no targets,
   autodiscovery flags do not drop explicit targets.
+- BOM pins: a leading UTF-8 BOM is stripped before the module-graph scan,
+  exactly as rustc drops it, so a BOM-prefixed module file walks the same
+  as the identical file without one; the strip also applies to literal
+  `include!` fragments whatever their extension, and a BOM must never turn
+  a complete walk incomplete (which would retain rather than reject an
+  uncompiled test). Pinned by the in-crate regression test
+  `a_leading_bom_does_not_change_the_module_walk` against all three BOM
+  placements (#9009); a golden-fixture or honesty-corpus graduation is
+  precluded because the repository text-encoding gate (itself an honesty
+  control: a BOM is invisible in review) forbids BOM bytes in tracked
+  files, so the runtime test is the graduated control.
 - Config pins: the opt-in parses as relative paths, joins the identity
   canonically, and absolute paths fail closed with a named error.
 - Never-compiled tests (#6293): a `#[test]` function whose own `cfg` is false
@@ -359,25 +405,28 @@ is not a measured throughput, peak-RSS, constant-memory, or reduced-coverage cla
 
 ## Acceptance Examples
 
-- Accept: `benches/exposure.rs` changed → indexed, counted as a changed
-  file, zero production findings.
-- Accept: a manifest-built `build.rs` or `xtask/src/main.rs` changed →
-  probes seeded and the editor pins them; a `build.rs` under
-  `build = false` or outside any package seeds nothing; `fixtures/**/build.rs`,
-  `metrics/**/source.after.rs`, and `benches/common/mod.rs` stay evidence.
-- Accept: `[[test]] path="src/contract_test.rs"` → helper in it is
-  evidence; `src/unconfirmed_test.rs` without a declaration → production.
-- Accept: `production_like_targets = ["tests/api_contract.rs"]` → that
-  file analyzed as production; `tests/other.rs` stays evidence.
-- Accept: a `custom_harness` registration on a declared
-  `harness = false` target (explicit custom path or name-only entry on
-  the conventional layout) → file-wide evidence role with adapter
-  subjects; the same registration against an undeclared or
-  `harness = true` target → typed limitation, no demotion, and a
-  production-classified target keeps seeding production seams while an
-  evidence-layout target keeps its evidence role (#3608).
-- Reject: a bench harness call (`criterion_main!`) becoming an
-  obligation; a `test_*.rs` name alone excluding a production file.
+1. Accept: `benches/exposure.rs` changed → indexed, counted as a changed
+   file, zero production findings.
+2. Accept: a manifest-built `build.rs` or `xtask/src/main.rs` changed →
+   probes seeded and the editor pins them.
+3. Accept: a `build.rs` under `build = false` or outside any package seeds
+   nothing; `fixtures/**/build.rs`, `metrics/**/source.after.rs`, and
+   `benches/common/mod.rs` stay evidence.
+4. Accept: `[[test]] path="src/contract_test.rs"` → helper in it is
+   evidence.
+5. Accept: `src/unconfirmed_test.rs` without a declaration → production.
+6. Accept: `production_like_targets = ["tests/api_contract.rs"]` → that
+   file analyzed as production; `tests/other.rs` stays evidence.
+7. Accept: a `custom_harness` registration on a declared
+   `harness = false` target (explicit custom path or name-only entry on
+   the conventional layout) → file-wide evidence role with adapter
+   subjects; the same registration against an undeclared or
+   `harness = true` target → typed limitation, no demotion, and a
+   production-classified target keeps seeding production seams while an
+   evidence-layout target keeps its evidence role (#3608).
+8. Reject: a bench harness call (`criterion_main!`) becoming an
+   obligation.
+9. Reject: a `test_*.rs` name alone excluding a production file.
 
 ## Test Mapping
 
@@ -404,8 +453,11 @@ executable-test membership, layout classification, naming-lookalike
 rejection, and cfg-variant equivalence against `facts::build_index`.
 `analysis/syntax/module_tree.rs` pins the per-file edge scan and every
 construct that makes it incomplete; `analysis/workspace/module_graph.rs`
-pins the package walk and each false-orphan path the #4556 reviews
-found; `analysis/language/rust/mod.rs` pins the diff-level module-tree
+pins the package walk, each false-orphan path the #4556 reviews
+found, and the leading-BOM strip for module files and literal `include!`
+fragments (#9009); `crates/ripr/tests/rust_discovery_comments.rs`
+pins end to end that a BOM-prefixed module walk, `#[path]` rename, and
+`include!` fragment behave exactly like their BOM-free counterparts. `analysis/language/rust/mod.rs` pins the diff-level module-tree
 seeding and `lsp/diagnostics.rs` the matching editor partition.
 `cargo xtask check-rust-source-role-authority` structurally rejects
 consumer-side role re-derivation and inventories the approved

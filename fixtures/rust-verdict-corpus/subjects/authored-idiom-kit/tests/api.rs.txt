@@ -1,0 +1,6 @@
+use idiomkit::slugify;
+
+#[test]
+fn spaces_become_dashes() {
+    assert_eq!(slugify("Hello World"), "hello-world");
+}

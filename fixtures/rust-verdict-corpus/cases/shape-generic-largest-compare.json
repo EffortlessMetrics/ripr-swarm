@@ -1,0 +1,55 @@
+{
+  "case_id": "shape-generic-largest-compare",
+  "subject_id": "authored-shape-kit",
+  "diff": "cases/shape-generic-largest-compare.diff",
+  "anchor": {
+    "file": "src/traits.rs",
+    "line": 24
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate",
+  "test_shape": "generic_fn_ints_and_floats",
+  "hard_case": "The owner is generic over `T: PartialOrd + Copy` and is called at two instantiations.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "if x < best {",
+        "mutated_line": "if x < best {",
+        "outcome": "tests_failed",
+        "failing_test": "traits::tests::largest_of_ints_and_floats",
+        "equivalence_review": "not equivalent: `if best < x {` becomes `if x < best {`"
+      },
+      {
+        "replacement": "if x != best {",
+        "mutated_line": "if x != best {",
+        "outcome": "tests_failed",
+        "failing_test": "traits::tests::largest_of_ints_and_floats",
+        "equivalence_review": "not equivalent: `if best < x {` becomes `if x != best {`"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "largest_of_ints_and_floats checks [3, 9, 2] and [1.5, 0.5]; `<` returns the minimum and `!=` returns the last differing element. Shape: generic function with a trait bound.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "infection_unknown"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "axes": [
+    "language_shape"
+  ]
+}

@@ -1,0 +1,10 @@
+diff --git a/src/helpers.rs b/src/helpers.rs
+--- a/src/helpers.rs
++++ b/src/helpers.rs
+@@ -1,5 +1,5 @@
+ pub fn discount(price: u32, percent: u32) -> u32 {
+-    price - price * percent / 100
++    price - (price * percent) / 100
+ }
+ 
+ pub fn surcharge(base: u32) -> u32 {

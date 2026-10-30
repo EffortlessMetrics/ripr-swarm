@@ -108,7 +108,7 @@ PR-native continuation record's `Validation:` line (see
 | --- | --- | --- |
 | fmt, policy, dependency/process/network, selected Clippy | `cargo xtask precommit` | Selects Clippy packages from the diff. |
 | Evidence promotion honesty | `cargo xtask check-evidence-promotion-honesty` | Not part of `precommit`; run when evidence promotion changes. |
-| Workspace and all-target check | `cargo check --workspace --all-targets` | Add `cargo check -p ripr --all-targets --all-features` for `ripr` changes. |
+| All-features check | `cargo check -p ripr --all-targets --all-features` | Run for `ripr` changes. The hosted run has no separate `cargo check --workspace --all-targets` step; Strict Clippy builds the same units (#10341). |
 | Strict workspace Clippy | `cargo clippy --workspace --all-targets -- -D warnings` | Hosted always runs the full workspace. |
 | Required Rust tests | `cargo nextest run -p <impacted package>` | Hosted runs `cargo nextest run --workspace --profile ci`. A `-p` run is focused proof, not that run; `cargo-nextest` may need installing, and `.config/nextest.toml` lists `--skip` filters for the slow LSP tests. |
 | Doctests | `cargo test --workspace --doc` | Nextest does not run doctests. |

@@ -1,0 +1,27 @@
+//! A repeated state: the default arm calls the helper with the same input.
+
+pub fn label_cycle(kind: &str) -> &'static str {
+    match kind {
+        "word" => "alpha",
+        _ => label_cycle(kind),
+    }
+}
+
+pub fn classify_cycle(input: &str) -> &'static str {
+    let final_label = label_cycle(input);
+    if final_label == "alpha" {
+        "word"
+    } else {
+        "blank"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_word_arm_is_alpha_r_cycle() {
+        assert_eq!(classify_cycle("word"), "word");
+    }
+}

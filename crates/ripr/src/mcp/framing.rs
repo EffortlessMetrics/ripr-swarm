@@ -3,9 +3,15 @@ use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 pub(super) enum FrameRead {
     Eof,
     Empty,
-    Oversized,
+    /// Over the input cap. Carries at most [`OVERSIZED_PREFIX_BYTES`] leading
+    /// bytes so the transport can name the request when its id sits at the
+    /// front of the message; the rest was discarded unbuffered.
+    Oversized(Vec<u8>),
     Frame(Vec<u8>),
 }
+
+/// Leading bytes of an over-cap message kept to recover a request id.
+pub(super) const OVERSIZED_PREFIX_BYTES: usize = 4096;
 
 /// Partial bytes and discard state live outside the cancelled receive future.
 pub(super) struct FrameReader<R> {
@@ -34,7 +40,7 @@ impl<R: AsyncRead + Unpin> FrameReader<R> {
                     }
                     _ => {
                         self.oversized = true;
-                        self.frame.clear();
+                        self.frame.truncate(OVERSIZED_PREFIX_BYTES);
                     }
                 }
             }
@@ -45,7 +51,7 @@ impl<R: AsyncRead + Unpin> FrameReader<R> {
             self.reader.consume(consumed);
             if eof || newline.is_some() {
                 if std::mem::take(&mut self.oversized) {
-                    return Ok(FrameRead::Oversized);
+                    return Ok(FrameRead::Oversized(std::mem::take(&mut self.frame)));
                 }
                 if self.frame.last() == Some(&b'\r') {
                     let _removed = self.frame.pop();

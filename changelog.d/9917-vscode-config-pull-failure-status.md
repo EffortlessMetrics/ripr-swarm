@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- VS Code now says so when the language server rejects the workspace configuration (for example an invalid setting value), naming the offending setting for an invalid value (a transport failure gets generic retry guidance) and noting that the last accepted configuration stays in use, instead of silently ignoring the new settings. The notice clears when a later pull is accepted, even while analysis has not run (#9917).

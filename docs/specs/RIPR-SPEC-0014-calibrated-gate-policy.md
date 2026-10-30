@@ -241,10 +241,16 @@ shares the anchor, collides with it. A baseline match that succeeds only via
 rule 5 is a legacy compatibility event and must not stay silent:
 
 - The match still suppresses blocking during the compatibility window
-  (`is_baseline_new` remains `false`). Flipping fallback-only matches to new
-  is a deferred deprecation decision; the destination is canonical-only
-  matching, after which a fallback-only collision blocks like any other new
-  candidate.
+  (`is_baseline_new` remains `false`) only for baseline entries that carry no
+  canonical gap id. When the baseline entry carries a canonical gap id (any of
+  `canonical_gap_id`, `identity.canonical_gap_id`,
+  `evidence_record.canonical_gap_id`) that differs from the candidate's, the
+  fallback join is refused and the candidate is new and blocks, exactly as
+  `ripr baseline diff` classifies it (issue #1964; one shared divergence rule).
+  A candidate with no canonical gap id of its own carries no divergence
+  evidence, so it still joins a canonical-bearing fallback, disclosed as
+  `legacy_path_line_class`, as `ripr baseline diff` does. Full canonical-only
+  matching for legacy entries remains the deferred deprecation decision.
 - The evaluator must emit a report-level warning naming the candidate and the
   matched legacy identity.
 - The evaluator must record `baseline_match_kind: "legacy_path_line_class"`
@@ -594,6 +600,16 @@ Initial implementation should add tests for:
 - a producer-declared static limitation outranks the PR-wide nearby-test
   reason in the gate headline without changing eligibility
   (`crates/ripr/src/output/gate/tests.rs::gate_static_limitation_reason_outranks_pr_wide_nearby_test_flag`).
+- a check document whose findings array was cut by the byte budget discloses
+  `analysis_outcome.document_complete: false` (additive, only when bounded,
+  with `findings_rendered`/`findings_total`) while `analysis_complete` stays
+  the analysis verdict, and the shared incomplete-outcome predicate refuses it
+  at every gate, baseline, RIPR Zero, and PR-summary position even without
+  `run_limitations[]` (#9010; negative tests with unbounded controls in
+  `crates/ripr/src/output/gate/tests.rs`, `output/ripr_zero_status.rs`, and
+  `app/pr_summary/json.rs`).
+  A document with both `document_complete: false` and `analysis_complete:
+  false` keeps the already-incomplete typed outcome kind in refusals.
 
 ## Implementation Mapping
 

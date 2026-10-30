@@ -85,7 +85,10 @@ all of these hold:
   shadow an outer `p`) with `const|let|var p = jest.fn(...)` or
   `vi.fn(...)`, or to a flat object literal whose `m` is such a call,
   whose keys are plain identifiers, which keys `m` once and which has no
-  spread that could replace it; amended 2026-10-15 (#8138), the mock
+  spread that could replace it (amended 2026-10-18: a `...name` entry
+  does not, when `name` is a test-file `const` object literal the file names
+  only there and after spreads, with plain `key: value` entries and no `m`
+  key; see example 4); amended 2026-10-15 (#8138), the mock
   call takes no argument or an arrow implementation that names neither
   `function` nor `this` (optionally after `<T>` type arguments), the
   literal's `m` value is that call and nothing more, and the call (or the
@@ -285,6 +288,25 @@ the call either way. A different spied method, a spy on an object
 imported from another module, `.mockImplementation(...)` after the spy,
 or anything outside the allowed words keeps `mock_expectation` / medium.
 
+**Rule 5. A truthiness assertion on a literal call to a `boolean` owner
+pins the value.** On a Predicate or ReturnValue seam, `assert.ok(f(1))`,
+`assert.notOk(f(1))`, `assert.ok(!f(1))`, `expect(f(1)).toBeTruthy()` and
+`toBeFalsy()` read `exact_value` / strong when all of these hold:
+
+- the owner is a function or arrow function declared `: boolean` exactly
+  (no generic list, `async`, generator, union or `Promise<boolean>`), so
+  the call returns only `true` or `false` and truthiness is equality;
+- the assertion observes the whole owner call (leading `!` aside) through
+  a name the test imports from the owner's module, a rename or a
+  namespace member, and every argument is a number, string, boolean or
+  `null` literal;
+- the test does not declare its own owner name.
+
+Anything else stays `smoke_only` / weak: a non-literal argument, a wrapper
+(`Boolean(f(1))`, `f(1) && x`, `f(1).valueOf()`), an unannotated or
+wider return type, or a method owner. The pin is per call; whether the
+call sits at the changed boundary stays with the row activation witness.
+
 ### Decisions
 
 The owner delegated these choices on 2026-10-04 ("make reasonable
@@ -400,6 +422,50 @@ and the rejected alternative. Recorded on #6654.
    a third module, and tests with more statements; each needs its own
    reach argument and none is in the corpus.
 
+11. **Boolean owner truthiness (rule 5, 2026-10-22; #9532).** Adopted:
+   credit a truthiness assertion as an exact pin when the owner declares
+   `boolean` and the call has literal arguments. Rejected: infer
+   booleanness from the returned expression, which needs type inference
+   ripr does not do. Rejected: credit non-literal arguments, which hides
+   whether the assertion reaches the changed input. Rejected: leave the
+   three `ts-grid-*-exact` rows false actionable, which asks for an
+   assertion that already exists.
+
+**Rule 6. `toBeCloseTo` on a literal call pins a changed `return` the
+tolerance separates (2026-10-26).** On a ReturnValue seam,
+`expect(f(a)).toBeCloseTo(n)` is credited as a pin (the extracted oracle
+stays `unknown`; the classifier reads it strong) when all of these hold:
+
+- the matcher takes one number literal and no `numDigits`, so the tolerance
+  is the default `10 ** -2 / 2` (0.005); a second argument, a negation, a
+  variable or computed expected value, and a non-finite literal keep the
+  `unknown` reading;
+- the changed line is a one-line `return <expression>;` in an owner that
+  `plain_changed_return` accepts: arity known, no parameter reassigned, no
+  nested function before the return (the gate RIPR-SPEC-0243 rule 18
+  uses), and the owner is synchronous and not a generator with nothing
+  between its signature and the return that branches, returns or throws
+  early, so the changed line runs for every call;
+  the owner is read from the source it was parsed from, not the worktree;
+- the test body has no `.resolves` or `.rejects` (the extracted assertion keeps
+  no promise modifier, and a synchronous number cannot satisfy either);
+- the assertion observes the whole result of one owner call with scalar
+  literal arguments, through a name the test imports from the owner's
+  module (the observation gate of rules 2 and 5);
+- the evaluator (`literal_eval`, RIPR-SPEC-0243 rule 18) computes both the
+  old and the new `return` expression to numbers for those arguments, the
+  old value is within the tolerance of `n`, and the new value is outside it,
+  each by a margin of `1e-9` that floating-point rounding cannot close.
+
+The assertion then fails for that edit on that input, which is the fact a
+mutant run would observe, computed instead of executed. Nothing else changes:
+an edit the tolerance absorbs, an old value that already fails the test, an
+expression the evaluator does not support, and every other matcher keep
+their reading. Rejected: reading `toBeCloseTo` as exact for every call,
+which credits an edit smaller than 0.005; and reading it as weak, which
+leaves a discriminating pin `weakly_exposed` and so a false actionable
+gap.
+
 ## Required Evidence
 
 - Each rule moves a finding to a stronger class only through an assertion
@@ -418,6 +484,9 @@ and the rejected alternative. Recorded on #6654.
   tightened binding refuses only shapes no corpus case uses.
 - Added 2026-10-15 (rule 4, decision 10): `jest-spec0247-ex05-spyon-send` moves from
   `gap` to `credited`, and no other row moves.
+- Added 2026-10-26 (rule 6): `shape-barrel-namespace-reexport` moves from
+  `limited` to `credited` together with the RIPR-SPEC-0095 namespace
+  re-export amendment, and no other row moves.
 
 ## Non-Goals
 
@@ -455,7 +524,20 @@ and the rejected alternative. Recorded on #6654.
    `send.call(null, "order 7")`, or `announce(send, 7)`; or with the
    mock declared in a nested block (`if (ready) { const send = jest.fn() }`)
    or, for example 2, `{ write: jest.fn(), ...defaults }` or a second
-   `write` key: `weakly_exposed`. Amended 2026-10-15: example 2 with
+   `write` key: `weakly_exposed`. Amended 2026-10-18: `...defaults` is
+   `exposed` when `const defaults = { flush: jest.fn() };` is a top-level
+   test-file `const` object literal with plain `key: value` entries, no
+   `write` key, no spread and no `__proto__`, and the file names `defaults`
+   only in that declaration and after `...` spreads; a source with a `write`
+   key (quoted, computed or a method included), a nested spread, a shorthand
+   entry, a `let`/`var` binding, a call or other initializer, a member
+   access or `Object.assign(defaults, ...)`, an import, an `export` or
+   `declare` binding, a body-local `defaults` (including an object-rest
+   binding `const { a, ...defaults } = cfg()` or a rest parameter), a
+   spread outside a `= { ... }` literal, a spread of an expression or
+   call, or a file that calls `eval`, uses `with` or holds a `\u` escape
+   stays `weakly_exposed`, and a spread inside a test-file factory
+   literal stays refused. Amended 2026-10-15: example 2 with
    `function makeDb() { return { write: jest.fn() }; }` in the test file
    and `const db = makeDb();` is `exposed`; a factory with a parameter, a
    spread, a second statement, an `export`, `async`, a generator, a
@@ -555,6 +637,14 @@ and the rejected alternative. Recorded on #6654.
     `describe` wrapper, a top-level statement, a side-effect, empty or
     `type` import, or an import from any other module.
 
+13. `src/adult.ts` is `export function isAdult(age: number): boolean {
+    return age >= 18; }` and the test runs `assert.ok(isAdult(18));
+    assert.ok(!isAdult(17));` (or `expect(isAdult(18)).toBeTruthy()`):
+    `exact_value` / strong. The same with an unannotated, `number` or
+    `boolean | null` return, a variable argument, `Boolean(isAdult(18))`,
+    `isAdult(18) && true`, `isAdult(18).valueOf()` or a test-local
+    `isAdult`: `smoke_only` / weak.
+
 ## Test Mapping
 
 - `crates/ripr/src/analysis/language/typescript/tests/literal_matcher_tests.rs`
@@ -564,6 +654,9 @@ and the rejected alternative. Recorded on #6654.
   decision 9.
 - `fixtures/typescript-verdict-corpus` pins the amended example 4:
   `jest-spec0243-ex30-factory-db` reads `credited`.
+- `crates/ripr/src/analysis/language/typescript/tests/mock_spread_source_tests.rs`
+  pins the 2026-10-18 spread-source amendment of example 4;
+  `jest-mock-fn-spread-object` reads `credited`.
 - `crates/ripr/src/analysis/language/typescript/tests/spy_module_object_tests.rs`
   pins example 12; `spy_file_checks_read_the_committed_test_file` pins that
   the spy file checks read HEAD's test file, not the working tree's, under
@@ -584,6 +677,17 @@ and the rejected alternative. Recorded on #6654.
   `nodetest-t-assert-equal-variable` reads `credited`.
 - `fixtures/typescript-verdict-corpus` pins the eight Problem rows: seven
   `credited`, and `ts-vitest-checkout-notify` still `gap`.
+
+- `crates/ripr/src/analysis/language/typescript/tests/boolean_pin_tests.rs`
+  pins example 13; `fixtures/typescript-verdict-corpus` pins it:
+  `ts-grid-boundary-exact`, `ts-grid-equality-exact` and
+  `ts-grid-logical-exact` read `credited`.
+- `crates/ripr/src/analysis/language/typescript/tests/close_to_pin_tests.rs`
+  pins rule 6: the pinned edit, the tolerance-absorbed edit, an old value
+  that already fails, an explicit `numDigits`, a negation, a wrapped call,
+  a variable argument or expected value, a shadowed owner and a rebound
+  parameter. `fixtures/typescript-verdict-corpus` pins it:
+  `shape-barrel-namespace-reexport` reads `credited`.
 
 ## Implementation Mapping
 
@@ -609,6 +713,13 @@ and the rejected alternative. Recorded on #6654.
 - `crates/ripr/src/analysis/language/typescript/typed_loose_equality_guard.rs`:
   `ts_owner_declares_number_return` and `ts_typed_loose_number_facts`
   (rule 2's typed owner), read by the classifier's pin facts.
+- `crates/ripr/src/analysis/language/typescript/boolean_pin_guard.rs`:
+  `ts_owner_declares_boolean_return` and `ts_boolean_pin_facts` (rule 5),
+  read by the classifier's pin facts.
+- `crates/ripr/src/analysis/language/typescript/close_to_guard.rs`:
+  `ts_close_to_pin_facts` (rule 6), read by the classifier's pin facts, with
+  `literal_eval::return_expression_numbers` and
+  `classifier::plain_changed_return`.
 - `crates/ripr/src/analysis/language/typescript/oracle.rs`: assertion
   extraction applies rules 2 and 3; `mock_payload_from_assertion` records
   multi-argument literal payloads.

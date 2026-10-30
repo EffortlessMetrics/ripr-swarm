@@ -1,0 +1,12 @@
+diff --git a/grid_delete/core.py b/grid_delete/core.py
+--- a/grid_delete/core.py
++++ b/grid_delete/core.py
+@@ -23,7 +23,7 @@
+         self.last_event = "reads"
+ 
+     def record_write(self):
+-        self.writes = self.writes + 1
++        self.writes += 1
+         self.last_event = "writes"
+ 
+     def record_eviction(self):

@@ -136,6 +136,61 @@ fn inventory_refuses_lossy_directory_identity_and_recovers() -> Result<(), Strin
 }
 
 #[test]
+fn inventory_page_limit_echoes_the_effective_cap() -> Result<(), String> {
+    let fixture = install_b4_fixture("inventory-limit-echo")?;
+    for directory in ["limit-a", "limit-b"] {
+        invalid_manifest(&fixture.root, directory)?;
+    }
+    with_session(&fixture.root, |session, tools| {
+        let name = tool_named(tools, INVENTORY_TOOL)?;
+        let descriptor = at(tools, "/result/tools", "tools/list")?
+            .as_array()
+            .and_then(|tools| tools.iter().find(|tool| tool["name"] == json!(name)))
+            .ok_or_else(|| "inventory tool descriptor missing".to_string())?;
+        // The declared input schema must assert the cap it enforces.
+        if descriptor
+            .pointer("/inputSchema/properties/limit/maximum")
+            .and_then(Value::as_u64)
+            != Some(256)
+        {
+            return Err(format!(
+                "input schema must declare the 256-row limit maximum: {descriptor}"
+            ));
+        }
+        // A request above the typed cap stays invalid params at the dispatch
+        // edge instead of being silently clamped (#8735).
+        let reply = session.call("over-cap-limit", &name, json!({"limit": 1000}))?;
+        if reply.pointer("/error/code").and_then(Value::as_i64) != Some(-32602) {
+            return Err(format!(
+                "a limit above the 256-row cap must stay invalid params: {reply}"
+            ));
+        }
+        // The typed page echoes the limit that was actually served.
+        let page = inventory(session, tools, json!({"limit": 2}))?;
+        if page["page"]["limit"] != json!(2) || as_u64(&page, "/page/returned", "page")? != 2 {
+            return Err(format!(
+                "page.limit must echo the effective served limit: {}",
+                page["page"]
+            ));
+        }
+        // The bound continuation echoes the same effective limit.
+        let first = inventory(session, tools, json!({"limit": 1}))?;
+        let next = first
+            .pointer("/continuation/next_page/arguments")
+            .cloned()
+            .ok_or_else(|| format!("first page lost its continuation: {first}"))?;
+        let continued = inventory(session, tools, next)?;
+        if continued["page"]["limit"] != json!(1) {
+            return Err(format!(
+                "continuation page must echo the effective limit: {}",
+                continued["page"]
+            ));
+        }
+        Ok(())
+    })
+}
+
+#[test]
 fn inventory_discovery_empty_store_and_argument_refusals() -> Result<(), String> {
     let fixture = install_b4_fixture("inventory-empty")?;
     let store = fixture.root.join("target/ripr/repair-attempts");

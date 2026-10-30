@@ -1,0 +1,12 @@
+diff --git a/grid_returns/core.py b/grid_returns/core.py
+--- a/grid_returns/core.py
++++ b/grid_returns/core.py
+@@ -10,7 +10,7 @@
+ 
+ 
+ def normalize(text):
+-    return text.strip()
++    return str.strip(text)
+ 
+ 
+ def shout(text):

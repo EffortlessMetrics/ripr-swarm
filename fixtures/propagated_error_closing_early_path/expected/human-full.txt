@@ -2,10 +2,15 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/propagated_error_closing_early_path/input
 
-Summary: 2 probe(s), 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 1 static_unknown; 2 of 2 finding(s) unsuppressed (1 base-side evidence, not candidate edit targets)
+Summary: 2 changed behavior(s) checked: 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 1 static_unknown; 2 of 2 finding(s) unsuppressed (1 base-side evidence, not candidate edit targets)
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
 
 Analysis outcome: findings below (analysis complete; complete_with_findings)
-  Counts: 1 changed file(s), 2 changed line(s), 2 candidate line(s), 2 probe(s), 2 finding(s)
+  Counts: 1 changed file(s), 2 changed line(s), 2 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
 
 WARNING ./src/lib.rs:6
   id: probe:src_lib.rs:error_path:107ffe09
@@ -15,11 +20,12 @@ Changed
         Failure::Missing
     )?
 
-Probe
+Change type
+  error handling changed
   family: error_path
-  delta:  value
+  delta:  value (changes a computed value)
   owner:  src/lib.rs::check
-  canonical gap: gap:rust:src/lib.rs:check:error_variant:error_path:value.ok_or_failure_missing
+  gap id (for scripts): gap:rust:src/lib.rs:check:error_variant:error_path:value.ok_or_failure_missing
 
 Static exposure
   weakly_exposed (warning, confidence 0.66)
@@ -56,23 +62,24 @@ Changed
   expr:   );
   source:  base_deleted — base-side evidence, not a candidate edit target
 
-Probe
+Change type
+  a change ripr could not classify
   family: static_unknown
-  delta:  unknown
+  delta:  unknown (kind of change not determined)
   owner:  src/lib.rs::check
-  canonical gap: gap:rust:src/lib.rs:check:static_unknown:static_unknown:unknown
+  gap id (for scripts): gap:rust:src/lib.rs:check:static_unknown:static_unknown:unknown
 
 Static exposure
   static_unknown (note, confidence 0.50)
 
 Evidence
   - reach yes: Related tests appear to reach check: observes_only_the_early_error
-  - infection unknown: Changed syntax is not mapped to a high-confidence probe family
+  - infection unknown: Changed syntax is not mapped to a high-confidence change type
   - propagation unknown: No propagation model is available for this changed syntax
   - observation yes: A related test observes a value or effect near the changed behavior
   - discriminator unknown: Assertions exist, but oracle strength is unknown
-  - local flow reaches unknown sink (line 8)
-  - related test src/lib.rs:16 observes_only_the_early_error uses unknown exact error variant oracle: assert_eq!(check(true, None), Err(Failure::Missing));
+  - local flow reaches unknown sink (line 8) — ripr could not classify where the changed value ends up; propagation confidence is limited
+  - related test src/lib.rs:16 observes_only_the_early_error uses exact error variant oracle, not graded against this probe: assert_eq!(check(true, None), Err(Failure::Missing));
   - source enum variant value Failure::Missing at line 17
   - source function argument value early = true at line 17
 
@@ -81,7 +88,8 @@ Weakness
   - Syntax-first analysis cannot classify this change; inspect the changed behavior and its existing tests
 
 Stop reasons:
-  - static_probe_unknown — ripr could not model this change well enough to classify it
+  - ripr could not model this change well enough to classify it (static_probe_unknown)
+    Next: Add a test that calls the changed code and asserts an exact result.
 
 Next step
   Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown

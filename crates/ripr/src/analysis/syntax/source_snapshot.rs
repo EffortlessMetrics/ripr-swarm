@@ -27,6 +27,19 @@ type ShadowKey = (
     Option<(PathBuf, String, usize)>,
 );
 
+/// What a parent file's root says about one receiver name, before the
+/// per-owner exemptions: the part of the parent-chain shadow check that
+/// depends only on the file and the name (#10809).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RootShadow {
+    /// The root neither declares nor renames the name: no shadow.
+    NotShadowing,
+    /// The name is declared but the file does not parse cleanly: refuse.
+    Unparseable,
+    /// A root item declares or renames the name; the owner exemptions decide.
+    Declared,
+}
+
 pub(crate) struct FunctionScope {
     pub(crate) name: String,
     pub(crate) start_line: usize,
@@ -70,16 +83,17 @@ impl std::fmt::Debug for SourceSyntaxMemos {
 
 impl SourceSyntaxMemos {
     pub(crate) fn parse_fragment(&self, text: &str) -> Option<Parse<SourceFile>> {
+        // Parse outside the index-wide lock; the first stored entry wins so
+        // concurrent callers converge on one shared green tree.
+        if let Ok(fragments) = self.fragments.lock()
+            && let Some(parse) = fragments.get(text)
+        {
+            return parse.clone();
+        }
+        let parse = parse_clean_source_file(text);
         match self.fragments.lock() {
-            Ok(mut fragments) => {
-                if let Some(parse) = fragments.get(text) {
-                    return parse.clone();
-                }
-                let parse = parse_clean_source_file(text);
-                fragments.insert(text.to_string(), parse.clone());
-                parse
-            }
-            Err(_) => parse_clean_source_file(text),
+            Ok(mut fragments) => fragments.entry(text.to_string()).or_insert(parse).clone(),
+            Err(_) => parse,
         }
     }
 
@@ -113,8 +127,12 @@ pub(crate) struct SourceSnapshot {
     nesting: Mutex<BTreeMap<(String, usize, bool), Option<ItemNesting>>>,
     lexical_items: OnceLock<Option<SourceScopes>>,
     shadows: Mutex<BTreeMap<ShadowKey, bool>>,
+    root_shadows: Mutex<BTreeMap<(String, bool), RootShadow>>,
+    masked: OnceLock<String>,
     #[cfg(test)]
     shadow_computations: std::sync::atomic::AtomicUsize,
+    #[cfg(test)]
+    root_shadow_computations: std::sync::atomic::AtomicUsize,
 }
 
 impl SourceSnapshot {
@@ -131,8 +149,12 @@ impl SourceSnapshot {
             nesting: Mutex::default(),
             lexical_items: OnceLock::new(),
             shadows: Mutex::default(),
+            root_shadows: Mutex::default(),
+            masked: OnceLock::new(),
             #[cfg(test)]
             shadow_computations: std::sync::atomic::AtomicUsize::new(0),
+            #[cfg(test)]
+            root_shadow_computations: std::sync::atomic::AtomicUsize::new(0),
         }
     }
 
@@ -193,6 +215,44 @@ impl SourceSnapshot {
         }
     }
 
+    /// The file's comment-and-string-masked source, built once per snapshot.
+    pub(crate) fn masked_source(&self, mask: impl FnOnce() -> String) -> &str {
+        self.masked.get_or_init(mask)
+    }
+
+    /// The owner-independent answer for one name, computed outside the lock
+    /// so a slow parse never stalls a reader of another name. The answer is
+    /// pure in the snapshot's source and the key, so two workers that miss
+    /// together agree and the first insert wins; the memo bounds repeated
+    /// work to the workers that race on one first miss, not to exactly one.
+    pub(crate) fn root_shadow(
+        &self,
+        base: &str,
+        trait_kind: bool,
+        compute: impl FnOnce() -> RootShadow,
+    ) -> RootShadow {
+        let key = (base.to_string(), trait_kind);
+        if let Ok(memo) = self.root_shadows.lock()
+            && let Some(found) = memo.get(&key)
+        {
+            return *found;
+        }
+        let answer = compute();
+        #[cfg(test)]
+        self.root_shadow_computations
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        match self.root_shadows.lock() {
+            Ok(mut memo) => *memo.entry(key).or_insert(answer),
+            Err(_) => answer,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn root_shadow_computations(&self) -> usize {
+        self.root_shadow_computations
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     #[cfg(test)]
     pub(crate) fn shadow_computations(&self) -> usize {
         self.shadow_computations
@@ -206,29 +266,33 @@ impl SourceSnapshot {
             function.start_line,
             function.end_line,
         );
-        let compute = || {
-            let tree = self.parse.as_ref()?.tree();
-            let mut matches = tree
-                .syntax()
-                .descendants()
-                .filter_map(ast::Fn::cast)
-                .filter(|item| {
-                    item.name()
-                        .is_some_and(|name| name.text() == function.name.as_str())
-                        && item.fn_token().is_some_and(|token| {
-                            (self.lines.line(item.syntax().text_range().start())
-                                ..=self.lines.line(token.text_range().start()))
-                                .contains(&function.start_line)
-                        })
-                });
-            match (matches.next(), matches.next()) {
-                (Some(item), None) => Some(item.async_token().is_some()),
-                _ => None,
-            }
-        };
+        let compute = || Some(self.declaration(function)?.async_token().is_some());
         match self.declarations.lock() {
             Ok(mut memo) => *memo.entry(key).or_insert_with(compute),
             Err(_) => compute(),
+        }
+    }
+
+    /// Recover the unique full-source declaration, including qualifiers,
+    /// attributes and lexical ancestry omitted from indexed body slices.
+    pub(crate) fn declaration(&self, function: &FunctionSummary) -> Option<ast::Fn> {
+        let tree = self.parse.as_ref()?.tree();
+        let mut matches = tree
+            .syntax()
+            .descendants()
+            .filter_map(ast::Fn::cast)
+            .filter(|item| {
+                item.name()
+                    .is_some_and(|name| name.text() == function.name.as_str())
+                    && item.fn_token().is_some_and(|token| {
+                        (self.lines.line(item.syntax().text_range().start())
+                            ..=self.lines.line(token.text_range().start()))
+                            .contains(&function.start_line)
+                    })
+            });
+        match (matches.next(), matches.next()) {
+            (Some(item), None) => Some(item),
+            _ => None,
         }
     }
 
@@ -336,7 +400,7 @@ impl SourceSnapshot {
 }
 
 /// Whether `node` carries a `cfg` or `cfg_attr` attribute, outer or inner.
-fn has_cfg_attr(node: &impl ast::HasAttrs) -> bool {
+pub(crate) fn has_cfg_attr(node: &impl ast::HasAttrs) -> bool {
     // `cfg` and `cfg_attr` parse to their own metas, which have no `path`.
     node.attrs().any(|attr| {
         matches!(

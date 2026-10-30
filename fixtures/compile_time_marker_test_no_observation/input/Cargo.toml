@@ -1,0 +1,4 @@
+[package]
+name = "compile_time_marker_test_no_observation_fixture"
+version = "0.0.0"
+edition = "2024"

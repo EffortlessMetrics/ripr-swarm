@@ -1,0 +1,52 @@
+{
+  "case_id": "ts-grid-arithmetic-helper",
+  "subject_id": "authored-ts-grid-arithmetic",
+  "diff": "cases/ts-grid-arithmetic-helper.diff",
+  "anchor": {
+    "file": "src/arithmetic.ts",
+    "line": 14
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "arithmetic_operator",
+  "test_shape": "nodetest_helper_wrapped_assert",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "node --experimental-strip-types --test \"test/*.test.ts\"",
+    "toolchain": "node 22.22.0 (--experimental-strip-types); node:test (built in); edit applied by hand and the test command run on the whole package",
+    "mutants": [
+      {
+        "replacement": "return rate + bill;",
+        "mutated_line": "return rate + bill;",
+        "outcome": "tests_failed",
+        "failing_test": "tip",
+        "equivalence_review": "not equivalent: another operator gives a different value unless the inputs hide it"
+      },
+      {
+        "replacement": "return rate / bill;",
+        "mutated_line": "return rate / bill;",
+        "outcome": "tests_failed",
+        "failing_test": "tip",
+        "equivalence_review": "not equivalent: another operator gives a different value unless the inputs hide it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Grid cell: arithmetic x helper-wrapped assert pinning 80.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

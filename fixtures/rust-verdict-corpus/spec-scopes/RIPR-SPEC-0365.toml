@@ -1,0 +1,3 @@
+id = "RIPR-SPEC-0365"
+scope = "out"
+reason = "Repository-policy manifest/registry identity join; its acceptance examples validate explicit cell claims, not a language exposure verdict or runtime mutant truth."

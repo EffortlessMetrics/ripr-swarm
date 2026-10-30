@@ -1,0 +1,22 @@
+{
+  "case_id": "spec0107-accounts-empty-variant-pinned",
+  "subject_id": "authored-accounts",
+  "origin": "authored",
+  "anchor": "src/parse.rs:12",
+  "behavior_family": "error_path",
+  "test_shape": "unit_test_assert_eq_exact_variant",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 2,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

@@ -1,0 +1,12 @@
+diff --git a/src/helpers.rs b/src/helpers.rs
+--- a/src/helpers.rs
++++ b/src/helpers.rs
+@@ -3,7 +3,7 @@
+ }
+ 
+ pub fn surcharge(base: u32) -> u32 {
+-    base + base / 10
++    base + (base / 10)
+ }
+ 
+ #[cfg(test)]

@@ -30,11 +30,21 @@ verify-execute` declining a packet (the refusal JSON document is on stdout)
 - `3`: the command completed by reaching a blocking decision or typed
   refusal; read the report or the stdout JSON document for the answer
   (standalone `ripr agent verify` is the exception: its refusal is named on
-  stderr and stdout stays empty; see below. `ripr agent repair` prints its
-  refusal document only with `--json`; without it stdout stays empty and
-  stderr names the cause. `ripr agent card` prints its
-  `agent_card_refusal` envelope on stderr with `--json` and the prose
-  rendering after it; stdout stays empty on every refusal).
+  stderr and stdout stays empty; see below. `ripr agent repair`,
+  `ripr agent card` and `ripr agent stub` print their refusal document
+  (`agent_card_refusal` / `rust_test_stub` `state: refused`) on stdout only
+  with `--json`, with the prose on stderr; without it stdout stays empty and
+  stderr names the cause. An unknown `--seam-id` is one typed refusal with
+  one exit, `3`, on `agent start`, `agent card`, `agent stub`,
+  `agent packet`, and `agent repair --phase before`. A known seam that
+  agent policy withholds (#10712) is the same typed refusal (exit `3`) on
+  `agent start`, `agent card`, `agent packet`, and
+  `agent repair --phase before`; `agent stub` still produces the stub
+  (exit `0`) with the omission disclosed in `warnings` and no repair
+  journey offered. With `--json` the
+  document is on stdout and the prose on stderr, except `agent start` and
+  `agent repair --phase before`, whose
+  refusals are prose on stderr with empty stdout).
 - `2`: the invocation or operation failed; retrying differently is
   appropriate.
 
@@ -48,9 +58,14 @@ Error and panic diagnostics on stderr are best effort. If a stderr reader
 closes after a JSON refusal has been written, the command retains that stdout
 document and its original exit `2` or `3`. A failed panic diagnostic still
 terminates with `2`; reporting it must not cause a recursive panic or abort.
-Once `agent card` or `agent stub` reaches a named refusal, its stderr JSON
-envelope is also best effort: a closed stderr reader keeps stdout empty and
-preserves exit `3`. An earlier analysis-stage failure can still exit `2`.
+Once `agent card` or `agent stub` reaches a named refusal, its stdout JSON
+document is written first and the stderr prose is best effort: a closed
+stderr reader keeps the stdout document and preserves exit `3`. An earlier analysis-stage failure can still exit `2`.
+The refusal exit `3` also requires that the machine answer was delivered: for
+`agent card`, `agent stub` and an unknown-seam `agent packet` under `--json`, a
+refusal document that cannot be rendered or cannot be written to stdout (for
+example a closed stdout reader) exits `2` instead, since no typed answer
+reached the caller.
 
 ## When you see exit code 2
 
@@ -84,8 +99,12 @@ preserves exit `3`. An earlier analysis-stage failure can still exit `2`.
   commands (#7331): `diff --json`, `rerun --json`, `context` (which emits
   JSON only), `agent brief --json`, and `agent packet --json` each write the
   shared refusal shape keyed with their own `schema_version` (rerun
-  `ripr-targeted-rerun-v1`, context `1.0`, diff and agent brief `0.1`, agent
-  packet `0.5`), and `mode` appears only on commands that accept `--mode`.
+  `ripr-targeted-rerun-v1`, context `1.1`, diff and agent brief `0.1`, agent
+  packet `0.5`; an unknown or policy-withheld `agent packet --seam-id` is the one typed
+  refusal among these and exits `3`, see above), and `mode` appears only on commands that accept `--mode`.
+  A fresh `context` run preserves the check producer's typed failure and
+  recovery route for both committed and working-tree analysis; an invalid
+  base therefore names `base_unresolvable`, not the generic `analysis_failed`.
   For `check`, the machine-readable formats also carry their own refusal
   document on stdout (#7332): SARIF renders a schema-valid run whose only
   signal is a tool-configuration notification, GitHub renders one workflow
@@ -99,9 +118,15 @@ preserves exit `3`. An earlier analysis-stage failure can still exit `2`.
   `repo-badge-*`, `repo-seams-*`, `repo-exposure-md`, and
   `repo-exposure-summary-json` — write
   nothing to stdout and put the prose diagnostic on stderr for now; that
-  gap is a named limitation, not a clean result. Exactly two cases stay
-  prose-only with empty stdout on every command: argv usage errors and
-  these not-yet-refusing machine formats. [docs/OUTPUT_SCHEMA.md](OUTPUT_SCHEMA.md) documents the refusal
+  gap is a named limitation, not a clean result. These machine formats and
+  usage-class errors keep stdout empty. Usage-class errors include argv
+  errors and `context`/`explain` selector misses or ambiguity; their guidance
+  and retry listing stay on stderr (RIPR-SPEC-0003).
+  Fresh selector misses also retain producer-owned language limitations for
+  that run, with the configured-off or unavailable-binary recovery. These
+  describe analysis scope rather than prove why the selector missed;
+  recorded `--from` lookups do not invent ambient language facts (#10720).
+  [docs/OUTPUT_SCHEMA.md](OUTPUT_SCHEMA.md) documents the refusal
   shape and its `schema_version`.
 - **User error**: unknown command, missing required argument, or invalid
   config.
@@ -127,6 +152,10 @@ preserves exit `3`. An earlier analysis-stage failure can still exit `2`.
 
 - **Gate failure**: `ripr gate evaluate` evaluated successfully and blocked
   the PR; the full report was still written to `--out`.
+- **Doctor findings**: `ripr doctor` completed its diagnosis and at least
+  one check failed; the full report was already written (human screen or
+  `--json` document) and stderr names `doctor found issues` (#5102). A
+  usage error or a failure before a report exists stays exit `2`.
 - **Typed refusal**: `ripr agent verify-execute` refused the packet (for
   example `verification_rejected_policy` or `verification_wrong_root`) and
   rendered the typed refusal JSON on stdout; `ripr agent repair --phase
@@ -160,14 +189,20 @@ preserves exit `3`. An earlier analysis-stage failure can still exit `2`.
   body or `const` block, an owner behind a cfg in its own file that a plain
   `cargo test` build may not enable, no return value, an out-of-line test module, or
   inline test modules that are all gated by more than `cfg(test)`), or the
-  selector names no reported gap (`seam_not_found`), or the location selector
+  `--at` path names a language the Rust-only generator does not support
+  (`unsupported_language`: follow any check-provided test guidance, edit and
+  run the test by hand, then refresh the finding), or the selector names no
+  reported gap (`seam_not_found`), or the location selector
   matches several files or tied disjoint seams (`selector_ambiguous`: choose
-  a specific path or one of the suggested seam IDs). Several inline test modules are not a
+  a specific path or one of the suggested seam IDs), or a single related
+  test already reaches the changed predicate boundary and only its assertion
+  is weak (`existing_test_weak_oracle`, #10683: strengthen that named test's
+  assertion instead of adding a second test). Several inline test modules are not a
   refusal: among those gated by plain `cfg(test)`, the stub goes into the
   one that already names the owner, else the nearest one after it, else the
-  nearest one before it. The named reason is on stderr, with
-  a `rust_test_stub` schema `0.2` `state: refused` envelope under `--json`; stdout stays
-  empty. A failed read, analysis, or `--write` stays exit `2`.
+  nearest one before it. The named reason is on stderr; under `--json` a
+  `rust_test_stub` schema `0.4` `state: refused` envelope is the stdout
+  document. A failed read, analysis, or `--write` stays exit `2`.
 - **Typed agent card refusal**: `ripr agent card` reached a deliberate named
   refusal of the default handoff — the seam id names no seam
   (`seam_not_found`: re-list seams or correct the id), the seam's grip class
@@ -179,9 +214,9 @@ preserves exit `3`. An earlier analysis-stage failure can still exit `2`.
   builder, route gate, or budget refused to mint the card
   (`budget_overflow`: fall back to the canonical packet). With `--json` the
   versioned `agent_card_refusal` envelope (`schema_version` `0.1`) renders
-  on stderr with the typed `error.kind`, `seam_id`, verbatim `message`, and
-  `remedy_route`; stdout stays empty because it is the card-artifact stream.
-  Without `--json` stderr carries the prose rendering only. The kinds are
+  on stdout with the typed `error.kind`, `seam_id`, verbatim `message`, and
+  `remedy_route`, and the prose rendering stays on stderr. Without `--json`
+  stdout stays empty and stderr carries the prose rendering only. The kinds are
   closed and pinned by `cargo xtask check-output-contracts`
   (RIPR-SPEC-0202). Operational failures of the command (an unreadable
   config, a failed git probe, a detail-source serialization failure) still
@@ -226,9 +261,12 @@ tree; and a repair `--phase after` whose edit cage recorded a violation.
 
 ## `ripr doctor` exit codes
 
-`ripr doctor` uses the same contract: `0` when all checks pass, `2` when
-any check fails (including missing language runtimes that are enabled in
-the effective configuration).
+`ripr doctor` uses the same contract: `0` when all checks pass, `3` when
+the diagnosis completed and any check failed (including missing language
+runtimes that are enabled in the effective configuration), and `2` only
+when the run could not complete — a usage error (no check ran) or an
+operational failure before a report exists (#5102). Both the human and
+`--json` surfaces use this mapping; the report is written before exit `3`.
 
 The `Cargo.toml` check applies only when Rust is in scope for the root:
 Rust is enabled and either a Cargo.toml is found at the selected root, an
@@ -237,7 +275,7 @@ ancestor Cargo project bounded by git, or nested in this tree; Rust markers
 detected or enabled. A Python-only or TypeScript-only root with no nested
 or ancestor Cargo.toml reports `cargo_toml` as `skipped` with the reason.
 The analysis profile also skips `cargo` and `rustc`; `--profile source-build`
-still probes those tools and can exit `2` if they are missing.
+still probes those tools and can exit `3` if they are missing.
 A Cargo.toml at the selected root, an
 ancestor Cargo project bounded by git, or a nested Cargo.toml in this tree
 (for example `rust/Cargo.toml` at a polyglot git root that also has
@@ -251,7 +289,7 @@ profile, a missing `cargo` or `rustc`, or a workspace `rustc` older than
 RIPR's build MSRV, is reported as `advisory` and does not change the exit
 code: the installed binary can still analyze the workspace. A missing `cargo`
 still withholds evidence that reads `cargo metadata`. Under
-`--profile source-build`, the same conditions are failures and exit `2`. A
+`--profile source-build`, the same conditions are failures and exit `3`. A
 missing cargo or rustc names an install route on the failing check; an older
 rustc still names `rustup update stable`. Enabled language runtimes stay
 visible but do not decide that profile's exit.

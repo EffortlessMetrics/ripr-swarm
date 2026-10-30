@@ -1,0 +1,12 @@
+diff --git a/grid_constant/core.py b/grid_constant/core.py
+--- a/grid_constant/core.py
++++ b/grid_constant/core.py
+@@ -14,7 +14,7 @@
+ 
+ 
+ def handling(weight):
+-    return weight * 12
++    return weight * 13
+ 
+ 
+ def rounding_unit(value):

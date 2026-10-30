@@ -45,10 +45,29 @@ impl SourceAuthority {
     }
     fn verify_repository(&self, root: &Path) -> Result<(), String> {
         if matches!(self, Self::Direct(_)) {
-            let origin = git_bytes(root, &["remote", "get-url", "origin"])?;
+            // Judge the origin as configured in the checkout. `remote get-url`
+            // applies `url.<base>.insteadOf`, so an operator's (or the
+            // checkout's own) rewrite could turn an undocumented transport or
+            // foreign origin into an approved one. `--local` also keeps the
+            // read independent of user/system config without hiding their
+            // `safe.directory` trust.
+            let origin = git_bytes(
+                root,
+                &[
+                    "config",
+                    "--local",
+                    "--no-includes",
+                    "--get-all",
+                    "remote.origin.url",
+                ],
+            )?;
             let origin = std::str::from_utf8(&origin)
-                .map_err(|error| format!("source origin UTF-8: {error}"))?
-                .trim();
+                .map_err(|error| format!("source origin UTF-8: {error}"))?;
+            // Count before trimming so an empty extra value cannot hide.
+            if origin.lines().count() != 1 {
+                return Err("direct manifest source origin is ambiguous: remote.origin.url must have exactly one value".to_string());
+            }
+            let origin = origin.trim();
             if !matches!(
                 origin,
                 "https://github.com/EffortlessMetrics/ripr-swarm.git"

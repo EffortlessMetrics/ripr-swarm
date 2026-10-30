@@ -67,6 +67,26 @@ from the non-test workspace sources. Per module it records named re-exports
 rename exports as self-hops, `export *` edges, the names the module exports
 from its own declarations, and the set of known workspace modules.
 
+### Namespace re-exports
+
+`export * as units from './units'` binds the namespace object of
+`./units` under the exported name `units`. A test that imports `units` by
+name from the barrel and calls `units.cmToIn(...)` runs the same code as
+`import * as units from './units'`, so the analysis reads it that way: the
+index records `(module, name) -> target module` per namespace export, and
+after the index is built every named import whose chain resolves to a
+namespace export is replaced in the test's import list by the namespace
+import of the target module. Every namespace-receiver rule (owner call
+reach, identity, shadowing, observation, the literal pins) then applies
+unchanged, and the relation is disclosed as `re_export_chain_followed`
+because the call reaches the owner through the barrel. The chain follows
+the same bounds as a named export: named re-exports of the namespace name
+(`export { units } from './inner'`) and star hops are followed within
+`MAX_REEXPORT_HOPS`; two star sources that bind the name to different
+modules (or one source binds it as an ordinary export), a cycle, a mocked barrel or target, and an unresolvable mock
+specifier leave the import as written. A body-local `units`, an enclosing
+scope that rebinds it, and `export type * as` bind no namespace value.
+
 ### Fail-closed bounds
 
 - A chain longer than `MAX_REEXPORT_HOPS` (4) hops is not followed.
@@ -75,14 +95,20 @@ from its own declarations, and the set of known workspace modules.
   closure) exports it; a module-private function is never forwarded.
 - A name exported by two star sources with different bindings is ambiguous
   and not credited.
+- A resolved star source whose export facts are unavailable (not discovered,
+  unreadable, over a read/parse budget, or unparsable) is unresolved, not an
+  empty export set. Losing that source cannot make a sibling's binding unique.
+  Successfully parsed empty modules still establish absence. Explicit local
+  and named exports retain their precedence over star exports.
 - `export *` never forwards `default`.
 - A local export of the name in an intermediate module shadows its star
   sources.
-- `export * as ns from`, type-only re-exports (`export type { N } from`,
-  `export type * from`), and non-relative package specifiers (node_modules)
-  are NOT followed.
-- Default imports and namespace imports through re-export chains are NOT
-  followed.
+- Type-only re-exports (`export type { N } from`, `export type * from`,
+  `export type * as ns from`) and non-relative package specifiers
+  (node_modules) are NOT followed. `export * as ns from` is followed only as
+  a namespace (see above): it never forwards named exports.
+- Default imports and `import * as ns from './barrel'` namespace imports of
+  the barrel itself are NOT followed through re-export chains.
 - A test body that redeclares the imported local name (`const N = ...`) calls
   the shadow, not the owner, and is not credited.
 
@@ -125,6 +151,8 @@ involves indirection that ripr cannot verify at runtime.
 - Unit tests in `reexport_chain_tests` for the over-bound chain, cycle,
   ambiguous star, non-exported star target, file-module-over-index, and
   shadowed import controls.
+- Fixture `typescript_reexport_unparsed_star` and CLI read-cap controls ensure
+  unavailable star siblings cannot retain positive owner or namespace credit.
 - `cargo xtask goldens check` must pass for all fixtures.
 
 ## Non-Goals
@@ -132,69 +160,70 @@ involves indirection that ripr cannot verify at runtime.
 - Chains beyond `MAX_REEXPORT_HOPS`.
 - Following a module's own `import { x } from './a'; export { x }` re-binding
   (under-credited, fail-closed).
-- Default-import and namespace-import tracing through barrels.
+- Default-import tracing through barrels, and `import * as ns` of a barrel
+  (`ns.units.f(...)`).
 - Package-graph resolution (no node_modules, no tsc, no package.json
   `exports`/`main` lookups).
 
 ## Acceptance Examples
 
-### Single-hop credit (must credit via re-export chain)
+1. Single-hop credit (must credit via re-export chain):
 
-```
-owner:              isRawNetworkError in src/util.ts
-barrel:             src/index.ts — export { isRawNetworkError } from './util'
-test import:        import { isRawNetworkError } from '../src/index'
-test assertion:     expect(isRawNetworkError(e)).toBe(true)
+   ```
+   owner:              isRawNetworkError in src/util.ts
+   barrel:             src/index.ts — export { isRawNetworkError } from './util'
+   test import:        import { isRawNetworkError } from '../src/index'
+   test assertion:     expect(isRawNetworkError(e)).toBe(true)
 
-Before fix:         no_static_path, 0 related tests
-After fix:          exposed, 2 related tests,
-                    relation_reason: re_export_chain_followed,
-                    relation_confidence: medium
-```
+   Before fix:         no_static_path, 0 related tests
+   After fix:          exposed, 2 related tests,
+                       relation_reason: re_export_chain_followed,
+                       relation_confidence: medium
+   ```
 
-### No-false-credit control (must stay no_static_path)
+2. No-false-credit control (must stay no_static_path):
 
-```
-owner:              isRawNetworkError in src/util.ts
-barrel:             src/index.ts — export { isRawNetworkError } from './other'
-test import:        import { isRawNetworkError } from '../src/index'
+   ```
+   owner:              isRawNetworkError in src/util.ts
+   barrel:             src/index.ts — export { isRawNetworkError } from './other'
+   test import:        import { isRawNetworkError } from '../src/index'
 
-After fix:          no_static_path, 0 related tests
-                    (chain resolves to src/other.ts, not src/util.ts)
-```
+   After fix:          no_static_path, 0 related tests
+                       (chain resolves to src/other.ts, not src/util.ts)
+   ```
 
-### Two-hop chain (credited within the bound)
+3. Two-hop chain (credited within the bound):
 
-```
-owner:              isRawNetworkError in src/util.ts
-chain:              index.ts → errors.ts → util.ts  (two named hops)
-test import:        import { isRawNetworkError } from '../src/index'
+   ```
+   owner:              isRawNetworkError in src/util.ts
+   chain:              index.ts → errors.ts → util.ts  (two named hops)
+   test import:        import { isRawNetworkError } from '../src/index'
 
-After:              exposed, 1 related test,
-                    relation_reason: re_export_chain_followed
-```
+   After:              exposed, 1 related test,
+                       relation_reason: re_export_chain_followed
+   ```
 
-### Directory star barrel (unjs/ufo shape)
+4. Directory star barrel (unjs/ufo shape):
 
-```
-owner:              withoutBase in src/utils.ts
-barrel:             src/index.ts — export * from './url'; export * from './utils'
-test import:        import { withoutBase } from '../src'
+   ```
+   owner:              withoutBase in src/utils.ts
+   barrel:             src/index.ts — export * from './url'; export * from './utils'
+   test import:        import { withoutBase } from '../src'
 
-Before:             no_static_path, 0 related tests
-After:              exposed, 2 related tests,
-                    relation_reason: re_export_chain_followed
-```
+   Before:             no_static_path, 0 related tests
+   After:              exposed, 2 related tests,
+                       relation_reason: re_export_chain_followed
+   ```
 
-### Barrel other-name control (must stay no_static_path)
+5. Barrel other-name control (must stay no_static_path):
 
-```
-owner:              applyDiscount in src/a.ts
-barrel:             src/index.ts — export { applyDiscount } from './a'; export * from './b'
-test import:        import { formatCents } from '../src'
+   ```
+   owner:              applyDiscount in src/a.ts
+   barrel:             src/index.ts — export { applyDiscount } from './a'; export * from './b'
+   test import:        import { formatCents } from '../src'
 
-After:              no_static_path, 0 related tests
-```
+   After:              no_static_path, 0 related tests
+   ```
 
 ## Test Mapping
 
@@ -209,6 +238,13 @@ After:              no_static_path, 0 related tests
 - `crates/ripr/src/analysis/language/typescript/tests/reexport_chain_tests.rs`
   — `ReExportIndex::build` + `find_related_tests` over real sources for
   positive chains and every fail-closed bound.
+- `crates/ripr/src/analysis/language/typescript/tests/namespace_reexport_tests.rs`
+  — namespace re-exports: file and index barrels, star and named hops, a
+  namespace of another module, another member, a mocked barrel or target,
+  a shadowing local, an ambiguous or cyclic chain and a type-only export.
+- `fixtures/typescript-verdict-corpus` pins it:
+  `shape-barrel-namespace-reexport` reads `credited` (with RIPR-SPEC-0247
+  rule 6 for its `toBeCloseTo` oracle).
 - `crates/ripr/src/analysis/language/typescript/tests.rs` — unit tests for
   `ReExportIndex::from_parts`, `ReExportIndex::resolve_to_owner`, and
   `find_related_tests` with re-export index.

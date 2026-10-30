@@ -1067,29 +1067,42 @@ mod tests {
     #[test]
     fn workflow_installs_from_a_local_wheelhouse_with_isolation_controls() {
         let text = WORKFLOW_TEXT;
-        assert!(text.contains("install --no-index --find-links"));
+        // Offline installs of the one staged wheel through both clients.
+        assert!(text.contains("--no-index --find-links"));
         assert!(text.contains("uv tool install --offline"));
-        assert!(text.contains("PIP_NO_INDEX=1"));
         assert!(text.contains("UV_OFFLINE=1"));
+        assert!(text.contains("${#wheels[@]} -ne 1"));
+        assert!(text.contains("EXPECTED_WHEEL_SHA256"));
+        assert!(text.contains("EXPECTED_PAYLOAD_SHA256"));
+        // Network is removed by a private namespace, then shown unreachable in it.
+        assert!(text.contains("unshare --net"));
+        assert!(text.contains("network still reachable"));
+        assert!(text.contains(r#"urllib.request.urlopen(\"https://pypi.org\""#));
+        // Planted wrong-PATH binary, Cargo, ambient ripr and source probes.
         assert!(text.contains("planted-wrong-path"));
         assert!(text.contains("command -v cargo"));
         assert!(text.contains("command -v rustc"));
-        assert!(text.contains("command -v ripr"));
-        assert!(text.contains(r#"= "${DECOY_ROOT}/ripr""#));
         assert!(text.contains("/usr/bin/ripr"));
+        assert!(text.contains("Cargo.toml"));
+        // Installed-use analysis supplies the subject count; no hard-coded verdict.
+        assert!(text.contains("ripr check --root"));
+        assert!(text.contains(".summary.findings"));
+        assert!(!text.contains(r#""status": "failed""#));
+        assert!(!text.contains(r#""subject_count": 0"#));
         assert!(text.contains("cargo xtask qualify-python-wheelhouse --receipts"));
-        assert!(text.contains("urllib.request.urlopen('https://pypi.org'"));
-        assert!(text.contains(r#"cd "${CONSUMER_ROOT}""#));
-        assert!(text.contains(r#"test -r "${GITHUB_WORKSPACE}/Cargo.toml""#));
-        assert!(text.contains("${#wheels[@]} -ne 1"));
-        assert!(text.contains(r#""${wheels[0]}""#));
-        assert!(text.contains("pathlib.Path(sys.argv[8])"));
         assert!(!text.contains("cowsay"));
-        assert!(!text.contains(".glob(\"*.whl\")"));
-        assert!(text.contains(r#""status": "failed""#));
-        assert!(text.contains(r#""subject_count": 0"#));
-        assert!(text.contains("flag(3)"));
-        assert!(text.contains("flag(7)"));
+    }
+
+    #[test]
+    fn consumer_job_has_no_source_checkout() {
+        let install = WORKFLOW_TEXT
+            .split("\n  install:\n")
+            .nth(1)
+            .and_then(|rest| rest.split("\n  aggregate:\n").next())
+            .unwrap_or_default();
+        assert!(!install.is_empty(), "install job section is missing");
+        assert!(!install.contains("actions/checkout"));
+        assert!(install.contains("actions/download-artifact"));
     }
 
     #[test]

@@ -1,6 +1,7 @@
 {
   "analysis_scope": {
     "basis": "base",
+    "cap_omitted_seams": 0,
     "changed_files": [
       "src/pricing.rs",
       "tests/pricing.rs"
@@ -12,6 +13,7 @@
     "downstream_consumable": true,
     "immediate_caller_files": [],
     "limitation": "review_comments_working_set_scope_only",
+    "omitted_by_policy": 0,
     "production_files_considered": 2,
     "repair_route": "analysis/review-comments-working-set",
     "run_status": "scoped",

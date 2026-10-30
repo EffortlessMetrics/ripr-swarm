@@ -1,0 +1,22 @@
+{
+  "case_id": "py-grid-returns-none",
+  "subject_id": "authored-py-grid-returns",
+  "origin": "authored",
+  "anchor": "grid_returns/core.py:21",
+  "behavior_family": "return_value",
+  "test_shape": "pytest_smoke_call_no_assert",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

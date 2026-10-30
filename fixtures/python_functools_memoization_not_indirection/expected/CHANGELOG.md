@@ -156,3 +156,160 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_functools_memoization_not_indirection (14)
+
+Reason:
+RIPR-SPEC-0224: unclassified-kind oracle not graded against this probe (#8388)
+
+Command:
+`cargo xtask goldens bless python_functools_memoization_not_indirection --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_functools_memoization_not_indirection (15)
+
+Reason:
+RIPR-SPEC-0224: a row with no selected assertion reads 'uses no oracle' (#8388)
+
+Command:
+`cargo xtask goldens bless python_functools_memoization_not_indirection --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_functools_memoization_not_indirection (16)
+
+Reason:
+RIPR-SPEC-0122: non-Rust repair-start refusal names the Rust-only seam inventory and the manual route (#9102)
+
+Command:
+`cargo xtask goldens bless python_functools_memoization_not_indirection --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_functools_memoization_not_indirection (17)
+
+Reason:
+RIPR-SPEC-0122: explain bounded Evidence stage and state meanings for #9373 item 1; retain full-human and JSON contracts
+
+Command:
+`cargo xtask goldens bless python_functools_memoization_not_indirection --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_functools_memoization_not_indirection (18)
+
+Reason:
+RIPR-SPEC-0122: #9373 item 1 review repair; missing discriminators include absent assertions as well as inputs
+
+Command:
+`cargo xtask goldens bless python_functools_memoization_not_indirection --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_functools_memoization_not_indirection (19)
+
+Reason:
+RIPR-SPEC-0122: #9373 item 1 observation-gloss repair; report independent related test/assertion evidence without implying that the changed arm executes.
+
+Operation:
+Manual edit: replaced only the observation clause in the existing five-line bounded Evidence legend with `observation = related test/assertion evidence`.
+
+Execution:
+Source-only reviewed edit; no native fixture or goldens-bless command executed because local storage admission is unavailable.
+
+Updated:
+- `expected/human.txt`
+
+## Pending — python_functools_memoization_not_indirection (20)
+
+Reason:
+RIPR-SPEC-0122: bounded evidence legend defines the Summary count terms (#9244 item 4)
+
+Command:
+`cargo xtask goldens bless python_functools_memoization_not_indirection --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_functools_memoization_not_indirection (21)
+
+Reason:
+RIPR-SPEC-0224: Python no_assertion row miss on an extraction-complete assertion-free call-bearing test (#5491)
+
+Command:
+`cargo xtask goldens bless python_functools_memoization_not_indirection --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_functools_memoization_not_indirection (22)
+
+Reason:
+RIPR-SPEC-0122: digest missing-discriminator prose wraps instead of one_line clipping (#4323 parity); the ellipsized cut dropped the operative tail silently
+
+Command:
+`cargo xtask goldens bless python_functools_memoization_not_indirection --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_functools_memoization_not_indirection (23)
+
+Reason:
+RIPR-SPEC-0122: digest missing-discriminator prose wraps instead of one_line clipping (#4323 parity); the ellipsized cut dropped the operative tail silently
+
+Command:
+`cargo xtask goldens bless python_functools_memoization_not_indirection --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_functools_memoization_not_indirection (24)
+
+Reason:
+RIPR-SPEC-0122: define finding, unsuppressed, unknown, base-side and candidate line in the evidence legend (#9244)
+
+Command:
+`cargo xtask goldens bless python_functools_memoization_not_indirection --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_functools_memoization_not_indirection (22)
+
+Reason:
+RIPR-SPEC-0118 / docs/OUTPUT_SCHEMA.md: #10192 displays hidden finding kind/reason, exact ambiguous seam choices, and evidence-specific unresolved-edge guidance; verdict, stage, identity and oracle fields stay unchanged (independently compared against actual JSON).
+
+Command:
+`cargo xtask goldens bless python_functools_memoization_not_indirection --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — python_functools_memoization_not_indirection (25)
+
+Reason:
+RIPR-SPEC-0122: plain-language wording for the default and human-full check views (#10691); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless python_functools_memoization_not_indirection --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

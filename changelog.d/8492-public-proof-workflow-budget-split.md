@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- The public-proof page now follows the #8491 split of the first-run budget metrics: its derived `first_run.over_budget_steps` bar counts only time and output-length budget flags, and the generated-workflow size flag is matched through the shared `GENERATED_WORKFLOW_BUDGET_FLAG` constant so the friction wording has one owner. The page also shows `first_run.over_budget_workflows` as its own bar, derived from the raw first-run receipts while the committed dx scoreboard receipt predates the metric (#8492).

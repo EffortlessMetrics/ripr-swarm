@@ -1,0 +1,55 @@
+{
+  "case_id": "shape-hostile-owner-through-fn-pointer",
+  "subject_id": "authored-shape-kit",
+  "diff": "cases/shape-hostile-owner-through-fn-pointer.diff",
+  "anchor": {
+    "file": "src/hostile.rs",
+    "line": 51
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "owner_called_through_fn_pointer_binding",
+  "hard_case": "The test binds the owner to a `fn(u32) -> u32` local and calls the local.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "x * 4",
+        "mutated_line": "x * 4",
+        "outcome": "tests_failed",
+        "failing_test": "hostile::tests::owner_through_a_fn_pointer",
+        "equivalence_review": "not equivalent: `3 * x` becomes `x * 4`"
+      },
+      {
+        "replacement": "x + 3",
+        "mutated_line": "x + 3",
+        "outcome": "tests_failed",
+        "failing_test": "hostile::tests::owner_through_a_fn_pointer",
+        "equivalence_review": "not equivalent: `3 * x` becomes `x + 3`"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "owner_through_a_fn_pointer pins f(2) to 6; 8 and 5 differ. Hostile input: owner reached through a function-pointer binding.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "axes": [
+    "hostile_input"
+  ]
+}

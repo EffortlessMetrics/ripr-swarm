@@ -38,15 +38,61 @@ workflow shell with the production policy binary and real Git histories, and
 exercise the checked-in job predicates and dependency wiring; they do not claim
 hosted Actions or wheel qualification.
 
+The wheel's package source-contract step selects the complete
+`policy::distribution::` test namespace, including sibling guidance, wheelhouse,
+version and archive-contract modules. The compiled-inventory regression compares
+the workflow filter through libtest with that complete nonempty inventory and
+rejects the former root-tests-only selection, a zero-match filter and an
+overbroad policy filter. Enumeration is separate from the step's test execution;
+these source controls do not qualify a built wheel or guard every possible
+zero-test command.
+
+## Merge queue request (cutover)
+
+`routed-rust.yml` also subscribes to `merge_group` (`checks_requested`), so the
+required `Ripr Rust Small Result` can be earned once per merge-queue entry, on
+the exact queued merge commit, instead of by a label. The queue run reads the
+queued PR's claim and scope (#8192) through the same admission job: the PR
+number comes from the merge-group branch name
+(`gh-readonly-queue/<base>/pr-<n>-<sha>`) and the PR's labels are forwarded to
+the gate (`full-ci` still selects the advisory reports, `ripr-waive` still
+reaches the PR-evidence step). The resolver accepts a head-suffixed ref or a
+base-suffixed fallback; the latter does not authoritatively identify the queued
+H. Admission is per PR, so the queue must use a group size of 1; the queued commit must be a single
+squash commit of the queued PR sitting directly on the group's `base_sha`, or
+admission refuses it, so a batch fails closed even if the ruleset is misconfigured. Batching needs per-PR admission (#8082) and is a follow-up. The
+`merge-ready` label request below still works until the label request is
+retired in a follow-up, after the repository's merge queue is enabled.
+
+The terminal Result now pins the initially admitted PR/head and native
+run/attempt. After the children finish, it rechecks the open, non-draft,
+same-repository destination and head, the request label for label requests,
+the same queue-entry identity for queue requests, GitHub's current blocking
+review decision, and every page of review threads. Missing or malformed
+evidence refuses the result; a Result-only retry cannot reuse admission from
+an older attempt. Main/manual authorities and child-result checks remain.
+
+This is a late eligibility check, not queue-cutover acceptance. The current
+base-suffixed queue-ref fallback still uses a timestamp and does not establish
+the reviewed/admitted H or its composed G tree. Candidate-local admission code
+also remains a trusted-source prerequisite. Neither these API freshness reads
+nor a tree match authenticates an arbitrary caller workflow or makes the final
+read and protected merge atomic. Preserve the installed gates until the
+source, producer and live-enforcement migration in [MERGE_FLOW](MERGE_FLOW.md)
+is qualified.
+
 ## Merge-ready label flow
 
 The non-required lanes gated by `merge-ready` do not run on a Draft or plain Ready
 PR without the label.
-Routed Rust Small, ub-review, the Python wheel workflow and source-of-truth still
-follow their own triggers until #4984/#8082 integrate them. Agents and authors prove
+Routed Rust Small is also requested by the `merge-ready` label (#4986; the
+required `Ripr Rust Small Result` exists only for that request). ub-review, the
+Python wheel workflow and source-of-truth still follow their own triggers until
+#4984/#8082 integrate them. Agents and authors prove
 the change locally ([validation](agent-context/validation.md#local-and-hosted-proof)),
-publish a Draft, and add the `merge-ready` label last. Adding `merge-ready`
-starts the non-required lanes once for the head it was applied to. A later push
+publish a Draft, mark it Ready once review is complete, and add the `merge-ready`
+label last (admission refuses a Draft PR). Adding `merge-ready`
+starts the required Result and the non-required lanes once for the head it was applied to. A later push
 to a labeled PR does not rerun them: re-apply the label (remove it, then add it
 again) once the new head is ready to qualify. Removing the label does not cancel
 runs already in flight. Only a `merge-ready` labeled request shares a concurrency
@@ -64,26 +110,49 @@ superseded.
   `windows-advisory` (both jobs), `macos-advisory`, `security`, `printed-command-paste`,
   `npm-launcher`, `zed-extension`, `pilot-ranking` and `public-proof`. Push,
   schedule and manual runs are unchanged.
-- Not changed here: the required `Ripr Rust Small Result` (still requested by
-  `ready_for_review`), `ub-review` (its triggers are pinned by
+- Not changed here: `ub-review` (its triggers are pinned by
   `pr_readiness_workflow_contract`), the Python wheel workflow, and
   `source-of-truth`. Their cutover is tracked under #4984.
 
-### What starts what (until #8082 lands)
+### What starts what
 
 | Action on a PR | Required `Ripr Rust Small Result` | Gated optional lanes |
 | --- | --- | --- |
 | Push to a Draft or Ready PR | no | no |
-| Draft -> Ready (`ready_for_review`) | yes, once for that head | no |
-| Add `merge-ready` (`labeled`) | no | yes, once for that head |
-| Push after Ready | no: re-toggle Draft -> Ready | no: re-apply `merge-ready` |
-| Any other label | no | no |
+| Draft -> Ready (`ready_for_review`) | no | no |
+| Add `merge-ready` (`labeled`) | yes, once for that head | yes, once for that head |
+| Push after the request | no: re-apply `merge-ready` | no: re-apply `merge-ready` |
+| Any other label | no (posts `Merge-ready Nonrequest`) | no |
 
-The required check is still requested by Draft -> Ready, not by the label.
-Moving it onto `merge-ready` is the #8082 cutover (its admission job); gating the
-required job by label in a separate change would let a skipped required job
-report success. A brief Draft flip followed by Ready on a PR is this re-toggle,
-not an error.
+The required check is requested by the `merge-ready` label (#4986). Draft -> Ready
+is review state only and starts no required work. Gating the required job by
+label with a skipped job would report success, so `routed-rust.yml` instead
+subscribes to `labeled` and names the result job by an expression: it is
+`Ripr Rust Small Result` only for push, manual main/master runs and a
+`merge-ready` label event, and `Merge-ready Nonrequest` for every other label.
+Route, docs detection and admission carry the same request guard, so an
+ordinary label allocates no qualification work, and the result job keeps
+`if: always()` so a skipped prerequisite fails the required context instead of
+skipping it.
+
+### Which state is my PR in, and what is next?
+
+The state names describe where a head is; only the `merge-ready` request (or a
+merge-queue entry) spends the required qualification. `merge-ready` is today's
+spelling of that request, so apply it only when the exact head is the selected,
+reviewed candidate, never as a general "please run CI" signal.
+
+| State | How to read it on the PR | Next action |
+| --- | --- | --- |
+| Candidate | Draft or Ready, no `merge-ready` for this head; `ub-review` and light checks run on push, gated jobs show `skipped` or are absent | Finish review, repair findings, run focused local proof; skipped or absent gated jobs are expected here |
+| Qualification requested | The PR is Ready (not Draft) and `merge-ready` was just added for this head | Wait; do not push, re-label or re-toggle Draft/Ready |
+| Qualifying | A `routed-rust.yml` run for this head is queued or in progress; `Ripr Rust Small Result` is absent or pending | Wait for the run; the watchdog reports it as in flight |
+| Qualified | `Ripr Rust Small Result` succeeded on the current head SHA | Confirm the head SHA is unchanged, inspect the results and review, then merge |
+| Not qualified | A push landed after the request, or the result failed or was refused at admission (a Draft PR is refused: `candidate_not_open_ready`) | Repair; admission refusals name the cause (for example a missing PR-body claim field, or Draft). Mark the PR Ready, then remove and re-apply `merge-ready` for the new head |
+
+A green `ub-review` wrapper is advisory: read its review and sensor output, not
+only the conclusion (see the `ub-review` notes under Current Workflows). A
+cancelled `ub-review` run was superseded by a newer push or a reopen and is not a result.
 
 ## Verification Economics Policy
 
@@ -143,9 +212,9 @@ workflow behavior documented in [Current Workflows](#current-workflows).
     replacement;
   - synchronize-cancel favors the latest commit and may abandon near-complete
     work;
-  - Ready-cancel (current `routed-rust.yml`, #4986) runs the PR qualification
-    only on Draft -> Ready and cancels only when a second Ready transition
-    replaces it.
+  - Request-cancel (current `routed-rust.yml`, #4986) runs the PR qualification
+    only on a `merge-ready` label event and cancels only when a repeated
+    request replaces it; ordinary labels use a unique group and cannot cancel it.
 - Any switch to or from `cancel-in-progress` must document the affected
   workflows, rollback path, cost tradeoff, and review impact.
 - Cheap metadata-only workflows may use `cancel-in-progress: true`, but only as
@@ -354,7 +423,7 @@ implement and validate the lane-selection logic.
 | Label | Effect |
 | --- | --- |
 | `merge-ready` | Start pull-request CI for the non-required lanes. The gated lanes do not run on a Draft or plain Ready PR without this label (Routed Rust Small, ub-review, wheel and source-of-truth keep their own triggers). It is a per-head request: a later push to a labeled PR does not rerun the lanes; remove and re-add the label for the new head. Add auxiliary labels (`full-ci`, `windows-ci`, ...) first, then `merge-ready`; they have no effect without it. Does not change the required `Ripr Rust Small Result` (#4984). |
-| `full-ci` | Run required, advisory, and release-like lanes. Demotes `ripr-waive` for this PR. Expected to cost more. For Routed Rust Small, read at the next Draft -> Ready transition. |
+| `full-ci` | Run required, advisory, and release-like lanes. Demotes `ripr-waive` for this PR. Expected to cost more. For Routed Rust Small, it must be present when `merge-ready` is applied; adding it afterward does not rerun the lanes. |
 | `release-check` | Run the currently wired release-surface proof without opting into every `full-ci` lane: package list, publish dry-run, unlocked install resolution, and release-readiness. |
 | `vscode` | Run editor extension lanes even when no editor path changed. |
 | `coverage` | Run coverage lanes and upload coverage artifacts. |
@@ -394,6 +463,62 @@ and single-platform CI was the root cause enabling both.
   `cargo xtask` step, `windows-advisory-summary`, which validates the two run
   logs and their captured exit statuses; it is evidence validation, not a test
   gate, and it fails the job when the evidence is missing or unusable.
+- **Real-ACL tests.** The three `doctor` cache probes and the xtask
+  unreadable-subtree sweep need a real directory deny, which Git for Windows
+  bash bypasses (it enables backup and restore privileges). The bash test steps
+  skip them (`ACL_SKIPS`) and a `shell: pwsh` step runs them with its own
+  `windows-acl.log` and `windows-acl.status`; they are not part of the
+  two-run verdict. The step ends with `cargo xtask
+  windows-advisory-acl-evidence`, which pins the four full libtest paths and
+  fails the step when the status or log is missing or unreadable, the runner
+  reported spawn status 127, or an expected test is missing, duplicated or
+  ignored in the log: a status file alone cannot tell these four tests from a
+  renamed filter that matched nothing (#10621).
+- **`Rust Test Shards`** (`rust-test-shards.yml`, called by `routed-rust.yml`) is the GitHub-hosted route's required test phase (#10507): four `cargo nextest run --workspace --profile ci --partition count:N/4` jobs that start only after the hosted `rust-gates.yml` job (called with `test-shards: 4`) passed every other gate, plus `rust-test-shards-verify`, which runs `cargo xtask verify-test-shards` and fails unless every shard has status 0, a current run context (repository, checkout, run, attempt, profile, partition, exit) and a complete JUnit report whose testcases are exactly its partition list, and the partition lists are a disjoint cover of the workspace list. The verifier parses XML before retaining complete suite elements and anchors each receipt’s four ordered input blobs to `Cargo.lock`, `.config/nextest.toml`, `.github/workflows/rust-gates.yml` and `.github/workflows/rust-test-shards.yml` at the expected checkout commit; malformed or unsupported namespaced XML, unresolved inputs, shared incorrect hashes, duplicate or reserved run-context keys (`shards` and `verified_attempts` are reserved for the combined receipt) and noncanonical artifact attempt suffixes fail closed. It then retains the combined `junit.xml` and `run-context.txt` under the unsharded artifact name. `Ripr Rust Small Result` fails unless it passed; the self-hosted routes keep the single-command step. The shards restore their own `ripr-swarm-rust-shards` cache, written by shard 1 on `main` pushes, so the first run after a cold cache pays the full test build.
+- **`Linux Nextest Shards`** (`linux-nextest-shards.yml`, manual `workflow_dispatch` only) runs the required Rust test step as four `cargo nextest --partition count:N/4` jobs on hosted 4-core runners and reports each shard's build and run seconds and JUnit test count and checks the four partitions are a disjoint cover of the workspace test list, so the wall-clock of a sharded step can be measured (#10341; the hosted required route now shards, see `Rust Test Shards`). It is advisory, not wired to pull requests, and does not replace `Ripr Rust Small Result`.
+- **`Windows Advisory Shards`** (`windows-advisory-shards.yml`, manual `workflow_dispatch` only) runs the same workspace tests as four `cargo nextest --partition count:N/4` jobs plus a doctest job, each with its own log artifact and failure summary, so a Windows test failure is attributable to a shard without a 75-minute single step (#9272). The four tests that need a real directory deny ACL are excluded from those bash partitions and run in a `shell: pwsh` step of shard 1 (20-minute step timeout, own `acl.log` and `acl.status`), because Git for Windows bash enables backup and restore privileges that bypass the deny. It is advisory and does not replace the nightly lane.
+- **`Windows Watchdog Qualification`** (`windows-watchdog-qualification.yml`, manual `workflow_dispatch` only) extracts the shard workflow's shipped test step, shortens only its timer to 12 seconds and runs it against a native fixture process tree in three cells: mapped, a primary-only-kill mutation that must fail the descendant check, and forced-missing mapping. It checks root identity, primary reaping, descendant termination, an unowned sentinel and uploaded receipts. It qualifies only the shortened bound (#9272).
+- **Test steps run under `windows-advisory-run`** (#9272, #9660). The
+  `--no-default-features` test step and both workspace runs go through
+  `cargo xtask windows-advisory-run`, which owns the cargo process tree (a Job
+  Object on Windows). It streams output to the job log as it arrives and into
+  the log file, ends the whole tree at its own deadline (40 minutes for the
+  `--no-default-features` tests, 70 for each workspace run), and on a timeout
+  names every test libtest reported as running for over 60 seconds with no
+  result, so a stuck run points at a test. It records cargo's exit code in the
+  status file (124 when it enforced the deadline, 127 when the command could
+  not start) and exits 0, so test outcomes stay advisory and a missing status is
+  still reported as missing evidence by the summarizer. Both streams share one
+  pipe so cargo's `Running` headers and libtest's results keep the order the
+  summarizer attributes by. It also bounds the wait for output after cargo
+  exits and requests termination of the process tree when a descendant keeps
+  the pipe open (a Job Object kills the whole tree on Windows), which is what a
+  `| tee` could not do: a test that leaks a child kept
+  the step alive after cargo finished until the 90-minute job limit cancelled
+  the whole lane (run 39549631529), and two jobs ran for hours past a
+  75-minute step limit with no output (jobs 119992784688 and 120026188944). The
+  runner executable is copied to `target/advisory-run/` first, because
+  `cargo test --workspace` rebuilds `xtask.exe` and Windows will not replace a
+  running image. Job-log delivery runs on its own thread behind a bounded
+  queue, so a stalled job-log pipe cannot delay the deadline: the log file keeps
+  every line and the runner reports what the job log lost. Termination runs on a helper thread that owns the child, because the
+  owner's reap and its drop poll without a bound; the runner observes the
+  primary for ten seconds, abandons a call that has not returned in twenty, and
+  reports a failed or unconfirmed termination instead of waiting indefinitely
+  or claiming success.
+  A read error on the command's pipe or a write error on the log file means the
+  log may be incomplete, so the status file is withheld and the summarizer
+  refuses the step. Repeating `--timeout-minutes`, `--log` or `--status` is
+  refused. The Windows-native forced-deadline control runs with
+  `workflow_dispatch` input `runner_probe_only` (job
+  `windows-advisory-runner-probe`), without the full lanes. The check steps still redirect to a file and replay it with
+  `cat`. Every step also carries its own `timeout-minutes` as a backstop above
+  the runner deadline, and later steps run under `!cancelled()`. The job
+  deadline (270 minutes) exceeds the sum of the step deadlines
+  (15+45+15+15+75+75, including the runner build), so those steps alone cannot
+  exhaust it (setup, summary compilation and the manual isolation repeats have
+  no separate deadline). The manual nested-alias isolation repeats use the
+  redirect-and-replay form.
 - **Two samples per run.** The suite runs twice on purpose: one sample cannot
   separate a reproducible failure from a load-dependent flake. The summarizer
   tracks three states per test (failed, observed pass, not observed) and reports
@@ -408,7 +533,11 @@ and single-platform CI was the root cause enabling both.
   pull requests labeled `windows-ci` or `full-ci`.
 - **Merge-ready subset (#4938).** The `labeled` event for `merge-ready` on a
   PR also runs `windows-advisory-subset`, a fast advisory Windows job
-  (`lsp::gap_artifacts` and Cargo-home identity lib tests, the #4918 cache-warning smoke, and
+  (`lsp::gap_artifacts` and Cargo-home identity lib tests, the #4918 cache-warning smoke,
+  the Windows process-ownership (`process_owner::tests`, including argument round-trip and spawn-error
+  controls), verify-execute cancellation containment, the VS Code managed-server install lock suite
+  under plain mocha on Node (#9498), xtask timed-capture
+  (`capture_output_with`) and LSP poisoned-initialize (#3802) controls, and
   `cargo clippy -p ripr --all-targets`) under the same advisory contract as
   the lane. It does not gate merges; #4337, #4918, and #4921 were each caught
   only by a native-Windows audit, so native-Windows verification of new
@@ -674,11 +803,18 @@ opened / reopened / synchronize while Draft:
   no Routed Rust Small run; the merge-ready-gated lanes skip as well
 
 ready_for_review (Draft -> Ready):
-  the sole pull-request qualification request; validates the exact Ready head
+  no Routed Rust Small run; Ready is review state, not a request
 
-labeled / unlabeled (any label):
-  no Routed Rust Small run; labels never create or refresh the required context
-  (only `labeled` of `merge-ready` admits the gated non-required lanes)
+labeled `merge-ready`:
+  the sole pull-request qualification request; validates the exact labeled head
+  and admits the gated non-required lanes
+
+labeled (any other label):
+  Routed Rust Small runs only its cheap result job, named `Merge-ready
+  Nonrequest`; it never creates or refreshes `Ripr Rust Small Result`
+
+unlabeled:
+  no Routed Rust Small run
 
 push to main / workflow_dispatch on main or master:
   launch under their own authorities
@@ -689,14 +825,15 @@ workflow_dispatch on another branch or tag:
 
 `windows-ci` continues to opt into `.github/workflows/windows-advisory.yml` only.
 `cancel-in-progress` is `github.event_name == 'pull_request'` and the concurrency
-group is qualified by `github.event_name`, so a second Ready transition replaces
-the prior admission attempt while independent main and manual work cannot replace
-each other. No run posts a pseudo-result, so a Draft PR with no required check
-blocks rather than inheriting stale proof. The result job keeps its static
-`Ripr Rust Small Result` name on every run. A manual dispatch on a branch or
+group is qualified by `github.event_name` (and unique per run for a nonrequest
+label), so a repeated `merge-ready` request replaces the prior admission attempt
+while independent main and manual work and ordinary labels cannot replace each
+other. A PR with no request has no required check and blocks rather than
+inheriting stale proof. The result job name is an expression that yields
+`Ripr Rust Small Result` only for main/manual runs and a `merge-ready` request. A manual dispatch on a branch or
 tag other than `refs/heads/main` or `refs/heads/master` is diagnostic-only:
 its implementation jobs may run, but Result fails explicitly even if they all
-pass (#5394). The summary names the Draft to Ready handoff. This preserves
+pass (#5394). The summary names the `merge-ready` request. This preserves
 workflow-testing diagnostics without letting a run that skips PR-only evidence
 qualify a PR. A skipped Result would report success, so the refusal runs inside
 the Result shell; it is not a job-level skip or a renamed required check.
@@ -727,6 +864,16 @@ synthetic success replaces it. Runner-minute savings remain unmeasured until a
 natural lifecycle is observed. `xtask/tests/pr_readiness_workflow_contract.rs`
 checks parsed event/config contracts, not hosted provider execution.
 
+The reusable required Rust gates prepare both locked owner-return fixtures,
+`owner_return_pin_fallible_literal/input` and
+`owner_return_pin_json_real_literal/input`, before repository policy and tests.
+Their independent lockfiles remain authoritative: a workspace dependency update
+does not prepare the JSON fixture's pinned `serde_json` version. Both fetches
+must succeed in the same Cargo home the offline test probes use. For a workflow
+repair, verify the executed reusable-workflow revision and preparation-step
+result; a checked-out workflow blob in the test context alone does not prove
+which controller executed.
+
 UB Review prepares the locked `owner_return_pin_fallible_literal/input` fixture
 before invoking the action, matching required Rust CI. Its offline identity
 probe needs `anyhow = 1.0.100` in the runner's default Cargo home. The pinned
@@ -741,14 +888,13 @@ needs its own evidence.
 
 - Open PRs as Draft (`gh pr create --draft`), then follow the
   [Draft to Ready handoff](PR_AUTOMATION.md#draft-to-ready-handoff) before
-  requesting qualification. A PR opened directly as Ready never receives a
-  `ready_for_review` event and never gets the required check.
-- A push after Ready leaves the new head without the required check. Return to
-  Draft and refresh affected proof and review through the same handoff before
-  another Ready transition. Reassess exact-head merge prerequisites before
-  rearming auto-merge.
-- Labels such as `full-ci` take effect at the next Ready transition, not when
-  they are added.
+  requesting qualification with the `merge-ready` label. Ready alone never
+  creates the required check.
+- A push after the request leaves the new head without the required check.
+  Refresh affected proof and review, then remove and re-apply `merge-ready`
+  for the exact new head. Reassess exact-head merge prerequisites first.
+- Labels such as `full-ci` take effect at the next `merge-ready` request, not
+  when they are added; add them before the request.
 
 The router uses the repository or organization `EM_RUNNER_READ_TOKEN` secret
 when available. It selects a self-hosted runner only when the runner is idle and
@@ -1066,6 +1212,37 @@ the same file to Codecov Test Analytics only when `CODECOV_TOKEN` is available
 on trusted runs. Fork pull requests still run tests and upload the artifact, but
 skip the Codecov test-results upload because repository secrets are unavailable.
 
+### Merge-ready Conflict Notice
+
+A `merge-ready` label on a PR that conflicts with its base starts no
+`routed-rust.yml` run, because GitHub creates no `pull_request` run without a
+test-merge ref (#9842, #9250).
+`.github/workflows/merge-ready-conflict-notice.yml` closes that silence. It runs
+on `pull_request_target: [labeled]` for the `merge-ready` label only, reads the
+PR's `mergeable_state` through the API (retrying while GitHub computes it), and
+for a `dirty` PR posts one comment per head SHA plus a failing
+`merge-ready conflict` commit status. A mergeable PR gets nothing from it except the clearing of a conflict status it posted earlier on the same head, and a
+head or base branch that changed after the request is ignored. If mergeability is still uncomputed after the retries it warns and exits, and the label can be re-applied. The failing status is keyed to the head SHA: it clears with the next push, or when a re-applied label finds the conflict gone. The workflow checks out and runs
+no PR code, takes only the PR number, head SHA and base branch name as `env` values, uses no
+third-party actions, and holds job-level `pull-requests: write` and
+`statuses: write` only. It is a notice, not a required check; the author merges
+the base branch, resolves the conflict, and re-applies `merge-ready`.
+
+### Base Still Merges Cleanly (rust-gates)
+
+`actions/checkout` tests the merge ref as it stood when a pull-request run was
+admitted. The `Base still merges cleanly` step of `rust-gates.yml` (`pull_request`
+events only) runs just before `Required Rust tests`, fetches the current base and
+runs `git merge-tree --write-tree HEAD^2 origin/<base>`. If the base moved and now
+conflicts with the PR head, the step fails with an error naming the base, the PR head
+and the remedy (merge the base, resolve, re-apply `merge-ready`), so the required
+check goes red before the ~18-minute test step instead of after it (#10341). It cannot
+cancel the run (that needs `actions: write`) and it only looks once, so a conflict
+that appears later still finishes the run. It fails open: a failed fetch, or a Git
+older than 2.38 (no `merge-tree --write-tree`), emits a warning and passes. Its
+outcome has its own row in the gate summary. `xtask/tests/rust_gate_merge_ref_check.rs`
+runs the step's script against real Git repositories.
+
 ### PR Staleness Watchdog
 
 GitHub sometimes silently drops the `pull_request` event delivery that creates
@@ -1076,34 +1253,62 @@ no required check to retry (#4937; incidents #4528/#4537 ~9 hours dark,
 same-repo, non-draft PR heads with no `Ripr Rust Small Result` check run on the
 head SHA, and reports them (step-summary row plus a workflow warning). It is
 alert-only (#4986; issue #4937 option ii): it never dispatches
-`routed-rust.yml` and holds no `actions: write` permission. With Ready-only
-admission, a Ready head without the required check is a dropped
-Ready-triggered delivery, a push made after Ready, or a conflicting head with
-no merge ref (#7079). A conflicting (`dirty`) PR silently gets zero
+`routed-rust.yml` and holds no `actions: write` permission. With
+merge-ready-label admission, a labeled head without the required check is a
+dropped label-triggered delivery, a push made after the label, or a conflicting
+head with no merge ref (#7079). A conflicting (`dirty`) PR silently gets zero
 `pull_request` runs because `routed-rust.yml` evaluates from the merge ref,
 which does not exist while the PR conflicts. The watchdog cannot tell a
-dropped delivery from a post-Ready push, but its summary row carries each PR's
+dropped delivery from a post-label push, but its summary row carries each PR's
 `mergeable_state`, so the conflicted dark mode is distinguishable from both at
-a glance. A head mutated after Ready has revoked its own admission
+a glance. A head mutated after the request has revoked its own admission
 and must not be qualified by a lighter branch-head dispatch (which skips the
-`pull_request`-scoped PR-evidence steps). Before re-toggling, check merge
-conflicts first: query the PR's `mergeable_state`; `dirty` means repair the
-conflict while Draft, then apply the shared
-[Draft to Ready handoff](PR_AUTOMATION.md#draft-to-ready-handoff) before requesting
-qualification for the composed head. That handoff also governs recovery from a
+`pull_request`-scoped PR-evidence steps). Before re-applying the label, check
+merge conflicts first: query the PR's `mergeable_state`; `dirty` means repair
+the conflict, then re-apply `merge-ready` for the composed head. That handoff also governs recovery from a
 dropped delivery. The required check, not run existence, is the
 discriminator: any `Ripr Rust Small Result` check run on the head SHA is a
 real qualification attempt on that exact head. That check run is created only
 when the `result` job starts, after every implementation job (up to 120
 minutes), so before calling a head dark the watchdog also lists
 `routed-rust.yml` runs with `event=pull_request` on that SHA. A queued or
-in-progress run is reported as in flight. Re-toggling Draft -> Ready on such a
+in-progress run is reported as in flight. Re-applying `merge-ready` on such a
 head would cancel the real run, so the watchdog never recommends it. This uses
 `actions: read` only. Drafts and fork heads are
-skipped. No PR comments are posted; each sweep's summary table is the audit
+not qualified, as are PRs without the `merge-ready` label (no request was made); the sweep still clears their stale conflict status, as described below. The one write is the conflict report (#10136): a labeled, non-draft, same-repo PR that is `dirty` and whose head has no `merge-ready conflict` failure from the actions bot gets one comment per head and base plus that failing status (the same marker and context the label-time notice uses, so the two never double up), and a PR that is no longer conflicting and still carries that failure gets a success status. The job holds `pull-requests: write` and `statuses: write` and still never dispatches. A labeled, non-draft, same-repo head that is not conflicting (mergeability computed), has no required check and no merge-ready run in flight was pushed after the label or lost its label event: the sweep comments once per head (marker `merge-ready-dark`) asking the author to remove and re-apply `merge-ready` (#10136). The comment names the cause (no run exists, or a run finished without the check, for example an admission refusal), and the sweep stays quiet for 10 minutes after any PR activity so a label just applied is not mistaken for a dropped one. A draft or unlabeled same-repo PR whose head still carries the actions bot's failing `merge-ready conflict` status gets a success status, so a removed label or a draft conversion does not leave a stale red status (#10136). Each sweep's summary table is the audit
 trail. `xtask/tests/pr_readiness_workflow_contract.rs` pins the alert-only
 shape (no dispatch command, no `actions: write`), the in-flight check, and
 the `mergeable_state` column.
+
+### Main Health Sentinel
+
+Main's push gate is frequently cancelled before completing (on busy days most
+`Routed Rust Small` main-push runs cancel before any job starts), and the
+Hard-cut watch stays green on broken main by design: it judges the cut packet,
+not the build. A broken main whose push run cancels can therefore sit with no
+completed red signal anywhere for hours (#10991; incidents #8990, #8989, with
+live repeats through 2026-10-29).
+`.github/workflows/main-health-sentinel.yml` runs twice an hour (`9,39 * * * *`)
+and probes main directly: `cargo check --locked -p ripr` plus one focused
+binary smoke selector (`cli_smoke
+version_is_exact_and_precedes_help_or_output_flags`), cached, on a
+GitHub-hosted runner, with its own serialization group and a 30-minute job
+timeout. It is a probe, not a second build lane and not a required check: it
+holds no branch-protection or ruleset authority and dispatches nothing.
+Detection is bounded and honest: probe logs are teed with native `PIPESTATUS`
+statuses, a judge step fails the job on missing or empty evidence (a probe
+terminated at its step timeout reads as the timeout status 124 and classifies red
+with a tracker record; a probe that executed zero tests reports red, never
+success), the summary table is the
+per-fire audit trail, and the `main-red` tracking issue
+(`main-red: scheduled main-health sentinel found a broken main`) is the
+durable findable record — opened once, appended per confirming probe, and
+closed by the first green probe with the recovering run link. Worst-case
+detection latency is roughly forty minutes (interval plus probe). The
+`xtask/tests/main_health_sentinel_contract.rs` contract pins the advisory-only
+shape: scheduled-plus-dispatch triggers, serialization, timeout, repository
+guard, `issues: write` as the only write authority, the exact probe selector,
+zero-executed-test refusal, and the tracker lifecycle.
 
 ### Self-Hosted Runner Placement
 
@@ -1416,6 +1621,18 @@ configure the workflow, so changing a mode never means editing the file:
 - `RIPR_GATE_BASELINE` is an optional path to a reviewed baseline ledger file,
   such as `.ripr/gate-baseline.json`, that `baseline-check` and
   `calibrated-gate` compare current evidence against. Empty by default.
+  The gate refuses a baseline whose recorded `schema_version` is not the
+  supported one (the same refusal `ripr baseline diff` applies; the gate,
+  unlike `baseline diff`, still accepts a hand-built baseline that omits
+  `schema_version`). It also refuses a baseline whose recorded `root`
+  (top-level or on any indexed item) is a non-string value or an absolute path
+  that differs from the gate's absolute root; this root refusal is gate-only.
+  Absent, `null`, blank and relative roots are accepted as unknown, because
+  relative and absolute spellings of one checkout are not comparable. The
+  comparison is textual (separators and trailing slashes are normalized, but
+  there is no canonicalization), so case, verbatim-prefix or symlink spellings
+  of the same checkout can differ. The remedy for a refused baseline is to
+  re-create it with `--root .`.
 - `RIPR_COMMENT_MODE` controls PR review comments. `off` (the default) posts
   nothing and leaves findings in artifacts; `plan` computes and uploads a
   comment plan without posting; `inline` publishes inline review comments on
@@ -2195,6 +2412,63 @@ PRs are limited to minor and patch updates. Major updates should be deliberate,
 scoped PRs because they often change toolchain, release, or runtime behavior.
 Dependabot PRs are not auto-merged; they must pass the normal CI, coverage,
 security, and `xtask` checks before merge.
+Candidate admission accepts a same-repository PR authored by `dependabot[bot]`
+on a `dependabot/` branch without the template claim lines: the claim is this
+dependency policy and the acceptance delta is the update branch. Any other PR
+still has to state its own claim.
+
+A security update that bumps a lockfile inside a blind-journey installed
+fixture (`fixtures/blind_journey_installed_*`) trips the fixture bindings: file
+digests, snapshot commit/tree ids and the scripted corpus's candidate
+identities are all recorded. Check out the update branch and run
+`cargo xtask fixtures refresh-identity <typescript|python>`. It re-derives the
+digests from the bytes, the ids from the manifest's own `construction_recipe`
+(the rebuild `check-fixture-contracts` verifies with), rebinds the same ids in
+`fixtures/blind_journey_execute/corpus.json`, and moves the TypeScript
+`runner_identity` to the vitest version the head lockfile selects. It refuses
+to add or drop a bound file and does not touch prose. It lists the lines that
+still name the old runner version; those, the frozen transcripts and the
+journeys themselves are re-checked by hand under the new runner
+(`cargo xtask check-fixture-contracts`, `cargo xtask blind-journey-execute`)
+before the update lands.
+
+The routed admission job checks out its executable bundle (the composite action
+wrapper and both admission interpreters) separately at the event's immutable
+PR base SHA, merge-group base SHA, or non-PR event SHA. The candidate checkout
+remains the input tree. The reserved `.admission-trusted` destination must be
+absent from that tree; before invoking either action mode the job verifies the
+trusted checkout's exact HEAD and all three executable file blobs. Missing or
+modified trusted bytes refuse admission without falling back to candidate code.
+Candidate `.gitattributes` declarations are still checked as data by the trusted
+interpreter, and generated exemptions still come only from the live base.
+
+This bundle pin does not authenticate a candidate-edited caller or its supplied
+thresholds and parameters. It does not establish reviewed-head/merge-group
+identity, same-head succession, atomic eligibility, or merge-queue activation.
+Those remain separate qualification and rollout obligations.
+
+The ordinary size envelope (files and changed lines) counts only what a human
+has to review. Generated files are declared once, with `linguist-generated` in
+`.gitattributes` (dependency lockfiles, blessed `expected/` rows and goldens,
+public-proof metrics, verdict-corpus producer fact packets), and their lines and files are not counted. The
+declaration is read from the PR's base commit, so a PR cannot label its own
+files; a `.gitattributes` edit is itself counted in full. Three guards keep the
+label from hiding hand-written code: only declarable shapes count (lockfiles,
+`fixtures/**/expected/**`, `fixtures/<language>-verdict-corpus/packets/**`,
+`metrics/public-proof/**`; a new family is added to
+`GENERATED_DECLARATION_ALLOWED` in reviewed code, and any other declaration is
+ignored and fails admission with `generated_declaration_invalid`); only data
+file types (`.json`, `.jsonl`, `.lock`, `.md`, `.txt`, `.stdout`) are ever
+exempt (corpus packets: `.json` only), and a file must change at least one line; and the exempt lines have their
+own cap of 40000 (`generated_scope_oversized`), so a regeneration is separated
+from the hand-written change. A truncated file listing exempts nothing.
+
+Past its diff budget (roughly 700 KB of patch text) GitHub lists the remaining
+files with no line counts while the PR totals still include them. Their lines are
+the PR total minus the listed lines. The generated files among them are exempt
+only after each hand-written file in that group, of any status, is bounded by its
+own line count at the merge base (under its previous name for a rename) plus the
+head; a file or merge base that cannot be read (error, 30 s timeout, over 2 MB, not UTF-8 text) keeps the whole residual counted. The files listing is read after the PR snapshot, so the head is re-read afterward; if it moved or cannot be read, no generated-file discount applies and the full GitHub totals are counted.
 
 GitHub-hosted security settings are tracked in
 [Repository settings](REPO_SETTINGS.md). Dependency Graph, Dependabot alerts,
@@ -2203,6 +2477,82 @@ vulnerability reporting are settings, not workflow files. Keep that document
 updated when repository settings change.
 
 Release workflows handle extension publishing and server binary releases.
+
+## Capability Producer Inventory
+
+`cargo xtask check-capability-producers [--registry-json <path>]` compares the
+binary-resident language capability registry (`ripr capabilities --json`, #5531)
+with repository inventory the in-crate tests cannot enumerate. It builds `ripr`
+and fails when:
+
+- a `LanguageId` variant declared in `domain/language.rs` is not exported by the
+  registry (an omitted `LanguageId::ALL` entry);
+- a registered language has no cell, or a cell names an unregistered language;
+- a `lang-*` Cargo feature, a registry `required_feature` and an adapter
+  directory under `analysis/language/` do not name the same producer set;
+- a cell `proof_refs` entry has no `docs/specs/RIPR-SPEC-NNNN-*.md`.
+
+It is separate from `check-capabilities`, which validates
+`metrics/capabilities.toml` against `docs/CAPABILITY_MATRIX.md` and joins explicit
+`cells` identities to the source-built whole registry. Product status and cell
+support remain separate authorities. The producer inventory does not check cell
+states, tier ceilings or docs text
+(in-crate tests and `check-support-tiers`), framework-level producers (the
+per-language disposition tests), the registry's relation to
+`metrics/capabilities.toml`, or non-default feature builds. `--registry-json`
+reads a saved registry without building and can be stale; the report says so.
+The producer inventory is not part of `precommit` or `check-pr`; those paths
+run the separate identity join through `check-capabilities`, which reads a
+source-built registry with default features. Producer inventory is hosted:
+`rust-gates.yml` runs it as the
+unconditional `capability_producers` step after `fixtures` (the `ripr` build is
+already warm), and the `routed-rust.yml` docs-gate runs it when a docs-only PR
+changes `docs/specs/**` or `docs/status/SUPPORT_TIERS.md` (a renamed spec is the
+one docs-only way to break a `proof_refs` entry).
+
+## Capability Registry Docs Block
+
+`cargo xtask capability-docs [--check | --write] [--markdown-file <path>]` keeps
+the generated `<!-- capability-registry:begin ... end -->` block in
+`docs/status/SUPPORT_TIERS.md` and in `docs/LANGUAGE_ADAPTER_PREVIEW.md` equal
+to the registry (#5531). Both documents embed the same rendering; a marker
+pair missing from either is a failure, and `--write` validates and splices every
+document in memory before writing any (an I/O error mid-write can leave a
+partial state that a re-run converges). The preview guide's remaining prose is checked by the
+`language_capability_drift` test: it may not state a `usable alpha` tier (the
+block owns per-cell tiers) and may say `<cell id> is not_proven` only of a cell
+the registry lacks or holds at `not_proven` (backticks, emphasis, hard wraps
+and the verbs is/are/remains/stays are normalized). There is one
+renderer, in the `ripr` library; `ripr capabilities --markdown` prints it and
+the command builds `ripr`, runs that, and compares or splices the exact text.
+The in-crate `language_capability_drift` test checks the same renderer, but a
+Rust test does not run on a Markdown-only PR (`routed-rust.yml` classifies it
+`docs_only`), so a hand edit of the block was previously caught only by a Rust
+run.
+
+- `--check` (default) fails when the block differs, when the begin/end markers
+  are missing, duplicated or reversed, or when the rendering is empty or has no
+  cell rows.
+- `--write` rewrites only the text from the begin marker to the end marker and
+  refuses on the same conditions, so a failed run writes nothing.
+- `--markdown-file` reads a saved rendering instead of building (offline, can be
+  stale; the report says so).
+
+Hosted wiring (#5531): `rust-gates.yml` runs `capability-docs --check` as the
+unconditional `capability_docs` step after `fixtures` on every non-docs-only
+lane, so registry drift (an edit to `domain/language_capability.rs`) fails the
+required `Ripr Rust Small Result`. For a docs-only PR the `routed-rust.yml`
+docs-gate runs it only when the PR changes `docs/status/SUPPORT_TIERS.md`,
+`docs/LANGUAGE_ADAPTER_PREVIEW.md` or `docs/specs/**`, so a hand edit of the block fails the same required result
+while other docs-only PRs build nothing extra. Both are existing jobs of the
+existing `pull_request`/`merge_group` workflow: no new trigger, permission,
+secret or `pull_request_target`, and candidate code runs only where
+`cargo xtask precommit` already ran it. A hosted run of the new step is not
+proof the wiring works; the local negative experiment is (hand-edit the block,
+`cargo xtask capability-docs --check` exits non-zero), and the workflow
+contract tests pin the step shape. It stays out of `precommit` and `check-pr`
+because producing the rendering needs a `ripr` build. It does not check tier
+prose or row bindings (`check-support-tiers` and the drift test).
 
 ## Principles
 

@@ -1,0 +1,12 @@
+diff --git a/idioms/stock.py b/idioms/stock.py
+--- a/idioms/stock.py
++++ b/idioms/stock.py
+@@ -3,7 +3,7 @@
+         self.count = count
+ 
+     def take(self, n):
+-        if n > self.count:
++        if n >= self.count:
+             raise ValueError("not enough stock")
+         self.count -= n
+         return self.count

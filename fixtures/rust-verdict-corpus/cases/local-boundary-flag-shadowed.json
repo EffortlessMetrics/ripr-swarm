@@ -1,0 +1,54 @@
+{
+  "case_id": "local-boundary-flag-shadowed",
+  "subject_id": "authored-local-boundary",
+  "diff": "cases/local-boundary-flag-shadowed.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 24
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "false_credit_trap",
+  "hard_case": "The flag is rebound (`let si = !si;`) before the local reads it, so the caller's literal is not the flag the local sees (#9276 review).",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "unit < bytes",
+        "mutated_line": "unit < bytes",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: tier_shadowed(1_000, true) becomes \"byte\""
+      },
+      {
+        "replacement": "unit > bytes",
+        "mutated_line": "unit > bytes",
+        "outcome": "tests_failed",
+        "failing_test": "tests::the_flag_is_flipped_before_the_unit_is_chosen",
+        "equivalence_review": "not equivalent: tier_shadowed(1_024, true) becomes \"byte\""
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "tier_shadowed flips its flag before choosing the unit, so tier_shadowed(1_024, true) compares against KB = 1_000, not KIB = 1_024; read naively the pinned 1_024 looks like the boundary and would be credited. No test passes 1_000, so the boundary mutant survives (1 of 2 listed mutants fails cargo test). ripr must not resolve the local through the caller's literal flag. Spec cells: RIPR-SPEC-0001, RIPR-SPEC-0158.",
+  "labeling_observation": {
+    "ripr_commit": "393e229",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "infection_unknown"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0158#9"
+  ]
+}

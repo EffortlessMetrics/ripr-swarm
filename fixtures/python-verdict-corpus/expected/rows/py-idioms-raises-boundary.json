@@ -1,0 +1,22 @@
+{
+  "case_id": "py-idioms-raises-boundary",
+  "subject_id": "authored-py-pytest-idioms",
+  "origin": "authored",
+  "anchor": "idioms/validate.py:3",
+  "behavior_family": "error_guard_boundary",
+  "test_shape": "pytest_raises_match_zero_untested",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

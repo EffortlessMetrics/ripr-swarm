@@ -53,6 +53,7 @@ pub(in crate::cli) fn gate(args: &[String]) -> Result<(), CommandError> {
     }
 
     let options = parse_gate_options(rest)?;
+    crate::atomic_file::ensure_report_output_contained(&options.input.root)?;
     // Surface the missing-input requirement directly instead of burying it
     // inside the gate-decision.json config_errors array (#2589 review).
     // Only `--pr-guidance` and `--gap-ledger` feed gate candidates.
@@ -85,8 +86,8 @@ pub(in crate::cli) fn gate(args: &[String]) -> Result<(), CommandError> {
     let rendered_md = output::gate::render_gate_decision_markdown(&report);
     write_text_file(&options.out, &rendered_json)?;
     write_text_file(&options.out_md, &rendered_md)?;
-    println!("Wrote {}", options.out.display());
-    println!("Wrote {}", options.out_md.display());
+    println!("Wrote {}", output::path::human_path(&options.out));
+    println!("Wrote {}", output::path::human_path(&options.out_md));
     if output::gate::gate_decision_should_fail(&report) {
         let detail = output::gate::gate_decision_inline_detail(&report);
         let message = format!(
@@ -1014,5 +1015,29 @@ mod tests {
             &out.display().to_string(),
         ]));
         assert_gate_root_refusal(result, &root, &out)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn gate_evaluate_refuses_a_target_ripr_review_link() -> Result<(), String> {
+        let base = unique_command_test_dir("gate-review-link");
+        let root = base.join("root");
+        let external = base.join("external");
+        std::fs::create_dir_all(root.join("target/ripr")).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&external).map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink(&external, root.join("target/ripr/review"))
+            .map_err(|e| e.to_string())?;
+        let result = gate(&args(&["evaluate", "--root", &root.display().to_string()]));
+        let leaked = std::fs::read_dir(&external)
+            .map_err(|e| e.to_string())?
+            .count();
+        let _ = std::fs::remove_dir_all(&base);
+        let message = result.err().map(|e| e.to_string()).unwrap_or_default();
+        assert!(
+            message.contains("refusing to write ripr output"),
+            "{message}"
+        );
+        assert_eq!(leaked, 0);
+        Ok(())
     }
 }

@@ -1,0 +1,29 @@
+{
+  "subject_id": "authored-ts-grid-returns",
+  "origin": "authored",
+  "version_label": "authored@3608bb9a",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "package.json",
+      "sha256": "aa7a7ce30f74aa8c32fc452b99640222d820e8a735cac4a423dc8bc152f84757"
+    },
+    {
+      "path": "ripr.toml",
+      "sha256": "27f3758ca9cce54d063a7f0daddc95f0940433563d4869a9e5a7c622ae961381"
+    },
+    {
+      "path": "src/returns.ts",
+      "sha256": "8384151760b2ca21a74a7907fdaca057f6e5552d2e83ea7295281f2d4e812cc9"
+    },
+    {
+      "path": "test/returns.test.ts",
+      "sha256": "888cddac42916871ea4e427a0574d59ded356f322686c128d615e7c937dd2ea1"
+    },
+    {
+      "path": "tsconfig.json",
+      "sha256": "1b36a03124c1cac5d5da52c58d09fd7e5cf22d03d4a2cf0699ce2dbe88cb419c"
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "subject_id": "authored-ts-grid-logical",
+  "origin": "authored",
+  "version_label": "authored@3608bb9a",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "package.json",
+      "sha256": "ea56e394f72e0c057806f0e34b57504218272c3e1bfe6584b12a6d6e414b0763"
+    },
+    {
+      "path": "ripr.toml",
+      "sha256": "27f3758ca9cce54d063a7f0daddc95f0940433563d4869a9e5a7c622ae961381"
+    },
+    {
+      "path": "src/logical.ts",
+      "sha256": "87c9fcff96d31e4347b79d5b63c39a845e5e8ac7f6fa90acb4a4216e34eeeeea"
+    },
+    {
+      "path": "test/logical.test.ts",
+      "sha256": "93ba00b0db6484f13f94933d65bc0ef029137ce26d4dd58918b220875a58c276"
+    },
+    {
+      "path": "tsconfig.json",
+      "sha256": "1b36a03124c1cac5d5da52c58d09fd7e5cf22d03d4a2cf0699ce2dbe88cb419c"
+    }
+  ]
+}

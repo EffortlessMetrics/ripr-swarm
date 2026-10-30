@@ -1,0 +1,12 @@
+diff --git a/src/equality.ts b/src/equality.ts
+--- a/src/equality.ts
++++ b/src/equality.ts
+@@ -11,7 +11,7 @@
+ }
+ 
+ export function isHttps(port: number): boolean {
+-  return port === 443;
++  return 443 === port;
+ }
+ 
+ export function isDefaultPort(port: number): boolean {

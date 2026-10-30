@@ -1,0 +1,22 @@
+{
+  "case_id": "spec-b-0150-len-utf8-map-or",
+  "subject_id": "authored-spec-b-bindings",
+  "origin": "authored",
+  "anchor": "src/b_utf8.rs:4",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "binding_len_utf8_map_or_equality",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "limited",
+  "followed_retarget": true,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "infection_unknown"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

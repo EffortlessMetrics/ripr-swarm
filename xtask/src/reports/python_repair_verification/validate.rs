@@ -734,7 +734,7 @@ pub(crate) fn validate_receipt(
                 return Err(verification_fail(
                     display,
                     "movement.state",
-                    "a `limited` movement requires a partial after analysis (`seam_limit_applied`); a complete analysis resolves the join or fails closed to `uncertain`",
+                    "a `limited` movement requires a partial after analysis (`seam_limit_applied` or `limited_declined_files`); a complete analysis resolves the join or fails closed to `uncertain`",
                 ));
             }
             if !before_absent || !after_absent {

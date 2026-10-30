@@ -1,0 +1,33 @@
+{
+  "subject_id": "authored-spec0171-5",
+  "origin": "authored",
+  "version_label": "authored 2026-10-24 for RIPR-SPEC-0168, 0171 and 0172 acceptance examples",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "865bc857df529f09884a684c5df08e8a99b635955bf6a70854379d93f88f4903"
+    },
+    {
+      "path": "ledger/Cargo.toml",
+      "sha256": "13b8f3a51dee588aa72f8bda39afcd4b5e4b84b6a23a5e7b490cf97ea1fffc99"
+    },
+    {
+      "path": "ledger/src/lib.rs",
+      "sha256": "623ed0828107015d591c6638dc7def0744a675e1699748b743b81c037a6a4276"
+    },
+    {
+      "path": "ledger/tests/ledger.rs",
+      "sha256": "dedf32c19202d924c080e867e9abb6aaa8f8ddca58eed068b824f68fbf64ec50"
+    },
+    {
+      "path": "tally/Cargo.toml",
+      "sha256": "376dd64ba84da68b002b39872fbcceb559969dea747ca8e87f2519b56c57c2e5"
+    },
+    {
+      "path": "tally/lib/core.rs",
+      "sha256": "017f8cd3de8b0de2c703fca668b8f3aa658932502e9f63d8486007d02cc2bf0d"
+    }
+  ]
+}

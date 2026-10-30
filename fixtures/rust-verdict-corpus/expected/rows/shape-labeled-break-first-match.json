@@ -1,0 +1,22 @@
+{
+  "case_id": "shape-labeled-break-first-match",
+  "subject_id": "authored-shape-kit",
+  "origin": "authored",
+  "anchor": "src/flow.rs:21",
+  "behavior_family": "predicate_equality",
+  "test_shape": "labeled_break_grid_search",
+  "hard_case": true,
+  "truth": "partially_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "infection_unknown"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

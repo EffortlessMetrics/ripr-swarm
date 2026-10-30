@@ -1,0 +1,55 @@
+{
+  "case_id": "spec0175-expect-response-downcast-pin",
+  "subject_id": "authored-spec-results",
+  "diff": "cases/spec0175-expect-response-downcast-pin.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 50
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "error_path",
+  "test_shape": "guarded_match_downcast_variant_pin",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "return Err(Box::new(ParseError::Truncated));",
+        "mutated_line": "return Err(Box::new(ParseError::Truncated));",
+        "outcome": "tests_failed",
+        "failing_test": "tests::mismatched_id_is_invalid_data",
+        "equivalence_review": "not equivalent: a mismatched id reports Truncated"
+      },
+      {
+        "replacement": "return Ok(Response { id, len: 0 });",
+        "mutated_line": "return Ok(Response { id, len: 0 });",
+        "outcome": "tests_failed",
+        "failing_test": "tests::mismatched_id_is_invalid_data",
+        "equivalence_review": "not equivalent: a mismatched id returns an empty response"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "mismatched_id_is_invalid_data is the expect_response shape: an Ok arm with exact field assertions and an Err arm that panics unless the error downcasts to ParseError::InvalidData, so a sibling variant or a wrong Ok fails it. Spec cells: RIPR-SPEC-0175 example 1.",
+  "labeling_observation": {
+    "ripr_commit": "2939c0d",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0175#1"
+  ]
+}

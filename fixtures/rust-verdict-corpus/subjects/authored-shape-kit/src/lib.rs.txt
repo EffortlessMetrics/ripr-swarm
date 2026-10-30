@@ -1,0 +1,8 @@
+//! Authored language-shape subject: operators, traits, generics, control
+//! flow, async and hostile source forms, one owner per verdict-corpus case.
+
+pub mod asyncs;
+pub mod flow;
+pub mod hostile;
+pub mod ops;
+pub mod traits;

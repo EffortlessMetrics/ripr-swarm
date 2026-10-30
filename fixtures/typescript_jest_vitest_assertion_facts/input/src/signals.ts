@@ -9,7 +9,7 @@ export function renderSummary(status: string): string {
   return `summary:${status.trim()}`;
 }
 
-export function isReady(count: number): boolean {
+export function isReady(count: number) {
   return count >= 1;
 }
 

@@ -14,6 +14,9 @@
 //! - No parallel TypeScript-specific completeness validator is introduced.
 //!   The only flip gate is `validate_agent_gap_record_packet(..) == Ok(())`.
 
+use crate::domain::language_capability::{
+    CapabilityFamily, cell_state, state_establishes_capability,
+};
 use crate::domain::{Finding, OracleStrength, ProbeFamily, StageState};
 use crate::output::gap_decision_ledger::{
     GapAnchor, GapRecord, GapRepairRoute, ProjectionEligibility, preview_receipt_write_command,
@@ -428,6 +431,20 @@ pub(crate) fn typescript_target_assertion_shape_with_boundary_facts(
         return observed_shape;
     }
     let Some(comparison) = parse_static_comparison(discriminator, boundary_parameters) else {
+        // A member-path operand (mutable object property, enum member) is
+        // never resolved to a value here, so the observed call is not shown
+        // to hit the boundary: fail closed (#9107).
+        if let Some(operand) = unresolved_member_boundary(discriminator) {
+            return TargetAssertionShape::UnboundOperand {
+                shape: format!(
+                    "expect({}(/* boundary input for {discriminator} */)){expected_clause}",
+                    call.callee
+                ),
+                observed_call: observed.to_string(),
+                discriminator: discriminator.to_string(),
+                operand,
+            };
+        }
         return observed_shape;
     };
     let placeholder_shape = || {
@@ -673,17 +690,9 @@ enum BoundaryReach {
     UnboundOperand(String),
 }
 
-/// Parse a discriminator like `user.length == 3` into a static comparison.
-///
-/// Conservative: only `<ident>` / `<ident>.length` receivers and int, plain
-/// string, constant-shaped (`UPPER_CASE`), or plain identifier boundaries are
-/// recognized; anything else stays undecided. A literal or constant side is
-/// preferred as the boundary in either operand order, so `LIMIT == amount`
-/// never reads `amount` as the boundary.
-fn parse_static_comparison(
-    discriminator: &str,
-    boundary_parameters: Option<&TypeScriptBoundaryParametersFact>,
-) -> Option<StaticComparison> {
+/// Split a discriminator at its first comparison operator into trimmed
+/// `(left, op, right)` sides.
+fn split_static_comparison(discriminator: &str) -> Option<(&str, StaticComparisonOp, &str)> {
     const OPS: [(&str, StaticComparisonOp); 8] = [
         ("===", StaticComparisonOp::Equal),
         ("!==", StaticComparisonOp::NotEqual),
@@ -712,6 +721,58 @@ fn parse_static_comparison(
     let (position, len, op) = best?;
     let left = discriminator[..position].trim();
     let right = discriminator[position + len..].trim();
+    Some((left, op, right))
+}
+
+/// A dotted member path (`pricingConfig.discountThreshold`,
+/// `DiscountTier.Volume`, `config.length`): its value can be a mutable object
+/// property or an enum member, neither of which this projection resolves
+/// (#9107). Receiver `.length` probes never reach this check: they parse as
+/// comparisons or sit opposite a literal.
+fn is_unresolved_member_operand(operand: &str) -> bool {
+    let operand = operand.trim();
+    let mut segments = operand.split('.');
+    let first_ok = segments.next().is_some_and(is_plain_identifier);
+    let mut rest = 0usize;
+    let rest_ok = segments.all(|segment| {
+        rest += 1;
+        is_plain_identifier(segment)
+    });
+    first_ok && rest_ok && rest >= 1
+}
+
+/// The member-path operand of an otherwise unparseable discriminator, so the
+/// packet fails closed instead of keeping the observed shape (#9107).
+fn unresolved_member_boundary(discriminator: &str) -> Option<String> {
+    let (left, _, right) = split_static_comparison(discriminator)?;
+    // A member path opposite a literal or constant is the receiver, not the
+    // boundary (`order.total >= 100`), so only the boundary position counts.
+    let is_boundary_side = |side: &str, other: &str| {
+        is_unresolved_member_operand(side)
+            && parse_static_literal(other).is_none()
+            && !is_constant_shaped_operand(other)
+    };
+    if is_boundary_side(right, left) {
+        Some(right.to_string())
+    } else if is_boundary_side(left, right) {
+        Some(left.to_string())
+    } else {
+        None
+    }
+}
+
+/// Parse a discriminator like `user.length == 3` into a static comparison.
+///
+/// Conservative: only `<ident>` / `<ident>.length` receivers and int, plain
+/// string, constant-shaped (`UPPER_CASE`), or plain identifier boundaries are
+/// recognized; anything else stays undecided. A literal or constant side is
+/// preferred as the boundary in either operand order, so `LIMIT == amount`
+/// never reads `amount` as the boundary.
+fn parse_static_comparison(
+    discriminator: &str,
+    boundary_parameters: Option<&TypeScriptBoundaryParametersFact>,
+) -> Option<StaticComparison> {
+    let (left, op, right) = split_static_comparison(discriminator)?;
     // The analysis side keeps operand order (`DISCOUNT_THRESHOLD <= amount`
     // becomes `DISCOUNT_THRESHOLD == amount`), so a boundary written first
     // is read with the operator mirrored (#4215 review).
@@ -1092,6 +1153,17 @@ pub(crate) fn typescript_gap_record_for(finding: &Finding) -> Option<GapRecord> 
     if !finding.is_candidate_actionable() {
         return None;
     }
+    // G-0 (#5531): the capability table is the authority for whether this
+    // finding's analysis scope may route repair. A repo-mode run has no
+    // `repair_routing` cell for TypeScript/JavaScript (absent = `not_proven`),
+    // so a repo-scoped finding never becomes a repair packet, however complete
+    // the diff-shaped evidence looks.
+    let mode = finding.analysis_mode()?;
+    // A finding with no language cannot be matched to a cell: fail closed.
+    let language = finding.language?;
+    if !state_establishes_capability(cell_state(language, mode, CapabilityFamily::RepairRouting)) {
+        return None;
+    }
     // G-A: only the terminal `incomplete_repair_packet` branch is eligible.
     let category = evidence_value(finding, "actionability_category: ")?;
     if category != "incomplete_repair_packet" {
@@ -1392,7 +1464,7 @@ fn has_moved_assertion_selection(finding: &Finding) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     // ──────────────────────────────────────────────────────────────────────
@@ -1411,8 +1483,9 @@ mod tests {
     };
     use std::path::PathBuf;
 
-    fn complete_finding() -> Finding {
+    pub(crate) fn complete_finding() -> Finding {
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: "probe:src_discount.ts:typescript_preview:a1b2c3d4".to_string(),
             canonical_gap: None,
             probe: Probe {
@@ -1498,6 +1571,8 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             }],
             recommended_next_step: None,
             language: Some(LanguageId::TypeScript),
@@ -1510,6 +1585,71 @@ mod tests {
             alignment_reason: None,
             source_currentness: crate::domain::SourceCurrentness::CandidateCurrent,
         }
+    }
+
+    /// #5531: the capability table has no repo-mode `repair_routing` cell for
+    /// TypeScript or JavaScript, so a repo-scoped finding projects no gap
+    /// record even though the identical diff-scoped finding does.
+    #[test]
+    fn repo_scoped_finding_projects_no_gap_record() {
+        for language in [LanguageId::TypeScript, LanguageId::JavaScript] {
+            let mut diff = complete_finding();
+            diff.language = Some(language);
+            assert!(
+                typescript_gap_record_for(&diff).is_some(),
+                "{language:?} diff control must keep its record"
+            );
+            let mut repo = diff.clone();
+            repo.mark_repo_scoped();
+            assert!(
+                typescript_gap_record_for(&repo).is_none(),
+                "{language:?} repo-scoped finding must fail closed"
+            );
+        }
+        let mut unlabeled = complete_finding();
+        unlabeled.language = None;
+        assert!(
+            typescript_gap_record_for(&unlabeled).is_none(),
+            "a finding with no language must fail closed"
+        );
+    }
+
+    /// #5531 negative experiments: the typed scope alone drives the gate. A
+    /// typed `Repo` finding with the evidence line removed still projects
+    /// nothing, and a legacy `analysis_scope: repo` evidence line on a finding
+    /// whose typed scope is `Diff` (contradictory) fails closed too.
+    #[test]
+    fn typed_scope_is_authority_and_contradiction_fails_closed() {
+        use crate::domain::language_capability::REPO_SCOPE_EVIDENCE_LINE;
+        let mut typed_only = complete_finding();
+        typed_only.analysis_scope = crate::domain::AnalysisScope::Repo;
+        assert!(
+            typed_only
+                .evidence
+                .iter()
+                .all(|l| l != REPO_SCOPE_EVIDENCE_LINE)
+        );
+        assert!(typescript_gap_record_for(&typed_only).is_none());
+
+        let mut legacy_line_only = complete_finding();
+        legacy_line_only
+            .evidence
+            .push(REPO_SCOPE_EVIDENCE_LINE.to_string());
+        assert!(legacy_line_only.analysis_mode().is_none());
+        assert!(typescript_gap_record_for(&legacy_line_only).is_none());
+
+        let mut marked = complete_finding();
+        marked.mark_repo_scoped();
+        marked.mark_repo_scoped();
+        assert_eq!(
+            marked
+                .evidence
+                .iter()
+                .filter(|l| *l == REPO_SCOPE_EVIDENCE_LINE)
+                .count(),
+            1,
+            "the compatibility evidence line is derived once"
+        );
     }
 
     /// #7689: a deleted or moved line is base-side evidence, so the same
@@ -2389,6 +2529,80 @@ mod tests {
         );
         validate_agent_gap_record_packet(&record)
             .map_err(|error| format!("derived literal boundary must be delegatable: {error}"))
+    }
+
+    /// #9107: a member-path boundary (mutable object property, enum member)
+    /// is never resolved, so the packet fails closed with a precise reason
+    /// even if the observed input looks plausible; the single immutable
+    /// same-file numeric const still resolves (alternate proof below and in
+    /// `resolved_constant_boundary_with_input_fact_is_delegatable`).
+    #[test]
+    fn member_path_boundaries_fail_closed_while_immutable_const_resolves() -> Result<(), String> {
+        for (label, discriminator, operand) in [
+            (
+                "object property",
+                "subtotal == pricingConfig.discountThreshold",
+                "pricingConfig.discountThreshold",
+            ),
+            (
+                "enum member",
+                "subtotal == DiscountTier.Volume",
+                "DiscountTier.Volume",
+            ),
+            (
+                "mirrored object property",
+                "pricingConfig.discountThreshold == subtotal",
+                "pricingConfig.discountThreshold",
+            ),
+        ] {
+            let mut finding = boundary_finding("discountedTotal(10001)", "9501", discriminator);
+            finding.probe.owner = Some(SymbolId(
+                "typescript:src/pricing.ts::discountedTotal".to_string(),
+            ));
+            let record = typescript_gap_record_for(&finding)
+                .ok_or_else(|| format!("{label}: record must project"))?;
+            let error = match validate_agent_gap_record_packet(&record) {
+                Ok(()) => return Err(format!("{label}: member boundary must fail closed")),
+                Err(error) => error.to_string(),
+            };
+            assert!(error.contains(operand), "{label}: {error}");
+            let route = record
+                .repair_route
+                .as_ref()
+                .ok_or_else(|| format!("{label}: repair route must be present"))?;
+            assert!(
+                route
+                    .assertion_shape
+                    .as_deref()
+                    .is_some_and(|shape| shape.contains("/* boundary input for ")),
+                "{label}: {:?}",
+                route.assertion_shape
+            );
+        }
+        // A member receiver against a literal or constant is not a member
+        // boundary and keeps its previous verdict.
+        for discriminator in [
+            "order.total >= 100",
+            "user.profile.age > 18",
+            "this.count == 3",
+            "order.total >= LIMIT",
+        ] {
+            assert_eq!(
+                unresolved_member_boundary(discriminator),
+                None,
+                "{discriminator}"
+            );
+        }
+        // A `.length`-named member path in boundary position is still an
+        // unresolved member operand; a `.length` receiver parses upstream.
+        assert!(is_unresolved_member_operand("pricingConfig.length"));
+        assert_eq!(
+            unresolved_member_boundary("subtotal == pricingConfig.length").as_deref(),
+            Some("pricingConfig.length")
+        );
+        assert_eq!(unresolved_member_boundary("items.length == 3"), None);
+        assert!(is_unresolved_member_operand("DiscountTier.Volume"));
+        Ok(())
     }
 
     /// The onboarding `tsapp` shape: the constant resolved on the analysis

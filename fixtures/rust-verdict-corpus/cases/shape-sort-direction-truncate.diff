@@ -1,0 +1,12 @@
+diff --git a/src/flow.rs b/src/flow.rs
+--- a/src/flow.rs
++++ b/src/flow.rs
+@@ -52,7 +52,7 @@
+ }
+ 
+ pub fn top_two(mut v: Vec<u32>) -> Vec<u32> {
+-    v.sort_by(|a, b| b.cmp(a));
++    v.sort_by_key(|x| std::cmp::Reverse(*x));
+     v.truncate(2);
+     v
+ }

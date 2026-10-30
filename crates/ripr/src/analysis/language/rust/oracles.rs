@@ -318,7 +318,9 @@ pub(super) fn apply_rust_macro_wrapped_assertion_limit(
     if finding.static_limit_kind.is_some() {
         return;
     }
-    let witness = if finding.class == ExposureClass::ReachableUnrevealed
+    let witness = if let Some(witness) = generated_assertion_witness(finding, index) {
+        Some(witness)
+    } else if finding.class == ExposureClass::ReachableUnrevealed
         && finding.oracle_related_tests().next().is_some()
         && finding.ripr.reveal.observe.state == crate::domain::StageState::No
         && finding
@@ -335,6 +337,14 @@ pub(super) fn apply_rust_macro_wrapped_assertion_limit(
         // owner inside an assertion-like macro ripr cannot read, that macro
         // is the likely discriminator, so name the limit instead of a gap.
         find_unresolved_assertion_macro_witness(finding, index, Some(owner_name))
+    } else if only_credited_local_macros_supply_an_oracle(finding) {
+        // #9122: a same-file macro earns an unknown-grade fact, never a
+        // graded oracle. It must not turn the macro limit into a gap: the
+        // named limit stays, because the macro's discrimination is unresolved.
+        // The credited macro need not be named `assert_*` (`check_eq!`), so
+        // its own spelling is the witness (#7089).
+        let credited = credited_local_macro_names(finding);
+        find_unresolved_assertion_macro_witness_among(finding, index, None, &credited)
     } else {
         return;
     };
@@ -451,6 +461,58 @@ fn only_proximity_tests_supply_an_oracle(finding: &Finding) -> bool {
     direct_seen && proximity_oracle_seen
 }
 
+/// A `weakly_exposed` finding whose every recognized oracle on a directly
+/// related test is a same-file macro call credited at unknown grade (#9122):
+/// `name!(..)` text with kind and strength both unknown. Oracles of tests
+/// related only by proximity are ignored (#7089). A truncated related-test window never qualifies.
+fn only_credited_local_macros_supply_an_oracle(finding: &Finding) -> bool {
+    if finding.class != ExposureClass::WeaklyExposed
+        || finding
+            .related_tests_matched_total
+            .is_some_and(|total| total > finding.related_tests.len())
+    {
+        return false;
+    }
+    let mut seen = false;
+    for related in finding.oracle_related_tests() {
+        let Some(oracle) = related.oracle.as_deref() else {
+            // A refused assertion on a directly related test is still an
+            // assertion ripr judged (#7089).
+            if related.miss == Some(crate::domain::RelatedTestMiss::AssertionNotCredited)
+                && (related.relation_reason.is_none()
+                    || is_direct_relation(related.relation_reason))
+            {
+                return false;
+            }
+            continue;
+        };
+        // #7089: a test related only by proximity never calls the owner, so
+        // its recognized oracle (a strong `assert_eq!` on another function)
+        // says nothing about this probe and must not hide the macro limit.
+        if related
+            .relation_reason
+            .is_some_and(|reason| !is_direct_relation(Some(reason)))
+        {
+            continue;
+        }
+        let macro_call = oracle.split_once('!').is_some_and(|(name, rest)| {
+            !name.is_empty()
+                && name
+                    .chars()
+                    .all(|c| c.is_alphanumeric() || c == '_' || c == ':')
+                && rest.trim_start().starts_with(['(', '[', '{'])
+        });
+        if !(macro_call
+            && related.oracle_kind == crate::domain::OracleKind::Unknown
+            && related.oracle_strength == crate::domain::OracleStrength::Unknown)
+        {
+            return false;
+        }
+        seen = true;
+    }
+    seen
+}
+
 /// With `owner_in_arguments`, only a test related by a direct relation counts,
 /// and the macro's own arguments must call that owner.
 fn find_unresolved_assertion_macro_witness(
@@ -458,6 +520,123 @@ fn find_unresolved_assertion_macro_witness(
     index: &RustIndex,
     owner_in_arguments: Option<&str>,
 ) -> Option<RustMacroAssertionWitness> {
+    find_unresolved_assertion_macro_witness_among(finding, index, owner_in_arguments, &[])
+}
+
+/// Names of the macros behind the unknown-grade oracles of directly related
+/// tests (`check_eq!(..)` gives `check_eq`).
+fn credited_local_macro_names(finding: &Finding) -> Vec<String> {
+    finding
+        .oracle_related_tests()
+        .filter(|related| {
+            related.relation_reason.is_none() || is_direct_relation(related.relation_reason)
+        })
+        .filter_map(|related| related.oracle.as_deref())
+        .filter_map(|oracle| {
+            oracle
+                .split_once('!')
+                .map(|(name, _)| name.trim().to_string())
+        })
+        .collect()
+}
+
+/// Whether `attribute` is a `#[test_case(.. => ..)]` (its `matches` and
+/// `with` forms included), which generates the test's comparison.
+fn generates_assertion(attribute: &str) -> bool {
+    let compact: String = attribute.split_whitespace().collect();
+    (compact.starts_with("#[test_case(") || compact.starts_with("#[test_case::test_case("))
+        && crate::analysis::extract::mask_comments_and_strings(attribute).contains("=>")
+}
+
+/// Whether the expected value of a generated `#[test_case(.. => EXPECTED)]` row
+/// is one plain literal. `with`, `matches`, `panics` and the other forms run
+/// code of their own that can observe state the owner changed, so they never
+/// qualify.
+fn expected_value_is_a_literal(attribute: &str) -> bool {
+    let masked = crate::analysis::extract::mask_comments_and_strings(attribute);
+    let Some(arrow) = masked.find("=>") else {
+        return false;
+    };
+    let after = arrow + 2;
+    let end = masked[after..]
+        .find(';')
+        .map_or(masked.len(), |semicolon| after + semicolon);
+    let expected = attribute[after..end]
+        .trim()
+        .trim_end_matches(|c: char| c.is_whitespace() || matches!(c, ')' | ']'));
+    crate::analysis::syntax::returns_only_a_literal(&format!("fn expected() {{ {expected} }}"))
+}
+
+/// A `reachable_unrevealed` (or proximity-only `weakly_exposed`) finding whose directly related tests have no
+/// oracle because their comparison is generated by `#[test_case(.. => ..)]`:
+/// ripr cannot read that comparison, so the finding is a named limit, not a
+/// gap. Oracles of tests related only by proximity or name do not hide it.
+fn generated_assertion_witness(
+    finding: &Finding,
+    index: &RustIndex,
+) -> Option<RustMacroAssertionWitness> {
+    // A weak oracle borrowed from a test that only shares the owner's file
+    // makes the finding `weakly_exposed`, but the generated comparison on the
+    // directly related test is still the likely discriminator.
+    let unobserved = finding.class == ExposureClass::ReachableUnrevealed
+        && finding.ripr.reveal.observe.state == crate::domain::StageState::No;
+    if !(unobserved || only_proximity_tests_supply_an_oracle(finding))
+        || finding
+            .related_tests_matched_total
+            .is_some_and(|total| total > finding.related_tests.len())
+    {
+        return None;
+    }
+    let direct: Vec<_> = finding
+        .oracle_related_tests()
+        .filter(|related| is_direct_relation(related.relation_reason))
+        .collect();
+    if direct.iter().any(|related| related.oracle.is_some()) {
+        return None;
+    }
+    let mut candidates = Vec::new();
+    for test in index
+        .tests()
+        .iter()
+        .chain(index.files().values().flat_map(|file| file.tests.iter()))
+    {
+        if test
+            .attrs
+            .iter()
+            .any(|attribute| generates_assertion(attribute))
+            && !(crate::analysis::syntax::returns_only_a_literal(&test.body)
+                && test
+                    .attrs
+                    .iter()
+                    .filter(|attribute| generates_assertion(attribute))
+                    .all(|attribute| expected_value_is_a_literal(attribute)))
+            && direct
+                .iter()
+                .any(|related| related.name == test.name && related.file == test.file)
+        {
+            candidates.push(RustMacroAssertionWitness {
+                test_name: test.name.clone(),
+                test_file: test.file.clone(),
+                test_line: test.start_line,
+                macro_name: "test_case".to_string(),
+                macro_line: test.start_line,
+            });
+        }
+    }
+    candidates.sort();
+    candidates.dedup();
+    candidates.into_iter().next()
+}
+
+fn find_unresolved_assertion_macro_witness_among(
+    finding: &Finding,
+    index: &RustIndex,
+    owner_in_arguments: Option<&str>,
+    credited: &[String],
+) -> Option<RustMacroAssertionWitness> {
+    // A credited macro is the oracle of a direct test, so the witness must
+    // come from one too (#7089).
+    let restrict_to_direct = owner_in_arguments.is_some() || !credited.is_empty();
     let mut candidates = Vec::new();
     for test in index
         .tests()
@@ -467,13 +646,16 @@ fn find_unresolved_assertion_macro_witness(
         if !finding.oracle_related_tests().any(|related| {
             related.name == test.name
                 && related.file == test.file
-                && (owner_in_arguments.is_none() || is_direct_relation(related.relation_reason))
+                && (!restrict_to_direct || is_direct_relation(related.relation_reason))
         }) {
             continue;
         }
-        for (macro_name, macro_line) in
-            unresolved_assertion_macro_invocations(&test.body, test.start_line, owner_in_arguments)
-        {
+        for (macro_name, macro_line) in unresolved_assertion_macro_invocations_among(
+            &test.body,
+            test.start_line,
+            owner_in_arguments,
+            credited,
+        ) {
             candidates.push(RustMacroAssertionWitness {
                 test_name: test.name.clone(),
                 test_file: test.file.clone(),
@@ -488,10 +670,20 @@ fn find_unresolved_assertion_macro_witness(
     candidates.into_iter().next()
 }
 
+#[cfg(test)]
 fn unresolved_assertion_macro_invocations(
     body: &str,
     start_line: usize,
     owner_in_arguments: Option<&str>,
+) -> Vec<(String, usize)> {
+    unresolved_assertion_macro_invocations_among(body, start_line, owner_in_arguments, &[])
+}
+
+fn unresolved_assertion_macro_invocations_among(
+    body: &str,
+    start_line: usize,
+    owner_in_arguments: Option<&str>,
+    credited: &[String],
 ) -> Vec<(String, usize)> {
     let mut invocations = Vec::new();
     let masked_body = mask_rust_comments_and_strings(body);
@@ -521,7 +713,14 @@ fn unresolved_assertion_macro_invocations(
             let Some(macro_name) = macro_name_before_bang(line, bang) else {
                 continue;
             };
-            if !is_unresolved_assertion_like_macro(&macro_name) {
+            // With credited macros the witness is the credited spelling, not
+            // another assertion-like macro in the same test (#7089).
+            let named = if credited.is_empty() {
+                is_unresolved_assertion_like_macro(&macro_name)
+            } else {
+                credited.contains(&macro_name)
+            };
+            if !named {
                 continue;
             }
             if let Some(owner_name) = owner_in_arguments {
@@ -698,6 +897,50 @@ fn rust_macro_assertion_limitation_detail_lines(
 #[cfg(test)]
 mod tests {
     #[test]
+    fn only_a_plain_literal_expected_value_is_independent_of_the_owner() {
+        for attribute in [
+            "#[test_case(2 => 4)]",
+            "#[test_case(2 => -4 ; \"neg\")]",
+            "#[test_case(2 => \"a;b\")]",
+            "#[test_case::test_case(2 => true)]",
+        ] {
+            assert!(super::expected_value_is_a_literal(attribute), "{attribute}");
+        }
+        for attribute in [
+            "#[test_case(2 => with |v: u32| assert_eq!(read(), v))]",
+            "#[test_case(2 => matches Ok(_))]",
+            "#[test_case(2 => panics \"boom\")]",
+            "#[test_case(2 => expected_total())]",
+            "#[test_case(2, 4)]",
+        ] {
+            assert!(
+                !super::expected_value_is_a_literal(attribute),
+                "{attribute}"
+            );
+        }
+    }
+
+    #[test]
+    fn only_the_arrow_forms_of_test_case_generate_an_assertion() {
+        for attribute in [
+            "#[test_case(2 => 4)]",
+            "#[test_case::test_case(2 => 4)]",
+            "#[test_case(\"\" => matches Err(_) ; \"empty\")]",
+            "#[test_case(150 => with |v: u32| assert!(v <= 100))]",
+        ] {
+            assert!(generates_assertion(attribute), "{attribute}");
+        }
+        for attribute in [
+            "#[test_case(2, 4)]",
+            "#[test_case(\"=>\", 4)]",
+            "#[test]",
+            "#[other(2 => 4)]",
+        ] {
+            assert!(!generates_assertion(attribute), "{attribute}");
+        }
+    }
+
+    #[test]
     fn property_scope_uses_only_valid_retained_package_authority() {
         use crate::analysis::facts::{UnresolvedPropertyMacroFact, WorkspaceFileAuthority};
         use std::collections::BTreeMap;
@@ -793,8 +1036,8 @@ mod tests {
     use super::{
         apply_cross_language_limit, apply_rust_macro_wrapped_assertion_limit,
         apply_wrapper_error_binding_limit, attr_is_ffi_binding, cross_language_limit_kind,
-        is_known_rust_assertion_macro, is_unresolved_assertion_like_macro, owner_has_ffi_attr,
-        unresolved_assertion_macro_invocations,
+        generates_assertion, is_known_rust_assertion_macro, is_unresolved_assertion_like_macro,
+        owner_has_ffi_attr, unresolved_assertion_macro_invocations,
     };
     use crate::analysis::facts::{
         CallFact, FunctionSourceRole, FunctionSummary, LiteralFact, RustIndex, TestSummary,
@@ -852,6 +1095,7 @@ mod tests {
         test_line: usize,
     ) -> Finding {
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: "probe:src_lib.rs:predicate:test".to_string(),
             canonical_gap: None,
             probe: Probe {
@@ -893,6 +1137,8 @@ mod tests {
                 relation_reason: None,
                 relation_confidence: None,
                 miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
             }],
             recommended_next_step: None,
             language: None,
@@ -1102,6 +1348,96 @@ mod tests {
             ..Default::default()
         });
         (finding, index)
+    }
+
+    // #9122: a credited same-file macro keeps the named limit instead of a gap.
+    #[test]
+    fn credited_local_macro_oracle_keeps_the_macro_limit_but_a_graded_one_does_not() {
+        let build = |oracle: &str, kind: OracleKind, strength: OracleStrength| {
+            let mut finding = reachable_unrevealed_finding_with_related_test(
+                "test_inner_with_custom_assertion_macro",
+                "tests/it.rs",
+                4,
+            );
+            finding.class = ExposureClass::WeaklyExposed;
+            for related in &mut finding.related_tests {
+                related.relation_reason = Some(crate::domain::RelationReason::DirectOwnerCall);
+                related.oracle = Some(oracle.to_string());
+                related.oracle_kind = kind.clone();
+                related.oracle_strength = strength.clone();
+            }
+            finding
+        };
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            tests: vec![test_summary(
+                "test_inner_with_custom_assertion_macro",
+                "tests/it.rs",
+                4,
+                "let result = inner(10, 3);\nassert_result!(result, 7);",
+            )],
+            ..Default::default()
+        });
+
+        let mut credited = build(
+            "assert_result!(result, 7)",
+            OracleKind::Unknown,
+            OracleStrength::Unknown,
+        );
+        apply_rust_macro_wrapped_assertion_limit(&mut credited, &index, None);
+        assert_eq!(
+            credited.static_limit_kind,
+            Some(StaticLimitKind::RustMacroWrappedAssertionUnresolved)
+        );
+
+        let mut graded = build(
+            "assert!(inner(10, 3) > 0);",
+            OracleKind::RelationalCheck,
+            OracleStrength::Weak,
+        );
+        apply_rust_macro_wrapped_assertion_limit(&mut graded, &index, None);
+        assert_eq!(graded.static_limit_kind, None);
+    }
+
+    // A generated comparison on the direct test keeps its named limit when a
+    // proximity-only oracle turned the finding `weakly_exposed`.
+    #[test]
+    fn a_generated_comparison_keeps_its_limit_beside_a_proximity_oracle() {
+        let with_attribute = |attribute: &str| {
+            let (finding, _) = weakly_exposed_beside_a_proximity_oracle();
+            let mut test = test_summary("direct_inner", "src/lib.rs", 20, "weight(x)");
+            test.attrs = vec![attribute.to_string()];
+            let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+                tests: vec![test],
+                ..Default::default()
+            });
+            (finding, index)
+        };
+        let arrow = || with_attribute("#[test_case(4 => 12)]");
+        let (mut finding, index) = arrow();
+        apply_rust_macro_wrapped_assertion_limit(&mut finding, &index, None);
+        assert_eq!(
+            finding.static_limit_kind,
+            Some(StaticLimitKind::RustMacroWrappedAssertionUnresolved)
+        );
+
+        // The plain-argument form generates no comparison.
+        let (mut finding, index) = with_attribute("#[test_case(4, 12)]");
+        apply_rust_macro_wrapped_assertion_limit(&mut finding, &index, None);
+        assert_eq!(finding.static_limit_kind, None);
+
+        // The direct-oracle, truncated-window and no-proximity-oracle safeguards still hold.
+        let (mut finding, index) = arrow();
+        finding.related_tests[0].oracle = Some("assert!(x > 0);".to_string());
+        apply_rust_macro_wrapped_assertion_limit(&mut finding, &index, None);
+        assert_eq!(finding.static_limit_kind, None);
+        let (mut finding, index) = arrow();
+        finding.related_tests_matched_total = Some(finding.related_tests.len() + 1);
+        apply_rust_macro_wrapped_assertion_limit(&mut finding, &index, None);
+        assert_eq!(finding.static_limit_kind, None);
+        let (mut finding, index) = arrow();
+        finding.related_tests[1].oracle = None;
+        apply_rust_macro_wrapped_assertion_limit(&mut finding, &index, None);
+        assert_eq!(finding.static_limit_kind, None);
     }
 
     #[test]

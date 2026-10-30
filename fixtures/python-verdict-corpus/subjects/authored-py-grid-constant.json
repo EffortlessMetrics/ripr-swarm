@@ -1,0 +1,29 @@
+{
+  "subject_id": "authored-py-grid-constant",
+  "origin": "authored",
+  "version_label": "authored@3608bb9a",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "grid_constant/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "grid_constant/core.py",
+      "sha256": "26dd17893457fba97c7ec86679777104ed2409dc6dfff0c928b31c3d8ccf204b"
+    },
+    {
+      "path": "pyproject.toml",
+      "sha256": "9c2516c649bba7a0e3317d0bf13623dcba28edc712985d73734b3d1e816e84cd"
+    },
+    {
+      "path": "tests/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tests/test_core.py",
+      "sha256": "4f8bd1373a229cee4e6d8d09e885491d06ef52cf0aeaae2e8af8b9df61e84038"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "case_id": "spec0175-ok-payload-observed",
+  "subject_id": "authored-spec-results",
+  "origin": "authored",
+  "anchor": "src/lib.rs:78",
+  "behavior_family": "return_value",
+  "test_shape": "guarded_match_ok_payload_asserted",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

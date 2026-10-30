@@ -1,0 +1,160 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/python_else_arm_no_exposed_credit/input",
+  "config_path": "<cwd>/fixtures/python_else_arm_no_exposed_credit/input/ripr.toml",
+  "summary": {"changed_rust_files":0,"probes":1,"findings":1,"exposed":0,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"python","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:22d926b58d6300e8","base_revision":null,"input_identity":"sha256:e8e276c81675aec7fba84c64bf245839f56e364fafc28f05ae6ec2b7090a509a","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_sign.py:python_preview:6169374f",
+      "canonical_gap_id": "gap:python:src/sign.py:sign:return_value:return_value:-2",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:python:src/sign.py:sign:return_value:return_value:-2",
+        "language": "python",
+        "file": "src/sign.py",
+        "owner": "sign",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "-2"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.40,
+      "probe": {
+        "id": "probe:src_sign.py:python_preview:6169374f",
+        "family": "return_value",
+        "delta": "value",
+        "file": "src/sign.py",
+        "line": 5,
+        "expression": "        return -2",
+        "owner": "python:src/sign.py::sign"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"low","summary":"1 related Python test(s) found for owner `sign`"},
+        "infect": {"state":"weak","confidence":"low","summary":"Related tests reach the changed owner, but every strong related test call provably fails the guarding arm, so the changed line never executes under an observed input."},
+        "propagate": {"state":"yes","confidence":"low","summary":"Changed Python return value is already at the owner output boundary."},
+        "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
+        "discriminate": {"state":"weak","confidence":"low","summary":"Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior."}
+       },
+      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `sign`", "infection weak: Related tests reach the changed owner, but every strong related test call provably fails the guarding arm, so the changed line never executes under an observed input.", "propagation yes: Changed Python return value is already at the owner output boundary.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches returned value: return -2 (line 5)", "related test tests/test_sign.py:4 test_positive_sign uses strong exact value oracle: assert sign(5) == 1", "source function argument value x = 5 at line 5", "missing discriminator not (x > 0): the changed line sits in the `else` arm of an `if`/`elif` chain (`x > 0`) that is entered only when none of them hold, and each strong related test input is kept off it by this chain or an enclosing guard; observed x = 5; the changed line never executes under an observed input"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"return -2","line":5}
+      ],
+      "evidence": ["owner: sign", "owner_kind: function", "missing_discriminator: not (x > 0)", "suggested_repair_action: strengthen_existing_test", "suggested_test_file: tests/test_sign.py", "suggested_test_name: test_positive_sign", "suggested_test_node_id: tests/test_sign.py::test_positive_sign", "suggested_verify_command: python -m pytest tests/test_sign.py::test_positive_sign", "suggested_verify_command_confidence: high", "suggested_test_location_reason: strengthen existing weak pytest relation", "test_framework: pytest (test_positive_sign)", "test_verify_command: python -m pytest tests/test_sign.py::test_positive_sign (test_positive_sign)", "related_test_relation: syntactic_call (test_positive_sign)", "test_oracle: exact_value strong (test_positive_sign)"],
+      "missing": ["A strong Python oracle reaches `sign`, but static evidence does not place a related test input inside the guarding arm `not (x > 0)`; every observed input leaves the changed line unexecuted (observation_unverified). Add a test input that satisfies the guarding condition."],
+      "assertion_texts": {
+        "5": "assert sign(5) == 1"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 5,
+            "value": "x = 5",
+            "context": "function_argument"
+          }
+        ],
+        "missing_discriminators": [
+          {
+            "value": "not (x > 0)",
+            "reason": "the changed line sits in the `else` arm of an `if`/`elif` chain (`x > 0`) that is entered only when none of them hold, and each strong related test input is kept off it by this chain or an enclosing guard; observed x = 5; the changed line never executes under an observed input",
+            "flow_sink": {"kind":"return_value","text":"return -2","line":5}
+          }
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 5,
+          "value": "x = 5",
+          "context": "function_argument"
+        }
+      ],
+      "missing_discriminators": [
+        {
+          "value": "not (x > 0)",
+          "reason": "the changed line sits in the `else` arm of an `if`/`elif` chain (`x > 0`) that is entered only when none of them hold, and each strong related test input is kept off it by this chain or an enclosing guard; observed x = 5; the changed line never executes under an observed input",
+          "flow_sink": {"kind":"return_value","text":"return -2","line":5}
+        }
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "test_positive_sign",
+          "file": "tests/test_sign.py",
+          "line": 4,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert sign(5) == 1"
+        }
+      ],
+      "repair_placement": {
+        "suggested_test_file": "tests/test_sign.py",
+        "suggested_test_name": "test_positive_sign",
+        "suggested_test_node_id": "tests/test_sign.py::test_positive_sign",
+        "verify_command": "python -m pytest tests/test_sign.py::test_positive_sign",
+        "verify_command_confidence": "high"
+       },
+      "python_repair_card": {
+        "card_version": "python_repair_card.v1",
+        "source": "check_python_preview",
+        "canonical_gap_id": "gap:python:src/sign.py:sign:return_value:return_value:-2",
+        "language": "python",
+        "language_status": "preview",
+        "authority_boundary": "preview_advisory_only",
+        "repair_action": "strengthen_existing_test",
+        "changed_owner": "sign",
+        "changed_behavior": "return_value changed at src/sign.py:5: `return -2`",
+        "current_test_evidence": "tests/test_sign.py:4 test_positive_sign currently has oracle_strength=strong, oracle_kind=exact_value: assert sign(5) == 1",
+        "missing_discriminator": "not (x > 0)",
+        "recommended_test_shape": "Strengthen the existing pytest exact return-value assertion for `not (x > 0)`.",
+        "suggested_assertion": "Assert the returned value equals the expected value for the changed inputs.",
+        "suggested_location": {
+          "test_file": "tests/test_sign.py",
+          "test_name": "test_positive_sign",
+          "pytest_node_id": "tests/test_sign.py::test_positive_sign"
+         },
+        "verify": {
+          "command": "python -m pytest tests/test_sign.py::test_positive_sign",
+          "confidence": "high"
+         },
+        "receipt": {
+          "command": null,
+          "status": "unavailable_until_python_gap_ledger",
+          "guidance": "Save this `ripr check --format json` report, then run `ripr first-pr --check-output <check.json>` or `ripr reports gap-ledger --check-output <check.json>` to materialize a gap ledger with a concrete receipt command."
+         },
+        "stop_conditions": ["Stop if imports, fixtures, or test setup cannot call the changed owner.", "Stop if the expected value for the missing discriminator is ambiguous.", "Stop if adding the test appears to require a production-code edit."],
+        "limits": ["Syntax-first Python preview evidence only.", "No source edits, generated tests, mutation execution, provider calls, or gate authority.", "Verify success alone is not a gap-closure receipt."]
+       },
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Python preview: strengthen the existing related test with an exact return-value assertion for missing discriminator `not (x > 0)`.",
+      "suggested_next_action": "Python preview: strengthen the existing related test with an exact return-value assertion for missing discriminator `not (x > 0)`.",
+      "language": "python",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "observed_sink": "assert sign(5) == 1",
+      "oracle_alignment": "direct",
+      "alignment_reason": "strong_oracle_observes_owner_name",
+      "source_currentness": "candidate_current"
+    }
+  ],
+  "preview_languages": [
+    {
+      "language": "python",
+      "file_count": 1,
+      "sample_paths": ["src/sign.py"],
+      "enabled": true,
+      "analyzed": true,
+      "category": "preview_language_advisory",
+      "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+    }
+  ],
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/sign.py","digest":"sha256:1d16be67d997631bbbd2aa0117a806ea0224c43f896162dc7d1116c5ead45a79"},{"path":"tests/test_sign.py","digest":"sha256:35378e82471ad8c4c0e8845b7191d87d425f35a0ef923dccfb4754a92d8b2ca3"}]}
+}

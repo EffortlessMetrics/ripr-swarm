@@ -277,7 +277,25 @@ fn baseline_entry_from_decision(
     }))
 }
 
-fn fallback_identity(
+/// Path half of the stored fallback identity: `\` becomes `/` on every host and
+/// leading `./` is stripped; case is preserved. Shared by baseline create/
+/// delta/update and the gate's legacy-match disclosure.
+pub(crate) fn normalize_fallback_path(path: &str) -> String {
+    path.replace('\\', "/").trim_start_matches("./").to_string()
+}
+
+/// Stored-string contract for the legacy `path:line:static_class` baseline
+/// fallback identity (#9666). This is deliberately NOT
+/// [`crate::output::path::path_identity_key`]: that key is host-dependent
+/// (`\` is a separator only on Windows; ASCII case folds on Windows/macOS),
+/// while a baseline is a committed text artifact that must key identically on
+/// every host that reads it. The stored string therefore always rewrites `\`
+/// to `/`, strips leading `./`, and never case-folds. Switching to the shared
+/// host key would silently change stored identities (a Windows-authored
+/// baseline would stop matching on Linux), so any change needs a versioned
+/// key with compatibility reads. This is the single owner for create, delta
+/// and update.
+pub(crate) fn fallback_identity(
     path: Option<&str>,
     line: Option<u64>,
     static_class: Option<&str>,
@@ -285,7 +303,7 @@ fn fallback_identity(
     match (path, line, static_class) {
         (Some(path), Some(line), Some(static_class)) => Some(format!(
             "{}:{line}:{static_class}",
-            path.replace('\\', "/").trim_start_matches("./")
+            normalize_fallback_path(path)
         )),
         _ => None,
     }
@@ -382,6 +400,23 @@ fn string_field(value: Option<&Value>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{baseline_create_report_from_gate_decision_json, render_baseline_create_json};
+
+    #[test]
+    fn fallback_identity_is_a_host_independent_stored_string() {
+        let id = |p| super::fallback_identity(Some(p), Some(7), Some("weakly_gripped"));
+        let want = Some("src/a/B.rs:7:weakly_gripped".to_string());
+        assert_eq!(id("src/a/B.rs"), want);
+        // Linux discriminator: the host-dependent shared key leaves `\\` alone there.
+        assert_eq!(id("src\\a\\B.rs"), want);
+        assert_eq!(id("./src/a/B.rs"), want);
+        // Guards Windows/macOS, where the shared key would fold case.
+        // No case folding: stored identity stays case-exact on every host.
+        assert_ne!(id("src/a/b.rs"), want);
+        assert_eq!(
+            super::fallback_identity(Some("a.rs"), None, Some("x")),
+            None
+        );
+    }
 
     #[test]
     fn baseline_create_includes_visible_gate_decisions_and_skips_hidden_ones() -> Result<(), String>

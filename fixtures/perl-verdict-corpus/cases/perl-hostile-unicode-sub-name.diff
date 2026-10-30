@@ -1,0 +1,13 @@
+diff --git a/lib/Hostile.pm b/lib/Hostile.pm
+index 505b49c..e3f8505 100644
+--- a/lib/Hostile.pm
++++ b/lib/Hostile.pm
+@@ -54,7 +54,7 @@ eval "sub quad { \$_[0] * 4 }";
+ 
+ sub café_price {
+     my ($montant) = @_;
+-    return $montant + 5;
++    return 5 + $montant;
+ }
+ 
+ # line 500 "elsewhere.pm"

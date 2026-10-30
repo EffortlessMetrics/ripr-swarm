@@ -60,8 +60,8 @@ With `--ci`, this refresh keeps an existing `ripr.toml` and replaces the
 generated workflow. **Do not substitute bare `ripr init --force`: that can
 reset configuration customizations.** Reapply intentional workflow edits and
 review the diff before committing. An unreleased generator may deliberately
-pin the latest published RIPR instead of its own development version; read its
-warning and inspect the emitted install/version steps. A successful refresh
+pin the latest published RIPR instead of its own development version; read the
+note `ripr init` prints and inspect the emitted install/version steps. A successful refresh
 alone does not prove CI is running 0.11. See [CI](CI.md).
 
 ### Re-select the diff and review suppressions

@@ -1,7 +1,7 @@
 {
   "name": "ripr",
   "displayName": "ripr: Static Mutation Exposure",
-  "description": "Find mutation-exposed Rust code with static diagnostics, targeted test briefs, and agent handoff commands.",
+  "description": "Static check for Rust changes in your editor: see which changed behavior your tests would not notice, with a focused test brief and agent handoff commands.",
   "version": "0.11.0",
   "publisher": "EffortlessMetrics",
   "preview": true,
@@ -207,13 +207,13 @@
           "scope": "resource"
         },
         "ripr.gitTimeoutMs": {
-          "type": "number",
+          "type": "integer",
           "minimum": 1000,
           "default": 30000,
           "description": "Deadline in milliseconds for each git invocation in the ripr language server's refresh path. A git command that exceeds the deadline is terminated and the refresh commits a limited snapshot naming git_invocation_timeout; run the ripr.refreshDiagnostics command to retry."
         },
         "ripr.refreshDeadlineMs": {
-          "type": "number",
+          "type": "integer",
           "minimum": 1000,
           "default": 600000,
           "description": "Physical deadline in milliseconds for one whole refresh analysis attempt in the ripr language server. An attempt that exceeds the deadline is dropped fail-closed with the named deadline_exceeded outcome and an 'analysis deadline exceeded' progress end — no limited snapshot is committed; the next save or the ripr.refreshDiagnostics command starts a fresh attempt."

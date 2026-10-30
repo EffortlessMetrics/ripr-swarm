@@ -1,0 +1,9 @@
+diff --git a/grid_arithmetic/core.py b/grid_arithmetic/core.py
+--- a/grid_arithmetic/core.py
++++ b/grid_arithmetic/core.py
+@@ -18,4 +18,4 @@
+ 
+ 
+ def seconds(minutes):
+-    return minutes * 60
++    return 60 * minutes

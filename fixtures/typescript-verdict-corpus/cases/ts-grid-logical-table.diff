@@ -1,0 +1,12 @@
+diff --git a/src/logical.ts b/src/logical.ts
+--- a/src/logical.ts
++++ b/src/logical.ts
+@@ -3,7 +3,7 @@
+ }
+ 
+ export function needsReview(flagged: boolean, large: boolean): boolean {
+-  return flagged || large;
++  return large || flagged;
+ }
+ 
+ export function canEnter(hasTicket: boolean, banned: boolean): boolean {

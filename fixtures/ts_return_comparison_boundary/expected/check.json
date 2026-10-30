@@ -12,6 +12,7 @@
   "findings": [
     {
       "id": "probe:src_pricing.ts:typescript_preview:060ff85c",
+      "canonical_gap_id": "gap:typescript:typescript_preview:060ff85c",
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.40,
@@ -68,7 +69,9 @@
           "oracle_kind": "exact_value",
           "oracle": "expect(...).toBe(...)",
           "relation_reason": "direct_owner_call",
-          "relation_confidence": "high"
+          "relation_confidence": "high",
+          "miss": "missing_input",
+          "why": "no input this test passes was seen reaching `total == 100`"
         }
       ],
       "typescript_preview_card": {

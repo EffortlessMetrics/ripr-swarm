@@ -21,7 +21,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
+mod observation_tail_return;
 mod preparation;
+mod transitional;
 
 /// Result of a single fixture run: violation lines + optional run output.
 type FixtureResult = Result<(Vec<String>, Option<FixtureRun>), String>;
@@ -864,6 +866,15 @@ impl FixtureRun {
         self.comparisons.iter().all(|comparison| comparison.matches)
     }
 
+    // Test-only detail accessor so nested-child assertions (fixture_cache)
+    // can print WHICH golden drifted and the first differing line instead of
+    // a bare bool; the parent's captured child output is the only artifact
+    // available when a CI flake reproduces on a hosted runner.
+    #[cfg(test)]
+    pub(crate) fn comparison_violations_for_tests(&self) -> Vec<String> {
+        self.comparison_violations()
+    }
+
     fn comparison_violations(&self) -> Vec<String> {
         self.comparisons
             .iter()
@@ -931,7 +942,12 @@ struct GoldenRunSet {
 pub(crate) fn run_fixture(path: &Path) -> Result<FixtureRun, String> {
     let run = run_fixture_outputs(path)?;
     let expected = path.join("expected");
+    let fixture_name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
     let comparisons = fixture_golden_comparisons(
+        &fixture_name,
         &expected,
         &run.check_json,
         &run.human_txt,
@@ -1041,6 +1057,9 @@ fn clear_fixture_cache(dir: &Path) -> Result<(), String> {
 
 pub(crate) fn run_fixture_outputs(path: &Path) -> Result<FixtureRun, String> {
     let name = fixture_name(path)?;
+    if name == observation_tail_return::FIXTURE {
+        observation_tail_return::validate(path)?;
+    }
     let diff = path.join("diff.patch");
     let input = path.join("input");
     if !diff.exists() {
@@ -1261,6 +1280,7 @@ pub(crate) fn run_fixture_check(
 }
 
 fn fixture_golden_comparisons(
+    fixture: &str,
     expected: &Path,
     check_json: &Path,
     human_txt: &Path,
@@ -1268,6 +1288,7 @@ fn fixture_golden_comparisons(
 ) -> Result<Vec<GoldenComparison>, String> {
     let mut comparisons = Vec::new();
     comparisons.push(compare_golden(
+        fixture,
         "check.json",
         &expected.join("check.json"),
         check_json,
@@ -1275,11 +1296,17 @@ fn fixture_golden_comparisons(
 
     let expected_human = expected.join("human.txt");
     if expected_human.exists() {
-        comparisons.push(compare_golden("human.txt", &expected_human, human_txt)?);
+        comparisons.push(compare_golden(
+            fixture,
+            "human.txt",
+            &expected_human,
+            human_txt,
+        )?);
     }
     let expected_human_full = expected.join("human-full.txt");
     if expected_human_full.exists() {
         comparisons.push(compare_golden(
+            fixture,
             "human-full.txt",
             &expected_human_full,
             human_full_txt,
@@ -1289,6 +1316,7 @@ fn fixture_golden_comparisons(
 }
 
 fn compare_golden(
+    fixture: &str,
     surface: &'static str,
     expected: &Path,
     actual: &Path,
@@ -1301,15 +1329,25 @@ fn compare_golden(
             normalize_check_json_golden_document(&actual_text),
         )
     } else {
-        (expected_text, actual_text)
+        (
+            mask_repair_refusal_reason(&expected_text),
+            mask_repair_refusal_reason(&actual_text),
+        )
     };
     let normalized_expected = normalize_golden_text(&expected_text);
     let normalized_actual = normalize_golden_text(&actual_text);
+    let aliased = surface != "check.json"
+        && transitional_refusal_aliases_apply(
+            fixture,
+            surface,
+            &normalized_expected,
+            &normalized_actual,
+        );
     Ok(GoldenComparison {
         surface,
         expected: expected.to_path_buf(),
         actual: actual.to_path_buf(),
-        matches: normalized_expected == normalized_actual,
+        matches: aliased || normalized_expected == normalized_actual,
         first_difference: first_line_difference(&normalized_expected, &normalized_actual),
     })
 }
@@ -1428,6 +1466,191 @@ fn split_compact_root_object_closer(value: &str) -> String {
         split.push('\n');
     }
     split
+}
+
+/// Marker that opens the human screen's repair-start refusal sentence.
+const REPAIR_REFUSAL_MARKER: &str = "no repair start offered: ";
+
+/// One `RepairRouteRefusal` variant's stable opening, and the evidence list
+/// (if any) that must stay compared.
+struct RefusalRule {
+    /// Fixed opening of the variant's sentence. It is the variant discriminator
+    /// and is always compared verbatim.
+    prefix: &'static str,
+    /// When set, a missing-evidence list follows this marker (empty means the
+    /// list starts right after `prefix`) and stays compared verbatim.
+    list_marker: Option<&'static str>,
+    /// Text that ends the list and starts the maskable trailing advice.
+    list_end: &'static str,
+}
+
+const fn rule(prefix: &'static str) -> RefusalRule {
+    RefusalRule {
+        prefix,
+        list_marker: None,
+        list_end: "",
+    }
+}
+
+/// Mirrors the arms of `RepairRouteRefusal::advisory`
+/// (crates/ripr/src/app/navigation.rs). A reason that matches no rule is
+/// compared verbatim, so a new or heavily reworded variant is visible golden
+/// drift that has to be re-blessed and added here, not silently masked.
+const REPAIR_REFUSAL_RULES: &[RefusalRule] = &[
+    rule("this finding has no gap ID"),
+    rule("ripr found no seam in this finding's file to bind it to"),
+    rule("several seams bind this finding"),
+    rule("nothing to repair here"),
+    rule("`ripr check` reads a gap or limit for this change"),
+    rule("the seam inventory behind `ripr repair`"),
+    rule("the seam budget left"),
+    rule("the root's config could not be read"),
+    rule("classifying the finding's seams failed"),
+    rule("ripr cannot build a repair packet for this finding yet because the static evidence"),
+    RefusalRule {
+        prefix: "ripr cannot build a repair packet for this finding yet because it is still missing: ",
+        list_marker: Some(""),
+        list_end: "; follow the Next step above",
+    },
+    RefusalRule {
+        prefix: "a related test already reaches the changed boundary input",
+        list_marker: Some(" It is also still missing: "),
+        list_end: ". Follow the Next step above",
+    },
+];
+
+/// Mask the explanatory prose of the repair-start refusal sentence in human
+/// goldens, keeping the variant and its evidence list compared.
+///
+/// The prose after `no repair start offered:` is plain language that focused
+/// tests assert directly. Comparing it verbatim made every wording improvement
+/// re-bless one line in each of hundreds of fixtures (#10702). Masking the
+/// whole tail also hid a refusal changing from one variant to another, so each
+/// known variant keeps its fixed opening (the discriminator) and, for the
+/// not-ready variants, the `still missing:` list; only the text around them is
+/// replaced by `<reason>`. A repair start that flips to a refusal, or the
+/// refusal line disappearing, is also still drift.
+fn mask_repair_refusal_reason(value: &str) -> String {
+    let mut masked = String::with_capacity(value.len());
+    for segment in value.split_inclusive('\n') {
+        let indent = segment.len() - segment.trim_start().len();
+        let (head, rest) = segment.split_at(indent);
+        let Some(reason) = rest.strip_prefix(REPAIR_REFUSAL_MARKER) else {
+            masked.push_str(segment);
+            continue;
+        };
+        let body_end = reason.trim_end_matches(['\r', '\n']).len();
+        let (body, ending) = reason.split_at(body_end);
+        masked.push_str(head);
+        masked.push_str(REPAIR_REFUSAL_MARKER);
+        masked.push_str(&mask_refusal_body(body));
+        masked.push_str(ending);
+    }
+    masked
+}
+
+const SEAMS_UNTIED_OPENING: &str = transitional::SEAMS_UNTIED;
+
+/// Whether `actual` differs from `expected` (both already refusal-masked) only
+/// by refusal openings approved for this exact `fixture/surface` in
+/// `transitional::MIGRATIONS`. A migration to the exposed opening also needs
+/// the expected golden to say `Static exposure: exposed` itself.
+fn transitional_refusal_aliases_apply(
+    fixture: &str,
+    surface: &str,
+    expected: &str,
+    actual: &str,
+) -> bool {
+    let key = format!("{fixture}/{surface}");
+    let approved: Vec<&transitional::Migration> = transitional::MIGRATIONS
+        .iter()
+        .filter(|migration| migration.surfaces.contains(&key.as_str()))
+        .collect();
+    if approved.is_empty() {
+        return false;
+    }
+    let expected_lines: Vec<&str> = expected.split('\n').collect();
+    let actual_lines: Vec<&str> = actual.split('\n').collect();
+    if expected_lines.len() != actual_lines.len() {
+        return false;
+    }
+    let exposed_in_expected = expected_lines
+        .iter()
+        .any(|line| line.trim_start().starts_with("Static exposure: exposed"));
+    expected_lines.iter().zip(&actual_lines).all(|(old, new)| {
+        if old == new {
+            return true;
+        }
+        // The opening may move, the line's indentation may not.
+        let indent = |line: &str| line[..line.len() - line.trim_start().len()].to_string();
+        if indent(old) != indent(new) {
+            return false;
+        }
+        let (Some(old_body), Some(new_body)) = (
+            old.trim_start().strip_prefix(REPAIR_REFUSAL_MARKER),
+            new.trim_start().strip_prefix(REPAIR_REFUSAL_MARKER),
+        ) else {
+            return false;
+        };
+        approved.iter().any(|migration| {
+            old_body.starts_with(migration.old)
+                && new_body.starts_with(migration.new)
+                && (migration.new != transitional::EXPOSED || exposed_in_expected)
+        })
+    })
+}
+
+/// Replace the seam count of the untied-seams opening so the count (which
+/// moves with unrelated seams) is not golden-pinned.
+fn normalize_seam_count(body: &str) -> Option<String> {
+    let rest = body.strip_prefix("ripr found ")?;
+    let digits = rest.chars().take_while(char::is_ascii_digit).count();
+    if digits == 0 {
+        return None;
+    }
+    let after = &rest[digits..];
+    let after = after
+        .strip_prefix(" seams")
+        .or_else(|| after.strip_prefix(" seam"))?;
+    after.strip_prefix(
+        " in this finding's file, but could not tie one to this finding's changed line",
+    )?;
+    Some(format!("{SEAMS_UNTIED_OPENING}<reason>"))
+}
+
+fn mask_refusal_body(body: &str) -> String {
+    if let Some(masked) = normalize_seam_count(body) {
+        return masked;
+    }
+    for rule in REPAIR_REFUSAL_RULES {
+        let Some(after) = body.strip_prefix(rule.prefix) else {
+            continue;
+        };
+        let mut out = String::from(rule.prefix);
+        let Some(marker) = rule.list_marker else {
+            out.push_str("<reason>");
+            return out;
+        };
+        let list_start = if marker.is_empty() {
+            Some(0)
+        } else {
+            after.find(marker)
+        };
+        match list_start {
+            Some(start) => {
+                if !marker.is_empty() {
+                    out.push_str("<reason>");
+                }
+                let tail = &after[start..];
+                let end = tail.find(rule.list_end).unwrap_or(tail.len());
+                out.push_str(&tail[..end]);
+                out.push_str("<reason>");
+            }
+            None => out.push_str("<reason>"),
+        }
+        return out;
+    }
+    body.to_string()
 }
 
 fn normalize_check_json_golden_document(value: &str) -> String {
@@ -2478,6 +2701,9 @@ pub(crate) fn fixtures_with_args(args: &[String]) -> Result<(), String> {
             println!(
                 "       cargo xtask fixtures new <name> — scaffold a new fixture directory with a seeded golden (#2445)"
             );
+            println!(
+                "       cargo xtask fixtures refresh-identity <typescript|python> — re-derive installed-journey digests, snapshot ids and corpus bindings after a dependency bump (#9261)"
+            );
             println!();
             println!("Without a name, runs all fixtures. With a name, runs only that fixture.");
             println!("Use `new <name>` to scaffold a new fixture directory.");
@@ -2488,6 +2714,9 @@ pub(crate) fn fixtures_with_args(args: &[String]) -> Result<(), String> {
                 .get(1)
                 .ok_or_else(|| "fixtures new requires a <name> argument".to_string())?;
             return fixtures_new(name);
+        }
+        if sub == "refresh-identity" {
+            return crate::fixture_contracts::fixtures_refresh_identity(&args[1..]);
         }
     }
     // Fall through to the existing runner (pass the first arg as the optional fixture name).
@@ -3055,6 +3284,268 @@ mod tests {
         );
     }
 
+    #[test]
+    fn refusal_reason_wording_is_masked_but_the_decision_is_pinned() {
+        let wrap = |reason: &str| {
+            format!("Next:\n  ripr explain x\n  no repair start offered: {reason}\nMore:\n")
+        };
+        let canonical =
+            wrap("this finding has no gap ID, so old words; follow the Next step above");
+        let reworded = wrap("this finding has no gap ID, so new words");
+        assert_eq!(
+            mask_repair_refusal_reason(&canonical),
+            mask_repair_refusal_reason(&reworded),
+            "a reworded refusal must not read as golden drift"
+        );
+        // Negative: a variant change is drift even though both are refusals.
+        let no_seam = wrap("ripr found no seam in this finding's file to bind it to, so new words");
+        assert_ne!(
+            mask_repair_refusal_reason(&canonical),
+            mask_repair_refusal_reason(&no_seam)
+        );
+        // Negative: an unknown reason is compared verbatim.
+        assert_ne!(
+            mask_repair_refusal_reason(&wrap("something unmapped one")),
+            mask_repair_refusal_reason(&wrap("something unmapped two"))
+        );
+        // The `still missing:` list stays compared; the trailing advice does not.
+        let missing = |list: &str, advice: &str| {
+            wrap(&format!(
+                "ripr cannot build a repair packet for this finding yet because it is still missing: {list}; follow the Next step above{advice}"
+            ))
+        };
+        assert_eq!(
+            mask_repair_refusal_reason(&missing("a; b", ", then rerun")),
+            mask_repair_refusal_reason(&missing("a; b", ", reworded"))
+        );
+        assert_ne!(
+            mask_repair_refusal_reason(&missing("a; b", "")),
+            mask_repair_refusal_reason(&missing("a; c", ""))
+        );
+        // A not-ready refusal with an empty list is a different variant.
+        assert_ne!(
+            mask_repair_refusal_reason(&missing("a", "")),
+            mask_repair_refusal_reason(&wrap(
+                "ripr cannot build a repair packet for this finding yet because the static evidence is thin"
+            ))
+        );
+        // The boundary variant keeps its optional `also still missing` list.
+        let boundary = |also: &str, advice: &str| {
+            wrap(&format!(
+                "a related test already reaches the changed boundary input, but words, yet.{also} Follow the Next step above{advice}"
+            ))
+        };
+        assert_eq!(
+            mask_repair_refusal_reason(&boundary("", ", then x")),
+            mask_repair_refusal_reason(&boundary("", ", then y"))
+        );
+        assert_ne!(
+            mask_repair_refusal_reason(&boundary("", "")),
+            mask_repair_refusal_reason(&boundary(" It is also still missing: q.", ""))
+        );
+        assert_ne!(
+            mask_repair_refusal_reason(&boundary(" It is also still missing: q.", "")),
+            mask_repair_refusal_reason(&boundary(" It is also still missing: r.", ""))
+        );
+        // Negative: a repair start that flips to a refusal is still drift.
+        let offered = "Next:\n  ripr explain x\n  ripr repair abc --root r\nMore:\n";
+        assert_ne!(
+            mask_repair_refusal_reason(offered),
+            mask_repair_refusal_reason(&canonical)
+        );
+        // Negative: a refusal that disappears is still drift.
+        let absent = "Next:\n  ripr explain x\nMore:\n";
+        assert_ne!(
+            mask_repair_refusal_reason(absent),
+            mask_repair_refusal_reason(&canonical)
+        );
+        // Only the marker line is masked; prose elsewhere stays compared, and
+        // CRLF and a missing final newline are preserved.
+        assert_ne!(
+            mask_repair_refusal_reason("a\n  no repair start offered: x\n"),
+            mask_repair_refusal_reason("b\n  no repair start offered: x\n")
+        );
+        assert_eq!(
+            mask_repair_refusal_reason(
+                "  no repair start offered: several seams bind this finding, x\r\n"
+            ),
+            "  no repair start offered: several seams bind this finding<reason>\r\n"
+        );
+        assert_eq!(
+            mask_repair_refusal_reason(
+                "  no repair start offered: several seams bind this finding"
+            ),
+            "  no repair start offered: several seams bind this finding<reason>"
+        );
+    }
+
+    #[test]
+    fn compare_golden_masks_human_refusal_prose_but_not_variant_or_check_json() -> Result<(), String>
+    {
+        let dir = unique_temp_path("10702-compare-golden");
+        std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+        let write = |name: &str, text: &str| -> Result<std::path::PathBuf, String> {
+            let path = dir.join(name);
+            std::fs::write(&path, text).map_err(|err| err.to_string())?;
+            Ok(path)
+        };
+        let line = |reason: &str| format!("Next:\n  no repair start offered: {reason}\n");
+        let expected = write(
+            "expected.txt",
+            &line(
+                "ripr cannot build a repair packet for this finding yet because it is still missing: a; b; follow the Next step above, then rerun `ripr check`",
+            ),
+        )?;
+        let reworded = write(
+            "reworded.txt",
+            &line(
+                "ripr cannot build a repair packet for this finding yet because it is still missing: a; b; follow the Next step above, then try again",
+            ),
+        )?;
+        let other_list = write(
+            "other_list.txt",
+            &line(
+                "ripr cannot build a repair packet for this finding yet because it is still missing: a; c; follow the Next step above",
+            ),
+        )?;
+        let other_variant = write(
+            "other_variant.txt",
+            &line("this finding has no gap ID, so there is no seam"),
+        )?;
+        let matches = |actual: &Path, surface: &'static str| -> Result<bool, String> {
+            Ok(compare_golden("unlisted_fixture", surface, &expected, actual)?.matches)
+        };
+        assert!(matches(&reworded, "human.txt")?, "reworded prose is masked");
+        assert!(
+            !matches(&other_list, "human.txt")?,
+            "missing list is pinned"
+        );
+        assert!(!matches(&other_variant, "human.txt")?, "variant is pinned");
+        // check.json is never refusal-masked: the same text diverges there.
+        assert!(!matches(&reworded, "check.json")?, "check.json is unmasked");
+        assert!(matches(&expected, "check.json")?);
+
+        // Transitional migrations (#10702): only an approved fixture/surface
+        // with an approved old -> new opening passes.
+        let exposed_header = "Static exposure: exposed (severity: info)\n";
+        let write_exposed = |name: &str, reason: &str| -> Result<std::path::PathBuf, String> {
+            write(name, &format!("{exposed_header}{}", line(reason)))
+        };
+        let exposed_line =
+            "nothing to repair here; the related tests already notice this change (exposed)";
+        let untied_line = "ripr found 4 seams in this finding's file, but could not tie one to this finding's changed line, so y";
+        let one_seam_line = "ripr found 1 seam in this finding's file, but could not tie one to this finding's changed line, so z";
+        let old_no_seam = write_exposed(
+            "old_no_seam.txt",
+            "ripr found no seam in this finding's file to bind it to, so x",
+        )?;
+        let exposed = write_exposed("exposed.txt", exposed_line)?;
+        let untied = write_exposed("untied.txt", untied_line)?;
+        let one_seam = write_exposed("one_seam.txt", one_seam_line)?;
+        let compare = |fixture: &str,
+                       exp: &Path,
+                       act: &Path,
+                       surface: &'static str|
+         -> Result<bool, String> {
+            Ok(compare_golden(fixture, surface, exp, act)?.matches)
+        };
+        // Real approved identities, one per migration.
+        let no_seam_exposed = "asserting_same_file_test_positive_control";
+        let no_seam_untied = "assertion_shaped_control_production_caller";
+        let missing_exposed = "assertion_shaped_control_production_owner";
+        let inventory_exposed = "currentness_matrix_python_deleted_statement";
+        let no_gap_exposed = "currentness_matrix_typescript_deleted_statement";
+        assert!(compare(
+            no_seam_exposed,
+            &old_no_seam,
+            &exposed,
+            "human.txt"
+        )?);
+        assert!(compare(no_seam_untied, &old_no_seam, &untied, "human.txt")?);
+        assert!(
+            compare(no_seam_untied, &old_no_seam, &one_seam, "human.txt")?,
+            "singular seam"
+        );
+        let inventory = write_exposed(
+            "inventory.txt",
+            "the seam inventory behind `ripr repair` and `ripr agent repair --phase before` could not be built",
+        )?;
+        assert!(
+            compare(inventory_exposed, &inventory, &exposed, "human.txt")?,
+            "inventory -> exposed"
+        );
+        let no_gap = write_exposed(
+            "no_gap.txt",
+            "this finding has no gap ID, so there is no seam",
+        )?;
+        assert!(
+            compare(no_gap_exposed, &no_gap, &exposed, "human.txt")?,
+            "no gap ID -> exposed"
+        );
+        let missing = write_exposed(
+            "missing.txt",
+            "ripr cannot build a repair packet for this finding yet because it is still missing: a; b; follow the Next step above",
+        )?;
+        assert!(
+            compare(missing_exposed, &missing, &exposed, "human.txt")?,
+            "still missing -> exposed"
+        );
+        // Negatives: an unapproved fixture, the wrong surface, check.json, an
+        // approved fixture with a pair it is not approved for, and pairs that
+        // are not aliases at all.
+        assert!(
+            !compare("unlisted_fixture", &old_no_seam, &exposed, "human.txt")?,
+            "unapproved fixture"
+        );
+        assert!(
+            !compare(no_seam_exposed, &old_no_seam, &exposed, "human-full.txt")?,
+            "unapproved surface"
+        );
+        assert!(
+            !compare(no_seam_exposed, &old_no_seam, &exposed, "check.json")?,
+            "check.json"
+        );
+        assert!(
+            !compare(no_seam_exposed, &old_no_seam, &untied, "human.txt")?,
+            "approved fixture, other pair"
+        );
+        assert!(
+            !compare(inventory_exposed, &inventory, &untied, "human.txt")?,
+            "inventory -> untied"
+        );
+        assert!(
+            !compare(no_seam_untied, &untied, &exposed, "human.txt")?,
+            "new -> new"
+        );
+        assert!(
+            !compare(no_seam_exposed, &exposed, &untied, "human.txt")?,
+            "exposed is not an alias source"
+        );
+        assert!(!compare(
+            no_seam_exposed,
+            &old_no_seam,
+            &other_variant,
+            "human.txt"
+        )?);
+        // The exposed target also needs the expected golden to say exposed.
+        let old_no_seam_not_exposed = write(
+            "old_no_seam_not_exposed.txt",
+            &line("ripr found no seam in this finding's file to bind it to, so x"),
+        )?;
+        let exposed_no_header = write("exposed_no_header.txt", &line(exposed_line))?;
+        assert!(
+            !compare(
+                no_seam_exposed,
+                &old_no_seam_not_exposed,
+                &exposed_no_header,
+                "human.txt"
+            )?,
+            "expected must say exposed"
+        );
+        std::fs::remove_dir_all(&dir).map_err(|err| err.to_string())?;
+        Ok(())
+    }
+
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// #3054 root cause: the previous guard was `if !binary.exists()`, so a
@@ -3211,6 +3702,66 @@ mod tests {
     #[test]
     fn fixture_cache_pin_names_the_variable_ripr_resolves() {
         assert_eq!(FIXTURE_CACHE_DIR_ENV, "RIPR_CACHE_DIR");
+    }
+
+    /// #10702: each listed no-seam surface approves exactly one new opening.
+    #[test]
+    fn transitional_no_seam_surface_approves_only_its_own_new_opening() -> Result<(), String> {
+        let line = |body: &str| format!("Start here:\n  {REPAIR_REFUSAL_MARKER}{body}\nEnd");
+        let old = line(&format!("{} so there is no seam", transitional::NO_SEAM));
+        let untied = line(&format!("{}<reason>", transitional::SEAMS_UNTIED));
+        let gripped = line(&format!("{} but", transitional::SEAM_GRIPPED));
+        let untied_list = transitional::NO_SEAM_UNTIED_SURFACES;
+        let gripped_list = transitional::NO_SEAM_GRIPPED_SURFACES;
+        if untied_list.len() != 43 || gripped_list.len() != 93 {
+            return Err(format!(
+                "expected 43 untied and 93 gripped surfaces, got {} and {}",
+                untied_list.len(),
+                gripped_list.len()
+            ));
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        for key in untied_list.iter().chain(gripped_list) {
+            if !seen.insert(*key) {
+                return Err(format!("`{key}` is listed more than once or in both lists"));
+            }
+        }
+        let split = |key: &str| -> Result<(String, String), String> {
+            key.split_once('/')
+                .map(|(f, sfc)| (f.to_string(), sfc.to_string()))
+                .ok_or_else(|| format!("malformed surface key `{key}`"))
+        };
+        for (list, own, other) in [
+            (untied_list, &untied, &gripped),
+            (gripped_list, &gripped, &untied),
+        ] {
+            for key in list {
+                let (fixture, surface) = split(key)?;
+                if !transitional_refusal_aliases_apply(&fixture, &surface, &old, own) {
+                    return Err(format!("`{key}` must approve its own new opening"));
+                }
+                if transitional_refusal_aliases_apply(&fixture, &surface, &old, other) {
+                    return Err(format!("`{key}` must reject the other new opening"));
+                }
+            }
+        }
+        let reindented = gripped.replace("  no repair start", "    no repair start");
+        if reindented == gripped
+            || transitional_refusal_aliases_apply("match_arm_blind", "human.txt", &old, &reindented)
+        {
+            return Err("an indentation change must not pass the alias".to_string());
+        }
+        let tabbed = gripped.replace("  no repair start", "\t no repair start");
+        if tabbed == gripped
+            || tabbed.len() != gripped.len()
+            || transitional_refusal_aliases_apply("match_arm_blind", "human.txt", &old, &tabbed)
+        {
+            return Err("an equal-length whitespace substitution must not pass".to_string());
+        }
+        if transitional_refusal_aliases_apply("match_arm_blind", "check.json", &old, &gripped) {
+            return Err("an unlisted surface stays strict".to_string());
+        }
+        Ok(())
     }
 
     #[test]

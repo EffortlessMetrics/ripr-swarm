@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -17,7 +17,7 @@
+ }
+ 
+ pub fn rounding_unit(value: u64) -> u64 {
+-    value / 10 * 10
++    value / 5 * 5
+ }
+ 
+ #[cfg(test)]

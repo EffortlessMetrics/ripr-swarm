@@ -1,0 +1,10 @@
+diff --git a/idioms/legacy.py b/idioms/legacy.py
+--- a/idioms/legacy.py
++++ b/idioms/legacy.py
+@@ -1,5 +1,5 @@
+ def legacy_rate():
+-    return 7
++    return 8
+ 
+ 
+ def beta_enabled():

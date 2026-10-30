@@ -1,0 +1,9 @@
+diff --git a/shapes/models.py b/shapes/models.py
+--- a/shapes/models.py
++++ b/shapes/models.py
+@@ -22,4 +22,4 @@
+ 
+     @staticmethod
+     def parse_amount(text):
+-        return int(text.strip())
++        return int(text.strip()) + 1

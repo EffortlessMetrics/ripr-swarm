@@ -1,0 +1,12 @@
+diff --git a/src/loadOrDefault.ts b/src/loadOrDefault.ts
+index 0000000..1111111 100644
+--- a/src/loadOrDefault.ts
++++ b/src/loadOrDefault.ts
+@@ -2,6 +2,6 @@
+   try {
+     return await read();
+   } catch {
+-    return fallback;
++    return fallback + 1;
+   }
+ }

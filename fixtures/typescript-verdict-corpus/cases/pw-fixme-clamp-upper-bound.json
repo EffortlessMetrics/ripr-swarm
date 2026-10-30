@@ -1,0 +1,44 @@
+{
+  "case_id": "pw-fixme-clamp-upper-bound",
+  "subject_id": "authored-ts-playwright-units",
+  "diff": "cases/pw-fixme-clamp-upper-bound.diff",
+  "anchor": {
+    "file": "src/skipped.ts",
+    "line": 2
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "playwright_test_fixme_only_upper_test",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx playwright test",
+    "toolchain": "Node.js v22.22.0, @playwright/test 1.62.1 (no browser launched), typescript 5.9, x86_64-linux; edit applied by hand to the whole package",
+    "mutants": [
+      {
+        "replacement": "return Math.min(200, Math.max(0, n));",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "the edit itself: The only test of the upper clamp is test.fixme, which Playwright reports as skipped."
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The only test of the upper clamp is test.fixme, which Playwright reports as skipped. The edited package's test command still passes, so no test notices the change and a gap is the honest verdict.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

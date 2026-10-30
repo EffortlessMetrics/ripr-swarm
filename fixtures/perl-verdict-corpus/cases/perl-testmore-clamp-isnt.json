@@ -57,7 +57,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-testmore-clamp-isnt.json",
-    "sha256": "21aa3a126d49c07e0dc10caf929f8b64e00993649c9dbe289c76f15209066f13",
+    "sha256": "2e6a5581ea67ec8a07246b1f08c90c1a79d6a9e83c96d66502aa4331b491dd55",
     "provenance": "producer"
   }
 }

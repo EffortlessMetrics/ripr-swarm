@@ -1,0 +1,44 @@
+{
+  "case_id": "spec0048-flow-unread-constant",
+  "subject_id": "authored-spec0048-const-flow",
+  "diff": "cases/spec0048-flow-unread-constant.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 51
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "behavior_selector_const",
+  "test_shape": "selector_const_never_read",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "pub const UNUSED_RETRIES: u32 = 4;",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "the edit itself: no function reads unused_retries, so the edit changes no behavior any test can observe"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "No function reads UNUSED_RETRIES, so the edit changes no behavior any test can observe. An unread constant keeps its abstention.",
+  "labeling_observation": {
+    "ripr_commit": "01097634",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

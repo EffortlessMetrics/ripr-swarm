@@ -53,6 +53,30 @@ The adapter may observe project marker filenames, but it does not parse
 `pyproject.toml` build metadata, install requirements, read virtualenv contents,
 read generated stubs, or consume runtime test output.
 
+Diff mode reads the workspace under a file-count cap
+(`RIPR_PYTHON_MAX_WORKSPACE_FILES`) and byte budgets. The count cap refuses only
+unchanged context: changed `.py` files are always kept. When the workspace
+exceeds the cap, the rest of it is filled from the files that may reach the diff
+(#10785): every `conftest.py` and the package `__init__.py` files above a
+changed file; files whose text names a name a changed file defines (a `def` or
+`class` name at any depth, a top-level assignment target, a word of a decorator
+route literal) or a pytest fixture a reaching test module or `conftest.py`
+defines over such a name (a `fixture as` decorator alias and an `import ... as`
+alias of the name count, and fixture hosts are rescanned as fixture names join);
+for a module-level change, files that import the
+changed module, and for a `__dunder__` method change, files that import from a
+package above it; and the workspace modules that a reaching test or a changed
+file imports. A refused
+file outside that set names nothing a related-test relation could match, so it
+does not make the run partial. A refused file inside it is a named
+`diff_scope_oversized` limitation that counts the refused reaching files and
+says changed files were kept. A changed route literal with no fixed word in it
+(`@app.get("/")`, `@app.get("/{item_id}")`), an unreadable changed file, a
+fixture closure that does not settle, or a workspace past the scan's own file
+bound keeps the earlier behavior: the earliest paths fill the cap and
+every refusal is disclosed. The byte budgets still apply to changed files and
+disclose their own refusals.
+
 ## Owner Facts
 
 Owners the adapter must recognise:
@@ -91,8 +115,11 @@ placements retain a related pointer but cannot contribute an oracle or boundary
 input. Function-level unittest skip wraps the function under either runner;
 unittest class skip flags and expected-failure metadata qualify only TestCase
 tests. Those flags do not suppress ordinary pytest assertions. The relation is
-`test_activation_unestablished`. Conditions are not evaluated: even a visible
-false conditional skip remains uncertain within this bounded static contract.
+`test_activation_unestablished`. Conditions are not evaluated: a visible false
+conditional skip on a name or comparison remains uncertain within this bounded
+static contract. The exception is a condition that is the boolean literal that
+never triggers the mark (`skipif(False)`), which leaves the test active
+(RIPR-SPEC-0238 rule 24).
 Imported decorator aliases use the last explicit binding in the declaration-time
 module/class scope, before test-body imports or later imports can shadow them.
 A canonical-looking name explicitly imported from another module is not a
@@ -191,6 +218,10 @@ status-code and exit-code assertions, broad smoke assertions, reach-only tests,
 mock expectations, and custom `assert_*` helpers.
 
 - bare `assert expr` â†’ smoke oracle
+  - exception (#9542): a bare `assert f(lit, ..)` / `assert not f(lit, ..)` whose
+    single resolved workspace function owner provably returns `bool` is an
+    exact pin, read as `f(lit, ..) == True` / `== False`; any ambiguity, patching
+    or non-literal argument stays smoke
 - `assert a == b` â†’ exact-value oracle; `assert a != b` and other
   non-equality comparisons â†’ relational check, weak
 - `assert isinstance(value, SomeType)` â†’ relational check, weak
@@ -241,6 +272,18 @@ directory named `src` (the PyPA src layout, including monorepo
 root, so `from pricing.discounts import f` identifies `src/pricing/discounts.py`
 while the repository-relative `src.pricing.discounts` form still matches. Bare
 file stems and arbitrary path suffixes never count as module identity.
+A test that imports a free-function owner's name from a workspace module that
+defines its own function of that name, when no import reaches the owner's module,
+is not related to the owner even if its call text matches the name (#8759). The
+evidence must be affirmative: the import's source module is exactly the module
+path of another workspace source file defining the same free function. A facade
+or package re-export, an unresolved or third-party source, a source the owner's
+path could also be spelled as under an import root the adapter cannot see, an
+ambiguous src-layout name, a test with no import of the name, a star import, and
+a test in the owner's own file keep the name-based relation.
+Only top-level free functions are gated, and only top-level imports are read: a
+same-named wrapper that delegates to the owner, or an import under `try`/`if`,
+is not modeled, so such a test can read as unrelated.
 
 A package whose `__init__.py` re-exports a top-level function or class under
 its own name is also an import path of that owner: `from .time import
@@ -295,6 +338,36 @@ Known limits, all weak-only: a module-level rebinding such as
 `helper = wrap(helper)` is not detected, and a call inside a nested `def` or
 lambda counts as an edge of the enclosing owner.
 
+The call-site lexer behind direct owner calls and helper edges hides comment,
+string and docstring text. A backslash continues an ordinary string over the
+next line break, which may be CRLF, so a quoted `"""` on the continuation line
+opens nothing and a call there stays hidden. The `{...}` replacement fields of
+a triple-quoted f-string (prefix `f`, `F`, `rf`, `fr`, any case) are code: a
+call on a line of a multiline field is visible, while the string's own text, a
+`{{` escape, a string nested in a field (single-line or a complete
+different-delimiter triple-quoted literal, newlines and braces included), the
+literal format-spec text after a field's top-level `:` (only a nested `{...}`
+inside the spec is code again), and a field not closed before the string ends
+stay hidden (#8787). A backslash before a brace in an f-string is a literal
+character on its own and the brace lexes normally. A nested f-string literal (up
+to four levels) in a field has its own replacement fields scanned by the same
+rules, so only real field code is visible; its own text, `{{`, spec text, and a
+plain or `b` nested literal are hidden locally while a later call in the same
+field stays visible. The scanner gives up and hides the rest of the text only
+for a `#` comment in field expression text (Python 3.12), the string's own
+delimiter nested in a field (3.12), a single-line f-string with a field of its
+own inside a field (3.12 same-quote nesting), a field or nested literal that is
+not closed, and nesting deeper than four levels. A colon that may or may not be
+the spec colon hides. The triple-quoted scanning here gives up and hides
+rather than inventing a call for the cases above. Known limits: inside
+triple-quoted f-strings a replacement field on the same line as the opening
+quote is hidden by the line-prefix quote check, and a real call after a field the
+scanner gave up on is hidden too (misses). Separately, and not changed by this
+change, top-level single-line f-strings that use Python 3.12 same-quote nesting
+(`f"{ "helper(1)" }"`, `f"{y["helper(1)"]}"`) or a newline inside a
+replacement field (`f"{\n y\n}  helper(1)"`) can expose text that is not a
+call (#9230).
+
 A pytest test that names a module-level `@pytest.fixture` function (in its own
 module or a `conftest.py` up its directory chain, nearest wins) as a parameter
 is related, with the weak `fixture_owner_call` relation, when that fixture's
@@ -303,7 +376,10 @@ renamed fixture (`name=`) and a test that rebinds the parameter name make no
 edge, nor does a parameter that a pytest `parametrize` names as an argname,
 read syntactically (variable argvalues, `pytest.param(marks=...)` and
 unreadable `indirect` values still count) unless `indirect=` is the literal
-`True` or a literal list naming it. A class-level `parametrize` (on the test's
+`True` or a literal list naming it, directly or through one never-rebound
+module `NAME = <value>` binding (#10685). The mark, its argnames and its
+`indirect` are read through imports and module names as RIPR-SPEC-0238 L8
+describes. A class-level `parametrize` (on the test's
 class or a local ancestor) counts the same way. When a file defines the same
 fixture name twice the last definition wins, and the analyzer attaches at most
 eight fixture definitions to one test (an implementation limit, not a pytest
@@ -340,7 +416,45 @@ comments, strings, and docstrings:
   `module.Class(...)`) relates `__init__`, `__new__`, and `__post_init__` as
   `constructor_call`, an oracle-eligible relation; for any other dunder it
   relates as `dunder_protocol`, which stays uncertain because syntax cannot
-  bind `obj[key] = value` or `a == b` to the constructed instance. A dunder
+  bind `obj[key] = value` or `a == b` to the constructed instance. The one
+  exception is a builtin protocol entry applied to a sole argument bound to the
+  owner class (`reversed(Class(0))` for `__reversed__`, likewise `len`, `bool`,
+  `iter`, `next`, `hash`, `str`, `repr`): it relates as `protocol_entry_call`,
+  an oracle-eligible relation, and only when an assertion takes the entry as an
+  asserted operand (an unasserted entry elsewhere in the body does not relate).
+  The entry, the `list`/`tuple` wrapper and the receiver must keep their
+  bindings: a builtin shadowed by an import, a module or test-local binding
+  (including tuple and annotated targets), or a receiver rebound by a chained,
+  bracketed (spaced or nested too: `( r), x = ...`, `((r), x) = ...`,
+  `for ((r), x) in ...`; #9178), loop, `with`, walrus or augmented target
+  (`(r) += ...` and `(r): list = ...` included), or not the whole bound value,
+  is not credited, as is an augmented assignment after a header or `;`
+  (`if c: r += 1`), an `import r` or `nonlocal r`, and any `case` pattern line that
+  mentions the name other than as a dotted value or class pattern (`case (r):`,
+  `case {"k": r}:`, `case Foo(x=r):`; a guard read such as `case x if r:` is
+  demoted too, a deliberate miss). Within one
+  bracketed target, a comment, a backslash continuation or a run of blanks
+  before the name, its closing bracket or the `=` / `in` / `as` after it, and
+  a run of blanks after `for`, `as`, `def` or `class`, do not hide the rebind.
+  A `for` or `as` inside a string or after a `#` comment is text, so
+  `assert "for" and ((r)) in [r]` stays a credited read. Loop-keyword masking
+  retains earlier lines for multiline literals while searching only the current
+  line; an unterminated literal supplies no parsed test or protocol-entry credit.
+  Known limits, none of
+  them closed by this: a multi-line tuple target whose earlier elements sit on
+  other lines (`(x,\n r) = ...`) is not seen, so the receiver stays credited
+  (the credit-keeping direction); and a dict key at the start of a continuation
+  line (`{\n (r): 1\n}`) reads as an annotated target and withholds credit
+  (a miss). A `:` ends a target
+  position only when it closes a compound-statement header whose brackets
+  balance outside string literals (single, double and tripled quotes, escaped
+  quotes) and comments (`if ")": ( r), x = ...` and
+  `if x == '''it's''': ( r), x = ...` rebind, a dict value `{"k": (r), 1}` does
+  not). A header whose brackets do not balance, or that is split across
+  lines, is not read as a header, so a one-line-suite rebind after it is not
+  seen and the receiver stays credited (the credit-keeping direction, a known
+  limit). Extra, keyword, starred or trailing-comma
+  arguments are not the entry and fall back to `dunder_protocol`. A dunder
   owner with no related test, in a workspace whose tests import its class,
   its module, or anything from a package above it, reads `static_unknown`
   with the `dynamic_dispatch` limit instead of `no_static_path`: the adapter
@@ -358,6 +472,121 @@ comments, strings, and docstrings:
   adapter does not see;
 - module-level owner: a local bound by an import of, or from, the owner
   module.
+
+A module-level `NAME = <literal>` edit (#9423) relates as `module_value_call`,
+an oracle-eligible relation, only to a test whose straight-line `assert`
+provably holds under the old literal and fails under the new one. The module
+binds `NAME` once (no `global`, walrus, attribute write, star import or dynamic
+namespace writer), the edit is the file's only changed line, no test file
+writes the attribute, and the test keeps its imported names. Reader functions
+must retain their binding too: same-module walrus/attribute replacements and
+workspace foreign writes withhold the reader's credit. Attribute targets come
+from the parsed statement tree, including parenthesized, unpacked, annotated,
+loop/context and spaced targets; comparison reads and annotations without values
+are not writes. An unparseable foreign source retains word-based write uncertainty;
+references to its module name, malformed test/initializer/conftest files, hidden
+loader spellings or package export uncertainty withhold credit globally. An
+unreferenced malformed production module alone does not erase exact credit.
+The workspace word index is bounded; overflow withholds credit. This is a bounded
+source read, not a complete import or reflective-execution graph. The assertion
+reads `NAME` itself or calls a module function with literal arguments whose
+body is one `return` expression over its parameters, literals and `NAME`; a
+name, call, operator or value kind outside that bounded evaluator decides
+nothing and the edit keeps the `missing_import_graph` abstention. A body-only edit of
+a top-level `NAME = lambda a, b: <body>` binding (#9619) credits the same way:
+the parameters are unchanged positional ones without defaults, `*args` or
+keywords, `NAME` is bound once in the old and new module, no file writes or
+patches it, and the bound expression over the parameters and literals is inside
+the same evaluator; a test that calls `NAME` with literal arguments in a
+straight-line `assert` that holds with the old body and fails with the new one
+is the oracle, and only then is the lambda-syntax limit lifted. A changed
+parameter list, a default, a body outside the evaluator, a second binding or a
+test that shadows, patches or may skip the call keeps `unsupported_syntax`. A value no
+assertion distinguishes is never graded as a gap. A default edit of a field in
+a plain `@dataclass` class (#9619) relates the same way: the class is a
+top-level `@dataclass` or `@dataclasses.dataclass` with no arguments, bases or
+keywords, imported from `dataclasses` and bound once; its body holds only
+annotated fields, a docstring, `pass` and methods, with no `__init__`,
+`__post_init__`, `__new__` or attribute hook and no `ClassVar`, `InitVar`,
+keyword-only or `init=False` field; and the edited line swaps one literal
+default under an unchanged name and annotation. A straight-line `assert` that
+builds the class from literals, leaves the field unset and reads it through an
+undecorated one-`return` method or an attribute is the oracle when it holds with
+the old default and fails with the new one. For this read the evaluator adds floats
+(`+`, `-`, `*`, `/`, comparisons and unary signs, declining integers beyond 2^53)
+and the unshadowed one-argument builtin `round`.
+An explicit value for the field, a field default that is `field(...)` or
+computed, a method outside the evaluator, a rebound class or field, or a test
+that shadows, writes or may skip the construction keeps `decorator_indirection`.
+The class body must also run nothing the model does not evaluate: a field call
+other than `field(default=<literal>)` or `field(default_factory=list|dict|set)`
+with the builtin unbound, an annotation other than an unbound builtin name, a
+non-literal parameter default or non-builtin annotation on any method (async
+included), or a decorator other than an unbound `property`, `classmethod` or
+`staticmethod` keeps the abstention, and a test that requests a fixture is not a
+reader (directly parametrized arguments are not fixture requests).
+An operator swap among `+`, `-` and `*` in the single `return` of an
+undecorated module function that calls an imported workspace function (#9619)
+is read without following the import: the line moves only the operator, so
+the call returns the same whole number `X` before and after. The call is a bare
+name that resolves to exactly one undecorated module-level function, bound once
+and rewritten nowhere, over parameters and literals, and the other operand is
+an expression over parameters and integer literals. A straight-line
+`assert owner(<literals>) == <integer>` of a test that names the owner through
+an import it does not rebind fixes `X` through the old operator (taking the
+assertion to hold before the diff, as for any passing test), and is the oracle
+when the new operator over that `X` gives another value; only then is the
+`missing_import_graph` limit lifted. An assertion both operators satisfy, a
+non-literal, keyword or short call, a second call, a division, a changed
+operand, side or argument, a decorated, unresolved, ambiguous or rebound
+callee or owner, a patched owner, any workspace file reachable from the owner's
+or the callee's module through imports that defines `__add__`, `__sub__`,
+`__mul__` or a reflected form (its result need not be the pinned number), or a
+test that rebinds, writes or may skip keeps `missing_import_graph`. The
+guarantee is bounded: the pass does not prove the call returns an ordinary
+integer. An exact integer assertion is taken to describe the returned value,
+and the abstention covers only arithmetic defined in reachable workspace
+files. A third-party or dynamically built type with its own `+`, `-` or `*` is
+not visible to this scan, and a pinned number it produced may not behave as the
+algebra assumes. A function defined under a
+decided module-level `if sys.version_info >= (3, 0):` condition (the only
+decided shapes are Python 2/3 version tuples, with `sys` the single plain
+import) is an ordinary function owner when its name has no other live
+binding (including walrus replacements), and no module-source write or
+uncertainty may replace `sys.version_info`, including an annotated attribute
+target. A definition in the dead arm stays with the `<module>` abstention.
+The workspace pass also withholds conditional-derived owners when another file
+may replace the callable or `sys.version_info`. Physical continuation indentation
+never makes a trailing `return` safe before the asserted value read; ordinary
+multiline setup remains eligible. A generator test lends no executed-body credit.
+Formatted strings remain uncertain in this bounded admission because their
+expressions can carry generator syntax. Statement identity uses the reported
+source assertion, independently of the boolean oracle's normalized gate text.
+A workspace assignment to a function's `__code__`, `__defaults__`, `__kwdefaults__` or
+`__closure__` can replace a reader without rebinding its name, so it withholds the module
+constant's credit for scalar and table constants alike (#10626).
+
+A one-line module-level dict literal of unique `str` or `int` keys and scalar
+values (#9619) is a constant of the same kind, read only by a module function
+through `NAME.get(key[, default])` or `NAME[key]`; a test reading the table
+itself, a `bool` lookup key, a missing key without a default, a computed or
+spread entry and a multi-line literal decide nothing. The table is mutable in
+place, so credit also requires that no source mention `NAME` other than as an
+import or export, a `.get` read or a subscript read on a line that binds
+nothing (the owning module's defining statement aside): a store through a
+subscript, `update`/`setdefault`/`pop`, an alias, a renamed import, an
+f-string mention (multi-line included), a statement sharing a `;` line with an import, a lexing error, or a file using a reflective spelling (`getattr`, `dir`,
+`getmembers`, `locals`, `__globals__`, `attrgetter`, `eval`, `compile`, `inspect`, `gc`,
+`__code__`, `__defaults__`, `__kwdefaults__`, `__closure__`) that mentions the table or its
+module withholds credit. A reflective file withholds credit for the tables of every module in its import
+component (files linked by an import word naming another file's stem or package `__init__.py`, in either
+direction, plus every `conftest.py` component; import statements are read across parenthesized and backslash continuations by the lexer, so a bracket in a comment or string does not end one), because the module it reflects over may be another
+file's re-export, or be handed to it as an argument, with no word of the file naming it. A reflective
+file that also loads modules by a runtime name (`importlib`, `__import__`, `sys.modules`, `eval`, `exec`, `compile`, ...) withholds
+credit for every table. Reflection over modules outside that component keeps the credit. A definition after a `;` is discovered like one at the start of a line, so an explicit
+line continuation cannot hide a table from the foreign-store scan.
+Preceding assertions must evaluate true under the same bounded old/new scope
+before a later assertion can supply the value-flip credit.
 
 A `def name(`, `async def name(`, or `class name(` header in a test defines a
 local; it is not a call of `name`.
@@ -421,7 +650,9 @@ values defined in RIPR-SPEC-0026:
   observed at the related-test call site)
 - `opaque_custom_assertion_helper` (e.g., a related test observes the changed
   owner only through an `assert_*(...)` helper body the adapter does not
-  inspect)
+  inspect; a same-file helper that is only `assert` statements, called with
+  literal arguments from a plain test, is not this limit: see the helper
+  inlining amendment below)
 - `property_based_test` (e.g., a related test uses Hypothesis `@given(...)`
   generated inputs whose concrete discriminator coverage is not statically
   known)
@@ -485,7 +716,18 @@ parameter bound to a literal argument or literal default (positional, keyword,
 import-alias, and method calls after `self`). Literal owner arguments, and the
 boundary equality when observed, are recorded in `observed_values`. Otherwise
 the finding fails closed to `weakly_exposed` and the infection stage reads
-`weak`. When every non-literal operand is bound by some call, the boundary is
+`weak`. A rewrite that keeps the predicate true on exactly the same integers
+(`amount >= 100` -> `amount > 99`, one comparison of a name against an
+integer literal, the rest of the condition unchanged) changes no behavior,
+so a test must notice a wrong version of the new line. Python's mutation
+tool shifts a number literal up by one (mutmut `n` -> `n + 1`), and for
+`v > C` and `v <= C` (and their mirrors) that shifted bound first differs
+at `v == C + 1`. There `exposed` also needs a strong call that places the
+name at `C + 1`; otherwise the finding is `weakly_exposed` and names
+`v == C + 1` as the missing discriminator (#10842). `v >= C` and `v < C`
+shift onto the equality point and need no further row. A behavior change
+keeps the equality rule, because the equality row notices the edit itself
+(RIPR-SPEC-0238 example 39). When every non-literal operand is bound by some call, the boundary is
 named as the missing discriminator (`amount == threshold`, with the observed
 operand values in its reason). An operand ripr cannot bind (an attribute such
 as `item.on_hand`, a computed `len(name)`, a comprehension local, or a line
@@ -502,9 +744,13 @@ imported from the owner's module (`discounted_total(DISCOUNT_THRESHOLD)` or
 or its module binds that name again. The name stays unresolved when anything
 can rebind it: a second module-scope binding (including inside
 `if`/`try`/`for`/`with`), a `global` declaration or walrus target anywhere in
-the module, a star import, a module-scope `match`, any mention of a dynamic
-namespace writer (`exec`, `globals`, `vars`, `locals`, `setattr`,
-`sys.modules`, `__dict__`), a non-literal value, a parameter or local binding
+the module, a star import, a module-scope `match`, a dynamic
+namespace writer in code (`exec`, `eval`, `globals`, `vars`, `locals`,
+`setattr`, `__setattr__`, `delattr`, `reload`, `patch`, `sys.modules`,
+`__dict__`), whether called, named in an f-string, or named as a
+whitespace-free string such as `getattr(m, "exec")` (a word in a comment or in
+prose, like a docstring saying "env vars", is not a writer, #10979; a module
+the lexer rejects falls back to the whole-text scan), a non-literal value, a parameter or local binding
 of the same name in the owner, a nested `def`/`class`/`lambda` in the owner,
 or a related test file that assigns the attribute (`pricing.DISCOUNT_THRESHOLD
 = 5`). A call inside a `@pytest.mark.parametrize` (or `@mark.parametrize`)
@@ -516,10 +762,20 @@ list/tuple argvalues literal with rows of the right arity (`pytest.param(...)`
 unwrapped), stacked decorators as a product of at most 256 cases. A
 single-name list/tuple argnames takes tuple rows, as pytest unpacks them.
 Another decorator named `parametrize` (a plugin or project helper) records
-no cases. Argvalues named by a variable, `indirect=`, starred rows, a `pytest.param`
+no cases; the mark is read through imports and module names as
+RIPR-SPEC-0238 L8 describes, and a mark whose root that read cannot pin to
+pytest records none for the whole test (#10867). Argvalues named by a variable, `indirect=`, starred rows, a `pytest.param`
 with any keyword but `id=` (a `marks=` skip or xfail case may never run), a
 unittest method (pytest does not parametrize it), and an argname the test
-body may rebind leave the call unresolved. A rebinding is read from the
+body may rebind leave the call unresolved. A test whose first statement after
+a docstring unpacks one argname (`quantity, rate = case`, alone on its lines)
+reads as parametrized by the target names, each case's row split by arity,
+and the unpack is not a rebinding (#10832). Every row must be a tuple of
+scalar literals (a bare target also takes a scalar literal) and every
+decorator a pytest mark; a list row (mutable, so a fixture may change it), a
+row naming a value (which may shadow the owner), a row of another arity, a
+target that is another parameter, and a later statement that names the
+argname or rebinds a target keep the argname's cases as they are. A rebinding is read from the
 parsed test body: any assignment, tuple, loop, `with` or `except` target, an
 import or `del` of the argname drops it from the cases, and a nested `def` or
 `class`, a `match` or a star import drops all cases. Any `lambda` in the test,
@@ -558,7 +814,15 @@ Otherwise it is the `<expected value>` placeholder
 claimed. These facts are evidence only until a later
 repair-card contract supplies the test shape, verify command, receipt command,
 and edit boundaries. Heuristic-only links, no related-test paths, and static
-limits must not emit repair guidance.
+limits must not emit repair guidance. "Repair guidance" here means an
+actionable repair target: a repair card, agent packet, placement, test node,
+or verify/receipt command. It does not preclude generic non-repair-ready
+advice: for a directly resolvable plain-function owner with no statically
+linked test call, the adapter may name the owner and the honest ordered
+route (add a relevant test/assertion, run the project's native verifier,
+then refresh) while repair readiness stays suppressed (#10708). A decorated,
+routed, command-registered, or otherwise indirected owner stays silent, and a
+later transitive-reach limitation silences the advice again.
 
 ### Sink alignment visibility
 
@@ -589,12 +853,42 @@ read-out: the boolean the classifier uses is derived from the surfaced
   of the same name inside the test replaces the earlier binding, and the
   test's own `import pkg.mod as alias` is not a rebinding of `alias`. Those calls also bind boundary activation, so the
   relational-boundary gate still applies to them.
+  `strong_oracle_observes_owner_protocol_entry` (`direct`) credits a dunder
+  method owner whose strong oracle takes the builtin protocol entry on a
+  receiver bound to its class as an asserted operand
+  (`list(reversed(Range(0))) == []`), directly or under `list`/`tuple` only.
+  `sorted`, `set` and `frozenset` erase the ordering the dunder determines and
+  are not transparent here; any other wrapper may ignore the entry
+  (`always_true(reversed(Range(0)))` stays `orthogonal`) (#8563).
+  `strong_oracle_observes_removed_type_guard` (`direct`) credits an `__eq__`
+  edit that deletes the leading `isinstance(other, <own class>) and` from the
+  method's only `return`, when the remaining expression is exactly
+  `self.<a> == other.<b>` (no call, boolean operator or conditional that could
+  skip the read) and `<b>` is an attribute the class stores itself
+  (`self.<b> = ..`) that no builtin literal has, the class defines neither
+  `__ne__` nor `__getattr__` and, read from the parsed class, names no base and
+  is plain (a builtin base answers `!=` itself), and a protocol-entry test with
+  no `try`, `with` or `raises` that could catch the error asserts
+  `Class(...) != <int, float, str, bool or None literal>` (or `not ... ==`).
+  Calling the edited method with such a literal raises `AttributeError`, so the
+  assertion fails after the edit. A literal on the left, a list or custom
+  operand, an early exit before the `return` or an `==` read that expects a
+  match keep the `dynamic_dispatch` abstention. The builtin-attribute list is
+  a finite catalogue of the Python 3.14 literal types, not a general claim
+  about Python semantics (#9619, #9421).
   `strong_oracle_observes_changed_effect_channel` (`direct`) credits a
   changed write (`print`, a file write, a call on a passed collaborator, or
   a `self` field) whose strong oracle compares the channel that write
   reaches: captured output, the file read back, a mock call pinned with
   arguments, or the field read through a bound receiver (RIPR-SPEC-0238
   rule 17).
+
+Effect-channel observations use native assertion and compared-operand spans.
+The owner call must finish before the operand is read, including statements at
+different columns on one line. Failure messages and weaker, discarded conjuncts
+cannot supply a later read for an earlier comparison. Resolved assertion helpers
+retain their call-site identity and require the owner to complete before their
+arguments are evaluated.
 
 These fields are advisory preview evidence; they do not change the
 classification and do not claim runtime maturity. The contract does not bump the
@@ -635,6 +929,17 @@ can show:
   emit `decorator_indirection`, so a memoized owner with a direct exact test is
   credited and a twin whose test misses the change remains a gap, while `@retry`
   stays limited
+- a corpus row (`py-shapes-decorator-wrapped-return`) and unit tests proving a
+  workspace-local forwarding decorator does not emit `decorator_indirection`
+  (#9619). Accepted: a bare `@name` over a module-level `def name(fn)` bound
+  once in the owner's file whose wrapper takes only `*args`/`**kwargs`, may run
+  side-effect calls that neither touch the arguments nor call or reset `fn`
+  (plain `fn.__name__`-style reads are allowed), is optionally decorated by
+  plain `functools.wraps(fn)`, and ends with `return fn(*args[, **kwargs])`.
+  Rejected, keeping the limit: called or grouped decorator spellings,
+  transforming, swallowing or retrying wrappers, `yield`/`await`, a wrapper
+  name or parameter that shadows `fn`, rebound, imported or method-scoped
+  decorators, and repo-mode classification (no owner source)
 - fixtures proving the first repair classes carry activation-level missing
   discriminators for predicate boundaries, return values, exception paths,
   field/object values, and output/log/call effects
@@ -698,98 +1003,126 @@ can show:
 
 ## Acceptance Examples
 
-Function with boundary gap:
+1. Function with boundary gap:
 
-```python
-def apply_discount(amount: float, threshold: float) -> float:
-    if amount >= threshold:
-        return amount * 0.9
-    return amount
-```
+   ```python
+   def apply_discount(amount: float, threshold: float) -> float:
+       if amount >= threshold:
+           return amount * 0.9
+       return amount
+   ```
 
-Existing tests:
+   Existing tests:
 
-```python
-def test_discount_applies_above_threshold():
-    assert apply_discount(100, 50) == 90
+   ```python
+   def test_discount_applies_above_threshold():
+       assert apply_discount(100, 50) == 90
 
-def test_no_discount_below_threshold():
-    assert apply_discount(10, 50) == 10
-```
+   def test_no_discount_below_threshold():
+       assert apply_discount(10, 50) == 10
+   ```
 
-Expected static evidence:
+   Expected static evidence:
 
-- owner: `apply_discount` (`function`)
-- predicate probe: `amount >= threshold`
-- oracle: `exact-value` via `assert ... == 90` and `assert ... == 10`
-- missing discriminator: `amount == threshold`
-- finding emits `language = "python"`,
-  `language_status = "preview"`, `owner_kind = "function"`
+   - owner: `apply_discount` (`function`)
+   - predicate probe: `amount >= threshold`
+   - oracle: `exact-value` via `assert ... == 90` and `assert ... == 10`
+   - missing discriminator: `amount == threshold`
+   - finding emits `language = "python"`,
+     `language_status = "preview"`, `owner_kind = "function"`
 
-Error path with `pytest.raises`:
+2. Error path with `pytest.raises`:
 
-```python
-def test_rejects_negative_amount():
-    with pytest.raises(ValueError):
-        apply_discount(-1, 50)
-```
+   ```python
+   def test_rejects_negative_amount():
+       with pytest.raises(ValueError):
+           apply_discount(-1, 50)
+   ```
 
-Expected static evidence:
+   Expected static evidence:
 
-- oracle: `error-path`
-- the `pytest.raises` context manager is recorded as the discriminator
-  surface
+   - oracle: `error-path`
+   - the `pytest.raises` context manager is recorded as the discriminator
+     surface
 
-Decorator indirection limit:
+3. Decorator indirection limit:
 
-```python
-@retry(times=3)
-def fetch_total(client):
-    return client.get_total()
-```
+   ```python
+   @retry(times=3)
+   def fetch_total(client):
+       return client.get_total()
+   ```
 
-Expected static evidence:
+   Expected static evidence:
 
-- probe emits `static_limit_kind = "decorator_indirection"`; finding
-  stays conservative.
+   - probe emits `static_limit_kind = "decorator_indirection"`; finding
+     stays conservative.
 
-Functools memoization is not decorator indirection:
+4. Functools memoization is not decorator indirection:
 
-```python
-from functools import lru_cache
+   ```python
+   from functools import lru_cache
 
-@lru_cache
-def format_year(year):
-    return "%03d" % (year % 100)
+   @lru_cache
+   def format_year(year):
+       return "%03d" % (year % 100)
 
-@lru_cache(maxsize=None)
-def century_index(year):
-    return year % 1000
-```
+   @lru_cache(maxsize=None)
+   def century_index(year):
+       return year % 1000
+   ```
 
-Expected static evidence:
+   Expected static evidence:
 
-- neither owner emits `decorator_indirection`;
-- a direct exact-value test on `format_year` can credit the owner;
-- a related test that reaches `century_index` without observing the
-  changed return remains a gap.
+   - neither owner emits `decorator_indirection`;
+   - a direct exact-value test on `format_year` can credit the owner;
+   - a related test that reaches `century_index` without observing the
+     changed return remains a gap.
 
-Simple route decorator repair:
+5. Typing markers are not decorator indirection:
 
-```python
-@api.post("/checkout")
-def checkout(coupon_expired):
-    response.status_code = 422
-```
+   ```python
+   from typing import final, override
 
-Expected static evidence:
+   class Child(Base):
+       @override
+       def rate(self, n):
+           return n + 1
+   ```
 
-- route decorator is preserved as owner context rather than treated as
-  arbitrary decorator indirection;
-- probe can emit a field/object repair card with missing discriminator
-  `response.status_code == 422`;
-- finding remains `preview` / advisory and does not execute route
-  registration.
+   Expected static evidence:
+
+   - `@final`, `@override` and `@no_type_check` written as plain names (and
+     `typing.` / `typing_extensions.` qualified or aliased spellings; the
+     `typing_extensions` spelling covers `final` and `override` only) return the
+     function unchanged, so the owner emits no `decorator_indirection`;
+   - a rebound receiver, a competing alias, a local same-named decorator, a
+     marker written as a call (`@final(wrapper)`), a file where the marker name
+     appears anywhere other than a `@name` decorator line or a `typing` /
+     `typing_extensions` import (a `def`, `class`, assignment, tuple or loop
+     target, nested or class-scope rebind, `try`/`except` import fallback), a
+     star import from another module, or any decorator in the file that is not
+     a plain dotted name (`@registry["x"]`, `@(lambda f: g)`) stays
+     `decorator_indirection`. This is a lexical fail-closed screen, not a scope
+     analysis, so an unrelated mention of the name (a docstring, a parameter, a `typing.` annotation for the qualified spelling) or a trailing comment on a decorator line also keeps the limit, and a rebind with no literal identifier (`globals().update(...)`, `exec`, a Unicode-normalised spelling) is not seen; a decorator line must be a dotted name or one call closing at the end of the line, so a subscripted, conditional, lambda, triple-quoted or multi-line call decorator withholds trust for the whole file (parentheses inside single-line string literals are skipped), as does a lone carriage-return line break (the lexical screen assumes the parser's pre-3.12 string lexing); `typing.overload`, `abc.abstractmethod`,
+     `contextlib.contextmanager` and `property` also stay limited.
+
+6. Simple route decorator repair:
+
+   ```python
+   @api.post("/checkout")
+   def checkout(coupon_expired):
+       response.status_code = 422
+   ```
+
+   Expected static evidence:
+
+   - route decorator is preserved as owner context rather than treated as
+     arbitrary decorator indirection;
+   - probe can emit a field/object repair card with missing discriminator
+     `response.status_code == 422`;
+   - finding remains `preview` / advisory and does not execute route
+     registration.
 
 ## Test Mapping
 
@@ -802,7 +1135,9 @@ framework-specific selectors and relate only to the referenced owner.
 Functools memoization transparency (`lru_cache` / `cache` /
 `cached_property`) is covered by
 `crates/ripr/src/analysis/language/python/static_limits.rs` tests and
-`fixtures/python_functools_memoization_not_indirection`. Arbitrary
+`fixtures/python_functools_memoization_not_indirection`. Typing-marker
+transparency (`final` / `override` / `no_type_check`) is covered by the
+`typing_marker_*` tests in the same file. Arbitrary
 decorators such as `@retry` remain limited via
 `fixtures/python_decorator_indirection_limit`.
 
@@ -839,6 +1174,15 @@ suggested test file when the repair route carries a bare test name.
 The single-literal expected-value rule (including one triple-quoted string,
 and excluding compounds and adjacent-string concatenation) is covered by
 `crates/ripr/src/analysis/language/python/tests.rs::classify_change_never_restates_changed_expression_as_discriminator`.
+
+The pre-parse nesting budget (`parse_budget.rs`, #4109) counts brackets inside
+an open string literal so a deeply bracketed literal still declines, but a
+closed literal cannot leave a bracket open for the code after it. Unbalanced
+brackets in separate literals such as `"\x1b[31m"` therefore do not accumulate
+into file nesting (#8561): covered by
+`crates/ripr/src/analysis/language/python/parse_budget.rs::tests::unbalanced_brackets_in_separate_strings_do_not_accumulate`
+(including real nesting after the table still declining) and the CLI test
+`crates/ripr/tests/python_parse_nesting.rs::unbalanced_bracket_string_literals_do_not_trip_the_nesting_budget`.
 
 Package re-export reach is covered end to end, in diff and repo mode, by
 `crates/ripr/src/analysis/language/python/reexport_tests.rs`: attribute calls
@@ -878,6 +1222,44 @@ precedence. It corrects three oracle lines in place above: `!=`,
 `isinstance` and `assertNotEqual` were listed as broad, broad-type and
 exact-value oracles, but the code records all three as
 `relational_check` / weak, and no broad-type kind exists.
+
+## Helper Inlining Amendment (2026-10-22, #9636)
+
+A plain test that calls a same-file assertion helper with literal arguments
+(`check_pass(50, True)` over `def check_pass(score, want): assert passes(score) == want`)
+reads as the helper's `assert` statements with each parameter replaced by its
+literal argument, on the call's own line (every line number is unchanged). The
+rewrite is credit or unknown only: the substituted asserts pass through the
+ordinary oracle admission, so a weak or unrecognised assert is no stronger than
+when written inline; no new finding kind or repair rule is added and the
+ordinary classifier applies. It applies only to
+test files, and only when all of these hold; otherwise the call reads as before:
+
+- the helper is a module-level, undecorated, synchronous `def`, spelled
+  `def NAME` exactly once in the file (and never also a `class NAME`), with plain positional parameters (no
+  default, `*args`, keyword-only or `**kwargs`), whose body is only `assert`
+  statements (and an optional leading docstring), one per line; every mention
+  of its name is its definition or a direct call;
+- the file does not use `globals(`, `setattr(`, `exec(`, `eval(`, a star import
+  or `__getattr__`;
+- the call is a top-level expression statement, alone on its line, of a
+  module-level `test*` function with no parameters and no decorators, whose
+  body holds only expression and `assert` statements and no walrus, with
+  exactly one argument per parameter, each a string, number, boolean or `None`
+  literal (a signed number is parenthesised);
+- a parameter is used in the asserts only as a plain value: not as an
+  attribute name, keyword, inside a string, or as the object of a member access
+  or call when the argument is a number, or directly followed by a quote
+  (a string prefix); the asserts hold no `lambda`, comprehension, walrus,
+  `await`, `yield`, backslash, or any `[` or `{` (every one is refused). A
+  rewrite that does not parse is discarded and the original source is read.
+
+A helper in another file (#9419), a call under `if`/loop/`with`, a computed
+argument or a helper with control flow stays `no_static_path`.
+
+This differs from `helper_assertions` (#9419, #9711): it is a same-file,
+literal-argument, multi-assert source rewrite that runs first, so
+`helper_assertions` then sees no call to resolve.
 
 ## Metrics
 

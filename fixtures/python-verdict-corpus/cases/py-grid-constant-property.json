@@ -1,0 +1,51 @@
+{
+  "case_id": "py-grid-constant-property",
+  "subject_id": "authored-py-grid-constant",
+  "diff": "cases/py-grid-constant-property.diff",
+  "anchor": {
+    "file": "grid_constant/core.py",
+    "line": 13
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "arithmetic_constant",
+  "test_shape": "pytest_property_invariant_loop",
+  "hard_case": null,
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return sale * 4 // 100",
+        "mutated_line": "return sale * 4 // 100",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: a 4 percent commission"
+      },
+      {
+        "replacement": "return sale * 103 // 100",
+        "mutated_line": "return sale * 103 // 100",
+        "outcome": "tests_failed",
+        "failing_test": "test_commission_stays_within_the_sale",
+        "equivalence_review": "not equivalent: the commission exceeds the sale"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "Grid cell: constant x property loop. The bound 0 <= commission <= sale catches a rate above 100 percent but not a nearby rate.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

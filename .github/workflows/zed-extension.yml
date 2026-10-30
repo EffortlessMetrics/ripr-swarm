@@ -40,7 +40,7 @@ jobs:
         working-directory: editors/zed
     steps:
       - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95.0
         with:
           targets: wasm32-wasip2
           components: rustfmt, clippy

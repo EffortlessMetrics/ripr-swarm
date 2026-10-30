@@ -1,0 +1,32 @@
+use std::fmt;
+
+pub struct Temp(pub i32);
+
+impl fmt::Display for Temp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}°C", self.0)
+    }
+}
+
+pub struct Pad(pub u32);
+
+impl fmt::Display for Pad {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:>5}", self.0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn temperature_prints_with_unit() {
+        assert_eq!(Temp(21).to_string(), "21°C");
+    }
+
+    #[test]
+    fn padded_number_ends_with_digit() {
+        assert!(Pad(7).to_string().ends_with('7'));
+    }
+}

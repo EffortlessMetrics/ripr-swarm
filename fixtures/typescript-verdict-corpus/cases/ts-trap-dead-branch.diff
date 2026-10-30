@@ -1,0 +1,10 @@
+diff --git a/src/core.ts b/src/core.ts
+--- a/src/core.ts
++++ b/src/core.ts
+@@ -1,5 +1,5 @@
+ export function deadBranch(a: number, b: number): number {
+-  return a * b;
++  return b * a;
+ }
+ 
+ export function liveBranch(a: number, b: number): number {

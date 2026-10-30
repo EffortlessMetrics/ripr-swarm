@@ -103,6 +103,68 @@ The class stays `weakly_exposed`; the finding names the limit instead of
 reporting a gap. An owner value that reaches the macro only through a binding,
 or a direct test that also holds a recognized oracle, keeps the gap.
 
+### Same-file macro whose arms show a recognized assertion (#9122)
+
+A macro defined in the test's own file is not unresolved when every arm of its
+unique, un-gated, in-scope `macro_rules!` definition itself contains an
+assertion the ordinary extractor recognizes (`assert_eq!`, `assert!`, ...) over
+a `$fragment` that arm's matcher binds, and the test calls it as a plain
+statement of its own body. A tautology (`assert!(true)`, `assert_eq!(1, 1)`,
+`assert_eq!($x, $x)`), a self-recursive macro and a call whose argument count
+no arm takes credit nothing. Only the asserted operands count (the first for
+`assert!`, the first two for `assert_eq!`/`assert_ne!`); a fragment that
+appears only in a diagnostic message does not attribute the assertion. A
+transcriber with a branch, loop, `match`, closure, early exit or repetition
+credits nothing, because its assertion may not run. An unrelated assertion on
+the same line as the call does not suppress the credit. When every recognized
+oracle of a `weakly_exposed` finding is such an unknown-grade macro credit, the
+finding keeps this limit (it is not reported as a gap), since the macro's
+discrimination remains unresolved. Only the oracles of directly related tests
+count: a recognized oracle in a test related by file or module proximity alone
+(a strong `assert_eq!` on another function) neither hides the limit nor makes
+the finding a gap (#7089). The credited macro need not be spelled `assert_*`
+(`check_eq!`); its own spelling is the witness the limit names. The call then earns one oracle of kind `unknown`
+and strength `unknown`, never `weak` or stronger, so it records that an
+assertion exists without grading what it pins (except for an exactly
+expandable macro, above). A hand-rolled
+`if bad { panic!() }` body, a macro that only logs, a macro with one arm that
+shows no assertion, a duplicate, imported or cfg-gated definition, a macro
+from another file or crate, and a call in a closure, branch or `use`-bearing
+test keep this limit.
+
+### Exactly expandable same-file macro (#10650)
+
+A definition gated by exactly `#[cfg(test)]` is read as in scope: a `#[test]`
+function exists only in a test build, so the macro exists wherever the call
+does. Any other `cfg` still refuses the definition.
+
+A call of such a macro that expands exactly is read as the assertion it
+stands for, graded like the same assertion written out. The macro has one arm,
+whose matcher is only comma-separated `$name:expr` fragments, and whose
+transcriber is a single assertion macro statement. The call's own argument
+text replaces each fragment (parenthesized unless it is a plain path, call or
+literal), and the ordinary extractor grades the result. The call earns that
+oracle in place of the `unknown` credit when the call's text occurs once in the
+test, the expansion is not a tautology, and its grade is above `unknown`. The
+test body and the owner-pin file scan then read the expansion at the call's
+lines, so every later stage sees an ordinary assertion and the line count is
+unchanged. A wrapped assertion therefore classifies exactly like the written-out
+one and never moves a finding past it. Several arms, any other fragment kind
+(`literal`, `ident`, `ty`, ..), a repetition, a transcriber of more than one
+statement, an argument whose commas cannot be split reliably (a turbofish or a
+closure) and a tautology after substitution keep the `unknown` credit and this
+limit.
+
+### Helper call with a macro among its arguments (#9122)
+
+An `assert_*` helper call (`common::assert_matches(snapbox::file![..], cmd)`)
+whose arguments contain a macro is still recognized as a helper call when its
+callee, the text before the first `(`, is the `assert_*` path. The macro hides
+what the call compares, so the call is graded `unknown` and never exact, even
+for an equality-named helper. A macro invocation (`assert_eq!(..)`) or a
+macro in the callee position is not a helper call. Negation and inequality
+arguments (`!x`, `a != b`) do not change this grade.
+
 ## Fail-Closed Boundaries
 
 - Never promote the finding because a custom assertion macro exists.
@@ -142,9 +204,18 @@ or a direct test that also holds a recognized oracle, keeps the gap.
    `weakly_exposed` and emits
    `static_limit_kind: rust_macro_wrapped_assertion_unresolved`. With
    `let flag = bulk(100); assert_flag!(flag, true);` the gap stays.
-   Corpus: `checkout-bulk-custom-assert-macro`. `strsim-sorensen-dice-equal`
-   keeps its gap: its related-test window is truncated, so a hidden direct
-   test's oracle cannot be ruled out.
+   A same-file `macro_rules!` wrapper such as `check_eq!` that expands to
+   `assert_eq!` takes the same limit when it does not expand exactly and the
+   only other oracle is a proximity test (test:
+   `crates/ripr/tests/local_macro_assertion_limit.rs`). A wrapper that does
+   expand exactly (one arm, only `$x:expr` fragments, one assertion statement)
+   is read as the assertion it stands for and credits like it (#10650;
+   corpus: `idiom-assert-macro-wrapper`, `checkout-bulk-custom-assert-macro`,
+   `spec0120-custom-assert-macro`, all `credited`). The `assert_flag!`
+   shape above keeps its limit when the macro is not defined in the file or
+   does not expand exactly. `strsim-sorensen-dice-equal` keeps its gap: its
+   related-test window is truncated, so a hidden direct test's oracle cannot
+   be ruled out.
 
 ## Required Evidence
 
@@ -179,6 +250,9 @@ or a direct test that also holds a recognized oracle, keeps the gap.
 - `fixtures/rust_macro_wrapped_assertion_limitation/expected/check.json`
 - `fixtures/evidence-promotion-honesty-corpus/corpus.json` case
   `rust_macro_wrapped_assertion_named_limitation`
+- `crates/ripr/tests/local_macro_assertion_expansion.rs`
+- `crates/ripr/src/analysis/facts/test_helpers/tests/assertion_macros.rs::exactly_expandable_local_assertion_macro_earns_the_expanded_assertions_grade`
+- `crates/ripr/src/analysis/facts/test_helpers/tests/assertion_macros.rs::local_assertion_macro_that_does_not_expand_exactly_stays_capped_at_unknown`
 - `cargo xtask check-evidence-promotion-honesty`
 
 ## Implementation Mapping
