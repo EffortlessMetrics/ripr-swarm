@@ -149,6 +149,10 @@ pub(super) struct Backend {
     /// panic containment is exercised through the real handler.
     #[cfg(test)]
     panic_in_next_hover: AtomicBool,
+    /// Test-only fault injection: the next `textDocument/didSave` unwinds, so
+    /// notification-path containment runs through the real handler.
+    #[cfg(test)]
+    panic_in_next_did_save: AtomicBool,
     root: Mutex<PathBuf>,
     workspace_root: Mutex<WorkspaceRootAuthority>,
     workspace_root_epoch: AtomicU64,
@@ -353,6 +357,8 @@ impl Backend {
         Self {
             #[cfg(test)]
             panic_in_next_hover: AtomicBool::new(false),
+            #[cfg(test)]
+            panic_in_next_did_save: AtomicBool::new(false),
             root: Mutex::new(root.clone()),
             workspace_root: Mutex::new(WorkspaceRootAuthority::unavailable(
                 "workspace root authority is awaiting initialization",
@@ -3265,6 +3271,12 @@ impl Backend {
     #[cfg(test)]
     pub(super) fn panic_in_next_hover_for_test(&self) {
         self.panic_in_next_hover
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    #[cfg(test)]
+    pub(super) fn panic_in_next_did_save_for_test(&self) {
+        self.panic_in_next_did_save
             .store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
@@ -6425,6 +6437,13 @@ impl LanguageServer for Backend {
     }
 
     async fn did_save(&self, params: DidSaveTextDocumentParams) {
+        #[cfg(test)]
+        if self
+            .panic_in_next_did_save
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            std::panic::resume_unwind(Box::new("injected didSave handler panic"));
+        }
         self.trace_inbound(
             "notification",
             "textDocument/didSave",
