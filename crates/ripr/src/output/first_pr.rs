@@ -4162,7 +4162,13 @@ mod tests {
         let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
         assert_eq!(packet["selected"]["state"], "missing_artifact");
         assert_eq!(packet["selected"]["artifact"]["id"], "gap_ledger");
-        assert!(packet["selected"].get("also_missing").is_none());
+        // Only the dependent review cards follow the ledger; the repo
+        // exposure input is satisfied by the pilot's report.
+        let also_missing: Vec<&str> = packet["selected"]["also_missing"]
+            .as_array()
+            .map(|rows| rows.iter().filter_map(|row| row["id"].as_str()).collect())
+            .unwrap_or_default();
+        assert_eq!(also_missing, ["review_comments"]);
         let command = packet["selected"]["regeneration_command"]
             .as_str()
             .ok_or_else(|| "regeneration command missing".to_string())?;
