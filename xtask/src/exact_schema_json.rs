@@ -255,6 +255,19 @@ mod tests {
     }
 
     #[test]
+    fn parse_enforces_scan_budget_on_nested_input() {
+        let payload = "x".repeat(1024 * 1024);
+        let shallow = format!("[\"{payload}\"]");
+        assert!(parse(shallow.as_bytes()).is_ok());
+        let nested = format!("{}\"{payload}\"{}", "[".repeat(65), "]".repeat(65));
+        assert!(
+            parse(nested.as_bytes())
+                .unwrap_err()
+                .contains("scan work limit")
+        );
+    }
+
+    #[test]
     fn raw_subtree_scan_budget_fails_closed() -> Result<(), String> {
         let raw: &serde_json::value::RawValue =
             serde_json::from_str("[[1]]").map_err(|e| e.to_string())?;
