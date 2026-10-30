@@ -593,19 +593,7 @@ Updated:
 ## Pending — typescript_tothrow_exact_oracle (36)
 
 Reason:
-RIPR-SPEC-0122: plain TypeScript/JavaScript wording for unresolved expected values and moved assertion selection (#10682)
-
-Command:
-`cargo xtask goldens bless typescript_tothrow_exact_oracle --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
-
-## Pending — typescript_tothrow_exact_oracle (37)
-
-Reason:
-RIPR-SPEC-0122: plain TypeScript/JavaScript wording applies only to a consistent incomplete_repair_packet category (#10682)
+RIPR-SPEC-0026: additive confidence_basis and Why capped line for TypeScript/JavaScript preview findings (#10700)
 
 Command:
 `cargo xtask goldens bless typescript_tothrow_exact_oracle --reason "..."`

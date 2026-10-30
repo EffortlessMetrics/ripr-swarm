@@ -3517,7 +3517,9 @@ mod tests {
         let no_seam_untied = "assertion_shaped_control_production_caller";
         let missing_exposed = "assertion_shaped_control_production_owner";
         let inventory_exposed = "currentness_matrix_python_deleted_statement";
-        let no_gap_exposed = "currentness_matrix_typescript_deleted_statement";
+        // Retired by the TypeScript/JavaScript re-bless (#10700, #10885): the
+        // no-gap-ID -> exposed entries were deleted, so it no longer aliases.
+        let retired_no_gap = "currentness_matrix_typescript_deleted_statement";
         assert!(compare(
             no_seam_exposed,
             &old_no_seam,
@@ -3542,8 +3544,8 @@ mod tests {
             "this finding has no gap ID, so there is no seam",
         )?;
         assert!(
-            compare(no_gap_exposed, &no_gap, &exposed, "human.txt")?,
-            "no gap ID -> exposed"
+            !compare(retired_no_gap, &no_gap, &exposed, "human.txt")?,
+            "retired no gap ID -> exposed migration is drift again"
         );
         let missing = write_exposed(
             "missing.txt",

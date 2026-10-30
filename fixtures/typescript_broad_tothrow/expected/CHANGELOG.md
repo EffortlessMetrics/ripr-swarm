@@ -836,20 +836,7 @@ Updated:
 ## Pending — typescript_broad_tothrow (34)
 
 Reason:
-RIPR-SPEC-0122: plain TypeScript/JavaScript wording for unresolved expected values and moved assertion selection (#10682)
-
-Command:
-`cargo xtask goldens bless typescript_broad_tothrow --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
-- `expected/human-full.txt`
-
-## Pending — typescript_broad_tothrow (35)
-
-Reason:
-RIPR-SPEC-0122: plain TypeScript/JavaScript wording applies only to a consistent incomplete_repair_packet category (#10682)
+RIPR-SPEC-0026: additive confidence_basis and Why capped line for TypeScript/JavaScript preview findings (#10700)
 
 Command:
 `cargo xtask goldens bless typescript_broad_tothrow --reason "..."`

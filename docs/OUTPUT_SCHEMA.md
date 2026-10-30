@@ -3011,7 +3011,7 @@ TypeScript/JavaScript preview findings carry a per-class constant `confidence`
 that is not on the same scale as Rust's. `confidence_basis` is a non-empty list
 of `{code, summary}` objects naming why the score is capped (codes:
 `preview_stages_not_modeled`, `syntax_first_no_type_resolution`,
-`no_related_test`, `oracle_below_strong`, `boundary_input_not_matched`,
+`infection_not_established`, `propagation_not_established`, `no_related_test`, `oracle_below_strong`, `boundary_input_not_matched`,
 `observation_not_confirmed`, `discriminator_not_established`), and
 `confidence_why_capped` is the one-line English form. Both are omitted for Rust
 findings and when empty. The same fields appear on `ripr context` packets and
@@ -18840,7 +18840,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.121",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.122",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. This is the existing
@@ -19608,7 +19608,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.121",
+      "schema_version": "1.122",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

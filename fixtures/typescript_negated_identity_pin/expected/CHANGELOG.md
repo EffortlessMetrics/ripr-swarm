@@ -149,7 +149,7 @@ Updated:
 ## Pending — typescript_negated_identity_pin (13)
 
 Reason:
-RIPR-SPEC-0122: plain TypeScript/JavaScript wording for unresolved expected values and moved assertion selection (#10682)
+RIPR-SPEC-0026: additive confidence_basis and Why capped line for TypeScript/JavaScript preview findings (#10700)
 
 Command:
 `cargo xtask goldens bless typescript_negated_identity_pin --reason "..."`

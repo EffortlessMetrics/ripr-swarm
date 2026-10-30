@@ -198,7 +198,7 @@ Updated:
 ## Pending — typescript_self_comparing_one_hop_local (16)
 
 Reason:
-RIPR-SPEC-0122: plain TypeScript/JavaScript wording for unresolved expected values and moved assertion selection (#10682)
+RIPR-SPEC-0026: additive confidence_basis and Why capped line for TypeScript/JavaScript preview findings (#10700)
 
 Command:
 `cargo xtask goldens bless typescript_self_comparing_one_hop_local --reason "..."`

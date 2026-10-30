@@ -1,5 +1,14 @@
 # Golden Output Changes
 
+## Pending — foreign embedded type cache generation (#10684)
+
+The portable unchanged-attempt snapshots follow corpus cache generation 1.121
+to 1.122 for the embedded-type identity reading in pushed-element equality.
+Refresh the corpus generation and artifact content commitment, then the
+dependent verify commitments and receipt byte hashes. Weak grip, unchanged
+movement, historical currentness, incomplete receipt status and fail-closed
+first-action routing remain unchanged. No other fixture output is regenerated.
+
 ## Pending — Display placeholder-edit refusal cache generation (#9836)
 
 The portable unchanged-attempt snapshots follow corpus cache generation 1.120
