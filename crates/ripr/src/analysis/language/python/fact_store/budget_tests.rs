@@ -32,10 +32,7 @@ impl Fixture {
         PythonFileFactStore::at_base(&self.root.join(label))
     }
 
-    fn entry(
-        &self,
-        name: &str,
-    ) -> Result<(PythonFileFactKey, PythonSourceFacts, Vec<u8>), String> {
+    fn entry(&self, name: &str) -> Result<(PythonFileFactKey, PythonSourceFacts, Vec<u8>), String> {
         let path = Path::new(name);
         let key = PythonFileFactKey::new(path, SOURCE, &self.root);
         let facts = extract_source_facts(path, SOURCE);
@@ -110,14 +107,20 @@ fn concurrent_stores_cannot_overspend_the_shared_budget() -> Result<(), String> 
         .map(|(_, _, bytes)| bytes.len())
         .ok_or_else(|| "concurrency fixture has no entries".to_string())?;
     assert!(
-        entries.iter().all(|(_, _, bytes)| bytes.len() == entry_bytes),
+        entries
+            .iter()
+            .all(|(_, _, bytes)| bytes.len() == entry_bytes),
         "equal-size entries make the admission count independent of scheduling"
     );
     let filenames = entries
         .iter()
         .map(|(key, _, _)| key.filename())
         .collect::<BTreeSet<_>>();
-    assert_eq!(filenames.len(), entries.len(), "each writer has its own key");
+    assert_eq!(
+        filenames.len(),
+        entries.len(),
+        "each writer has its own key"
+    );
     let expected_admissions = 3;
     let available = entry_bytes * expected_admissions;
     assert!(entries.len() > expected_admissions);
@@ -149,7 +152,7 @@ fn concurrent_stores_cannot_overspend_the_shared_budget() -> Result<(), String> 
                 .map(|handle| {
                     handle
                         .join()
-                        .map_err(|_| "budget worker panicked".to_string())?
+                        .map_err(|_panic_payload| "budget worker panicked".to_string())?
                 })
                 .collect::<Result<Vec<_>, String>>()
         })?;
@@ -165,17 +168,17 @@ fn concurrent_stores_cannot_overspend_the_shared_budget() -> Result<(), String> 
             .filter(|(_, stored)| **stored)
             .map(|((_, _, bytes), _)| bytes.len())
             .sum::<usize>();
-        assert!(spent <= available, "concurrent callers overspent the budget");
+        assert!(
+            spent <= available,
+            "concurrent callers overspent the budget"
+        );
         let remaining = store.remaining_store_bytes.load(Ordering::Relaxed);
         assert_eq!(remaining, available - spent);
         assert_eq!(remaining, 0, "three admissions consume the exact budget");
         for ((key, facts, bytes), stored) in entries.iter().zip(results) {
             let path = store.dir.join(key.filename());
             if stored {
-                assert_eq!(
-                    std::fs::read(path).map_err(|err| err.to_string())?,
-                    *bytes
-                );
+                assert_eq!(std::fs::read(path).map_err(|err| err.to_string())?, *bytes);
                 match store.load(key) {
                     CacheLoad::Hit(served) => assert_eq!(served, served_view(facts.clone())),
                     _ => return Err("a successful concurrent store was not served".to_string()),
