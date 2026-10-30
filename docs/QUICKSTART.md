@@ -97,34 +97,27 @@ cargo install --locked --git https://github.com/EffortlessMetrics/ripr-swarm rip
 ```
 
 From a `ripr-swarm` checkout, `cargo install --path crates/ripr` does the same.
-Either route compiles from source. A `cargo build --release` in the workspace (thin LTO,
-16 codegen units) took about 6 minutes on a cold 4-core Linux container in
-October 2026. A local build of the packaged crate, which is what `cargo install
-ripr --locked` should compile once 0.11.0 is published, took about 4.6 minutes on
-the same container because it carries no profile section (an estimate, not a
-crates.io install). A
-prebuilt 0.11 archive exists only after 0.11.0 is published.
+Either route compiles from source. A cold `cargo build --release` of the
+workspace (thin LTO, 16 codegen units) took about 6 minutes (366 s) on a 4-core
+Linux container in October 2026, against 17 minutes (1037 s) for the earlier
+fat-LTO, single-codegen-unit profile; `cargo install ripr` for 0.10.0 took about
+2 minutes on an earlier run. The packaged 0.11.0 crate carries no profile
+section, so `cargo install ripr --locked` should build in about 4.6 minutes
+(275 s) once 0.11.0 is on crates.io (measured by building the packaged crate with
+`cargo build --release` on the same container, not a download). In that walk,
+`doctor` and `check` each took under 3 seconds on small crates; `ripr pilot`
+takes longer on large repositories. The prebuilt 0.10.0 archive downloads in
+about a second, against about two minutes to compile 0.10.0 from source. There is
+no prebuilt 0.11 archive until 0.11.0 is published.
+`cargo xtask first-run --install-archive 0.10.0` replays the archive route end
+to end and times it; the [first-run scoreboard](../benchmarks/dx_scoreboard/README.md)
+tracks the install time so a rise shows.
 
 With [cargo-binstall](https://github.com/cargo-bins/cargo-binstall) installed,
 `cargo binstall ripr` uses the prebuilt 0.11.0 release archive when that asset is
 published, and compiles from source when it is not. Releases before 0.11.0 carry
 no binstall metadata. See [Install channels](INSTALL_CHANNELS.md) for what
 each channel serves today.
-
-Build and install timings (moved from the README): a cold `cargo build --release`
-of the workspace took about 6 minutes (366 s) on a 4-core Linux container in
-October 2026, against 17 minutes (1037 s) for the earlier fat-LTO,
-single-codegen-unit profile; `cargo install ripr` for 0.10.0 took about 2
-minutes on an earlier run. The packaged 0.11.0 crate drops that profile, so
-`cargo install ripr --locked` should build in about 4.6 minutes (275 s) once
-0.11.0 is on crates.io (measured by building the packaged crate with
-`cargo build --release`, not a download). In that walk, `doctor` and `check`
-each took under 3 seconds on small crates; `ripr pilot` takes longer on large
-repositories. The prebuilt 0.10.0 archive downloads in about a second, against
-about two minutes to compile 0.10.0 from source.
-`cargo xtask first-run --install-archive 0.10.0` replays the archive route end
-to end and times it. The [first-run scoreboard](../benchmarks/dx_scoreboard/README.md)
-tracks the install time so a rise shows.
 
 For another installation method or a pinned server, see
 [Server provisioning](SERVER_PROVISIONING.md).
@@ -465,7 +458,7 @@ these commands.
 
 ### Agent repair details
 
-Reference details for driving ripr from a coding agent (moved from the README):
+Reference details for driving ripr from a coding agent:
 
 - `ripr check` prints the `ripr explain` and `ripr context` commands for the top
   finding. With `--format json` the result embeds the same bounded
@@ -474,8 +467,11 @@ Reference details for driving ripr from a coding agent (moved from the README):
   needs a precise recovery, matching the human Safe-next-action line.
 - Run the follow-up commands ripr prints (`ripr explain`, `ripr context`,
   `ripr agent repair ...`) exactly as printed: their IDs belong to that run and
-  cannot be copied from documentation. `agent repair --seam-id` takes the seam ID
-  that `pilot` prints; the `probe:...` IDs from `check` are rejected there.
+  cannot be copied from documentation. `agent repair --seam-id` and `ripr repair`
+  accept the seam ID that `pilot` prints. They also resolve a `probe:...`,
+  `repo-probe:...` or `gap:...` finding ID from `ripr check` to its one seam. If
+  the ID is stale, ambiguous, or its seam is not repair-eligible they refuse and
+  start no attempt. Run `ripr pilot --root .` to list current seam IDs.
 - The compact repair card is the default bounded handoff to a coding agent:
   `ripr agent card --root . --seam-id <seam-id> --json` projects the
   fix-instruction summary, repair-route readiness, and canonical next action, with

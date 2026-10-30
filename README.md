@@ -89,7 +89,8 @@ which is not yet the published release. In it, `ripr check` uses uncommitted
 tracked edits when present, otherwise committed history against the default
 base. On a clean checkout of the base branch, edit a tracked source file, then
 run `ripr check` to inspect that change. Stage a new file with
-`git add -N PATH` to include it. Install it with:
+`git add -N PATH` to include it. No commit or configuration file is needed for
+this edit-and-check loop. Install it with:
 
 ```bash
 cargo install --locked --git https://github.com/EffortlessMetrics/ripr-swarm ripr
