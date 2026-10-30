@@ -733,8 +733,9 @@ module-qualified path (`crate::Money::name(`, which may name another module's
 brings its own `Money` in by `use` or declares one (`type`, `struct`, `enum`,
 `trait`, `union`). A same-file path call can lift withholding only when the
 test's enclosing scopes leave the type and trait bindings clear. A foreign
-named import, local alias, local module or possibly binding macro in those
-scopes refuses the lift; unrelated sibling modules do not. A direct
+named import, local alias, local module or macro invocation in those scopes
+refuses the lift, because an invocation's expansion can introduce a binding
+without naming it at the invocation site; unrelated sibling modules do not. A direct
 `super::Money` import from the owner's module is admitted, including the
 grouped `super::Money::{self}` spelling. A grouped `other::Money::{self}`
 binds the foreign `Money` and refuses the lift. Other same-name imports,

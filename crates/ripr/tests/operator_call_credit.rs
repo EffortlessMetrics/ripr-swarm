@@ -774,6 +774,27 @@ fn module_type_bindings_do_not_name_the_operator_owner() -> Result<(), String> {
     Ok(())
 }
 
+#[test]
+fn an_unresolved_macro_invocation_in_the_test_scope_withholds_the_credit() -> Result<(), String> {
+    // A sibling-defined macro invoked in the test's enclosing module expands
+    // to a foreign `Money` import; the invocation never names `Money`. The
+    // expansion cannot be read statically, so the enclosing scope is not
+    // clear and the type-path call stays withheld.
+    let base = Case {
+        label: "macro_binding",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        ..ADD
+    };
+    let foreign = Case {
+        label: "macro_binding_foreign",
+        extra_items: "mod other { pub type Money = i64; }\nmod defs { macro_rules! foreign_money { () => { use super::other::Money; } } pub(crate) use foreign_money; }\n#[cfg(test)] mod named { use super::*; use super::defs::foreign_money; foreign_money!(); #[test] fn named_call() { let _ = Money::add(1, 1); } }",
+        ..base
+    };
+    assert_eq!(classes(&foreign)?, [ExposureClass::StaticUnknown]);
+    Ok(())
+}
+
 /// Relating the test says the operator runs, not that an assertion would
 /// notice the impl change. A result built from the impl's own tokens
 /// (`Money(..)`) is observed by the test's `Money(..)` operands and reads

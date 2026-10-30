@@ -378,12 +378,15 @@ fn type_path_scope_is_clear(
         if matches!(item, ast::Item::Fn(_) | ast::Item::Impl(_)) {
             return true;
         }
-        if matches!(
-            item,
-            ast::Item::MacroCall(_) | ast::Item::MacroRules(_) | ast::Item::MacroDef(_)
-        ) {
+        if matches!(item, ast::Item::MacroRules(_) | ast::Item::MacroDef(_)) {
             return !contains_as_whole_word(&text, &path.self_type)
                 && !contains_as_whole_word(&text, &path.trait_name);
+        }
+        if matches!(item, ast::Item::MacroCall(_)) {
+            // A macro invocation is unresolved: its expansion can introduce
+            // any binding without naming it at the invocation site, so any
+            // invocation in an enclosing scope refuses the lift.
+            return false;
         }
         if module == owner_module {
             return true;
