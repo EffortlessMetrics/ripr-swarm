@@ -43,6 +43,7 @@ fn a_writer_inside_a_test_body_does_not_unsettle_the_argnames() -> Result<(), St
         "def test_isatty(monkeypatch):\n    monkeypatch.setattr(object(), \"isatty\", lambda: True)\n",
         "async def test_later():\n    setattr(object(), \"x\", 1)\n",
         "class TestCompat:\n    def test_reload(self):\n        globals()[\"x\"] = 1\n",
+        "class TestCompat:\n    async def test_reload(self):\n        globals()[\"x\"] = 1\n",
     ] {
         let finding = classify_module(&module_with(other))?;
         assert!(
@@ -69,8 +70,16 @@ fn a_writer_anywhere_else_keeps_the_limit() -> Result<(), String> {
         "@pytest.mark.skipif(setattr(object(), \"x\", 1) is None, reason=\"r\")\ndef test_other():\n    pass\n",
         // A fixture.
         "@pytest.fixture\ndef fix():\n    setattr(object(), \"x\", 1)\n",
-        // A test-named function that is not a test body at module level.
+        // Module-level assignment of a writer result.
         "test_value = vars()\n",
+        // Writers in a default argument and in `Test*` class-level code.
+        "def test_default(x=setattr(object(), \"x\", 1)):\n    pass\n",
+        "class TestHolder:\n    setattr(object(), \"x\", 1)\n",
+        // A test-named fixture runs when requested, not as a test.
+        "@pytest.fixture\ndef test_fix():\n    setattr(object(), \"x\", 1)\n",
+        // A test function called at import, or used as a decorator.
+        "def test_helper():\n    setattr(object(), \"x\", 1)\n\n\ntest_helper()\n",
+        "def test_wrap(f):\n    globals()[\"pytest\"] = f\n    return f\n\n\n@test_wrap\ndef test_wrapped():\n    pass\n",
     ] {
         let finding = classify_module(&module_with(other))?;
         assert!(
@@ -80,4 +89,37 @@ fn a_writer_anywhere_else_keeps_the_limit() -> Result<(), String> {
         );
     }
     Ok(())
+}
+
+#[test]
+fn call_time_constants_keep_the_whole_module_scan() {
+    // A writer in a test-named function rewrites a constant a production
+    // function reads when it runs, so only the import-time read is relaxed.
+    let count = |source: &str| {
+        extract_owners(Path::new("src/pricing.py"), source)
+            .iter()
+            .flat_map(|owner| owner.module_constants.iter())
+            .count()
+    };
+    // Object and table bindings read at call time keep the scan as well.
+    let bindings = |source: &str| {
+        let parsed = super::source_facts::parse_module_result(Path::new("m.py"), source);
+        match parsed {
+            Ok(rustpython_parser::ast::Mod::Module(module)) => {
+                let text = super::source_utils::SourceText::new(source);
+                super::module_constants::module_object_bindings(&text, &module.body).len()
+            }
+            _ => usize::MAX,
+        }
+    };
+    let object = "CONFIG = make()\n\n\ndef testbed():\n    globals()[\"CONFIG\"] = 0\n";
+    assert_eq!(bindings(object), 0);
+    assert_eq!(
+        bindings(&object.replace("globals()[\"CONFIG\"] = 0", "return 1")),
+        1
+    );
+    let quiet = "DISCOUNT_THRESHOLD = 10\n\n\ndef testbed_reset():\n    return 1\n";
+    assert!(count(quiet) > 0, "control: the constant is visible");
+    let writing = "DISCOUNT_THRESHOLD = 10\n\n\ndef testbed_reset():\n    globals()[\"DISCOUNT_THRESHOLD\"] = 0\n";
+    assert_eq!(count(writing), 0);
 }

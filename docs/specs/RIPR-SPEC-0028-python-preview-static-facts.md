@@ -878,7 +878,9 @@ the lexer rejects falls back to the whole-text scan; for the names a
 `parametrize` decorator reads at import, that is the `pytest` root, a `@cases` name and
 argnames, a writer inside the body of a `test*` function or a `test*` method of a
 `Test*` class is not counted because it runs after every decorator, while module
-scope, class bodies, helpers, fixtures and decorator arguments still count, #11018),
+scope, class bodies, helpers, fixtures and decorator arguments still count, and a
+test function named outside its own `def` keeps the whole-module scan; constants,
+object and table bindings read at call time keep it too, #11018),
 a non-literal value, a parameter or local binding
 of the same name in the owner, a nested `def`/`class`/`lambda` in the owner,
 or a related test file that assigns the attribute (`pricing.DISCOUNT_THRESHOLD
