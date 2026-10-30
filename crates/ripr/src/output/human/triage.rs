@@ -20,6 +20,30 @@ use crate::output::python_repair_card::python_repair_card;
 use crate::output::typescript_packet_projection::typescript_gap_record_for;
 use std::collections::BTreeSet;
 
+/// The operand static evidence cannot bind to a test input when a weakly
+/// exposed Python boundary finding declines its repair card: the Missing check
+/// names the equality (`amount == DISCOUNT_THRESHOLD`) but one side reads
+/// `observed <operand> values: unresolved`. #11103 keeps the decline
+/// fail-closed (no gap id, no card) and only names the unbindable operand in
+/// the Safe-next-action text instead of the generic line.
+pub(crate) fn unresolved_boundary_operand(missing: &[String]) -> Option<String> {
+    missing.iter().find_map(|line| {
+        if !line.contains("changed predicate boundary") {
+            return None;
+        }
+        line.split("; ").find_map(|segment| {
+            segment
+                .strip_prefix("observed ")
+                // The Missing check is prose: the final segment ends with a
+                // sentence period after `unresolved`.
+                .map(|rest| rest.trim_end_matches('.'))
+                .and_then(|rest| rest.strip_suffix("values: unresolved"))
+                .map(|operand| operand.trim().to_string())
+                .filter(|operand| !operand.is_empty())
+        })
+    })
+}
+
 use super::sections::{one_line, render_finding_digest_with_config};
 
 pub(crate) struct HumanTriage<'a> {
@@ -1270,10 +1294,23 @@ fn python_preview_safe_action(finding: &Finding) -> String {
         // #5531: the typed repo scope, not placement, is why no card exists.
         (scope_reason, "add or strengthen a test by hand")
     } else if finding.activation.missing_discriminators.is_empty() {
-        (
-            "static evidence names no concrete missing discriminator".to_string(),
-            "add or strengthen a test by hand",
-        )
+        // #11103: the boundary decline already names the equality in the
+        // Missing check but cannot bind one operand to a test input, so no
+        // repair card exists. Name that operand instead of the generic line;
+        // routing stays fail-closed (no gap id, no card).
+        if let Some(operand) = unresolved_boundary_operand(&finding.missing) {
+            (
+                format!(
+                    "static evidence cannot bind `{operand}` to a test input, so the boundary equality cannot become a repair target"
+                ),
+                "add or strengthen a test by hand",
+            )
+        } else {
+            (
+                "static evidence names no concrete missing discriminator".to_string(),
+                "add or strengthen a test by hand",
+            )
+        }
     } else {
         (
             "its test placement or related-test evidence is incomplete".to_string(),
@@ -1512,9 +1549,9 @@ mod tests {
     use super::*;
     use crate::app::Mode;
     use crate::domain::{
-        ActivationEvidence, Confidence, DeltaKind, FindingCanonicalGap, NextActionClass, Probe,
-        ProbeFamily, ProbeId, RevealEvidence, RiprEvidence, SourceCurrentness, SourceLocation,
-        StageEvidence, StageState, Summary, SymbolId,
+        ActivationEvidence, Confidence, DeltaKind, FindingCanonicalGap, LanguageStatus,
+        NextActionClass, Probe, ProbeFamily, ProbeId, RevealEvidence, RiprEvidence,
+        SourceCurrentness, SourceLocation, StageEvidence, StageState, Summary, SymbolId,
     };
     use std::path::PathBuf;
 
@@ -3101,6 +3138,52 @@ mod tests {
         assert!(
             !rendered.contains("(weak, unresolved currentness)"),
             "{rendered}"
+        );
+    }
+
+    #[test]
+    fn unresolved_boundary_operand_names_the_unbindable_side() {
+        // #11103: the boundary decline names the equality in the Missing
+        // check but one side reads `values: unresolved`.
+        assert_eq!(
+            unresolved_boundary_operand(&["A strong Python oracle reaches `discounted_total`, but static evidence does not place a related test input at the changed predicate boundary. No strong related test call places amount equal to DISCOUNT_THRESHOLD; observed amount values: 20000, 5000; observed DISCOUNT_THRESHOLD values: unresolved.".to_string()]),
+            Some("DISCOUNT_THRESHOLD".to_string())
+        );
+        // Other weak shapes keep the generic line.
+        assert_eq!(
+            unresolved_boundary_operand(&["Only heuristic Python test links were found for `owner`; verify the suggested test location.".to_string()]),
+            None
+        );
+        assert_eq!(unresolved_boundary_operand(&[]), None);
+    }
+
+    #[test]
+    fn preview_safe_action_names_the_unbindable_boundary_operand() {
+        // #11103: fail-closed decline, specific wording.
+        let mut finding = test_finding("finding:boundary-decline");
+        finding.class = ExposureClass::WeaklyExposed;
+        finding.language = Some(LanguageId::Python);
+        finding.language_status = Some(LanguageStatus::Preview);
+        finding.missing = vec!["A strong Python oracle reaches `discounted_total`, but static evidence does not place a related test input at the changed predicate boundary. No strong related test call places amount equal to DISCOUNT_THRESHOLD; observed amount values: 20000; observed DISCOUNT_THRESHOLD values: unresolved.".to_string()];
+        let action = python_preview_safe_action(&finding);
+        assert!(
+            action.contains("static evidence cannot bind `DISCOUNT_THRESHOLD` to a test input, so the boundary equality cannot become a repair target"),
+            "{action}"
+        );
+        assert!(
+            !action.contains("names no concrete missing discriminator"),
+            "{action}"
+        );
+        // A weak finding without the unresolved-operand shape keeps the
+        // generic line.
+        let mut generic = test_finding("finding:generic-decline");
+        generic.class = ExposureClass::WeaklyExposed;
+        generic.language = Some(LanguageId::Python);
+        generic.language_status = Some(LanguageStatus::Preview);
+        let generic_action = python_preview_safe_action(&generic);
+        assert!(
+            generic_action.contains("static evidence names no concrete missing discriminator"),
+            "{generic_action}"
         );
     }
 }

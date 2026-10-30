@@ -88,6 +88,7 @@ use tower_lsp_server::{LspService, Server};
 mod analysis_thread_routing_tests;
 mod bare_cr_origin_tests;
 mod consumed_source_tests;
+mod panic_containment_tests;
 mod progress_completion_tests;
 mod progress_create_liveness_tests;
 mod progress_notification_isolation_tests;
@@ -1259,6 +1260,10 @@ fn serve_stdio_call_presence_observer() -> Result<(), String> {
     assert!(
         serve_streams.contains(".concurrency_level(bounds.request_concurrency)"),
         "serve_streams should set the explicit in-flight request concurrency bound (#2034)"
+    );
+    assert!(
+        serve_streams.contains("panic_containment::ContainPanics("),
+        "serve_streams should serve behind the handler panic-containment layer so one panicking request cannot end the session"
     );
     assert!(
         serve_streams.contains("dollar_requests::AnswerDollarRequests(")
@@ -13371,6 +13376,258 @@ fn unavailable_language_notices(shown: &[serde_json::Value]) -> Vec<&serde_json:
                 .is_some_and(|text| text.contains("python") && text.contains("not enabled"))
         })
         .collect()
+}
+
+// #10715: the file itself carries the limitation. Without it the editor ends
+// on an empty list for a changed file that was never analyzed, which reads as
+// clean. Requires the Python adapter compiled in (disabled-but-available
+// advisory), like the notice test below.
+#[test]
+#[cfg(feature = "lang-python")]
+fn changed_file_of_a_disabled_language_gets_a_not_analyzed_diagnostic() -> Result<(), String> {
+    let root = disabled_python_change_fixture("disabled-language-diagnostic")?;
+    let config = LspAnalysisConfig {
+        base_ref: Some("HEAD".to_string()),
+        mode: Mode::Instant,
+        ..LspAnalysisConfig::default()
+    };
+    let diagnostics = workspace_diagnostics_with_config(root.path(), &config, true)?;
+    let code = super::diagnostic_catalog::DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE;
+    let marked = diagnostics
+        .batches
+        .iter()
+        .flat_map(|batch| batch.diagnostics.iter().map(move |d| (batch, d)))
+        .filter(|(_, diagnostic)| diagnostic.code == Some(NumberOrString::String(code.to_string())))
+        .collect::<Vec<_>>();
+    let [(batch, diagnostic)] = marked.as_slice() else {
+        return Err(format!(
+            "exactly one not-analyzed diagnostic expected, got {} ({:?})",
+            marked.len(),
+            marked.iter().map(|(_, d)| &d.message).collect::<Vec<_>>()
+        ));
+    };
+    if !batch.uri.as_str().ends_with("zpy/pricing.py") {
+        return Err(format!(
+            "marker must sit on the changed file: {:?}",
+            batch.uri
+        ));
+    }
+    if diagnostic.severity != Some(DiagnosticSeverity::INFORMATION)
+        || !diagnostic.message.contains("did not analyze")
+        || !diagnostic.message.contains("does not mean it is clean")
+        || !diagnostic.message.contains("[languages] enabled")
+    {
+        return Err(format!(
+            "message must be plain and name recovery: {diagnostic:?}"
+        ));
+    }
+    let data = diagnostic.data.as_ref().ok_or("marker must carry data")?;
+    if data["limitation"] != "language_adapter_unavailable"
+        || data["not_analyzed_reason"] != "language_adapter_not_enabled"
+        || data["language"] != "python"
+    {
+        return Err(format!("typed reason must stay in data: {data}"));
+    }
+    // Negative control: a repository with no changed disabled-language file
+    // publishes no marker.
+    let clean_root = boundary_gap_git_fixture_root("disabled-language-diagnostic-control")?;
+    let control = workspace_diagnostics_with_config(clean_root.path(), &config, true)?;
+    if control
+        .batches
+        .iter()
+        .flat_map(|batch| batch.diagnostics.iter())
+        .any(|diagnostic| diagnostic.code == Some(NumberOrString::String(code.to_string())))
+    {
+        return Err("no marker is owed when no disabled-language file changed".to_string());
+    }
+    Ok(())
+}
+
+// #10715: the producer names at most three changed files per disabled
+// language. Every further changed file must still not read as clean, and the
+// snapshot must stay consistent with the governed markers it stores.
+#[test]
+#[cfg(feature = "lang-python")]
+fn more_than_three_disabled_language_files_are_all_marked_not_analyzed() -> Result<(), String> {
+    let root = disabled_python_change_fixture("disabled-language-many")?;
+    for name in ["a", "b", "c", "d", "e"] {
+        std::fs::write(
+            root.path().join(format!("zpy/{name}.py")),
+            "def f():\n    return 1\n",
+        )
+        .map_err(|err| format!("write {name}.py failed: {err}"))?;
+    }
+    run_lsp_scope_git(root.path(), &["add", "-A"])?;
+    let config = LspAnalysisConfig {
+        base_ref: Some("HEAD".to_string()),
+        mode: Mode::Instant,
+        ..LspAnalysisConfig::default()
+    };
+    let diagnostics = workspace_diagnostics_with_config(root.path(), &config, true)?;
+    let snapshot = &diagnostics.snapshot;
+    if snapshot.unavailable_adapter.incomplete_languages.is_empty() {
+        return Err("fixture must exceed the producer's three-path sample".to_string());
+    }
+    if !snapshot.is_consistent() {
+        return Err("stored not-analyzed markers must keep the snapshot consistent".to_string());
+    }
+    let mut extra = snapshot.clone();
+    extra
+        .diagnostics_by_uri
+        .entry(test_uri("file:///workspace/zpy/a.py")?)
+        .or_default()
+        .push(Diagnostic {
+            source: Some("ripr".to_string()),
+            message: "unaccounted".to_string(),
+            ..Default::default()
+        });
+    if extra.is_consistent() {
+        return Err("an unaccounted extra diagnostic must still be rejected".to_string());
+    }
+    // Serve through the real delivery selection the push and pull paths read:
+    // the stored marker must survive the budget, exactly once per document.
+    let mut snapshot = snapshot.clone();
+    snapshot.delivery_selection = Some(super::backend::compute_delivery_selection(&snapshot));
+    let snapshot = &snapshot;
+    let code = super::diagnostic_catalog::DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE;
+    // The budget itself (not the serve-time fallback) must keep every stored
+    // marker: without the producer delivery stamp it is profile-filtered.
+    let selection = snapshot
+        .delivery_selection
+        .as_ref()
+        .ok_or("selection must be stored")?;
+    let mut stored_markers = 0;
+    for (uri, stored) in &snapshot.diagnostics_by_uri {
+        let has_marker = |list: &[Diagnostic]| {
+            list.iter()
+                .any(|d| d.code == Some(NumberOrString::String(code.to_string())))
+        };
+        if has_marker(stored) {
+            stored_markers += 1;
+            if !has_marker(&selection.diagnostics_for_document(uri.as_str(), stored)) {
+                return Err(format!("the budget dropped the marker for {uri:?}"));
+            }
+        }
+    }
+    if stored_markers == 0 {
+        return Err("fixture must store at least one named marker".to_string());
+    }
+    for name in ["pricing", "a", "b", "c", "d", "e"] {
+        let uri = file_uri_for_path(&root.path().join(format!("zpy/{name}.py")))
+            .map_err(|err| format!("uri for {name}.py failed: {err}"))?;
+        let served = super::diagnostics::delivered_diagnostics_for_uri(
+            snapshot,
+            &uri,
+            &std::collections::BTreeMap::new(),
+        );
+        let markers = served
+            .iter()
+            .filter(|d| d.code == Some(NumberOrString::String(code.to_string())))
+            .count();
+        if markers != 1 {
+            return Err(format!(
+                "{name}.py must carry exactly one marker, got {markers}"
+            ));
+        }
+    }
+    // Unrelated, unchanged files stay unmarked.
+    let unrelated = file_uri_for_path(&root.path().join("src/lib.rs"))
+        .map_err(|err| format!("uri for lib.rs failed: {err}"))?;
+    let served = super::diagnostics::delivered_diagnostics_for_uri(
+        snapshot,
+        &unrelated,
+        &std::collections::BTreeMap::new(),
+    );
+    if served
+        .iter()
+        .any(|d| d.code == Some(NumberOrString::String(code.to_string())))
+    {
+        return Err("an unrelated file must not carry the marker".to_string());
+    }
+    Ok(())
+}
+
+// TypeScript end to end (the PR #10715 example): a changed .ts file gets the
+// marker, an unchanged file does not.
+#[test]
+#[cfg(feature = "lang-typescript")]
+fn changed_typescript_file_with_the_adapter_disabled_is_marked_not_analyzed() -> Result<(), String>
+{
+    let root = boundary_gap_git_fixture_root("disabled-typescript-diagnostic")?;
+    std::fs::create_dir_all(root.path().join("web"))
+        .map_err(|err| format!("create web failed: {err}"))?;
+    std::fs::write(
+        root.path().join("web/pricing.ts"),
+        "export function price(): number {\n  return 1;\n}\n",
+    )
+    .map_err(|err| format!("write pricing.ts failed: {err}"))?;
+    run_lsp_scope_git(root.path(), &["add", "-A"])?;
+    let config = LspAnalysisConfig {
+        base_ref: Some("HEAD".to_string()),
+        mode: Mode::Instant,
+        ..LspAnalysisConfig::default()
+    };
+    let diagnostics = workspace_diagnostics_with_config(root.path(), &config, true)?;
+    let mut snapshot = diagnostics.snapshot.clone();
+    if !snapshot.is_consistent() {
+        return Err("snapshot must stay consistent with the stored marker".to_string());
+    }
+    snapshot.delivery_selection = Some(super::backend::compute_delivery_selection(&snapshot));
+    let snapshot = &snapshot;
+    let code = super::diagnostic_catalog::DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE;
+    let marker_count = |relative: &str| -> Result<usize, String> {
+        let uri = file_uri_for_path(&root.path().join(relative))
+            .map_err(|err| format!("uri for {relative} failed: {err}"))?;
+        Ok(super::diagnostics::delivered_diagnostics_for_uri(
+            snapshot,
+            &uri,
+            &std::collections::BTreeMap::new(),
+        )
+        .iter()
+        .filter(|d| {
+            d.code == Some(NumberOrString::String(code.to_string()))
+                && d.data
+                    .as_ref()
+                    .is_some_and(|data| data["language"] == "typescript")
+        })
+        .count())
+    };
+    if marker_count("web/pricing.ts")? != 1 {
+        return Err("the changed .ts file must carry one typescript marker".to_string());
+    }
+    if marker_count("src/lib.rs")? != 0 {
+        return Err("an unrelated file must not carry the marker".to_string());
+    }
+    Ok(())
+}
+
+// The marker text is language-generic: TypeScript and JavaScript files name
+// their own label and share the TypeScript-family recovery route. Needs no
+// compiled-in adapter beyond the TypeScript family.
+#[test]
+fn not_analyzed_marker_names_typescript_and_javascript_labels() -> Result<(), String> {
+    for (language, path) in [
+        (crate::domain::LanguageId::TypeScript, "src/pricing.ts"),
+        (crate::domain::LanguageId::JavaScript, "src/pricing.js"),
+    ] {
+        let marker = super::diagnostics::language_not_analyzed_diagnostic(language, path);
+        let name = language.as_str();
+        if !marker
+            .message
+            .contains(&format!("the {name} adapter is not enabled"))
+            || !marker.message.contains("does not mean it is clean")
+        {
+            return Err(format!("{name} message: {}", marker.message));
+        }
+        let data = marker.data.ok_or("marker must carry data")?;
+        if data["language"] != name
+            || data["limitation"] != "language_adapter_unavailable"
+            || data["path"] != path
+        {
+            return Err(format!("{name} data: {data}"));
+        }
+    }
+    Ok(())
 }
 
 #[test]

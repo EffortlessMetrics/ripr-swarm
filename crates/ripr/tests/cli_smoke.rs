@@ -319,7 +319,8 @@ fn stdin_probe_fixture(mode: &str) -> Result<Command, std::io::Error> {
 
 #[test]
 fn stdin_probe_stalled_child_returns_bounded_timeout() -> Result<(), std::io::Error> {
-    let started = std::time::Instant::now();
+    // The child sleeps for a minute; waiting it out would return `Ok`, so a
+    // `TimedOut` error is itself the proof the 100 ms budget ended the call.
     let result = run_owned_stdin_probe(
         stdin_probe_fixture("hang")?,
         b"small fixture",
@@ -329,7 +330,6 @@ fn stdin_probe_stalled_child_returns_bounded_timeout() -> Result<(), std::io::Er
         result.err().map(|err| err.kind()),
         Some(std::io::ErrorKind::TimedOut)
     );
-    assert!(started.elapsed() < std::time::Duration::from_secs(5));
     Ok(())
 }
 
@@ -4936,7 +4936,7 @@ fn check_json_timeout_and_bad_base_have_distinct_identities() -> Result<(), Stri
     let shim_dir = unique_temp_workspace("check-json-timeout-shim");
     std::fs::create_dir_all(&shim_dir).map_err(|err| format!("create shim dir: {err}"))?;
     let shim = shim_dir.join("git");
-    std::fs::write(&shim, "#!/bin/sh\nexec sleep 60\n")
+    std::fs::write(&shim, hanging_git_script(&shim_dir))
         .map_err(|err| format!("write git shim: {err}"))?;
     {
         use std::os::unix::fs::PermissionsExt;
@@ -4952,7 +4952,6 @@ fn check_json_timeout_and_bad_base_have_distinct_identities() -> Result<(), Stri
         .to_string_lossy()
         .into_owned();
 
-    let started = std::time::Instant::now();
     let output = run_command_with_env(
         env!("CARGO_BIN_EXE_ripr"),
         &root,
@@ -4969,12 +4968,11 @@ fn check_json_timeout_and_bad_base_have_distinct_identities() -> Result<(), Stri
         &[("PATH", search_path.as_str())],
     )
     .map_err(|err| format!("run check with hanging git: {err}"))?;
-    let elapsed = started.elapsed();
     let timeout_value =
         assert_check_json_refusal(&output, "git_invocation_timeout", "analysis/git-timeout")?;
     assert!(
-        elapsed < std::time::Duration::from_secs(45),
-        "check waited {elapsed:?} on hung git under --git-timeout 1"
+        !hang_finished_marker(&shim_dir).exists(),
+        "check waited: the hang ran to its end instead of being cut by the timeout"
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     if !stderr.contains("git_invocation_timeout") {
@@ -5013,11 +5011,29 @@ fn check_json_timeout_and_bad_base_have_distinct_identities() -> Result<(), Stri
 /// Fixture setup with real git must finish before installing the override.
 /// Returns the shim dir (for cleanup) and the search path for the run.
 #[cfg(unix)]
+/// A `git` shim that hangs for a minute and then leaves a marker file. The
+/// tests assert the marker is absent after `ripr` returns: the hang never ran
+/// to its end, so the git timeout (not the hang) ended the call. That holds
+/// on any runner speed, unlike an elapsed-time ceiling.
+#[cfg(unix)]
+fn hang_finished_marker(shim_dir: &std::path::Path) -> PathBuf {
+    shim_dir.join("hang-finished")
+}
+
+#[cfg(unix)]
+fn hanging_git_script(shim_dir: &std::path::Path) -> String {
+    format!(
+        "#!/bin/sh\nsleep 60\ntouch '{}'\n",
+        hang_finished_marker(shim_dir).display()
+    )
+}
+
+#[cfg(unix)]
 fn hanging_git_path_override(label: &str) -> Result<(PathBuf, String), String> {
     let shim_dir = unique_temp_workspace(label);
     std::fs::create_dir_all(&shim_dir).map_err(|err| format!("create shim dir: {err}"))?;
     let shim = shim_dir.join("git");
-    std::fs::write(&shim, "#!/bin/sh\nexec sleep 60\n")
+    std::fs::write(&shim, hanging_git_script(&shim_dir))
         .map_err(|err| format!("write git shim: {err}"))?;
     {
         use std::os::unix::fs::PermissionsExt;
@@ -5046,7 +5062,6 @@ fn check_json_omitted_base_git_timeout_names_timeout_identity() -> Result<(), St
     let (shim_dir, search_path) =
         hanging_git_path_override("check-json-omitted-base-timeout-shim")?;
 
-    let started = std::time::Instant::now();
     let output = run_command_with_env(
         env!("CARGO_BIN_EXE_ripr"),
         &root,
@@ -5062,12 +5077,11 @@ fn check_json_omitted_base_git_timeout_names_timeout_identity() -> Result<(), St
         &[("PATH", search_path.as_str())],
     )
     .map_err(|err| format!("run check with hanging git: {err}"))?;
-    let elapsed = started.elapsed();
     let value =
         assert_check_json_refusal(&output, "git_invocation_timeout", "analysis/git-timeout")?;
     assert!(
-        elapsed < std::time::Duration::from_mins(1),
-        "check waited {elapsed:?} on hung git under --git-timeout 1"
+        !hang_finished_marker(&shim_dir).exists(),
+        "check waited: the hang ran to its end instead of being cut by the timeout"
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     if !stderr.contains("git_invocation_timeout") {
@@ -5103,7 +5117,6 @@ fn check_json_bound_subject_config_timeout_names_timeout_identity() -> Result<()
     let (shim_dir, search_path) =
         hanging_git_path_override("check-json-subject-config-timeout-shim")?;
 
-    let started = std::time::Instant::now();
     let output = run_command_with_env(
         env!("CARGO_BIN_EXE_ripr"),
         &root,
@@ -5122,12 +5135,11 @@ fn check_json_bound_subject_config_timeout_names_timeout_identity() -> Result<()
         &[("PATH", search_path.as_str())],
     )
     .map_err(|err| format!("run check with hanging git: {err}"))?;
-    let elapsed = started.elapsed();
     let value =
         assert_check_json_refusal(&output, "git_invocation_timeout", "analysis/git-timeout")?;
     assert!(
-        elapsed < std::time::Duration::from_mins(1),
-        "check waited {elapsed:?} on hung git for the candidate config read"
+        !hang_finished_marker(&shim_dir).exists(),
+        "check waited: the hang ran to its end instead of being cut by the timeout"
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     if !stderr.contains("git_invocation_timeout") {
@@ -5585,7 +5597,7 @@ fn first_pr_cli_writes_start_here_packet() -> Result<(), Box<dyn std::error::Err
     assert!(stdout.contains(&format!("Start here: {wrote_base}/start-here.md")));
     assert!(stdout.contains(&format!("Wrote {wrote_base}/start-here.json")));
     assert!(stdout.contains(&format!("Wrote {wrote_base}/start-here.md")));
-    assert!(stdout.contains("State: top_gap"));
+    assert!(stdout.contains("State: top gap"));
     assert!(stdout.contains("Safe next action: repair one named gap"));
     assert!(stdout.contains("Top actionable gap: missing boundary assertion"));
     assert!(stdout.contains("Changed behavior: `amount >= threshold`"));
@@ -5594,19 +5606,13 @@ fn first_pr_cli_writes_start_here_packet() -> Result<(), Box<dyn std::error::Err
             .contains("Current evidence strength: Static evidence found related Rust test context")
     );
     assert!(
-        stdout.contains(
-            "Missing discriminator: Equality-boundary assertion for the changed behavior."
-        )
+        stdout.contains("Missing check: Equality-boundary assertion for the changed behavior.")
     );
-    assert!(
-        stdout.contains(
-            "Focused proof intent: Add a focused boundary assertion in `tests/pricing.rs`"
-        )
-    );
+    assert!(stdout.contains("Test to add: Add a focused boundary assertion in `tests/pricing.rs`"));
     assert!(stdout.contains(
         "Why this matters: A related Rust test reaches this change, but no equality-boundary assertion was found for the changed behavior."
     ));
-    assert!(stdout.contains("Boundary: static advisory evidence only; not runtime proof, coverage adequacy, mutation confirmation, gate approval, or merge approval."));
+    assert!(stdout.contains("Note: ripr reads code; it does not run your tests. This is not proof your tests are good enough and not approval to merge."));
 
     let json_path = reports.join("start-here.json");
     let md_path = reports.join("start-here.md");
@@ -5742,7 +5748,7 @@ fn first_pr_cli_writes_start_here_packet() -> Result<(), Box<dyn std::error::Err
     assert_success(&check_output);
     let check_stdout = String::from_utf8_lossy(&check_output.stdout);
     assert!(check_stdout.contains("Start here:"));
-    assert!(check_stdout.contains("State: top_gap"));
+    assert!(check_stdout.contains("State: top gap"));
     assert!(check_stdout.contains("First PR start-here packet ok:"));
     // --check validates without rewriting, so the disclosure must not claim writes.
     assert!(
@@ -10047,6 +10053,10 @@ fn agent_repair_operational_error_after_attempt_selection_stays_failure()
         Some(2),
         "an unreadable retained packet is operational, not a typed refusal"
     );
+    assert!(
+        after.stdout.is_empty(),
+        "an operational error must not emit a typed refusal document"
+    );
     let stderr = String::from_utf8_lossy(&after.stderr);
     assert!(
         stderr.contains("canonicalize artifact") && stderr.contains("agent-packet.json"),
@@ -10054,6 +10064,48 @@ fn agent_repair_operational_error_after_attempt_selection_stays_failure()
     );
     let (_, manifest) = sole_repair_attempt(&root)?;
     assert_eq!(manifest["state"], "awaiting_edit", "{manifest}");
+    std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+#[test]
+fn agent_receipt_rejects_invalid_attempt_before_reading_verify_input()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("agent-receipt-invalid-attempt");
+    std::fs::create_dir_all(&root)?;
+    for (attempt, expected) in [
+        (
+            "bogus",
+            "repair attempt ID must start with `repair-attempt-`",
+        ),
+        (
+            "repair-attempt-short",
+            "repair attempt ID suffix must contain 24 lowercase hexadecimal characters",
+        ),
+        (
+            "repair-attempt-0123456789abcdef01234567",
+            "repair attempt manifest not found for repair-attempt-0123456789abcdef01234567 at ",
+        ),
+    ] {
+        let output = run_ripr(&[
+            "agent",
+            "receipt",
+            "--root",
+            &root.display().to_string(),
+            "--verify-json",
+            "absent-verify.json",
+            "--seam-id",
+            "seam-a",
+            "--attempt",
+            attempt,
+            "--json",
+        ]);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(2), "{attempt}: {stderr}");
+        assert!(output.stdout.is_empty(), "{output:?}");
+        assert!(stderr.contains(expected), "{attempt}: {stderr}");
+        assert!(!stderr.contains("absent-verify.json"), "{stderr}");
+    }
     std::fs::remove_dir_all(root)?;
     Ok(())
 }
@@ -10826,9 +10878,11 @@ fn agent_verify_missing_snapshot_named_like_a_refusal_is_operational()
     std::fs::create_dir_all(&root)?;
     init_git_fixture_repo(&root)?;
     for missing in [
-        "analysis input identities differ",
-        "no repository movement between before and after artifacts",
+        "agent verify artifacts are incomparable: analysis input identities differ",
+        "agent verify no repository movement between before and after artifacts",
+        "agent verify gap binding refused",
     ] {
+        assert!(!root.join(missing).exists(), "the input must be absent");
         let output = run_ripr(&[
             "agent",
             "verify",
@@ -10842,6 +10896,14 @@ fn agent_verify_missing_snapshot_named_like_a_refusal_is_operational()
         ]);
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert_eq!(output.status.code(), Some(2), "{missing}: {stderr}");
+        assert!(
+            output.stdout.is_empty(),
+            "failed verify must not emit an artifact"
+        );
+        assert!(
+            stderr.contains("failed to read agent verify --before snapshot"),
+            "the real snapshot read must fail: {stderr}"
+        );
         assert!(
             stderr.contains(missing),
             "the error names the path: {stderr}"
@@ -19444,7 +19506,7 @@ fn check_python_finding_without_repair_card_names_the_terminal_manual_step() -> 
     )?;
     assert_eq!(
         line,
-        "  Safe next action: this Python preview finding has no repair card (static evidence names no concrete missing discriminator), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`"
+        "  Safe next action: this Python preview finding has no repair card (static evidence cannot bind `DISCOUNT_THRESHOLD` to a test input, so the boundary equality cannot become a repair target), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`"
     );
     Ok(())
 }
@@ -19931,7 +19993,8 @@ fn pilot_honors_ripr_git_timeout_for_the_current_change() -> Result<(), String> 
     std::fs::write(
         &shim,
         format!(
-            "#!/bin/sh\nfor arg in \"$@\"; do\n  if [ \"$arg\" = diff ]; then exec sleep 60; fi\ndone\nexec '{}' \"$@\"\n",
+            "#!/bin/sh\nfor arg in \"$@\"; do\n  if [ \"$arg\" = diff ]; then sleep 60; touch '{}'; exit 0; fi\ndone\nexec '{}' \"$@\"\n",
+            hang_finished_marker(&shim_dir).display(),
             real_git.display()
         ),
     )
@@ -19950,7 +20013,6 @@ fn pilot_honors_ripr_git_timeout_for_the_current_change() -> Result<(), String> 
         .to_string_lossy()
         .into_owned();
 
-    let started = std::time::Instant::now();
     let output = run_command_with_env(
         env!("CARGO_BIN_EXE_ripr"),
         &root,
@@ -19958,11 +20020,10 @@ fn pilot_honors_ripr_git_timeout_for_the_current_change() -> Result<(), String> 
         &[("RIPR_GIT_TIMEOUT", "1"), ("PATH", &search_path)],
     )
     .map_err(|err| format!("run pilot with hanging git diff: {err}"))?;
-    let elapsed = started.elapsed();
     assert_success(&output);
     assert!(
-        elapsed < std::time::Duration::from_secs(45),
-        "pilot waited {elapsed:?} on a hung git diff under RIPR_GIT_TIMEOUT=1"
+        !hang_finished_marker(&shim_dir).exists(),
+        "pilot waited the hang ran to its end instead of being cut by the timeout"
     );
     let summary: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(out_dir.join("pilot-summary.json"))
@@ -26862,9 +26923,8 @@ fn agent_status_refuses_non_default_out_dir() -> Result<(), String> {
         "elsewhere",
         "--json",
     ]);
-    if custom.status.success() {
-        return Err("agent status --out elsewhere must fail closed".to_string());
-    }
+    assert_eq!(custom.status.code(), Some(2), "{custom:?}");
+    assert!(custom.stdout.is_empty(), "{custom:?}");
     let stderr = String::from_utf8_lossy(&custom.stderr);
     if !stderr.contains("agent status --out elsewhere is not supported") {
         return Err(format!("expected a named --out refusal; got:\n{stderr}"));
@@ -27497,6 +27557,7 @@ fn agent_status_names_a_refused_after_phase_before_repeating_it()
         "{refused_stderr}"
     );
     let refused_document: serde_json::Value = serde_json::from_slice(&refused.stdout)?;
+    assert_eq!(refused_document["schema_version"], "0.2");
     assert_eq!(
         refused_document["kind"], "repair_after_refusal",
         "{refused_document:#}"
@@ -29145,10 +29206,8 @@ fn agent_status_attempt_types_a_malformed_row_and_isolates_valid_rows()
     // A selector that is not a repair attempt ID fails closed at the CLI.
     let root_arg = root.to_string_lossy().into_owned();
     let rejected = run_ripr(&["agent", "status", "--root", &root_arg, "--attempt", "bogus"]);
-    assert!(
-        !rejected.status.success(),
-        "a malformed attempt ID must be refused: {rejected:?}"
-    );
+    assert_eq!(rejected.status.code(), Some(2), "{rejected:?}");
+    assert!(rejected.stdout.is_empty(), "{rejected:?}");
     let stderr = String::from_utf8_lossy(&rejected.stderr);
     assert!(stderr.contains("repair-attempt-"), "{stderr}");
 
@@ -29681,18 +29740,38 @@ fn pr_summary_does_not_invoke_cargo() -> Result<(), String> {
     .map_err(|err| err.to_string())?;
     let bin = std::fs::canonicalize(env!("CARGO_BIN_EXE_ripr"))
         .unwrap_or_else(|_| std::path::PathBuf::from(env!("CARGO_BIN_EXE_ripr")));
-    let start = std::time::Instant::now();
-    let output = std::process::Command::new(&bin)
-        .current_dir(&root)
-        .arg("pr-summary")
-        .output()
+    let mut command = std::process::Command::new(&bin);
+    command.current_dir(&root).arg("pr-summary");
+    // A `cargo` shim that records any invocation is the direct oracle for
+    // "no compile"; an elapsed-time ceiling only guessed at it.
+    #[cfg(unix)]
+    let invoked = {
+        use std::os::unix::fs::PermissionsExt;
+        let shim_dir = root.join("cargo-shim");
+        std::fs::create_dir_all(&shim_dir).map_err(|err| err.to_string())?;
+        let invoked = shim_dir.join("cargo-invoked");
+        let shim = shim_dir.join("cargo");
+        std::fs::write(
+            &shim,
+            format!("#!/bin/sh\ntouch '{}'\nexit 1\n", invoked.display()),
+        )
         .map_err(|err| err.to_string())?;
-    let elapsed = start.elapsed();
+        std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755))
+            .map_err(|err| err.to_string())?;
+        let mut paths = vec![shim_dir];
+        paths.extend(std::env::split_paths(
+            &std::env::var_os("PATH").unwrap_or_default(),
+        ));
+        command.env(
+            "PATH",
+            std::env::join_paths(paths).map_err(|err| err.to_string())?,
+        );
+        invoked
+    };
+    let output = command.output().map_err(|err| err.to_string())?;
     assert!(output.status.success(), "pr-summary must succeed");
-    assert!(
-        elapsed.as_secs() < 10,
-        "pr-summary must complete in <10s (no compile); took {elapsed:?}"
-    );
+    #[cfg(unix)]
+    assert!(!invoked.exists(), "pr-summary must not invoke cargo");
     ignore_remove_dir_all(&root);
     Ok(())
 }
@@ -33059,7 +33138,7 @@ fn repair_refuses_uncommitted_inline_target_before_writing_artifacts_and_status_
         "status must not claim a repair is in progress:\n{status_out}\n{status_err}"
     );
     assert!(
-        status_out.contains("Seam: unknown") && !status_out.contains("agent_packet"),
+        status_out.contains("No repair in progress.") && !status_out.contains("agent_packet"),
         "status must report no repair in progress:\n{status_out}\n{status_err}"
     );
     std::fs::remove_dir_all(&root)?;

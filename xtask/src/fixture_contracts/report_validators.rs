@@ -8,9 +8,7 @@
 //! `dogfood.rs`, and `tests.rs`) compile unchanged.
 
 use super::*;
-pub(crate) use repo_policy::{
-    validate_assistant_loop_health_fixture_corpus, validate_assistant_loop_health_fixture_corpus_at,
-};
+pub(crate) use repo_policy::validate_assistant_loop_health_fixture_corpus_at;
 
 pub(crate) fn validate_pr_review_front_panel_fixture_corpus(
     violations: &mut Vec<String>,
@@ -1096,3 +1094,6 @@ fn known_pr_inline_comment_blocked_reasons() -> [&'static str; 11] {
         "unknown",
     ]
 }
+
+#[cfg(test)]
+mod tests;
