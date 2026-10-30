@@ -17,7 +17,7 @@ use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use std::env;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
 const SCHEMA_VERSION: &str = "0.1";
@@ -545,7 +545,9 @@ fn render_start_here_packet_with_selection(
             "check_output",
             "Check output",
             check_output,
-            (!selection.is_unbound_no_action_limit()).then(|| {
+            (!selection.is_unbound_no_action_limit()
+                || direct_check_output_bound_to_root(root, options))
+            .then(|| {
                 format!(
                     "ripr check --root {} --base {} --json > {}",
                     shell_arg(&options.command_root()),
@@ -1293,8 +1295,15 @@ fn select_from_gap_ledger(gap_ledger: &Value, root: &Path, options: &FirstPrOpti
     // A foreign or unknown producer root cannot authorize a command that
     // overwrites the supplied check artifact, regardless of ledger status or
     // record count. Only a verified same-root producer may use that route.
+    // One exception stays fail-closed either way: a zero-record projection
+    // miss whose input is the selected root's own root-relative artifact
+    // falls through to its blocked recovery, which regenerates the
+    // repo-exposure/ledger inputs under the selected root and never promotes
+    // the supplied evidence to an actionable or no-action conclusion.
     if is_check_output_derived(gap_ledger)
         && !matches!(check_output_root(gap_ledger, root), CheckOutputRoot::Same)
+        && !(direct_check_output_bound_to_root(root, options)
+            && ledger_check_output_projected_nothing(gap_ledger))
         && let Some(limitation) = unbound_no_action_limit(gap_ledger, root, options)
     {
         return limitation;
@@ -1527,6 +1536,34 @@ fn unbound_no_action_limit(
         message,
         inspect,
     ))
+}
+
+/// A `--check-output` supplied as a plain root-relative path names the
+/// selected root's own artifact slot: first-pr resolves it against the
+/// selected root, so regenerating it with the anchored `--root` can only
+/// write under that root. An absolute (or `..`-escaping) path can name a
+/// foreign file, so it keeps the fail-closed treatment for unknown or
+/// foreign producer roots. The artifact must be present and canonicalize
+/// inside the selected root, so a symlink cannot smuggle the write out.
+fn direct_check_output_bound_to_root(root: &Path, options: &FirstPrOptions) -> bool {
+    let Some(check_output) = options.check_output.as_deref() else {
+        return false;
+    };
+    let path = Path::new(check_output);
+    if path.as_os_str().is_empty()
+        || !path
+            .components()
+            .all(|component| matches!(component, Component::Normal(_) | Component::CurDir))
+    {
+        return false;
+    }
+    match (
+        resolve_path(root, check_output).canonicalize(),
+        root.canonicalize(),
+    ) {
+        (Ok(target), Ok(root)) => target.starts_with(&root),
+        _ => false,
+    }
 }
 
 enum CheckOutputRoot {
@@ -5277,6 +5314,89 @@ mod tests {
             );
             fs::remove_file(alias).map_err(|e| e.to_string())?;
         }
+        cleanup(&root)?;
+        cleanup(&other)
+    }
+
+    #[test]
+    fn root_relative_check_output_keeps_anchored_regeneration_under_unbound_limit()
+    -> Result<(), String> {
+        let root = temp_repo("first-pr-root-bound-check-output")?;
+        write_json(&root.join(DEFAULT_CHECK_OUTPUT), json!({"root": "."}))?;
+        let options = FirstPrOptions {
+            root: root.to_string_lossy().into_owned(),
+            check_output: Some(DEFAULT_CHECK_OUTPUT.to_string()),
+            ..FirstPrOptions::default()
+        };
+        let limited = || {
+            Selection::blocked_with_reason(
+                "blocked_artifact",
+                "source_currentness_unavailable",
+                "limited".to_string(),
+                None,
+            )
+        };
+        let packet =
+            render_start_here_packet_with_selection(&root, &options, limited(), Vec::new(), None);
+        let artifact = |packet: &Value, id: &str| {
+            packet["artifacts"]
+                .as_array()
+                .and_then(|artifacts| artifacts.iter().find(|artifact| artifact["id"] == id))
+                .cloned()
+        };
+        let check_output = artifact(&packet, "check_output").ok_or("check_output artifact")?;
+        let command = check_output["regeneration_command"]
+            .as_str()
+            .ok_or("root-bound check output keeps its regeneration command")?;
+        assert!(
+            command.contains(&options.command_root()) && command.contains(DEFAULT_CHECK_OUTPUT),
+            "{command}"
+        );
+        let gap_ledger = artifact(&packet, "gap_ledger").ok_or("gap ledger artifact")?;
+        assert!(
+            gap_ledger["regeneration_command"].is_null(),
+            "unbound ledger regeneration stays withheld: {gap_ledger}"
+        );
+
+        // An absolute supplied file stays withheld under the same limit.
+        let other = temp_repo("first-pr-root-bound-check-output-other")?;
+        let foreign = other.join("foreign.json");
+        write_json(&foreign, json!({"root": "."}))?;
+        let foreign_options = FirstPrOptions {
+            check_output: Some(foreign.to_string_lossy().into_owned()),
+            ..options.clone()
+        };
+        let packet = render_start_here_packet_with_selection(
+            &root,
+            &foreign_options,
+            limited(),
+            Vec::new(),
+            None,
+        );
+        let check_output = artifact(&packet, "check_output").ok_or("check_output artifact")?;
+        assert!(
+            check_output["regeneration_command"].is_null(),
+            "absolute supplied input must not be overwritten: {check_output}"
+        );
+
+        // A zero-record projection miss on the root-bound artifact falls
+        // through to its blocked repo-exposure recovery, not the unbound
+        // limit, and still claims no actionable or no-action conclusion.
+        let ledger = json!({
+            "status": "no_records",
+            "inputs": {"source_kind": "check_output"},
+            "input_root": ".",
+            "records": [],
+            "warnings": ["check output contained 1 finding, but the --check-output route projects presentation/output-text and Python/TypeScript/Perl findings only; no gap records were derived from them. For Rust findings, use `ripr check` to read them and `ripr repair` to start a repair"]
+        });
+        let selected = select_from_gap_ledger(&ledger, &root, &options).to_json();
+        assert_eq!(selected["state"], "blocked_artifact", "{selected}");
+        assert!(
+            selected.get("reason_code").is_none(),
+            "projection miss keeps its own blocked route: {selected}"
+        );
+        let next = selected["next_command"].as_str().ok_or("recovery")?;
+        assert!(next.contains("repo-exposure"), "{next}");
         cleanup(&root)?;
         cleanup(&other)
     }

@@ -14255,7 +14255,10 @@ Field contract:
   same-root evidence. For every check-derived ledger status and record count,
   unknown or foreign roots suppress write-oriented input and ledger regeneration
   guidance; a verified same-root zero-record projection keeps its existing
-  bounded recovery route.
+  bounded recovery route. A `--check-output` supplied as a plain root-relative
+  path is the selected root's own artifact: its present artifact keeps the
+  anchored regeneration command, and a zero-record projection miss on it keeps
+  the blocked repo-exposure recovery, without promoting its evidence.
   A still-no-action preview/mixed result remains limited until corpus
   provenance is available (#7452). `missing_artifacts` on this blocked state
   means missing source authority, not necessarily a missing file.
