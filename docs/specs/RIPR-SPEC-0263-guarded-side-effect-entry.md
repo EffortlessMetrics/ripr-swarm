@@ -211,6 +211,15 @@ counterpart for side effects.
    `weakly_exposed`, missing input `if price > 1_000_000`, not `exposed`.
    Adding a call with `2_000_000` keeps `exposed`; a changed return in
    `if price < 0` (entered by `-1`) names no guard.
+   The repair is the same input route as a side effect: the next step asks
+   for an input that enters the guard, the strong rows read `missing_input`
+   (never `missing_exact_assertion`), and the explain text says "use an input
+   that enters `if price > 1_000_000`", never "assert the exact `if ...`".
+   For these probes the only movement is `exposed` to `weakly_exposed`
+   (infection `Yes` to `Weak`, confidence lower); `infection_unknown` cannot
+   move, because the guard fact is built only when a related test exists and
+   the infection stage reads `Yes` for these families otherwise. A mutable or
+   rebound parameter and a compound guard keep `exposed`.
 
 ## Test Mapping
 
@@ -226,7 +235,9 @@ counterpart for side effects.
 - `crates/ripr/tests/guarded_error_return_unentered.rs` covers example 7:
   `an_exact_variant_assertion_on_another_branch_does_not_read_exposed`,
   `a_call_that_enters_the_guard_keeps_the_exposed_reading` and
-  `a_changed_error_return_in_a_guard_the_tests_enter_names_nothing`.
+  `a_changed_error_return_in_a_guard_the_tests_enter_names_nothing`,
+  `the_repair_is_an_input_that_enters_the_guard_never_an_assertion` and
+  `shared_refusals_keep_the_exposed_reading_for_error_returns`.
 - `analysis::classify::arm_selection::guard_entry::tests` covers the guard
   parser, the comparison semantics and the rebinding refusals.
 - The corpus case `rust-guarded-push-unentered-branch` is the labeled

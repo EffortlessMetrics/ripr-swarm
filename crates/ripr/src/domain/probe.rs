@@ -403,13 +403,21 @@ pub(crate) fn input_boundary_fact<'a>(
     match family {
         // A returned bare comparison reads the same boundary (#9094); no
         // other return-value fact is spelled `left == right`.
-        ProbeFamily::Predicate | ProbeFamily::ReturnValue => {
-            facts.iter().find(|fact| fact.value.contains(" == "))
-        }
+        ProbeFamily::Predicate => facts.iter().find(|fact| fact.value.contains(" == ")),
+        // A returned error variant under an unentered `if` reads the guard
+        // (#11147), after the bare-comparison reading above.
+        ProbeFamily::ReturnValue => facts
+            .iter()
+            .find(|fact| fact.value.contains(" == "))
+            .or_else(|| {
+                facts
+                    .iter()
+                    .find(|fact| fact.reason.starts_with(GUARD_UNENTERED_REASON_PREFIX))
+            }),
         ProbeFamily::MatchArm => facts
             .iter()
             .find(|fact| fact.reason.starts_with(ARM_UNSELECTED_REASON_PREFIX)),
-        ProbeFamily::SideEffect | ProbeFamily::CallDeletion => facts
+        ProbeFamily::SideEffect | ProbeFamily::CallDeletion | ProbeFamily::ErrorPath => facts
             .iter()
             .find(|fact| fact.reason.starts_with(GUARD_UNENTERED_REASON_PREFIX)),
         _ => None,

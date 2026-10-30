@@ -33,7 +33,11 @@ struct TempRepo {
 }
 
 impl TempRepo {
-    fn create(test_source: &str, line: usize) -> Result<Self, String> {
+    fn create(
+        test_source: &str,
+        line: usize,
+        tweak: &dyn Fn(&str) -> String,
+    ) -> Result<Self, String> {
         static SEQUENCE: AtomicU64 = AtomicU64::new(0);
         let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
         let root = std::env::temp_dir().join(format!(
@@ -57,7 +61,7 @@ impl TempRepo {
         } else {
             SOURCE.replacen("Err(PriceError::TooLarge)", "Err(PriceError::Negative)", 1)
         };
-        write("src/lib.rs", edited)?;
+        write("src/lib.rs", tweak(&edited))?;
         write("tests/discount.rs", test_source.to_string())?;
         write("diff.patch", diff(line))?;
         Ok(Self { root })
@@ -72,9 +76,12 @@ impl Drop for TempRepo {
 
 const TEST_HEADER: &str = "use guarded_error_return::*;\n\n";
 
-/// Classes and guard-naming flags of every finding on the changed line.
-fn readings(body: &str, line: usize) -> Result<Vec<(ExposureClass, bool)>, String> {
-    let repo = TempRepo::create(&format!("{TEST_HEADER}{body}"), line)?;
+fn findings_with(
+    body: &str,
+    line: usize,
+    tweak: &dyn Fn(&str) -> String,
+) -> Result<(PathBuf, Vec<ripr::Finding>, TempRepo), String> {
+    let repo = TempRepo::create(&format!("{TEST_HEADER}{body}"), line, tweak)?;
     let output = check_workspace(CheckInput {
         root: repo.root.clone(),
         base: None,
@@ -86,22 +93,39 @@ fn readings(body: &str, line: usize) -> Result<Vec<(ExposureClass, bool)>, Strin
     })?;
     let found = output
         .findings
-        .iter()
+        .into_iter()
         .filter(|finding| finding.probe.location.line == line)
-        .map(|finding| {
-            let named = finding
-                .activation
-                .missing_discriminators
-                .iter()
-                .any(|fact| fact.reason.starts_with(UNENTERED_PREFIX))
-                || finding.ripr.infect.summary.contains(UNENTERED_PREFIX);
-            (finding.class.clone(), named)
-        })
         .collect::<Vec<_>>();
     if found.is_empty() {
         return Err("no finding on the changed return".to_string());
     }
-    Ok(found)
+    Ok((repo.root.clone(), found, repo))
+}
+
+fn names_guard(finding: &ripr::Finding) -> bool {
+    finding
+        .activation
+        .missing_discriminators
+        .iter()
+        .any(|fact| fact.reason.starts_with(UNENTERED_PREFIX))
+        || finding.ripr.infect.summary.contains(UNENTERED_PREFIX)
+}
+
+/// Classes and guard-naming flags of every finding on the changed line.
+fn readings(body: &str, line: usize) -> Result<Vec<(ExposureClass, bool)>, String> {
+    readings_with(body, line, &|source| source.to_string())
+}
+
+fn readings_with(
+    body: &str,
+    line: usize,
+    tweak: &dyn Fn(&str) -> String,
+) -> Result<Vec<(ExposureClass, bool)>, String> {
+    let (_, found, _repo) = findings_with(body, line, tweak)?;
+    Ok(found
+        .iter()
+        .map(|finding| (finding.class.clone(), names_guard(finding)))
+        .collect())
 }
 
 const MISSING_TESTS: &str = "#[test]\nfn ok_small() {\n    assert!(discount(100, 1).is_ok());\n}\n\n#[test]\nfn negative() {\n    assert_eq!(discount(-1, 1), Err(PriceError::Negative));\n}\n\n#[test]\nfn bulk() {\n    assert_eq!(discount(100, 20), Ok(80));\n}\n";
@@ -120,14 +144,72 @@ fn an_exact_variant_assertion_on_another_branch_does_not_read_exposed() -> Resul
 }
 
 #[test]
+fn the_repair_is_an_input_that_enters_the_guard_never_an_assertion() -> Result<(), String> {
+    let (_, found, repo) = findings_with(MISSING_TESTS, 12, &|source| source.to_string())?;
+    let families = found
+        .iter()
+        .map(|finding| finding.probe.family.as_str())
+        .collect::<Vec<_>>();
+    if !(families.contains(&"error_path") && families.contains(&"return_value")) {
+        return Err(format!("expected both families, saw {families:?}"));
+    }
+    for finding in &found {
+        let step = finding.recommended_next_step.as_deref().unwrap_or_default();
+        if !step.starts_with("Add a related test input that enters `if price > 1_000_000`") {
+            return Err(format!("next step must ask for the input: {step:?}"));
+        }
+        let misses = finding
+            .related_tests
+            .iter()
+            .filter_map(|test| test.miss.as_ref())
+            .collect::<Vec<_>>();
+        // The smoke-only row keeps its weak-assertion miss; no row asks for
+        // a stronger exact assertion, and the strong rows ask for an input.
+        let missing_input = misses
+            .iter()
+            .filter(|miss| matches!(miss, ripr::domain::RelatedTestMiss::MissingInput))
+            .count();
+        if missing_input != 2
+            || misses
+                .iter()
+                .any(|miss| matches!(miss, ripr::domain::RelatedTestMiss::MissingExactAssertion))
+        {
+            return Err(format!("strong rows must miss an input: {misses:?}"));
+        }
+        let explained = ripr::explain_finding_with_input(
+            CheckInput {
+                root: repo.root.clone(),
+                base: None,
+                diff_file: Some(repo.root.join("diff.patch")),
+                mode: Mode::Ready,
+                format: OutputFormat::Json,
+                include_unchanged_tests: true,
+                ..CheckInput::default()
+            },
+            &finding.id,
+        )?;
+        if !explained.contains("use an input that enters `if price > 1_000_000`") {
+            return Err(format!("explain must name the input route:\n{explained}"));
+        }
+        if explained.contains("assert the exact `if") {
+            return Err(format!(
+                "the guard must never be an assertion:\n{explained}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn a_call_that_enters_the_guard_keeps_the_exposed_reading() -> Result<(), String> {
     let tests = format!(
         "{MISSING_TESTS}\n#[test]\nfn too_large() {{\n    assert_eq!(discount(2_000_000, 1), Err(PriceError::TooLarge));\n}}\n"
     );
     let found = readings(&tests, 12)?;
-    if found
-        .iter()
-        .any(|(class, named)| *named || *class != ExposureClass::Exposed)
+    if found.is_empty()
+        || found
+            .iter()
+            .any(|(class, named)| *named || *class != ExposureClass::Exposed)
     {
         return Err(format!("an entering call keeps `exposed`: {found:?}"));
     }
@@ -139,6 +221,38 @@ fn a_changed_error_return_in_a_guard_the_tests_enter_names_nothing() -> Result<(
     let found = readings(MISSING_TESTS, 9)?;
     if found.iter().any(|(_, named)| *named) {
         return Err("price = -1 enters `price < 0`; no guard may be named".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn shared_refusals_keep_the_exposed_reading_for_error_returns() -> Result<(), String> {
+    type Tweak = fn(&str) -> String;
+    let rows: [(&str, Tweak); 3] = [
+        ("a mutable parameter", |source| {
+            source.replace("price: i64", "mut price: i64")
+        }),
+        ("a compound guard", |source| {
+            source.replace(
+                "if price > 1_000_000 {",
+                "if price > 1_000_000 && qty > 0 {",
+            )
+        }),
+        ("a rebound parameter", |source| {
+            source.replace(
+                "    }\n    if price > 1_000_000 {",
+                "    } let price = price + 0;\n    if price > 1_000_000 {",
+            )
+        }),
+    ];
+    for (label, tweak) in rows {
+        let found = readings_with(MISSING_TESTS, 12, &tweak)?;
+        if found
+            .iter()
+            .any(|(class, named)| *named || *class != ExposureClass::Exposed)
+        {
+            return Err(format!("{label} must stay exposed and unnamed: {found:?}"));
+        }
     }
     Ok(())
 }
