@@ -444,7 +444,7 @@ pub(crate) fn tracked_files_under(dir: &Path) -> Result<bool, String> {
             // the warm path (#7780).
             if git_marker_above(dir).is_some() {
                 return Err(format!(
-                    "git was not found on PATH and {} lies inside a Git work tree, \
+                    "git is unavailable and {} lies inside a Git work tree, \
                      so tracked files under it cannot be ruled out",
                     dir.display()
                 ));
