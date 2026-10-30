@@ -66,9 +66,11 @@ fn structural_observer_does_not_pin_wording() -> Result<(), String> {
 
 #[test]
 fn direct_wording_observer_remains_exposed() -> Result<(), String> {
-    let test = TEST.replace(
-        "let _ = default_check_description();",
-        "assert_eq!(default_check_description(), \"verifies catalog consistency\");",
+    let test = format!(
+        "{}assert_eq!(default_check_description(), \"verifies catalog consistency\");\n}}\n",
+        TEST.split_once("    let _ = default_check_description();")
+            .ok_or("missing test body")?
+            .0
     );
     assert_ne!(test, TEST);
     assert_eq!(check(&test)?, "exposed");
@@ -107,6 +109,7 @@ fn native_mutants_separate_structural_and_value_observers() -> Result<(), String
         for (wording, fails) in [
             ("verifies catalog consistency", false),
             ("checks catalog consistency", catches),
+            ("xxxxxxxxxxxxxxxxxxxxxxxxxxxx", label == "direct"),
         ] {
             let source = SOURCE.replace("verifies catalog consistency", wording);
             let path = root.join("fixture.rs");
@@ -147,9 +150,11 @@ fn native_mutants_separate_structural_and_value_observers() -> Result<(), String
 
 #[test]
 fn length_observer_remains_exposed() -> Result<(), String> {
-    let test = TEST.replace(
-        "let _ = default_check_description();",
-        "assert_eq!(default_check_description().len(), 28);",
+    let test = format!(
+        "{}assert_eq!(default_check_description().len(), 28);\n}}\n",
+        TEST.split_once("    let _ = default_check_description();")
+            .ok_or("missing test body")?
+            .0
     );
     assert_ne!(test, TEST);
     assert_eq!(check(&test)?, "exposed");
