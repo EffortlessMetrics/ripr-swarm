@@ -605,6 +605,17 @@ fn recompute_after_verdict_binding(
     let delta = normalize(&delta);
     let (verdict, holds) = matches(&delta)?;
     if holds {
+        // A declared retained gap snapshot is terminal evidence even when the
+        // compatibility projection is still present. Do not bypass its
+        // validation merely because the live delta matches.
+        if find_terminal_artifact_by_role(manifest, TERMINAL_GAP_AFTER_ROLE).is_some()
+            && !matches!(
+                load_attempt_terminal_receipt(root, manifest),
+                AttemptTerminalReceipt::Issued { .. }
+            )
+        {
+            return Err("retained gap terminal evidence is unavailable".to_string());
+        }
         return Ok((verdict, true));
     }
     let projections = match retained_missing_gap_projections(root, manifest) {
@@ -1916,7 +1927,28 @@ pub(crate) fn load_attempt_terminal_receipt(
         }
     };
     match read_bound_terminal_receipt(root, manifest, receipt_artifact, &verify_bytes) {
-        Ok((path, value)) => AttemptTerminalReceipt::Issued { path, value },
+        Ok((path, value)) => {
+            if let Some(after_artifact) =
+                find_terminal_artifact_by_role(manifest, TERMINAL_GAP_AFTER_ROLE)
+            {
+                let checked = read_attempt_artifact_bytes_with_limit(
+                    root,
+                    manifest,
+                    after_artifact,
+                    crate::edit_cage::MAX_CAPTURE_FILE_BYTES,
+                )
+                .and_then(|after| {
+                    validate_retained_gap_after(root, manifest, &value, &verify_bytes, &after)
+                });
+                if let Err(reason) = checked {
+                    return AttemptTerminalReceipt::Unavailable {
+                        path: Some(after_artifact.path.clone()),
+                        reason,
+                    };
+                }
+            }
+            AttemptTerminalReceipt::Issued { path, value }
+        }
         Err(reason) => AttemptTerminalReceipt::Unavailable {
             path: Some(receipt_artifact.path.clone()),
             reason,

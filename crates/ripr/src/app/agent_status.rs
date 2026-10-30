@@ -986,13 +986,14 @@ fn finished_attempt_warnings(
                 kind: "repair_receipt_stale".to_string(),
                 artifact: WORKFLOW_AGENT_RECEIPT_ARTIFACT.to_string(),
                 message: format!(
-                    "the receipt for repair attempt `{}` (seam `{}`) reports static grip improved (receipt advisory) at HEAD `{}`, the head its after phase recorded, but {}; its static evidence is stale against HEAD, so status does not report the loop complete. Re-read the current HEAD with `ripr check --root {}` before relying on it",
+                    "the receipt for repair attempt `{}` (seam `{}`) reports static grip improved (receipt advisory) at HEAD `{}`, the head its after phase recorded, but {}; status does not report the loop complete. Re-read the current inputs with `ripr check --root {}` before relying on it",
                     attempt.attempt_id,
                     attempt.seam_id,
                     attempt.evidence_head,
-                    match current_head {
-                        Some(head) => format!("the repository HEAD is now `{head}`"),
-                        None => "the current Git HEAD could not be read".to_string(),
+                    match (current_head, attempt.head_current) {
+                        (Some(head), _) if head != attempt.evidence_head => format!("the repository HEAD is now `{head}` and its static evidence is stale against HEAD"),
+                        (Some(_), Some(false)) => "bound inputs no longer match the recorded evidence".to_string(),
+                        _ => "currentness of the bound evidence could not be established".to_string(),
                     },
                     shell_arg(root_display)
                 ),
