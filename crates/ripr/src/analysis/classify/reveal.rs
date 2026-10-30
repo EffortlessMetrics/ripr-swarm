@@ -2027,7 +2027,21 @@ fn analyze_related_assertions(
             .filter(|token| !owner_local_bindings.contains(token))
             .collect()
     } else {
-        extract_identifier_tokens(analysis_expression)
+        // #10479: a literal-only integer expression (`8 * 100`) returns its
+        // folded value (`800`), which an exact-value assertion pins. Digit
+        // tokens stay owner-scoped below, so the fold confirms only an
+        // assertion bound to the owner's result. A value of one or two digits
+        // is no token, as for a bare literal: `1` or `2` would match any
+        // assertion that mentions them (`one() + 1 == 2`).
+        let mut tokens = extract_identifier_tokens(analysis_expression);
+        // The folded value goes through the same token reader, so the one
+        // token-length rule in `extract_identifier_tokens` decides.
+        tokens.extend(
+            super::value_transfer::fold_literal_integer(analysis_expression)
+                .into_iter()
+                .flat_map(|folded| extract_identifier_tokens(&folded)),
+        );
+        tokens
     };
     let effect_literals = if is_effect_family(&probe.family) {
         rust_string_literals(analysis_expression)

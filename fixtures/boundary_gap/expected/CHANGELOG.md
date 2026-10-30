@@ -1,23 +1,13 @@
 # Golden Output Changes
 
-## Pending — integration composition to cache generation 1.120 (#9836)
+## Pending — literal fold and sole-glob reach cache generation (#10479)
 
-Integration update:
-The `#9836` entry below was generated at the candidate's own `1.115`
-generation. Merging `main` composed that semantic transition onto main's
-classified line (`1.115` #10797, `1.116` #10819, `1.117` #10839, `1.118`
-#10814, `1.119` #8610), so the admitted generation for this candidate is
-`1.120` (sharded/compact `0.127`). The two `unchanged-after-attempt`
-snapshots adopt `"cache_schema_version": "1.120"` with their content
-commitments recomputed through the same raw-JSON placeholder procedure, and
-`agent-verify.json` / `agent-receipt.json` adopt the derived commitments
-and artifact byte hashes. No boundary-gap evidence, movement class or
-envelope field changed; only the corpus generation and the commitments
-that cover it moved. The snapshots still carry producer facts frozen at
-the original run; a head-qualified regeneration remains hosted-proof
-work for the qualification lane. The native `agent verify` and
-`agent receipt` commands on this head reproduce the committed verify
-artifact and its dependent commitments byte-for-byte.
+The portable unchanged-attempt snapshots follow corpus cache generation 1.119
+to 1.120 for the literal-only integer fold and the sole-glob owner reach.
+Refresh the corpus generation and artifact content commitment, then the
+dependent verify commitments and receipt byte hashes. Weak grip, unchanged
+movement, historical currentness, incomplete receipt status and fail-closed
+first-action routing remain unchanged. No other fixture output is regenerated.
 
 ## Pending — integration composition to cache generation 1.119 (#8610, #10792)
 
@@ -153,13 +143,6 @@ commitment, dependent verify commitments and receipt byte hashes only.
 The same snapshots follow corpus cache generation 1.117 to 1.118 for a standard
 `Drop::drop` credited through a scope-end carrier (RIPR-SPEC-0240, #10814), with
 the same scope: generation, content commitment, dependent verify commitments and
-receipt byte hashes only.
-
-### Format placeholder edit classified-cache generation parity
-
-The same snapshots follow corpus cache generation 1.119 to 1.120 for the
-placeholder-edit reading of the Display pin (RIPR-SPEC-0297, #9836), with the
-same scope: generation, content commitment, dependent verify commitments and
 receipt byte hashes only.
 
 ## Pending — boundary_gap (9)
