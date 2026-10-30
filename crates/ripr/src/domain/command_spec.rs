@@ -17,23 +17,10 @@ pub(crate) fn python_pytest_verify_display(
     node: &str,
     windows: bool,
 ) -> Option<String> {
-    let safe = |c: char| {
-        c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '/' | '-') || (windows && c == ':')
-    };
-    let quote = |value: &str| {
-        if !value.is_empty() && value.chars().all(safe) {
-            Some(value.to_string())
-        } else if windows {
-            (!value.contains(['$', '`', '%']))
-                .then(|| format!("\"{}\"", value.replace('"', "\"\"")))
-        } else {
-            Some(format!("'{}'", value.replace('\'', "'\\''")))
-        }
-    };
     let selector = if windows {
-        quote(&format!("{path}::{node}"))?
+        shell_quote_file_arg_for_host(&format!("{path}::{node}"), true)?
     } else {
-        format!("{}::{node}", quote(path)?)
+        format!("{}::{node}", shell_quote_file_arg_for_host(path, false)?)
     };
     Some(format!(
         "{} {selector}",
