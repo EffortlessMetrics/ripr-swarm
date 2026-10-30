@@ -348,12 +348,31 @@ to `CliRunner(...)` imported from `click.testing` or `typer.testing`, or a
 literal `CliRunner()` fixture that nothing else rewrites. A different module's
 `CliRunner`, a non-first argument, an attribute of the command, a rebound or
 parameter-shadowed name, a fixture with arguments or extra statements, an
-undecorated function and a command reached only by a group's subcommand name
-make no edge. The relation is uncertain, carries no oracle and never reaches
-`exposed`: the command's output is not credited, and a helper reached through
-the command is reach-only too (the invoke may never run the body, e.g.
-`--help`). `import click as c`, `from click import command` and group
-subcommands are not recognised.
+undecorated function make no edge. The relation is uncertain, carries no
+oracle and never reaches `exposed`: the command's output is not credited, and a
+helper reached through the command is reach-only too (the invoke may never run
+the body, e.g. `--help`). `import click as c` and `from click import command`
+are not recognised.
+A group subcommand gets the same weak relation by name (#9226): a top-level
+synchronous function bound once and decorated by one `@<group>.command`
+registration (plus `click.option` / `click.argument` only) is reached by a test
+that passes the group, through the same provenance-checked import, as the first
+argument of `<runner>.invoke(` with a literal argument list (positional or
+`args=`) whose first element is the subcommand's name. The group must be a
+top-level function bound once in the same file, decorated only by `click.group`
+(without `cls=`), `click.option` and `click.argument`, with `import click` as
+the file's only binding of `click`. The name is a string literal given to the
+registration (positionally or as `name=`), or the function's own name lowered
+with `_` as `-`; a function name ending `_command`, `_cmd`, `_group` or `_grp`
+is refused, since click versions differ on stripping it. Every registration on
+the group must be readable and distinct, the text `<group>.command` /
+`<group>.group` must appear only as those decorators, and the file must not
+spell `add_command` or `.commands`. A name after an option, a command-line
+string, a name built at run time, an option on the registration other than
+`name`, `help`, `short_help`, `epilog`, `hidden`, `deprecated` or
+`no_args_is_help`, and a helper the subcommand calls make no edge. The
+subcommand's `decorator_indirection` limit is lifted only while such a test
+exists; with none, the owner keeps the limit.
 An owner left `no_static_path` while a test that imports its module (or a
 package above it) calls `.invoke(` on a recognised fresh `CliRunner` keeps its
 class but replaces the generic "No Python test references" line with one

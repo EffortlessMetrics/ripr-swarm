@@ -198,6 +198,7 @@ use static_limits::{
     python_callee_start_has_boundary, python_prefix_hides_code,
 };
 mod cli_runner;
+mod cli_subcommand;
 mod transitive_reach;
 #[cfg(test)]
 use static_limits::{
@@ -346,6 +347,10 @@ struct PythonOwner {
     foreign_writes: module_value::ForeignWrites,
     /// Owner admitted through a decided interpreter-version condition.
     version_conditional: bool,
+    /// The click group this top-level function is registered on as a
+    /// subcommand, and the name a test passes to the group to reach it
+    /// (`cli_subcommand.rs`, #9226). `None` unless the file proves it.
+    cli_subcommand: Option<cli_subcommand::CliSubcommand>,
 }
 
 /// One declared parameter of a Python function owner.
@@ -1817,6 +1822,8 @@ mod literal_patch_tests;
 
 #[cfg(test)]
 mod cli_runner_tests;
+#[cfg(test)]
+mod cli_subcommand_tests;
 #[cfg(test)]
 mod helper_owner_call_tests;
 #[cfg(test)]

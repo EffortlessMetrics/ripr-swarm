@@ -624,8 +624,14 @@ pub(super) fn related_test_relation(
     // them the full scan below (route parsing, fixture views, import
     // matching) is pure cost (#10914: pandas scans ~23k tests per changed
     // owner).
+    // A click subcommand is reached through its group, so the test spells the
+    // group instead (`cli_subcommand.rs`).
     if let Some(name) = name_anchor(owner)
         && !test_text_mentions(test, name)
+        && !owner
+            .cli_subcommand
+            .as_ref()
+            .is_some_and(|subcommand| test_text_mentions(test, &subcommand.group))
     {
         debug_assert_eq!(
             related_test_relation_scan(test, owner),
@@ -1807,6 +1813,19 @@ fn import_alias_calls_owner(test: &PythonTest, owner: &PythonOwner) -> bool {
 /// ([`submodule_receivers`]), or a re-exporting package alias. A local that
 /// shadows the import is not a spelling. Methods have none.
 pub(super) fn owner_module_callees(test: &PythonTest, owner: &PythonOwner) -> Vec<String> {
+    module_callees_named(test, owner, &owner.name, true)
+}
+
+/// The spellings a test uses for the top-level function `name` of the owner's
+/// module, through the same provenance checks as [`owner_module_callees`].
+/// `reexported` also accepts the owner's package re-exports, which only hold
+/// when `name` is the owner's own name.
+pub(super) fn module_callees_named(
+    test: &PythonTest,
+    owner: &PythonOwner,
+    name: &str,
+    reexported: bool,
+) -> Vec<String> {
     if matches!(
         owner.owner_kind,
         Some(OwnerKind::Method | OwnerKind::ClassMethod)
@@ -1819,18 +1838,18 @@ pub(super) fn owner_module_callees(test: &PythonTest, owner: &PythonOwner) -> Ve
         if test_rebinds_import_alias(test, &import.alias) {
             continue;
         }
-        if import.imported == owner.name
-            && import_source_module_matches_owner(import, owner, &test.file)
+        if import.imported == name && import_source_module_matches_owner(import, owner, &test.file)
         {
             callees.push(import.alias.clone());
         }
-        let reexporting_package =
-            import.source_module.is_empty() && owner.reexport_modules.contains(&import.imported);
+        let reexporting_package = reexported
+            && import.source_module.is_empty()
+            && owner.reexport_modules.contains(&import.imported);
         let receivers = submodule_receivers(import, owner, &test.file)
             .into_iter()
             .chain(reexporting_package.then(|| import.alias.clone()));
         for receiver in receivers {
-            callees.push(format!("{receiver}.{}", owner.name));
+            callees.push(format!("{receiver}.{name}"));
         }
     }
     callees.sort();
