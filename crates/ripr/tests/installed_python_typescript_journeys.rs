@@ -660,6 +660,11 @@ fn python_flat_layout_journey_runs_the_gap_bound_loop_from_the_printed_start() -
         ],
     )?;
     expect_exit(before_ok, true, "agent repair --gap-id --phase before")?;
+    if before.contains("Some TypeScript test runners write ignored cache files") {
+        return Err(format!(
+            "Python repair received TypeScript cache guidance:\n{before}"
+        ));
+    }
     need(
         &before,
         "tests/test_pricing.py",
@@ -1310,6 +1315,26 @@ fn typescript_literal_threshold_packet_is_complete_and_controls_fail_closed() ->
         "attempt published",
     )?;
     need(&repair, "test/pricing.test.ts", "edit target is the test")?;
+    need(
+        &repair,
+        "Some TypeScript test runners write ignored cache files",
+        "cache warning",
+    )?;
+    need(
+        &repair,
+        "run the focused test after continue",
+        "safe test order",
+    )?;
+    need(
+        &repair,
+        "record its result separately",
+        "runtime evidence remains separate",
+    )?;
+    need(
+        &repair,
+        "may make that receipt stale",
+        "currentness limitation",
+    )?;
     if repair.contains("--seam-id") {
         return Err(format!("gap-bound output leaks --seam-id:\n{repair}"));
     }
@@ -2144,6 +2169,60 @@ struct GapAttempt {
     attempt_id: String,
 }
 
+/// The cache limitation must be visible to consumers that capture only stdout.
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn gap_before_stdout_discloses_test_runner_cache_limit_in_both_modes() -> Result<(), String> {
+    for json in [true, false] {
+        let (_guard, root, decoy) = materialize(
+            "blind_journey_installed_typescript",
+            "head",
+            "ts-cache-stdout",
+            Some("[languages]\nenabled = [\"typescript\"]\n"),
+        )?;
+        let root_arg = root.to_string_lossy().into_owned();
+        let (ok, check) = ripr(&decoy, &["check", "--root", &root_arg, "--base", "HEAD~1"])?;
+        expect_exit(ok, true, "check")?;
+        let (gap, base) = gap_start_tokens(&check).ok_or("missing gap start")?;
+        let mut args = vec![
+            "agent", "repair", "--gap-id", &gap, "--base", &base, "--root", &root_arg, "--phase",
+            "before",
+        ];
+        if json {
+            args.push("--json");
+        }
+        let output = ripr_output(&decoy, &args)?;
+        expect_exit(output.status.success(), true, "gap before")?;
+        let stdout = String::from_utf8(output.stdout).map_err(|error| error.to_string())?;
+        let guidance = if json {
+            let value: serde_json::Value =
+                serde_json::from_str(&stdout).map_err(|error| error.to_string())?;
+            value["repair_attempt"]["test_runner_cache_guidance"]
+                .as_str()
+                .ok_or("missing JSON cache guidance")?
+                .to_string()
+        } else {
+            stdout
+        };
+        need(
+            &guidance,
+            "run the focused test after continue succeeds",
+            "stdout cache order",
+        )?;
+        need(
+            &guidance,
+            "record its result separately",
+            "stdout evidence boundary",
+        )?;
+        need(
+            &guidance,
+            "may make that receipt stale",
+            "stdout currentness limitation",
+        )?;
+    }
+    Ok(())
+}
+
 #[cfg(feature = "lang-typescript")]
 impl GapAttempt {
     fn start(label: &str) -> Result<Self, String> {
@@ -2725,6 +2804,73 @@ fn gap_bound_after_phase_enforces_the_edit_cage() -> Result<(), String> {
         .exists()
     {
         return Err("a receipt was issued for a gap that the cage refused".to_string());
+    }
+    Ok(())
+}
+
+/// An ignored transformed module is executable test input, not a safe edit.
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn gap_bound_after_phase_still_refuses_ignored_vitest_module_cache() -> Result<(), String> {
+    let attempt = GapAttempt::start("ts-cage-vitest-cache")?;
+    std::fs::write(attempt.root.join(".git/info/exclude"), "node_modules/\n")
+        .map_err(|error| format!("exclude cache: {error}"))?;
+    attempt.commit_closing_test()?;
+    let cache = attempt.root.join("node_modules/.vitest-cache");
+    std::fs::create_dir_all(&cache).map_err(|error| format!("cache directory: {error}"))?;
+    std::fs::write(cache.join("transformed"), "transformed test code")
+        .map_err(|error| format!("cache file: {error}"))?;
+    let output = attempt.after(false)?;
+    let (_, stderr) = text_of(&output);
+    expect_exit(output.status.success(), false, "ignored module cache")?;
+    need(
+        &stderr,
+        "node_modules/.vitest-cache/transformed",
+        "refused cache",
+    )?;
+    need(&stderr, "terminal", "attempt remains fail-closed")?;
+    if attempt
+        .root
+        .join("target/ripr/reports/agent-receipt.json")
+        .exists()
+    {
+        return Err("receipt issued after cache violation".to_string());
+    }
+    Ok(())
+}
+
+/// The alternative ordering avoids a terminal refusal but does not keep the
+/// receipt current after a test runner changes the observed cache.
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn gap_bound_status_reports_cache_drift_after_receipt() -> Result<(), String> {
+    let attempt = GapAttempt::start("ts-status-vitest-cache")?;
+    std::fs::write(attempt.root.join(".git/info/exclude"), "node_modules/\n")
+        .map_err(|error| format!("exclude cache: {error}"))?;
+    attempt.commit_closing_test()?;
+    let after = attempt.after(false)?;
+    expect_exit(after.status.success(), true, "after before cache write")?;
+    let cache = attempt.root.join("node_modules/.vitest-cache");
+    std::fs::create_dir_all(&cache).map_err(|error| format!("cache directory: {error}"))?;
+    std::fs::write(cache.join("transformed"), "transformed test code")
+        .map_err(|error| format!("cache file: {error}"))?;
+    let output = ripr_output(
+        &attempt.decoy,
+        &["agent", "status", "--root", &attempt.root_arg, "--json"],
+    )?;
+    expect_exit(output.status.success(), true, "status after cache write")?;
+    let (stdout, _) = text_of(&output);
+    let status: serde_json::Value =
+        serde_json::from_str(&stdout).map_err(|error| error.to_string())?;
+    let attempts = status["repair_attempts"]
+        .as_array()
+        .ok_or("missing attempts")?;
+    let recorded = attempts
+        .iter()
+        .find(|entry| entry["attempt_id"] == attempt.attempt_id)
+        .ok_or("missing recorded attempt")?;
+    if recorded["head_current"] != false {
+        return Err(format!("cache drift did not stale the attempt: {stdout}"));
     }
     Ok(())
 }

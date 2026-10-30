@@ -599,12 +599,21 @@ fn persist_before_repair_attempt(
     // captures only stdout can complete before → edit → after without reading
     // stderr. Without it, the human summary plus the one command a reader of
     // stdout alone needs next.
+    let typescript_test_cache_guidance = !baseline_ambiguous
+        && options.gap_id.is_some()
+        && matches!(
+            std::path::Path::new(policy.selected_target.path())
+                .extension()
+                .and_then(std::ffi::OsStr::to_str),
+            Some("ts" | "tsx" | "js" | "jsx" | "mts" | "cts" | "mjs" | "cjs")
+        );
     let continuation = crate::output::agent_seam_packets::BeforePhaseAttemptContinuation {
         attempt_id: result.manifest.repair_attempt_id.as_str().to_string(),
         manifest_path: crate::agent::loop_commands::display_path(&result.manifest_path),
         next_command: result.manifest.next_command.clone(),
         packet_path: crate::agent::loop_commands::display_path(&agent_packet),
         baseline_ambiguous,
+        typescript_test_cache_guidance,
     };
     if let Some(binding) = &binding {
         eprintln!(

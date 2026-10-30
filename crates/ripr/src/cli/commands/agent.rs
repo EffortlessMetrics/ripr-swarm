@@ -3435,6 +3435,10 @@ pub(in crate::cli) fn before_phase_stdout(
         .unwrap_or_else(|| {
             format!("Repair packet (JSON): {packet_path}; add --json to print it here\n")
         });
+    if continuation.typescript_test_cache_guidance {
+        document.push_str(output::agent_seam_packets::TYPESCRIPT_TEST_CACHE_GUIDANCE);
+        document.push('\n');
+    }
     if continuation.baseline_ambiguous {
         document.push_str(&before_phase_ambiguous_stdout_lines(
             &crate::agent::human_after_phase_follow_up(&continuation.next_command),
@@ -5106,6 +5110,7 @@ mod before_phase_stdout_tests {
                     .to_string(),
             packet_path: "target/ripr/workflow/agent-packet.json".to_string(),
             baseline_ambiguous: false,
+            typescript_test_cache_guidance: false,
         }
     }
 
