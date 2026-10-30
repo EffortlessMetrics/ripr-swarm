@@ -37,9 +37,10 @@ The TypeScript preview adapter:
   the type-name string;
 - does not credit either test, because neither passes a value written as a
   function at the position of `input`;
-- classifies the changed line `weakly_exposed` and keeps the repair packet
-  delegatable, with an assertion shape that asks for a function value and
-  never reuses the observed number.
+- classifies the changed line `weakly_exposed`; the repair packet stays
+  incomplete here (no repair start is offered), and the assertion-shape wording
+  that asks for a function value is covered by unit tests rather than this
+  golden.
 
 The companion fixture `typescript_typeof_kind_exposed` adds a test that calls
 the owner with `() => 42` and reads `exposed`.

@@ -733,8 +733,11 @@ fn still_open_reason(before: Option<&str>, after: &CheckFindingsGap) -> String {
         return String::new();
     };
     match before {
-        Some(before) if before == missing => format!(
+        Some(before) if before == missing && missing.starts_with("typeof ") => format!(
             "; the missing discriminator `{missing}` named before the edit is still not matched by any test in the after artifact, so the edited test is not shown to supply it. Make the focused test supply that input in the call itself (a value of that kind, not a variable or a stand-in string), then rerun"
+        ),
+        Some(before) if before == missing => format!(
+            "; the missing discriminator `{missing}` named before the edit is still not matched by any test in the after artifact, so the edited test is not shown to supply it"
         ),
         Some(before) => format!(
             "; the missing discriminator changed from `{before}` to `{missing}`, and no test in the after artifact is shown to supply the new one"
@@ -2110,6 +2113,21 @@ mod tests {
                     return Err(format!("{case}: `{error}` lacks `{fragment}`"));
                 }
             }
+        }
+        let plain = [gap_missing("gap:a", "weakly_exposed", Some("total == 100"))];
+        let Err(plain_error) = evaluate_gap_closure(
+            "gap:a",
+            &plain,
+            &[gap_missing("gap:a", "weakly_exposed", Some("total == 100"))],
+        ) else {
+            return Err("plain gap accepted".to_string());
+        };
+        if !plain_error.contains("`total == 100` named before the edit is still not matched")
+            || plain_error.contains("a value of that kind")
+        {
+            return Err(format!(
+                "kind hint leaked to a non-typeof gap: `{plain_error}`"
+            ));
         }
         // No named discriminator in the after artifact: the reason is not
         // invented, and a bare open gap reads as before.

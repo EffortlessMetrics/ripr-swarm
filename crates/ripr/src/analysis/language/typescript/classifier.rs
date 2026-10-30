@@ -4800,14 +4800,6 @@ fn last_identifier_segment(operand: &str) -> &str {
     operand.trim().rsplit('.').next().unwrap_or(operand).trim()
 }
 
-/// `true` when the boundary literal reaches the argument position the changed
-/// comparison reads (#4102 guards 1 and 2). The literal must stand alone as
-/// the argument value — the whole argument tokenizes to the literal, or an
-/// object-literal argument pins the comparison operand's field to it
-/// (`{ total: 50 }` for `total >= 50`). Containment inside a larger
-/// expression (`price + 100`) leaves the effective input unknown and never
-/// credits, and an argument beyond the owner's readable positions
-/// (`applyDiscount(150, 100)` against `applyDiscount(total)`) is never read.
 /// `true` when the argument at the parameter a `typeof <param> == "<kind>"`
 /// guard reads is written as a value of exactly that kind (#11196): a function
 /// for `"function"`, a number literal for `"number"`. An input of another kind
@@ -4835,6 +4827,14 @@ fn typeof_kind_input_reaches_read_argument(
         .is_some_and(|argument_kind| argument_kind == kind)
 }
 
+/// `true` when the boundary literal reaches the argument position the changed
+/// comparison reads (#4102 guards 1 and 2). The literal must stand alone as
+/// the argument value — the whole argument tokenizes to the literal, or an
+/// object-literal argument pins the comparison operand's field to it
+/// (`{ total: 50 }` for `total >= 50`). Containment inside a larger
+/// expression (`price + 100`) leaves the effective input unknown and never
+/// credits, and an argument beyond the owner's readable positions
+/// (`applyDiscount(150, 100)` against `applyDiscount(total)`) is never read.
 fn boundary_literal_reaches_read_argument(
     arguments: &[String],
     literal: &str,
