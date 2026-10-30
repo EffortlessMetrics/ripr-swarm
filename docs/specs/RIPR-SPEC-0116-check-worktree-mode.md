@@ -100,6 +100,12 @@ head it analyzed.
   A `--candidate-tree` human header names the base tree and candidate tree.
   `--diff` file and stdin runs carry no revisions ripr can verify, so their
   output is unchanged; badge and repo-scope formats have no diff header.
+  When a committed-history run leaves untracked routed files out
+  (`unanalyzed_working_tree` with untracked paths), the human header adds one
+  `untracked: N file(s) not analyzed (<up to three paths and N more>); run
+  `git add -N <paths>` then `ripr check --worktree`, or pass `--diff PATH``
+  line directly after `head:` (#11159). It is display-only and absent on a
+  working-tree read and when no untracked routed file was left out.
 - **LSP and library callers are unchanged.** The LSP already reads the
   working tree for every refresh (`check_workspace_worktree_*`), and the
   public `check_workspace*` library entry points keep their committed-history
@@ -398,6 +404,11 @@ that untracked source was analyzed.
     empty default working-tree read (a staged edit reverted in the working
     tree) describes the working-tree diff in human and JSON output, not
     `main...HEAD`.
+    The untracked-only human header carries the `untracked:` line directly
+    after `head:`; the working-tree reads do not (#11159).
+- `crates/ripr/src/output/human.rs::tests::header_names_untracked_files_left_out_of_a_committed_history_run`
+  - renders the `untracked:` header line (plural, singular, capped listing)
+    and omits it when nothing was left out or on a working-tree read.
 - `crates/ripr/src/output/human.rs::tests::empty_working_tree_read_describes_the_working_tree_and_names_untracked_files`
 - `crates/ripr/src/output/human.rs::tests::candidate_tree_header_names_base_and_candidate_trees`
 - `crates/ripr/src/output/github.rs::tests::render_leads_with_analyzed_base_and_head_notice`

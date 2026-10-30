@@ -24765,6 +24765,20 @@ fn check_untracked_files_keep_committed_default_and_working_tree_reads_name_them
             "the untracked-only default must print the #5258 note; got:\n{untracked_only_human}"
         ));
     }
+    // #11159: the committed-history header names the count and the repair
+    // beside `head:`, not only in the end-of-report note.
+    let header_line = "untracked: 1 file not analyzed (src/new.rs); run `git add -N <paths>` then `ripr check --worktree`, or pass `--diff PATH`";
+    let header_head = untracked_only_human
+        .lines()
+        .position(|line| line.starts_with("head: HEAD "));
+    let header_untracked = untracked_only_human
+        .lines()
+        .position(|line| line == header_line);
+    if header_head.map(|index| index + 1) != header_untracked {
+        return Err(format!(
+            "the untracked-only default must print the untracked header line right after head:; got:\n{untracked_only_human}"
+        ));
+    }
 
     // (c) An empty working-tree read describes the merge-base-to-working-tree
     // diff, not `main...HEAD`, never offers `--worktree`, and names the
@@ -24823,6 +24837,11 @@ fn check_untracked_files_keep_committed_default_and_working_tree_reads_name_them
     {
         return Err(format!(
             "the empty working-tree read must not describe `main...HEAD` or advise `--worktree`; got:\n{empty_worktree}"
+        ));
+    }
+    if empty_worktree.contains("\nuntracked: ") {
+        return Err(format!(
+            "a working-tree read must not print the committed-history untracked header line; got:\n{empty_worktree}"
         ));
     }
 

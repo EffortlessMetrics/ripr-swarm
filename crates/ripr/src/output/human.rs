@@ -409,7 +409,7 @@ pub(crate) fn render_full_with_config_and_navigation(
 
 /// One header line, beside `head:`, when untracked routed files were left out
 /// of a committed-history run: the end-of-report note was missed in agent runs
-/// (#5358), so the count and the exact repair sit where `head:` is read.
+/// (#11159), so the count and the exact repair sit where `head:` is read.
 /// Display-only: it never touches the verdict, and it is absent on a
 /// working-tree read (which carries its own untracked disclosure).
 fn untracked_header_line(output: &CheckOutput) -> Option<String> {
@@ -424,7 +424,7 @@ fn untracked_header_line(output: &CheckOutput) -> Option<String> {
     };
     let listing = crate::output::analyzed_revisions::name_paths(untracked, escape_terminal_display);
     Some(format!(
-        "untracked: {} {noun} not analyzed ({listing}); run `git add -N <paths>` then `ripr check --worktree`\n",
+        "untracked: {} {noun} not analyzed ({listing}); run `git add -N <paths>` then `ripr check --worktree`, or pass `--diff PATH`\n",
         untracked.len()
     ))
 }
@@ -4072,7 +4072,7 @@ mod tests {
         let rendered = render(&output);
         assert!(
             rendered.contains(
-                "head: HEAD 1a2b3c4\nuntracked: 2 files not analyzed (tests/new.rs, src/new.rs); run `git add -N <paths>` then `ripr check --worktree`\n"
+                "head: HEAD 1a2b3c4\nuntracked: 2 files not analyzed (tests/new.rs, src/new.rs); run `git add -N <paths>` then `ripr check --worktree`, or pass `--diff PATH`\n"
             ),
             "{rendered}"
         );
@@ -4081,6 +4081,14 @@ mod tests {
         assert!(
             render(&output).contains("untracked: 1 file not analyzed (tests/new.rs);"),
             "singular count"
+        );
+
+        // The count is the full list; the listing is capped at three names.
+        output.untracked_working_tree_source_paths = (1..=5).map(|n| format!("t{n}.rs")).collect();
+        assert!(
+            render(&output)
+                .contains("untracked: 5 files not analyzed (t1.rs, t2.rs, t3.rs and 2 more);"),
+            "count must match the capped listing"
         );
 
         output.untracked_working_tree_source_paths = Vec::new();
