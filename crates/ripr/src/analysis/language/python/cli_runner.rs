@@ -12,7 +12,7 @@
 //! oracle, so it never earns `exposed`.
 
 use super::related_tests::{
-    owner_module_callees, python_text_hides_code, test_body_binds_local,
+    owner_module_callees, python_text_hides_code, test_body_binds_local, test_rebinds_import_alias,
     text_binds_beyond_assignment,
 };
 use super::{PythonImport, PythonOwner, PythonTest};
@@ -39,14 +39,45 @@ fn is_click_command(owner: &PythonOwner) -> bool {
     owner.owner_kind == Some(OwnerKind::Function)
         && owner.class_path.is_empty()
         && owner.qualified_name == owner.name
-        && owner
-            .imports
-            .iter()
-            .any(|import| import.imported == "click" && import.alias == "click")
+        && owner.imports.iter().any(is_plain_click_import)
         && owner
             .decorators
             .iter()
             .any(|decorator| matches!(decorator.as_str(), "click.command" | "click.group"))
+        && owner.decorators.iter().all(|decorator| {
+            matches!(
+                decorator.as_str(),
+                "click.command" | "click.group" | "click.option" | "click.argument"
+            )
+        })
+}
+
+/// `import click`, not `from helpers import click`.
+pub(super) fn is_plain_click_import(import: &PythonImport) -> bool {
+    import.imported == "click" && import.alias == "click" && import.source_module.is_empty()
+}
+
+/// Whether `rhs` is exactly one `alias(...)` construction and nothing else:
+/// no conditional, boolean, attribute or call chained after it.
+fn is_sole_construction(rhs: &str, alias: &str) -> bool {
+    let Some(rest) = rhs.strip_prefix(alias).filter(|rest| rest.starts_with('(')) else {
+        return false;
+    };
+    let mut depth = 0usize;
+    for (index, ch) in rest.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    let after = rest[index + 1..].trim();
+                    return after.is_empty() || after.starts_with('#');
+                }
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 fn runner_alias(imports: &[PythonImport]) -> Option<&str> {
@@ -75,9 +106,8 @@ fn runner_receivers(test: &PythonTest) -> Vec<String> {
                 continue;
             };
             let (name, rhs) = (name.trim(), rhs.trim_start());
-            let constructs = rhs
-                .strip_prefix(alias)
-                .is_some_and(|rest| rest.starts_with('('));
+            let constructs =
+                is_sole_construction(rhs, alias) && !test_rebinds_import_alias(test, alias);
             if constructs && is_identifier(name) && !bound_beyond_one_assignment(test, name) {
                 receivers.push(name.to_string());
             }

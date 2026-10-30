@@ -240,3 +240,25 @@ fn a_decorator_argument_call_is_not_a_helper_edge() -> Result<(), String> {
     );
     Ok(())
 }
+
+#[test]
+fn a_click_name_that_is_not_the_click_module_is_not_a_command() -> Result<(), String> {
+    let source = APP_PY.replace("import click", "from helpers import click");
+    let owners = extract_owners(Path::new("src/app.py"), &source);
+    let tests = extract_tests(Path::new("tests/test_commands.py"), LOCAL_RUNNER);
+    let finding = classify_change(
+        Path::new("src/app.py"),
+        7,
+        "    click.echo(greeting(name))",
+        &owners,
+        &tests,
+    )
+    .ok_or("expected a finding")?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::NoStaticPath,
+        "{:?}",
+        finding.evidence
+    );
+    Ok(())
+}

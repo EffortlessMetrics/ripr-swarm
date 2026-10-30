@@ -185,7 +185,7 @@ fn owner_from_function(
         && context
             .imports
             .iter()
-            .any(|import| import.imported == "click" && import.alias == "click");
+            .any(super::cli_runner::is_plain_click_import);
     // A decorator whose name cannot be read still wraps the call.
     let binding_only = !is_async
         && decorator_names.len() == decorators.len()
