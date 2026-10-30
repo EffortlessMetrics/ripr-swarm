@@ -12,7 +12,7 @@ use super::{confirmed_over_credits, derive_feedback, verify_staged, write_stagin
 #[test]
 fn feedback_does_not_invent_missing_source_revisions() -> Result<(), String> {
     let report = json!({
-        "as_of": {"panel_digest": "panel", "replay_binary": ["version", "digest"]},
+        "as_of": {"panel_digest": "panel", "replay_binary": {"version": "version", "sha256": "digest"}},
         "cases": [{
             "case_id": "unversioned", "repo": "example", "base": null, "head": null,
             "source_envelope": "panel.json", "anchor": {"owner": "f"}, "diff_path": "f.diff",
@@ -324,8 +324,8 @@ fn feedback_stages_a_proposal_for_a_confirmed_over_credit() -> Result<(), String
     .map_err(|error| error.to_string())?;
     ensure(
         proposal["provenance"]["diff_sha256"] == replay["diff"]["sha256"]
-            && proposal["provenance"]["replay_binary"][0] == replay["binary"]["version"]
-            && proposal["provenance"]["replay_binary"][1] == replay["binary"]["sha256"],
+            && proposal["provenance"]["replay_binary"]["version"] == replay["binary"]["version"]
+            && proposal["provenance"]["replay_binary"]["sha256"] == replay["binary"]["sha256"],
         "proposal must preserve the replay's exact diff and binary identities",
     )?;
     ensure(
