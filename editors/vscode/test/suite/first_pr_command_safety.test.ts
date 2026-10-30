@@ -55,7 +55,8 @@ suite('First-PR command safety', () => {
     withHost('win32', () => {
       // cmd.exe treats > inside single quotes as a live redirect (#9738).
       assert.strictEqual(firstPrCommandIsSafe(quotedOperator, [root]), false);
-      assert.strictEqual(firstPrCommandIsSafe(plainArgument, [root]), true);
+      const consoleCommand = ` \tripr  agent\tpacket --root . --gap-id gap:pricing --json \t>\t "${root}/target/ripr/out.json"\t `;
+      assert.strictEqual(firstPrCommandIsSafe(consoleCommand, [root]), true);
     });
   });
 
