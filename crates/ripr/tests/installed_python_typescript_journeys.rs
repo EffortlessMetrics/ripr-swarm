@@ -1160,21 +1160,25 @@ fn check_findings_verify_rejects_changed_test_scope() -> Result<(), String> {
         .to_string();
     let dir = root.join("target/ripr");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let produce = |name: &str| -> Result<(PathBuf, serde_json::Value), String> {
-        let output = ripr_output(
-            &decoy,
-            &[
-                "check",
-                "--root",
-                &root_arg,
-                "--base",
-                &base,
-                "--mode",
-                "deep",
-                "--format",
-                "check-findings-json",
-            ],
-        )?;
+    let produce = |name: &str,
+                   override_scope: bool,
+                   mode: &str|
+     -> Result<(PathBuf, serde_json::Value), String> {
+        let mut args = vec![
+            "check",
+            "--root",
+            &root_arg,
+            "--base",
+            &base,
+            "--mode",
+            mode,
+            "--format",
+            "check-findings-json",
+        ];
+        if override_scope {
+            args.push("--no-unchanged-tests");
+        }
+        let output = ripr_output(&decoy, &args)?;
         if !output.status.success() {
             return Err(format!(
                 "producer failed: {}",
@@ -1194,11 +1198,11 @@ fn check_findings_verify_rejects_changed_test_scope() -> Result<(), String> {
         std::fs::write(&path, output.stdout).map_err(|e| e.to_string())?;
         Ok((path, value))
     };
-    let (before, before_value) = produce("before.json")?;
+    let (before, before_value) = produce("before.json", false, "deep")?;
     std::fs::write(root.join("scope-marker.txt"), "next revision\n").map_err(|e| e.to_string())?;
     fixture_git_ok(&root, &["add", "scope-marker.txt"])?;
     fixture_git_ok(&root, &["commit", "-q", "-m", "next revision"])?;
-    let (same_scope, same_value) = produce("same.json")?;
+    let (same_scope, same_value) = produce("same.json", false, "deep")?;
     assert_eq!(
         before_value["artifact"]["analysis"]["input_identity"],
         same_value["artifact"]["analysis"]["input_identity"]
@@ -1208,7 +1212,21 @@ fn check_findings_verify_rejects_changed_test_scope() -> Result<(), String> {
         "[languages]\nenabled = [\"typescript\"]\n[analysis]\ninclude_unchanged_tests = false\n",
     )
     .map_err(|e| e.to_string())?;
-    let (changed_scope, changed_value) = produce("changed.json")?;
+    let (changed_scope, changed_value) = produce("changed.json", false, "deep")?;
+    std::fs::write(
+        root.join("ripr.toml"),
+        "[languages]\nenabled = [\"typescript\"]\n[analysis]\ninclude_unchanged_tests = true\n",
+    )
+    .map_err(|e| e.to_string())?;
+    let (overridden, override_value) = produce("override.json", true, "deep")?;
+    assert_eq!(
+        changed_value["artifact"]["analysis"]["input_identity"],
+        override_value["artifact"]["analysis"]["input_identity"],
+        "config and CLI resolving to the same scope agree"
+    );
+    let (different_mode, _) = produce("mode.json", false, "draft")?;
+    std::fs::write(root.join("ripr.toml"), "[languages]\nenabled = [\"typescript\", \"rust\"]\n[analysis]\ninclude_unchanged_tests = true\n").map_err(|e| e.to_string())?;
+    let (different_languages, _) = produce("languages.json", false, "deep")?;
     let verify = |after: &Path| {
         ripr_output(
             &decoy,
@@ -1246,6 +1264,21 @@ fn check_findings_verify_rejects_changed_test_scope() -> Result<(), String> {
         "incomparable",
         "scope mismatch",
     )?;
+    for (label, path) in [
+        ("CLI scope override", overridden),
+        ("mode", different_mode),
+        ("languages", different_languages),
+    ] {
+        let refused = verify(&path)?;
+        if refused.status.success() {
+            return Err(format!("{label} movement was accepted"));
+        }
+        need(
+            &String::from_utf8_lossy(&refused.stderr),
+            "incomparable",
+            label,
+        )?;
+    }
     decoy_untouched(&decoy)
 }
 

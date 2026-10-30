@@ -467,6 +467,14 @@ fn check_with_progress_and_origins_run(
         )?;
     }
 
+    if let Some(outcome) = analysis.analysis_outcome.as_mut() {
+        outcome.check_findings_inputs = Some(crate::analysis_outcome::CheckFindingsInputs {
+            include_unchanged_tests: input.include_unchanged_tests,
+            languages: languages.clone(),
+            perl_facts_used: input.perl_facts_path.is_some(),
+        });
+    }
+
     if crate::is_verbose() {
         let finding_count = analysis.findings.len();
         let probe_count = analysis.summary.probes;
