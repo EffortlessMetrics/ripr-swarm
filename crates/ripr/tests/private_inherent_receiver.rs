@@ -538,8 +538,23 @@ fn executable_owner_identity_boundaries_agree_in_diff() -> Result<(), String> {
                 // unexecuted routes must stay uncredited.
                 let bridged_helper = case.relation == Some(RelationReason::HelperOwnerCall)
                     && row.relation_reason == Some(RelationReason::HelperOwnerCall);
-                if case.relation == Some(RelationReason::DirectOwnerCall) || bridged_helper {
-                    assert_eq!(row.relation_reason, case.relation, "{}", case.path);
+                // The sparse one-line sync chain has no static route in the
+                // repository seam walk (`cases.json` is `null`, pinned by the
+                // lib matrix), but the diff path bridges it (#8633).
+                let diff_bridged_sparse_chain = case
+                    .path
+                    .ends_with("inherent_receiver_async_function/controls/sync-chain.rs")
+                    && row.relation_reason == Some(RelationReason::HelperOwnerCall);
+                if case.relation == Some(RelationReason::DirectOwnerCall)
+                    || bridged_helper
+                    || diff_bridged_sparse_chain
+                {
+                    let expected = if diff_bridged_sparse_chain {
+                        Some(RelationReason::HelperOwnerCall)
+                    } else {
+                        case.relation
+                    };
+                    assert_eq!(row.relation_reason, expected, "{}", case.path);
                     assert_eq!(
                         row.relation_confidence,
                         Some(RelationConfidence::High),
