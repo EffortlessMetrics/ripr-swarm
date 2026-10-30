@@ -24,8 +24,7 @@ helper into executed owner evidence. Do not rewrite runtime truth to fit advice.
 
 ## Regression Controls
 
-The adjacent `controls/` files are complete native Rust subjects. The shared
-boundary matrix is documented in
-`fixtures/inherent_receiver_free_helper_identity/BOUNDARIES.md` and exercised by
-`inherent_executable_owner_identity_boundary_matrix` and the production-path
-integration `executable_owner_identity_boundaries_agree_in_diff`.
+The adjacent `controls/` files are complete native Rust subjects. A shared
+owner-identity boundary matrix and production-path integration proofs are
+intended to land in the integration-tests slice (#11031) and the sibling fixture
+slice; this fixture slice does not carry them.
