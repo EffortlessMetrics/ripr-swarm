@@ -14251,6 +14251,11 @@ Field contract:
   `check_output_wrong_root`. Its inspection command runs a fresh default
   worktree check without redirecting over an input and is offered only when
   selected head resolves to the live HEAD; it is not a replay of input options.
+  Missing, relative or unresolvable check-producer roots are unknown, not
+  same-root evidence. For every check-derived ledger status and record count,
+  unknown or foreign roots suppress write-oriented input and ledger regeneration
+  guidance; a verified same-root zero-record projection keeps its existing
+  bounded recovery route.
   A still-no-action preview/mixed result remains limited until corpus
   provenance is available (#7452). `missing_artifacts` on this blocked state
   means missing source authority, not necessarily a missing file.

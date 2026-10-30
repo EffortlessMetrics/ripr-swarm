@@ -1290,11 +1290,11 @@ impl TopGapSelection {
 
 fn select_from_gap_ledger(gap_ledger: &Value, root: &Path, options: &FirstPrOptions) -> Selection {
     let records = gap_records(gap_ledger);
-    // Refuse a foreign check producer before any ledger-status recovery can
-    // offer a command that overwrites the supplied check artifact. In
-    // particular, a valid Rust check can project zero ledger records.
+    // A foreign or unknown producer root cannot authorize a command that
+    // overwrites the supplied check artifact, regardless of ledger status or
+    // record count. Only a verified same-root producer may use that route.
     if is_check_output_derived(gap_ledger)
-        && foreign_check_output_root(gap_ledger, root).is_some()
+        && !matches!(check_output_root(gap_ledger, root), CheckOutputRoot::Same)
         && let Some(limitation) = unbound_no_action_limit(gap_ledger, root, options)
     {
         return limitation;
@@ -1486,7 +1486,8 @@ fn unbound_no_action_limit(
         "No worktree check is offered because the selected head is not established as the live HEAD; use a checkout at the selected head and the intended analysis configuration."
     };
     let source_root = string_path(ledger, &["input_root"]);
-    if let Some(source) = foreign_check_output_root(ledger, root) {
+    let root_identity = check_output_root(ledger, root);
+    if let CheckOutputRoot::Foreign(source) = &root_identity {
         return Some(Selection::blocked_with_reason(
             "wrong_root",
             "check_output_wrong_root",
@@ -1505,8 +1506,13 @@ fn unbound_no_action_limit(
     .or_else(|| string_path(ledger, &["source_subject_unavailable"]))
     .unwrap_or_else(|| "source_corpus_provenance_unavailable".to_string());
     let source_label = source_root.as_deref().unwrap_or("unavailable");
+    let root_boundary = if matches!(root_identity, CheckOutputRoot::Unknown) {
+        "The check-output producer root cannot be established; the supplied input must not be overwritten."
+    } else {
+        "Complete source-corpus currentness is unavailable (preview/mixed corpus provenance: #7452)."
+    };
     let mut message = format!(
-        "The no-action conclusion cannot be bound to the current workspace: source root `{source_label}`; source subject `{subject}`; complete source-corpus currentness is unavailable (preview/mixed corpus provenance: #7452). {inspection_boundary} If a fresh check still has no repairable gap, this limitation remains until the producer can establish corpus currentness. Do not treat the fresh check alone as proof of no action."
+        "The check evidence cannot be bound to the current workspace: source root `{source_label}`; source subject `{subject}`. {root_boundary} {inspection_boundary} If a fresh check still has no repairable gap, this limitation remains until the producer can establish corpus currentness. Do not treat the fresh check alone as proof of no action."
     );
     if let Some(note) = gap_records(ledger)
         .iter()
@@ -1523,14 +1529,28 @@ fn unbound_no_action_limit(
     ))
 }
 
-fn foreign_check_output_root(ledger: &Value, root: &Path) -> Option<String> {
-    let source = string_path(ledger, &["input_root"])?;
+enum CheckOutputRoot {
+    Same,
+    Foreign(String),
+    Unknown,
+}
+
+fn check_output_root(ledger: &Value, root: &Path) -> CheckOutputRoot {
+    let Some(source) = string_path(ledger, &["input_root"]) else {
+        return CheckOutputRoot::Unknown;
+    };
     let source_path = Path::new(&source);
-    (source_path.is_absolute()
-        && source_path.canonicalize().is_ok()
-        && root.canonicalize().is_ok()
-        && !crate::output::gap_source_subject::same_root(root, source_path))
-    .then_some(source)
+    if !source_path.is_absolute()
+        || source_path.canonicalize().is_err()
+        || root.canonicalize().is_err()
+    {
+        return CheckOutputRoot::Unknown;
+    }
+    if crate::output::gap_source_subject::same_root(root, source_path) {
+        CheckOutputRoot::Same
+    } else {
+        CheckOutputRoot::Foreign(source)
+    }
 }
 
 fn is_check_output_derived(ledger: &Value) -> bool {
@@ -3525,15 +3545,16 @@ mod tests {
     #[test]
     fn no_records_check_output_ledger_recovers_through_regeneration_compound() -> Result<(), String>
     {
+        let root = temp_repo("first-pr-no-records-recovery")?;
         let ledger_value = |status: &str, source_kind: &str| {
             serde_json::json!({
                 "status": status,
                 "inputs": {"source_kind": source_kind},
+                "input_root": root,
                 "records": [],
                 "warnings": ["check output contained 3 findings, but the --check-output route projects presentation/output-text and Python/TypeScript/Perl findings only; no gap records were derived from them. For Rust findings, use `ripr check` to read them and `ripr repair` to start a repair"]
             })
         };
-        let root = temp_repo("first-pr-no-records-recovery")?;
         let options = FirstPrOptions::default();
 
         let selection =
@@ -3567,6 +3588,7 @@ mod tests {
             &serde_json::json!({
                 "status": "no_records",
                 "inputs": {"source_kind": "check_output"},
+                "input_root": root,
                 "records": [],
                 "warnings": []
             }),
@@ -6440,7 +6462,7 @@ mod tests {
         run_git_setup(&repo, &["add", "app/pricing.py"])?;
         run_git_setup(&repo, &["commit", "-m", "change pricing"])?;
         let check_output = repo.join(DEFAULT_CHECK_OUTPUT);
-        write_json(&check_output, check_output_with_python_repair_card())?;
+        write_json(&check_output, check_output_with_python_repair_card(&repo))?;
         let written = fs::metadata(&check_output)
             .and_then(|metadata| metadata.modified())
             .map_err(|err| format!("check output mtime: {err}"))?;
@@ -6494,6 +6516,7 @@ mod tests {
             "source_kind": "check_output",
             "records": DEFAULT_CHECK_OUTPUT,
         });
+        ledger["input_root"] = json!(repo);
 
         // No check report on disk: nothing to compare against.
         write_json(&repo.join(DEFAULT_GAP_LEDGER), ledger.clone())?;
@@ -6508,7 +6531,7 @@ mod tests {
         // A `ripr outcome` receipt compares snapshots itself: no re-check.
         write_json(
             &repo.join(DEFAULT_CHECK_OUTPUT),
-            check_output_with_python_repair_card(),
+            check_output_with_python_repair_card(&repo),
         )?;
         write_json(
             &repo.join(DEFAULT_GAP_LEDGER),
@@ -6604,7 +6627,7 @@ mod tests {
         );
         write_json(
             &repo.join("saved/check.json"),
-            check_output_with_python_repair_card(),
+            check_output_with_python_repair_card(&repo),
         )?;
         let saved_before = options.anchored_arg("saved/check.json");
         let saved_after = options.anchored_arg("saved/check.after.json");
@@ -6631,7 +6654,7 @@ mod tests {
         run_git_setup(&repo, &["commit", "-m", "change pricing"])?;
         write_json(
             &repo.join(DEFAULT_CHECK_OUTPUT),
-            check_output_with_python_repair_card(),
+            check_output_with_python_repair_card(&repo),
         )?;
 
         let options = FirstPrOptions {
@@ -6801,13 +6824,12 @@ mod tests {
     #[test]
     fn python_no_strong_oracle_check_output_is_selected_for_start_here() -> Result<(), String> {
         let repo = temp_python_repo("first-pr-python-no-strong-oracle")?;
-        write_json(
-            &repo.join(DEFAULT_CHECK_OUTPUT),
-            serde_json::from_str(include_str!(
-                "../../../../fixtures/python_boundary_gap/expected/check.json"
-            ))
-            .map_err(|error| format!("parse boundary Python fixture: {error}"))?,
-        )?;
+        let mut check: Value = serde_json::from_str(include_str!(
+            "../../../../fixtures/python_boundary_gap/expected/check.json"
+        ))
+        .map_err(|error| format!("parse boundary Python fixture: {error}"))?;
+        check["root"] = json!(repo);
+        write_json(&repo.join(DEFAULT_CHECK_OUTPUT), check)?;
         let options = FirstPrOptions {
             check_output: Some(DEFAULT_CHECK_OUTPUT.to_string()),
             ..FirstPrOptions::default()
@@ -7393,8 +7415,9 @@ mod tests {
         })
     }
 
-    fn check_output_with_python_repair_card() -> Value {
+    fn check_output_with_python_repair_card(root: &Path) -> Value {
         json!({
+            "root": root,
             "schema_version": "0.1",
             "tool": "ripr",
             "findings": [
@@ -7498,6 +7521,22 @@ mod tests {
             .and_then(|file| file.set_modified(std::time::SystemTime::now()))
             .map_err(|err| format!("refresh ledger mtime {}: {err}", ledger.display()))?;
         let mut actual_json = render_start_here_packet(&case, &options);
+        if case_id == "typescript-preview-gap" {
+            // This historical, portable ledger does not record its producer
+            // root. It must be limited as-is. Bind a separate in-memory test
+            // instance to this fixture's physical root to retain the existing
+            // actionable projection control; this is not producer evidence.
+            assert_eq!(
+                actual_json["selected"]["reason_code"], "source_currentness_unavailable",
+                "rootless fixture must not claim same-root authority: {actual_json}"
+            );
+            let mut bound_ledger = read_packet(&ledger)?;
+            bound_ledger["input_root"] = json!(case.canonicalize().map_err(|e| e.to_string())?);
+            let selection = select_from_gap_ledger(&bound_ledger, &case, &options);
+            let warnings = selection.warning().into_iter().collect();
+            actual_json =
+                render_start_here_packet_with_selection(&case, &options, selection, warnings, None);
+        }
         // The new context names the physical selected fixture root, which
         // can differ from the renderer CWD used by historical output paths.
         // Normalize only that advisory context before rendering; raw command

@@ -214,6 +214,10 @@ the input root separately from the selected root, and offers a fresh
 selected-workspace check to inspect. If that fresh check still has no repairable
 row, the limitation remains; a fresh check alone does not establish whole-corpus
 currentness. A known distinct producer root instead reports `wrong_root`. When
+the producer root is missing, relative, or cannot be resolved, its identity is
+unknown: first-pr must not offer a regeneration command that can overwrite the
+supplied check output. This applies even when the ledger projects zero records;
+only a verified same-root input can use its existing regeneration route. When
 the selected head is the live HEAD, the suggested command is a fresh default
 worktree analysis for inspection, not a replay of the original mode or policy;
 it does not redirect over the supplied input. Otherwise no live-worktree check

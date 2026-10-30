@@ -101,6 +101,104 @@ fn fixture() -> Result<PathBuf, String> {
     Ok(p)
 }
 
+fn unknown_root_cases(
+    root: &Path,
+    produced: &Value,
+    expected_records: usize,
+) -> Result<(), String> {
+    for state in ["missing", "relative", "unresolvable"] {
+        let mut input = produced.clone();
+        match state {
+            "missing" => {
+                input.as_object_mut().ok_or("check object")?.remove("root");
+            }
+            "relative" => input["root"] = serde_json::json!("relative/path"),
+            _ => input["root"] = serde_json::json!(text(&root.join("absent-producer-root"))?),
+        }
+        let input_path = root
+            .join("target")
+            .join(format!("unknown-{expected_records}-{state}.json"));
+        fs::create_dir_all(root.join("target")).map_err(|e| e.to_string())?;
+        let original = serde_json::to_vec(&input).map_err(|e| e.to_string())?;
+        fs::write(&input_path, &original).map_err(|e| e.to_string())?;
+        let ledger = root
+            .join("target")
+            .join(format!("unknown-{expected_records}-{state}-ledger.json"));
+        let packet = first_pr(
+            root,
+            &input_path,
+            &root
+                .join("target")
+                .join(format!("unknown-{expected_records}-{state}")),
+            &ledger,
+        )?;
+        let ledger: Value = serde_json::from_slice(&fs::read(ledger).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
+        assert_eq!(
+            ledger["records"].as_array().map(Vec::len),
+            Some(expected_records),
+            "{state}: {ledger}"
+        );
+        assert_eq!(
+            packet["selected"]["reason_code"], "source_currentness_unavailable",
+            "{state}: {packet}"
+        );
+        assert!(
+            packet["commands"].get("regenerate_gap_ledger").is_none(),
+            "{state}: {packet}"
+        );
+        for id in ["check_output", "gap_ledger"] {
+            let artifact = packet["artifacts"]
+                .as_array()
+                .ok_or("artifacts")?
+                .iter()
+                .find(|v| v["id"] == id)
+                .ok_or("artifact")?;
+            assert!(
+                artifact["regeneration_command"].is_null(),
+                "{state}: {artifact}"
+            );
+        }
+        #[cfg(unix)]
+        {
+            let command = packet["selected"]["next_command"]
+                .as_str()
+                .ok_or("missing inspection")?;
+            assert!(
+                !command.contains('>'),
+                "inspection must not redirect: {command}"
+            );
+            let bin_dir = Path::new(env!("CARGO_BIN_EXE_ripr"))
+                .parent()
+                .ok_or("binary directory")?;
+            let mut paths = vec![bin_dir.to_path_buf()];
+            paths.extend(std::env::split_paths(
+                &std::env::var_os("PATH").unwrap_or_default(),
+            ));
+            let result = Command::new("sh")
+                .current_dir(root)
+                .env(
+                    "PATH",
+                    std::env::join_paths(paths).map_err(|e| e.to_string())?,
+                )
+                .args(["-c", command])
+                .output()
+                .map_err(|e| e.to_string())?;
+            assert!(
+                result.status.success(),
+                "{state}: {}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+        }
+        assert_eq!(
+            fs::read(&input_path).map_err(|e| e.to_string())?,
+            original,
+            "{state}: input changed"
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn zero_record_foreign_check_preserves_the_input() -> Result<(), String> {
     let a = fixture()?;
@@ -150,6 +248,24 @@ fn zero_record_foreign_check_preserves_the_input() -> Result<(), String> {
     assert_eq!(same_ledger["status"], "no_records", "{same_ledger}");
     assert_eq!(same_ledger["records"].as_array().map(Vec::len), Some(0));
     assert_eq!(same["selected"]["state"], "blocked_artifact", "{same}");
+    let same_check = same["artifacts"]
+        .as_array()
+        .ok_or("artifacts")?
+        .iter()
+        .find(|v| v["id"] == "check_output")
+        .ok_or("check artifact")?;
+    assert!(
+        same_check["regeneration_command"].as_str().is_some(),
+        "{same_check}"
+    );
+    assert!(
+        same["selected"]["next_command"]
+            .as_str()
+            .is_some_and(|s| s.contains("repo-exposure")),
+        "{same}"
+    );
+    assert_eq!(fs::read(&input).map_err(|e| e.to_string())?, bytes);
+    unknown_root_cases(&a, &produced, 0)?;
     let other = first_pr(
         &b,
         &input,
@@ -236,6 +352,7 @@ fn no_action_does_not_promote_unbound_or_stale_preview_check() -> Result<(), Str
         "nonempty strong control: {strong}"
     );
     assert_eq!(strong["root"], text(&a)?);
+    unknown_root_cases(&a, &strong, 1)?;
     let input = a.with_extension("strong.json");
     fs::write(
         &input,
