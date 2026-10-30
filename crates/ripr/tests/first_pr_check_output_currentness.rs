@@ -106,14 +106,18 @@ fn unknown_root_cases(
     produced: &Value,
     expected_records: usize,
 ) -> Result<(), String> {
-    for state in ["missing", "relative", "unresolvable"] {
+    for state in ["missing", "null", "relative", "unresolvable", "malformed"] {
         let mut input = produced.clone();
         match state {
             "missing" => {
                 input.as_object_mut().ok_or("check object")?.remove("root");
             }
             "relative" => input["root"] = serde_json::json!("relative/path"),
-            _ => input["root"] = serde_json::json!(text(&root.join("absent-producer-root"))?),
+            "null" => input["root"] = Value::Null,
+            "unresolvable" => {
+                input["root"] = serde_json::json!(text(&root.join("absent-producer-root"))?)
+            }
+            _ => input["root"] = serde_json::json!(["malformed"]),
         }
         let input_path = root
             .join("target")
@@ -134,6 +138,10 @@ fn unknown_root_cases(
         )?;
         let ledger: Value = serde_json::from_slice(&fs::read(ledger).map_err(|e| e.to_string())?)
             .map_err(|e| e.to_string())?;
+        assert_eq!(
+            ledger["check_output_provenance"].get("source_root_raw"),
+            input.get("root")
+        );
         assert_eq!(
             ledger["records"].as_array().map(Vec::len),
             Some(expected_records),
@@ -357,15 +365,19 @@ fn newly_discovered_foreign_write_changes_strong_producer_result() -> Result<(),
     let strong = check(&root)?;
     assert_eq!(strong["summary"]["findings"], 1, "{strong}");
     assert_eq!(strong["summary"]["exposed"], 1, "{strong}");
-    for state in ["missing", "malformed"] {
+    for state in ["missing", "null", "malformed"] {
         let mut altered = strong.clone();
         if state == "missing" {
             altered
                 .as_object_mut()
                 .ok_or("check object")?
                 .remove("source_subject");
+        } else if state == "null" {
+            altered["source_subject"] = Value::Null;
         } else {
             altered["source_subject"] = serde_json::json!({"corpus": ["not an authority"]});
+            altered["head"] = serde_json::json!(["malformed"]);
+            altered["base"] = Value::Null;
         }
         let altered_path = root.join("target").join(format!("{state}-input.json"));
         fs::create_dir_all(root.join("target")).map_err(|e| e.to_string())?;
@@ -391,6 +403,28 @@ fn newly_discovered_foreign_write_changes_strong_producer_result() -> Result<(),
         assert_eq!(
             ledger["check_output_provenance"].get("source_subject"),
             altered.get("source_subject")
+        );
+        let wrapped = root.join("target").join(format!("{state}-wrapped.json"));
+        ripr(
+            &root,
+            &[
+                "reports",
+                "gap-ledger",
+                "--root",
+                text(&root)?,
+                "--records",
+                text(&root.join("target").join(format!("{state}-ledger.json")))?,
+                "--out",
+                text(&wrapped)?,
+                "--out-md",
+                text(&root.join("target").join(format!("{state}-wrapped.md")))?,
+            ],
+        )?;
+        let wrapped: Value = serde_json::from_slice(&fs::read(wrapped).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
+        assert_eq!(
+            wrapped["check_output_provenance"],
+            ledger["check_output_provenance"]
         );
     }
     let input = root.with_extension("foreign-write-strong.json");

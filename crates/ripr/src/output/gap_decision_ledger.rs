@@ -675,6 +675,9 @@ pub(crate) fn build_gap_decision_ledger_report(
             // derived source_subject and its limitation remain authoritative
             // for existing consumers, and absent fields stay absent.
             if let Some(source) = source_value_snapshot.as_ref().and_then(Value::as_object) {
+                if let Some(raw_root) = source.get("root") {
+                    origin.insert("source_root_raw".to_string(), raw_root.clone());
+                }
                 for key in ["source_subject", "base", "base_commit", "head", "mode"] {
                     if let Some(value) = source.get(key) {
                         origin.insert(key.to_string(), value.clone());
