@@ -1496,7 +1496,7 @@ pub(crate) fn typescript_dynamic_assertion_blocker(finding: &Finding) -> Option<
 pub(crate) fn typescript_moved_selection_blocker(finding: &Finding) -> Option<String> {
     // A named limitation refuses projection before the selection guard, so it
     // is the first cause; do not name the later guard in its place.
-    if has_named_typescript_limitation(finding) {
+    if has_named_typescript_limitation(finding) || !is_incomplete_repair_packet(finding) {
         return None;
     }
     let names: Vec<&str> = finding
@@ -1522,8 +1522,18 @@ pub(crate) fn typescript_moved_selection_blocker(finding: &Finding) -> Option<St
 /// The plain reason a TypeScript/JavaScript preview finding has no repair
 /// packet, when a guard above names one; `None` keeps the caller's wording.
 pub(crate) fn typescript_advisory_blocker(finding: &Finding) -> Option<String> {
+    // Both blockers explain an `incomplete_repair_packet` finding; a finding
+    // in another actionability category (for example `missing_target_shape`)
+    // keeps its own cause and route.
+    if !is_incomplete_repair_packet(finding) {
+        return None;
+    }
     typescript_dynamic_assertion_blocker(finding)
         .or_else(|| typescript_moved_selection_blocker(finding))
+}
+
+fn is_incomplete_repair_packet(finding: &Finding) -> bool {
+    evidence_value(finding, "actionability_category: ") == Some("incomplete_repair_packet")
 }
 
 #[cfg(test)]
@@ -1798,6 +1808,10 @@ pub(crate) mod tests {
         Ok(())
     }
 
+    fn incomplete_packet_finding() -> Finding {
+        complete_finding()
+    }
+
     /// The plain blockers name the test line, the matcher and the test that
     /// moved, never the raw limitation id, and stay absent on a clean finding.
     #[test]
@@ -1806,7 +1820,7 @@ pub(crate) mod tests {
         if typescript_advisory_blocker(&clean).is_some() {
             return Err("a clean finding has no advisory blocker".to_string());
         }
-        let mut dynamic = complete_finding();
+        let mut dynamic = incomplete_packet_finding();
         dynamic.evidence.push(
             "typescript_limitation_sample: typescript_dynamic_assertion_unresolved at tests/a.test.ts:12"
                 .to_string(),
@@ -1823,7 +1837,7 @@ pub(crate) mod tests {
         {
             return Err(format!("unexpected dynamic blocker: {text}"));
         }
-        let mut moved = complete_finding();
+        let mut moved = incomplete_packet_finding();
         moved.evidence.push(
             "typescript_assertion_selection: no_predicate_relevant_assertion (throws on bad input)"
                 .to_string(),
@@ -1839,7 +1853,7 @@ pub(crate) mod tests {
         {
             return Err(format!("unexpected moved blocker: {text}"));
         }
-        let mut single = complete_finding();
+        let mut single = incomplete_packet_finding();
         single.evidence.push(
             "typescript_assertion_selection: no_predicate_relevant_assertion (only one)"
                 .to_string(),
@@ -1848,6 +1862,20 @@ pub(crate) mod tests {
             .ok_or_else(|| "single moved selection must read a blocker".to_string())?;
         if !text.contains("`only one` asserts a different") {
             return Err(format!("singular wording must use `asserts`: {text}"));
+        }
+        // A different actionability category keeps its own cause.
+        let mut other = complete_finding();
+        other
+            .evidence
+            .retain(|l| !l.starts_with("actionability_category: "));
+        other
+            .evidence
+            .push("actionability_category: missing_target_shape".to_string());
+        other.evidence.push(
+            "typescript_assertion_selection: no_predicate_relevant_assertion (x)".to_string(),
+        );
+        if typescript_advisory_blocker(&other).is_some() {
+            return Err("another category must not read a moved-selection blocker".to_string());
         }
         // The blocker is wording only: the guard still refuses the packet.
         if typescript_gap_record_for(&moved).is_some() {
