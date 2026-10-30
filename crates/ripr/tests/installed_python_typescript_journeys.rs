@@ -1369,6 +1369,60 @@ struct GapAttempt {
     attempt_id: String,
 }
 
+/// The cache limitation must be visible to consumers that capture only stdout.
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn gap_before_stdout_discloses_test_runner_cache_limit_in_both_modes() -> Result<(), String> {
+    for json in [true, false] {
+        let (_guard, root, decoy) = materialize(
+            "blind_journey_installed_typescript",
+            "head",
+            "ts-cache-stdout",
+            Some("[languages]\nenabled = [\"typescript\"]\n"),
+        )?;
+        let root_arg = root.to_string_lossy().into_owned();
+        let (ok, check) = ripr(&decoy, &["check", "--root", &root_arg, "--base", "HEAD~1"])?;
+        expect_exit(ok, true, "check")?;
+        let (gap, base) = gap_start_tokens(&check).ok_or("missing gap start")?;
+        let mut args = vec![
+            "agent", "repair", "--gap-id", &gap, "--base", &base, "--root", &root_arg, "--phase",
+            "before",
+        ];
+        if json {
+            args.push("--json");
+        }
+        let output = ripr_output(&decoy, &args)?;
+        expect_exit(output.status.success(), true, "gap before")?;
+        let stdout = String::from_utf8(output.stdout).map_err(|error| error.to_string())?;
+        let guidance = if json {
+            let value: serde_json::Value =
+                serde_json::from_str(&stdout).map_err(|error| error.to_string())?;
+            value["repair_attempt"]["test_runner_cache_guidance"]
+                .as_str()
+                .ok_or("missing JSON cache guidance")?
+                .to_string()
+        } else {
+            stdout
+        };
+        need(
+            &guidance,
+            "run the focused test after continue",
+            "stdout cache order",
+        )?;
+        need(
+            &guidance,
+            "record its result separately",
+            "stdout evidence boundary",
+        )?;
+        need(
+            &guidance,
+            "may make that receipt stale",
+            "stdout currentness limitation",
+        )?;
+    }
+    Ok(())
+}
+
 #[cfg(feature = "lang-typescript")]
 impl GapAttempt {
     fn start(label: &str) -> Result<Self, String> {
