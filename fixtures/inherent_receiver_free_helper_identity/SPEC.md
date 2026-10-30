@@ -26,6 +26,17 @@ helper into executed owner evidence. Do not rewrite runtime truth to fit advice.
 
 The adjacent `controls/` files are complete native Rust subjects. The shared
 boundary matrix is documented in
-`fixtures/inherent_receiver_free_helper_identity/BOUNDARIES.md` and exercised by
-`inherent_executable_owner_identity_boundary_matrix` and the production-path
-integration `executable_owner_identity_boundaries_agree_in_diff`.
+`fixtures/inherent_receiver_free_helper_identity/BOUNDARIES.md` and is exercised
+by `inherent_executable_owner_identity_boundary_matrix` and the production-path
+integration `executable_owner_identity_boundaries_agree_in_diff`, which land in the
+integration-tests slice (#11031), not in this fixture slice.
+
+## Matrix polarity
+
+`relation` in `cases.json` is the row the repository report must carry. The diff
+report cannot carry helper-only reach, so the diff consumer reads the same field
+as: `direct_owner_call` must be a high-confidence direct row, and every other value
+(`helper_owner_call` or none) must not be credited as a direct or helper owner call.
+It does not assert which refusal reason replaces the credit, and the direct
+case does not pin the finding's class or reach in diff mode: the repository
+matrix owns the positive grip assertion.
