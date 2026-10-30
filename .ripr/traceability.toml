@@ -13029,6 +13029,14 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/parse.rs::parse_depth_tests::previously_aborting_depth_now_parses_and_classifies",
   "crates/ripr/src/analysis/language/typescript/parse.rs::parse_depth_tests::unsupported_syntax_finding_carries_budget_reason",
   "crates/ripr/src/analysis/language/typescript/tests.rs::parse_error_reason_reports_parser_errors",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::parse_worker_panic_is_a_typed_refusal_not_a_process_failure",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::analyze_diff_contains_a_parse_worker_panic_on_a_changed_file",
+  "crates/ripr/src/analysis/language/typescript/tests.rs::analyze_diff_discloses_a_test_extraction_worker_failure",
+  "crates/ripr/src/analysis/pipeline.rs::tests::diff_pipeline_contains_a_preview_adapter_panic",
+  "crates/ripr/src/analysis/pipeline.rs::tests::diff_pipeline_turns_a_rust_adapter_panic_into_a_typed_failure",
+  "crates/ripr/src/analysis/pipeline.rs::tests::repo_pipeline_contains_adapter_panics",
+  "crates/ripr/src/lsp/tests.rs::lsp_refresh_contains_a_language_adapter_panic",
+  "crates/ripr/src/mcp/server_tests.rs::refresh_contains_a_language_adapter_panic",
 ]
 fixtures = [
   "fixtures/ts_parse_depth_budget",
@@ -13037,6 +13045,8 @@ code = [
   "crates/ripr/src/analysis/language/typescript/parse.rs",
   "crates/ripr/src/analysis/language/typescript/owners.rs",
   "crates/ripr/src/analysis/language/typescript/related_tests.rs",
+  "crates/ripr/src/analysis/language/typescript/extraction_cache.rs",
+  "crates/ripr/src/analysis/pipeline.rs",
 ]
 outputs = [
 ]

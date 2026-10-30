@@ -2020,5 +2020,7 @@ mod git_candidate_entry_tests {
 pub(crate) mod input_boundary;
 #[cfg(test)]
 pub(crate) use pipeline::diff_pipeline_entry_count;
+#[cfg(test)]
+pub(crate) use pipeline::injected_adapter_panic;
 
 pub(crate) use workspace::cargo_input_identity;
