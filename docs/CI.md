@@ -1687,6 +1687,19 @@ configure the workflow, so changing a mode never means editing the file:
   SARIF to the Security tab; set `"false"` if the repository does not use code
   scanning.
 
+Pilot deadline (#11205). `RIPR_PILOT_TIMEOUT_MS` is optional and not in the
+generated file. Add it to
+the workflow `env:` (positive milliseconds) when `ripr pilot` stops at its
+deadline on a large repository. The `ripr reports ci-packet` pilot step then
+passes it as an explicit `ripr pilot --timeout-ms` hard limit, with no
+automatic extension; unset keeps pilot's 30 s default plus its automatic
+extension, and a non-numeric or zero value is refused. When the pilot packet
+is the timeout partial, the step summary's First-run status names the pilot
+deadline as the cause of the missing artifacts, the effect, and this next
+step (#11205). Per-file facts computed before the deadline are written to
+`target/ripr/cache`, so restoring that directory between runs lets the retry
+resume.
+
 Permissions and job settings:
 
 - `pull-requests: write` is used by the summary comment and by
