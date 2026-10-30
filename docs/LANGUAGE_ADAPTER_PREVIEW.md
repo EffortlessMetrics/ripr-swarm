@@ -237,10 +237,10 @@ a per-class constant (`0.6` exposed, `0.4` weakly exposed or no static path,
 not on the same scale as Rust's `confidence`. The number is unchanged by
 #10700; what the finding adds is the reason it is held there:
 
-- `confidence_basis` in `check`, `explain` and `context` JSON is a list of
+- `confidence_basis` in `check` and `context` JSON (`explain` prints the `Why capped:` text line only) is a list of
   `{code, summary}` capping reasons: `preview_stages_not_modeled`,
   `syntax_first_no_type_resolution`, and the evidence-specific
-  `no_related_test`, `oracle_below_strong`, `boundary_input_not_matched`,
+  `infection_not_established`, `propagation_not_established`, `no_related_test`, `oracle_below_strong`, `boundary_input_not_matched`,
   `observation_not_confirmed` or `discriminator_not_established`.
 - `confidence_why_capped` is the one plain-English line; human `check` and
   `explain` print it as `Why capped:` under the confidence.

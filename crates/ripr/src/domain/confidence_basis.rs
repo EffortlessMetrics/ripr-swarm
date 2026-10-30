@@ -32,6 +32,11 @@ pub enum ConfidenceCap {
     ObservationNotConfirmed,
     /// The discriminator is not established either way.
     DiscriminatorNotEstablished,
+    /// The adapter could not establish that the changed value alters behavior.
+    InfectionNotEstablished,
+    /// The adapter could not establish that the changed effect reaches an
+    /// observable output.
+    PropagationNotEstablished,
 }
 
 /// Evidence the semantic owner reads to derive the basis. Each field is a
@@ -59,6 +64,8 @@ impl ConfidenceCap {
             Self::BoundaryInputNotMatched => "boundary_input_not_matched",
             Self::ObservationNotConfirmed => "observation_not_confirmed",
             Self::DiscriminatorNotEstablished => "discriminator_not_established",
+            Self::InfectionNotEstablished => "infection_not_established",
+            Self::PropagationNotEstablished => "propagation_not_established",
         }
     }
 
@@ -86,6 +93,12 @@ impl ConfidenceCap {
             Self::DiscriminatorNotEstablished => {
                 "whether a discriminator exists is not established".to_string()
             }
+            Self::InfectionNotEstablished => {
+                "whether the changed value alters behavior is not established".to_string()
+            }
+            Self::PropagationNotEstablished => {
+                "whether the changed effect reaches an output is not established".to_string()
+            }
         }
     }
 
@@ -100,6 +113,8 @@ impl ConfidenceCap {
         ];
         match class {
             ExposureClass::StaticUnknown => caps.push(Self::DiscriminatorNotEstablished),
+            ExposureClass::InfectionUnknown => caps.push(Self::InfectionNotEstablished),
+            ExposureClass::PropagationUnknown => caps.push(Self::PropagationNotEstablished),
             _ if !inputs.has_related_test => caps.push(Self::NoRelatedTest),
             _ if !inputs.strong_oracle_present => caps.push(Self::OracleBelowStrong),
             ExposureClass::Exposed => {}
@@ -224,5 +239,23 @@ mod tests {
         for cap in unknown.iter().chain(&none).chain(&observed) {
             assert!(!cap.as_str().is_empty() && !cap.summary(None).is_empty());
         }
+    }
+
+    #[test]
+    fn infection_and_propagation_unknown_name_their_own_reason() {
+        let infection =
+            ConfidenceCap::for_preview(&ExposureClass::InfectionUnknown, &inputs(true, true, true));
+        assert_eq!(
+            infection.last(),
+            Some(&ConfidenceCap::InfectionNotEstablished)
+        );
+        let propagation = ConfidenceCap::for_preview(
+            &ExposureClass::PropagationUnknown,
+            &inputs(false, false, true),
+        );
+        assert_eq!(
+            propagation.last(),
+            Some(&ConfidenceCap::PropagationNotEstablished)
+        );
     }
 }
