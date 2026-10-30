@@ -383,6 +383,11 @@ fn dirty_python_check_withholds_start_when_git_inspection_fails() -> Result<(), 
         "status could not confirm a gap-bound start",
         "status uncertainty",
     )?;
+    if status_text.contains("prints the gap-bound start") {
+        return Err(format!(
+            "failed inspection also advertised a start: {status_text}"
+        ));
+    }
     Ok(())
 }
 
