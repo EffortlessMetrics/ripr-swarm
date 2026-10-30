@@ -47,7 +47,8 @@ The SARIF layer should:
   GitHub annotation denominator notice (#4393);
 - fold diff-scoped results that share a rule, file, line and suppression
   state into the first one, so one changed line is one code-scanning alert
-  (#11219). The kept result keeps its message and fingerprint, lists the
+  (#11219). The kept result is the one with the smallest fingerprint (input order never
+  changes it), keeps its message and fingerprint, lists the
   folded results in `properties.folded_results`, and the run records the
   count in `runs[].properties.folded_same_line_results` (absent when zero).
   Different classes never fold: a weaker class does not hide a stronger one.
@@ -321,7 +322,10 @@ Implemented renderer tests:
 - `crates/ripr/src/output/sarif.rs::tests::sarif_empty_findings_run_omits_omitted_not_current_property`
 - `crates/ripr/src/output/sarif.rs::tests::sarif_mixed_current_and_not_current_records_omitted_count_beside_results`
 - `crates/ripr/src/output/sarif.rs::tests::same_line_same_class_findings_fold_into_one_alert_that_names_the_rest`
-- `crates/ripr/src/output/sarif.rs::tests::findings_that_differ_in_class_line_or_suppression_stay_separate`
+- `crates/ripr/src/output/sarif.rs::tests::findings_that_differ_in_class_or_line_stay_separate`
+- `crates/ripr/src/output/sarif.rs::tests::the_kept_alert_does_not_depend_on_input_order`
+- `crates/ripr/src/output/sarif.rs::tests::a_suppressed_finding_is_not_folded_into_an_active_one`
+- `crates/ripr/src/output/sarif.rs::tests::findings_without_a_line_are_never_folded`
 
 Implemented policy tests:
 

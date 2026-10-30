@@ -90,21 +90,22 @@ pub(crate) fn render_findings_sarif(
 /// One alert per changed line and class (#11219): two probes of the same
 /// class on one line (for example an `error_path` and a `return_value`
 /// probe) read as one edit to the author, yet code scanning opens one alert
-/// for each. The first result keeps its message, fingerprint and location
-/// unchanged; the later ones are named in its `properties.folded_results`
-/// and counted for the run, so nothing is dropped silently. Results with
-/// different classes, or different suppression state, stay separate: a
-/// weaker class never hides a stronger one, and a suppressed result never
-/// hides an active one. Returns the kept results and how many were folded.
+/// for each. The kept result is the one with the smallest fingerprint, so a
+/// reorder of the findings never changes which alert survives; it keeps its
+/// message, fingerprint and location. The others are named, sorted by
+/// fingerprint, in its `properties.folded_results` and counted for the run,
+/// so nothing is dropped silently. Results with different classes or
+/// different suppression metadata, and results without a line, stay
+/// separate: a weaker class never hides a stronger one and a suppressed
+/// result never hides an active one. Returns the kept results, in the order
+/// their groups first appear, and how many were folded.
 fn fold_same_line_results(results: Vec<Value>) -> (Vec<Value>, usize) {
-    let mut kept: Vec<Value> = Vec::new();
-    let mut index: std::collections::HashMap<(String, String, u64, bool), usize> =
-        std::collections::HashMap::new();
-    let mut folded = 0usize;
+    type Key = (String, String, u64, String);
+    let mut groups: Vec<Vec<Value>> = Vec::new();
+    let mut index: std::collections::HashMap<Key, usize> = std::collections::HashMap::new();
     for result in results {
         let region = &result["locations"][0]["physicalLocation"];
-        let line = region["region"]["startLine"].as_u64();
-        let key = line.map(|line| {
+        let key = region["region"]["startLine"].as_u64().map(|line| {
             (
                 result["ruleId"].as_str().unwrap_or_default().to_string(),
                 region["artifactLocation"]["uri"]
@@ -112,35 +113,54 @@ fn fold_same_line_results(results: Vec<Value>) -> (Vec<Value>, usize) {
                     .unwrap_or_default()
                     .to_string(),
                 line,
-                result.get("suppressions").is_some(),
+                result
+                    .get("suppressions")
+                    .map(Value::to_string)
+                    .unwrap_or_default(),
             )
         });
-        let Some(key) = key else {
-            kept.push(result);
+        match key {
+            Some(key) => match index.get(&key) {
+                Some(&at) => groups[at].push(result),
+                None => {
+                    index.insert(key, groups.len());
+                    groups.push(vec![result]);
+                }
+            },
+            None => groups.push(vec![result]),
+        }
+    }
+    let fingerprint = |result: &Value| -> String {
+        result["partialFingerprints"]["riprFingerprintV1"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string()
+    };
+    let mut folded = 0usize;
+    let mut kept = Vec::with_capacity(groups.len());
+    for mut group in groups {
+        group.sort_by_key(|result| fingerprint(result));
+        let mut rest = group.split_off(1).into_iter();
+        let Some(mut keeper) = group.pop() else {
             continue;
         };
-        match index.get(&key) {
-            Some(&at) => {
-                folded += 1;
-                let note = json!({
+        let notes: Vec<Value> = rest
+            .by_ref()
+            .map(|result| {
+                json!({
                     "finding_id": result["properties"]["finding_id"],
                     "probe_id": result["properties"]["probe_id"],
                     "probe_family": result["properties"]["probe_family"],
-                });
-                if let Some(Value::Object(properties)) = kept[at].get_mut("properties") {
-                    let list = properties
-                        .entry("folded_results".to_string())
-                        .or_insert_with(|| json!([]));
-                    if let Some(list) = list.as_array_mut() {
-                        list.push(note);
-                    }
-                }
-            }
-            None => {
-                index.insert(key, kept.len());
-                kept.push(result);
-            }
+                })
+            })
+            .collect();
+        folded += notes.len();
+        if !notes.is_empty()
+            && let Some(Value::Object(properties)) = keeper.get_mut("properties")
+        {
+            properties.insert("folded_results".to_string(), Value::Array(notes));
         }
+        kept.push(keeper);
     }
     (kept, folded)
 }
@@ -2922,7 +2942,87 @@ weakly_gripped = "note"
     }
 
     #[test]
-    fn findings_that_differ_in_class_line_or_suppression_stay_separate() -> Result<(), String> {
+    fn the_kept_alert_does_not_depend_on_input_order() -> Result<(), String> {
+        let render = |order: [&str; 2]| -> Result<Value, String> {
+            let mut output = sample_output();
+            output.findings = order
+                .iter()
+                .map(|id| sibling_probe(id, ProbeFamily::ErrorPath))
+                .collect();
+            parse_json(&render_findings_sarif(&output, &RiprConfig::default(), &[]))
+        };
+        let forward = render(["alpha", "beta"])?;
+        let reversed = render(["beta", "alpha"])?;
+        assert_eq!(
+            forward["runs"][0]["results"],
+            reversed["runs"][0]["results"]
+        );
+        let kept = first_result(&forward)?;
+        assert_eq!(kept["properties"]["finding_id"], "finding:alpha");
+        assert_eq!(
+            kept["properties"]["folded_results"][0]["finding_id"],
+            "finding:beta"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_suppressed_finding_is_not_folded_into_an_active_one() -> Result<(), String> {
+        let suppression = SuppressionEntry {
+            kind: SuppressionKind::ExposureGap,
+            finding_id: Some("finding:first".to_string()),
+            test: None,
+            path: None,
+            reason: "tracked".to_string(),
+            owner: "team-ripr".to_string(),
+            expires: Some("2099-01-01".to_string()),
+            scope: None,
+            created_at: None,
+            last_seen: None,
+            review_by: None,
+            expected_visibility: None,
+            static_class: None,
+            language: None,
+            language_status: None,
+            block_line: 4,
+        };
+        let mut output = sample_output();
+        output.findings = vec![
+            sibling_probe("first", ProbeFamily::ErrorPath),
+            sibling_probe("second", ProbeFamily::ReturnValue),
+        ];
+        let sarif = parse_json(&render_findings_sarif(
+            &output,
+            &RiprConfig::default(),
+            &[suppression],
+        ))?;
+        let results = results(&sarif)?;
+        assert_eq!(results.len(), 2, "{sarif}");
+        assert_eq!(
+            results
+                .iter()
+                .filter(|result| result.get("suppressions").is_some())
+                .count(),
+            1
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn findings_without_a_line_are_never_folded() -> Result<(), String> {
+        let mut first = sibling_probe("first", ProbeFamily::ErrorPath);
+        first.probe.location = SourceLocation::new("src/pricing.rs", 0, 0);
+        let mut second = sibling_probe("second", ProbeFamily::ReturnValue);
+        second.probe.location = SourceLocation::new("src/pricing.rs", 0, 0);
+        let mut output = sample_output();
+        output.findings = vec![first, second];
+        let sarif = parse_json(&render_findings_sarif(&output, &RiprConfig::default(), &[]))?;
+        assert_eq!(results(&sarif)?.len(), 2, "{sarif}");
+        Ok(())
+    }
+
+    #[test]
+    fn findings_that_differ_in_class_or_line_stay_separate() -> Result<(), String> {
         let mut other_class = sibling_probe("class", ProbeFamily::ReturnValue);
         other_class.class = ExposureClass::InfectionUnknown;
         let mut other_line = sibling_probe("line", ProbeFamily::ReturnValue);
