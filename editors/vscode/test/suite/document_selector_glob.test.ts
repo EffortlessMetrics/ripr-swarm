@@ -55,10 +55,19 @@ suite('Document selector workspace-root glob escaping', () => {
         return { spelling, own: vscode.languages.match(selector, doc) > 0,
           sibling: vscode.languages.match(selector, siblingDoc) > 0 };
       });
-      assert.deepStrictEqual(scores, [
+      const expected = [
         { spelling: 'upper', own: true, sibling: false },
         { spelling: 'lower', own: true, sibling: false }
-      ]);
+      ];
+      const selected = process.env.RIPR_GLOB_PROBE_ROW;
+      if (selected) {
+        const [spelling, field] = selected.split(':');
+        assert.ok((spelling === 'upper' || spelling === 'lower') && (field === 'own' || field === 'sibling'));
+        const index = spelling === 'upper' ? 0 : 1;
+        assert.strictEqual(scores[index][field as 'own' | 'sibling'], expected[index][field as 'own' | 'sibling']);
+      } else {
+        assert.deepStrictEqual(scores, expected);
+      }
     } finally {
       fs.rmSync(parent, { recursive: true, force: true });
     }
