@@ -1045,7 +1045,9 @@ pub(super) fn shadowed_by_extension(
 /// for a leading component that is not the owner's own ancestor shadows the
 /// owner's package (`tests/shapes/__init__.py` or `tests/shapes.py` for
 /// `shapes.rates.table`): the import then fails or loads another module
-/// (#9619). `roots` are every directory holding a source or above one; their
+/// (#9619), unless that root is itself a package below the workspace root
+/// (`tests/__init__.py`), which pytest never puts on `sys.path`. `roots`
+/// are every directory holding a source or above one; their
 /// own compiled entries are left to `extension_names`. An unreadable
 /// directory or name counts as one (#9226).
 pub(super) fn compiled_package_shadow(
@@ -1085,13 +1087,21 @@ pub(super) fn compiled_package_shadow(
         .map(|ancestor| root.join(ancestor))
         .collect();
     roots.iter().any(|base| {
+        // pytest's prepend mode inserts the first directory above a test that
+        // has no `__init__.py`, so a package directory below the workspace
+        // root is never an import root of its own for the prefix rule.
+        let package_base =
+            !base.as_os_str().is_empty() && root.join(base).join("__init__.py").is_file();
         (0..parts.len()).any(|start| {
             let mut directory = root.join(base);
             for (depth, name) in parts[start..].iter().enumerate() {
                 if depth > 0 && compiled_entry(&directory, name) {
                     return true;
                 }
-                if leading_starts.contains(&start) && start + depth + 1 < parts.len() {
+                if !package_base
+                    && leading_starts.contains(&start)
+                    && start + depth + 1 < parts.len()
+                {
                     let path = directory.join(name);
                     if !own_ancestors.contains(&path)
                         && (path.with_extension("py").is_file() || initializer_in_package(&path))

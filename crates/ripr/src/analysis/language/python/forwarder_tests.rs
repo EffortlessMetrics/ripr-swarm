@@ -207,6 +207,14 @@ fn a_forwarder_credits_only_through_certain_bindings_and_a_flipped_assertion() -
             ],
         ),
         (
+            "same-named package inside a tests package",
+            true,
+            vec![
+                ("tests/__init__.py", Some("")),
+                ("tests/shapes/__init__.py", Some("")),
+            ],
+        ),
+        (
             "owner binds only literals beside its reader",
             true,
             vec![("shapes/rates/table.py", Some(&literal_owner))],

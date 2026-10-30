@@ -620,8 +620,10 @@ through the new one. The conditions are:
   `__init__.py` is a workspace source), does not mention the forwarder
   module's name, and loads inertly: its top level holds only a docstring,
   `pass`, `from __future__` imports, assignments of literals (dict, list and
-  tuple displays of constants included) to plain names other than dunders,
-  and undecorated `def`s with literal defaults and unevaluated annotations.
+  tuple displays of constants included) to plain non-dunder names or
+  `__all__`, with an optional annotation that is a string or, under
+  `from __future__ import annotations`, a bare name, and undecorated `def`s
+  with literal defaults and annotations of the same kinds.
   It imports nothing else, not even a standard-library module, because a
   test-root module can take a standard-library name and calls such as
   `pickle.loads` or `pydoc.locate` import by a string. Loading it therefore
@@ -660,7 +662,11 @@ and from the path below a `src` layout root (any depth) or a top-level `lib`
 root, a package with an initializer of any kind or a source module named for
 a leading component that is not the module's own ancestor
 (`tests/shapes/__init__.py` or `tests/shapes.py` for `shapes.rates.quote`)
-shadows the module's package under pytest's prepend mode. It withholds the
+shadows the module's package under pytest's prepend mode. An import root
+that is itself a package below the workspace root (it holds `__init__.py`,
+as `tests/` does when `tests/__init__.py` exists) is skipped by this rule:
+pytest inserts the first directory above a test that has no `__init__.py`,
+so it never puts a package directory on `sys.path`. It withholds the
 credit of every pass that refuses a shared module name. A shadow reached only
 through another suffix of the path is not checked.
 
