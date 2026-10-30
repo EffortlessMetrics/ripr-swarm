@@ -174,6 +174,8 @@ fn confirmed_over_credits(report: &Value) -> Result<Vec<Value>, String> {
                 "adjudication_record": adjudication["record"].clone(),
                 "replay_record": replay["record"].clone(),
                 "replay_candidate_classification": replay["candidate_classification"].clone(),
+                "source_limit": "repository and revisions are inventory declarations; replay reconstructs retained diff-derived files and does not verify an upstream checkout or rerun its original tests",
+                "judgment_limit": "replay_binary identifies the current reconstruction; it does not establish which binary either adjudicator assessed",
             },
             "promotion_recipe": {
                 "step_1": "extract a minimal self-contained REGULAR fixture (with golden expected/check.json) reproducing this row's false-promotion shape; retain origin, available revision, and semantic assumptions, and use the retained diff at provenance diff_path as the extraction source — manifest-only fixture dirs are rejected by the SPEC-0108 meta-gate",

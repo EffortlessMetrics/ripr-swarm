@@ -7,28 +7,38 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
-use super::{confirmed_over_credits, derive_feedback, verify_staged, write_staging};
+use super::{derive_feedback, verify_staged, write_staging};
 
 #[test]
 fn feedback_does_not_invent_missing_source_revisions() -> Result<(), String> {
-    let report = json!({
-        "as_of": {"panel_digest": "panel", "replay_binary": {"version": "version", "sha256": "digest"}},
-        "cases": [{
-            "case_id": "unversioned", "repo": "example", "base": null, "head": null,
-            "source_envelope": "panel.json", "anchor": {"owner": "f"}, "diff_path": "f.diff",
-            "expected_direction": "should_gap", "row_kind": "seed", "behavior_family": [],
-            "replay": {"identity_current": true, "outcome": "complete", "diff_sha256": "diff"},
-            "adjudication": {"state": "adjudicated", "verdict": "exposed", "false_exposed": "true",
-                "row_revision": {"current": "row"}}
-        }]
-    });
-    let proposals = confirmed_over_credits(&report)?;
-    ensure(proposals.len() == 1, "expected one proposal")?;
-    ensure(
-        proposals[0]["provenance"]["base"].is_null()
-            && proposals[0]["provenance"]["head"].is_null(),
-        "missing revisions must not be invented",
-    )
+    for explicit_null in [false, true] {
+        let (fixture, refs, adjudications, records) =
+            seeded_pipeline_with_revisions("feedback-unversioned", Some(explicit_null))?;
+        let displays = refs.iter().map(String::as_str).collect::<Vec<_>>();
+        let staged = derive_feedback(
+            &fixture.root,
+            &displays,
+            Path::new(&records),
+            Path::new(&adjudications),
+            &adjudications,
+        )?;
+        ensure(
+            staged.confirmed_over_credits == 1,
+            "expected one confirmed proposal",
+        )?;
+        let out = fixture.root.join("feedback");
+        write_staging(&out, &staged)?;
+        let proposal: Value = serde_json::from_slice(
+            &fs::read(out.join("feedback-gap-row.proposal.json"))
+                .map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        ensure(
+            proposal["provenance"]["base"].is_null() && proposal["provenance"]["head"].is_null(),
+            "missing revisions must not be invented",
+        )?;
+    }
+    Ok(())
 }
 use crate::python_judged_panel_replay::replay_inventory_at;
 use crate::python_judged_panel_report::{AdjudicationRequest, adjudicate_case_at};
@@ -180,8 +190,36 @@ fn judge_request(
 /// Replays both rows and adjudicates the gap row as a confirmed over-credit
 /// (two roles agreeing `exposed` with `false_exposed` decided true).
 fn seeded_pipeline(name: &str) -> Result<(TempFixture, Vec<String>, String, String), String> {
+    seeded_pipeline_with_revisions(name, None)
+}
+
+fn seeded_pipeline_with_revisions(
+    name: &str,
+    missing: Option<bool>,
+) -> Result<(TempFixture, Vec<String>, String, String), String> {
     let fixture = TempFixture::new(name)?;
     let refs = write_inventory(&fixture)?;
+    if let Some(explicit_null) = missing {
+        let path = fixture.root.join(&refs[0]);
+        let mut inventory: Value =
+            serde_json::from_slice(&fs::read(&path).map_err(|error| error.to_string())?)
+                .map_err(|error| error.to_string())?;
+        let row = inventory["items"][0]
+            .as_object_mut()
+            .ok_or("missing seed row")?;
+        for key in ["base", "head"] {
+            if explicit_null {
+                row.insert(key.to_string(), Value::Null);
+            } else {
+                row.remove(key);
+            }
+        }
+        fs::write(
+            path,
+            serde_json::to_vec_pretty(&inventory).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+    }
     let ref_strs = refs.iter().map(String::as_str).collect::<Vec<_>>();
     let records = fixture.root.join("records");
     replay_inventory_at(
@@ -353,6 +391,25 @@ fn feedback_stages_a_proposal_for_a_confirmed_over_credit() -> Result<(), String
             && proposal["provenance"]["replay_record"] == "feedback-gap-row.json"
             && proposal["provenance"]["diff_path"].as_str().is_some(),
         "the proposal must carry the full provenance chain",
+    )?;
+    ensure(
+        proposal["provenance"]["source_limit"]
+            .as_str()
+            .is_some_and(|limit| {
+                limit.contains("inventory declarations")
+                    && limit.contains("does not verify an upstream checkout")
+                    && limit.contains("original tests")
+            }),
+        "the proposal must disclose the source-only replay boundary",
+    )?;
+    ensure(
+        proposal["provenance"]["judgment_limit"]
+            .as_str()
+            .is_some_and(|limit| {
+                limit.contains("current reconstruction")
+                    && limit.contains("does not establish which binary either adjudicator assessed")
+            }),
+        "the replay binary must not be attributed to adjudicators",
     )?;
     ensure(
         proposal["promotion_recipe"]["step_1"]
