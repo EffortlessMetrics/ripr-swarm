@@ -1688,9 +1688,11 @@ pub(crate) fn normalize_fixture_json_output(value: &str) -> String {
 /// `\u{7b}` escape, a `\n` in an asserted string literal) and must reach
 /// the golden unchanged: the former blanket `\\` to `/` rewrote
 /// `quoted\"marker\"` to `quoted/"marker/"` in checked-in goldens (#11119).
-/// On Windows a `\\` separates path components only between two path
-/// characters; a doubled backslash that opens a Rust `\u{..}` escape or
-/// sits beside a quote or another backslash is source text there too.
+/// On Windows only string values under a path-bearing key (see
+/// [`is_path_bearing_json_key`]) have their separators projected; every
+/// other string (an asserted `"a\\nb"`, a `\\u{7b}` escape, a `\\"` quote)
+/// is source text and stays byte-identical, so the fold no longer guesses
+/// from neighbouring characters.
 fn normalize_fixture_json_output_for_host(value: &str, windows: bool) -> String {
     let value = normalize_check_json_golden_document(value);
     if !windows {
@@ -1698,41 +1700,45 @@ fn normalize_fixture_json_output_for_host(value: &str, windows: bool) -> String 
     }
     // #2556: operate on CHARS, not bytes, so multi-byte UTF-8 survives.
     let chars: Vec<char> = value.chars().collect();
-    let is_path_char = |c: char| c.is_alphanumeric() || matches!(c, '_' | '-' | '.' | ':');
     let mut result = String::with_capacity(value.len());
+    let mut current_key = String::new();
     let mut i = 0;
     while i < chars.len() {
-        if chars[i] == '\\' && chars.get(i + 1) == Some(&'\\') {
-            let prev_is_path = i > 0 && is_path_char(chars[i - 1]);
-            let next = chars.get(i + 2).copied();
-            let next_is_path = next.is_some_and(is_path_char);
-            let opens_unicode_escape = next == Some('u') && chars.get(i + 3) == Some(&'{');
-            if prev_is_path && next_is_path && !opens_unicode_escape {
-                result.push('/');
-            } else {
-                result.push_str("\\\\");
-            }
-            i += 2;
-            continue;
-        }
-        if chars[i] == '\\' && i + 1 < chars.len() {
-            let next = chars[i + 1];
-            // Preserve JSON escape sequences: \" \\ \n \t \r \uXXXX
-            if matches!(next, '"' | '\\' | 'n' | 't' | 'r' | 'u') {
-                result.push('\\');
-                result.push(next);
-                i += 2;
-                continue;
-            }
-            // Not a JSON escape: a lone Windows path separator.
-            result.push('/');
+        if chars[i] != '"' {
+            result.push(chars[i]);
             i += 1;
             continue;
         }
-        result.push(chars[i]);
+        // Scan one JSON string token, honoring escapes.
+        let start = i;
         i += 1;
+        while i < chars.len() && chars[i] != '"' {
+            i += if chars[i] == '\\' { 2 } else { 1 };
+        }
+        let end = i.min(chars.len().saturating_sub(1));
+        let token: String = chars[start..=end].iter().collect();
+        i = end + 1;
+        let mut after = i;
+        while chars.get(after).is_some_and(|c| c.is_whitespace()) {
+            after += 1;
+        }
+        if chars.get(after) == Some(&':') {
+            current_key = token.trim_matches('"').to_string();
+            result.push_str(&token);
+        } else if is_path_bearing_json_key(&current_key) {
+            result.push_str(&token.replace("\\\\", "/"));
+        } else {
+            result.push_str(&token);
+        }
     }
     project_json_cwd_prefix(&result)
+}
+
+/// Keys whose string values are filesystem paths in the check/gate JSON.
+fn is_path_bearing_json_key(key: &str) -> bool {
+    ["path", "file", "root", "dir"]
+        .iter()
+        .any(|needle| key.contains(needle))
 }
 
 pub(crate) fn normalize_fixture_human_output(value: &str) -> String {
@@ -3222,27 +3228,6 @@ mod tests {
     }
 
     #[test]
-    fn normalize_json_handles_single_backslash() {
-        // #2337: single backslash in free-text fields (code excerpts, error
-        // messages) must also be normalized. But JSON escape sequences
-        // (\" \\ \n etc) must be preserved.
-        // Here `\b` and `\c` are NOT valid JSON escapes, so they should
-        // be treated as path separators and normalized.
-        // Note: in the raw string, `\b` is a single backslash + 'b'.
-        let input = r#"{"expression":"a\b\c"}"#;
-        let out = normalize_fixture_json_output_for_host(input, true);
-        // After normalization: the `\b` becomes `/b` (not a JSON escape
-        // since \b in JSON is backspace U+0008, but in this context it's
-        // a raw backslash in the Rust string). The key assertion is that
-        // the output does not contain a bare backslash that is NOT part of
-        // a JSON escape.
-        assert!(
-            !out.contains(r#"\b"#) && !out.contains(r#"\c"#),
-            "single backslash before non-escape char must be normalized: {out}"
-        );
-    }
-
-    #[test]
     fn normalize_json_keeps_source_text_backslashes_off_windows() -> Result<(), String> {
         // #11119: a JSON `\\` is a literal backslash of asserted source text.
         // Source `"read \"error\"", "\u{7b}", "a\nb"` renders as the JSON below.
@@ -3266,6 +3251,25 @@ mod tests {
         assert_eq!(
             out,
             r#"{"oracle":"\"read \\\"error\\\"\" \\u{7b}","file":"crates/ripr/src/lib.rs"}"#
+        );
+    }
+
+    #[test]
+    fn normalize_json_windows_folds_parenthesized_program_files_path() {
+        let source = r#"{"root":"vendor (x86)\\ripr\\src"}"#;
+        let out = normalize_fixture_json_output_for_host(source, true);
+        assert_eq!(out, r#"{"root":"vendor (x86)/ripr/src"}"#);
+    }
+
+    #[test]
+    fn normalize_json_windows_keeps_newline_source_text_beside_path_fields() {
+        // `a\nb` has path-character neighbours but lives under a source-text
+        // key, so it must survive while the sibling path field folds (#11119).
+        let source = r#"{"oracle":"a\\nb","files":["src\\a.rs","src\\b.rs"],"text":"x\\y"}"#;
+        let out = normalize_fixture_json_output_for_host(source, true);
+        assert_eq!(
+            out,
+            r#"{"oracle":"a\\nb","files":["src/a.rs","src/b.rs"],"text":"x\\y"}"#
         );
     }
 

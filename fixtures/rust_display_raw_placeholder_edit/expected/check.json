@@ -41,20 +41,20 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach fmt: exact_display_pin", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: write!(f, r#\"quoted\"marker\"{:?}°C\"#, self.0)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: write!(f, r#\"quoted\"marker\"{:?}°C\"#, self.0) (line 7)", "related test src/display.rs:16 exact_display_pin uses strong exact value oracle: assert_eq!(Temp(21).to_string(), \"quoted/\"marker/\"21°C\");", "source assertion argument value \"quoted/\"marker/\"21°C\" at line 17", "source assertion argument value 21 at line 17"],
+      "evidence_path": ["reach yes: Related tests appear to reach fmt: exact_display_pin", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: write!(f, r#\"quoted\"marker\"{:?}°C\"#, self.0)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: write!(f, r#\"quoted\"marker\"{:?}°C\"#, self.0) (line 7)", "related test src/display.rs:16 exact_display_pin uses strong exact value oracle: assert_eq!(Temp(21).to_string(), \"quoted\\\"marker\\\"21°C\");", "source assertion argument value \"quoted\\\"marker\\\"21°C\" at line 17", "source assertion argument value 21 at line 17"],
       "flow_sinks": [
         {"kind":"return_value","text":"write!(f, r#\"quoted\"marker\"{:?}°C\"#, self.0)","line":7}
       ],
       "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: write!(f, r#\"quoted\"marker\"{:?}°C\"#, self.0)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach fmt: exact_display_pin"],
       "missing": ["No strong discriminator was detected"],
       "assertion_texts": {
-        "17": "assert_eq!(Temp(21).to_string(), \"quoted/\"marker/\"21°C\");"
+        "17": "assert_eq!(Temp(21).to_string(), \"quoted\\\"marker\\\"21°C\");"
       },
       "activation": {
         "observed_values": [
           {
             "line": 17,
-            "value": "\"quoted/\"marker/\"21°C\"",
+            "value": "\"quoted\\\"marker\\\"21°C\"",
             "context": "assertion_argument"
           },
           {
@@ -69,7 +69,7 @@
       "observed_values": [
         {
           "line": 17,
-          "value": "\"quoted/\"marker/\"21°C\"",
+          "value": "\"quoted\\\"marker\\\"21°C\"",
           "context": "assertion_argument"
         },
         {
@@ -88,7 +88,7 @@
           "line": 16,
           "oracle_strength": "strong",
           "oracle_kind": "exact_value",
-          "oracle": "assert_eq!(Temp(21).to_string(), \"quoted/\"marker/\"21°C\");",
+          "oracle": "assert_eq!(Temp(21).to_string(), \"quoted\\\"marker\\\"21°C\");",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
           "miss": "observation_unconfirmed",
