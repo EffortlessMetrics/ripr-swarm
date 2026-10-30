@@ -3,6 +3,10 @@
 
 [[capability]]
 id = "static_exposure_loop"
+cells = [
+  "rust/any/diff/static_facts",
+  "rust/any/repo/static_facts",
+]
 name = "Static exposure loop"
 status = "alpha"
 spec = "RIPR-SPEC-0001"
@@ -44,6 +48,9 @@ metric = "findings include changed behavior, class, evidence, and next step"
 
 [[capability]]
 id = "rust_gap_repair_loop"
+cells = [
+  "rust/any/diff/repair_routing",
+]
 name = "Rust gap repair loop"
 status = "usable alpha"
 spec = "RIPR-SPEC-0057"
@@ -1553,6 +1560,10 @@ metric = "configured analysis mode, oracle policy, severity, suppressions, and s
 
 [[capability]]
 id = "python_preview_static_facts"
+cells = [
+  "python/any/diff/static_facts",
+  "python/any/repo/static_facts",
+]
 name = "Python preview static facts"
 status = "alpha"
 spec = "RIPR-SPEC-0028"
@@ -1700,6 +1711,10 @@ metric = "language_adapter_python_findings_preview, language_adapter_python_cano
 
 [[capability]]
 id = "python_repair_routing_loop"
+cells = [
+  "python/pytest/diff/repair_routing",
+  "python/unittest/diff/repair_routing",
+]
 name = "Python repair routing loop"
 status = "usable alpha"
 spec = "RIPR-SPEC-0028"
@@ -1729,6 +1744,11 @@ metric = "language_adapter_python_repair_card_v1, language_adapter_python_agent_
 
 [[capability]]
 id = "perl_repair_routing_loop"
+cells = [
+  "perl/any/diff/static_facts",
+  "perl/any/repo/static_facts",
+  "perl/any/diff/repair_routing",
+]
 name = "Perl repair routing loop"
 status = "planned"
 spec = "RIPR-SPEC-0064"
@@ -1754,6 +1774,14 @@ metric = "language_adapter_perl_facts_packet_v1, language_adapter_perl_gap_recor
 
 [[capability]]
 id = "typescript_preview_static_facts"
+cells = [
+  "typescript/any/diff/static_facts",
+  "typescript/any/repo/static_facts",
+  "typescript/any/diff/repair_routing",
+  "javascript/any/diff/static_facts",
+  "javascript/any/repo/static_facts",
+  "javascript/any/diff/repair_routing",
+]
 name = "TypeScript preview static facts"
 status = "alpha"
 spec = "RIPR-SPEC-0027"

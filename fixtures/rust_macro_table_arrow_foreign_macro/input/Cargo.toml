@@ -1,0 +1,4 @@
+[package]
+name = "rust_macro_table_arrow_foreign_macro"
+version = "0.1.0"
+edition = "2024"

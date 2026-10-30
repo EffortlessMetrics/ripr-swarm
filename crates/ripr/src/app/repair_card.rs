@@ -7,7 +7,9 @@
 //! fail-closed — a card never presents a runnable route that the shared
 //! instruction vocabulary and repair-route readiness gate would not expose.
 
-use crate::analysis::repair_route::{RepairRouteReadiness, RepairTargetSelection};
+use crate::analysis::repair_route::{
+    RepairRouteReadiness, RepairTargetSelection, humanize_evidence,
+};
 use crate::domain::{
     CanonicalNextActionV1, CommandRole, CommandSpec, FixInstructionState, FixInstructionSummary,
     NextActionAttemptView, NextActionCurrentness, NextActionDiffSource, NextActionInput,
@@ -245,7 +247,17 @@ fn canonical_next_action_for_card(
     } else if input.readiness.missing_evidence.is_empty() {
         Some("repair readiness for this seam".to_string())
     } else {
-        Some(input.readiness.missing_evidence.join("; "))
+        // #10644: the next action reads on a human surface; name the missing
+        // fact in plain words while the card's readiness data stays internal.
+        Some(
+            input
+                .readiness
+                .missing_evidence
+                .iter()
+                .map(|evidence| humanize_evidence(evidence))
+                .collect::<Vec<_>>()
+                .join("; "),
+        )
     };
     select_canonical_next_action(&NextActionInput {
         producer: NextActionProducer::RepairCard,

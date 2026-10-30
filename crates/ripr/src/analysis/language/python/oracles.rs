@@ -1,5 +1,8 @@
 use super::source_utils::{SourceText, line_for_range_start, text_for_range};
-use super::{PythonAssertion, PythonOracleShape, expr_full_name};
+use super::{
+    KnownEqualityLibrary, PythonAssertion, PythonKnownEqualityHelper, PythonOracleShape,
+    expr_full_name,
+};
 use crate::domain::{OracleKind, OracleStrength};
 use rustpython_parser::ast::{self, Expr, Ranged, Stmt};
 use rustpython_parser::text_size::TextRange;
@@ -71,36 +74,136 @@ fn collect_assertions(
             Stmt::With(with_stmt) => {
                 let after = &statements[index + 1..];
                 collect_with_item_assertions(&with_stmt.items, &with_stmt.body, after, source, out);
+                let first = out.len();
                 collect_assertions(&with_stmt.body, source, loops, out);
+                forget_known_equality_helpers(&mut out[first..]);
             }
             Stmt::AsyncWith(with_stmt) => {
                 let after = &statements[index + 1..];
                 collect_with_item_assertions(&with_stmt.items, &with_stmt.body, after, source, out);
+                let first = out.len();
                 collect_assertions(&with_stmt.body, source, loops, out);
+                forget_known_equality_helpers(&mut out[first..]);
             }
             Stmt::Try(try_stmt) => {
+                let first = out.len();
                 if !handlers_swallow_assertion_errors(&try_stmt.handlers) {
                     collect_assertions(&try_stmt.body, source, loops, out);
                 }
                 collect_except_handler_assertions(&try_stmt.handlers, source, loops, out);
                 collect_assertions(&try_stmt.orelse, source, loops, out);
                 collect_assertions(&try_stmt.finalbody, source, loops, out);
+                forget_known_equality_helpers(&mut out[first..]);
             }
             Stmt::TryStar(try_stmt) => {
+                let first = out.len();
                 if !handlers_swallow_assertion_errors(&try_stmt.handlers) {
                     collect_assertions(&try_stmt.body, source, loops, out);
                 }
                 collect_except_handler_assertions(&try_stmt.handlers, source, loops, out);
                 collect_assertions(&try_stmt.orelse, source, loops, out);
                 collect_assertions(&try_stmt.finalbody, source, loops, out);
+                forget_known_equality_helpers(&mut out[first..]);
             }
             Stmt::Match(match_stmt) => {
+                let first = out.len();
                 for case in &match_stmt.cases {
                     collect_assertions(&case.body, source, loops, out);
                 }
+                forget_known_equality_helpers(&mut out[first..]);
             }
             _ => {}
         }
+    }
+}
+
+/// A numpy.testing or assertpy equality helper under a `with`, `try` or
+/// `match` may be expected to fail (`with pytest.raises(AssertionError)`) or
+/// may not run, so it stays an unclassified helper (#10936).
+fn forget_known_equality_helpers(assertions: &mut [PythonAssertion]) {
+    for assertion in assertions {
+        assertion.known_equality_helper = None;
+    }
+}
+
+/// `np.testing.assert_array_equal(A, B)`, `assert_equal(A, B)` or
+/// `assert_that(A).is_equal_to(B)` as a candidate: the shape only. Whether
+/// the callee is numpy's or assertpy's is settled later from the file's
+/// imports (`known_equality_helpers.rs`).
+fn known_equality_candidate(
+    call: &ast::ExprCall,
+    source: &SourceText<'_>,
+) -> Option<PythonKnownEqualityHelper> {
+    let operand = |expr: &Expr| {
+        let text = text_for_range(source, expr.range()).trim().to_string();
+        match expr {
+            Expr::Compare(_)
+            | Expr::BoolOp(_)
+            | Expr::IfExp(_)
+            | Expr::Lambda(_)
+            | Expr::NamedExpr(_)
+            | Expr::UnaryOp(_)
+            | Expr::Starred(_)
+            | Expr::Yield(_)
+            | Expr::YieldFrom(_)
+            | Expr::Await(_) => format!("({text})"),
+            _ => text,
+        }
+    };
+    if let Expr::Attribute(method) = call.func.as_ref()
+        && method.attr.as_str() == "is_equal_to"
+        && let Expr::Call(subject) = method.value.as_ref()
+    {
+        let callee = plain_dotted_name(subject.func.as_ref())?;
+        if callee.rsplit('.').next() != Some("assert_that")
+            || subject.args.len() != 1
+            || !subject.keywords.is_empty()
+            || call.args.len() != 1
+            || !call.keywords.is_empty()
+            || matches!(subject.args[0], Expr::Starred(_))
+            || matches!(call.args[0], Expr::Starred(_))
+        {
+            return None;
+        }
+        return Some(PythonKnownEqualityHelper {
+            library: KnownEqualityLibrary::Assertpy,
+            callee,
+            left: operand(&subject.args[0]),
+            right: operand(&call.args[0]),
+            established: None,
+        });
+    }
+    let callee = plain_dotted_name(call.func.as_ref())?;
+    if !matches!(
+        callee.rsplit('.').next(),
+        Some("assert_array_equal" | "assert_equal")
+    ) || call.args.len() != 2
+        || call.args.iter().any(|arg| matches!(arg, Expr::Starred(_)))
+        || call.keywords.iter().any(|keyword| {
+            !keyword
+                .arg
+                .as_ref()
+                .is_some_and(|name| matches!(name.as_str(), "err_msg" | "verbose" | "strict"))
+        })
+    {
+        return None;
+    }
+    Some(PythonKnownEqualityHelper {
+        library: KnownEqualityLibrary::NumpyTesting,
+        callee,
+        left: operand(&call.args[0]),
+        right: operand(&call.args[1]),
+        established: None,
+    })
+}
+
+/// A dotted name made only of names and attribute accesses.
+fn plain_dotted_name(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::Name(name) => Some(name.id.to_string()),
+        Expr::Attribute(attribute) => plain_dotted_name(attribute.value.as_ref())
+            .map(|prefix| format!("{prefix}.{}", attribute.attr)),
+        _ => None,
     }
 }
 
@@ -465,6 +568,7 @@ fn assertion_from_assert(
         oracle_strength,
         oracle_shape,
         bare_bool_call: bare_bool_call(assert_stmt.test.as_ref(), source),
+        known_equality_helper: None,
     }
 }
 
@@ -599,6 +703,7 @@ fn assertion_from_expr(expr: &Expr, source: &SourceText<'_>) -> Option<PythonAss
             oracle_strength,
             oracle_shape,
             bare_bool_call: None,
+            known_equality_helper: None,
         });
     }
     let gate_text = compared_operands(call)
@@ -635,6 +740,9 @@ fn assertion_from_expr(expr: &Expr, source: &SourceText<'_>) -> Option<PythonAss
         oracle_strength,
         oracle_shape,
         bare_bool_call: None,
+        known_equality_helper: (oracle_shape == PythonOracleShape::UnknownCustomHelper)
+            .then(|| known_equality_candidate(call, source))
+            .flatten(),
     })
 }
 

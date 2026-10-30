@@ -9,7 +9,7 @@
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "predicate_boundary",
   "test_shape": "table_row_arrow_separator",
-  "hard_case": "The same boundary rows as the credited table, written `name => (width, limit, want)`; a row separator outside `,`, `;` and `:` is not a shape the expander splits.",
+  "hard_case": "The same boundary rows as the credited table, written `name => (width, limit, want)`; `=>` is a row element the expander splits like `,`, `;` and `:`.",
   "truth": {
     "state": "discriminated",
     "method": "runtime_mutant_kill",
@@ -40,7 +40,7 @@
       "silent"
     ]
   },
-  "reasoning": "arrow_at => (5, 5, true) and arrow_over => (6, 5, false) kill both mutants at runtime, but the `=>` row layout is outside the table form, so ripr indexes no generated test and abstains. Spec cell: RIPR-SPEC-0117 example 8.",
+  "reasoning": "arrow_at => (5, 5, true) and arrow_over => (6, 5, false) kill both mutants at runtime. The matcher spells `=>` between the name and the row group, so ripr expands one generated test per row and the boundary row discriminates the owner. Spec cell: RIPR-SPEC-0117 example 8.",
   "labeling_observation": {
     "ripr_commit": "a7437dbc7 + #6925 table expansion",
     "full_checkout_verdict": "limited",

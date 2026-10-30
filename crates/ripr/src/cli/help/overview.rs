@@ -79,8 +79,10 @@ Machine catalog: ripr help --json  (this route accepts no other arguments)
 
 Global flags (accepted in any position, before or after the command, except on ripr help --json):
   -v, --verbose   Extra pipeline diagnostics on stderr: analyzed languages,
-                  mode, and probe/finding counts. A -v/--verbose token is
-                  always this global flag, never another flag's value.
+                  mode, and probe/finding counts; ripr pilot also prints a
+                  per-stage timing table after a complete run. A -v/--verbose
+                  token is always this global flag, never another flag's
+                  value.
 
 Task map:
   Diagnose setup        ripr doctor

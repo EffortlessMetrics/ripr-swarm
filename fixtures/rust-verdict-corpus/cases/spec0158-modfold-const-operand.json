@@ -1,0 +1,60 @@
+{
+  "case_id": "spec0158-modfold-const-operand",
+  "subject_id": "authored-spec0158-modfold-expected",
+  "diff": "cases/spec0158-modfold-const-operand.diff",
+  "anchor": {
+    "file": "src/m_const.rs",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "owner_called_with_same_file_const_plus_one",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "if 10 < qty {",
+        "mutated_line": "if 10 < qty {",
+        "outcome": "tests_failed",
+        "failing_test": "m_const::tests::the_tenth_unit_earns_the_tier_m_const",
+        "equivalence_review": "not equivalent: m_const::tests::the_tenth_unit_earns_the_tier_m_const fails on it"
+      },
+      {
+        "replacement": "if 11 <= qty {",
+        "mutated_line": "if 11 <= qty {",
+        "outcome": "tests_failed",
+        "failing_test": "m_const::tests::the_tenth_unit_earns_the_tier_m_const",
+        "equivalence_review": "not equivalent: m_const::tests::the_tenth_unit_earns_the_tier_m_const fails on it"
+      },
+      {
+        "replacement": "if 9 <= qty {",
+        "mutated_line": "if 9 <= qty {",
+        "outcome": "tests_failed",
+        "failing_test": "m_const::tests::the_tenth_unit_earns_the_tier_m_const",
+        "equivalence_review": "not equivalent: m_const::tests::the_tenth_unit_earns_the_tier_m_const fails on it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "the rows BASE + 1 = 10 and BASE = 9 sit on both sides of the boundary, so each boundary mutant fails the test; BASE is declared once in the file with a plain literal.",
+  "labeling_observation": {
+    "ripr_commit": "UNSET",
+    "full_checkout_verdict": "silent",
+    "full_checkout_classifications": [],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0158#24"
+  ]
+}

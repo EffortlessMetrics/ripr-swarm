@@ -1552,7 +1552,7 @@ mod seam_hover_tests {
             )),
             code_description: None,
             source: Some("ripr".to_string()),
-            message: "Weakly gripped behavioral seam".to_string(),
+            message: "Tests only loosely check this".to_string(),
             related_information: None,
             tags: None,
             data: Some(serde_json::json!({"seam_id": "f3c9e4d21a0b7c88"})),

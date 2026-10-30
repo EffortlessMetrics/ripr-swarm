@@ -204,9 +204,15 @@ edge itself rather than one input on it:
   with the new ordering guard on the edge pair and differ only away from it
   (`len == 256` to `len >= 256` changes `257..`), where no oracle reads.
 
-Any other shape keeps rule 2's reading. Residuals shared with rule 3b:
-a top-level call that ends the process before the assertions
-(`std::process::exit(0)`), and a crate-local `Result`, `Ok`, `Err` or
+Any other shape keeps rule 2's reading. Test code that calls something
+ending the run without a failure refuses rules 3, 3b and the mock-count
+producer (#8015): a call whose path ends in `exit` or `abort`
+(`std::process::exit(0)`) or a `.exec()` method call, anywhere in the test
+file, in an owner-call argument, a check helper or a table loop body. In the
+owner's own file only `#[test]` functions and `#[cfg(test)]` modules are read,
+so a production `process::exit` there refuses nothing. The scan is by name, so
+a user function called `exit` or `abort` refuses too (a missed credit).
+Residual shared with rule 3b: a crate-local `Result`, `Ok`, `Err` or
 `is_err` that shadows std's by name.
 
 ### Rule 3b: `?` side flips

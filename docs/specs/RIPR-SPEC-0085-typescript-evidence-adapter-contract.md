@@ -119,6 +119,17 @@ summary with `affected_items: 12`. The limited outcome remains explicit and
 recovery names the configured read caps. This bounds emitted entries without
 changing read admission, cap defaults, or TypeScript's support tier (#7868).
 
+### Diff with no analyzable file
+
+A diff whose changed files include no TypeScript or JavaScript file the adapter
+would analyze (accepted extension, not generated, not under an excluded
+directory unless declared hand-written) and no Rust file a Bun bridge profile
+reads against the TypeScript tests does not index the workspace. The adapter
+returns the empty complete result: no findings, no changed-file count and none
+of the workspace-wide limitations above (read caps, discovery cap, skipped
+links), because those describe files the diff never consulted. Any diff that
+does include such a file reads the workspace as before (#10931).
+
 ### Reality baseline (what already exists)
 
 ```text
@@ -231,7 +242,7 @@ t.notEqual / t.notStrictEqual       -> relational_check (weak)   # tape / node:t
 t.deepEqual                         -> exact_value (strong)      # shared
 t.notDeepEqual                      -> relational_check (weak)   # shared
 t.truthy / t.falsy / t.pass / t.fail / t.assert / t.ok / t.notOk -> smoke_only (smoke)
-t.throws / t.throwsAsync / t.notThrows / t.notThrowsAsync -> broad_error (weak)
+t.throws / t.throwsAsync / t.notThrows / t.notThrowsAsync -> broad_error (weak)  # except RIPR-SPEC-0243 rule 10 (AVA message object)
 t.regex / t.notRegex / t.like / t.notLike -> relational_check (weak)
 <any other t.method>                -> not an oracle (fail-closed)
 ```
