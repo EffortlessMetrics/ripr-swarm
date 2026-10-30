@@ -235,11 +235,13 @@ fn unique_private_inherent_receiver_keeps_real_calls_and_refuses_serde_decoys() 
     // #9969 widened the unresolved-macro-placement refusal (a glob import
     // beside a qualified macro path anywhere in the package, here the
     // decoy's `serde_json::json!`), so the cross-target library probe is
-    // `weakly_exposed` on main; this test pins its relation, not that class.
-    assert!(matches!(
+    // `weakly_exposed` on main. Pinned exactly: accepting `exposed` here
+    // would mask an over-promotion past the refusal (fail-closed).
+    assert_eq!(
         public.class,
-        ExposureClass::Exposed | ExposureClass::WeaklyExposed
-    ));
+        ExposureClass::WeaklyExposed,
+        "unresolved-macro-placement refusal (#9969) must keep the cross-target probe weakly_exposed"
+    );
     let test = public
         .related_tests
         .iter()
