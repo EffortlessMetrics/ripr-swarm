@@ -618,9 +618,14 @@ through the new one. The conditions are:
 
 - the owner module is not `__init__.py` and sits in a regular package (its
   `__init__.py` is a workspace source), does not mention the forwarder
-  module's name, imports nothing while loading but `__future__` and
-  standard-library modules (outside function bodies), and names no runtime
-  module loader, so loading it can never import the forwarder module;
+  module's name, and loads inertly: its top level holds only a docstring,
+  `pass`, `from __future__` imports, assignments of literals (dict, list and
+  tuple displays of constants included) to plain names other than dunders,
+  and undecorated `def`s with literal defaults and unevaluated annotations.
+  It imports nothing else, not even a standard-library module, because a
+  test-root module can take a standard-library name and calls such as
+  `pickle.loads` or `pydoc.locate` import by a string. Loading it therefore
+  never imports the forwarder module;
 - the forwarder module is a non-test sibling in the same directory (not
   `__init__.py` or `conftest.py`) whose source spells `from .<stem> import`; at
   most 16 such siblings are read per changed file, and more reads none;

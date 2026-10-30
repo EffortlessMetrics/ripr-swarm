@@ -2052,15 +2052,12 @@ fn forwarders_of<'o>(
     if module_owner.foreign_writes.shares_module_name() {
         return Vec::new();
     }
-    // An owner that imports another workspace module while loading can close
-    // a cycle back to the forwarder module through it.
-    let owner_imports_inert = match parse_module_result(file, owner_source) {
-        Ok(Mod::Module(parsed)) => {
-            imports_only_standard_library(&parsed.body)
-                && !MODULE_LOADERS
-                    .iter()
-                    .any(|word| mentions_identifier(owner_source, word))
-        }
+    // The owner's own load must not import anything: a standard-library
+    // import can resolve to a test-root module of the same name, and calls
+    // such as `pickle.loads` or `pydoc.locate` import by string. Either can
+    // close a cycle back to the forwarder module.
+    let owner_inert = match parse_module_result(file, owner_source) {
+        Ok(Mod::Module(parsed)) => inert_module(&parsed.body, None),
         _ => false,
     };
     let mut out = Vec::new();
@@ -2093,14 +2090,14 @@ fn forwarders_of<'o>(
         };
         // The owner importing the forwarder module makes the import order
         // matter: loading it first can meet a partly initialized module.
-        if mentions_identifier(owner_source, module_stem) || !owner_imports_inert {
+        if mentions_identifier(owner_source, module_stem) || !owner_inert {
             continue;
         }
         let Ok(Mod::Module(parsed)) = parse_module_result(&module.file, source) else {
             continue;
         };
         let facts = ModuleBindingFacts::of(source, &parsed.body);
-        if facts.assigns_dunder() || !inert_forwarder_module(&parsed.body, stem) {
+        if facts.assigns_dunder() || !inert_module(&parsed.body, Some(stem)) {
             continue;
         }
         let mut callees: Vec<(String, usize)> = Vec::new();
@@ -2154,57 +2151,13 @@ fn forwarders_of<'o>(
     out
 }
 
-/// Whether loading a forwarder module runs nothing but its import of the
-/// owner module `stem`: a docstring, `from __future__` and `from .<stem>`
-/// imports, `pass`, assignments of literals, and undecorated `def`s whose
-/// defaults are literals and whose annotations are names or strings. Any
-/// other statement could call the forwarder, or import a module that does,
-/// before its import binds the reader.
-/// Whether every import a module runs while loading (outside function
-/// bodies) is `from __future__` or of a standard-library module.
-fn imports_only_standard_library(body: &[Stmt]) -> bool {
-    body.iter().all(|statement| match statement {
-        Stmt::Import(import) => import
-            .names
-            .iter()
-            .all(|alias| names_stdlib_module(alias.name.as_str())),
-        Stmt::ImportFrom(import) => {
-            import.level.is_none_or(|level| level.to_u32() == 0)
-                && import
-                    .module
-                    .as_deref()
-                    .is_some_and(|module| module == "__future__" || names_stdlib_module(module))
-        }
-        Stmt::FunctionDef(_) | Stmt::AsyncFunctionDef(_) => true,
-        Stmt::ClassDef(class) => imports_only_standard_library(&class.body),
-        Stmt::If(branch) => {
-            imports_only_standard_library(&branch.body)
-                && imports_only_standard_library(&branch.orelse)
-        }
-        Stmt::Try(block) => {
-            imports_only_standard_library(&block.body)
-                && imports_only_standard_library(&block.orelse)
-                && imports_only_standard_library(&block.finalbody)
-                && block.handlers.iter().all(|handler| {
-                    let ast::ExceptHandler::ExceptHandler(handler) = handler;
-                    imports_only_standard_library(&handler.body)
-                })
-        }
-        Stmt::With(block) => imports_only_standard_library(&block.body),
-        Stmt::For(block) => {
-            imports_only_standard_library(&block.body)
-                && imports_only_standard_library(&block.orelse)
-        }
-        Stmt::While(block) => {
-            imports_only_standard_library(&block.body)
-                && imports_only_standard_library(&block.orelse)
-        }
-        Stmt::Match(_) | Stmt::TryStar(_) | Stmt::AsyncWith(_) | Stmt::AsyncFor(_) => false,
-        _ => true,
-    })
-}
-
-fn inert_forwarder_module(body: &[Stmt], stem: &str) -> bool {
+/// Whether loading a module runs nothing but a docstring, `pass`,
+/// `from __future__` imports, assignments of literals, undecorated `def`s
+/// whose defaults are literals and whose annotations are names or strings,
+/// and, for a forwarder module, its `from .<relative>` import of the owner.
+/// Any other statement could call the forwarder, or import a module that
+/// does, before the forwarder's import binds the reader.
+fn inert_module(body: &[Stmt], relative: Option<&str>) -> bool {
     // Without `from __future__ import annotations` an annotation runs while
     // the module loads (before 3.14), and a name it reads may be unbound.
     let postponed = body.iter().any(|statement| {
@@ -2229,6 +2182,12 @@ fn inert_forwarder_module(body: &[Stmt], stem: &str) -> bool {
             Expr::Constant(_) => true,
             Expr::List(list) => list.elts.iter().all(literal),
             Expr::Tuple(tuple) => tuple.elts.iter().all(literal),
+            Expr::Dict(dict) => {
+                dict.keys
+                    .iter()
+                    .all(|key| key.as_ref().is_some_and(literal))
+                    && dict.values.iter().all(literal)
+            }
             _ => false,
         }
     }
@@ -2236,7 +2195,7 @@ fn inert_forwarder_module(body: &[Stmt], stem: &str) -> bool {
         Stmt::Pass(_) => true,
         Stmt::Expr(expr) => matches!(expr.value.as_ref(), Expr::Constant(_)),
         Stmt::ImportFrom(import) => match import.level.map(|level| level.to_u32()) {
-            Some(1) => import.module.as_deref() == Some(stem),
+            Some(1) => relative.is_some() && import.module.as_deref() == relative,
             None | Some(0) => import.module.as_deref() == Some("__future__"),
             Some(_) => false,
         },
