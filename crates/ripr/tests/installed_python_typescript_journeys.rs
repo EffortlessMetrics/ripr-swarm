@@ -279,6 +279,52 @@ fn dirty_python_repair_start_keeps_original_diff_after_commit() -> Result<(), St
     Ok(())
 }
 
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn dirty_typescript_start_uses_diverged_merge_base() -> Result<(), String> {
+    let (_guard, root, decoy) = materialize(
+        "blind_journey_installed_typescript",
+        "head",
+        "ts-base-pin",
+        None,
+    )?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let original_base = fixture_git_output(&root, &["rev-parse", "HEAD~1"])?
+        .trim()
+        .to_string();
+    fixture_git_ok(&root, &["checkout", "-q", "-b", "other", "HEAD~1"])?;
+    std::fs::write(root.join("unrelated.txt"), "other branch\n").map_err(|e| e.to_string())?;
+    fixture_git_ok(&root, &["add", "unrelated.txt"])?;
+    fixture_git_ok(&root, &["commit", "-q", "-m", "other"])?;
+    fixture_git_ok(&root, &["checkout", "-q", "main"])?;
+    let path = root.join("src/pricing.ts");
+    let source = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    std::fs::write(&path, format!("{source}\n// dirty production\n")).map_err(|e| e.to_string())?;
+    let (ok, check) = ripr(&decoy, &["check", "--root", &root_arg, "--base", "other"])?;
+    expect_exit(ok, true, "diverged dirty check")?;
+    need(
+        &check,
+        "Commit your production change first",
+        "commit prerequisite",
+    )?;
+    let (gap, base) = gap_start_tokens(&check).ok_or_else(|| format!("missing start: {check}"))?;
+    if base != original_base {
+        return Err(format!("expected merge base {original_base}, got {base}"));
+    }
+    fixture_git_ok(&root, &["add", "src/pricing.ts"])?;
+    fixture_git_ok(&root, &["commit", "-q", "-m", "production"])?;
+    let (ok, result) = ripr(
+        &decoy,
+        &[
+            "agent", "repair", "--gap-id", &gap, "--base", &base, "--root", &root_arg, "--phase",
+            "before",
+        ],
+    )?;
+    expect_exit(ok, true, "diverged printed base after commit")?;
+    need(&result, "Repair prepared", "prepared attempt")?;
+    Ok(())
+}
+
 #[cfg(feature = "lang-python")]
 #[test]
 fn python_flat_layout_journey_runs_the_gap_bound_loop_from_the_printed_start() -> Result<(), String>

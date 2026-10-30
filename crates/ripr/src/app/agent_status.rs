@@ -1574,7 +1574,7 @@ fn pilot_python_repair_card_message(
         return message;
     }
     message.push_str(&format!(
-        "; `ripr agent repair` targets ranked seams only, and running pilot again unchanged records the same card. Follow the card from `ripr first-pr --root {root}`, which names the test to strengthen and its verify command",
+        "; status could not confirm a gap-bound start, and running pilot again unchanged records the same card. Run `ripr check --root {root}` for the current route and any reason it is unavailable; the card from `ripr first-pr --root {root}` names the test and its verify command",
         root = shell_arg(root_display)
     ));
     if let Some(verify) = &card.verify_command {
@@ -1988,7 +1988,7 @@ fn pilot_routed_to_check_message(
                 ))
             }
             None => message.push_str(&format!(
-                ": it routed {code} to {commands}, which reviews changes diff-first and offers no `ripr agent repair` start, and running pilot again unchanged routes there again. Read the findings from {commands}, add or strengthen a test for the changed behavior by hand, then rerun {commands} to see whether static evidence now finds a discriminator"
+                ": it routed {code} to {commands}, which reviews changes diff-first; status could not confirm a gap-bound start. Running pilot again unchanged routes there again. Run {commands} for the current finding and any reason a start is unavailable"
             )),
         }
     }
@@ -6148,7 +6148,7 @@ mod tests {
             // hint status generates binds the selected root (#4000).
             for expected in [
                 "routed the typescript, python code to `ripr check --root .`".to_string(),
-                "add or strengthen a test for the changed behavior by hand, then rerun `ripr check --root .`".to_string(),
+                "status could not confirm a gap-bound start".to_string(),
                 format!(
                     "If the workspace changed since that run, rerun `{}`",
                     pilot_select_command(&bound_root("."))

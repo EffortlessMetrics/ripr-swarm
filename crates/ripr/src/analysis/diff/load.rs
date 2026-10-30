@@ -2098,6 +2098,8 @@ pub(crate) struct AnalyzedRevisions {
     /// `base_commit`: both live diff sources diff from the merge base of the
     /// base and `HEAD`.
     pub(crate) merge_base_commit: Option<String>,
+    /// Exact worktree diff origin captured by the loader, including when equal to the base.
+    pub(crate) loaded_diff_origin: Option<String>,
     /// Full commit id of `HEAD`.
     pub(crate) head_commit: Option<String>,
     /// `true` when the diff ended at the working tree (staged and unstaged
@@ -2150,6 +2152,9 @@ pub(crate) fn resolve_analyzed_revisions(
         base_ref: base.to_string(),
         base_commit,
         merge_base_commit,
+        loaded_diff_origin: loaded_merge_base
+            .filter(|origin| !origin.is_empty())
+            .map(str::to_string),
         head_commit,
         working_tree,
     }
