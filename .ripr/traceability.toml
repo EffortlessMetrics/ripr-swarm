@@ -15295,6 +15295,9 @@ code = [
   "crates/ripr/src/mcp/repair_card.rs",
   "crates/ripr/src/workspace_status.rs",
   "crates/ripr/src/output/path.rs",
+  "crates/ripr/src/process_owner.rs",
+  "crates/ripr/src/cli/interrupt.rs",
+  "crates/ripr/src/analysis/cancellation.rs",
 ]
 outputs = []
 metrics = [
