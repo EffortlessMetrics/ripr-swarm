@@ -1563,20 +1563,40 @@ jobs:
             target/selector-literal/
           if-no-files-found: ignore
 
-  # Native forced-deadline control for `windows-advisory-run` (#9272). The
-  # runner's deadline and leaked-descendant tests need `sh`, so they are
-  # Unix-only; this runs the Windows-native one on its own, without the
-  # two-hour workspace repeats.
+  # Temporary dispatch-only evidence for #11086; this branch is not for merge.
+  # The product checkout is pinned independently of this workflow branch.
   windows-advisory-runner-probe:
-    name: windows-advisory-runner-probe
+    name: focused-11086-python-route
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.runner_probe_only && (github.event_name != 'pull_request' || (github.event.action == 'labeled' && github.event.label.name == 'merge-ready')) }}
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: 9bebcdf9ed14bd243e8f4d729d7d94cb6480d44e
 
-      # No toolchain or cache action here: `rust-toolchain.toml` pins 1.95 and
-      # the workflow-pin tests count those actions per workflow.
-      - name: Native forced-deadline control
+      # rust-toolchain.toml in the pinned product checkout selects Rust 1.95.
+      - name: Verify checkout and native Python route
         timeout-minutes: 30
-        run: cargo test -p xtask --bin xtask windows_native_deadline -- --nocapture
+        shell: pwsh
+        run: |
+          $expected = '9bebcdf9ed14bd243e8f4d729d7d94cb6480d44e'
+          $head = (git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $head -ne $expected) { throw "Unexpected product checkout: $head" }
+          $tree = (git rev-parse 'HEAD^{tree}').Trim()
+          if ($LASTEXITCODE -ne 0 -or $tree -ne '7d28b7368bfa9502e58d91d4083d17995d1e8b12') { throw "Unexpected product tree: $tree" }
+          Write-Output "Product head: $head; tree: $tree; runner: $env:RUNNER_OS; image: $env:ImageOS $env:ImageVersion"
+          rustc --version --verbose
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot identify Rust toolchain' }
+          cargo --version
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot identify Cargo' }
+          git --version
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot identify Git' }
+          $name = 'repair_after_explicit_base_check_points_back_to_its_gap_start'
+          $listed = cargo test --locked -p ripr --test task_first_facade -- --list
+          if ($LASTEXITCODE -ne 0) { throw 'Could not list test subjects' }
+          if (($listed | Where-Object { $_ -eq "${name}: test" }).Count -ne 1) { throw "Expected exactly one listed subject: $name" }
+          cargo test --locked -p ripr --test task_first_facade $name -- --exact --nocapture
+          if ($LASTEXITCODE -ne 0) { throw "Native regression failed: $LASTEXITCODE" }
+          if (!(Test-Path 'target/debug/ripr.exe')) { throw 'Expected CLI executable was not built' }
+          Get-FileHash -Algorithm SHA256 'target/debug/ripr.exe'
