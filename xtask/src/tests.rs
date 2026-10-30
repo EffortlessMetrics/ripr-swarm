@@ -169,24 +169,23 @@ use super::{
     parse_file_policy_allowlist, parse_gh_pr_status_args, parse_gh_pr_status_pull_request,
     parse_inline_array, parse_mutation_calibration_args, parse_mutation_outcomes_json,
     parse_pr_triage_pull_requests, parse_reason, parse_repo_badge_artifact_options,
-    parse_repo_exposure_static_seams, parse_repo_exposure_summary_counts,
-    parse_required_status_contexts, parse_ripr_swarm_args, parse_ripr_swarm_plan_args,
-    parse_sarif_policy_args, parse_sarif_policy_results, parse_static_language_allowlist,
-    parse_targeted_test_outcome_args, pin_report_packet_index_generated_at,
-    pr_actionable_delta_front_panel_from_inputs, pr_body_from_input_text,
-    pr_body_template_missing_error, pr_body_template_missing_lines, pr_body_validation_warning,
-    pr_checks_summary, pr_ready_json, pr_ready_markdown, pr_ready_next_action, pr_ready_status,
-    pr_sensitive_file_reason, pr_shape_report_body, pr_shape_warnings, pr_summary_body,
-    pr_title_family, pr_triage_findings, pr_triage_json, pr_triage_markdown,
-    pr_triage_queue_dispositions, precommit_report_body, public_badge_basis_violations,
-    public_contract_rows, read_badge_artifact_diff_governed, read_json_value,
-    read_lsp_cockpit_json_value, read_mutation_input_json, read_repo_exposure_summary_artifact,
-    receipt_json, receipt_specs, receipt_status_from_reports, repo_badge_artifact_command_args,
-    repo_badge_artifact_jobs, repo_badge_artifact_stdout_from_output,
-    repo_badge_artifact_timeout_ms_from_env, repo_badge_artifacts_summary_markdown,
-    repo_exposure_authenticated_cache_load, repo_exposure_cache_family_store_from_stderr,
-    repo_exposure_file_fact_cache_from_stderr, repo_exposure_latency_json,
-    repo_exposure_latency_markdown, repo_exposure_latency_run,
+    parse_repo_exposure_static_seams, parse_repo_exposure_summary_counts, parse_ripr_swarm_args,
+    parse_ripr_swarm_plan_args, parse_sarif_policy_args, parse_sarif_policy_results,
+    parse_static_language_allowlist, parse_targeted_test_outcome_args,
+    pin_report_packet_index_generated_at, pr_actionable_delta_front_panel_from_inputs,
+    pr_body_from_input_text, pr_body_template_missing_error, pr_body_template_missing_lines,
+    pr_body_validation_warning, pr_checks_summary, pr_ready_json, pr_ready_markdown,
+    pr_ready_next_action, pr_ready_status, pr_sensitive_file_reason, pr_shape_report_body,
+    pr_shape_warnings, pr_summary_body, pr_title_family, pr_triage_findings, pr_triage_json,
+    pr_triage_markdown, pr_triage_queue_dispositions, precommit_report_body,
+    public_badge_basis_violations, public_contract_rows, read_badge_artifact_diff_governed,
+    read_json_value, read_lsp_cockpit_json_value, read_mutation_input_json,
+    read_repo_exposure_summary_artifact, receipt_json, receipt_specs, receipt_status_from_reports,
+    repo_badge_artifact_command_args, repo_badge_artifact_jobs,
+    repo_badge_artifact_stdout_from_output, repo_badge_artifact_timeout_ms_from_env,
+    repo_badge_artifacts_summary_markdown, repo_exposure_authenticated_cache_load,
+    repo_exposure_cache_family_store_from_stderr, repo_exposure_file_fact_cache_from_stderr,
+    repo_exposure_latency_json, repo_exposure_latency_markdown, repo_exposure_latency_run,
     repo_exposure_latency_run_from_output, repo_exposure_latency_status,
     repo_exposure_latency_status_reasons, repo_exposure_latency_trace,
     repo_exposure_normalized_output, repo_exposure_parity_leg_receipts, repo_exposure_parity_run,
@@ -31028,10 +31027,6 @@ fn parse_gh_pr_status_reads_view_json() -> Result<(), String> {
     assert_eq!(pr.checks.len(), 2);
     assert_eq!(pr.reviews.len(), 1);
     assert_eq!(pr.reviews[0].author, "droid");
-    assert_eq!(
-        parse_required_status_contexts(r#"["rust","msrv","rust"]"#)?,
-        vec!["msrv".to_string(), "rust".to_string()]
-    );
     Ok(())
 }
 
@@ -31063,6 +31058,68 @@ fn gh_pr_status_readiness_selects_safe_next_action() {
         gh_pr_safe_next_action(&behind, &behind_readiness),
         "inspect integration"
     );
+}
+
+#[test]
+fn gh_pr_status_unknown_required_checks_are_not_passed_or_classified() -> Result<(), String> {
+    let pending = gh_pr_status_pr(vec![gh_pr_status_check("rust", "IN_PROGRESS", "")]);
+    let readiness = gh_pr_status_readiness(&pending, &[], false, Vec::new());
+    assert!(readiness.required_checks_outstanding.is_empty());
+    assert_eq!(readiness.pending_checks.len(), 1);
+    assert_eq!(readiness.safe_next_action, "wait");
+    let markdown = gh_pr_status_markdown(&pending, &[], &readiness);
+    assert!(markdown.contains("Required-check classification and completeness are unknown"));
+    let json: Value = serde_json::from_str(&gh_pr_status_json(&pending, &[], &readiness))
+        .map_err(|error| error.to_string())?;
+    assert_eq!(json["required_contexts_available"], false);
+    assert_eq!(json["pending_checks"].as_array().map(Vec::len), Some(1));
+
+    let clean = gh_pr_status_pr(vec![gh_pr_status_check("rust", "COMPLETED", "SUCCESS")]);
+    let readiness = gh_pr_status_readiness(&clean, &[], false, Vec::new());
+    assert_eq!(readiness.safe_next_action, "merge"); // advisory request, not merge authority
+    assert!(gh_pr_status_markdown(&clean, &[], &readiness).contains("completeness are unknown"));
+    Ok(())
+}
+
+#[test]
+fn gh_pr_status_rejects_missing_rollup_and_waits_on_unknown_check_states() -> Result<(), String> {
+    let mut fixture = gh_pr_status_subject_fixture("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+    for value in [Value::Null, serde_json::json!({})] {
+        fixture["statusCheckRollup"] = value;
+        assert!(parse_gh_pr_status_pull_request(&fixture.to_string()).is_err());
+    }
+    fixture
+        .as_object_mut()
+        .ok_or("fixture object")?
+        .remove("statusCheckRollup");
+    assert!(parse_gh_pr_status_pull_request(&fixture.to_string()).is_err());
+    fixture["statusCheckRollup"] = serde_json::json!([]);
+    let empty = parse_gh_pr_status_pull_request(&fixture.to_string())?;
+    let empty_readiness = gh_pr_status_readiness(&empty, &[], false, Vec::new());
+    assert_eq!(empty_readiness.safe_next_action, "merge");
+    assert!(
+        gh_pr_status_markdown(&empty, &[], &empty_readiness).contains("completeness are unknown")
+    );
+    for (name, status, conclusion) in [
+        ("rust", "UNKNOWN", ""),
+        ("rust", "COMPLETED", ""),
+        ("", "COMPLETED", "SUCCESS"),
+        ("rust", "", "SUCCESS"),
+    ] {
+        let pr = gh_pr_status_pr(vec![gh_pr_status_check(name, status, conclusion)]);
+        let readiness = gh_pr_status_readiness(&pr, &[], false, Vec::new());
+        assert_eq!(
+            readiness.safe_next_action, "wait",
+            "{name} {status} {conclusion}"
+        );
+        assert!(
+            readiness
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("unknown"))
+        );
+    }
+    Ok(())
 }
 
 #[test]
@@ -57105,34 +57162,32 @@ fn gh_pr_status_final_snapshot_drives_the_real_readiness_and_renderers() -> Resu
         last["statusCheckRollup"][0]["status"] = serde_json::json!(status);
         last["statusCheckRollup"][0]["conclusion"] = serde_json::json!(conclusion);
         let mut reads = 0;
-        let observation = super::gh_pr_status_snapshot::collect_current(
-            42,
-            || {
-                reads += 1;
-                super::collect_gh_pr_status_json_with(42, |program, args| {
-                    assert_eq!(program, "gh");
-                    if args.first().is_some_and(|arg| arg == "api") {
-                        return Ok(gh_pr_status_identity_response(if reads == 1 {
-                            &first
-                        } else {
-                            &last
-                        }));
-                    }
-                    assert_eq!(&args[..4], ["pr", "view", "42", "--json"]);
-                    let fields = args[4].split(',').collect::<Vec<_>>();
-                    assert!(fields.contains(&"headRefOid") && !fields.contains(&"baseRefOid"));
-                    Ok(if reads == 1 {
-                        first.to_string()
+        let observation = super::gh_pr_status_snapshot::collect_current(42, || {
+            reads += 1;
+            super::collect_gh_pr_status_json_with(42, |program, args| {
+                assert_eq!(program, "gh");
+                if args.first().is_some_and(|arg| arg == "api") {
+                    assert_eq!(args.get(1).map(String::as_str), Some("graphql"));
+                    assert!(
+                        args.iter()
+                            .all(|arg| !arg.contains("protection") && !arg.contains("rulesets"))
+                    );
+                    return Ok(gh_pr_status_identity_response(if reads == 1 {
+                        &first
                     } else {
-                        last.to_string()
-                    })
+                        &last
+                    }));
+                }
+                assert_eq!(&args[..4], ["pr", "view", "42", "--json"]);
+                let fields = args[4].split(',').collect::<Vec<_>>();
+                assert!(fields.contains(&"headRefOid") && !fields.contains(&"baseRefOid"));
+                Ok(if reads == 1 {
+                    first.to_string()
+                } else {
+                    last.to_string()
                 })
-            },
-            |target| {
-                assert_eq!(target, "main");
-                Ok(vec!["rust".to_string()])
-            },
-        )?;
+            })
+        })?;
         assert_eq!(reads, 2);
         let pr = parse_gh_pr_status_pull_request(&observation.pr.to_string())?;
         let readiness = gh_pr_status_readiness(

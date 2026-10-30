@@ -31,11 +31,13 @@ Routine publication and convergence inside the selected repository claim—push 
 
 "Protected squash merge" means the normal squash operation respecting existing
 enforcement. It does not require protection to exist or authorize installing it.
-Read applicable classic protection and active rulesets, preserving unreadable
-policy as an evidence gap. If no applicable protection exists, ordinary merge
-can still proceed after current-head review, findings and required proof are
-satisfied. Existing restrictions remain binding; never use admin bypass or
-change settings to obtain a merge.
+Do not read protection or ruleset settings or credential values for routine
+PR progression. Inspect exact-head PR-visible checks, review and merge state;
+unknown checks are not passed. A settings-read 403 is not a blanket blocker or
+a reason to request broader access. An ordinary PR/check read failure is a
+separate evidence gap. After required proof and review, submit the normal
+expected-head squash merge and let GitHub enforce applicable requirements. Report
+a rejection without guessing its cause; never bypass enforcement or change settings.
 
 1. Reuse the PR that already owns the claim. Search current source, all-state PRs, recently merged PRs, and the controlling issue immediately before publishing a new PR. Publish a new PR only when no equivalent candidate exists.
 2. Write a complete body:
@@ -85,7 +87,7 @@ change settings to obtain a merge.
 10. Do not update a behind-only branch. Unrelated movement on `main` is normal and does not require restacking, force-pushing, or rerunning unaffected proof. Reconcile only an actual conflict, explicit stack change, material prerequisite change, failed combined-tree proof, or exact-base policy that applies to this candidate.
 11. Before spending time on conflict repair, re-run the claim-identity search. When upstream or another PR already delivered the same claim, stop, compare for unique residuals, record the winning implementation, and close or disposition the duplicate rather than resolving a dead candidate.
 12. Apply the shared [Draft to Ready handoff](../../../docs/PR_AUTOMATION.md#draft-to-ready-handoff), retaining its PR-native continuation record. Only then request required hosted qualification for the exact head by applying `merge-ready` (remove and re-add it for a new head; a Ready toggle requests nothing). A push or material finding returns through that same Draft repair wave, not an immediate re-toggle.
-13. Do not infer review from an empty thread list, reviewer quota/unavailability, or green required checks. Do not infer a human approval requirement from `mergeStateStatus: BLOCKED`; identify the exact rule and evidence source first. Query both authorities, since classic branch protection and repository rulesets can disagree.
+13. Do not infer review from an empty thread list, reviewer quota/unavailability, or green required checks. Do not infer a human approval requirement or exact cause from `mergeStateStatus: BLOCKED`; inspect available PR/check evidence and report what is known. Do not query settings for routine diagnosis.
 14. When GitHub owns the next transition, return an in-flight result instead of polling unchanged state. Auto-merge may be armed only for the exact published head with `REVIEW_READY` and current required proof. The parent goal may advance another independent claim while this PR waits.
 15. Merge ordinary `ripr-swarm` development PRs with the repository's protected squash method. Exact history-preserving source-integration transactions are a separate controlled path and follow their governing issue instead of this rule.
 16. After merge, verify `main`, update issue acceptance, parent state, generated evidence, and any residual work. A merged PR means implementation landed; it does not by itself complete the parent issue, release phase, or high-level goal.

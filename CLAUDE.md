@@ -287,7 +287,8 @@ Routine commit, ordinary branch push, PR creation/update, review/CI repair,
 protected squash merge and lane cleanup inside an authorized delivery goal do
 not require repeated approval. Settings/rulesets/secrets, shared-history rewrite,
 durable-evidence deletion and public release actions need applicable explicit
-authorization. Diagnose protection read-only; never weaken it to clear a merge.
+authorization. Use PR-visible checks and reviews, not protection or ruleset
+settings, for routine progression; never weaken or bypass server enforcement.
 
 ## Evidence and actionability
 

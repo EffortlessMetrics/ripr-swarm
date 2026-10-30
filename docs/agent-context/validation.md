@@ -174,5 +174,5 @@ Run this with `check-workflows` for changes to:
 
 For secrets, workflows, dependency policy, release scripts or command execution,
 inspect permissions, event triggers, fork behavior, artifact/log exposure and
-whether secrets can be printed or written. Diagnose branch protection and
-rulesets read-only; ordinary PR repair never authorizes weakening them.
+whether secrets can be printed or written. Routine PR repair does not need to
+read branch-protection or ruleset settings and never authorizes weakening them.

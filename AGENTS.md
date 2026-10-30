@@ -505,19 +505,17 @@ justification; do not re-bless a wrong result or merge stale bytes already
 superseded upstream. If CI fails on untouched code, reproduce the exact base and
 route the inherited repair separately.
 
-Read classic protection and active rulesets before diagnosing a blocked merge:
-
-```bash
-gh api repos/EffortlessMetrics/ripr-swarm/branches/main/protection/required_pull_request_reviews
-gh api repos/EffortlessMetrics/ripr-swarm/rules/branches/main
-```
-
-A blocked/unstable status is not a causal diagnosis. Identify actual required
-checks, advisory results, thread requirements and rule. An advisory red can still
-merge; verify that a claimed protective gate is actually on the required path.
-Missing permission to read rules is an evidence gap, not absence of protection.
-Never patch approval counts, disable checks or use admin bypass to make a PR
-merge. Settings changes require explicit authorization naming the rule/change.
+For routine PR progression, inspect the exact current head, PR-visible checks,
+reviews, conversations and merge state; do not read branch-protection or ruleset
+settings, or inspect credential values. `BLOCKED` or `UNSTABLE` alone does not
+identify a cause. Unknown or inaccessible checks are not passed. A settings-read
+403 is not a blanket PR block or a reason to request broader access; distinguish
+it from a 401 on an ordinary PR/check read, which leaves that evidence unavailable.
+After exact-head review, required proof and addressed findings, use the normal
+expected-head squash merge endpoint; GitHub enforces applicable requirements.
+Report a concrete rejection without guessing the rule. Never use admin bypass,
+change settings or weaken checks to make a PR merge; settings changes require
+explicit authorization naming the change.
 
 `stackable = false` prohibits building a dependent item atop that branch; it is
 not an approval pause. `blocked_by` requires the dependency to land or an
