@@ -26,7 +26,7 @@ const TITLE_FIELD_CHAR_BUDGET: usize = 200;
 /// [`PUBLISHED_BODY_BYTE_CEILING`] (#4446).
 const SKIP_REASON_COMMENT_BODY_TOO_LARGE: &str = "comment_body_too_large";
 const SKIP_REASON_NOT_PUBLISHABLE: &str = "not_publishable";
-const GAP_STATE_STATIC_LIMITATION: &str = "static_limitation";
+const GAP_STATE_ACTIONABLE: &str = "actionable";
 /// Hard ceiling on the projected published body of one inline comment.
 ///
 /// GitHub rejects a comment body over 65,536 characters, and the generated
@@ -648,11 +648,14 @@ fn add_comment_item_plan(
 ) {
     let source_id = string_field(item, "id");
     let dedupe_key = string_field(item, "dedupe_key");
-    // A card with no test to suggest is a note about what RIPR could not
-    // follow. Posted as a review comment it reads as ripr's own bookkeeping
-    // ("repair route missing") on the author's code and takes a slot from a
-    // gap they can act on. It stays in comments.md and the summary comment.
-    if string_field(item, "gap_state").as_deref() == Some(GAP_STATE_STATIC_LIMITATION) {
+    // Fail closed: only a card whose gap_state is `actionable` names a test to
+    // add. Any other state (a static limitation, already observed, internal
+    // only, unknown) and a card with no gap_state are notes about what RIPR
+    // could not follow or has nothing to ask for. Posted as a review comment
+    // they read as ripr's own bookkeeping ("repair route missing") on the
+    // author's code and take a slot from a gap the author can act on. They stay
+    // in comments.md and the summary comment.
+    if string_field(item, "gap_state").as_deref() != Some(GAP_STATE_ACTIONABLE) {
         report.skipped.push(PlanSkipped {
             source_collection: "comments".to_string(),
             source_id,
@@ -1151,7 +1154,11 @@ fn skipped_summary(reason: &str, count: usize) -> String {
             "{count} recommendation was too large to post inline and remains in `comments.md`"
         ),
         SKIP_REASON_NOT_PUBLISHABLE => {
-            format!("{count} recommendation has no test to suggest and stays in `comments.md`")
+            if count == 1 {
+                "1 recommendation has no test to suggest and stays in `comments.md`".to_string()
+            } else {
+                format!("{count} recommendations have no test to suggest and stay in `comments.md`")
+            }
         }
         "mode_off" => "inline comment planning is disabled".to_string(),
         _ => format!("{count} recommendation was skipped"),
@@ -1255,6 +1262,7 @@ mod tests {
 
         let guidance = serde_json::json!({
             "comments": [{
+                "gap_state": "actionable",
                 "id": "c",
                 "dedupe_key": "ripr:c",
                 "placement": {"path": "src/lib.rs", "line": 1, "side": "RIGHT", "mode": "exact_seam_line"},
@@ -1301,6 +1309,7 @@ mod tests {
         let repair = format!("Assert {span} for @octocat <script>alert(1)</script>.");
         let guidance = serde_json::json!({
             "comments": [{
+                "gap_state": "actionable",
                 "id": "c",
                 "dedupe_key": "ripr:c",
                 "placement": {"path": "src/`@octocat|<b>.rs", "line": 7, "side": "RIGHT", "mode": "exact_seam_line"},
@@ -1381,6 +1390,7 @@ mod tests {
     // repair-card prose fields and the older reason fallback.
     fn planned_prose(field: &str, source: &str) -> Result<String, String> {
         let mut item = serde_json::json!({
+            "gap_state": "actionable",
             "id": "prose", "dedupe_key": "ripr:prose",
             "placement": {"path": "src/lib.rs", "line": 7,
                 "side": "RIGHT", "mode": "exact_seam_line"}
@@ -1594,12 +1604,14 @@ mod tests {
         let guidance = serde_json::json!({
             "comments": [
                 {
+                    "gap_state": "actionable",
                     "id": "big",
                     "dedupe_key": oversized_key,
                     "placement": {"path": "src/lib.rs", "line": 1, "side": "RIGHT", "mode": "exact_seam_line"},
                     "reason": "safe"
                 },
                 {
+                    "gap_state": "actionable",
                     "id": "small",
                     "dedupe_key": "ripr:small",
                     "placement": {"path": "src/lib.rs", "line": 2, "side": "RIGHT", "mode": "exact_seam_line"},
@@ -1726,7 +1738,7 @@ mod tests {
             max_inline_comments: 1,
             pr_guidance_path: Some("comments.json".to_string()),
             pr_guidance_json: Some(Ok(
-                r#"{"comments":[{"id":"one","dedupe_key":"ripr:one","placement":{"path":"src/lib.rs","line":1}},{"id":"two","dedupe_key":"ripr:two","placement":{"path":"src/lib.rs","line":2}}],"summary_only":[],"suppressed":[]}"#
+                r#"{"comments":[{"gap_state":"actionable","id":"one","dedupe_key":"ripr:one","placement":{"path":"src/lib.rs","line":1}},{"gap_state":"actionable","id":"two","dedupe_key":"ripr:two","placement":{"path":"src/lib.rs","line":2}}],"summary_only":[],"suppressed":[]}"#
                     .to_string(),
             )),
             existing_comments_path: None,
@@ -1805,10 +1817,90 @@ mod tests {
         );
         let markdown = render_comment_publish_plan_markdown(&report);
         assert!(
-            markdown.contains("2 recommendation has no test to suggest and stays in `comments.md`"),
+            markdown
+                .contains("2 recommendations have no test to suggest and stay in `comments.md`"),
             "{markdown}"
         );
         Ok(())
+    }
+
+    fn plan_for_guidance(guidance: &str, existing: Option<&str>) -> CommentPublishPlanReport {
+        build_comment_publish_plan_report(CommentPublishPlanInput {
+            root: ".".to_string(),
+            generated_at: "2026-05-10T12:00:00Z".to_string(),
+            mode: CommentMode::Inline,
+            max_inline_comments: 3,
+            pr_guidance_path: Some("comments.json".to_string()),
+            pr_guidance_json: Some(Ok(guidance.to_string())),
+            existing_comments_path: existing.map(|_| "existing.json".to_string()),
+            existing_comments_json: existing.map(|text| Ok(text.to_string())),
+            permission: CommentPermissionContext {
+                pull_request: Some(7),
+                event_name: Some("pull_request".to_string()),
+                head_repo: Some("o/r".to_string()),
+                base_repo: Some("o/r".to_string()),
+                token_available: true,
+                write_permission: true,
+            },
+        })
+    }
+
+    #[test]
+    fn only_an_actionable_gap_state_is_planned_inline() {
+        // Fail closed: every state but `actionable`, and a card that names no
+        // state at all, is kept out of inline comments. Only the actionable
+        // card is published.
+        let guidance = r#"{"comments":[
+            {"id":"unknown","gap_state":"unknown","dedupe_key":"ripr:unknown","placement":{"path":"src/a.rs","line":1}},
+            {"id":"observed","gap_state":"already_observed","dedupe_key":"ripr:observed","placement":{"path":"src/a.rs","line":2}},
+            {"id":"internal","gap_state":"internal_only","dedupe_key":"ripr:internal","placement":{"path":"src/a.rs","line":3}},
+            {"id":"none","dedupe_key":"ripr:none","placement":{"path":"src/a.rs","line":4}},
+            {"id":"ok","gap_state":"actionable","dedupe_key":"ripr:ok","missing_discriminator":"20","placement":{"path":"src/a.rs","line":5}}
+        ],"summary_only":[],"suppressed":[]}"#;
+        let report = plan_for_guidance(guidance, None);
+        let published: Vec<&str> = report
+            .operations
+            .iter()
+            .map(|operation| operation.source_id.as_str())
+            .collect();
+        assert_eq!(published, ["ok"]);
+        let skipped: Vec<(&str, &str)> = report
+            .skipped
+            .iter()
+            .map(|item| {
+                (
+                    item.source_id.as_deref().unwrap_or(""),
+                    item.skip_reason.as_str(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            skipped,
+            [
+                ("unknown", "not_publishable"),
+                ("observed", "not_publishable"),
+                ("internal", "not_publishable"),
+                ("none", "not_publishable"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_placeholder_comment_from_an_older_run_is_planned_as_stale_delete() {
+        // An earlier run posted the placeholder body for a card that is now a
+        // static limitation. The card is skipped, so nothing matches the
+        // existing comment and it is planned for deletion.
+        let guidance = r#"{"comments":[
+            {"id":"a","gap_state":"static_limitation","dedupe_key":"ripr:a","placement":{"path":"src/a.rs","line":1}}
+        ],"summary_only":[],"suppressed":[]}"#;
+        let existing = r#"{"comments":[{"comment_id":42,"dedupe_key":"ripr:a"}]}"#;
+        let report = plan_for_guidance(guidance, Some(existing));
+        assert_eq!(report.operations.len(), 1);
+        let operation = &report.operations[0];
+        assert_eq!(operation.operation, "delete");
+        assert_eq!(operation.existing_comment_id, Some(42));
+        assert_eq!(operation.placement.mode, "stale_existing");
+        assert_eq!(report.skipped[0].skip_reason, "not_publishable");
     }
 
     #[test]
@@ -1820,7 +1912,7 @@ mod tests {
             max_inline_comments: 3,
             pr_guidance_path: Some("comments.json".to_string()),
             pr_guidance_json: Some(Ok(
-                r#"{"comments":[{"id":"missing-dedupe","placement":{"path":"src/lib.rs","line":1}},{"id":"missing-placement","dedupe_key":"ripr:x"}],"summary_only":[],"suppressed":[]}"#
+                r#"{"comments":[{"gap_state":"actionable","id":"missing-dedupe","placement":{"path":"src/lib.rs","line":1}},{"gap_state":"actionable","id":"missing-placement","dedupe_key":"ripr:x"}],"summary_only":[],"suppressed":[]}"#
                     .to_string(),
             )),
             existing_comments_path: None,
@@ -1854,7 +1946,7 @@ mod tests {
             max_inline_comments: 3,
             pr_guidance_path: Some("comments.json".to_string()),
             pr_guidance_json: Some(Ok(
-                r#"{"comments":[{"id":"c","dedupe_key":"ripr:c","placement":{"path":"src/lib.rs","line":1,"side":"RIGHT","mode":"exact_seam_line"},"reason":"safe"}],"summary_only":[],"suppressed":[]}"#
+                r#"{"comments":[{"gap_state":"actionable","id":"c","dedupe_key":"ripr:c","placement":{"path":"src/lib.rs","line":1,"side":"RIGHT","mode":"exact_seam_line"},"reason":"safe"}],"summary_only":[],"suppressed":[]}"#
                     .to_string(),
             )),
             existing_comments_path: None,
@@ -2012,7 +2104,7 @@ mod tests {
             max_inline_comments: 3,
             pr_guidance_path: Some("comments.json".to_string()),
             pr_guidance_json: Some(Ok(
-                r#"{"comments":[{"id":"one","dedupe_key":"ripr:one","placement":{"path":"src/lib.rs","line":1}},{"id":"two","dedupe_key":"ripr:two","placement":{"path":"src/lib.rs","line":2}}],"summary_only":[],"suppressed":[]}"#
+                r#"{"comments":[{"gap_state":"actionable","id":"one","dedupe_key":"ripr:one","placement":{"path":"src/lib.rs","line":1}},{"gap_state":"actionable","id":"two","dedupe_key":"ripr:two","placement":{"path":"src/lib.rs","line":2}}],"summary_only":[],"suppressed":[]}"#
                     .to_string(),
             )),
             existing_comments_path: None,
@@ -2048,7 +2140,7 @@ mod tests {
             max_inline_comments: 3,
             pr_guidance_path: Some("comments.json".to_string()),
             pr_guidance_json: Some(Ok(
-                r#"{"comments":[{"dedupe_key":"ripr:default","placement":{"path":"src/lib.rs","line":4}}],"summary_only":[],"suppressed":[]}"#
+                r#"{"comments":[{"gap_state":"actionable","dedupe_key":"ripr:default","placement":{"path":"src/lib.rs","line":4}}],"summary_only":[],"suppressed":[]}"#
                     .to_string(),
             )),
             existing_comments_path: Some("existing.json".to_string()),

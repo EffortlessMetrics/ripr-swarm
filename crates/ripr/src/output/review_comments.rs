@@ -883,15 +883,21 @@ fn repair_prompt(route: &GapRepairRoute, verify_command: &str) -> String {
     )
 }
 
-/// Whether the card for `entry` offers a test to add. The same decision
-/// `review_recommendation_json` projects into `gap_state`.
-fn card_is_actionable(entry: &ClassifiedSeam) -> bool {
+/// The card's `gap_state`, decided once: the review card projects it and the
+/// slot ordering reads it, so the two cannot disagree.
+fn card_gap_state(
+    entry: &ClassifiedSeam,
+    missing: &[crate::output::agent_seam_packets_legacy::MissingRecord],
+) -> &'static str {
     if cross_language_test_target_unresolved(entry) {
-        return false;
+        return "static_limitation";
     }
-    let missing = missing_records_for(entry);
-    let actionability = actionability_for(entry, &missing);
-    gap_state_for(entry, &actionability) == "actionable"
+    gap_state_for(entry, &actionability_for(entry, missing))
+}
+
+/// Whether the card for `entry` offers a test to add.
+fn card_is_actionable(entry: &ClassifiedSeam) -> bool {
+    card_gap_state(entry, &missing_records_for(entry)) == "actionable"
 }
 
 fn review_recommendation_json(
@@ -925,12 +931,7 @@ fn review_recommendation_json(
         .map(agent_seam_packets::navigation_only_external_target_json);
 
     // Derive gap_state for every card using the canonical decision from evidence_record.
-    let actionability = actionability_for(entry, &missing);
-    let gap_state = if target_unresolved {
-        "static_limitation"
-    } else {
-        gap_state_for(entry, &actionability)
-    };
+    let gap_state = card_gap_state(entry, &missing);
 
     // receipt_command: only for actionable cards; reuses canonical_receipt_command_for.
     let receipt_command = canonical_receipt_command_for(entry, gap_state, &root_display);

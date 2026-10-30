@@ -280,6 +280,14 @@ these states as success:
   changed owner, the missing discriminator, a suggested assertion
   shape, a related test with file and line, and a copyable verify
   command. Clicking the placement lands on the changed line.
+- A card whose `gap_state` is not `actionable` (a named static limitation,
+  `already_observed`, `internal_only`, or a card with no `gap_state`) is
+  never planned as an inline comment: the publish plan skips it with
+  `not_publishable`, and it stays in `comments.md` and the summary comment.
+  Slots are filled by gaps first: when the inline or summary cap would drop a
+  card, limitation cards are dropped before actionable ones. Its annotation
+  is a `::notice` rather than a `::warning`. A stale inline comment an older
+  run posted for such a card is planned for deletion.
 - A fourth qualifying seam appears in the summary, or is skipped by
   the inline-comment publish plan, with reason
   `inline_comment_cap_reached`, keeping the inline surface sparse.
