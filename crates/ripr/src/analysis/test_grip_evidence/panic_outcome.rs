@@ -10,18 +10,23 @@
 //! same typed limit, so `ripr repair` cannot start an attempt for a seam
 //! `check` reports as a named limitation rather than a gap.
 //!
-//! Stages that read `no` or `weak` become `unknown` and the missing values
-//! are dropped, so the seam reads as an unknown with a limit; the repair
-//! eligibility flip additionally refuses any seam whose evidence names the
-//! limit (`TestGripEvidence::names_static_limit`). Fail-closed: it only
-//! withholds, never admits.
+//! The seam keeps its stage states and missing values, so seam
+//! classification and every ranking that reads them (pilot picks, repo
+//! exposure counts) are unchanged. Only the discrimination summary gains the
+//! typed limit, and the repair eligibility flip refuses any seam whose
+//! evidence names it (`TestGripEvidence::names_static_limit`). Fail-closed: it
+//! only withholds a repair start, never admits one.
+//!
+//! Scope: `check` applies the predicate to each changed line; a repo seam is
+//! a candidate changed line, so the repair decision for one seam is the
+//! decision `check` would give if that line changed.
 
 use super::TestGripEvidence;
 use crate::analysis::classify::should_panic_tests_deciding_changed_panic;
 use crate::analysis::rust_index::{FunctionSummary, RustIndex};
 use crate::analysis::seam_classification::classify_seam;
 use crate::analysis::seams::{RepoSeam, SeamGripClass};
-use crate::domain::{Confidence, StageEvidence, StageState, StaticLimitKind};
+use crate::domain::StaticLimitKind;
 use std::path::Path;
 
 pub(super) const LIMIT: StaticLimitKind = StaticLimitKind::RustPanicOutcomeUnresolved;
@@ -50,35 +55,25 @@ fn clause(tests: &[String]) -> String {
     )
 }
 
-/// Withhold the absence claims of `evidence` under the panic-outcome limit.
+/// Name the panic-outcome limit on `evidence`'s discrimination summary.
 /// `tests` is [`deciding_tests`]. Returns `true` when the evidence changed.
 ///
 /// Gated on the condition `withhold_should_panic_gap` applies to a finding:
-/// the seam must read `reachable_unrevealed` before the withhold (no
-/// assertion observes the change). A seam that also has a weak asserting
-/// test is a weak-grip gap, so it keeps its gap and its repair route.
+/// the seam must read `reachable_unrevealed` (no assertion observes the
+/// change). A seam that also has a weak asserting test is a weak-grip gap, so
+/// it keeps its repair route.
 pub(super) fn withhold(seam: &RepoSeam, evidence: &mut TestGripEvidence, tests: &[String]) -> bool {
-    if tests.is_empty() || classify_seam(seam, evidence) != SeamGripClass::ReachableUnrevealed {
+    if tests.is_empty()
+        || evidence.names_static_limit(LIMIT)
+        || classify_seam(seam, evidence) != SeamGripClass::ReachableUnrevealed
+    {
         return false;
     }
-    let clause = clause(tests);
-    for (label, stage) in [
-        ("Activation", &mut evidence.activate),
-        ("Propagation", &mut evidence.propagate),
-        ("Observation", &mut evidence.observe),
-        ("Discrimination", &mut evidence.discriminate),
-    ] {
-        if matches!(stage.state, StageState::No | StageState::Weak) {
-            *stage = StageEvidence::new(
-                StageState::Unknown,
-                Confidence::Low,
-                format!("{label} unresolved: {clause}"),
-            );
-        }
-    }
-    evidence.missing_discriminators.clear();
-    // `reachable_unrevealed` means discrimination read `no`, so it was
-    // rewritten above and now names the typed limit.
+    evidence.discriminate.summary = format!(
+        "{}; Discrimination unresolved: {}",
+        evidence.discriminate.summary,
+        clause(tests)
+    );
     true
 }
 

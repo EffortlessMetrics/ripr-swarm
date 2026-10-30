@@ -1,7 +1,7 @@
 use super::*;
 use crate::analysis::rust_index::RustIndex;
 use crate::analysis::seams::{ExpectedSink, RequiredDiscriminator, SeamKind};
-use crate::domain::{Confidence, MissingDiscriminatorFact};
+use crate::domain::{Confidence, MissingDiscriminatorFact, StageEvidence, StageState};
 
 fn seam() -> RepoSeam {
     RepoSeam::new(
@@ -54,7 +54,7 @@ fn no_owner_means_the_limit_does_not_apply() {
 }
 
 #[test]
-fn an_unrevealed_seam_is_withheld_under_the_typed_limit_once() {
+fn an_unrevealed_seam_names_the_typed_limit_once_without_reclassifying() {
     use StageState::{No, Yes};
     let seam = seam();
     let mut gap = evidence([Yes, Yes, Yes, No, No]);
@@ -64,9 +64,14 @@ fn an_unrevealed_seam_is_withheld_under_the_typed_limit_once() {
     );
     assert!(withhold(&seam, &mut gap, &labels()));
     assert!(gap.names_static_limit(LIMIT));
-    assert_eq!(gap.discriminate.state, StageState::Unknown);
-    assert!(gap.missing_discriminators.is_empty());
-    // The seam no longer reads as a gap, so a second pass changes nothing.
+    // Classification inputs are untouched: the seam still ranks as before.
+    assert_eq!(gap.discriminate.state, StageState::No);
+    assert_eq!(gap.missing_discriminators.len(), 1);
+    assert_eq!(
+        classify_seam(&seam, &gap),
+        SeamGripClass::ReachableUnrevealed
+    );
+    // A second pass changes nothing.
     let settled = gap.discriminate.summary.clone();
     assert!(!withhold(&seam, &mut gap, &labels()));
     assert_eq!(gap.discriminate.summary, settled);

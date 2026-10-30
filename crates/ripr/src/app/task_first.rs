@@ -160,10 +160,15 @@ pub(crate) fn decide_repair_start(
             .ok_or_else(|| "repair-start decision bound no subject".to_string())?;
         return Ok(RepairStartDecision::Start { seam_id });
     }
-    Ok(RepairStartDecision::Action(
-        Box::new(action),
-        facts.candidate_notes.to_vec(),
-    ))
+    // Describe only the candidates the stop itself lists; its own total and
+    // remainder disclosure covers the rest.
+    let described = facts
+        .candidate_notes
+        .iter()
+        .take(crate::domain::MAX_NEXT_ACTION_STOP_CANDIDATES)
+        .cloned()
+        .collect();
+    Ok(RepairStartDecision::Action(Box::new(action), described))
 }
 
 /// The one repair-admission gate, shared by the auto selector and the
@@ -420,6 +425,7 @@ pub(crate) fn resolve_repair_start(root: &Path) -> Result<RepairStartDecision, S
     // classes this selector already excludes, or for configured-off
     // classes, so no eligible seam is lost.
     let policy = AgentBriefPolicy::from_config(&config);
+    let bound = bound_root(&root.to_string_lossy());
     let mut eligible_ids = Vec::new();
     let mut candidate_notes: Vec<String> = Vec::new();
     let mut refusal_reasons: Vec<String> = Vec::new();
@@ -427,7 +433,7 @@ pub(crate) fn resolve_repair_start(root: &Path) -> Result<RepairStartDecision, S
         match repair_refusal_reason(entry, policy, Some(root)) {
             None => {
                 eligible_ids.push(entry.seam.id().as_str().to_string());
-                candidate_notes.push(describe_candidate(entry));
+                candidate_notes.push(describe_candidate(entry, &bound));
             }
             // Name the shared gate's own reason among the no-eligible
             // reasons so the limitation is diagnosable.
@@ -436,7 +442,6 @@ pub(crate) fn resolve_repair_start(root: &Path) -> Result<RepairStartDecision, S
     }
     let (reasons, reasons_total) =
         collect_no_eligible_reasons(refusal_reasons.iter().map(String::as_str));
-    let bound = bound_root(&root.to_string_lossy());
     let head = current_git_head(root).ok();
     let spec = if eligible_ids.len() == 1 {
         Some(repair_start_command_spec(&bound, &eligible_ids[0]))
@@ -520,8 +525,18 @@ pub(crate) fn no_test_route_refusal(
         ),
     };
     format!(
-        "ripr did not start a repair for the change at `{file}:{line}`: {why}. Write the test by hand in {place}, or run `{stub}` to write a starter test; no repair attempt was started."
+        "ripr did not start a repair for the change at `{file}:{line}`: {why}. Write the test by hand in {place}, or run `{stub}` to preview a starter test; no repair attempt was started."
     )
+}
+
+/// Whether an edit-cage policy rejection means the packet names no editable
+/// test target (the case [`no_test_route_refusal`] explains), as opposed to a
+/// malformed packet or an invalid edit surface, which keep their own
+/// diagnostics. Pinned to the producer's wording by unit tests.
+pub(crate) fn is_missing_edit_target_error(error: &str) -> bool {
+    error.contains("has no selected edit target")
+        || error.contains("is missing allowed edit target")
+        || (error.contains("selected edit target `") && error.contains("is not a test surface"))
 }
 
 /// Longest changed-code excerpt shown beside a candidate.
@@ -530,7 +545,7 @@ const CANDIDATE_CODE_CHARS: usize = 70;
 /// One plain line for a selectable seam: where the change is and the changed
 /// code, then the exact command that picks it (#10978). The excerpt is the
 /// seam's own expression collapsed to one line and bounded.
-fn describe_candidate(entry: &crate::analysis::ClassifiedSeam) -> String {
+fn describe_candidate(entry: &crate::analysis::ClassifiedSeam, bound_root_display: &str) -> String {
     let file = crate::analysis::stable_path_text(entry.seam.file());
     let collapsed = entry
         .seam
@@ -545,9 +560,10 @@ fn describe_candidate(entry: &crate::analysis::ClassifiedSeam) -> String {
         collapsed
     };
     format!(
-        "{file}:{}  `{code}`  -> ripr repair {}",
+        "{file}:{}  `{code}`  -> ripr repair {} --root {}",
         entry.seam.display_line(),
-        entry.seam.id().as_str()
+        entry.seam.id().as_str(),
+        shell_arg(bound_root_display)
     )
 }
 
@@ -1773,6 +1789,59 @@ fn held_inline_target(
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    /// #10978: the candidate list is bounded by the stop's own cap, and every
+    /// described candidate carries the bound root.
+    #[test]
+    fn decide_describes_only_the_candidates_the_stop_lists() -> Result<(), String> {
+        let eligible: Vec<String> = (0..10).map(|n| format!("seam:{n}")).collect();
+        let notes: Vec<String> = (0..10).map(|n| format!("note {n}")).collect();
+        let facts = RepairStartFacts {
+            candidate_notes: &notes,
+            ..facts(&eligible, 10, &[], 0, None)
+        };
+        match decide_repair_start(&facts)? {
+            RepairStartDecision::Action(_, described) => {
+                assert_eq!(
+                    described.len(),
+                    crate::domain::MAX_NEXT_ACTION_STOP_CANDIDATES
+                );
+                assert_eq!(described.first().map(String::as_str), Some("note 0"));
+                Ok(())
+            }
+            _ => Err("ten eligible seams must select".to_string()),
+        }
+    }
+
+    /// #10978: only a genuinely missing edit target takes the plain refusal;
+    /// a malformed packet keeps its own diagnostic.
+    #[test]
+    fn missing_edit_target_is_told_from_other_cage_rejections() {
+        let rejection = |packet: &str| {
+            crate::app::repair_attempt::edit_cage_policy_from_packet(packet, "s")
+                .err()
+                .unwrap_or_default()
+        };
+        for packet in [
+            r#"{"seam_id":"s","recommended_test":{"file":"not_applicable"}}"#,
+            r#"{"seam_id":"s","allowed_edit_surface":[]}"#,
+            r#"{"seam_id":"s","recommended_test":{}}"#,
+        ] {
+            let error = rejection(packet);
+            assert!(is_missing_edit_target_error(&error), "{packet}: {error}");
+        }
+        for packet in [
+            "not json",
+            r#"{"seam_id":"other","allowed_edit_surface":["tests/t.rs"]}"#,
+            r#"{"seam_id":"s","allowed_edit_surface":["tests/t.rs",7],"denied_edit_surface":[]}"#,
+        ] {
+            let error = rejection(packet);
+            assert!(
+                !error.is_empty() && !is_missing_edit_target_error(&error),
+                "{packet}: {error}"
+            );
+        }
+    }
     fn proposed_readiness(
         kind: crate::analysis::new_test_target::NewTestKind,
         file: &str,

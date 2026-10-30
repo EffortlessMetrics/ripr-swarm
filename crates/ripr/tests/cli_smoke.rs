@@ -9716,6 +9716,13 @@ fn agent_repair_before_inline_only_seam(ambiguous: bool) -> Result<(), Box<dyn s
         )),
         "the refusal must pre-fill the stub command for this change:\n{stderr}"
     );
+    // The plain text comes first; the exact diagnostic trails it as a labeled
+    // detail (the agent card reports the same blocker text).
+    let plain = stderr.split(" (Detail: ").next().unwrap_or_default();
+    assert!(
+        stderr.contains(" (Detail: "),
+        "the exact diagnostic must trail the refusal:\n{stderr}"
+    );
     for jargon in [
         "recommended_test",
         "edit surface",
@@ -9725,8 +9732,8 @@ fn agent_repair_before_inline_only_seam(ambiguous: bool) -> Result<(), Box<dyn s
         "FILE:LINE",
     ] {
         assert!(
-            !stderr.contains(jargon),
-            "the refusal must not use `{jargon}`:\n{stderr}"
+            !plain.contains(jargon),
+            "the plain refusal must not use `{jargon}`:\n{stderr}"
         );
     }
     assert!(

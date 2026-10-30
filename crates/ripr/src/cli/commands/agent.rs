@@ -1870,9 +1870,16 @@ fn run_agent_repair_phase(
             }
             let mut policy =
                 crate::app::repair_attempt::edit_cage_policy_from_packet(&packet, &seam_id)
-                    .map_err(|_error| {
-                        // #10978: say where the change is and what to do next;
-                        // the packet-field cause stays out of the user text.
+                    .map_err(|error| {
+                        // Only a packet that names no editable test target gets
+                        // the plain next-step text; a malformed packet or an
+                        // invalid edit surface keeps its own diagnostic.
+                        if !crate::app::task_first::is_missing_edit_target_error(&error) {
+                            return error;
+                        }
+                        // #10978: say where the change is and what to do next.
+                        // The exact diagnostic stays last, because `ripr agent
+                        // card` reports the same text as its blocker.
                         let seam = before_report
                             .classified
                             .iter()
@@ -1880,12 +1887,13 @@ fn run_agent_repair_phase(
                         let source = seam.and_then(|entry| {
                             std::fs::read_to_string(root.join(entry.seam.file())).ok()
                         });
-                        crate::app::task_first::no_test_route_refusal(
+                        let plain = crate::app::task_first::no_test_route_refusal(
                             &root,
                             &seam_id,
                             seam,
                             source.as_deref(),
-                        )
+                        );
+                        format!("{plain} (Detail: {error})")
                     })?;
             crate::app::repair_attempt::include_explicit_store_operational_write(
                 &mut policy,

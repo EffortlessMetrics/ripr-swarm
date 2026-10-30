@@ -2214,6 +2214,20 @@ fn repair_two_items_requires_explicit_selection() -> Result<(), String> {
         stderr.contains("ripr repair "),
         "must name the retry command:\n{stderr}"
     );
+    // From another directory the printed candidate commands must still select
+    // this workspace, so each carries the bound root.
+    let elsewhere = Fixture::dir("facade-two-elsewhere")?;
+    let remote = run_ripr(&elsewhere.root, &["repair", "--root", &root_arg])?;
+    let remote_stderr = stderr_text(&remote);
+    for seam in [FIXTURE_SEAM, SECOND_SEAM] {
+        assert!(
+            remote_stderr.lines().any(|line| {
+                line.contains(&format!("ripr repair {seam} --root "))
+                    && line.contains(root_arg.as_str())
+            }),
+            "candidate {seam} must carry the bound root:\n{remote_stderr}"
+        );
+    }
     assert!(
         attempt_ids(root).is_empty(),
         "no attempt may be created before selection"
