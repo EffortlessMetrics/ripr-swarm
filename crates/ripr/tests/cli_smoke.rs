@@ -71,6 +71,9 @@ mod init_followups;
 #[path = "cli_smoke/javascript_awaited_roots.rs"]
 mod javascript_awaited_roots;
 #[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/legend_first_run.rs"]
+mod legend_first_run;
+#[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/mixed_quote_rename.rs"]
 mod mixed_quote_rename;
 #[cfg(feature = "lang-rust")]
@@ -765,7 +768,15 @@ fn unique_external_workspace(label: &str) -> Result<PathBuf, String> {
         if canonical == workspace || canonical.starts_with(&workspace) {
             continue;
         }
-        let probe = canonical.join(format!(".ripr-write-probe-{}", std::process::id()));
+        // Tests run on parallel threads of one process: a pid-only name made a
+        // sibling's `remove_dir` race this `create_dir` into a false "no
+        // writable directory".
+        static PROBE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let probe = canonical.join(format!(
+            ".ripr-write-probe-{}-{}",
+            std::process::id(),
+            PROBE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
         if std::fs::create_dir(&probe).is_err() {
             continue;
         }

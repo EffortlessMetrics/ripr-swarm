@@ -52,6 +52,22 @@ pub(super) fn trim_field_period(value: &str) -> &str {
 /// parse error ("Next step: TypeScript preview advisory: ..."), so a value
 /// carrying a short leading label renders with a dash; plain text keeps the
 /// colon.
+/// The full first-run Evidence legend (#9373, #10481). `check` records the
+/// first-run marker only when a render contains this whole block, so a header
+/// that merely echoes one legend line cannot count as a displayed legend.
+pub(crate) const HUMAN_EVIDENCE_LEGEND: &str = concat!(
+    "    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;\n",
+    "      propagation = changed effect reaches output; observation = related test/assertion evidence;\n",
+    "      discriminator = assertion distinguishes intended from wrong behavior\n",
+    "    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;\n",
+    "      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused\n",
+    "    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;\n",
+    "      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;\n",
+    "      no test path = no test path found; unclear = analysis limited, not a verdict;\n",
+    "      found = listed for review; suppressed by your settings = hidden by your suppression policy;\n",
+    "      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers\n",
+);
+
 fn next_step_prefix(step: &str) -> &'static str {
     const NEXT_STEP_PREFIX: &str = "  Next step: ";
     const NEXT_STEP_NESTED_PREFIX: &str = "  Next step — ";
@@ -325,18 +341,15 @@ pub(crate) fn render_finding_digest_with_config(
         ));
         // #9373 item 1: explain the pipeline and its conservative tokens at
         // the bounded surface; full human and machine evidence stay unchanged.
-        out.push_str(concat!(
-            "    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;\n",
-            "      propagation = changed effect reaches output; observation = related test/assertion evidence;\n",
-            "      discriminator = assertion distinguishes intended from wrong behavior\n",
-            "    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;\n",
-            "      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused\n",
-            "    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;\n",
-            "      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;\n",
-            "      no test path = no test path found; unclear = analysis limited, not a verdict;\n",
-            "      found = listed for review; suppressed by your settings = hidden by your suppression policy;\n",
-            "      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers\n",
-        ));
+        // #10481: after the first run the digest keeps one pointer line; the
+        // definitions stay one flag away.
+        if config.reports().human_legend() == crate::config::HumanLegend::Pointer {
+            out.push_str(
+                "    Terms: rerun with `--legend` for the stage, state and summary definitions\n",
+            );
+        } else {
+            out.push_str(HUMAN_EVIDENCE_LEGEND);
+        }
         for line in evidence.iter().take(2) {
             // #7756: list-item values carry no trailing period.
             let line = super::evidence_lines::plain_internal_wording(line);
