@@ -1198,6 +1198,66 @@ fn pilot_summary_md_pairs_bash_next_commands_with_powershell_variants() -> Resul
     Ok(())
 }
 
+/// #10694 review: the plain "why" keeps the observed-evidence qualification
+/// and the producer's reason instead of claiming no test covers the value.
+#[test]
+fn pilot_terminal_why_line_keeps_the_observed_evidence_qualification() {
+    let entry = classified_with(
+        SeamGripClass::WeaklyGripped,
+        "src/pricing.rs",
+        88,
+        vec![missing()],
+        vec![related_test()],
+    );
+    let reason = entry.evidence.missing_discriminators[0].reason.clone();
+    let artifacts = pilot_artifacts();
+    let terminal = render_pilot_terminal(&[entry], pilot_context(&artifacts));
+    assert!(
+        terminal.contains("why it matters: the tests we looked at do not check "),
+        "{terminal}"
+    );
+    assert!(terminal.contains(&reason), "{terminal}");
+    assert!(!terminal.contains("no test covers"), "{terminal}");
+}
+
+/// #10694 review: with a seam limit and nothing ranked, the terminal keeps
+/// the unchecked-count limitation instead of "no gap, nothing to add".
+#[test]
+fn pilot_terminal_keeps_unchecked_count_guidance_when_limit_cut_an_empty_ranking() {
+    let entries = [
+        classified_in_owner(SeamGripClass::StronglyGripped, "src/a.rs", "a::f", 1),
+        classified_in_owner(SeamGripClass::StronglyGripped, "src/b.rs", "b::g", 2),
+    ];
+    let artifacts = pilot_artifacts();
+    let limit = crate::analysis::SeamLimitInfo {
+        analyzed: 2,
+        total: 9,
+        source: crate::analysis::SeamLimitSource::Configured,
+    };
+    let limited = PilotSummaryContext {
+        seam_limit: Some(&limit),
+        ..pilot_context(&artifacts)
+    };
+    let terminal = render_pilot_terminal(&entries, limited);
+    assert!(
+        terminal.contains("7 of 9 were not checked and may hold gaps"),
+        "{terminal}"
+    );
+    assert!(
+        terminal.contains("RIPR_REPO_EXPOSURE_SEAM_LIMIT"),
+        "{terminal}"
+    );
+    assert!(
+        !terminal.contains("so there is no test to add"),
+        "{terminal}"
+    );
+    let unlimited = render_pilot_terminal(&entries, pilot_context(&artifacts));
+    assert!(
+        unlimited.contains("so there is no test to add"),
+        "{unlimited}"
+    );
+}
+
 #[test]
 fn pilot_terminal_prints_top_test_and_follow_up_commands() {
     let entry = classified_with(
@@ -1221,7 +1281,7 @@ fn pilot_terminal_prints_top_test_and_follow_up_commands() {
         "config: loaded ripr.toml",
         "Top recommendation:",
         "gap ",
-        "why it matters: no test covers input that hits the boundary: amount >= discount_threshold",
+        "why it matters: the tests we looked at do not check input that hits the boundary: amount >= discount_threshold (",
         "test to add: none: `ripr agent repair` has no test file to use for this gap (for example, the only tests are inline `#[cfg(test)]` in a file outside the test paths, or live in another crate), so it will not start a repair here",
         "assertion: not_applicable",
         "Full report (Markdown):",

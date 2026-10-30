@@ -893,9 +893,18 @@ pub(crate) fn render_pilot_terminal(
     } else {
         // #8766: nothing was ranked, so no focused test was named and there
         // is nothing to run "after adding" yet.
-        out.push_str(
-            "No gap was found, so there is no test to add; rerun `ripr pilot` after the code or its tests change.\n",
-        );
+        match context.seam_limit {
+            // A limit cut the list, so the unchecked spots may hold gaps.
+            Some(limit) => out.push_str(&format!(
+                "No gap was found in the {} spots checked, but {} of {} were not checked and may hold gaps: raise or remove RIPR_PILOT_SEAM_BUDGET and RIPR_REPO_EXPOSURE_SEAM_LIMIT, then rerun `ripr pilot`.\n",
+                limit.analyzed,
+                limit.total.saturating_sub(limit.analyzed),
+                limit.total
+            )),
+            None => out.push_str(
+                "No gap was found, so there is no test to add; rerun `ripr pilot` after the code or its tests change.\n",
+            ),
+        }
         return out;
     }
     out.push_str(&format!("  {}\n", commands.after_snapshot));
@@ -1564,7 +1573,10 @@ fn terminal_pick_note(class: crate::analysis::seams::SeamGripClass, in_change: b
 
 fn terminal_why_line(entry: &ClassifiedSeam) -> String {
     if let Some(missing) = entry.evidence.missing_discriminators.first() {
-        return format!("no test covers {}", missing.value);
+        return format!(
+            "the tests we looked at do not check {} ({})",
+            missing.value, missing.reason
+        );
     }
     let summary = entry.evidence.discriminate.summary.trim();
     if !summary.is_empty() {
