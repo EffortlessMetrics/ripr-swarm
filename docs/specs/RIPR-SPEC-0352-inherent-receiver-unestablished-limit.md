@@ -13,18 +13,16 @@ Linked issues: #9611 (inherent-receiver identity), #10122 (unplaced workspace re
 Support-tier impact:
 
 - None.
-- This narrows when Rust findings claim a gap. It does not promote a
-  language, surface, or gate.
+- Narrows when Rust findings claim a gap; promotes no language, surface or gate.
 
 Policy impact:
 
 - Register this spec in `policy/doc-artifacts.toml` and
   `.ripr/traceability.toml`.
 - Add one `static_limit_kind` value (`rust_inherent_receiver_unestablished`)
-  to `policy/output_contracts.txt`, `docs/OUTPUT_SCHEMA.md`, and
-  `docs/STATIC_LIMITS.md`. The JSON schema version does not change; the value
-  is additive and the RIPR-SPEC-0240 `gap_evidence_unresolved` stop reason is
-  reused.
+  to `policy/output_contracts.txt`, `docs/OUTPUT_SCHEMA.md` and
+  `docs/STATIC_LIMITS.md`. The schema version is unchanged; the RIPR-SPEC-0240
+  `gap_evidence_unresolved` stop reason is reused.
 
 
 ## Problem
@@ -37,8 +35,7 @@ macro binding is verified, which needs target-root placement. An unresolved
 another crate, so placement is unavailable and the binding cannot be verified.
 
 The refusal then dropped the relation to `weak_token_substring` and the finding
-to a gap: a certain "no test notices this" claim, and an actionable repair
-signal, resting on a receiver that was never shown to differ.
+to a gap, an actionable repair signal on a receiver never shown to differ.
 
 ## Trigger
 
@@ -92,7 +89,6 @@ cause.
   several directories, the directory holds a crate of another name, any
   manifest in scope renames a dependency, or a manifest cannot be read. The scan
   is lexical and over-approximate, which only keeps more gaps.
-- A new schema version or a new stop reason.
 
 ## Required Evidence
 
@@ -138,9 +134,8 @@ See `.ripr/traceability.toml`.
 
 ## Fail-closed statement
 
-The rule only withholds. It runs after the implicit-call and indirect-owner
-withholds and never changes a class toward `exposed`; a doubt about the trigger
-keeps the current gap and a doubt about the macro keeps the current non-credit.
+The rule only withholds, after the implicit-call and indirect-owner withholds,
+and never moves a class toward `exposed`; a doubt keeps the current gap.
 
 ## Implementation Mapping
 
