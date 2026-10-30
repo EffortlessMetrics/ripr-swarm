@@ -61,7 +61,7 @@ pub struct DiagnosticConfidence {
 ///
 /// `check` JSON and human output print `{:.2}`; widening the stored `f32`
 /// straight to `f64` would serialize `0.4` as `0.4000000059604645`. Every
-/// producer that puts a confidence into a `serde_json::Value` goes through
+/// producer that puts a confidence into a JSON value goes through
 /// this one rounding so all surfaces agree (#10717).
 pub(crate) fn contract_confidence(value: f32) -> f64 {
     format!("{value:.2}")
