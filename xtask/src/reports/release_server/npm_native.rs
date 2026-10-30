@@ -507,12 +507,18 @@ mod tests {
     use crate::policy::distribution::parse_distribution_contract;
 
     #[test]
-    fn extracted_executable_requires_both_expected_bytes_and_executable_mode() {
+    fn extracted_executable_requires_both_expected_bytes_and_executable_mode() -> Result<(), String>
+    {
         let expected = hex_lower(&Sha256::digest(b"native"));
-        assert!(verify_extracted_file(b"native", 0o755, &expected, true).is_ok());
-        assert!(verify_extracted_file(b"wrong", 0o755, &expected, true).is_err());
-        assert!(verify_extracted_file(b"native", 0o644, &expected, true).is_err());
-        assert!(verify_extracted_file(b"native", 0o644, &expected, false).is_ok());
+        verify_extracted_file(b"native", 0o755, &expected, true)?;
+        let Err(_) = verify_extracted_file(b"wrong", 0o755, &expected, true) else {
+            return Err("mismatched payload bytes accepted".to_string());
+        };
+        let Err(_) = verify_extracted_file(b"native", 0o644, &expected, true) else {
+            return Err("missing execute bit accepted for executables".to_string());
+        };
+        verify_extracted_file(b"native", 0o644, &expected, false)?;
+        Ok(())
     }
 
     #[test]
@@ -530,23 +536,19 @@ mod tests {
         ] {
             let mut wrong = expected.clone();
             wrong[key] = json!(null);
-            assert!(
-                verify_qualification(
-                    &serde_json::to_vec(&wrong).map_err(|e| e.to_string())?,
-                    &expected
-                )
-                .is_err(),
-                "accepted wrong {key}"
-            );
+            let Err(_) = verify_qualification(
+                &serde_json::to_vec(&wrong).map_err(|e| e.to_string())?,
+                &expected,
+            ) else {
+                return Err(format!("accepted wrong {key}"));
+            };
             wrong.as_object_mut().ok_or("expected object")?.remove(key);
-            assert!(
-                verify_qualification(
-                    &serde_json::to_vec(&wrong).map_err(|e| e.to_string())?,
-                    &expected
-                )
-                .is_err(),
-                "accepted missing {key}"
-            );
+            let Err(_) = verify_qualification(
+                &serde_json::to_vec(&wrong).map_err(|e| e.to_string())?,
+                &expected,
+            ) else {
+                return Err(format!("accepted missing {key}"));
+            };
         }
         Ok(())
     }
@@ -568,16 +570,15 @@ mod tests {
         let hash = hex_lower(&Sha256::digest(b"package"));
         fs::write(&source_receipt, b"receipt").map_err(|e| e.to_string())?;
         fs::write(&output_receipt, b"existing").map_err(|e| e.to_string())?;
-        assert!(
-            promote_pair(
-                b"package",
-                &hash,
-                &source_receipt,
-                &output_package,
-                &output_receipt
-            )
-            .is_err()
-        );
+        let Err(_) = promote_pair(
+            b"package",
+            &hash,
+            &source_receipt,
+            &output_package,
+            &output_receipt,
+        ) else {
+            return Err("promotion over an existing receipt accepted".to_string());
+        };
         assert!(!output_package.exists());
         assert_eq!(
             fs::read(&output_receipt).map_err(|e| e.to_string())?,
@@ -677,7 +678,9 @@ mod tests {
             .find(|item| item.path == "LICENSE-MIT")
             .ok_or("license missing")?;
         license.sha256 = "0".repeat(64);
-        assert!(verify_notices(&wrong_license, &source).is_err());
+        let Err(_) = verify_notices(&wrong_license, &source) else {
+            return Err("tampered license digest accepted".to_string());
+        };
         let mut wrong_notice = identity.clone();
         let notice = wrong_notice
             .files
@@ -685,7 +688,9 @@ mod tests {
             .find(|item| item.path == "README-server.txt")
             .ok_or("notice missing")?;
         notice.sha256 = "0".repeat(64);
-        assert!(verify_notices(&wrong_notice, &source).is_err());
+        let Err(_) = verify_notices(&wrong_notice, &source) else {
+            return Err("tampered notice digest accepted".to_string());
+        };
         pack(&source, &identity, &contract, &original)?;
         verify_package(&original, &identity, &contract)?;
         let repeated = root.join("repeat.tgz");
@@ -694,7 +699,9 @@ mod tests {
         let (verified, snapshot) = verify_package(&repeated, &identity, &contract)?;
         ensure_archive_unchanged(&repeated, &verified)?;
         fs::write(&repeated, b"replacement").map_err(|e| e.to_string())?;
-        assert!(ensure_archive_unchanged(&repeated, &verified).is_err());
+        let Err(_) = ensure_archive_unchanged(&repeated, &verified) else {
+            return Err("archive changed after verification accepted".to_string());
+        };
         let staged_receipt = root.join("staged.json");
         fs::write(&staged_receipt, b"receipt").map_err(|e| e.to_string())?;
         let promoted_package = root.join("promoted.tgz");
@@ -712,14 +719,15 @@ mod tests {
         ] {
             let changed = root.join(format!("{mutation}.tgz"));
             mutate(&original, &changed, mutation)?;
-            assert!(
-                verify_package(&changed, &identity, &contract).is_err(),
-                "accepted {mutation}"
-            );
+            let Err(_) = verify_package(&changed, &identity, &contract) else {
+                return Err(format!("accepted {mutation}"));
+            };
         }
         let mut wrong_target = identity.clone();
         wrong_target.target = "aarch64-unknown-linux-gnu".into();
-        assert!(manifest(&wrong_target, &contract).is_err());
+        let Err(_) = manifest(&wrong_target, &contract) else {
+            return Err("manifest for an uncontracted target accepted".to_string());
+        };
         let mut wrong_policy = contract.clone();
         let linux = wrong_policy
             .target
@@ -727,14 +735,20 @@ mod tests {
             .find(|item| item.rust_target == TARGET)
             .ok_or("Linux target missing")?;
         linux.npm_cpu = "arm64".into();
-        assert!(manifest(&identity, &wrong_policy).is_err());
+        let Err(_) = manifest(&identity, &wrong_policy) else {
+            return Err("manifest with a mismatched npm cpu accepted".to_string());
+        };
         let mut wrong_hash = identity.clone();
         wrong_hash.files[0].sha256 = "0".repeat(64);
-        assert!(verify_package(&original, &wrong_hash, &contract).is_err());
+        let Err(_) = verify_package(&original, &wrong_hash, &contract) else {
+            return Err("package with a tampered payload digest accepted".to_string());
+        };
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(source.join("ripr"), fs::Permissions::from_mode(0o644))
             .map_err(|e| e.to_string())?;
-        assert!(pack(&source, &identity, &contract, &root.join("no-mode.tgz")).is_err());
+        let Err(_) = pack(&source, &identity, &contract, &root.join("no-mode.tgz")) else {
+            return Err("payload without the execute bit accepted".to_string());
+        };
         fs::remove_dir_all(root).map_err(|e| e.to_string())?;
         Ok(())
     }
