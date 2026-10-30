@@ -104,6 +104,12 @@ pub(crate) enum RepairRouteRefusal {
     GapRouteUnavailable {
         reason: &'static str,
     },
+    /// The run's analysis is incomplete (#11136): the after phase refuses a
+    /// before artifact like that, so no gap-bound start is printed.
+    /// `limitation` names the cause and the recovery.
+    AnalysisIncomplete {
+        limitation: String,
+    },
     /// The finding has no canonical gap to bind a seam from.
     NoCanonicalGap,
     /// The finding's file belongs to a language adapter whose findings the
@@ -168,6 +174,9 @@ impl RepairRouteRefusal {
         match self {
             Self::GapRouteUnavailable { reason } => format!(
                 "no repair start offered: {reason}; inspect the current workspace and rerun `ripr check`"
+            ),
+            Self::AnalysisIncomplete { limitation } => format!(
+                "no repair start offered: the analysis is incomplete ({limitation}), so a repair started now could not be verified afterward; resolve that, rerun `ripr check`, or add the missing test by hand from the packet above"
             ),
             Self::NoCanonicalGap => {
                 "no repair start offered: this finding has no gap ID, so there is \
