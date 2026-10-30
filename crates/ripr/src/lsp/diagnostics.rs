@@ -3075,7 +3075,9 @@ pub(super) fn seam_class_phrase(class: SeamGripClass) -> &'static str {
         SeamGripClass::Opaque => "ripr cannot fully determine how tests exercise this",
         SeamGripClass::Ungripped => "No test path detected for this",
         SeamGripClass::WeaklyGripped => "Tests only loosely check this",
-        SeamGripClass::ReachableUnrevealed => "Tests run this code but would not notice a change",
+        SeamGripClass::ReachableUnrevealed => {
+            "Tests appear to reach this code, but nothing found would notice a change"
+        }
         SeamGripClass::ActivationUnknown => {
             "ripr cannot tell whether a test runs this with a changed value"
         }
@@ -4750,7 +4752,7 @@ mod seam_diagnostic_tests {
             ),
             (
                 SeamGripClass::ReachableUnrevealed,
-                "Tests run this code but would not notice a change",
+                "Tests appear to reach this code, but nothing found would notice a change",
             ),
             (
                 SeamGripClass::ActivationUnknown,

@@ -660,7 +660,7 @@ static classification legible:
 
 ```text
 ## Why this diagnostic?
-the tests found check this loosely, or a specific test input is missing.
+the tests found check this loosely, or a specific value or check is missing.
 
 Strong evidence:
 - reach yes: related tests reach discounted_total
@@ -668,7 +668,7 @@ Strong evidence:
 
 Weak / missing evidence:
 - discrimination weak: equality boundary missing
-- missing test input `discount_threshold (equality boundary)`: observed values do not include the equality-boundary case
+- missing value or check `discount_threshold (equality boundary)`: observed values do not include the equality-boundary case
 
 ## Suggested test shape
 - file: `tests/pricing.rs`

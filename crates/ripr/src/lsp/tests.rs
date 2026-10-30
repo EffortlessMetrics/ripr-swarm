@@ -1608,7 +1608,7 @@ fn framed_lsp_protocol_smoke_logs_successful_refresh_completion() -> Result<(), 
             .as_str()
             .ok_or_else(|| "expected seam hover markdown value".to_string())?;
         assert!(
-            hover_value.contains("## Missing test input"),
+            hover_value.contains("## Missing value or check"),
             "expected seam hover to name missing discriminator, got {hover_value}"
         );
         assert!(
@@ -8660,7 +8660,7 @@ fn editor_lsp_workflow_lsp_goldens_match_production() -> Result<(), String> {
     let hover = std::fs::read_to_string(&hover_path)
         .map_err(|err| format!("failed to read {}: {err}", hover_path.display()))?;
     for heading in [
-        "## Missing test input",
+        "## Missing value or check",
         "## Suggested test shape",
         "## Handoff, verify, and receipt commands",
     ] {
@@ -16182,7 +16182,7 @@ fn finding_hover_with_named_missing_discriminator_spells_markers_in_words() -> R
     }
     for needle in [
         "* discriminator missing: `amount == threshold`, `other`; related oracle: strong oracle, changed value never named\n",
-        "- missing test input: `amount == threshold` \u{2014} input unexecuted\n",
+        "- missing value or check: `amount == threshold` \u{2014} input unexecuted\n",
         "`raise ValueError(\"observation_unverified\")`.",
     ] {
         if !text.contains(needle) {
@@ -28241,7 +28241,7 @@ fn actionable_line_hover_names_editor_neutral_full_profile_routes() -> Result<()
 fn exclusive_vscode_setting_route_is_rejected_as_insufficient() {
     // Pre-fix wording from origin/main: the VS Code settings-UI name as the
     // only instruction. A non-VS Code user following it has no such setting.
-    let exclusive_vscode_route = "The `actionable` diagnostic profile publishes only current `weakly_exposed`, `reachable_unrevealed` or `no_static_path` findings with a producer-backed repair route (a named missing test input and a fix site), so these are not diagnostics. Set `ripr.diagnosticProfile` to `full` to publish them with their Inspect finding quick fix.";
+    let exclusive_vscode_route = "The `actionable` diagnostic profile publishes only current `weakly_exposed`, `reachable_unrevealed` or `no_static_path` findings with a producer-backed repair route (a named missing value or check and a fix site), so these are not diagnostics. Set `ripr.diagnosticProfile` to `full` to publish them with their Inspect finding quick fix.";
     let defects = actionable_line_hover_route_defects(exclusive_vscode_route);
     assert!(
         defects.contains(&"missing LSP server key `diagnosticProfile`"),

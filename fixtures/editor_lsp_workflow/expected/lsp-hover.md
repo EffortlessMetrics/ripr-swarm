@@ -13,7 +13,7 @@ Kind: `predicate_boundary`
 - observe: yes
 - discriminate: yes
 
-## Missing test input
+## Missing value or check
 
 - `discount_threshold (equality boundary)` — observed values do not include the equality-boundary case for this predicate
 

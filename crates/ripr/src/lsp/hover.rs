@@ -106,7 +106,7 @@ const MAX_LINE_HOVER_FINDINGS: usize = 5;
 /// server key `diagnosticProfile` (initializationOptions or the pulled
 /// `ripr` configuration section) and `diagnostic_profile` under the `lsp`
 /// table in `ripr.toml`. `ripr.diagnosticProfile` is the VS Code settings-UI name.
-const ACTIONABLE_PROFILE_UNPUBLISHED_FINDINGS_GUIDANCE: &str = "The `actionable` diagnostic profile publishes only current `weakly_exposed`, `reachable_unrevealed` or `no_static_path` findings with a producer-backed repair route (a named missing test input and a fix site), so these are not diagnostics. Set `diagnosticProfile` to `full` (VS Code setting `ripr.diagnosticProfile`) or `[lsp] diagnostic_profile = \"full\"` in `ripr.toml` to publish them with their Inspect finding quick fix.";
+const ACTIONABLE_PROFILE_UNPUBLISHED_FINDINGS_GUIDANCE: &str = "The `actionable` diagnostic profile publishes only current `weakly_exposed`, `reachable_unrevealed` or `no_static_path` findings with a producer-backed repair route (a named missing value or check and a fix site), so these are not diagnostics. Set `diagnosticProfile` to `full` (VS Code setting `ripr.diagnosticProfile`) or `[lsp] diagnostic_profile = \"full\"` in `ripr.toml` to publish them with their Inspect finding quick fix.";
 
 /// Hover for a position with no published diagnostic but with snapshot
 /// findings on its line — the findings the code lens on that line shows.
@@ -731,7 +731,7 @@ fn push_diagnostic_witness(lines: &mut Vec<String>, witness: &DiagnosticWitness)
     }
     for missing in &witness.missing_discriminators {
         lines.push(format!(
-            "- missing test input: `{}` — {}",
+            "- missing value or check: `{}` — {}",
             missing.value,
             plain_observation_wording(&missing.reason)
         ));
@@ -1007,7 +1007,7 @@ fn classified_seam_hover_markdown(
 
     if !evidence.missing_discriminators.is_empty() {
         lines.push(String::new());
-        lines.push("## Missing test input".to_string());
+        lines.push("## Missing value or check".to_string());
         for missing in &evidence.missing_discriminators {
             lines.push(format!(
                 "- `{}` — {}",
@@ -1090,7 +1090,7 @@ fn push_first_useful_action(lines: &mut Vec<String>, first_action: &FirstUsefulA
         lines.push(format!("- location: `{location}`"));
     }
     if let Some(missing) = &first_action.missing_discriminator {
-        lines.push(format!("- missing test input: `{missing}`"));
+        lines.push(format!("- missing value or check: `{missing}`"));
     }
     if let Some(target) = &first_action.target {
         lines.push(format!("- target: `{target}`"));
@@ -1390,7 +1390,7 @@ fn push_classification_explanation(
     for missing in &evidence.missing_discriminators {
         has_gap_evidence = true;
         lines.push(format!(
-            "- missing test input `{}`: {}",
+            "- missing value or check `{}`: {}",
             missing.value,
             plain_observation_wording(&missing.reason)
         ));
@@ -1407,14 +1407,14 @@ fn seam_class_reason(entry: &ClassifiedSeam) -> &'static str {
     use crate::analysis::seams::SeamGripClass;
     match entry.class {
         SeamGripClass::StronglyGripped => {
-            "every step from the changed code to a test check is established and no missing test input is recorded."
+            "every step from the changed code to a test check is established and no missing value or check is recorded."
         }
         SeamGripClass::WeaklyGripped => {
-            "the tests found check this loosely, or a specific test input is missing."
+            "the tests found check this loosely, or a specific value or check is missing."
         }
         SeamGripClass::Ungripped => "no test path to this code was detected.",
         SeamGripClass::ReachableUnrevealed => {
-            "tests reach this code, but no check that would notice a change was found."
+            "tests appear to reach this code, but no check that would notice a change was found."
         }
         SeamGripClass::ActivationUnknown => {
             "ripr cannot tell whether a test runs this with a changed value."
@@ -1931,6 +1931,31 @@ mod seam_hover_tests {
     // and missing-discriminator reasons spell the producer marker in words;
     // embedded source text with the token is left alone.
     #[test]
+    fn seam_hover_labels_an_error_variant_as_a_value_or_check_not_an_input() -> Result<(), String> {
+        let mut seam = weakly_gripped_classified();
+        seam.evidence.missing_discriminators = vec![MissingDiscriminatorFact {
+            value: "PricingError::Boundary".to_string(),
+            reason: "no test asserts this error variant".to_string(),
+            flow_sink: None,
+        }];
+        let hover = classified_seam_hover_response(&seam, &sample_diagnostic(), None);
+        let md = extract_markup(&hover)?;
+        for needle in [
+            "## Missing value or check",
+            "- `PricingError::Boundary` \u{2014} no test asserts this error variant",
+            "- missing value or check `PricingError::Boundary`:",
+        ] {
+            if !md.contains(needle) {
+                return Err(format!("missing {needle:?} in:\n{md}"));
+            }
+        }
+        if md.contains("test input") {
+            return Err(format!("an error variant is not a test input:\n{md}"));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn seam_hover_spells_the_unconfirmed_observation_in_words() -> Result<(), String> {
         let mut seam = weakly_gripped_classified();
         seam.evidence.observe = stage(
@@ -1963,7 +1988,7 @@ mod seam_hover_tests {
             "- observation yes: assertion reads the value\n",
             "- discrimination weak: changed value never named\n",
             "* observation yes: assertion reads the value\n",
-            "- missing test input `a`: input unexecuted\n",
+            "- missing value or check `a`: input unexecuted\n",
             "`raise ValueError(\"observation_unverified\")`.",
         ] {
             if !md.contains(needle) {
@@ -1986,7 +2011,7 @@ mod seam_hover_tests {
             "## How well tests check this",
             "Tests only loosely check this",
             "## Why this diagnostic?",
-            "the tests found check this loosely, or a specific test input is missing.",
+            "the tests found check this loosely, or a specific value or check is missing.",
             "Strong evidence:",
             "Weak / missing evidence:",
             "Recommended next move:",
@@ -2000,6 +2025,10 @@ mod seam_hover_tests {
             if !md.contains(needle) {
                 return Err(format!("missing {needle:?} in:\n{md}"));
             }
+        }
+        // #10695: static evidence is not stated as a test outcome.
+        if md.contains("would not notice") {
+            return Err(format!("hover predicts a test outcome:\n{md}"));
         }
         // #10695: no internal jargon or machine class names in hover prose.
         for banned in [
@@ -2024,13 +2053,13 @@ mod seam_hover_tests {
         let diagnostic = sample_diagnostic();
         let hover = classified_seam_hover_response(&seam, &diagnostic, None);
         let md = extract_markup(&hover)?;
-        if !md.contains("## Missing test input") {
+        if !md.contains("## Missing value or check") {
             return Err(format!("missing section header in:\n{md}"));
         }
         if !md.contains("discount_threshold (equality boundary)") {
             return Err(format!("missing boundary value in:\n{md}"));
         }
-        if !md.contains("missing test input `discount_threshold (equality boundary)`") {
+        if !md.contains("missing value or check `discount_threshold (equality boundary)`") {
             return Err(format!("missing classification explanation in:\n{md}"));
         }
         if !md.contains("## Next step") {
@@ -2165,7 +2194,7 @@ mod seam_hover_tests {
             "- action: `write_focused_test`",
             "- title: Add equality-boundary discriminator test",
             "- location: `src/pricing.rs:88`",
-            "- missing test input: `discount_threshold (equality boundary)`",
+            "- missing value or check: `discount_threshold (equality boundary)`",
             "- target: `tests/pricing.rs`",
             "- related test: `tests/pricing.rs::below_threshold_has_no_discount`",
             "- verify: `ripr agent verify --root . --json`",
