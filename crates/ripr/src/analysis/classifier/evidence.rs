@@ -2506,17 +2506,22 @@ mod tests {
     /// #10980 review control: a credited test keeps its normal infection
     /// reading when a sibling test is withheld, even when the credited test
     /// passes no comparable values (a zero-argument owner whose literal
-    /// tail the equality fold reads). The withholding fires only on an
-    /// empty credited set, so the clean test's reach keeps infection `yes`.
+    /// tail the equality fold reads). The sibling's stale literal
+    /// contradicts BOTH the candidate fold (7) and the reconstructed
+    /// baseline fold (6), so it is genuinely withheld, and the withholding
+    /// fires only on an empty credited set, so the clean test's reach keeps
+    /// infection `yes`. The literal `7` occurs exactly once in the owner
+    /// body, so the `after`→`before` reconstruction reaches the withheld
+    /// path.
     #[test]
     fn a_credited_zero_argument_test_keeps_infection_beside_a_withheld_sibling()
     -> Result<(), String> {
         use crate::domain::ExposureClass;
 
-        let source = "pub fn answer() -> i32 {\n    3\n}\n\n\
+        let source = "pub fn answer() -> i32 {\n    7\n}\n\n\
              #[cfg(test)]\nmod tests {\n    use super::*;\n\
-             #[test]\nfn pins_new_value() {\nassert_eq!(answer(), 3);\n}\n\
-             #[test]\nfn stale_old_value() {\nassert_eq!(answer(), 2);\n}\n}\n";
+             #[test]\nfn pins_new_value() {\nassert_eq!(answer(), 7);\n}\n\
+             #[test]\nfn stale_old_value() {\nassert_eq!(answer(), 5);\n}\n}\n";
         let path = PathBuf::from("src/lib.rs");
         let facts = crate::analysis::syntax::ra::summarize_file_with_parser(&path, source)?;
         let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
@@ -2544,9 +2549,9 @@ mod tests {
             owner: Some(owner.id.clone()),
             family: ProbeFamily::ReturnValue,
             delta: DeltaKind::Value,
-            before: Some("2".to_string()),
-            after: Some("3".to_string()),
-            expression: "3".to_string(),
+            before: Some("6".to_string()),
+            after: Some("7".to_string()),
+            expression: "7".to_string(),
             expected_sinks: Vec::new(),
             required_oracles: Vec::new(),
         };
