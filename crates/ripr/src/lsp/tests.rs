@@ -22835,6 +22835,76 @@ async fn hover_without_evidence_names_an_unsaved_buffer() -> Result<(), String> 
 }
 
 #[tokio::test]
+async fn external_rewrite_reloaded_into_a_buffer_is_analyzed_without_a_save() -> Result<(), String>
+{
+    // A formatter, `git checkout` or coding agent rewrites an open file and the
+    // client reloads the buffer with a change, never a save. The buffer then
+    // equals the file on disk, so "save the file" cannot help; ripr must treat
+    // it as saved content and schedule analysis. A buffer that is merely ahead
+    // of disk (typing) must still wait for a real save.
+    let fixture = quarantine_fixture("external-rewrite")?;
+    let (service, socket) = LspService::new(|client| Backend::new(client, fixture.root.clone()));
+    drop(socket);
+    let backend = service.inner();
+    backend
+        .initialize(initialize_params(
+            None,
+            Some(
+                file_uri_for_path(&fixture.root)
+                    .map_err(|err| format!("root URI failed: {err}"))?,
+            ),
+        ))
+        .await
+        .map_err(|err| format!("initialize failed: {err}"))?;
+    backend
+        .did_open(quarantine_open_params(&fixture.uri_a, QUARANTINE_TEXT_A))
+        .await;
+    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A)?;
+    let before = backend.workspace_revision();
+
+    // Typing: the buffer is ahead of disk, so no analysis input changed.
+    backend
+        .did_change(quarantine_change_params(
+            &fixture.uri_a,
+            2,
+            QUARANTINE_TEXT_A_DIRTY,
+        ))
+        .await;
+    if backend.workspace_revision() != before {
+        return Err("a buffer ahead of disk must not schedule analysis".to_string());
+    }
+
+    // External rewrite: disk now holds the same bytes as the reloaded buffer.
+    std::fs::write(&fixture.path_a, QUARANTINE_TEXT_A_DIRTY)
+        .map_err(|err| format!("rewrite a.rs failed: {err}"))?;
+    backend
+        .did_change(quarantine_change_params(
+            &fixture.uri_a,
+            3,
+            QUARANTINE_TEXT_A_DIRTY,
+        ))
+        .await;
+    if backend.workspace_revision() != before + 1 {
+        return Err(format!(
+            "a buffer equal to disk must be recorded as saved content: {before} -> {}",
+            backend.workspace_revision()
+        ));
+    }
+    // The same bytes again are the same input: no second analysis.
+    backend
+        .did_change(quarantine_change_params(
+            &fixture.uri_a,
+            4,
+            QUARANTINE_TEXT_A_DIRTY,
+        ))
+        .await;
+    if backend.workspace_revision() != before + 1 {
+        return Err("an unchanged reload must deduplicate".to_string());
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn hover_without_evidence_routes_an_unanalyzed_file_to_refresh() -> Result<(), String> {
     // A document with no analyzed saved content (here a new file that is
     // not on disk yet, so no refresh can record a baseline for it) is

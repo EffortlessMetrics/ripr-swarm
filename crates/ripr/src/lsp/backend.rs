@@ -136,10 +136,10 @@ use tower_lsp_server::ls_types::{
     Hover, HoverParams, InitializeParams, InitializeResult, InitializedParams, LSPAny,
     LogTraceParams, MessageType, PositionEncodingKind, Registration,
     RelatedFullDocumentDiagnosticReport, RelatedUnchangedDocumentDiagnosticReport,
-    ShowMessageParams, TraceValue, UnchangedDocumentDiagnosticReport, Unregistration, Uri,
-    WorkspaceDiagnosticParams, WorkspaceDiagnosticReport, WorkspaceDiagnosticReportResult,
-    WorkspaceDocumentDiagnosticReport, WorkspaceFullDocumentDiagnosticReport,
-    WorkspaceUnchangedDocumentDiagnosticReport,
+    ShowMessageParams, TextDocumentIdentifier, TraceValue, UnchangedDocumentDiagnosticReport,
+    Unregistration, Uri, WorkspaceDiagnosticParams, WorkspaceDiagnosticReport,
+    WorkspaceDiagnosticReportResult, WorkspaceDocumentDiagnosticReport,
+    WorkspaceFullDocumentDiagnosticReport, WorkspaceUnchangedDocumentDiagnosticReport,
 };
 use tower_lsp_server::{Client, LanguageServer};
 
@@ -3722,6 +3722,25 @@ impl Backend {
         }
     }
 
+    /// Whether `uri`'s buffer is quarantined only because it differs from the
+    /// analyzed saved content while its bytes equal the file on disk. A cheap
+    /// length check precedes the read, so ordinary typing (buffer ahead of
+    /// disk) costs one `stat` per change.
+    fn buffer_equals_unanalyzed_disk_content(&self, uri: &Uri) -> bool {
+        let Some((path, DocumentStalenessReason::BufferDivergesFromAnalyzedSavedContent)) =
+            self.document_quarantine(uri)
+        else {
+            return false;
+        };
+        let Some(text) = self.document_text(uri) else {
+            return false;
+        };
+        if std::fs::metadata(&path).map(|meta| meta.len()).ok() != u64::try_from(text.len()).ok() {
+            return false;
+        }
+        std::fs::read(&path).is_ok_and(|disk| disk == text.as_bytes())
+    }
+
     /// The quarantine state of an open document, as `(path, reason)`.
     /// `None` means the document is unknown or clean: its buffer matches the
     /// saved content the committed snapshot analyzed.
@@ -6385,6 +6404,19 @@ impl LanguageServer for Backend {
         };
         self.handle_document_quarantine_transition(&uri, transition, decision_version)
             .await;
+        // An external rewrite (formatter, `git checkout`, a coding agent) that
+        // the client reloads into an open buffer arrives as a change with no
+        // `didSave`, so the evidence would stay paused behind advice to save
+        // a file that is not dirty. When the new buffer is exactly the file
+        // on disk it is saved content: record it as a save so the normal
+        // digest dedup and refresh path analyze it.
+        if self.buffer_equals_unanalyzed_disk_content(&uri) {
+            self.did_save(DidSaveTextDocumentParams {
+                text_document: TextDocumentIdentifier { uri },
+                text: None,
+            })
+            .await;
+        }
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
