@@ -283,7 +283,7 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
         assert.ok(middleware, 'the observed real client must expose its middleware object');
         const previous = middleware.provideCodeActions;
         const wrapped = trace.middleware(previous, {
-          client_id: clientIdentity(client), client_pid: client.serverProcess?.pid,
+          client_id: clientIdentity(client), client_pid: () => client.serverProcess?.pid,
         });
         middleware.provideCodeActions = wrapped;
         restoreMiddleware.push(() => {

@@ -296,6 +296,35 @@ suite('Request event trace unit controls', () => {
     assert.strictEqual(failure, timeouts[0], 'cleanup must preserve the original entry failure');
   });
 
+  test('a throwing cancellation disposal cannot replace the result or original rejection', async () => {
+    const trace = new RequestEventTrace();
+    const document = { uri: { toString: () => 'file:///fixture/alpha.rs' }, version: 2 } as vscode.TextDocument;
+    const throwingToken = {
+      isCancellationRequested: false,
+      onCancellationRequested: () => ({ dispose: () => { throw new Error('dispose failed'); } }),
+    } as unknown as vscode.CancellationToken;
+    const actions: vscode.Command[] = [];
+    assert.strictEqual(trace.middleware()(document, {} as vscode.Range, {} as vscode.CodeActionContext,
+      throwingToken, () => actions), actions);
+    const original = new Error('original rejection preserved');
+    await assert.rejects(Promise.resolve(trace.middleware()(document, {} as vscode.Range,
+      {} as vscode.CodeActionContext, throwingToken, () => Promise.reject(original))),
+      error => error === original);
+    const kinds = (trace.snapshot().events as Array<Record<string, unknown>>).map(event => event.kind);
+    assert.deepStrictEqual(kinds.filter(kind => kind === 'provider.resolve' || kind === 'provider.reject'),
+      ['provider.resolve', 'provider.reject']);
+  });
+
+  test('reads the client pid at invocation time, not wiring time', () => {
+    const { trace, document, range, context, token } = providerFixture();
+    let pid = 123;
+    const wrapped = trace.middleware(undefined, { client_id: 7, client_pid: () => pid });
+    pid = 456;
+    const observe = trace.observeProviderRequest(document, range, { client_id: 7, client_pid: 456 });
+    wrapped(document, range, context, token, () => []);
+    assert.strictEqual(observe().status, 'observed');
+  });
+
   test('bounds and sanitizes metadata; replacement documents get distinct local identities', () => {
     const trace = new RequestEventTrace();
     const token = `ghp_${'a'.repeat(30)}`;

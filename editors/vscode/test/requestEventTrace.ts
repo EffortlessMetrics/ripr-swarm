@@ -127,10 +127,12 @@ export class RequestEventTrace {
     } catch { return () => ({ status: 'incomplete' }); }
   }
 
-  middleware(previous?: ProviderMiddleware, client: Fields = {}): ProviderMiddleware {
+  middleware(previous?: ProviderMiddleware,
+    client: Omit<Fields, 'client_pid'> & { client_pid?: number | (() => number | undefined) } = {}): ProviderMiddleware {
     return (document, range, context, token, next) => {
       const fields = { ...this.document(document), client_id: client.client_id,
-        client_pid: client.client_pid, invocation_id: ++this.nextInvocation,
+        client_pid: typeof client.client_pid === 'function' ? client.client_pid() : client.client_pid,
+        invocation_id: ++this.nextInvocation,
         trigger_kind: context.triggerKind, range_start_line: range.start?.line,
         range_start_character: range.start?.character, range_end_line: range.end?.line,
         range_end_character: range.end?.character };
@@ -139,20 +141,14 @@ export class RequestEventTrace {
         this.record('provider.cancel', { ...fields, cancelled: true });
       });
       let settled = false;
-      const resolved = <T>(value: T): T => {
-        if (!settled) {
-          settled = true;
-          subscription.dispose(); this.record('provider.resolve', fields);
-        }
-        return value;
+      const settle = (kind: 'provider.resolve' | 'provider.reject', error?: unknown): void => {
+        if (settled) { return; }
+        settled = true;
+        try { subscription.dispose(); } catch { /* disposal must not replace the outcome */ }
+        this.record(kind, fields, error);
       };
-      const rejected = (error: unknown): never => {
-        if (!settled) {
-          settled = true;
-          subscription.dispose(); this.record('provider.reject', fields, error);
-        }
-        throw error;
-      };
+      const resolved = <T>(value: T): T => { settle('provider.resolve'); return value; };
+      const rejected = (error: unknown): never => { settle('provider.reject', error); throw error; };
       try {
         const result = previous ? previous(document, range, context, token, next)
           : next(document, range, context, token);
