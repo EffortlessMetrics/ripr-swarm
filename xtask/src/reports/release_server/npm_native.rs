@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 use std::fs::{self, File, OpenOptions};
-use std::io::{Cursor, Read, Write};
+use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -198,7 +198,7 @@ fn verify_package(
     path: &Path,
     identity: &payload::FinalNativePayloadIdentity,
     contract: &DistributionContract,
-) -> Result<String, String> {
+) -> Result<(String, Vec<u8>), String> {
     let bytes = fs::read(path).map_err(|e| format!("read {}: {e}", path.display()))?;
     let digest = hex_lower(&Sha256::digest(&bytes));
     let temp = std::env::temp_dir().join(format!(
@@ -214,7 +214,7 @@ fn verify_package(
     let cleanup =
         fs::remove_dir_all(&temp).map_err(|e| format!("remove verification directory: {e}"));
     result.and(cleanup)?;
-    Ok(digest)
+    Ok((digest, bytes))
 }
 
 fn verify_package_inner(
@@ -325,13 +325,47 @@ fn verify_qualification(bytes: &[u8], expected: &Value) -> Result<(), String> {
 }
 
 fn promote_pair(
-    package: &Path,
+    package_bytes: &[u8],
+    verified_hash: &str,
     receipt: &Path,
     output_package: &Path,
     output_receipt: &Path,
 ) -> Result<(), String> {
-    fs::hard_link(package, output_package)
-        .map_err(|e| format!("publish local package {}: {e}", output_package.display()))?;
+    let mut package = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .open(output_package)
+        .map_err(|e| format!("create local package {}: {e}", output_package.display()))?;
+    let write_result = (|| {
+        package
+            .write_all(package_bytes)
+            .map_err(|e| format!("write local package: {e}"))?;
+        package
+            .seek(SeekFrom::Start(0))
+            .map_err(|e| format!("seek local package: {e}"))?;
+        let mut hasher = Sha256::new();
+        let mut buffer = [0u8; 8192];
+        loop {
+            let count = package
+                .read(&mut buffer)
+                .map_err(|e| format!("read local package: {e}"))?;
+            if count == 0 {
+                break;
+            }
+            hasher.update(&buffer[..count]);
+        }
+        if hex_lower(&hasher.finalize()) != verified_hash {
+            return Err("promoted npm package does not match verified bytes".to_string());
+        }
+        Ok(())
+    })();
+    drop(package);
+    if let Err(error) = write_result {
+        fs::remove_file(output_package)
+            .map_err(|e| format!("package write failed ({error}); remove partial package: {e}"))?;
+        return Err(error);
+    }
     if let Err(error) = fs::hard_link(receipt, output_receipt) {
         fs::remove_file(output_package).map_err(|e| {
             format!("receipt promotion failed ({error}); remove partial package: {e}")
@@ -412,7 +446,8 @@ pub(super) fn produce(
         );
         let package = staging.join(&package_name);
         pack(payload_dir, &identity, &contract, &package)?;
-        let verified_tarball_hash = verify_package(&package, &identity, &contract)?;
+        let (verified_tarball_hash, verified_tarball_bytes) =
+            verify_package(&package, &identity, &contract)?;
         if sha256_file(identity_path)? != identity_hash
             || payload::verify_final_native_payload(payload_dir, identity_path)? != identity
         {
@@ -443,7 +478,13 @@ pub(super) fn produce(
         .map_err(|e| e.to_string())?;
         let output_package = out_dir.join(&package_name);
         let output_receipt = out_dir.join("npm-native-receipt.json");
-        promote_pair(&package, &receipt_path, &output_package, &output_receipt)?;
+        promote_pair(
+            &verified_tarball_bytes,
+            &verified_tarball_hash,
+            &receipt_path,
+            &output_package,
+            &output_receipt,
+        )?;
         eprintln!(
             "wrote {} and {}",
             output_package.display(),
@@ -521,16 +562,16 @@ mod tests {
                 .as_nanos()
         ));
         fs::create_dir(&root).map_err(|e| e.to_string())?;
-        let source_package = root.join("source.tgz");
         let source_receipt = root.join("source.json");
         let output_package = root.join("output.tgz");
         let output_receipt = root.join("output.json");
-        fs::write(&source_package, b"package").map_err(|e| e.to_string())?;
+        let hash = hex_lower(&Sha256::digest(b"package"));
         fs::write(&source_receipt, b"receipt").map_err(|e| e.to_string())?;
         fs::write(&output_receipt, b"existing").map_err(|e| e.to_string())?;
         assert!(
             promote_pair(
-                &source_package,
+                b"package",
+                &hash,
                 &source_receipt,
                 &output_package,
                 &output_receipt
@@ -544,7 +585,8 @@ mod tests {
         );
         fs::remove_file(&output_receipt).map_err(|e| e.to_string())?;
         promote_pair(
-            &source_package,
+            b"package",
+            &hash,
             &source_receipt,
             &output_package,
             &output_receipt,
@@ -649,10 +691,22 @@ mod tests {
         let repeated = root.join("repeat.tgz");
         pack(&source, &identity, &contract, &repeated)?;
         assert_eq!(sha256_file(&original)?, sha256_file(&repeated)?);
-        let verified = verify_package(&repeated, &identity, &contract)?;
+        let (verified, snapshot) = verify_package(&repeated, &identity, &contract)?;
         ensure_archive_unchanged(&repeated, &verified)?;
         fs::write(&repeated, b"replacement").map_err(|e| e.to_string())?;
         assert!(ensure_archive_unchanged(&repeated, &verified).is_err());
+        let staged_receipt = root.join("staged.json");
+        fs::write(&staged_receipt, b"receipt").map_err(|e| e.to_string())?;
+        let promoted_package = root.join("promoted.tgz");
+        let promoted_receipt = root.join("promoted.json");
+        promote_pair(
+            &snapshot,
+            &verified,
+            &staged_receipt,
+            &promoted_package,
+            &promoted_receipt,
+        )?;
+        assert_eq!(sha256_file(&promoted_package)?, verified);
         for mutation in [
             "binary", "mode", "license", "version", "platform", "missing",
         ] {

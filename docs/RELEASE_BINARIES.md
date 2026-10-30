@@ -88,6 +88,11 @@ digests. It records the payload aggregate, identity and producer receipt hashes
 separately from the tarball hash in `npm-native-receipt.json`. Existing output
 files are not overwritten. This is a Linux x64 package artifact only: it does
 not establish installed channel parity, a compatibility floor or publication.
+The build identity must be retained with the successful workflow run and
+artifact evidence; its JSON fields alone do not authenticate their origin. If
+the process is killed between the package and receipt writes, remove the
+incomplete output package before retrying; a package without its receipt is not
+a successful producer result.
 
 ## Exact-candidate qualification (read-only)
 
