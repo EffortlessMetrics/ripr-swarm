@@ -45,7 +45,6 @@ jobs:
       PACKAGE: ${{ matrix.package }}
       TEST_FILTER: ${{ matrix.test_filter }}
       TEST_WITNESS: ${{ matrix.test_witness }}
-      EVIDENCE: ${{ runner.temp }}/onboarding-focused-proof
     steps:
       - uses: actions/checkout@v6
         with:
@@ -55,6 +54,8 @@ jobs:
       - name: Bind immutable source and host
         run: |
           set -euo pipefail
+          export EVIDENCE="$RUNNER_TEMP/onboarding-focused-proof"
+          printf 'EVIDENCE=%s\n' "$EVIDENCE" >> "$GITHUB_ENV"
           mkdir -p "$EVIDENCE"
           test "$(git rev-parse HEAD)" = "$SUBJECT"
           test -z "$(git status --porcelain)"
