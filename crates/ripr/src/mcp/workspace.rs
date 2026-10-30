@@ -1515,7 +1515,7 @@ fn worktree_scope_disclosure(snapshot: &Snapshot) -> Value {
             "analyzed": analyzed,
             "uncommitted_edits": "saved tracked edits included",
             "note": format!(
-                "this snapshot analyzed saved staged and unstaged tracked edits as the producer read them during the refresh; unsaved editor buffers, untracked files and gitignored files are outside it. The consumed source bytes of the findings and the seam inventory were not shown to agree{}, so edits after the refresh are not detected (refresh again) and repair cards and repair readiness are withheld",
+                "this snapshot analyzed saved staged and unstaged tracked edits as the producer read them during the refresh; unsaved editor buffers and gitignored files are outside it, and untracked files are never analyzed as findings. The consumed source bytes of the findings and the seam inventory were not shown to agree{}, so edits after the refresh are not detected (refresh again) and repair cards and repair readiness are withheld",
                 match &snapshot.custody {
                     SourceCustody::NotEstablished { reason } => format!(" ({reason})"),
                     SourceCustody::Established { .. } | SourceCustody::NotApplicable => String::new(),
@@ -1967,9 +1967,28 @@ fn run_worktree_check(
             .map_err(|error| check_failure(&error, &root, base, RefreshSource::Worktree))?;
     #[cfg(test)]
     after_worktree_findings_hook::run();
-    let inventory = super::repair_card::gather_seam_inventory(&root, config, &output.findings)?;
-    let mut snapshot = match worktree_custody(&output, &findings_sources, &inventory) {
-        Ok(commitment) => {
+    // An inventory failure must not drop findings the producer already
+    // computed: it degrades to a withheld custody carrying the cause.
+    let custody = super::repair_card::gather_seam_inventory(&root, config, &output.findings)
+        .map_err(|failure| {
+            if crate::analysis::cancellation::current_abort_kind().is_some() {
+                Err(failure)
+            } else {
+                Ok(format!(
+                    "the seam inventory could not be gathered ({}): {}",
+                    failure.code, failure.detail
+                ))
+            }
+        });
+    // A cancelled attempt still fails; any other inventory failure degrades.
+    let custody = match custody {
+        Err(Err(failure)) => return Err(failure),
+        Err(Ok(reason)) => Err(reason),
+        Ok(inventory) => worktree_custody(&output, &findings_sources, &inventory)
+            .map(|commitment| (commitment, inventory)),
+    };
+    let mut snapshot = match custody {
+        Ok((commitment, inventory)) => {
             let admission = super::repair_admission::SeamAdmission::evaluate(
                 &output.findings,
                 &inventory.candidate_seams,

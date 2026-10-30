@@ -10,5 +10,8 @@
   is part of the worktree snapshot identity, so an equal-result edit to a
   consumed helper or test invalidates pinned snapshots. `scope`
   `consumed_source_commitment` is `established` (with `repair_cards:
-  "available"`) or `not_established` (`withheld`); unsaved buffers, untracked
-  files and non-Rust inputs stay outside (#7357).
+  "available"`) or `not_established` (`withheld`); unsaved buffers, gitignored
+  files and non-Rust inputs stay outside, untracked files are never analyzed as
+  findings (the inventory reads them, so their bytes join the commitment), and
+  an inventory failure keeps the findings with custody `not_established`
+  (#7357).

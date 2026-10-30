@@ -468,8 +468,15 @@ impl WorkspaceSession {
         // inventory consumed the same Rust bytes. Anything else refuses with
         // the recorded cause instead of pairing two saved states.
         if snapshot.source == super::workspace::RefreshSource::Worktree
-            && let super::workspace::SourceCustody::NotEstablished { reason } = &snapshot.custody
+            && !matches!(
+                snapshot.custody,
+                super::workspace::SourceCustody::Established { .. }
+            )
         {
+            let reason = match &snapshot.custody {
+                super::workspace::SourceCustody::NotEstablished { reason } => reason.as_str(),
+                _ => "source custody was not recorded for this worktree snapshot",
+            };
             return Err(agent_card_failure(AgentCardError::refusal(
                 AgentCardRefusalKind::IncompleteInventory,
                 format!(

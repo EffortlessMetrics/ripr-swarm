@@ -235,8 +235,8 @@ when staged or unstaged tracked edits exist; sharing the authority does not
 mean identical input. `ripr check --committed` selects committed input;
 `ripr check --worktree --format json` analyzes staged and unstaged tracked
 edits outside MCP, or inside MCP with the opt-in `source: "worktree"`
-(RIPR-SPEC-0211, #7357: findings only; repair cards and readiness
-withheld). The existing response `scope` note discloses detected
+(RIPR-SPEC-0211, #7357: repair cards and readiness only with an
+established producer-custody agreement, withheld with the cause otherwise). The existing response `scope` note discloses detected
 excluded edits. The call blocks until the
 attempt reaches a terminal state and reports it: `completed` with the new
 snapshot identity (a `snapshot:sha256:` digest over the typed outcome, the

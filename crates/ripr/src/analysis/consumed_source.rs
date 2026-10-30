@@ -24,12 +24,16 @@ pub(crate) struct ConsumedRustSources {
 impl ConsumedRustSources {
     /// Observe the raw loaded buffer before parsing or consulting fact caches.
     pub(crate) fn record(&mut self, path: &Path, bytes: Option<&[u8]>) {
-        if !is_normal_relative_path(path) {
-            return;
-        }
-        let observed = bytes.map_or(Commitment::Unavailable, |bytes| {
-            Commitment::Captured(format!("{:x}", Sha256::digest(bytes)))
-        });
+        // An empty, absolute or escaping key cannot be vouched for under the
+        // snapshot root. It is kept as a conflicting observation so it forces
+        // a refusal instead of being silently dropped.
+        let observed = if is_normal_relative_path(path) {
+            bytes.map_or(Commitment::Unavailable, |bytes| {
+                Commitment::Captured(format!("{:x}", Sha256::digest(bytes)))
+            })
+        } else {
+            Commitment::Conflicting
+        };
         self.paths
             .entry(path.to_path_buf())
             .and_modify(|previous| {
@@ -356,6 +360,24 @@ mod tests {
             &ConsumedRustSources::default(),
             CustodyRefusal::FindingsObservedNothing,
             "an empty findings carrier",
+        )?;
+        // A non-normal key is recorded as an uncaptured observation, so it
+        // refuses on either side instead of being dropped.
+        refusal_is(
+            &carrier(&[
+                ("src/lib.rs", Some(b"a")),
+                ("tests/t.rs", Some(b"t")),
+                ("../escaped.rs", Some(b"x")),
+            ]),
+            &findings,
+            CustodyRefusal::InventoryUnobserved(PathBuf::from("../escaped.rs")),
+            "a recorded out-of-root inventory key",
+        )?;
+        refusal_is(
+            &findings,
+            &carrier(&[("src/lib.rs", Some(b"a")), ("/abs/t.rs", Some(b"t"))]),
+            CustodyRefusal::FindingsUnobserved(PathBuf::from("/abs/t.rs")),
+            "a recorded absolute findings key",
         )?;
         // Absorbing a conflicting carrier never regains authority.
         let mut folded = carrier(&[("src/lib.rs", Some(b"a")), ("tests/t.rs", Some(b"t"))]);

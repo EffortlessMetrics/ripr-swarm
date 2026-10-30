@@ -276,8 +276,14 @@ official SDK transport:
     included"`. `consumed_source_commitment` is `established` with
     `repair_cards: "available"` when custody holds, and `not_established`
     with `repair_cards: "withheld"` otherwise; the note names the cause.
-    Unsaved buffers, untracked and gitignored files stay outside either way,
-    and the server still does not watch the worktree. A committed snapshot
+    Unsaved buffers and gitignored files stay outside either way, and
+    untracked files are never analyzed as findings; the seam inventory walks
+    disk, so an untracked Rust file it reads is bound into the commitment (see
+    the residuals). The server still does not watch the worktree. If the seam
+    inventory cannot be gathered after the findings producer ran, the refresh
+    still serves the findings with custody `not_established` and the failure
+    named, rather than failing the whole refresh (a cancelled attempt still
+    fails). A committed snapshot
     makes no custody claim and keeps its unchanged contract.
   - Residuals under #7357 / #1765 / #1602: a Rust file that only the
     inventory read and the findings producer did not (a new file or one the
@@ -285,7 +291,13 @@ official SDK transport:
     contradict the findings; unsupported, generated, `include!` and
     mixed-language dependencies are not claimed; a committed refresh over a
     dirty checkout still reads HEAD bytes for findings and live bytes for the
-    inventory and is not covered by this agreement.
+    inventory and is not covered by this agreement; an untracked (not
+    intent-to-add) Rust file is not analyzed as a finding but is read by the
+    inventory, so editing it changes the commitment and snapshot identity; a
+    deleted or renamed tracked Rust file in the findings scope has no captured
+    bytes and may refuse custody (fail-closed, cards withheld with the cause).
+    A non-normal (empty, absolute or escaping) observed path is recorded as an
+    uncaptured observation and refuses.
 - The snapshot identity is `snapshot:sha256:` over the typed outcome digest,
   the sorted canonical item identities, and each item's evidence digest:
   equivalent roots at equivalent inputs share one portable identity, while

@@ -295,12 +295,12 @@ fn head_movement_between_findings_and_inventory_withholds_the_card() -> Result<(
     Ok(())
 }
 
-/// Equal findings, equal diff and equal scope names, different consumed Rust
-/// bytes: the producer commitment alone moves the identity, and a request
-/// pinned to the earlier snapshot fails stale.
+/// Disclosed inventory binding: an UNTRACKED Rust helper is outside the
+/// tracked-worktree scope and never a finding, but the seam inventory walks
+/// disk and reads it, so its bytes are bound into the commitment. This is a
+/// stated residual, not tracked-scope proof.
 #[test]
-fn equal_result_consumed_byte_movement_changes_identity_and_stales_pinned_references()
--> Result<(), String> {
+fn untracked_helper_is_bound_by_the_inventory_and_moves_identity() -> Result<(), String> {
     let fixture = install_fixture("equal-result")?;
     // An untracked helper is outside the worktree diff and the findings, but
     // the seam inventory reads the whole corpus.
@@ -384,4 +384,119 @@ fn committed_and_worktree_refreshes_do_not_share_custody_or_identity() -> Result
         return Err("source kind must stay load-bearing across the switch".to_string());
     }
     Ok(())
+}
+
+/// An inventory failure after the findings producer ran must not drop the
+/// findings: the snapshot is served with custody withheld and the cause named.
+#[test]
+fn inventory_failure_degrades_to_withheld_custody_and_keeps_findings() -> Result<(), String> {
+    let fixture = install_fixture("inventory-failure")?;
+    let root = fixture.root.clone();
+    after_worktree_findings_hook::install(move || {
+        // Deleting the checked-out branch ref makes the inventory's own head
+        // resolution fail after the findings producer already ran.
+        let _ = fixture_git_ok(&root, &["update-ref", "-d", "HEAD"]);
+    });
+    let withheld = worktree_refresh(&fixture.root)?;
+    assert_withheld(&withheld, "seam inventory could not be gathered")?;
+    Ok(())
+}
+
+/// A deleted tracked Rust file in the findings scope is fail-closed: the
+/// findings producer cannot capture its bytes, so custody is withheld (or the
+/// file is simply not consumed). Either way no card is served for an
+/// unobserved path.
+#[test]
+fn deleted_tracked_rust_file_never_establishes_custody_over_an_unobserved_path()
+-> Result<(), String> {
+    let fixture = install_fixture("deleted-file")?;
+    write(
+        &fixture.root,
+        "src/extra.rs",
+        "pub fn extra() -> i32 {\n    3\n}\n",
+    )?;
+    commit(&fixture.root, "add extra")?;
+    std::fs::remove_file(fixture.root.join("src/extra.rs")).map_err(|e| e.to_string())?;
+    let snapshot = worktree_refresh(&fixture.root)?;
+    match &snapshot.custody {
+        SourceCustody::Established { .. } => {
+            if snapshot.card_producers.is_none() {
+                return Err("established custody must bind card producers".to_string());
+            }
+        }
+        SourceCustody::NotEstablished { .. } => {
+            if snapshot.card_producers.is_some() {
+                return Err("withheld custody must not bind card producers".to_string());
+            }
+        }
+        SourceCustody::NotApplicable => return Err("a worktree snapshot has custody".to_string()),
+    }
+    Ok(())
+}
+
+/// Two saved edits to TRACKED, findings-consumed Rust files with equal
+/// findings: the commitment and snapshot id change, and a request pinned to the
+/// earlier snapshot fails stale.
+fn tracked_equal_result_control(
+    tag: &str,
+    relative: &str,
+    edited: &str,
+    stage: bool,
+) -> Result<(), String> {
+    let fixture = install_fixture(tag)?;
+    let first = worktree_refresh(&fixture.root)?;
+    let first_commitment = commitment_of(&first)?.to_string();
+    let first_id = first.snapshot_id.clone();
+    let first_items = first
+        .items
+        .iter()
+        .map(|item| item.canonical_id.clone())
+        .collect::<Vec<_>>();
+    write(&fixture.root, relative, edited)?;
+    if stage {
+        fixture_git_ok(&fixture.root, &["add", relative])?;
+    }
+    let second = worktree_refresh(&fixture.root)?;
+    let second_commitment = commitment_of(&second)?.to_string();
+    let second_items = second
+        .items
+        .iter()
+        .map(|item| item.canonical_id.clone())
+        .collect::<Vec<_>>();
+    if first_items.is_empty() || first_items != second_items {
+        return Err("the control needs equal, non-empty findings".to_string());
+    }
+    if first_commitment == second_commitment {
+        return Err(format!(
+            "{relative}: an equal-result edit must move the commitment"
+        ));
+    }
+    if first_id == second.snapshot_id {
+        return Err(format!(
+            "{relative}: an equal-result edit must move the snapshot id"
+        ));
+    }
+    let session = session_over(second);
+    let stale = session
+        .active_snapshot(Some(&first_id))
+        .err()
+        .ok_or("a pinned old snapshot must fail")?;
+    if stale.code != CODE_STALE_SNAPSHOT {
+        return Err(format!("expected stale_snapshot, got {}", stale.code));
+    }
+    Ok(())
+}
+
+#[test]
+fn tracked_test_file_equal_result_edit_moves_commitment_and_stales_pinned_ids() -> Result<(), String>
+{
+    let edited = format!("// saved comment-only edit\n{PRICING_TESTS}");
+    tracked_equal_result_control("tracked-test", "tests/pricing.rs", &edited, false)
+}
+
+#[test]
+fn tracked_source_file_equal_result_staged_edit_moves_commitment_and_stales_pinned_ids()
+-> Result<(), String> {
+    let edited = format!("// staged comment-only edit\n{CLOSED_LIB}");
+    tracked_equal_result_control("tracked-src", "src/lib.rs", &edited, true)
 }
