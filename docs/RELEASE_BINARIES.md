@@ -66,6 +66,25 @@ targets before writing the aggregate receipt. This proves payload and archive
 shape for the exact candidate; it does not establish a public release, wheel,
 npm package, or native runtime compatibility floor.
 
+### Linux x64 npm native package
+
+From the same clean committed checkout, the Linux x64 producer can wrap the
+staged final payload and its producer build receipt without publishing:
+
+```bash
+cargo xtask release-server-archive --npm-payload-dir <payload-directory> \
+  --payload-identity <payload-identity.json> --producer-receipt <producer-build.json> \
+  --out-dir <new-output-directory>
+```
+
+The command validates the current payload and producer identity, maps the flat
+`ripr` file to the launcher's `bin/ripr`, writes a deterministic npm tarball,
+and checks its extracted metadata, inventory, executable mode and payload
+digests. It records the payload aggregate, identity and producer receipt hashes
+separately from the tarball hash in `npm-native-receipt.json`. Existing output
+files are not overwritten. This is a Linux x64 package artifact only: it does
+not establish installed channel parity, a compatibility floor or publication.
+
 ## Exact-candidate qualification (read-only)
 
 Use `.github/workflows/server-archive-qualification.yml` when archive shape
