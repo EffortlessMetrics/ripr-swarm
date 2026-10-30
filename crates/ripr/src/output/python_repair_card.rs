@@ -12,7 +12,12 @@ struct NativePytestRoute<'a> {
 /// Build only from the producer's declared file and pytest node, never by
 /// parsing an arbitrary user-authored shell command.
 fn native_pytest_route(finding: &Finding) -> Option<NativePytestRoute<'_>> {
-    if finding.language != Some(LanguageId::Python) {
+    if finding.language != Some(LanguageId::Python)
+        || finding
+            .evidence
+            .iter()
+            .any(|line| line.starts_with("suggested_test_line: "))
+    {
         return None;
     }
     let unique = |prefix: &str| {
@@ -38,6 +43,7 @@ fn native_pytest_route_parts<'a>(
 ) -> Option<NativePytestRoute<'a>> {
     let name = node.strip_prefix(file)?.strip_prefix("::")?;
     if name.is_empty()
+        || name.contains("::")
         || name.rsplit("::").next()? != selected
         || crate::domain::python_pytest_verify_display(file, name, false).as_deref() != Some(raw)
         || file.chars().chain(node.chars()).any(char::is_control)
@@ -52,6 +58,14 @@ fn native_pytest_route_parts<'a>(
         args: ["-m", "pytest", node],
         cwd: ".",
     })
+}
+
+pub(crate) fn validated_pytest_raw(finding: &Finding) -> Option<&str> {
+    native_pytest_route(finding)?;
+    finding
+        .evidence
+        .iter()
+        .find_map(|s| s.strip_prefix("suggested_verify_command: "))
 }
 
 /// Render the producer's pytest selector as a Bash action at the selected root.
@@ -77,7 +91,7 @@ pub(crate) fn rooted_pytest_action(finding: &Finding, root: &Path) -> Option<Str
     }
     let quote = |s: &str| crate::agent::loop_commands::shell_arg_for(s, false);
     Some(format!(
-        "(cd -- {} && {} {} {} {})",
+        "(cd -P -- {} && {} {} {} {})",
         quote(root),
         quote(route.program),
         quote(route.args[0]),
@@ -591,9 +605,18 @@ mod tests {
     #[test]
     fn native_route_refuses_disagreeing_or_escaping_test_identity() {
         let file = "tests/test_order.py";
-        let node = "tests/test_order.py::TestOrder::test_total";
-        let raw = "python -m pytest tests/test_order.py::TestOrder::test_total";
+        let node = "tests/test_order.py::test_total";
+        let raw = "python -m pytest tests/test_order.py::test_total";
         assert!(super::native_pytest_route_parts(file, node, raw, "test_total").is_some());
+        assert!(
+            super::native_pytest_route_parts(
+                file,
+                "tests/test_order.py::TestOther::test_total",
+                "python -m pytest tests/test_order.py::TestOther::test_total",
+                "test_total"
+            )
+            .is_none()
+        );
         assert!(super::native_pytest_route_parts(file, node, raw, "test_other").is_none());
         assert!(
             super::native_pytest_route_parts(

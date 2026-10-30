@@ -2707,6 +2707,29 @@ mod tests {
         finding
     }
 
+    #[test]
+    fn conflicting_python_verify_metadata_is_not_rendered_as_a_command() {
+        let mut finding = python_preview_finding(1, true);
+        finding
+            .evidence
+            .retain(|entry| !entry.starts_with("suggested_verify_command: "));
+        finding.evidence.push(
+            "suggested_test_node_id: tests/test_pricing.py::test_small_order_pays_shipping"
+                .to_string(),
+        );
+        finding.evidence.push(
+            "suggested_verify_command: python -m pytest tests/test_pricing.py::test_other"
+                .to_string(),
+        );
+        let text = super::sections::render_finding_digest_with_config(
+            &finding,
+            &RiprConfig::default(),
+            Path::new("/tmp/selected"),
+        );
+        assert!(text.contains("no verified command"), "{text}");
+        assert!(!text.contains("python -m pytest"), "{text}");
+    }
+
     /// #5531: the same carded finding stamped as repo-scoped gets no repair
     /// card (no repo-mode Python repair_routing cell); unstamped keeps it.
     #[test]

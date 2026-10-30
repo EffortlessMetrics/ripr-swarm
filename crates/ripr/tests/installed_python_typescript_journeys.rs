@@ -255,7 +255,7 @@ fn python_flat_layout_journey_runs_the_gap_bound_loop_from_the_printed_start() -
     #[cfg(not(windows))]
     need(
         &check,
-        "Verify command (Bash): (cd -- ",
+        "Verify command (Bash): (cd -P -- ",
         "root-bound module-form verify",
     )?;
     #[cfg(windows)]
@@ -2014,8 +2014,35 @@ fn python_printed_verify_runs_in_selected_root_from_foreign_cwd() -> Result<(), 
             return Err(format!("action failed from {}: {result:?}", cwd.display()));
         }
     }
+    // The OS follows the symlink before applying `..`; a logical shell cd
+    // would instead land in a/repo, not the repository ripr analyzed.
+    std::fs::create_dir(quoted_parent.join("x")).map_err(|e| e.to_string())?;
+    let alias_parent = guard.0.join("a");
+    std::fs::create_dir(&alias_parent).map_err(|e| e.to_string())?;
+    std::fs::create_dir(alias_parent.join("repo")).map_err(|e| e.to_string())?;
+    std::os::unix::fs::symlink(quoted_parent.join("x"), alias_parent.join("link"))
+        .map_err(|e| e.to_string())?;
+    let alias = alias_parent.join("link/../repo");
+    let alias_arg = alias.to_str().ok_or("non-UTF8 alias")?;
+    let (ok, alias_check) = ripr(&decoy, &["check", "--root", alias_arg, "--base", "HEAD~1"])?;
+    if !ok {
+        return Err(format!("alias check failed: {alias_check}"));
+    }
+    let alias_action = alias_check
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("Verify command (Bash): "))
+        .and_then(|line| line.strip_suffix(" (high)"))
+        .ok_or("missing alias action")?;
+    let result = run(&decoy, alias_action)?;
+    if !result.status.success()
+        || !String::from_utf8_lossy(&result.stdout).contains("selected one fixture test")
+    {
+        return Err(format!(
+            "symlink-parent action selected the wrong root: {result:?}"
+        ));
+    }
     let prefix = action
-        .strip_prefix("(cd -- ")
+        .strip_prefix("(cd -P -- ")
         .and_then(|s| s.split_once(" && "))
         .ok_or("unexpected action")?
         .0;
