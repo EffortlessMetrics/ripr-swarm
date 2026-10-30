@@ -478,8 +478,8 @@ after phase applies) and selects `next_command` in this order:
    (add the language to `[languages] enabled` in `ripr.toml`) instead. It
    also says to rerun pilot if the workspace changed since that run. For an
    enabled TypeScript-family route, the warning uses the same gap-start
-   admission as the routed `ripr check` (#10001): when check would print a
-   gap-bound start, the warning names that start instead. For a refused or
+   admission as the routed `ripr check` (#10001): when `ripr check` would print
+   a gap-bound start, the warning names that start instead. For a refused or
    undecidable admission, it reports "status could not confirm a gap-bound
    start" and directs the user to the routed check for the current finding
    and any reason a start is unavailable, without claiming that no start exists.
