@@ -910,38 +910,44 @@ fn suppression_metadata(entry: &SuppressionEntry) -> Value {
 }
 
 fn finding_message(finding: &Finding) -> String {
-    let mut message = format!(
+    let mut message = String::new();
+    // #11219: lead with the missing check when the analyzer named one, so the
+    // length bound can never cut it; the full list stays in
+    // `properties.missing_discriminators`.
+    if let Some(missing) = finding.activation.missing_discriminators.first() {
+        let reason = missing.reason.trim();
+        if !reason.is_empty() {
+            message.push_str("Missing check: ");
+            message.push_str(reason.trim_end_matches('.'));
+            message.push_str(". ");
+        }
+    }
+    message.push_str(&format!(
         "{} static exposure for {} probe",
         finding.class.as_str(),
         finding.probe.family.as_str()
-    );
+    ));
     if !finding.probe.expression.is_empty() {
         message.push_str(": ");
         message.push_str(&finding.probe.expression);
     }
+    // Bound the evidence head only; the reconciled next step below is
+    // appended whole so it keeps agreeing with the other surfaces.
+    let mut message = bound_message(message);
     // RIPR-SPEC-0088 §PR8: the SARIF message text is a machine-consumed surface.
     // Use the shared reconciliation fn (not the raw field) so the embedded
     // "Next step" agrees with suggested_next_action and the other surfaces.
-    // #11219: lead with the missing check when the analyzer named one; the
-    // full list stays in `properties.missing_discriminators`.
-    if let Some(missing) = finding.activation.missing_discriminators.first() {
-        let reason = missing.reason.trim();
-        if !reason.is_empty() {
-            message.push_str(". Missing check: ");
-            message.push_str(reason.trim_end_matches('.'));
-        }
-    }
     if finding.recommended_next_step.is_some() {
         message.push_str(". Next step: ");
         message.push_str(&reconcile_next_step(finding));
     }
-    bound_message(message)
+    message
 }
 
-/// Longest `message.text` a result carries (#11219). Code scanning shows the
-/// message as the alert body; the complete evidence stays in `properties`
-/// (`missing_discriminators`, `suggested_next_action`).
-const MAX_MESSAGE_CHARS: usize = 400;
+/// Longest evidence head (missing check, class, probe, expression) a finding
+/// message carries (#11219). The reconciled next step is appended whole
+/// (RIPR-SPEC-0088); the complete evidence stays in `properties`.
+const MAX_MESSAGE_CHARS: usize = 240;
 
 fn bound_message(message: String) -> String {
     if message.chars().count() <= MAX_MESSAGE_CHARS {
@@ -2260,16 +2266,24 @@ weakly_gripped = "note"
         }
         let message = finding_message(&sample_finding());
         assert!(
-            message.contains("Missing check: no related test calls the equality boundary"),
+            message.starts_with("Missing check: no related test calls the equality boundary. "),
             "{message}"
         );
         assert!(message.contains("Next step:"), "{message}");
 
+        // The next step is never cut: it stays whole after the bounded head.
         let mut long = sample_finding();
-        long.recommended_next_step = Some("word ".repeat(400));
+        long.recommended_next_step = Some("word ".repeat(100));
         let message = finding_message(&long);
-        assert_eq!(message.chars().count(), MAX_MESSAGE_CHARS);
-        assert!(message.ends_with("..."));
+        assert!(message.ends_with(&reconcile_next_step(&long)), "{message}");
+        // A long expression is cut by the bound, never the leading missing check.
+        let mut wide = sample_finding();
+        wide.probe.expression = "x".repeat(2000);
+        let message = finding_message(&wide);
+        assert!(message.starts_with("Missing check: no related test calls the equality boundary"));
+        let head = message.split(". Next step:").next().unwrap_or_default();
+        assert_eq!(head.chars().count(), MAX_MESSAGE_CHARS);
+        assert!(head.ends_with("..."));
         // Control: without a missing discriminator no "Missing check" is invented.
         let mut none = sample_finding();
         none.activation.missing_discriminators.clear();
