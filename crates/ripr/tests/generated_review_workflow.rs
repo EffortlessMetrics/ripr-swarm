@@ -3890,12 +3890,24 @@ fn run_pr_comments_requests(
     Ok((requests, stdout))
 }
 
-fn run_ripr_init(root: &std::path::Path) -> Result<std::process::Output, Box<dyn Error>> {
+/// One spawn site for running `ripr` with `args` from `cwd` (process-policy
+/// bound).
+fn run_ripr_in(
+    cwd: &std::path::Path,
+    args: &[&str],
+) -> Result<std::process::Output, Box<dyn Error>> {
     Ok(Command::new(env!("CARGO_BIN_EXE_ripr"))
-        .args(["init", "--root"])
-        .arg(root)
-        .args(["--ci", "github"])
+        .current_dir(cwd)
+        .args(args)
         .output()?)
+}
+
+fn run_ripr_init(root: &std::path::Path) -> Result<std::process::Output, Box<dyn Error>> {
+    let root = root.to_string_lossy();
+    run_ripr_in(
+        std::path::Path::new("."),
+        &["init", "--root", root.as_ref(), "--ci", "github"],
+    )
 }
 
 /// One spawn site for executing extracted capture-step shell (process-policy
@@ -4047,17 +4059,17 @@ fn ci_packet_annotations_emit_a_notice_for_a_static_limitation() -> Result<(), B
         ],"summary_only":[],"suppressed":[]}"#,
     )?;
 
-    let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
-        .current_dir(&root)
-        .args([
+    let output = run_ripr_in(
+        &root,
+        &[
             "reports",
             "ci-packet",
             "--root",
             ".",
             "--step",
             "Emit RIPR PR guidance annotations",
-        ])
-        .output()?;
+        ],
+    )?;
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let _ = fs::remove_dir_all(&root);
 
