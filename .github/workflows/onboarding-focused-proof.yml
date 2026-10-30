@@ -1,0 +1,195 @@
+name: Onboarding focused proof (non-shipping)
+run-name: Exact-head onboarding proof 10993 and 10994
+
+# Diagnostic controller only. This branch/workflow must never merge into main.
+on:
+  push:
+    branches: [codex/onboarding-focused-proof-10993-10994]
+    paths: [.github/workflows/onboarding-focused-proof.yml]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: onboarding-focused-proof-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  focused:
+    name: ${{ matrix.owner }} / Rust ${{ matrix.toolchain }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        toolchain: ['1.95.0', '1.99.1']
+        owner: [python, xtask]
+        include:
+          - owner: python
+            subject: 635ced5612915ebef3ad1d0e68064af8d235a3b2
+            package: ripr
+            test_filter: analysis::language::python::fact_store
+            test_witness: concurrent_stores_cannot_overspend_the_shared_budget
+          - owner: xtask
+            subject: 417a25357388a7b25494b69fc5ba937f584aec74
+            package: xtask
+            test_filter: assistant_loop_health
+            test_witness: assistant_loop_health_stays_in_the_production_fixture_contract_gate
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_TERM_COLOR: never
+      TOOLCHAIN: ${{ matrix.toolchain }}
+      SUBJECT: ${{ matrix.subject }}
+      OWNER: ${{ matrix.owner }}
+      PACKAGE: ${{ matrix.package }}
+      TEST_FILTER: ${{ matrix.test_filter }}
+      TEST_WITNESS: ${{ matrix.test_witness }}
+      EVIDENCE: ${{ runner.temp }}/onboarding-focused-proof
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ matrix.subject }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Bind immutable source and host
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE"
+          test "$(git rev-parse HEAD)" = "$SUBJECT"
+          test -z "$(git status --porcelain)"
+          {
+            printf 'controller_sha=%s\nsubject_sha=%s\n' "$GITHUB_SHA" "$SUBJECT"
+            printf 'subject_tree=%s\n' "$(git rev-parse HEAD^{tree})"
+            printf 'owner=%s\nrequested_toolchain=%s\n' "$OWNER" "$TOOLCHAIN"
+            printf 'run_id=%s\nrun_attempt=%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+            uname -a
+            nproc
+            df -h .
+            free -h
+            sha256sum Cargo.toml Cargo.lock rust-toolchain.toml
+          } > "$EVIDENCE/identity.txt"
+      - name: Install requested compiler without changing the repository pin
+        id: toolchain
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: ${{ matrix.toolchain }}
+          components: rustfmt, clippy
+      - name: Record actual compiler
+        run: |
+          set -euo pipefail
+          rustc +"$TOOLCHAIN" -Vv | tee "$EVIDENCE/rustc.txt"
+          cargo +"$TOOLCHAIN" -Vv | tee "$EVIDENCE/cargo.txt"
+          test "$(rustc +"$TOOLCHAIN" --version | cut -d' ' -f2)" = "$TOOLCHAIN"
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+        with:
+          shared-key: ripr-swarm-rust-small-${{ runner.os }}
+          save-if: 'false'
+      - name: Focused compilation, tests and MSRV lint checks
+        id: positive
+        shell: bash
+        run: |
+          set -euo pipefail
+          failed=0
+          run() {
+            local name="$1"; shift
+            printf '%q ' "$@" > "$EVIDENCE/$name.command"
+            printf '\n' >> "$EVIDENCE/$name.command"
+            local started=$SECONDS
+            set +e
+            timeout --signal=TERM --kill-after=30s 1500s "$@" > "$EVIDENCE/$name.stdout" 2> "$EVIDENCE/$name.stderr"
+            local status=$?
+            set -e
+            printf 'command=%s exit=%s elapsed_s=%s\n' "$name" "$status" "$((SECONDS-started))" | tee -a "$EVIDENCE/status.txt"
+            # 124/137 are bounded-execution failures, never native Cargo passes.
+            if [ "$status" -ne 0 ]; then failed=1; tail -n 100 "$EVIDENCE/$name.stderr"; fi
+          }
+          if [ "$TOOLCHAIN" = 1.95.0 ]; then
+            run formatting cargo +"$TOOLCHAIN" fmt --all -- --check
+          fi
+          run check cargo +"$TOOLCHAIN" check --locked -p "$PACKAGE" --all-targets --message-format=json
+          if [ "$OWNER" = python ]; then
+            run tests cargo +"$TOOLCHAIN" test --locked -p ripr --lib "$TEST_FILTER" -- --nocapture
+          else
+            run tests cargo +"$TOOLCHAIN" test --locked -p xtask "$TEST_FILTER" -- --nocapture
+            run production-gate cargo +"$TOOLCHAIN" run --locked -p xtask -- check-fixture-contracts
+          fi
+          if [ "$TOOLCHAIN" = 1.95.0 ]; then
+            run clippy cargo +"$TOOLCHAIN" clippy --locked -p "$PACKAGE" --all-targets -- -D warnings
+          fi
+          if ! grep -E "test .*${TEST_WITNESS} \.\.\. ok" "$EVIDENCE/tests.stdout"; then
+            printf 'witness_missing_or_not_passed=%s\n' "$TEST_WITNESS" | tee -a "$EVIDENCE/status.txt"
+            failed=1
+          fi
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          root = Path(os.environ['EVIDENCE'])
+          messages = [json.loads(line) for line in (root / 'check.stdout').read_text().splitlines() if line.strip()]
+          assert messages and messages[-1].get('reason') == 'build-finished' and messages[-1].get('success') is True, 'missing successful Cargo completion'
+          owner = os.environ['OWNER']
+          path = 'analysis/language/python/fact_store.rs' if owner == 'python' else 'fixture_contracts/report_validators.rs'
+          lint = 'deprecated' if owner == 'python' else 'unused_imports'
+          owned = []
+          for row in messages:
+              if row.get('reason') != 'compiler-message':
+                  continue
+              diagnostic = row['message']
+              code = diagnostic.get('code') or {}
+              if code.get('code') == lint and any(span.get('file_name', '').replace('\\', '/').endswith(path) for span in diagnostic.get('spans', [])):
+                  owned.append(diagnostic)
+          (root / 'owned-warning-check.json').write_text(json.dumps({'path': path, 'lint': lint, 'diagnostics': owned}, indent=2) + '\n')
+          assert not owned, 'the reported warning remains in the owning source'
+          PY
+          git diff --exit-code
+          exit "$failed"
+      - name: Isolated wrong-implementation or gate-removal control
+        if: matrix.toolchain == '1.95.0' && steps.positive.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$OWNER" = python ]; then
+            file=crates/ripr/src/analysis/language/python/fact_store.rs
+            expected='exactly three equal-size entries fit the shared budget'
+          else
+            file=xtask/src/fixture_contracts/mod.rs
+            expected='production gate accepted a malformed corpus'
+          fi
+          trap 'git restore --source="$SUBJECT" -- "$file"' EXIT
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          if os.environ['OWNER'] == 'python':
+              path = Path('crates/ripr/src/analysis/language/python/fact_store.rs')
+              old, new = 'remaining.checked_sub(approx_bytes)', 'remaining.checked_sub(approx_bytes).map(|_| remaining)'
+          else:
+              path = Path('xtask/src/fixture_contracts/mod.rs')
+              old, new = '    validate_assistant_loop_health_fixture_corpus(&mut violations)?;\n', ''
+          text = path.read_text()
+          assert text.count(old) == 1, 'refuse ambiguous control patch'
+          path.write_text(text.replace(old, new, 1))
+          PY
+          git diff > "$EVIDENCE/removal-control.patch"
+          set +e
+          if [ "$OWNER" = python ]; then
+            timeout --signal=TERM --kill-after=30s 1500s cargo +"$TOOLCHAIN" test --locked -p ripr --lib "$TEST_WITNESS" -- --nocapture > "$EVIDENCE/removal.stdout" 2> "$EVIDENCE/removal.stderr"
+          else
+            timeout --signal=TERM --kill-after=30s 1500s cargo +"$TOOLCHAIN" test --locked -p xtask "$TEST_WITNESS" -- --nocapture > "$EVIDENCE/removal.stdout" 2> "$EVIDENCE/removal.stderr"
+          fi
+          status=$?
+          set -e
+          printf 'removal_exit=%s\n' "$status" >> "$EVIDENCE/status.txt"
+          test "$status" = 101
+          grep -F "$expected" "$EVIDENCE/removal.stderr" "$EVIDENCE/removal.stdout"
+          grep -E 'test result: FAILED\. 0 passed; 1 failed;' "$EVIDENCE/removal.stdout"
+          git restore --source="$SUBJECT" -- "$file"
+          git diff --exit-code
+          printf 'control_source_restored=true\n' >> "$EVIDENCE/status.txt"
+      - name: Retain bounded evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: onboarding-${{ matrix.owner }}-${{ matrix.toolchain }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/onboarding-focused-proof
+          if-no-files-found: error
+          retention-days: 14
