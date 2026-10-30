@@ -1322,6 +1322,11 @@ fn compare_golden(
     actual: &Path,
 ) -> Result<GoldenComparison, String> {
     let expected_text = read_text_lossy(expected)?;
+    let expected_text = if surface != "check.json" {
+        project_windows_python_verify_expected(fixture, &expected_text, cfg!(windows))
+    } else {
+        expected_text
+    };
     let actual_text = read_text_lossy(actual)?;
     let (expected_text, actual_text) = if surface == "check.json" {
         (
@@ -1350,6 +1355,51 @@ fn compare_golden(
         matches: aliased || normalized_expected == normalized_actual,
         first_difference: first_line_difference(&normalized_expected, &normalized_actual),
     })
+}
+
+/// Fixture goldens pin the Bash action. On Windows the product instead gives
+/// manual guidance; project only exact, simple fixture-owned actions, keeping
+/// the selected test token and requiring the expected fixture root.
+fn project_windows_python_verify_expected(fixture: &str, text: &str, windows: bool) -> String {
+    if !windows {
+        return text.to_string();
+    }
+    let root = format!("<cwd>/fixtures/{fixture}/input");
+    text.split_inclusive('\n')
+        .map(|line| {
+            let (body, newline) = line.strip_suffix('\n').map_or((line, ""), |s| (s, "\n"));
+            let (prefix, replacement) = if let Some(rest) =
+                body.strip_prefix("  Verify command (Bash): (cd -P -- ")
+            {
+                (
+                    rest,
+                    "  Suggested command (unverified; inspect and run from the selected root): ",
+                )
+            } else if let Some(rest) = body.strip_prefix("  verify (Bash): (cd -P -- ") {
+                (
+                    rest,
+                    "  suggested command (unverified; inspect and run from the selected root): ",
+                )
+            } else {
+                return line.to_string();
+            };
+            let Some((declared_root, selector)) = prefix.split_once(" && python -m pytest ") else {
+                return line.to_string();
+            };
+            let Some(selector) = selector.strip_suffix(") (high)") else {
+                return line.to_string();
+            };
+            if declared_root != root
+                || selector.is_empty()
+                || !selector
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '/' | ':' | '-'))
+            {
+                return line.to_string();
+            }
+            format!("{replacement}python -m pytest {selector}{newline}")
+        })
+        .collect()
 }
 
 pub(crate) fn normalize_golden_text(value: &str) -> String {
@@ -2841,6 +2891,39 @@ fn fixtures_new(name: &str) -> Result<(), String> {
 }
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn windows_python_golden_projection_keeps_fixture_and_selector_identity() {
+        let bash = "  Verify command (Bash): (cd -P -- <cwd>/fixtures/py/input && python -m pytest tests/test_a.py::test_one) (high)\n";
+        let manual = "  Suggested command (unverified; inspect and run from the selected root): python -m pytest tests/test_a.py::test_one\n";
+        assert_eq!(
+            super::project_windows_python_verify_expected("py", bash, true),
+            manual
+        );
+        assert_eq!(
+            super::project_windows_python_verify_expected("py", bash, false),
+            bash
+        );
+        assert_eq!(
+            super::project_windows_python_verify_expected("other", bash, true),
+            bash
+        );
+        let hostile = bash.replace("test_one", "$(touch x)");
+        assert_eq!(
+            super::project_windows_python_verify_expected("py", &hostile, true),
+            hostile
+        );
+        let other = bash.replace("test_one", "test_two");
+        assert_ne!(
+            super::project_windows_python_verify_expected("py", &other, true),
+            manual
+        );
+        let full = bash.replace("Verify command (Bash)", "verify (Bash)");
+        assert_eq!(
+            super::project_windows_python_verify_expected("py", &full, true),
+            manual.replace("Suggested command", "suggested command")
+        );
+    }
 
     // #8421: the precommit goldens trigger and gap classification.
 
