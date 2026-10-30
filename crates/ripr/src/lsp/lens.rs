@@ -122,9 +122,19 @@ pub(super) fn code_lens_response(uri: &Uri, snapshot: Option<&AnalysisSnapshot>)
         return Vec::new();
     };
     let age = snapshot.refresh.age();
-    lens_findings(uri, snapshot)
-        .map(|finding| finding_to_code_lens(finding, age))
-        .collect()
+    let mut lenses: Vec<CodeLens> = Vec::new();
+    for lens in lens_findings(uri, snapshot).map(|finding| finding_to_code_lens(finding, age)) {
+        // Several probes on one line (a predicate and its returned value) often
+        // read identically; one lens per distinct line and title keeps the
+        // editor from stacking repeated text. Hover still lists every finding.
+        if !lenses
+            .iter()
+            .any(|seen| seen.range == lens.range && seen.command == lens.command)
+        {
+            lenses.push(lens);
+        }
+    }
+    lenses
 }
 
 /// The findings the code lens shows for `uri`, in snapshot order.
@@ -624,6 +634,26 @@ mod tests {
             {
                 return Err("lens refresh must not introduce command arguments".into());
             }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn code_lens_response_collapses_identical_lenses_on_one_line() -> Result<(), String> {
+        let first = make_finding("src/lib.rs", 10, ExposureClass::Exposed, 3, None);
+        let twin = make_finding("src/lib.rs", 10, ExposureClass::Exposed, 3, None);
+        let other_line = make_finding("src/lib.rs", 20, ExposureClass::Exposed, 3, None);
+        let different = make_finding("src/lib.rs", 10, ExposureClass::Exposed, 5, None);
+        let snapshot =
+            make_snapshot_with_findings("/workspace", vec![first, twin, other_line, different]);
+        let uri = parse_uri("file:///workspace/src/lib.rs")?;
+
+        let lenses = code_lens_response(&uri, Some(&snapshot));
+
+        // Twin on the same line with the same title collapses; a distinct line
+        // and a distinct title on the same line both survive.
+        if lenses.len() != 3 {
+            return Err(format!("expected 3 lenses, got {}", lenses.len()));
         }
         Ok(())
     }
