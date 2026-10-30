@@ -188,3 +188,151 @@ fn selected_manifest_exception_never_spreads_to_sibling_eligibility_classes() ->
     );
     Ok(())
 }
+
+fn receipt_change(bytes: &[u8]) -> AttemptPathChange {
+    captured_change(RECEIPT_PROJECTION, &format!("{:x}", Sha256::digest(bytes)))
+}
+
+#[test]
+fn issued_receipt_replacement_reconstructs_only_the_exact_bound_slot() -> Result<(), String> {
+    let baseline = baseline("target/ripr/repair-attempts")?;
+    let prior = b"issued A\r\n";
+    let issued = b"issued B\n";
+    let mut old = receipt_change(prior);
+    if let Some(RepositoryPathState {
+        worktree_identity:
+            WorktreeIdentity::File {
+                eol_normalized_digest,
+                ..
+            },
+        ..
+    }) = &mut old.after_state
+    {
+        *eol_normalized_digest = eol_normalized_file_digest(prior);
+    }
+    let neighbor = captured_change("target/ripr/reports/neighbor.json", "bound-neighbor");
+    let sibling = captured_change(
+        "target/ripr/repair-attempts/other/attempt.json",
+        "bound-sibling",
+    );
+    let bound = captured_delta(vec![old, neighbor.clone(), sibling.clone()]);
+    assert_eq!(
+        receipt_projection_identity(&bound, &baseline, prior),
+        Some((AttemptPathChangeKind::Added, false))
+    );
+    let mut current = captured_delta(vec![receipt_change(issued), neighbor, sibling]);
+    assert_ne!(bound, current);
+    assert!(reconstruct_receipt_projection(
+        &mut current,
+        &baseline,
+        AttemptPathChangeKind::Added,
+        false,
+        prior,
+        issued
+    ));
+    assert_eq!(bound, current, "only the issued projection moves backward");
+    for index in [1, 2] {
+        let mut drifted = captured_delta(vec![
+            receipt_change(issued),
+            bound.changes[1].clone(),
+            bound.changes[2].clone(),
+        ]);
+        drifted.changes[index].after_state = Some(captured_file("external drift"));
+        assert!(reconstruct_receipt_projection(
+            &mut drifted,
+            &baseline,
+            AttemptPathChangeKind::Added,
+            false,
+            prior,
+            issued
+        ));
+        assert_ne!(
+            bound, drifted,
+            "neighbor and sibling drift must still break the whole-delta binding"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn receipt_replacement_refuses_unowned_bytes_modes_shapes_and_policy() -> Result<(), String> {
+    for guard in [
+        "different_bytes",
+        "executable",
+        "kind",
+        "baseline_index",
+        "current_index",
+        "selected",
+        "authored",
+        "forbidden",
+        "not_operational",
+        "symlink",
+        "incomparable",
+    ] {
+        let mut baseline = baseline("target/ripr/repair-attempts")?;
+        let mut delta = captured_delta(vec![receipt_change(b"issued B")]);
+        match guard {
+            "different_bytes" => delta.changes[0] = receipt_change(b"unowned B"),
+            "executable" => {
+                if let Some(RepositoryPathState {
+                    worktree_identity: WorktreeIdentity::File { executable, .. },
+                    ..
+                }) = &mut delta.changes[0].after_state
+                {
+                    *executable = true;
+                }
+            }
+            "kind" => delta.changes[0].kind = AttemptPathChangeKind::Modified,
+            "baseline_index" => {
+                let mut state = captured_file("baseline");
+                state.index_entry = Some("100644 object 0".into());
+                baseline.paths.insert(RECEIPT_PROJECTION.into(), state);
+            }
+            "current_index" => {
+                delta.changes[0]
+                    .after_state
+                    .as_mut()
+                    .ok_or("missing state")?
+                    .index_entry = Some("100644 object 0".into())
+            }
+            "selected" => {
+                baseline.policy.selected_target = CagePathRule::exact(RECEIPT_PROJECTION)?
+            }
+            "authored" => baseline
+                .policy
+                .allowed_edit_surface
+                .push(CagePathRule::exact(RECEIPT_PROJECTION)?),
+            "forbidden" => baseline
+                .policy
+                .forbidden_paths
+                .push(CagePathRule::exact(RECEIPT_PROJECTION)?),
+            "not_operational" => baseline.policy.expected_operational_writes.clear(),
+            "symlink" => {
+                delta.changes[0]
+                    .after_state
+                    .as_mut()
+                    .ok_or("missing state")?
+                    .worktree_identity = WorktreeIdentity::Symlink("other".into())
+            }
+            "incomparable" => delta.comparable = false,
+            _ => return Err("unknown guard".into()),
+        }
+        let unchanged = delta.clone();
+        assert!(
+            !reconstruct_receipt_projection(
+                &mut delta,
+                &baseline,
+                AttemptPathChangeKind::Added,
+                false,
+                b"issued A",
+                b"issued B"
+            ),
+            "{guard}"
+        );
+        assert_eq!(
+            delta, unchanged,
+            "a refused reconstruction cannot alter other evidence"
+        );
+    }
+    Ok(())
+}

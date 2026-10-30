@@ -1590,6 +1590,108 @@ pub(crate) fn omit_owned_workflow_backups(
     Ok(())
 }
 
+/// The compatibility receipt is a single fixed producer output, not a
+/// directory exemption. Only an already-bound regular-file change can carry
+/// a predecessor witness; all authored, tracked and forbidden paths stay bound.
+const RECEIPT_PROJECTION: &str = "target/ripr/reports/agent-receipt.json";
+
+fn eligible_receipt_projection_change<'a>(
+    delta: &'a AttemptDelta,
+    baseline: &AttemptBaseline,
+) -> Option<&'a AttemptPathChange> {
+    let policy = baseline.policy();
+    if !delta.comparable
+        || baseline.index_entry(RECEIPT_PROJECTION).is_some()
+        || policy.selected_target.matches(RECEIPT_PROJECTION)
+        || policy
+            .allowed_edit_surface
+            .iter()
+            .any(|rule| rule.matches(RECEIPT_PROJECTION))
+        || policy
+            .forbidden_paths
+            .iter()
+            .any(|rule| rule.matches(RECEIPT_PROJECTION))
+        || !policy
+            .expected_operational_writes
+            .iter()
+            .any(|rule| rule.matches(RECEIPT_PROJECTION))
+        || !writable_path_components_are_safe(baseline.root(), RECEIPT_PROJECTION).ok()?
+    {
+        return None;
+    }
+    let change = delta
+        .changes
+        .iter()
+        .find(|change| change.path == Path::new(RECEIPT_PROJECTION))?;
+    if !matches!(
+        change.kind,
+        AttemptPathChangeKind::Added | AttemptPathChangeKind::Modified
+    ) || change.after_state.as_ref()?.index_entry.is_some()
+    {
+        return None;
+    }
+    Some(change)
+}
+
+/// Match producer-validated receipt bytes against the real captured slot.
+/// The caller, not the pathname, must establish the retained receipt's custody.
+pub(crate) fn receipt_projection_identity(
+    delta: &AttemptDelta,
+    baseline: &AttemptBaseline,
+    bytes: &[u8],
+) -> Option<(AttemptPathChangeKind, bool)> {
+    if bytes.len() as u64 > MAX_CAPTURE_FILE_BYTES {
+        return None;
+    }
+    let change = eligible_receipt_projection_change(delta, baseline)?;
+    match &change.after_state.as_ref()?.worktree_identity {
+        WorktreeIdentity::File {
+            digest,
+            executable,
+            eol_normalized_digest,
+        } if *digest == format!("{:x}", Sha256::digest(bytes))
+            && *eol_normalized_digest == eol_normalized_file_digest(bytes) =>
+        {
+            Some((change.kind, *executable))
+        }
+        _ => None,
+    }
+}
+
+/// Reconstruct only a bound A-to-B issued receipt replacement. Both receipts
+/// must already be validated by the caller. Keep shape, mode, every neighbor,
+/// and the original whole-delta digest authoritative; never edit the worktree.
+pub(crate) fn reconstruct_receipt_projection(
+    delta: &mut AttemptDelta,
+    baseline: &AttemptBaseline,
+    kind: AttemptPathChangeKind,
+    executable: bool,
+    predecessor: &[u8],
+    issued: &[u8],
+) -> bool {
+    if predecessor.len() as u64 > MAX_CAPTURE_FILE_BYTES
+        || receipt_projection_identity(delta, baseline, issued) != Some((kind, executable))
+    {
+        return false;
+    }
+    let Some(change) = delta
+        .changes
+        .iter_mut()
+        .find(|change| change.path == Path::new(RECEIPT_PROJECTION))
+    else {
+        return false;
+    };
+    change.after_state = Some(RepositoryPathState {
+        index_entry: None,
+        worktree_identity: WorktreeIdentity::File {
+            digest: format!("{:x}", Sha256::digest(predecessor)),
+            executable,
+            eol_normalized_digest: eol_normalized_file_digest(predecessor),
+        },
+    });
+    true
+}
+
 /// Removes from a recomputed `delta` the command-owned output that appeared
 /// only after a verdict was bound: a change whose path is an expected
 /// operational write (the `target/ripr` reports, workflow, and cache files a

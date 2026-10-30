@@ -549,8 +549,19 @@ exclusively created them and their captured bytes and executable state still
 match its receipt. Baseline, authored, forbidden, and non-operational paths
 never receive this backup exception. Cleanup of these exact temporary copies
 must not invalidate the just-finished attempt; another attempt's bound manifest
-remains identity-sensitive. This does not authorize reconstructing missing gap
-projections or ignoring present projection drift.
+remains identity-sensitive. One bound compatibility receipt may be replaced
+by the next issued receipt without staling that producer: an optional
+`receipt_projection_predecessor` records only a different, validated issued
+attempt in the same store, plus the captured path kind and executable state.
+The read-only currentness owner validates both retained terminal pairs and the
+exact live replacement bytes, reconstructs only this fixed receipt slot, and
+requires the original whole-delta digest and verdict. Unowned or modified
+bytes, missing predecessor evidence, tracked/authored/forbidden paths and
+neighbor or sibling drift receive no exception. The predecessor can remain
+historical; this does not recurse through or grant it currentness. Legacy
+attempts without this optional witness retain their existing behavior. This
+does not authorize reconstructing missing gap projections or ignoring present
+projection drift.
 The same HEAD and the same changed path and kind do not establish
 the same bytes: changing an already-bound boundary assertion after finish must
 make both status currentness and receipt issuance refuse or remain unknown;

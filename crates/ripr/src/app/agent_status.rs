@@ -4851,6 +4851,7 @@ mod tests {
             repository_head: stored.repository_head.clone(),
             delta_sha256: "sha256:fixture-delta".to_string(),
             delta_binding: None,
+            receipt_projection_predecessor: None,
             packet_sha256: "sha256:fixture-packet".to_string(),
             current: true,
             verdict: EditCageVerdict {
@@ -5012,6 +5013,7 @@ mod tests {
                 repository_head: head,
                 delta_sha256: "sha256:delta".to_string(),
                 delta_binding: None,
+                receipt_projection_predecessor: None,
                 packet_sha256: "sha256:packet".to_string(),
                 current: true,
                 verdict: EditCageVerdict {

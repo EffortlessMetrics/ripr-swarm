@@ -3036,6 +3036,124 @@ fn repeated_gap_attempt_is_current_and_keeps_test_byte_binding() -> Result<(), S
     Ok(())
 }
 
+/// Receipt replacement and absent gap projections must compose, rather than
+/// competing as two alternative currentness fallbacks.
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn gap_cleanup_composes_with_exact_issued_receipt_replacement() -> Result<(), String> {
+    let first = GapAttempt::start("gap-receipt-cleanup-composition")?;
+    let manifest = first.manifest_for_only_attempt()?;
+    let base = manifest["gap_binding"]["base_commit"]
+        .as_str()
+        .ok_or("missing immutable gap base")?;
+    // B's baseline must precede A's finish, so A's issued compatibility
+    // receipt becomes a changed path that B binds before replacing it.
+    let (ok, before) = ripr(
+        &first.decoy,
+        &[
+            "agent",
+            "repair",
+            "--gap-id",
+            &first.gap,
+            "--base",
+            base,
+            "--root",
+            &first.root_arg,
+            "--phase",
+            "before",
+        ],
+    )?;
+    expect_exit(ok, true, &format!("second before: {before}"))?;
+    let attempts = first.root.join("target/ripr/repair-attempts");
+    let ids = std::fs::read_dir(&attempts)
+        .map_err(|error| error.to_string())?
+        .filter_map(Result::ok)
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .filter(|name| name.starts_with("repair-attempt-") && name != &first.attempt_id)
+        .collect::<Vec<_>>();
+    if ids.len() != 1 {
+        return Err(format!("expected one second attempt, got {ids:?}"));
+    }
+    let second = &ids[0];
+    first.commit_closing_test()?;
+    let output = first.after(true)?;
+    expect_exit(output.status.success(), true, "first finish")?;
+    let output = ripr_output(
+        &first.decoy,
+        &["continue", "--root", &first.root_arg, "--attempt", second],
+    )?;
+    let (stdout, stderr) = text_of(&output);
+    expect_exit(
+        output.status.success(),
+        true,
+        &format!("second finish: {stdout}\n{stderr}"),
+    )?;
+    let manifest: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(attempts.join(second).join("attempt.json"))
+            .map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    if manifest["after"]["receipt_projection_predecessor"]["attempt_id"] != first.attempt_id {
+        return Err(format!("B did not bind A's issued receipt: {manifest}"));
+    }
+    let receipt_path = "target/ripr/reports/agent-receipt.json";
+    let projection_path = "target/ripr/workflow/after.check-findings.json";
+    let changed = manifest["after"]["verdict"]["changed_paths"]
+        .as_array()
+        .ok_or("missing bound paths")?;
+    for path in [receipt_path, projection_path] {
+        if !changed.iter().any(|value| value == path) {
+            return Err(format!(
+                "composition fixture did not bind {path}: {manifest}"
+            ));
+        }
+    }
+    let current = || -> Result<bool, String> {
+        let (ok, status) = ripr(
+            &first.decoy,
+            &["agent", "status", "--root", &first.root_arg, "--json"],
+        )?;
+        expect_exit(ok, true, "composition status")?;
+        let document: serde_json::Value =
+            serde_json::from_str(&status).map_err(|error| error.to_string())?;
+        document["repair_attempts"]
+            .as_array()
+            .ok_or("no attempt rows")?
+            .iter()
+            .find(|row| row["attempt_id"].as_str() == Some(second.as_str()))
+            .and_then(|row| row["head_current"].as_bool())
+            .ok_or_else(|| format!("no boolean B currentness: {status}"))
+    };
+    if !current()? {
+        return Err("B was not current after replacing A's receipt".to_string());
+    }
+    let projection = first.root.join(projection_path);
+    let projection_bytes = std::fs::read(&projection).map_err(|error| error.to_string())?;
+    std::fs::remove_file(&projection).map_err(|error| error.to_string())?;
+    if !current()? {
+        return Err("receipt replacement and missing projection did not compose".to_string());
+    }
+    let receipt = first.root.join(receipt_path);
+    let receipt_bytes = std::fs::read(&receipt).map_err(|error| error.to_string())?;
+    std::fs::write(&receipt, b"unowned replacement").map_err(|error| error.to_string())?;
+    let receipt_drift = current();
+    std::fs::write(&receipt, &receipt_bytes).map_err(|error| error.to_string())?;
+    if receipt_drift? || !current()? {
+        return Err("missing projection hid receipt drift or lost restoration".to_string());
+    }
+    std::fs::write(&projection, &projection_bytes).map_err(|error| error.to_string())?;
+    if !current()? {
+        return Err("projection restoration did not preserve B currentness".to_string());
+    }
+    std::fs::write(&projection, b"present projection drift").map_err(|error| error.to_string())?;
+    let projection_drift = current();
+    std::fs::write(&projection, &projection_bytes).map_err(|error| error.to_string())?;
+    if projection_drift? || !current()? {
+        return Err("receipt reconstruction hid present projection drift".to_string());
+    }
+    Ok(())
+}
+
 /// Human (non `--json`) gap-bound after output names the closure and this
 /// attempt's receipt, and replaces a stale seam receipt planted at the
 /// receipt path rather than summarizing it.
