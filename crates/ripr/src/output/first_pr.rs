@@ -1,5 +1,7 @@
 use crate::agent::command_specs::report_regeneration_command_spec_from_display;
-use crate::agent::loop_commands::{check_repo_exposure_command, display_path, shell_arg};
+use crate::agent::loop_commands::{
+    PILOT_BEFORE_SNAPSHOT_ARTIFACT, check_repo_exposure_command, display_path, shell_arg,
+};
 use crate::app::agent_status::pilot_select_command;
 use crate::config::{detect_python_project, detect_typescript_project};
 use crate::domain::CommandSpec;
@@ -31,7 +33,7 @@ const DEFAULT_REPO_EXPOSURE: &str = "target/ripr/reports/repo-exposure.json";
 /// The repo-exposure report `ripr pilot` writes (`repo-exposure-json` shape,
 /// the same producer as the default report). First-pr reads it as the gap
 /// ledger's input when the default report is absent (#3905).
-const PILOT_REPO_EXPOSURE: &str = "target/ripr/pilot/repo-exposure.json";
+const PILOT_REPO_EXPOSURE: &str = PILOT_BEFORE_SNAPSHOT_ARTIFACT;
 const DEFAULT_REPO_EXPOSURE_LATENCY_JSON: &str = "target/ripr/reports/repo-exposure-latency.json";
 const DEFAULT_REPO_EXPOSURE_LATENCY_REPORT: &str = "target/ripr/reports/repo-exposure-latency.md";
 const DEFAULT_CHECK_OUTPUT: &str = "target/ripr/reports/check.json";
