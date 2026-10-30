@@ -837,18 +837,20 @@ fn git_preflight_recovery(root: &Path, options: &FirstPrOptions) -> Option<Selec
     match git_rev_exists(root, &options.base) {
         Ok(true) => {}
         Ok(false) => {
-            // A shallow clone (actions/checkout's default `fetch-depth: 1`) is
-            // the usual cause in CI, and a one-branch fetch does not repair
-            // it: name the checkout setting and the unshallow command, like
-            // `ripr check` does.
+            // A shallow clone (actions/checkout's default `fetch-depth: 1`)
+            // is a likely cause in CI: the base branch is usually not
+            // fetched. A mistyped `--base` lands here too, so the wording
+            // stays conditional. The command fetches the base branch with
+            // full history; a bare `fetch --unshallow` would not create
+            // `origin/<base>` in a single-branch clone.
             if crate::analysis::is_shallow_repository(root, None) {
                 return Some(Selection::blocked(
                     "blocked_artifact",
                     format!(
-                        "The first-pr base `{}` does not resolve to a commit. This is a shallow clone, so the base branch was never fetched: set `fetch-depth: 0` on actions/checkout (or fetch the full history) before assigning repair work.",
+                        "The first-pr base `{}` does not resolve to a commit. This is a shallow clone, which usually means the base branch was not fetched (in GitHub Actions, set `fetch-depth: 0` on actions/checkout); if you passed `--base`, also check its spelling. Fix the base before assigning repair work.",
                         options.base
                     ),
-                    Some(unshallow_command(options)),
+                    Some(fetch_base_deep_command(options)),
                 ));
             }
             return Some(Selection::blocked(
@@ -2752,6 +2754,21 @@ fn diff_range_command(options: &FirstPrOptions) -> String {
     )
 }
 
+/// Fetch the base branch with its full history into a shallow clone. Unlike a
+/// bare `fetch --unshallow`, the explicit refspec creates `origin/<base>` even
+/// in a single-branch clone. Without a nameable `origin/<branch>` base there
+/// is nothing to fetch by name, so it falls back to the plain unshallow.
+fn fetch_base_deep_command(options: &FirstPrOptions) -> String {
+    match options.base.strip_prefix("origin/") {
+        Some(branch) if !branch.is_empty() => format!(
+            "git -C {} fetch --unshallow origin -- {}",
+            shell_arg(&options.command_root()),
+            shell_arg(&base_fetch_refspec(branch))
+        ),
+        _ => unshallow_command(options),
+    }
+}
+
 fn unshallow_command(options: &FirstPrOptions) -> String {
     format!(
         "git -C {} fetch --unshallow",
@@ -4562,9 +4579,10 @@ mod tests {
     fn shallow_checkout_without_the_base_branch_points_at_fetch_depth() -> Result<(), String> {
         // A default `actions/checkout` (fetch-depth 1) fetches only the head
         // commit, so `origin/main` does not exist at all. A one-branch fetch
-        // is not the repair; the checkout setting and the unshallow command
-        // are. The full-clone twin above keeps the plain fetch advice.
+        // is not the repair; the checkout setting and a deep fetch of the
+        // base branch are. The full-clone twin above keeps the plain fetch advice.
         let origin = temp_repo("first-pr-shallow-nobase-origin")?;
+        run_git_setup(&origin, &["branch", "-M", "main"])?;
         run_git_setup(&origin, &["checkout", "-q", "-b", "feature"])?;
         run_git_setup(&origin, &["commit", "-q", "--allow-empty", "-m", "feature"])?;
         let shallow = write_temp_root(&env::temp_dir(), "first-pr-shallow-nobase-clone")?;
@@ -4602,13 +4620,30 @@ mod tests {
         assert!(
             message.contains("does not resolve to a commit")
                 && message.contains("shallow clone")
-                && message.contains("fetch-depth: 0"),
+                && message.contains("fetch-depth: 0")
+                && message.contains("usually means")
+                && message.contains("spelling")
+                && !message.contains("was never fetched"),
             "unexpected message: {message}"
         );
+        let refspec = "+refs/heads/main:refs/remotes/origin/main";
         assert_eq!(
             packet["selected"]["next_command"],
-            format!("git -C {} fetch --unshallow", bound_arg("."))
+            format!(
+                "git -C {} fetch --unshallow origin -- {}",
+                bound_arg("."),
+                shell_arg(refspec)
+            )
         );
+        // Precondition, then the advertised repair on this very single-branch
+        // depth-1 clone.
+        if git_rev_exists(&shallow, "origin/main")? {
+            return Err("fixture must start without origin/main".to_string());
+        }
+        run_git_setup(&shallow, &["fetch", "-q", "--unshallow", "origin", refspec])?;
+        if !git_rev_exists(&shallow, "origin/main")? {
+            return Err("the advertised fetch did not create origin/main".to_string());
+        }
         cleanup(&shallow)?;
         cleanup(&origin)
     }

@@ -1703,10 +1703,18 @@ fn hex(bytes: &[u8]) -> String {
 /// causes this wording does not cover.
 fn unresolved_base_message(root: &Path, base_ref: &str, detail: &str) -> String {
     let branch = base_ref.strip_prefix("origin/").unwrap_or(base_ref);
-    let repair = if crate::analysis::is_shallow_repository(root, None) {
-        "This is a shallow clone: set `fetch-depth: 0` on actions/checkout (or run \
-         `git fetch --unshallow`), then re-run."
+    let repair = if branch.is_empty() {
+        // `GITHUB_BASE_REF` is empty (not a pull_request event payload), so
+        // the base is `origin/` and no fetch can name a branch.
+        "GITHUB_BASE_REF is empty, so there is no base branch to compare against; run this \
+         on a pull_request event."
             .to_string()
+    } else if crate::analysis::is_shallow_repository(root, None) {
+        format!(
+            "This is a shallow clone: set `fetch-depth: 0` on actions/checkout (or run \
+             `git fetch --unshallow origin '+refs/heads/{branch}:refs/remotes/origin/{branch}'`), \
+             then re-run."
+        )
     } else {
         format!(
             "Fetch the base branch (`git fetch origin {branch}`; actions/checkout with \
@@ -2666,9 +2674,29 @@ mod tests {
         assert!(message.contains("shallow clone"), "{message}");
         assert!(message.contains("`fetch-depth: 0`"), "{message}");
         assert!(
+            message
+                .contains("fetch --unshallow origin '+refs/heads/main:refs/remotes/origin/main'"),
+            "{message}"
+        );
+        assert!(
             !message.contains("git fetch origin main"),
             "a shallow clone is repaired by fetch-depth, not a one-branch fetch: {message}"
         );
+        Ok(())
+    }
+
+    /// An empty `GITHUB_BASE_REF` makes the base `origin/`; advice must not
+    /// tell the reader to `git fetch origin ` with no branch.
+    #[test]
+    fn empty_base_ref_names_the_missing_event_not_a_blank_fetch() -> Result<(), String> {
+        let (scratch, full, shallow) = full_and_shallow_clone("empty-base")?;
+        let messages = [capture_error(&full, ""), capture_error(&shallow, "")];
+        let _ = fs::remove_dir_all(&scratch);
+        for message in messages {
+            assert!(message.contains("GITHUB_BASE_REF is empty"), "{message}");
+            assert!(!message.contains("git fetch origin "), "{message}");
+            assert!(!message.contains("refs/heads/:"), "{message}");
+        }
         Ok(())
     }
 
