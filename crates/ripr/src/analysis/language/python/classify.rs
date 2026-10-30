@@ -714,7 +714,7 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
     // arguments, `exposed` requires one of those calls to bind both operands
     // to equal values (or, for `==` -> `==`, either compared literal).
     // Unresolved operands never count as observed, so this fails closed to
-    // `weakly_exposed` and names the missing `left == right` boundary. With no
+    // `weakly_exposed` without naming a boundary they may already reach. With no
     // literal owner inputs at all the gate cannot see the activation either
     // way; that case keeps the oracle verdict and carries a named
     // `boundary_activation_unresolved` limitation instead.
@@ -999,8 +999,8 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
         && let Some(gap) = boundary_gap
     {
         // A strong oracle observes the owner's output, but no strong related
-        // call places the comparison operands on the changed boundary, so the
-        // changed predicate is never activated where old and new disagree.
+        // call is statically placed on the changed boundary. Unresolved calls
+        // may still reach it at runtime.
         boundary_downgraded = true;
         (
             ExposureClass::WeaklyExposed,
@@ -1247,7 +1247,11 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
                 limit.kind.as_str()
             )
         } else if boundary_downgraded {
-            "Related tests reach the changed predicate, but no strong related test call places an input at the changed boundary.".to_string()
+            if boundary_gap.is_some_and(|gap| gap.discriminator.is_none()) {
+                "Related tests reach the changed predicate, but static evidence does not place a strong related test input at the changed boundary.".to_string()
+            } else {
+                "Related tests reach the changed predicate, but no strong related test call places an input at the changed boundary.".to_string()
+            }
         } else if guarded_arm_downgraded
             && guarded_arm_gap
                 .as_ref()

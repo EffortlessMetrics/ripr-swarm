@@ -19390,6 +19390,198 @@ fn pilot_language_fixture_repo(
     Ok(root)
 }
 
+#[test]
+#[cfg(feature = "lang-python")]
+fn python_mixed_boundary_calls_do_not_invent_a_missing_discriminator() -> Result<(), String> {
+    let root = pilot_language_fixture_repo(
+        "python-mixed-boundary-10990",
+        &[
+            (
+                "pyproject.toml",
+                "[project]\nname = \"boundary\"\nversion = \"0.1.0\"\n",
+            ),
+            (
+                "pricing/__init__.py",
+                "def eligible(x):\n    if x > 3:\n        return True\n    return False\n",
+            ),
+            (
+                "tests/test_pricing.py",
+                "from pricing import eligible\n\ndef test_off():\n    assert eligible(5) == True\n\ndef test_unknown():\n    value = 3\n    assert eligible(value) == True\n",
+            ),
+        ],
+        (
+            "pricing/__init__.py",
+            "def eligible(x):\n    if x >= 3:\n        return True\n    return False\n",
+        ),
+    )?;
+    let root_arg = root.display().to_string();
+    let check = || -> Result<serde_json::Value, String> {
+        let output = run_ripr(&[
+            "check",
+            "--root",
+            &root_arg,
+            "--base",
+            "origin/main",
+            "--format",
+            "json",
+        ]);
+        assert_success(&output);
+        serde_json::from_slice(&output.stdout).map_err(|err| err.to_string())
+    };
+    let report = check()?;
+    let findings = report["findings"].as_array().ok_or("missing findings")?;
+    assert_eq!(findings.len(), 1, "{report}");
+    let finding = &findings[0];
+    assert_eq!(finding["classification"], "weakly_exposed", "{finding}");
+    assert_eq!(
+        finding["missing_discriminators"].as_array().map(Vec::len),
+        Some(0),
+        "{finding}"
+    );
+    assert!(finding["python_repair_card"].is_null(), "{finding}");
+    assert!(
+        !finding["ripr"]["infect"]["summary"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("no strong related test call places"),
+        "{finding}"
+    );
+    assert!(
+        finding["missing"].to_string().contains("unresolved inputs"),
+        "{finding}"
+    );
+    assert!(
+        finding["observed_values"].to_string().contains("x = 5"),
+        "{finding}"
+    );
+    assert!(
+        !finding["recommended_next_step"]
+            .to_string()
+            .contains("x == 3"),
+        "{finding}"
+    );
+
+    std::fs::write(root.join("tests/test_pricing.py"), "from pricing import eligible\n\ndef test_off():\n    assert eligible(5) == True\n\ndef test_unknown():\n    values = (3,)\n    assert eligible(*values) == True\n").map_err(|err| err.to_string())?;
+    let unpack = check()?;
+    assert_eq!(
+        unpack["findings"][0]["classification"], "weakly_exposed",
+        "{unpack}"
+    );
+    assert_eq!(
+        unpack["findings"][0]["missing_discriminators"]
+            .as_array()
+            .map(Vec::len),
+        Some(0),
+        "{unpack}"
+    );
+    assert!(
+        unpack["findings"][0]["python_repair_card"].is_null(),
+        "{unpack}"
+    );
+
+    std::fs::write(
+        root.join("tests/test_pricing.py"),
+        "from pricing import eligible\n\ndef test_off():\n    assert eligible(5) == True\n",
+    )
+    .map_err(|err| err.to_string())?;
+    let off = check()?;
+    assert_eq!(
+        off["findings"][0]["missing_discriminators"][0]["value"], "x == 3",
+        "{off}"
+    );
+    assert!(
+        off["findings"][0]["python_repair_card"].is_object(),
+        "{off}"
+    );
+
+    std::fs::write(root.join("tests/test_pricing.py"), "from pricing import eligible\n\ndef test_on():\n    assert eligible(3) == True\n\ndef test_unknown():\n    value = 3\n    assert eligible(value) == True\n").map_err(|err| err.to_string())?;
+    let on = check()?;
+    assert_eq!(on["findings"][0]["classification"], "exposed", "{on}");
+    assert_eq!(
+        on["findings"][0]["missing_discriminators"]
+            .as_array()
+            .map(Vec::len),
+        Some(0),
+        "{on}"
+    );
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+#[test]
+#[cfg(feature = "lang-python")]
+fn python_mixed_calls_do_not_invent_a_shifted_boundary_gap() -> Result<(), String> {
+    let root = pilot_language_fixture_repo(
+        "python-mixed-shift-10990",
+        &[
+            (
+                "pyproject.toml",
+                "[project]\nname = \"boundary\"\nversion = \"0.1.0\"\n",
+            ),
+            (
+                "pricing/__init__.py",
+                "def eligible(x):\n    if x >= 3:\n        return True\n    return False\n",
+            ),
+            (
+                "tests/test_pricing.py",
+                "from pricing import eligible\n\ndef test_equal():\n    assert eligible(2) == False\n\ndef test_unknown():\n    value = 3\n    assert eligible(value) == True\n",
+            ),
+        ],
+        (
+            "pricing/__init__.py",
+            "def eligible(x):\n    if x > 2:\n        return True\n    return False\n",
+        ),
+    )?;
+    let root_arg = root.display().to_string();
+    let check = || -> Result<serde_json::Value, String> {
+        let output = run_ripr(&[
+            "check",
+            "--root",
+            &root_arg,
+            "--base",
+            "origin/main",
+            "--format",
+            "json",
+        ]);
+        assert_success(&output);
+        serde_json::from_slice(&output.stdout).map_err(|err| err.to_string())
+    };
+    let mixed = check()?;
+    assert_eq!(
+        mixed["findings"][0]["classification"], "weakly_exposed",
+        "{mixed}"
+    );
+    assert_eq!(
+        mixed["findings"][0]["missing_discriminators"]
+            .as_array()
+            .map(Vec::len),
+        Some(0),
+        "{mixed}"
+    );
+    assert!(
+        mixed["findings"][0]["python_repair_card"].is_null(),
+        "{mixed}"
+    );
+    std::fs::write(
+        root.join("tests/test_pricing.py"),
+        "from pricing import eligible\n\ndef test_equal():\n    assert eligible(2) == False\n",
+    )
+    .map_err(|err| err.to_string())?;
+    let resolved = check()?;
+    assert_eq!(
+        resolved["findings"][0]["missing_discriminators"][0]["value"], "x == 3",
+        "{resolved}"
+    );
+    std::fs::write(root.join("tests/test_pricing.py"), "from pricing import eligible\n\ndef test_equal():\n    assert eligible(2) == False\n\ndef test_shift():\n    assert eligible(3) == True\n\ndef test_unknown():\n    value = 3\n    assert eligible(value) == True\n").map_err(|err| err.to_string())?;
+    let witnessed = check()?;
+    assert_eq!(
+        witnessed["findings"][0]["classification"], "exposed",
+        "{witnessed}"
+    );
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
 /// #4216 row 1: the onboarding re-walk's `pyapp` shape. A named module
 /// constant threshold leaves the boundary operand unresolved, so the Python
 /// preview finding is weakly exposed with no repair card. `check` used to
