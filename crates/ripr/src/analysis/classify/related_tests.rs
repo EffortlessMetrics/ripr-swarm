@@ -5027,7 +5027,7 @@ pub(in crate::analysis) fn free_helper_call_resolves(
             helper,
             prefix.as_deref(),
             index,
-            &syntax,
+            syntax,
         )
     })
 }
