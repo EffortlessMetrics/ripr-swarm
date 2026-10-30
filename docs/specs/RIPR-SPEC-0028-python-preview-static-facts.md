@@ -874,7 +874,12 @@ namespace writer in code (`exec`, `eval`, `globals`, `vars`, `locals`,
 `__dict__`), whether called, named in an f-string, or named as a
 whitespace-free string such as `getattr(m, "exec")` (a word in a comment or in
 prose, like a docstring saying "env vars", is not a writer, #10979; a module
-the lexer rejects falls back to the whole-text scan), a non-literal value, a parameter or local binding
+the lexer rejects falls back to the whole-text scan; for the names a
+`parametrize` decorator reads at import, that is the `pytest` root, a `@cases` name and
+argnames, a writer inside the body of a `test*` function or a `test*` method of a
+`Test*` class is not counted because it runs after every decorator, while module
+scope, class bodies, helpers, fixtures and decorator arguments still count, #11018),
+a non-literal value, a parameter or local binding
 of the same name in the owner, a nested `def`/`class`/`lambda` in the owner,
 or a related test file that assigns the attribute (`pricing.DISCOUNT_THRESHOLD
 = 5`). A call inside a `@pytest.mark.parametrize` (or `@mark.parametrize`)

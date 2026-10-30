@@ -164,7 +164,11 @@ impl StableNames {
     fn of(source: &SourceText<'_>, statements: &[Stmt]) -> Option<Self> {
         let mut bindings = ScopeBindings::default();
         collect_scope_bindings(statements, &mut bindings);
-        if bindings.opaque || writes_namespace_dynamically(source) {
+        // A decorator reads these names when the module is imported; a writer
+        // inside a test body runs later, so only the rest of the module
+        // counts (#11018).
+        if bindings.opaque || writes_namespace_dynamically(&without_test_bodies(source, statements))
+        {
             return None;
         }
         let mut globals = Vec::new();
@@ -194,6 +198,65 @@ impl StableNames {
             && !self.attributes.iter().any(|attribute| attribute == name)
             && !self.walrus.iter().any(|target| target == name)
     }
+}
+
+/// `source` with the body of every `test*` function and every `test*` method
+/// of a `Test*` class blanked (decorators, signatures and all other code
+/// stay). A test body runs only when pytest calls it, after every decorator in
+/// the module was applied, so a namespace writer there cannot change what a
+/// decorator read at import. Module scope, class bodies, helpers, fixtures and
+/// decorator arguments are untouched, so those writers still count. A module
+/// that calls a test function itself at import is not detected (#11018).
+fn without_test_bodies(source: &str, statements: &[Stmt]) -> String {
+    let mut ranges = Vec::new();
+    for statement in statements {
+        match statement {
+            Stmt::FunctionDef(function) if function.name.starts_with("test") => {
+                ranges.extend(body_range(&function.body));
+            }
+            Stmt::AsyncFunctionDef(function) if function.name.starts_with("test") => {
+                ranges.extend(body_range(&function.body));
+            }
+            Stmt::ClassDef(class) if class.name.starts_with("Test") => {
+                for member in &class.body {
+                    match member {
+                        Stmt::FunctionDef(method) if method.name.starts_with("test") => {
+                            ranges.extend(body_range(&method.body));
+                        }
+                        Stmt::AsyncFunctionDef(method) if method.name.starts_with("test") => {
+                            ranges.extend(body_range(&method.body));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    if ranges.is_empty() {
+        return source.to_string();
+    }
+    let mut blanked = source.as_bytes().to_vec();
+    for (start, end) in ranges {
+        let end = end.min(blanked.len());
+        for byte in blanked.get_mut(start..end).unwrap_or_default() {
+            if *byte != b'\n' {
+                *byte = b' ';
+            }
+        }
+    }
+    // Whole statements were replaced byte for byte by spaces, so the text is
+    // valid UTF-8; the fallback is only a guard.
+    String::from_utf8(blanked).unwrap_or_else(|_| source.to_string())
+}
+
+fn body_range(body: &[Stmt]) -> Option<(usize, usize)> {
+    let first = body.first()?;
+    let last = body.last()?;
+    Some((
+        usize::from(first.range().start()),
+        usize::from(last.range().end()),
+    ))
 }
 
 /// How a module binds its names, for the conditional-definition and
