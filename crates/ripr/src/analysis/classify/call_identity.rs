@@ -1182,6 +1182,16 @@ fn path_attributes_only_select_cfg_alternatives(source: &str) -> bool {
         declared_path_attributes += 1;
         gates.entry(name.text().to_string()).or_default().push(gate);
     }
+    // A `#[path]` inside a macro invocation or `macro_rules!` body is raw
+    // tokens, not an `Attr` node, so the count below cannot see it.
+    if file
+        .syntax()
+        .descendants()
+        .filter_map(ast::TokenTree::cast)
+        .any(|tree| has_path_attribute(&tree.syntax().text().to_string()))
+    {
+        return false;
+    }
     // Every `#[path]` of the file sits on one of those declarations.
     let total_path_attributes = file
         .syntax()
@@ -3721,6 +3731,8 @@ mod tests {
         let third = format!("{PAIR_ROOT}#[path = \"elsewhere.rs\"]\nmod moved;\n");
         let inline = format!("{PAIR_ROOT}mod nested {{\n    #[path = \"x.rs\"]\n    mod x;\n}}\n");
         let ungated = PAIR_ROOT.replace("#[cfg(feature = \"parking_lot\")]\n", "");
+        let macro_remap =
+            format!("{PAIR_ROOT}cfg_if! {{ if #[cfg(unix)] {{ #[path = \"a.rs\"] mod sys; }} }}\n");
         for (label, root) in [
             ("not complementary", not_complementary),
             ("cfg(test) pair", test_pair),
@@ -3728,6 +3740,7 @@ mod tests {
             ("third remap", third),
             ("nested path", inline),
             ("ungated half", ungated),
+            ("macro token-tree path", macro_remap),
         ] {
             let index = pair_index(&root);
             assert_eq!(
