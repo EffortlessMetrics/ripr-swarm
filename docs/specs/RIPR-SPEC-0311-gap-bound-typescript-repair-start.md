@@ -228,7 +228,7 @@ existed with no way to begin the attempt.
   `gap_bound_after_phase_stops_when_the_retry_budget_is_spent`,
   `gap_bound_after_phase_human_output_names_closure_and_replaces_a_stale_receipt`,
   `gap_bound_receipt_requires_the_verify_closure_and_rejects_forgery`,
-  `typescript_status_warning_keeps_the_no_start_claim_for_refused_variants`,
+  `typescript_status_warning_reports_unconfirmed_start_for_refused_variants`,
   `python_flat_layout_journey_runs_the_gap_bound_loop_from_the_printed_start`,
   `python_status_after_pilot_names_the_gap_bound_start`,
   `python_refused_variant_is_offered_no_gap_bound_start`.
@@ -256,8 +256,8 @@ existed with no way to begin the attempt.
 - `crates/ripr/src/app/gap_bound_repair.rs`: lookup, start spelling, manual
   verify route, and `default_check_gap_start`, the admission `ripr agent
   status` consults so its `pilot_routed_to_check_no_repair_target` warning
-  names the start check prints and keeps the "offers no start" claim only when
-  check offers none (#10001).
+  names the start check prints, or reports that it could not confirm a start
+  and directs the user to check the current route (#10001).
 - `crates/ripr/src/cli/commands/agent.rs`: `run_gap_bound_before_phase`.
 - `crates/ripr/src/app/repair_attempt/mod.rs`: `RepairAttemptGapBinding`,
   `begin_gap_bound_repair_attempt_with_identity`,

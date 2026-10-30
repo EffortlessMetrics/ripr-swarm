@@ -1359,10 +1359,10 @@ fn typescript_literal_threshold_packet_is_complete_and_controls_fail_closed() ->
 
 #[cfg(feature = "lang-typescript")]
 #[test]
-fn typescript_status_warning_keeps_the_no_start_claim_for_refused_variants() -> Result<(), String> {
+fn typescript_status_warning_reports_unconfirmed_start_for_refused_variants() -> Result<(), String> {
     // #10001 negative control: the status warning is derived from the same
-    // admission as `ripr check`, so a finding check refuses keeps the claim
-    // that check offers no `ripr agent repair` start.
+    // admission as `ripr check`. For a refused finding it does not invent a
+    // start or claim certainty about why one is unavailable.
     let toml = "[languages]\nenabled = [\"typescript\"]\n";
     for variant in [
         "variant-let-binding",
@@ -1397,10 +1397,13 @@ fn typescript_status_warning_keeps_the_no_start_claim_for_refused_variants() -> 
         need(&status, "pilot_routed_to_check_no_repair_target", variant)?;
         need(
             &status,
-            "offers no `ripr agent repair` start",
+            "status could not confirm a gap-bound start",
             "a refused variant keeps the warning",
         )?;
-        if status.contains("prints the gap-bound start") || gap_start_tokens(&status).is_some() {
+        if status.contains("prints the gap-bound start")
+            || status.contains("offers no `ripr agent repair` start")
+            || gap_start_tokens(&status).is_some()
+        {
             return Err(format!("{variant}: status names a start:\n{status}"));
         }
         decoy_untouched(&decoy)?;

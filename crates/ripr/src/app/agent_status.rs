@@ -1817,8 +1817,8 @@ struct PilotCheckRoutes {
 /// Reads the retained pilot summary (#4216, Python and TypeScript
 /// re-walks): `status: complete`, empty `top_actionable_seams`, an explicit
 /// null `next.repair_command`, `language_routes.state: required` (pilot
-/// itself sends the code to `ripr check`, which offers no `ripr agent
-/// repair` start), and no repair card (`python_first_use` absent, null, or
+/// itself sends the code to `ripr check`), and no repair card
+/// (`python_first_use` absent, null, or
 /// a no-repair-card status). Sending the user back to pilot then only routes
 /// them to `ripr check` again, for any routed language. A missing,
 /// unreadable, timed-out, seam-ranking, repair-card-bearing,
@@ -1906,8 +1906,8 @@ fn routed_code_phrase(languages: &[String]) -> String {
 /// ([`default_check_gap_start`], which ends in the shared agent-packet
 /// validator) rather than assuming the route offers no start; only a
 /// TypeScript-family or Python route can be admitted (#10373), and anything
-/// undecidable keeps
-/// the "offers no start" wording (fail-closed).
+/// an unconfirmed route is reported as such instead of claiming there is no
+/// start (fail-closed).
 ///
 /// [`default_check_gap_start`]: crate::app::gap_bound_repair::default_check_gap_start
 fn pilot_routed_gap_start(
