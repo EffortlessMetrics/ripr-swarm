@@ -5417,6 +5417,7 @@ mod tests {
         json!({
             "schema_version": "0.1",
             "kind": "gap_decision_ledger",
+            "inputs": {"source_kind": "repo_exposure"},
             "records": [
                 {
                     "gap_id": "gap:repo:pricing",
