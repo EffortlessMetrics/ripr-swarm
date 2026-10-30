@@ -491,8 +491,10 @@ disclosed and fails closed; it is never treated as a complete causal comparison.
   representations longer than 256 bytes or with an unnormalized scale outside
   -256..=256 anywhere in the validated input or a numeric bound fail closed,
   including inside boolean schema combinators. File and sweep validation parse
-  original bytes with a lossless tree after serde_json preflight. Inputs exceeding
-  16 MiB or serde_json's nesting and finite-number limits are rejected. An
+  original bytes with a lossless tree after serde_json preflight. The parser
+  rejects inputs exceeding 16 MiB or serde_json's nesting and finite-number
+  limits; file bytes are read before the size check. Recursive, unresolved, or
+  more than 128-deep schema references are rejected by preflight. An
   already-constructed `f64` cannot recover its source precision. The xtask
   tests `integer_type_follows_json_schema_numeric_semantics` and
   `exact_integer_and_bounds_controls` pin the behavior and limits.

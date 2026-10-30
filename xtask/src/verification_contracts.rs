@@ -1102,20 +1102,46 @@ fn supported_numeric_input(value: &ExactValue) -> bool {
     }
 }
 
-fn supported_numeric_bounds(schema: &ExactValue) -> bool {
+fn supported_numeric_bounds(
+    schema: &ExactValue,
+    root: &ExactValue,
+    active_refs: &mut BTreeSet<String>,
+    checked_refs: &mut BTreeSet<String>,
+) -> bool {
     let Some(object) = schema.as_object() else {
         return true;
     };
+    if let Some(reference) = object.get("$ref").and_then(ExactValue::as_str) {
+        if !checked_refs.contains(reference) {
+            if active_refs.len() >= 128 || !active_refs.insert(reference.to_string()) {
+                return false;
+            }
+            let supported = resolve_ref(root, reference).is_some_and(|target| {
+                supported_numeric_bounds(target, root, active_refs, checked_refs)
+            });
+            active_refs.remove(reference);
+            if !supported {
+                return false;
+            }
+            checked_refs.insert(reference.to_string());
+        }
+    }
     for (key, value) in object {
         let supported = match key.as_str() {
             "minimum" | "maximum" | "const" | "enum" => supported_numeric_input(value),
-            "properties" | "$defs" | "definitions" => value
-                .as_object()
-                .is_none_or(|entries| entries.values().all(supported_numeric_bounds)),
-            "allOf" | "anyOf" | "oneOf" => value
-                .as_array()
-                .is_none_or(|entries| entries.iter().all(supported_numeric_bounds)),
-            "not" | "if" | "then" | "else" | "items" => supported_numeric_bounds(value),
+            "properties" | "$defs" | "definitions" => value.as_object().is_none_or(|entries| {
+                entries
+                    .values()
+                    .all(|entry| supported_numeric_bounds(entry, root, active_refs, checked_refs))
+            }),
+            "allOf" | "anyOf" | "oneOf" => value.as_array().is_none_or(|entries| {
+                entries
+                    .iter()
+                    .all(|entry| supported_numeric_bounds(entry, root, active_refs, checked_refs))
+            }),
+            "not" | "if" | "then" | "else" | "items" => {
+                supported_numeric_bounds(value, root, active_refs, checked_refs)
+            }
             _ => true,
         };
         if !supported {
@@ -1177,11 +1203,18 @@ pub(crate) fn validate_exact_value_against_schema(
     location: String,
     violations: &mut Vec<String>,
 ) {
+    let mut active_refs = BTreeSet::new();
+    let mut checked_refs = BTreeSet::new();
     if !supported_numeric_input(value)
-        || !supported_numeric_bounds(root_schema)
-        || !supported_numeric_bounds(schema)
+        || !supported_numeric_bounds(
+            root_schema,
+            root_schema,
+            &mut active_refs,
+            &mut checked_refs,
+        )
+        || !supported_numeric_bounds(schema, root_schema, &mut active_refs, &mut checked_refs)
     {
-        violations.push(format!("{location}: unsupported numeric precision"));
+        violations.push(format!("{location}: unsupported numeric precision or invalid, recursive, or excessively deep schema reference"));
         return;
     }
     validate_value_against_schema_inner(value, schema, root_schema, location, violations);
@@ -1579,9 +1612,8 @@ fn value_matches_type(value: &ExactValue, expected_type: &str) -> bool {
     }
 }
 
-/// Check the exact decimal represented by `ExactValue`, within the documented
-/// limits. JSON input must be parsed with serde_json's arbitrary_precision
-/// feature; values constructed from f64 already carry that conversion's loss.
+/// Check the exact source decimal represented by the validator-local value,
+/// within the documented limits.
 fn json_number_is_integer(value: &ExactValue) -> bool {
     exact_schema_number(value)
         .is_some_and(|number| number.normalized().as_bigint_and_exponent().1 <= 0)
@@ -1813,6 +1845,74 @@ mod tests {
             );
             assert!(!violations.is_empty(), "{schema_text}");
         }
+        Ok(())
+    }
+
+    #[test]
+    fn referenced_unsupported_bound_cannot_be_inverted() -> Result<(), String> {
+        let schema = parse_exact_text(r##"{"not":{"$ref":"#/x"},"x":{"minimum":1e300}}"##)?;
+        let value = parse_exact_text("1")?;
+        let mut violations = Vec::new();
+        validate_exact_value_against_schema(
+            &value,
+            &schema,
+            &schema,
+            "value".into(),
+            &mut violations,
+        );
+        assert!(
+            !violations.is_empty(),
+            "unsupported bound through $ref cannot become a match"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn reference_preflight_preserves_valid_not_and_rejects_cycles() -> Result<(), String> {
+        let value = parse_exact_text("1")?;
+        for (schema_text, valid) in [
+            (r##"{"not":{"$ref":"#/x"},"x":{"minimum":2}}"##, true),
+            (r##"{"not":{"$ref":"#/missing"}}"##, false),
+            (r##"{"$ref":"#"}"##, false),
+        ] {
+            let schema = parse_exact_text(schema_text)?;
+            let mut violations = Vec::new();
+            validate_exact_value_against_schema(
+                &value,
+                &schema,
+                &schema,
+                "value".into(),
+                &mut violations,
+            );
+            assert_eq!(
+                violations.is_empty(),
+                valid,
+                "{schema_text}: {violations:?}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn excessively_deep_reference_chain_fails_closed() -> Result<(), String> {
+        let links = (0..129)
+            .map(|index| format!(r##""n{index}":{{"$ref":"#/n{}"}}"##, index + 1))
+            .collect::<Vec<_>>()
+            .join(",");
+        let schema = parse_exact_text(&format!(r##"{{"$ref":"#/n0",{links},"n129":{{}}}}"##))?;
+        let value = parse_exact_text("1")?;
+        let mut violations = Vec::new();
+        validate_exact_value_against_schema(
+            &value,
+            &schema,
+            &schema,
+            "value".into(),
+            &mut violations,
+        );
+        assert!(
+            !violations.is_empty(),
+            "long reference chain must fail closed"
+        );
         Ok(())
     }
 
