@@ -428,6 +428,53 @@ fn python_flat_layout_journey_runs_the_gap_bound_loop_from_the_printed_start() -
         return Err(format!("the after phase wrote no receipt:\n{after}"));
     }
 
+    // #10984: the aggregate and named façades must agree on the real,
+    // current gap attempt without inventing a project test run.
+    let (again_ok, again) = ripr(
+        &decoy,
+        &["continue", "--root", &root_arg, "--attempt", attempt],
+    )?;
+    expect_exit(again_ok, true, "repeat named continue")?;
+    need(&again, "finished_current", "repeat is current")?;
+    let named = ripr_output(
+        &decoy,
+        &[
+            "status",
+            "--root",
+            &root_arg,
+            "--attempt",
+            attempt,
+            "--json",
+        ],
+    )?;
+    expect_exit(named.status.success(), true, "named status")?;
+    let named_doc: serde_json::Value =
+        serde_json::from_slice(&named.stdout).map_err(|e| e.to_string())?;
+    if named_doc["attempt"]["status_class"] != "finished_current" {
+        return Err(format!(
+            "named attempt is not finished/current: {named_doc}"
+        ));
+    }
+    let aggregate = ripr_output(&decoy, &["status", "--root", &root_arg, "--json"])?;
+    expect_exit(aggregate.status.success(), true, "aggregate status")?;
+    let aggregate_doc: serde_json::Value =
+        serde_json::from_slice(&aggregate.stdout).map_err(|e| e.to_string())?;
+    if aggregate_doc["status"] != "complete"
+        || aggregate_doc["test_run"]["status"] != "not_recorded"
+    {
+        return Err(format!(
+            "current gap status must be complete with the test unrecorded: {aggregate_doc}"
+        ));
+    }
+    let (human_ok, human) = ripr(&decoy, &["status", "--root", &root_arg])?;
+    expect_exit(human_ok, true, "aggregate human status")?;
+    need(&human, "Status: complete", "human aggregate status")?;
+    need(
+        &human,
+        "Test run: none recorded",
+        "human runtime limitation",
+    )?;
+
     decoy_untouched(&decoy)
 }
 
