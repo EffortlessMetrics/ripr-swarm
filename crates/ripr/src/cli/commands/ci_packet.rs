@@ -533,7 +533,10 @@ impl PacketRun {
             "Plan RIPR inline comments",
             When::Always,
             Role::Advisory,
-            pr && self.settings.comment_mode != "off" && self.exists(COMMENTS_JSON),
+            // An empty mode means `off`, as `--comment-mode` documents and
+            // `ci-summary` reads it (#11146); only a named mode is planned.
+            pr && !matches!(self.settings.comment_mode.trim(), "" | "off")
+                && self.exists(COMMENTS_JSON),
             Self::plan_inline_comments,
         );
 
@@ -2084,6 +2087,30 @@ mod tests {
         assert!(line(&manual, "ripr first-pr ").contains(" --base origin/trunk "));
         assert!(!manual.contains("ripr review-comments "), "{manual}");
         assert!(!line(&manual, "ripr policy history ").contains("--pr-number"));
+        Ok(())
+    }
+
+    /// #11146: an empty (or blank) `RIPR_COMMENT_MODE` means `off`, so the plan
+    /// stage must not run and fail with `unknown pr-comments plan mode ""`.
+    /// `plan` and an unknown value still plan (the unknown one fails loudly).
+    #[test]
+    fn empty_comment_mode_skips_the_inline_plan_like_off() -> Result<(), String> {
+        let planned = |mode: &str| -> Result<bool, String> {
+            let (packet, _failed) = recorded_packet_with(CiSettings {
+                comment_mode: mode.to_string(),
+                ..full_packet_settings()
+            })?;
+            Ok(packet.contains("ripr pr-comments plan "))
+        };
+        assert!(planned("inline")?, "inline must plan");
+        assert!(planned("plan")?, "plan must plan");
+        assert!(
+            planned("post")?,
+            "an unknown mode must still reach the plan"
+        );
+        assert!(!planned("off")?, "off must not plan");
+        assert!(!planned("")?, "empty must not plan");
+        assert!(!planned("  ")?, "blank must not plan");
         Ok(())
     }
 

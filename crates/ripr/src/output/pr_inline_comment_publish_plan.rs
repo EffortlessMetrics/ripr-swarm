@@ -58,6 +58,11 @@ impl CommentMode {
             "off" => Ok(Self::Off),
             "plan" => Ok(Self::Plan),
             "inline" => Ok(Self::Inline),
+            "" => Err(
+                "pr-comments plan mode is empty; expected `off`, `plan`, or `inline` (leave \
+                 `--mode` out, or pass `off`, to publish no comments)"
+                    .to_string(),
+            ),
             _ => Err(format!(
                 "unknown pr-comments plan mode {value:?}; expected `off`, `plan`, or `inline`"
             )),
