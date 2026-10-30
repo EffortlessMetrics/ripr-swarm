@@ -10465,6 +10465,8 @@ name = "bounded human check output"
 spec = "docs/specs/RIPR-SPEC-0122-bounded-human-check-output.md"
 tests = [
   "crates/ripr/src/analysis/classify/decision.rs::tests::infection_unknown_next_step_names_a_concrete_action",
+  "crates/ripr/src/output/typescript_packet_projection.rs::tests::plain_blockers_name_the_test_and_hide_the_limit_id",
+  "crates/ripr/src/app/navigation.rs::tests::repair_route_refusal_advisory_names_state_and_recovery",
   "crates/ripr/src/output/human.rs::tests::render_finding_marks_a_match_arm_head_only_after_row",
   "crates/ripr/src/output/human.rs::tests::render_finding_adds_no_arm_note_when_the_after_row_is_complete",
   "crates/ripr/src/output/human.rs::tests::render_finding_arm_note_ignores_arrows_in_literals_and_comments",
@@ -16169,6 +16171,7 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/predicate_activation_tests.rs::non_call_owner_reference_is_unresolved",
   "crates/ripr/src/analysis/language/typescript/predicate_activation_tests.rs::non_predicate_change_is_not_applicable",
   "crates/ripr/src/output/typescript_packet_projection.rs::moved_assertion_selection_is_never_agent_packet_eligible",
+  "crates/ripr/src/output/typescript_packet_projection.rs::tests::plain_blockers_name_the_test_and_hide_the_limit_id",
   "crates/ripr/src/app/tests/typescript_family_selection_packets.rs::family_relevant_value_assertion_keeps_its_packet",
   "crates/ripr/src/app/tests/typescript_family_selection_packets.rs::passed_over_wrong_family_assertion_suppresses_the_packet",
   "crates/ripr/src/app/tests/typescript_family_selection_packets.rs::wrong_family_only_test_cannot_become_the_packet_target",
@@ -16185,6 +16188,8 @@ code = [
   "crates/ripr/src/analysis/language/typescript/classifier.rs",
   "crates/ripr/src/analysis/language/typescript/boundary_input.rs",
   "crates/ripr/src/output/typescript_packet_projection.rs",
+  "crates/ripr/src/output/preview_actionability.rs",
+  "crates/ripr/src/output/human/triage.rs",
   "crates/ripr/src/analysis/classify/reveal.rs",
   "crates/ripr/src/analysis/classifier/finding.rs",
   "crates/ripr/src/analysis/language/perl/mod.rs",

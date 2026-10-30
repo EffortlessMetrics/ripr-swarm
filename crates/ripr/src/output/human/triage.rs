@@ -261,6 +261,17 @@ pub(crate) fn render_human_triage(
                     Some(finding) if finding.class == ExposureClass::Exposed => {
                         out.push_str(EXPOSED_PREVIEW_SAFE_ACTION);
                     }
+                    // An unresolved expected value (a named TypeScript limitation)
+                    // is worded for the person who must act on it: which test line
+                    // and matcher, why ripr cannot tell, and what to do. The raw
+                    // limitation id stays in evidence only.
+                    Some(finding)
+                        if let Some(blocker) = typescript_dynamic_blocker_for(finding) =>
+                    {
+                        out.push_str(&format!(
+                            "  Safe next action: {blocker}; replace that expected value with a literal, or check by hand that the test covers this change, then rerun `ripr check`. No repair is started for this finding: `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it\n"
+                        ));
+                    }
                     // #7384: TypeScript named limitations deliberately leave
                     // `static_limit_kind` unset, so the structured branch above
                     // never fires and this line fell through to generic
@@ -1119,6 +1130,16 @@ fn packet_closed_preview_safe_action(finding: &Finding, why_not_actionable: &str
 /// evidence). Read the real producer line back so the human safe-action
 /// surface can name the actual blocker instead of generic packet-contract
 /// jargon.
+fn typescript_dynamic_blocker_for(finding: &Finding) -> Option<String> {
+    if !matches!(
+        finding.language,
+        Some(LanguageId::TypeScript) | Some(LanguageId::JavaScript)
+    ) {
+        return None;
+    }
+    crate::output::typescript_packet_projection::typescript_dynamic_assertion_blocker(finding)
+}
+
 fn typescript_named_limitation_why(finding: &Finding) -> Option<String> {
     finding
         .evidence

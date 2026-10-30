@@ -557,7 +557,10 @@ full gate's answer``. A refusal whose gate answer would only repeat it names
 its own recovery instead (#9244): a finding with no canonical gap says there
 is no seam to start a repair from and sends the reader to the Next step above
 (it makes no claim about missing discriminators, which other languages can
-name without a Rust canonical gap); an unreadable config names `ripr.toml` and
+name without a Rust canonical gap), except a TypeScript or JavaScript preview
+finding whose repair packet is blocked by an unresolved expected value or a
+moved assertion selection, which says ripr has no complete repair packet for the
+finding and names that cause in plain words (#10682, the section below); an unreadable config names `ripr.toml` and
 the `ripr check` rerun; a finding no seam binds to says ripr found no seam in
 its file to bind it to and sends the reader to the Next step above; several binding seams say `ripr repair` needs the ID of
 the chosen seam without promising a listing; a repair route that is not ready
@@ -738,6 +741,31 @@ Body presence includes a string or character literal even without a trailing
 comma. Comment-only text, including the producer's `/* old body unread */`
 placeholder, does not establish a body. A complete literal `after:` body is
 not a head-only row and prints no note.
+
+### Plain wording for a TypeScript/JavaScript advisory-only finding (#10682)
+
+A TypeScript or JavaScript preview finding that stays advisory-only names its
+real blocker in plain words on the bounded check screen, without raising or
+lowering any gate:
+
+1. An unresolved expected value (the `typescript_dynamic_assertion_unresolved`
+   named limitation, RIPR-SPEC-0085 §PR5) leads the `Safe next action` with the
+   test `file:line` and the matcher, says ripr cannot tell whether that test
+   covers the change because the expected value is a variable or computed value
+   rather than a literal, and says what to do (use a literal expected value or
+   check by hand). The limitation id stays in evidence only.
+2. A moved assertion selection (RIPR-SPEC-0224) puts the cause into
+   `why_not_actionable`: the named related test (`and N more`, with the verb
+   agreeing in number) asserts a different kind of behavior than the change, so
+   ripr cannot safely choose which test to edit.
+3. In both cases the repair-route advisory reads `no repair start offered: ripr
+   has no complete repair packet for this <language> finding (<cause>); ...`
+   instead of the missing-seam sentence. A TypeScript or JavaScript finding with
+   any other cause keeps the existing advisory.
+
+The wording reads existing evidence only. Readiness, `actionability_category`,
+`repair_packet_ready`, the shared validator and every eligibility guard are
+unchanged, and the lines claim no runtime outcome.
 
 ## Non-Claims
 
