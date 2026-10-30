@@ -3981,6 +3981,35 @@ mod tests {
         );
     }
 
+    /// #10696 review: each recognized evidence shape is rewritten, and any
+    /// other text (older or newer producer wording) passes through unchanged.
+    #[test]
+    fn plain_toolchain_note_rewrites_known_shapes_and_passes_the_rest_through() {
+        let tail = "; project verification and source builds require their own toolchain";
+        let rustc = plain_toolchain_note(&format!(
+            "rustc timed out after 5s; the installed binary's static analysis does not run rustc{tail}"
+        ));
+        assert_eq!(
+            rustc,
+            "rustc did not answer within 5s. ripr does not need rustc to analyze your code; your own builds do."
+        );
+        let cargo = plain_toolchain_note(&format!(
+            "cargo not available; static analysis continues, but evidence that reads `cargo metadata` in the selected root is withheld{tail}"
+        ));
+        assert!(
+            cargo.starts_with("cargo not available. ripr still analyzes"),
+            "{cargo}"
+        );
+        assert!(!cargo.contains("project verification"), "{cargo}");
+        for other in [
+            "git version 2.43.0",
+            "rustc not available; some future effect wording; project verification and source builds require their own toolchain",
+            "rustc not available; the installed binary's static analysis does not run rustc",
+        ] {
+            assert_eq!(plain_toolchain_note(other), other);
+        }
+    }
+
     #[test]
     fn compact_tilde_line_spells_newlines() {
         let line = compact_tilde_line("target/\n! doctor checks passed");

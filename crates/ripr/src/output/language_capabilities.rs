@@ -185,12 +185,36 @@ mod tests {
     }
 
     #[test]
+    fn human_output_has_exactly_one_summary_line_per_language() {
+        let all = render_human(None);
+        for language in LanguageId::ALL {
+            let lines = all
+                .lines()
+                .filter(|line| line.starts_with(&format!("{} (", language.display_name())))
+                .count();
+            assert_eq!(lines, 1, "{language:?}: {all}");
+        }
+        let one = render_human(Some(LanguageId::Python));
+        assert_eq!(
+            one.lines()
+                .filter(|line| line.contains(" (preview"))
+                .count(),
+            1,
+            "{one}"
+        );
+    }
+
+    #[test]
     fn human_output_is_one_plain_sentence_per_language_without_registry_tokens() {
         let text = render_human(Some(LanguageId::TypeScript));
-        assert!(
-            text.contains("TypeScript (preview): finds test gaps"),
-            "{text}"
-        );
+        // Build-feature aware: an uncompiled adapter still gets its sentence,
+        // marked "not in this build".
+        let marker = if LanguageId::TypeScript.is_available() {
+            "TypeScript (preview): finds test gaps"
+        } else {
+            "TypeScript (preview; not in this build): finds test gaps"
+        };
+        assert!(text.contains(marker), "{text}");
         assert!(!text.contains("Python"), "{text}");
         let all = render_human(None);
         for language in LanguageId::ALL {

@@ -5157,6 +5157,30 @@ mod tests {
         Ok(())
     }
 
+    /// #10696 review: the artifact table is hidden only while nothing has
+    /// started; one present artifact brings it (and the `Seam:` line) back.
+    #[test]
+    fn agent_status_markdown_keeps_artifact_table_once_an_artifact_exists() -> Result<(), String> {
+        let root = unique_agent_status_test_dir("table-returns");
+        let workflow = root.join("target/ripr/workflow");
+        std::fs::create_dir_all(&workflow).map_err(|err| format!("create workflow: {err}"))?;
+        std::fs::write(workflow.join("before.repo-exposure.json"), "{}")
+            .map_err(|err| format!("write artifact: {err}"))?;
+
+        let report = build_agent_status_report(&root, Path::new("."));
+        let rendered = render_agent_status_markdown(&report);
+
+        assert!(!rendered.contains("No repair in progress."), "{rendered}");
+        assert!(rendered.contains("Seam: unknown"), "{rendered}");
+        assert!(
+            rendered.contains("| before snapshot | present |"),
+            "{rendered}"
+        );
+
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
     #[test]
     fn agent_status_markdown_names_next_command_and_limits() -> Result<(), String> {
         let root = unique_agent_status_test_dir("markdown");
