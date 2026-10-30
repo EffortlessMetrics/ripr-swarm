@@ -1,0 +1,3 @@
+case = "serde-derive-rename-variant-lower"
+issue = 8782
+reason = "A bare-imported unit variant receiver (LowerCase.apply_to_variant) is not credited by the bounded inherent-receiver rule (#7415, #8782)."

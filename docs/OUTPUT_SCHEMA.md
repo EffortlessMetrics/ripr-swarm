@@ -126,7 +126,7 @@ map is:
 | `ripr cache status --json` | `schema_version` | `0.2` |
 | `ripr cache export` success stdout | `schema_version` | `0.1` |
 | `ripr mcp` status tool and resource | `schema_version` | `ripr-mcp-workspace-status-v1` (see [MCP workspace status server](interop/mcp.md)) |
-| `ripr_list_gaps` success and refusal | `schema_version` | `ripr-mcp-gap-list-v3`; strict v1 readers migrate via `tools/list` (see [MCP gap filters](interop/mcp.md)) |
+| `ripr_list_gaps` success and refusal | `schema_version` | `ripr-mcp-gap-list-v4`; strict v1 readers migrate via `tools/list` (see [MCP gap filters](interop/mcp.md)) |
 | `ripr swarm queue --json` | `schema_version` | `0.2` |
 | `ripr help --json` | `schema_version` | `3` |
 | `ripr agent card --json` and the `RepairCardV1` DTO (RIPR-SPEC-0192, RIPR-SPEC-0194; `ripr agent card` is the default CLI handoff, #4667) | `schema_version` | `repair_card.v1` |
@@ -297,7 +297,8 @@ Field contract:
 On a refusal under `--json` stdout carries this envelope (the same stream
 `check`, `agent packet` and `agent verify-execute` use for refusal documents)
 and stderr the prose; on success the envelope never appears. An unknown
-`--seam-id` exits `3` on `agent card`, `agent stub` and `agent packet`. Operational could-not-complete failures of
+`--seam-id`, or a known one that agent policy withholds, exits `3` on `agent card`,
+`agent stub` and `agent packet`. Operational could-not-complete failures of
 `agent card` (an unreadable config, a failed git probe, a detail-source
 serialization failure) still exit `2` with human prose only, as does a refusal
 whose envelope cannot be rendered or written to stdout (no typed answer was
@@ -783,6 +784,23 @@ header and summary counts, then one `Start here:` triage block with a closed
 state (`top_gap`, `no_actionable_gap`, `preview_limited`, `static_limited`, or
 `missing_scope`), one selected finding digest when available, an omitted-finding
 count, and pointers to `--format human-full` and `--format json`.
+Each listed hidden finding includes its probe kind and bounded explanatory
+reason alongside location, exposure class, and any currentness label. When
+`--at FILE:LINE --kind FAMILY` is ambiguous, check prints explicit
+`ripr agent stub --seam-id ID` choices from that resolver. Choices also appear beside eligible hidden findings within the same first
+twenty-row window, keyed by finding ID. Base-side/unresolved subjects and
+stale source bytes receive no choices. These syntax choices are unvalidated:
+the seam-ID command may refuse an already-gripped or unsupported seam. They
+do not establish stub readiness, a canonical finding-to-seam repair binding,
+or repair eligibility. Hidden rows resolve syntax ambiguity only; unique
+hidden routes do not trigger classified inventory lookups merely to be omitted.
+A named Rust transitive/public-API reach limitation with retained unresolved-edge
+evidence says tests cannot close that analysis limitation, names the edge and
+analyzer route, and reserves test changes for an independently confirmed gap.
+Exact indexed declarations may additionally identify a private or restricted
+helper behind a public entry; the path remains a candidate, not confirmed reach.
+That declaration context uses additive `limitation_helper_boundary` evidence;
+canonical edge, route, and non-claim values retain their original bytes.
 `ripr check --format human-full` (alias `text-full`) preserves the exhaustive
 per-finding human report. Navigation-aware CLI reports may define identical
 facts or guidance once with explicit finding-ordinal references; every finding
@@ -1020,6 +1038,8 @@ zeroed `summary`, same empty `findings`, same
 | `check_artifact_unusable` | `analysis/check-artifact` | A named `ripr context --from` check artifact is unreadable, malformed, foreign, or identity-mismatched (#7331). |
 | `gap_ledger_unusable` | `analysis/gap-ledger` | A named `ripr rerun --gap-ledger` file cannot be read or parsed (#7331). |
 | `seam_id_unknown` | `analysis/seam-inventory` | A named `ripr agent packet --seam-id` matches no current seam (#7331). |
+| `seam_not_actionable` | `analysis/seam-limitation` | A named `ripr agent start --seam-id` matches a seam that policy permits but the shared repair-admission gate refuses to start: a static-limitation seam (opaque or `*_unknown`) with no repairable gap, or a seam `ripr repair` and `agent card` report as not repair-eligible (route not ready, no editable test target); `agent packet` still renders its inspection packet (#10712). |
+| `seam_policy_omitted` | `analysis/seam-policy` | A named `ripr agent packet`, `ripr agent start`, or `ripr agent repair --phase before` `--seam-id` matches a seam that agent policy withholds (configured off, already gripped, or not agent-visible) (#10712). |
 | `diff_input_unsupported` | `analysis/diff-input` | The shared diff parser refused a region, admission, or truncated textual section of an `agent brief --diff` or `--base` input; no brief selection ran. |
 | `git_invocation_timeout` | `analysis/git-timeout` | A git invocation exceeded its cooperative deadline and was terminated. |
 | `analysis_timeout` | `analysis/timeout` | The `ripr check` wall-clock budget (`--timeout SECS`, `RIPR_CHECK_TIMEOUT`) ran out before analysis finished; no findings were produced (#5369). |
@@ -1069,7 +1089,8 @@ for rerun, `"1.1"` for context, `"0.5"` for agent packet). `mode` appears only
 on commands that accept `--mode` (check, diff, context); `scope` is `"diff"`
 for diff-scoped commands and `"repo"` for agent brief and agent packet; agent
 brief echoes the caller-supplied `--base` when its working set selected one.
-The exit stays `2` and the human prose stays on stderr; argv usage errors stay
+The exit stays `2` and the human prose stays on stderr, except an unknown or
+policy-withheld `agent packet --seam-id`, which exits `3` (#10712); argv usage errors stay
 prose-only with empty stdout on every command.
 
 For `ripr check`, the machine-readable formats also carry their own refusal
@@ -2405,7 +2426,14 @@ JSON fields:
   itself, so a comparison seam names the same equality boundary the
   classifier's missing-discriminator statement renders. Static-limit
   findings and probes with no owner identity may omit this field until a
-  non-actionable gap-state projection exists.
+  non-actionable gap-state projection exists. TypeScript preview findings
+  that carry a preview card state the content-addressed
+  `gap:typescript:typescript_preview:<fp8>` id (the one `ripr agent repair
+  --gap-id` accepts) without the `canonical_gap` object or a
+  `canonical_gap_group_size` (TypeScript ids carry no group semantics).
+  JavaScript preview findings state no id. The id is independent of
+  `preview_actionability.missing_actionability_fields`, which lists
+  `canonical_gap_id` only to say the repair packet is not yet ready (#10709).
 - `canonical_gap_group_size` is the number of raw findings in the current
   report that share the same `canonical_gap_id`, or omitted when no canonical
   gap identity is assigned.
@@ -16889,6 +16917,13 @@ target/ripr/pilot/pilot-summary.json
 target/ripr/pilot/pilot-summary.md
 ```
 
+`ripr pilot -v` also writes `target/ripr/pilot/pilot-timings.json` after the
+files above (RIPR-SPEC-0185, #10727): `{"schema_version": 1, "kind":
+"pilot_timings", "stages": [{"stage", "elapsed_ms", "items"?}], "total_ms"}`,
+the machine-readable twin of the stderr stage table. It is the only pilot file
+that holds wall-clock values, so it is not byte-stable; it is absent without
+`-v`, and a run without `-v` or a timeout run removes a prior one.
+
 `ripr pilot --format json` writes that same `pilot-summary.json` document to
 stdout and suppresses the human terminal. Packet files are still written under
 `--out`. There is no `--json` alias.
@@ -17392,7 +17427,7 @@ Diagnostic shape:
   "severity": 2, // 1=Error, 2=Warning, 3=Information, 4=Hint
   "code": "ripr-seam-weakly-gripped",
   "source": "ripr",
-  "message": "Weakly gripped behavioral seam (predicate_boundary): amount >= discount_threshold",
+  "message": "Tests only loosely check this: amount >= discount_threshold",
   "data": {
     "schema_version": "0.1",
     "seam_id": "f3c9e4d21a0b7c88",
@@ -17419,6 +17454,11 @@ contains a local file and line. These diagnostics are sourced from the explicit
 GapRecord; they do not infer projectability from raw findings and do not make
 gate or badge decisions.
 
+The diagnostic `message` is plain English for the editor Problems panel: the
+gap kind is spoken as a phrase ("Missing boundary assertion"), and the
+CamelCase kind and repair route stay machine-side in `code` and `data`
+(#10695).
+
 GapRecord diagnostic shape:
 
 ```jsonc
@@ -17427,7 +17467,7 @@ GapRecord diagnostic shape:
   "severity": 2,
   "code": "ripr-gap-MissingBoundaryAssertion",
   "source": "ripr",
-  "message": "ripr gap: MissingBoundaryAssertion; repair route: AddBoundaryAssertion; changed behavior: amount >= threshold; suggested check: assert_eq!(...)",
+  "message": "Missing boundary assertion: amount >= threshold. Suggested check: assert_eq!(...).",
   "data": {
     "schema_version": "0.1",
     "source": "gap_decision_ledger",
@@ -18763,7 +18803,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.116",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.119",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. This is the existing
@@ -19531,7 +19571,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.116",
+      "schema_version": "1.119",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

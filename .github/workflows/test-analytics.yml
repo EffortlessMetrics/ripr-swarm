@@ -31,6 +31,11 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          # #10794 / #9646: the default shallow PR checkout has no base branch,
+          # so base-resolution tests (cli_progress, cli_smoke pr-evidence) fail
+          # and nextest aborts before ~30% of the suite runs.
+          fetch-depth: 0
 
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
@@ -51,6 +56,9 @@ jobs:
 
       - name: Prepare locked JSON owner-return fixture dependencies
         run: cargo fetch --locked --manifest-path fixtures/owner_return_pin_json_real_literal/input/Cargo.toml
+
+      - name: Prepare locked proptest profile dependencies
+        run: cargo fetch --locked --manifest-path crates/ripr/tests/fixtures/proptest_singleton/input/Cargo.toml
 
       - name: Run Rust tests with JUnit output
         run: cargo nextest run --workspace --all-features --profile ci

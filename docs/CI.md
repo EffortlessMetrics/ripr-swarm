@@ -474,7 +474,7 @@ and single-platform CI was the root cause enabling both.
   reported spawn status 127, or an expected test is missing, duplicated or
   ignored in the log: a status file alone cannot tell these four tests from a
   renamed filter that matched nothing (#10621).
-- **`Rust Test Shards`** (`rust-test-shards.yml`, called by `routed-rust.yml`) is the GitHub-hosted route's required test phase (#10507): four `cargo nextest run --workspace --profile ci --partition count:N/4` jobs that start only after the hosted `rust-gates.yml` job (called with `test-shards: 4`) passed every other gate, plus `rust-test-shards-verify`, which runs `cargo xtask verify-test-shards` and fails unless every shard has status 0, a current run context (repository, checkout, run, attempt, profile, partition, exit) and a complete JUnit report whose testcases are exactly its partition list, and the partition lists are a disjoint cover of the workspace list; it then retains the combined `junit.xml` and `run-context.txt` under the unsharded artifact name. `Ripr Rust Small Result` fails unless it passed; the self-hosted routes keep the single-command step. The shards restore their own `ripr-swarm-rust-shards` cache, written by shard 1 on `main` pushes, so the first run after a cold cache pays the full test build.
+- **`Rust Test Shards`** (`rust-test-shards.yml`, called by `routed-rust.yml`) is the GitHub-hosted route's required test phase (#10507): four `cargo nextest run --workspace --profile ci --partition count:N/4` jobs that start only after the hosted `rust-gates.yml` job (called with `test-shards: 4`) passed every other gate, plus `rust-test-shards-verify`, which runs `cargo xtask verify-test-shards` and fails unless every shard has status 0, a current run context (repository, checkout, run, attempt, profile, partition, exit) and a complete JUnit report whose testcases are exactly its partition list, and the partition lists are a disjoint cover of the workspace list. The verifier parses XML before retaining complete suite elements and anchors each receipt’s four ordered input blobs to `Cargo.lock`, `.config/nextest.toml`, `.github/workflows/rust-gates.yml` and `.github/workflows/rust-test-shards.yml` at the expected checkout commit; malformed or unsupported namespaced XML, unresolved inputs, shared incorrect hashes, duplicate or reserved run-context keys (`shards` and `verified_attempts` are reserved for the combined receipt) and noncanonical artifact attempt suffixes fail closed. It then retains the combined `junit.xml` and `run-context.txt` under the unsharded artifact name. `Ripr Rust Small Result` fails unless it passed; the self-hosted routes keep the single-command step. The shards restore their own `ripr-swarm-rust-shards` cache, written by shard 1 on `main` pushes, so the first run after a cold cache pays the full test build.
 - **`Linux Nextest Shards`** (`linux-nextest-shards.yml`, manual `workflow_dispatch` only) runs the required Rust test step as four `cargo nextest --partition count:N/4` jobs on hosted 4-core runners and reports each shard's build and run seconds and JUnit test count and checks the four partitions are a disjoint cover of the workspace test list, so the wall-clock of a sharded step can be measured (#10341; the hosted required route now shards, see `Rust Test Shards`). It is advisory, not wired to pull requests, and does not replace `Ripr Rust Small Result`.
 - **`Windows Advisory Shards`** (`windows-advisory-shards.yml`, manual `workflow_dispatch` only) runs the same workspace tests as four `cargo nextest --partition count:N/4` jobs plus a doctest job, each with its own log artifact and failure summary, so a Windows test failure is attributable to a shard without a 75-minute single step (#9272). The four tests that need a real directory deny ACL are excluded from those bash partitions and run in a `shell: pwsh` step of shard 1 (20-minute step timeout, own `acl.log` and `acl.status`), because Git for Windows bash enables backup and restore privileges that bypass the deny. It is advisory and does not replace the nightly lane.
 - **`Windows Watchdog Qualification`** (`windows-watchdog-qualification.yml`, manual `workflow_dispatch` only) extracts the shard workflow's shipped test step, shortens only its timer to 12 seconds and runs it against a native fixture process tree in three cells: mapped, a primary-only-kill mutation that must fail the descendant check, and forced-missing mapping. It checks root identity, primary reaping, descendant termination, an unowned sentinel and uploaded receipts. It qualifies only the shortened bound (#9272).
@@ -1279,6 +1279,36 @@ not qualified, as are PRs without the `merge-ready` label (no request was made);
 trail. `xtask/tests/pr_readiness_workflow_contract.rs` pins the alert-only
 shape (no dispatch command, no `actions: write`), the in-flight check, and
 the `mergeable_state` column.
+
+### Main Health Sentinel
+
+Main's push gate is frequently cancelled before completing (on busy days most
+`Routed Rust Small` main-push runs cancel before any job starts), and the
+Hard-cut watch stays green on broken main by design: it judges the cut packet,
+not the build. A broken main whose push run cancels can therefore sit with no
+completed red signal anywhere for hours (#10991; incidents #8990, #8989, with
+live repeats through 2026-10-29).
+`.github/workflows/main-health-sentinel.yml` runs twice an hour (`9,39 * * * *`)
+and probes main directly: `cargo check --locked -p ripr` plus one focused
+binary smoke selector (`cli_smoke
+version_is_exact_and_precedes_help_or_output_flags`), cached, on a
+GitHub-hosted runner, with its own serialization group and a 30-minute job
+timeout. It is a probe, not a second build lane and not a required check: it
+holds no branch-protection or ruleset authority and dispatches nothing.
+Detection is bounded and honest: probe logs are teed with native `PIPESTATUS`
+statuses, a judge step fails the job on missing or empty evidence (a probe
+terminated at its step timeout reads as the timeout status 124 and classifies red
+with a tracker record; a probe that executed zero tests reports red, never
+success), the summary table is the
+per-fire audit trail, and the `main-red` tracking issue
+(`main-red: scheduled main-health sentinel found a broken main`) is the
+durable findable record — opened once, appended per confirming probe, and
+closed by the first green probe with the recovering run link. Worst-case
+detection latency is roughly forty minutes (interval plus probe). The
+`xtask/tests/main_health_sentinel_contract.rs` contract pins the advisory-only
+shape: scheduled-plus-dispatch triggers, serialization, timeout, repository
+guard, `issues: write` as the only write authority, the exact probe selector,
+zero-executed-test refusal, and the tracker lifecycle.
 
 ### Self-Hosted Runner Placement
 
@@ -2463,14 +2493,18 @@ and fails when:
 - a cell `proof_refs` entry has no `docs/specs/RIPR-SPEC-NNNN-*.md`.
 
 It is separate from `check-capabilities`, which validates
-`metrics/capabilities.toml` against `docs/CAPABILITY_MATRIX.md` and does not read
-the registry. Limits: it does not check cell states, tier ceilings or docs text
+`metrics/capabilities.toml` against `docs/CAPABILITY_MATRIX.md` and joins explicit
+`cells` identities to the source-built whole registry. Product status and cell
+support remain separate authorities. The producer inventory does not check cell
+states, tier ceilings or docs text
 (in-crate tests and `check-support-tiers`), framework-level producers (the
 per-language disposition tests), the registry's relation to
 `metrics/capabilities.toml`, or non-default feature builds. `--registry-json`
 reads a saved registry without building and can be stale; the report says so.
-It is not part of `precommit` or `check-pr` (it requires a `ripr` build, which
-`precommit` must not force). It is hosted: `rust-gates.yml` runs it as the
+The producer inventory is not part of `precommit` or `check-pr`; those paths
+run the separate identity join through `check-capabilities`, which reads a
+source-built registry with default features. Producer inventory is hosted:
+`rust-gates.yml` runs it as the
 unconditional `capability_producers` step after `fixtures` (the `ripr` build is
 already warm), and the `routed-rust.yml` docs-gate runs it when a docs-only PR
 changes `docs/specs/**` or `docs/status/SUPPORT_TIERS.md` (a renamed spec is the

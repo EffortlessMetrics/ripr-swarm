@@ -374,6 +374,8 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     /// run. A doctest is its own crate, so the file holding the comment
     /// declares no function its assertions could be read under.
     doctest_pins: SyncMemo<BTreeMap<(PathBuf, usize), OwnerPinAssertions>>,
+    /// Only generation-owned provider receipts can populate this source view.
+    proptest_pins: SyncMemo<BTreeMap<(PathBuf, usize), OwnerPinAssertions>>,
     /// Per file: the exact pattern pins of its tests through a verified
     /// local `assert_matches!` (#6616), parsed once per run.
     pattern_pins: SyncMemo<BTreeMap<PathBuf, PatternPins>>,
@@ -1351,6 +1353,11 @@ impl OwnerPinSyntax {
         if let Some(refusal) = self.source_provenance_refusal(test, index) {
             return Err(Box::new(refusal));
         }
+        if index.proptest_source(test).is_some() {
+            // These ordinary assertion spellings are a checked interpretation
+            // of $crate-bound property assertions, not caller macro imports.
+            return Ok(BTreeSet::new());
+        }
         let resolved_modules = self.resolved_module_declarations(index);
         let module_resolved = |file: &Path, line: usize, declaration: &str| {
             resolved_modules.contains(&(file.to_path_buf(), line, declaration.to_string()))
@@ -1554,6 +1561,32 @@ impl OwnerPinSyntax {
         assertion: &OracleFact,
         index: &RustIndex,
     ) -> Option<AssertionRefusal> {
+        if let Some((source, offset)) = index.proptest_source(test) {
+            if let Some(refusal) = self.source_provenance_refusal(test, index) {
+                return Some(refusal);
+            }
+            let (Some(start), Some(end), Some(line)) = (
+                test.start_line.checked_sub(offset),
+                test.end_line.checked_sub(offset),
+                assertion.line.checked_sub(offset),
+            ) else {
+                return Some(AssertionRefusal::Syntax(
+                    AssertionContextRefusal::UnidentifiedTest,
+                ));
+            };
+            return self
+                .proptest_pins
+                .borrow_mut()
+                .entry((test.file.clone(), test.start_line))
+                .or_insert_with(|| owner_pin_assertions(source, &assertion_context_macros()))
+                .refusal(
+                    (start, end, &test.name),
+                    &test.body,
+                    (line, &assertion.text),
+                    &BTreeSet::new(),
+                )
+                .map(AssertionRefusal::Syntax);
+        }
         let ambiguous = match self.context_ambiguities(test, assertion.line, index) {
             Ok(ambiguous) => ambiguous,
             Err(refusal) => return Some(*refusal),
@@ -4682,9 +4715,7 @@ impl OwnerReturnPin {
                 }
                 let shadowed_by_std = match &receiver_type {
                     ReceiverType::ByteSlice => BYTE_SLICE_METHODS.contains(&self.name.as_str()),
-                    ReceiverType::Named(_) => {
-                        BY_VALUE_PRELUDE_METHODS.contains(&self.name.as_str())
-                    }
+                    ReceiverType::Named(_) => method_may_dispatch_through_prelude(&self.name),
                 };
                 !shadowed_by_std
                     && trait_scope.as_ref().is_none_or(|scope| {
@@ -5554,6 +5585,16 @@ pub(in crate::analysis) fn function_declaration_is_async(
         .source_syntax
         .get(index, &owner.file)?
         .declaration_is_async(owner)
+}
+
+/// A whole free call, not an unrelated method or associated call with the
+/// same name and a free call nested inside its arguments. Definition identity
+/// remains the caller's authority.
+pub(super) fn is_whole_free_owner_call(operand: &str, name: &str) -> bool {
+    matches!(
+        owner_call_shape(operand, name),
+        Some(CallShape::Bare | CallShape::Path(_))
+    )
 }
 
 /// The operand as a complete call of `name`: `name(..)` or `recv.name(..)`
@@ -9198,6 +9239,58 @@ fn free_call_reaches_definition(
         }
 }
 
+/// Executable helper admission shares lexical call identity and item refusal,
+/// without imposing production-owner pin Cargo/cfg prerequisites on same-file
+/// test helpers. Every caller supplies an actual parsed call site.
+pub(in crate::analysis) fn same_file_free_helper_call_reaches_owner(
+    caller: &TestSummary,
+    helper: &FunctionSummary,
+    prefix: Option<&str>,
+    index: &RustIndex,
+    syntax: &OwnerPinSyntax,
+) -> bool {
+    if caller.file != helper.file
+        || index
+            .files()
+            .get(&helper.file)
+            .is_none_or(|facts| facts.used_lexical_fallback)
+    {
+        return false;
+    }
+    let Some(identity) = super::call_identity::shared_same_file_helper_identity(index, helper)
+    else {
+        return false;
+    };
+    let qualifier = prefix.map(path_prefix_segments).unwrap_or_default();
+    if identity.resolve_same_file_call(caller, index, &qualifier) != CallTarget::Owner {
+        return false;
+    }
+    let masked_body = mask_comments_and_strings(&caller.body);
+    if prefix.is_none()
+        && (test_body_shadows_owner(caller, &helper.name)
+            || binds_outside_let(&masked_body, &helper.name)
+            || bound_by_macro(&masked_body, &helper.name))
+    {
+        return false;
+    }
+    let Some(nesting) = syntax.item_nesting(index, &helper.file, &helper.name, helper.start_line)
+    else {
+        return false;
+    };
+    let binding = FreeOwnerBinding {
+        name: &helper.name,
+        owner_file: &helper.file,
+        owner_start_line: helper.start_line,
+    };
+    binding.resolved_module_delivers_owner(
+        helper.file.clone(),
+        nesting.modules.clone(),
+        &nesting.modules,
+        index,
+        syntax,
+    )
+}
+
 /// Whether the file declares a type alias `type name`.
 fn file_aliases_type(source: &str, name: &str) -> bool {
     if !source.contains(name) {
@@ -9284,18 +9377,26 @@ impl OwnerPinSyntax {
                 &index.source_syntax.get(index, file)?.tree()?,
             )))
         };
+        // Build outside the index-wide lock; re-lock and keep the first entry
+        // stored for this exact source so concurrent callers share one table.
+        if let Ok(memo) = index.call_identity_memos.owner_file_scopes.lock()
+            && let Some((known_source, scopes)) = memo.get(file)
+            && Arc::ptr_eq(known_source, source)
+        {
+            return scopes.clone();
+        }
+        let scopes = compute();
         match index.call_identity_memos.owner_file_scopes.lock() {
             Ok(mut memo) => {
-                if let Some((known_source, scopes)) = memo.get(file)
+                if let Some((known_source, stored)) = memo.get(file)
                     && Arc::ptr_eq(known_source, source)
                 {
-                    return scopes.clone();
+                    return stored.clone();
                 }
-                let scopes = compute();
                 memo.insert(file.to_path_buf(), (Arc::clone(source), scopes.clone()));
                 scopes
             }
-            Err(_) => compute(),
+            Err(_) => scopes,
         }
     }
 }
@@ -13242,7 +13343,7 @@ impl UnitStructFacts {
 /// Items a derive or attribute proc macro emits stay invisible, as for
 /// every other pin rule, as do items an out-of-workspace `macro_rules!`
 /// invocation emits (#7160).
-fn unit_struct_value(
+pub(super) fn unit_struct_value(
     name: &str,
     test_file: &Path,
     index: &RustIndex,
@@ -14569,6 +14670,10 @@ const BYTE_SLICE_METHODS: &[&str] = &[
 /// cannot see which std traits a workspace type implements (derives,
 /// blanket impls), so a named receiver never credits a pin through these
 /// names.
+pub(super) fn method_may_dispatch_through_prelude(name: &str) -> bool {
+    BY_VALUE_PRELUDE_METHODS.contains(&name)
+}
+
 const BY_VALUE_PRELUDE_METHODS: &[&str] = &[
     "all",
     "any",

@@ -1,0 +1,39 @@
+{
+  "kind": "retained_review_counterexample",
+  "candidate": "d4910e91698b1930fdc0fc6a4589ad686cfc179a",
+  "tree": "582074aa6b1499e1e64f140326dcbfcc354d4c23",
+  "executable_sha256": "3ce64ad31432ac5084b56123cf38daff0c1f76ecd22b58f947d04b82de2ca8ce",
+  "native_exit": 0,
+  "native_command": [
+    "ripr",
+    "check",
+    "--root",
+    "<counterexample-root>",
+    "--diff",
+    "<counterexample-root>/diff.patch",
+    "--format",
+    "json"
+  ],
+  "native_raw_sha256": "8a42d9a0ef8a43bc687120f0802ba25e4db65d6263eaa5c5ae02016d01bbd9ae",
+  "report_sanitization": "Only the absolute counterexample root is replaced with <counterexample-root>; retained raw bytes remain in task evidence.",
+  "sources": {
+    "src/shapes/money.py": "class Money:\n    def __init__(self, cents):\n        self.cents = cents\n\n    def __bool__(self):\n        return self.cents > 0\n",
+    "tests/test_money.py": "from shapes.money import Money\n\n\ndef test_truthiness():\n    assert Money(-1)\n",
+    "tests/test_patch.py": "from shapes.money import Money\ntype.__setattr__(Money, '__bool__', lambda self: True)\n\ndef test_patch():\n    assert True\n"
+  },
+  "source_sha256": {
+    "src/shapes/money.py": "d9074631b8986693ce9501fb6602b394d7d79a23c5e384a56e7dde5e11008b4e",
+    "tests/test_money.py": "ea72900e510042f294c67cbea310f1edafc96dd3c688b6912ae6d423ca11bad2",
+    "tests/test_patch.py": "32bbc0c538f029f0d0bdc81dc195368f68a289c2870c8fa1ae2edb08b269c5cf"
+  },
+  "diff": "diff --git a/src/shapes/money.py b/src/shapes/money.py\n--- a/src/shapes/money.py\n+++ b/src/shapes/money.py\n@@ -3,4 +3,4 @@\n         self.cents = cents\n \n     def __bool__(self):\n-        return self.cents != 0\n+        return self.cents > 0\n",
+  "runtime": {
+    "python": "3.12.14",
+    "scope": "Manual import/collection of the two test modules, followed by calls to the two selected tests; not pytest execution.",
+    "before": "2 selected tests pass",
+    "after": "2 selected tests pass"
+  },
+  "expected_disposition": "static_unknown",
+  "observed_disposition": "exposed",
+  "review_disposition": "REPAIR_REQUIRED"
+}

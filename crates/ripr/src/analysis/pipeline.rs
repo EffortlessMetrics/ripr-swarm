@@ -1502,6 +1502,12 @@ fn run_pipeline_for_diff_text_with_language_config(
     // counts are merged once per adapter family so enabling both ids does not
     // retain each finding twice.
     let mut typescript_family_merged = false;
+    // #10725: per-language persistent fact-cache admissions, rendered into
+    // the verbose reuse line by `app::check`.
+    let mut preview_fact_caches: Vec<(
+        LanguageId,
+        crate::analysis::language::PreviewFactCacheStats,
+    )> = Vec::new();
     for language in languages {
         cancellation::checkpoint()?;
         // Non-abort contract (Campaign 31 PR 10, #1403): a preview-language
@@ -1579,6 +1585,13 @@ fn run_pipeline_for_diff_text_with_language_config(
                 ));
                 if repeat_typescript_pass {
                     continue;
+                }
+                // #10725: the typescript/javascript family merges above, so
+                // only the first pass's admissions are recorded — the repeat
+                // pass served everything from the caches the first pass
+                // seeded and would double-count.
+                if result.preview_fact_cache.did_work() {
+                    preview_fact_caches.push((adapter_language, result.preview_fact_cache.clone()));
                 }
                 value_origins.extend(result.value_origins);
                 findings.extend(result.findings);
@@ -2145,6 +2158,7 @@ fn run_pipeline_for_diff_text_with_language_config(
         rust_diagnostic_origins,
         rust_consumed_sources,
         language_view: Some(language_view),
+        preview_fact_caches,
     })
 }
 
@@ -2429,6 +2443,7 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
         rust_diagnostic_origins,
         rust_consumed_sources,
         language_view: Some(language_view),
+        preview_fact_caches: Vec::new(),
     })
 }
 
@@ -7876,6 +7891,7 @@ index 0000000..1111111 100644
             uninspected_changed_lines_lower_bound: uninspected_lines,
             stop_reason,
             next_file_changed_lines: (uninspected_lines > 0).then_some(uninspected_lines),
+            whole_diff_budgets: None,
             partition_identity: "sha256:partition".to_string(),
         }
     }

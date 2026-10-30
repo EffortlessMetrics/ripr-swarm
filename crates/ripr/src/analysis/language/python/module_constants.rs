@@ -33,10 +33,11 @@ use super::boundary::literal_value;
 use super::source_facts::parse_module_result;
 use super::source_utils::{SourceText, line_for_range_start, text_for_range};
 use rustpython_parser::ast::{self, Expr, Ranged, Stmt};
+use rustpython_parser::{Mode, Tok, lexer::lex};
 use std::sync::Arc;
 
 /// A module-scope name bound once to a scalar literal and never rebound.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct PythonModuleConstant {
     pub(super) name: String,
     /// Canonical literal text (`10_000` becomes `10000`).
@@ -292,7 +293,7 @@ pub(super) fn function_bound_names(
 }
 
 /// What a test file can do to a module constant's value, for one test.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct PythonTestRebinding {
     /// Names the test cannot be trusted to hold at their imported value: its
     /// own parameters and locals. Names its module binds more than once are in
@@ -332,6 +333,9 @@ pub(super) struct PythonTestRebinding {
     /// A module `def`/`class` header (decorator, default, annotation, base) or
     /// a conditional import can run code at import (#10040 `no_call_path`).
     pub(super) header_reach: bool,
+    /// One import and one argument-free test with no definition-time
+    /// expressions; only bounded dunder truthiness consumes this fact.
+    pub(super) plain_test_module: bool,
 }
 
 impl PythonTestRebinding {
@@ -373,6 +377,7 @@ pub(super) fn python_test_rebinding(
         edited_in_diff: false,
         implicit_reach: false,
         header_reach: false,
+        plain_test_module: false,
     }
 }
 
@@ -384,6 +389,7 @@ pub(super) fn with_module_rebinding(source: &str, statements: &[Stmt], tests: &m
     let mut module = ScopeBindings::default();
     collect_scope_bindings(statements, &mut module);
     let dynamic = writes_namespace_dynamically(source);
+    let plain_test_module = super::dunder_truthiness::plain_test_module(statements);
     // A `global NAME` in any function (an autouse fixture, a helper) can
     // rebind an imported name before another test in the module runs.
     let mut globals = Vec::new();
@@ -417,6 +423,7 @@ pub(super) fn with_module_rebinding(source: &str, statements: &[Stmt], tests: &m
         rebinding.names.dedup();
         rebinding.module_names = Arc::clone(&module_names);
         rebinding.module_opaque = module.opaque || dynamic;
+        rebinding.plain_test_module = plain_test_module;
         rebinding.module_bound = Arc::clone(&module_bound);
         rebinding.attributes = Arc::clone(&attributes);
     }
@@ -499,24 +506,73 @@ fn contains_nested_scope(statements: &[Stmt]) -> bool {
 /// Whether `source` names a writer that can bind module names at runtime
 /// without an assignment statement, including `unittest.mock` patching
 /// (`patch("pkg.LIMIT", 5)`, `patch.object(pkg, "LIMIT", 5)`), and
-/// `importlib.reload`, which re-executes the module. Textual on
-/// purpose: a false match only leaves constants unresolved.
+/// `importlib.reload`, which re-executes the module. Reads code tokens, so a
+/// word in a comment or an ordinary string (a docstring saying "env vars",
+/// a comment about `--reload`) is not a writer (#10979); an f-string can run
+/// code, so its text still counts, and a module the lexer rejects falls back
+/// to the whole-text scan. A false match only leaves constants unresolved.
 fn writes_namespace_dynamically(source: &str) -> bool {
-    [
-        "exec",
-        "globals",
-        "vars",
-        "locals",
-        "setattr",
-        "__setattr__",
-        "delattr",
-        "reload",
-        "__dict__",
-        "patch",
-    ]
-    .into_iter()
-    .any(|identifier| mentions_identifier(source, identifier))
-        || source.contains("sys.modules")
+    // 0: nothing pending, 1: just read `sys`, 2: just read `sys.`.
+    let mut after_sys = 0;
+    for result in lex(source, Mode::Module) {
+        let Ok((token, range)) = result else {
+            return writes_namespace_in_text(source);
+        };
+        match &token {
+            Tok::Name { name } => {
+                if DYNAMIC_NAMESPACE_WRITERS.contains(&name.as_str())
+                    || (after_sys == 2 && name == "modules")
+                {
+                    return true;
+                }
+                after_sys = usize::from(name == "sys");
+            }
+            Tok::Dot if after_sys == 1 => after_sys = 2,
+            // `getattr(importlib, "reload")(m)` and `locate("importlib.reload")`
+            // name the writer only as a string, so a whitespace-free string
+            // with a writer name among its dotted parts still counts. Prose
+            // (a docstring saying "env vars") has whitespace and does not.
+            Tok::String { value, kind, .. }
+                if !kind.is_any_fstring()
+                    && !value.trim().contains(char::is_whitespace)
+                    && value
+                        .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                        .any(|part| DYNAMIC_NAMESPACE_WRITERS.contains(&part)) =>
+            {
+                return true;
+            }
+            Tok::String { kind, .. } if kind.is_any_fstring() => {
+                let text = &source[usize::from(range.start())..usize::from(range.end())];
+                if writes_namespace_in_text(text) {
+                    return true;
+                }
+                after_sys = 0;
+            }
+            _ => after_sys = 0,
+        }
+    }
+    false
+}
+
+const DYNAMIC_NAMESPACE_WRITERS: [&str; 11] = [
+    "exec",
+    "eval",
+    "globals",
+    "vars",
+    "locals",
+    "setattr",
+    "__setattr__",
+    "delattr",
+    "reload",
+    "__dict__",
+    "patch",
+];
+
+fn writes_namespace_in_text(text: &str) -> bool {
+    DYNAMIC_NAMESPACE_WRITERS
+        .into_iter()
+        .any(|identifier| mentions_identifier(text, identifier))
+        || text.contains("sys.modules")
 }
 
 /// Attribute assignment/deletion targets, including unpacking, annotations,
@@ -529,7 +585,7 @@ pub(super) fn assigned_attributes(source: &str) -> Option<Vec<String>> {
     }
 }
 
-fn assigned_attribute_names(statements: &[Stmt]) -> Vec<String> {
+pub(super) fn assigned_attribute_names(statements: &[Stmt]) -> Vec<String> {
     let mut attributes = Vec::new();
     visit_statements(statements, &mut |stmt| match stmt {
         Stmt::Assign(assign) => {

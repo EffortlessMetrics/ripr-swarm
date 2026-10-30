@@ -1,6 +1,7 @@
 use super::PythonFramework;
 use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion};
 use super::fixtures::literal_owner_instance_fixture;
+use super::sink_alignment::AlignmentPrep;
 use super::source_utils::normalized_path;
 use super::{
     PythonImport, PythonOwner, PythonTest, first_python_string_literal, line_prefix_before,
@@ -10,6 +11,7 @@ use crate::domain::{ExposureClass, OracleKind, OracleStrength, OwnerKind, Relate
 use rayon::prelude::*;
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 #[cfg(test)]
 mod verify_command_tests;
@@ -136,6 +138,8 @@ pub(super) struct PythonRepairPlacement {
 pub(super) struct RelatedCandidateMemo<'a> {
     by_owner: HashMap<OwnerKey, Vec<PythonRelatedCandidate<'a>>>,
     helpers: HashMap<OwnerKey, Vec<HelperOwnerCallCandidate<'a>>>,
+    alignment_preps: HashMap<OwnerKey, AlignmentPrep<'a>>,
+    alignment_lookup: Option<Rc<TestLookup<'a>>>,
 }
 
 type OwnerKey = (PathBuf, usize, usize, String);
@@ -175,6 +179,25 @@ impl<'a> RelatedCandidateMemo<'a> {
             .or_insert_with(|| helper_owner_call_candidates(owner, owners, all_tests))
             .clone()
     }
+
+    /// The owner's sink-alignment prep, once per owner (#10914): the owner's
+    /// import aliases across every test, which repeated per changed line was
+    /// most of a large workspace's per-line cost. The test index it reads
+    /// covers every test, so the run builds it once and every owner shares it.
+    pub(super) fn alignment_prep(
+        &mut self,
+        owner: &PythonOwner,
+        all_tests: &'a [PythonTest],
+    ) -> &AlignmentPrep<'a> {
+        self.alignment_preps
+            .entry(owner_key(owner))
+            .or_insert_with(|| {
+                let lookup = self
+                    .alignment_lookup
+                    .get_or_insert_with(|| AlignmentPrep::lookup(all_tests));
+                AlignmentPrep::with_lookup(owner, all_tests, Rc::clone(lookup))
+            })
+    }
 }
 
 // Full relation scans on this thread, so a test can pin one scan per owner
@@ -182,6 +205,13 @@ impl<'a> RelatedCandidateMemo<'a> {
 #[cfg(test)]
 thread_local! {
     pub(super) static RELATED_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+// Helper-caller scans that ran on the rayon workers, so a test can pin the
+// parallel path rather than only its result (#10914).
+#[cfg(test)]
+thread_local! {
+    pub(super) static PARALLEL_HELPER_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Below this many tests the relation scan stays on the calling thread.
@@ -308,15 +338,35 @@ pub(super) fn helper_owner_call_candidates<'a>(
         frontier = next;
     }
     let mut found: Vec<HelperOwnerCallCandidate<'a>> = Vec::new();
+    let mut seen: std::collections::HashSet<(&'a Path, &'a str)> = std::collections::HashSet::new();
+    let token = crate::analysis::cancellation::current_token();
     for caller in callers {
-        for test in all_tests {
-            if found.iter().any(|existing| {
-                existing.candidate.test.file == test.file
-                    && existing.candidate.test.qualified_name == test.qualified_name
-            }) {
-                continue;
-            }
-            if related_test_relation(test, caller).is_some_and(PythonRelationKind::uses_oracle) {
+        // The relation is per-test and pure, so a large workspace scans it
+        // on the rayon workers; the first caller to reach a test still wins
+        // because the fold below runs in caller and test order (pandas: one
+        // changed helper scanned ~23k tests serially per caller).
+        // A test an earlier caller already credited keeps that caller, so skip
+        // its relation check.
+        let related = |test: &'a PythonTest| {
+            !seen.contains(&(test.file.as_path(), test.qualified_name.as_str()))
+                && related_test_relation(test, caller).is_some_and(PythonRelationKind::uses_oracle)
+        };
+        let reached: Vec<&'a PythonTest> = if all_tests.len() >= PARALLEL_RELATION_MIN_TESTS {
+            #[cfg(test)]
+            PARALLEL_HELPER_SCANS.with(|scans| scans.set(scans.get() + 1));
+            all_tests
+                .par_iter()
+                .filter(|test| {
+                    crate::analysis::cancellation::with_optional_token(token.as_ref(), || {
+                        related(test)
+                    })
+                })
+                .collect()
+        } else {
+            all_tests.iter().filter(|test| related(test)).collect()
+        };
+        for test in reached {
+            if seen.insert((test.file.as_path(), test.qualified_name.as_str())) {
                 found.push(HelperOwnerCallCandidate {
                     candidate: PythonRelatedCandidate {
                         test,
@@ -560,6 +610,64 @@ pub(super) fn python_repair_placement_on(
 }
 
 pub(super) fn related_test_relation(
+    test: &PythonTest,
+    owner: &PythonOwner,
+) -> Option<PythonRelationKind> {
+    // Most of a large workspace's tests never spell the owner's name; for
+    // them the full scan below (route parsing, fixture views, import
+    // matching) is pure cost (#10914: pandas scans ~23k tests per changed
+    // owner).
+    if let Some(name) = name_anchor(owner)
+        && !test_text_mentions(test, name)
+    {
+        debug_assert_eq!(
+            related_test_relation_scan(test, owner),
+            None,
+            "a test that never spells `{name}` related to it"
+        );
+        return None;
+    }
+    related_test_relation_scan(test, owner)
+}
+
+/// The name every relation of `owner` needs the test to spell, or `None` when
+/// a relation can hold without it: a module owner (reached through its module
+/// path), a dunder method (reached by operator, builtin or construction) and
+/// a routed handler (reached by URL).
+fn name_anchor(owner: &PythonOwner) -> Option<&str> {
+    (!owner.name.is_empty()
+        && !owner.is_module_owner()
+        && !is_dunder_name(&owner.name)
+        && dunder_method_class(owner).is_none()
+        && owner.route_paths.is_empty())
+    .then_some(owner.name.as_str())
+}
+
+/// Whether `name` occurs anywhere a relation reads source text: the body, the
+/// assertions, the imports, and the bodies and imports of resolved fixtures.
+fn test_text_mentions(test: &PythonTest, name: &str) -> bool {
+    let import_mentions = |import: &super::PythonImport| {
+        import.imported.contains(name)
+            || import.alias.contains(name)
+            || import.source_module.contains(name)
+    };
+    test.body_text.contains(name)
+        || test.assertions.iter().any(|assertion| {
+            assertion.text.contains(name)
+                || assertion.gate_text.contains(name)
+                || assertion
+                    .callable_call
+                    .as_deref()
+                    .is_some_and(|call| call.contains(name))
+        })
+        || test.imports.iter().any(import_mentions)
+        || test
+            .fixture_defs
+            .iter()
+            .any(|def| def.body_text.contains(name) || def.imports.iter().any(import_mentions))
+}
+
+fn related_test_relation_scan(
     test: &PythonTest,
     owner: &PythonOwner,
 ) -> Option<PythonRelationKind> {
@@ -928,7 +1036,7 @@ fn chained_or_bracketed_target(body: &str, idx: usize, before: &str, after: &str
         // `for (r)in items`, `for x, (r) in items`); a membership test such as
         // `assert ((r)) in items` rebinds nothing.
         || (rest.strip_prefix("in").is_some_and(|after_in| {
-            !after_in.starts_with(is_python_identifier_char) && is_inside_for_target(head_line)
+            !after_in.starts_with(is_python_identifier_char) && is_inside_for_target(head)
         }))
         || head.trim_end().strip_suffix("as").is_some_and(|before_as| {
             before_as.ends_with([' ', '\t']) || before_as.ends_with(['(', ','])
@@ -1015,16 +1123,19 @@ fn skip_blank_backward(text: &str, across_lines: bool) -> &str {
     }
 }
 
-/// Whether `head` (the text of a line before a peeled target) sits in the
-/// target list of a `for` statement: the last whole word `for` has no `in`,
-/// `=` or `:` after it.
+/// Whether `head` (the body prefix before a peeled target) sits in the
+/// target list of a `for` statement: the last whole code word `for` on the
+/// current line has no `in`, `=` or `:` after it. Keep earlier lines available
+/// to the string mask, since a triple-quoted string can start on one of them.
 fn is_inside_for_target(head: &str) -> bool {
+    let line_start = head.rfind('\n').map_or(0, |at| at + 1);
     let mut search = head.len();
-    while let Some(at) = head[..search].rfind("for") {
+    while let Some(offset) = head[line_start..search].rfind("for") {
+        let at = line_start + offset;
         let boundary_before = !head[..at].ends_with(is_python_identifier_char);
         let boundary_after = !head[at + 3..].starts_with(is_python_identifier_char);
         // A `for` inside a string or after a comment is text, not a keyword.
-        let hidden = python_prefix_hides_code(&head[..at]);
+        let hidden = python_text_hides_code(head, at);
         if boundary_before && boundary_after && !hidden {
             let targets = &head[at + 3..];
             return !targets.contains(['=', ':'])
@@ -2069,7 +2180,7 @@ pub(super) fn owner_module_paths(file: &Path) -> Vec<String> {
 /// A src-layout short module name of an owner file that another workspace
 /// source file also produces (#4566): `a/src/shared/calc.py` and
 /// `b/src/shared/calc.py` are both importable as `shared.calc`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct AmbiguousSrcModule {
     /// The shared dotted name.
     module: String,

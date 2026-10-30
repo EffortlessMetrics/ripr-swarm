@@ -24,7 +24,7 @@ pub(crate) use input_facts::{
     publish_scoped_intake as publish_scoped_intake_facts, published as published_input_facts,
     with_input_facts_capture,
 };
-mod language;
+pub(crate) mod language;
 pub(crate) mod language_outcome;
 pub(crate) mod new_test_target;
 pub(crate) mod path_glob;
@@ -34,6 +34,7 @@ pub(crate) use pipeline::NON_TEXT_ONLY_DETAIL;
 pub(crate) use pipeline::{
     DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV, DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV,
 };
+mod probe_read_trace;
 mod probes;
 pub(crate) mod repair_route;
 /// Process CPU time and peak resident memory observability (#5213). One
@@ -1051,6 +1052,12 @@ pub struct AnalysisResult {
     /// aggregate (#6475). A sidecar for in-process consumers (the editor);
     /// never serialized and not part of the public output contract.
     pub(crate) language_view: Option<language_outcome::LanguageCompletenessView>,
+    /// Per-language persistent fact-cache admissions for this run (#10725),
+    /// collected from each adapter's `LanguageDiffResult`. Rendered into the
+    /// verbose disclosure line by `app::check`; empty when no adapter did
+    /// cache work.
+    pub(crate) preview_fact_caches:
+        Vec<(crate::domain::LanguageId, language::PreviewFactCacheStats)>,
 }
 
 /// Default language list when callers do not pass `[languages]` config.

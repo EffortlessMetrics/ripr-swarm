@@ -1,0 +1,7 @@
+[[artifact]]
+id = "RIPR-SPEC-0365"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0365-capability-manifest-cell-join.md"
+status = "accepted"
+owner = "repository-policy"
+standalone_reason = "Issue #10065 follow-up 1 binds explicit product-capability claims to runtime registry identities while retaining the separate support authority decided in #9294; this contract pins the fail-closed join and its existing discriminating tests."
