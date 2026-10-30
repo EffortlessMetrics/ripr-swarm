@@ -833,6 +833,129 @@ fn python_status_after_pilot_names_the_gap_bound_start() -> Result<(), String> {
     decoy_untouched(&decoy)
 }
 
+/// #11136: a TypeScript finding whose test sits under a condition static
+/// analysis cannot evaluate leaves the run's analysis incomplete. The after
+/// phase refuses a before artifact like that, so `ripr check` must not print a
+/// gap-bound start (and must say why) instead of offering a repair that cannot
+/// finish. Negative control: the same fixture with an evaluable test, and so a
+/// complete analysis, still prints its start.
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn typescript_incomplete_analysis_withholds_the_gap_bound_start() -> Result<(), String> {
+    let toml = "[languages]\nenabled = [\"typescript\"]\n";
+    let (_guard, root, decoy) = materialize(
+        "blind_journey_installed_typescript",
+        "head",
+        "tsi",
+        Some(toml),
+    )?;
+    let root_arg = root.to_string_lossy().into_owned();
+
+    // Control first: the unmodified fixture is complete and offers the start.
+    let (ok, control) = ripr(&decoy, &["check", "--root", &root_arg, "--base", "HEAD~1"])?;
+    expect_exit(ok, true, "check of the complete fixture")?;
+    if gap_start_tokens(&control).is_none() {
+        return Err(format!(
+            "control: a complete analysis lost its start:\n{control}"
+        ));
+    }
+    if control.contains("analysis incomplete") {
+        return Err(format!("control: the fixture is not complete:\n{control}"));
+    }
+
+    // Scule-shaped: the finding's own tests stay evaluable (its packet is
+    // complete), while one of its credited assertions sits under an unevaluable
+    // condition, so the run discloses an incomplete analysis.
+    let test_path = root.join("test/pricing.test.ts");
+    let test_text = std::fs::read_to_string(&test_path)
+        .map_err(|error| format!("read {}: {error}", test_path.display()))?;
+    let guarded = test_text.replace(
+        "    expect(discountedTotal(9999)).toBe(9999);",
+        "    if (process.env.RIPR_FIXTURE_FLAG) {\n      expect(discountedTotal(9999)).toBe(9999);\n    }",
+    );
+    if guarded == test_text {
+        return Err("fixture construction: the guarded assertion was not applied".to_string());
+    }
+    std::fs::write(&test_path, guarded).map_err(|error| format!("write test: {error}"))?;
+    fixture_git_ok(&root, &["add", "-A"])?;
+    fixture_git_ok(&root, &["commit", "-q", "-m", "guard the test"])?;
+
+    let (ok, check) = ripr(&decoy, &["check", "--root", &root_arg, "--base", "HEAD~2"])?;
+    expect_exit(ok, true, "check of the guarded-test variant")?;
+    need(
+        &check,
+        "analysis incomplete",
+        "the variant's analysis is incomplete",
+    )?;
+    if check.contains("ripr agent repair --gap-id") {
+        return Err(format!(
+            "an incomplete analysis was offered a gap-bound start:\n{check}"
+        ));
+    }
+    need(
+        &check,
+        "no repair start offered: the analysis is incomplete",
+        "the withheld start names the incomplete analysis",
+    )?;
+    need(
+        &check,
+        "cannot evaluate",
+        "the withheld start names the limitation",
+    )?;
+
+    // The after phase's refusal of the same incomplete run names the
+    // limitation and the next step, not "regenerate it".
+    let findings = ripr_output(
+        &decoy,
+        &[
+            "check",
+            "--root",
+            &root_arg,
+            "--base",
+            "HEAD~2",
+            "--mode",
+            "draft",
+            "--format",
+            "check-findings-json",
+        ],
+    )?;
+    expect_exit(findings.status.success(), true, "check-findings-json")?;
+    let artifact = root.join("incomplete-findings.json");
+    std::fs::write(&artifact, &findings.stdout).map_err(|error| format!("write: {error}"))?;
+    let artifact_arg = artifact.to_string_lossy().into_owned();
+    let verify = ripr_output(
+        &decoy,
+        &[
+            "agent",
+            "verify",
+            "--json",
+            "--root",
+            &root_arg,
+            "--before",
+            &artifact_arg,
+            "--after",
+            &artifact_arg,
+        ],
+    )?;
+    expect_exit(
+        verify.status.success(),
+        false,
+        "verify of an incomplete run",
+    )?;
+    let (_, refusal) = text_of(&verify);
+    need(&refusal, "is incomplete", "verify names the incompleteness")?;
+    need(
+        &refusal,
+        "unevaluated_condition",
+        "verify names the limitation",
+    )?;
+    need(&refusal, "test/pricing.test.ts", "verify names the file")?;
+    if refusal.contains("regenerate it before verifying") {
+        return Err(format!("verify still says regenerate:\n{refusal}"));
+    }
+    decoy_untouched(&decoy)
+}
+
 #[cfg(feature = "lang-typescript")]
 #[test]
 fn typescript_literal_threshold_packet_is_complete_and_controls_fail_closed() -> Result<(), String>
@@ -2602,6 +2725,36 @@ fn gap_bound_after_phase_enforces_the_edit_cage() -> Result<(), String> {
         .exists()
     {
         return Err("a receipt was issued for a gap that the cage refused".to_string());
+    }
+    Ok(())
+}
+
+/// A gap-bound refusal must point to the packet that its before phase wrote.
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn gap_bound_cage_refusal_names_its_own_packet() -> Result<(), String> {
+    let attempt = GapAttempt::start("ts-cage-packet-hint")?;
+    if !attempt
+        .root
+        .join("target/ripr/workflow/gap-repair-packet.json")
+        .is_file()
+    {
+        return Err("before phase did not write its gap packet".to_string());
+    }
+    attempt.commit_closing_test()?;
+    std::fs::write(attempt.root.join("before.err"), "redirected output")
+        .map_err(|error| format!("write redirect: {error}"))?;
+    let output = attempt.after(false)?;
+    let (_, stderr) = text_of(&output);
+    expect_exit(output.status.success(), false, "untracked redirect")?;
+    need(&stderr, "before.err", "refused redirect")?;
+    need(
+        &stderr,
+        "target/ripr/workflow/gap-repair-packet.json",
+        "gap packet path",
+    )?;
+    if stderr.contains("target/ripr/workflow/agent-packet.json") {
+        return Err(format!("gap refusal names the seam packet:\n{stderr}"));
     }
     Ok(())
 }

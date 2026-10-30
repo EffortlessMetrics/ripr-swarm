@@ -2252,6 +2252,136 @@ fn repair_human_path_identity_journey(name: &str, sibling: &str) -> Result<(), S
     Ok(())
 }
 
+/// #11111: one changed line that ripr can repair two ways (the condition's
+/// boundary and the returned value) must not print two identical choices.
+/// The change is named once, each choice says what a test must check, the
+/// command `ripr check` printed is named as the recommended pick, and the
+/// prompt carries no internal terms or a PowerShell line about a placeholder.
+/// No attempt starts without an explicit pick.
+#[test]
+fn repair_same_line_candidates_are_told_apart_in_plain_words() -> Result<(), String> {
+    let fixture = Fixture::dir("facade-same-line")?;
+    let root = &fixture.root;
+    std::fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(root.join("tests")).map_err(|e| e.to_string())?;
+    std::fs::write(root.join("Cargo.toml"), FIXTURE_CARGO_TOML).map_err(|e| e.to_string())?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn is_adult(age: u32) -> bool {\n    age >= 18\n}\n",
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::write(
+        root.join("tests/t.rs"),
+        "use boundary_gap_fixture::is_adult;\n\n#[test]\nfn adult_far_above() {\n    assert!(is_adult(40));\n}\n",
+    )
+    .map_err(|e| e.to_string())?;
+    init_repo(root)?;
+    run_git(root, &["add", "Cargo.toml", "src", "tests"])?;
+    git_commit(root, "same-line fixture source")?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let repair = run_ripr(root, &["repair", "--root", &root_arg])?;
+    assert_exit(&repair, 3, "repair with two candidates on one line");
+    assert!(
+        stdout_text(&repair).is_empty(),
+        "selection must leave stdout empty"
+    );
+    let stderr = stderr_text(&repair);
+    assert!(
+        stderr.contains(
+            "ripr can start a repair for the change at src/lib.rs:2 `age >= 18` in 2 ways"
+        ),
+        "must name the one change once:\n{stderr}"
+    );
+    assert_eq!(
+        stderr.matches("`age >= 18`").count(),
+        1,
+        "the shared change must not repeat per choice:\n{stderr}"
+    );
+    for need in [
+        "a test must use an input right at the edge of this condition and check the result",
+        "a test must check the exact value returned",
+    ] {
+        assert!(stderr.contains(need), "must say `{need}`:\n{stderr}");
+    }
+    let choice_lines: Vec<&str> = stderr
+        .lines()
+        .filter(|line| line.trim_start().starts_with(['1', '2']))
+        .collect();
+    assert_eq!(choice_lines.len(), 2, "{stderr}");
+    assert_ne!(
+        choice_lines[0], choice_lines[1],
+        "choices must read differently"
+    );
+    assert_eq!(
+        stderr.matches("ripr repair ").count(),
+        2,
+        "exactly the two start commands:\n{stderr}"
+    );
+    assert!(
+        stderr.contains(
+            "If `ripr check` printed a `ripr repair` command for this change, run that one"
+        ),
+        "must point at the command check printed:\n{stderr}"
+    );
+    for jargon in [
+        "choose_item",
+        "select_item",
+        "producer:",
+        "<seam-id>",
+        "PowerShell",
+    ] {
+        assert!(
+            !stderr.contains(jargon),
+            "selection must not print `{jargon}`:\n{stderr}"
+        );
+    }
+    assert!(
+        attempt_ids(root).is_empty(),
+        "no attempt may be created before selection"
+    );
+    Ok(())
+}
+
+/// #11111 review: the candidate commands carry a concrete `--root`, so a root
+/// with an apostrophe (Bash `'\''`, PowerShell `''`) must print each command's
+/// PowerShell spelling instead of leaving a PowerShell reader with silent Bash.
+#[test]
+fn repair_choice_commands_pair_powershell_form_for_apostrophe_root() -> Result<(), String> {
+    let fixture = Fixture::two_seam("facade-o'neil")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    assert!(
+        root_arg.contains('\''),
+        "fixture root must carry an apostrophe"
+    );
+    let repair = run_ripr(root, &["repair", "--root", &root_arg])?;
+    assert_exit(&repair, 3, "repair with two actionable items");
+    assert!(
+        stdout_text(&repair).is_empty(),
+        "selection must leave stdout empty"
+    );
+    let stderr = stderr_text(&repair);
+    let lines: Vec<&str> = stderr.lines().collect();
+    for seam in [FIXTURE_SEAM, SECOND_SEAM] {
+        assert!(
+            lines.windows(2).any(|pair| {
+                pair[0]
+                    .trim_start()
+                    .starts_with(&format!("ripr repair {seam} --root "))
+                    && pair[0].contains("'\\''")
+                    && pair[1]
+                        .trim_start()
+                        .starts_with(&format!("(PowerShell) ripr repair {seam} --root '"))
+                    && pair[1].contains("''")
+                    && !pair[1].contains("'\\''")
+            }),
+            "candidate {seam} must pair its PowerShell form:\n{stderr}"
+        );
+    }
+    assert!(attempt_ids(root).is_empty(), "no attempt before selection");
+    Ok(())
+}
+
 /// Control 3: two actionable items — no attempt is created until the user
 /// selects one; never an implicit first/newest pick.
 #[test]
@@ -2266,23 +2396,16 @@ fn repair_two_items_requires_explicit_selection() -> Result<(), String> {
         "selection must leave stdout empty"
     );
     let stderr = stderr_text(&repair);
-    assert!(
-        stderr.contains("next action: choose_item"),
-        "must decide an explicit item selection:\n{stderr}"
-    );
-    assert!(
-        stderr.contains("stop [select_item]"),
-        "must name the typed selection stop:\n{stderr}"
-    );
     for seam in [FIXTURE_SEAM, SECOND_SEAM] {
         assert!(stderr.contains(seam), "must list seam {seam}:\n{stderr}");
     }
     assert!(
-        stderr.contains("select one of 2"),
+        stderr.contains("ripr can start 2 different repairs"),
         "must bound the selection to both candidates:\n{stderr}"
     );
-    // #10978: each candidate says where the change is and what it is, beside
-    // the exact command that picks it, instead of a bare hash.
+    // #10978: each candidate says where the change is and what it is, with
+    // the exact command that picks it on the next line, instead of a bare hash.
+    let lines: Vec<&str> = stderr.lines().collect();
     for (location, code, seam) in [
         (
             "src/lib.rs:2",
@@ -2292,16 +2415,26 @@ fn repair_two_items_requires_explicit_selection() -> Result<(), String> {
         ("src/lib.rs:10", "`items >= free_threshold`", SECOND_SEAM),
     ] {
         assert!(
-            stderr.lines().any(|line| line.contains(location)
-                && line.contains(code)
-                && line.contains(&format!("ripr repair {seam}"))),
+            lines.windows(2).any(|pair| pair[0].contains(location)
+                && pair[0].contains(code)
+                && pair[1].contains(&format!("ripr repair {seam}"))),
             "candidate {seam} must show {location} and {code}:\n{stderr}"
         );
     }
-    assert!(
-        stderr.contains("ripr repair "),
-        "must name the retry command:\n{stderr}"
-    );
+    // #11111: plain words only, and no PowerShell disclosure about a
+    // placeholder.
+    for jargon in [
+        "choose_item",
+        "select_item",
+        "producer:",
+        "<seam-id>",
+        "PowerShell",
+    ] {
+        assert!(
+            !stderr.contains(jargon),
+            "selection must not print `{jargon}`:\n{stderr}"
+        );
+    }
     // From another directory the printed candidate commands must still select
     // this workspace, so each carries the bound root.
     let elsewhere = Fixture::dir("facade-two-elsewhere")?;
@@ -2733,6 +2866,88 @@ fn continue_two_attempts_requires_explicit_selection() -> Result<(), String> {
         "awaiting_edit",
         "the unselected attempt must stay current"
     );
+    Ok(())
+}
+
+/// #11111 review: `ripr continue` shares only the retry template with the
+/// repair selection; its choices stay the bare current attempt ids (an
+/// attempt has no separate change description to show). With a root that
+/// quotes differently in PowerShell, the retry keeps its `<attempt-id>`
+/// placeholder in both spellings and prints the PowerShell form instead of a
+/// disclosure about the placeholder. No attempt advances without a pick.
+#[test]
+fn continue_selection_retry_pairs_powershell_form_for_apostrophe_root() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-continue-o'neil")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    assert!(
+        root_arg.contains('\''),
+        "fixture root must carry an apostrophe"
+    );
+    for _ in 0..2 {
+        let before = run_ripr(
+            root,
+            &[
+                "agent",
+                "repair",
+                "--root",
+                &root_arg,
+                "--seam-id",
+                FIXTURE_SEAM,
+                "--phase",
+                "before",
+            ],
+        )?;
+        assert_exit(&before, 0, "advanced before phase");
+    }
+    let ids = attempt_ids(root);
+    assert_eq!(ids.len(), 2, "two current attempts must exist");
+    assert_ne!(ids[0], ids[1], "the two attempts must be distinct");
+    let continued = run_ripr(root, &["continue", "--root", &root_arg])?;
+    assert_exit(&continued, 3, "continue with two current attempts");
+    assert!(
+        stdout_text(&continued).is_empty(),
+        "selection must leave stdout empty"
+    );
+    let stderr = stderr_text(&continued);
+    let lines: Vec<&str> = stderr.lines().collect();
+    assert!(
+        lines
+            .first()
+            .is_some_and(|line| line.starts_with("ripr: 2 current attempts under ")),
+        "must state the bounded choice:\n{stderr}"
+    );
+    for id in &ids {
+        assert_eq!(
+            lines.iter().filter(|line| line.trim() == id).count(),
+            1,
+            "attempt {id} must be listed once as its own choice:\n{stderr}"
+        );
+    }
+    assert!(
+        lines.windows(2).any(|pair| {
+            pair[0].starts_with("retry: ripr continue --attempt <attempt-id> --root ")
+                && pair[0].contains("'\\''")
+                && pair[1].starts_with(
+                    "retry (PowerShell): ripr continue --attempt <attempt-id> --root '",
+                )
+                && pair[1].contains("''")
+                && !pair[1].contains("'\\''")
+        }),
+        "retry must pair its PowerShell form around the placeholder:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("PowerShell form unavailable"),
+        "the placeholder must not trigger the no-form disclosure:\n{stderr}"
+    );
+    for id in &ids {
+        assert_eq!(
+            read_manifest(root, id)?["state"],
+            "awaiting_edit",
+            "no attempt may move before selection"
+        );
+    }
+    assert_eq!(attempt_ids(root), ids, "no attempt may be created");
     Ok(())
 }
 
