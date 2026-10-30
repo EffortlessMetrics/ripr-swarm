@@ -9092,7 +9092,8 @@ fn word_after_as(rest: &str) -> &str {
 /// process cannot grow without limit. `None` if the lock is poisoned.
 fn renamed_names_memoized(source: &str) -> Option<Arc<BTreeSet<String>>> {
     use std::hash::{Hash, Hasher};
-    static MEMO: std::sync::Mutex<BTreeMap<(u64, usize), Arc<BTreeSet<String>>>> =
+    type Renamed = Arc<BTreeSet<String>>;
+    static MEMO: std::sync::Mutex<BTreeMap<(u64, usize), Renamed>> =
         std::sync::Mutex::new(BTreeMap::new());
     const MAX_ENTRIES: usize = 8192;
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
