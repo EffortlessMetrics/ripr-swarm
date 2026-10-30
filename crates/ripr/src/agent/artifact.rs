@@ -3268,7 +3268,7 @@ mod tests {
             validate_verify_movement(&before, &after),
             Err(error) if error.contains("no repository movement")
                 && error.contains("the repository is still at aaaaaaa")
-                && error.contains("nothing has changed since the before phase")
+                && error.contains("nothing has changed since the before phase and there is nothing to compare yet")
                 // The old internal wording and the full 40-character
                 // revision must not come back.
                 && !error.contains("both are current")
