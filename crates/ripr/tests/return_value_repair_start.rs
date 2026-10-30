@@ -115,10 +115,7 @@ fn assert_repair_ready(case: &str, old_src: &str, new_src: &str, test: &str) -> 
         .ok_or_else(|| format!("{case}: check printed no repair start:\n{check}"))?;
     let (ok, repair) = repo.repair_text(&[&seam])?;
     assert!(ok, "{case}: repair must start:\n{repair}");
-    assert!(
-        repair.contains("Ready to repair."),
-        "{case}: {repair}"
-    );
+    assert!(repair.contains("Ready to repair."), "{case}: {repair}");
     assert!(
         repair.contains("edit one test file: tests/t.rs"),
         "{case}: repair must name the test edit target:\n{repair}"
@@ -170,8 +167,7 @@ fn err_variant_with_is_err_assert_reaches_repair() -> Result<(), String> {
     let (ok, repair) = repo.repair_text(&[&seam])?;
     assert!(ok, "{repair}");
     assert!(
-        repair.contains("Ready to repair.")
-            && repair.contains("edit one test file: tests/t.rs"),
+        repair.contains("Ready to repair.") && repair.contains("edit one test file: tests/t.rs"),
         "{repair}"
     );
     Ok(())
