@@ -34,6 +34,7 @@ use super::source_facts::parse_module_result;
 use super::source_utils::{SourceText, line_for_range_start, text_for_range};
 use rustpython_parser::ast::{self, Expr, Ranged, Stmt};
 use rustpython_parser::{Mode, Tok, lexer::lex};
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 /// A module-scope name bound once to a scalar literal and never rebound.
@@ -612,8 +613,13 @@ pub(super) fn assigned_attribute_names(statements: &[Stmt]) -> Vec<String> {
 /// `Runner = CliRunner` and a string such as `"click.testing.CliRunner.invoke"`
 /// all name a class in a way that can change what it builds. A module the
 /// lexer rejects names every identifier it contains, so nothing is hidden.
-pub(super) fn names_used_beyond_construction(source: &str) -> Vec<String> {
-    let mut names = Vec::new();
+/// Only names `watched` accepts are kept, each once: the caller asks about a
+/// fixed set of classes, and every file's facts are stored and decoded.
+pub(super) fn names_used_beyond_construction(
+    source: &str,
+    watched: &dyn Fn(&str) -> bool,
+) -> Vec<String> {
+    let mut names = BTreeSet::new();
     let mut tokens = Vec::new();
     for result in lex(source, Mode::Module) {
         match result {
@@ -621,8 +627,10 @@ pub(super) fn names_used_beyond_construction(source: &str) -> Vec<String> {
             Err(_) => {
                 return source
                     .split(|c: char| !(c.is_alphanumeric() || c == '_'))
-                    .filter(|word| !word.is_empty())
+                    .filter(|word| !word.is_empty() && watched(word))
                     .map(str::to_string)
+                    .collect::<BTreeSet<_>>()
+                    .into_iter()
                     .collect();
             }
         }
@@ -653,19 +661,21 @@ pub(super) fn names_used_beyond_construction(source: &str) -> Vec<String> {
                             .and_then(|before| tokens.get(before))
                             .is_some_and(|before| matches!(before, Tok::Def | Tok::Class))) =>
             {
-                names.push(name.to_string());
+                if watched(name.as_str()) {
+                    names.insert(name.to_string());
+                }
             }
             Tok::String { value, .. } => names.extend(
                 value
                     .split(|c: char| !(c.is_alphanumeric() || c == '_'))
-                    .filter(|word| !word.is_empty())
+                    .filter(|word| !word.is_empty() && watched(word))
                     .map(str::to_string),
             ),
             _ => {}
         }
         line_start = false;
     }
-    names
+    names.into_iter().collect()
 }
 
 /// The dotted modules a file imports, at any nesting depth: `import a.b` names
