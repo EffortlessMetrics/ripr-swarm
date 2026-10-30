@@ -125,6 +125,10 @@ pub(crate) enum RepairPacketIneligibility {
     /// Producer-owned route readiness did not reach `Ready` with a
     /// selected target.
     RouteNotReady,
+    /// The seam's evidence names a static limitation `check` reports as a
+    /// limitation rather than a gap (today: a `#[should_panic]` test whose
+    /// panic outcome is unresolved, #10703), so there is no gap to repair.
+    NamedStaticLimitation,
 }
 
 /// Producer-owned repair-packet eligibility: the single authority for the
@@ -158,6 +162,11 @@ pub(crate) fn repair_packet_eligibility(entry: &ClassifiedSeam) -> RepairPacketE
         Some(RepairPacketIneligibility::CrossLanguageOracleVisibilityUnresolved)
     } else if target_unresolved {
         Some(RepairPacketIneligibility::CrossLanguageTestTargetUnresolved)
+    } else if entry
+        .evidence
+        .names_static_limit(crate::domain::StaticLimitKind::RustPanicOutcomeUnresolved)
+    {
+        Some(RepairPacketIneligibility::NamedStaticLimitation)
     } else if !readiness.is_repair_ready() {
         Some(RepairPacketIneligibility::RouteNotReady)
     } else {
