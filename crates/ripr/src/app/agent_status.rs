@@ -2277,11 +2277,10 @@ fn attempt_condition(attempt: &AgentStatusRepairAttempt) -> String {
                 reading.status.as_deref().unwrap_or("unknown"),
                 reading.movement.as_deref().unwrap_or("unknown")
             );
-            if attempt.head_current != Some(true) {
-                condition.push_str(&format!(
-                    ", and its evidence is stale against HEAD (recorded at `{}`)",
-                    attempt.evidence_head
-                ));
+            match attempt.head_current {
+                Some(false) => condition.push_str(", and its evidence is no longer current"),
+                None => condition.push_str(", and its evidence currentness is unknown"),
+                Some(true) => {}
             }
             if let Some(action) = &reading.recommended_action {
                 condition.push_str(&format!(
@@ -2327,8 +2326,8 @@ fn attempt_outcome(attempt: &AgentStatusRepairAttempt) -> String {
     if attempt.receipt != AgentStatusAttemptReceipt::NotApplicable {
         match attempt.head_current {
             Some(true) => {}
-            Some(false) => parts.push("evidence stale against HEAD".to_string()),
-            None => parts.push("HEAD unknown".to_string()),
+            Some(false) => parts.push("evidence no longer current".to_string()),
+            None => parts.push("evidence currentness unknown".to_string()),
         }
     }
     if attempt.last_after_refusal.is_some() {

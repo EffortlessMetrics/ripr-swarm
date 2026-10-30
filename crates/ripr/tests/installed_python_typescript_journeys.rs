@@ -1583,6 +1583,9 @@ fn check_bound_test_drift(committed: bool) -> Result<(), String> {
                 "same-HEAD drift misreported a moved HEAD: {status}"
             ));
         }
+        if status.contains("stale against HEAD") {
+            return Err(format!("same-HEAD drift blamed HEAD in status: {status}"));
+        }
     }
     std::fs::write(&file, original).map_err(|error| error.to_string())?;
     if current()? != Some(true) {
@@ -1602,7 +1605,7 @@ fn check_bound_test_drift(committed: bool) -> Result<(), String> {
         }
         let (ok, status) = ripr(&attempt.decoy, &args)?;
         expect_exit(ok, true, "moved-HEAD status")?;
-        need(&status, "stale against HEAD", "moved-HEAD warning")?;
+        need(&status, "the repository HEAD is now", "moved-HEAD warning")?;
     }
     decoy_untouched(&attempt.decoy)
 }
