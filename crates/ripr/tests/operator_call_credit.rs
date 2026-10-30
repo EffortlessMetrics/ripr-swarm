@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// One operator impl for `Money` plus the test body under study.
+#[derive(Clone, Copy)]
 struct Case {
     label: &'static str,
     /// Trait path as written in the impl header (`Add`, `Neg`).
@@ -664,6 +665,134 @@ fn classes(case: &Case) -> Result<Vec<ExposureClass>, String> {
         .into_iter()
         .map(|finding| finding.class)
         .collect())
+}
+
+#[test]
+fn grouped_self_import_binds_the_enclosing_type_name() -> Result<(), String> {
+    let base = Case {
+        label: "grouped_self",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        ..ADD
+    };
+    let foreign = Case {
+        label: "grouped_self_foreign",
+        extra_items: "mod other { pub type Money = i64; }\n#[cfg(test)] mod named { use super::*; use crate::other::Money::{self}; #[test] fn named_call() { let _ = Money::add(1, 1); } }",
+        ..base
+    };
+    assert_eq!(classes(&foreign)?, [ExposureClass::StaticUnknown]);
+    let owner = Case {
+        label: "grouped_self_owner",
+        extra_items: "#[cfg(test)] mod named { use super::Money::{self}; use std::ops::Add; #[test] fn named_call() { let _ = Money::add(super::Money(1), super::Money(1)); } }",
+        ..base
+    };
+    assert_eq!(classes(&owner)?, [ExposureClass::WeaklyExposed]);
+    let sibling = Case {
+        label: "grouped_self_sibling",
+        extra_items: "mod other { pub type Money = i64; }\n#[cfg(test)] mod unrelated { use crate::other::Money::{self}; }\n#[cfg(test)] mod named { use super::*; #[test] fn named_call() { let _ = Money::add(Money(1), Money(1)); } }",
+        ..base
+    };
+    assert_eq!(classes(&sibling)?, [ExposureClass::WeaklyExposed]);
+    Ok(())
+}
+
+#[test]
+fn module_type_bindings_do_not_name_the_operator_owner() -> Result<(), String> {
+    let base = Case {
+        label: "module_binding",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        ..ADD
+    };
+    let real_owner = Case {
+        label: "module_binding_owner",
+        extra_items: "#[cfg(test)] mod named { use super::*; #[test] fn named_call() { let _ = Money::add(Money(1), Money(1)); } }",
+        ..base
+    };
+    assert_eq!(classes(&real_owner)?, [ExposureClass::WeaklyExposed]);
+    let owner_import = Case {
+        label: "module_binding_owner_import",
+        extra_items: "#[cfg(test)] mod named { use super::Money; use std::ops::Add; #[test] fn named_call() { let _ = Money::add(Money(1), Money(1)); } }",
+        ..base
+    };
+    assert_eq!(classes(&owner_import)?, [ExposureClass::WeaklyExposed]);
+
+    let owner_alias = Case {
+        label: "module_binding_owner_alias",
+        extra_items: "#[cfg(test)] mod named { use super::*; type Money = super::Money; #[test] fn named_call() { let _ = Money::add(super::Money(1), super::Money(1)); } }",
+        ..base
+    };
+    // The relation stage itself currently withholds a type alias, including
+    // one that names the owner. This slice does not change that admission.
+    assert_eq!(classes(&owner_alias)?, [ExposureClass::StaticUnknown]);
+
+    let sibling = Case {
+        label: "module_binding_sibling",
+        extra_items: "mod other { pub type Money = i64; }\n#[cfg(test)] mod unrelated { use crate::other::Money; }\n#[cfg(test)] mod named { use super::*; #[test] fn named_call() { let _ = Money::add(Money(1), Money(1)); } }",
+        ..base
+    };
+    assert_eq!(classes(&sibling)?, [ExposureClass::WeaklyExposed]);
+
+    let foreign_import = Case {
+        label: "module_binding_foreign_import",
+        extra_items: "mod other { pub type Money = i64; }\n#[cfg(test)] mod named { use super::*; use crate::other::Money; #[test] fn named_call() { let _ = Money::add(1, 1); } }",
+        ..base
+    };
+    assert_eq!(classes(&foreign_import)?, [ExposureClass::StaticUnknown]);
+    let raw_import = Case {
+        label: "module_binding_raw_import",
+        extra_items: "mod other { pub type Money = i64; }\n#[cfg(test)] mod named { use super::*; use crate::other::r#Money; #[test] fn named_call() { let _ = r#Money::add(1, 1); } }",
+        ..base
+    };
+    assert_eq!(classes(&raw_import)?, [ExposureClass::StaticUnknown]);
+    let nested_import = Case {
+        label: "module_binding_nested_import",
+        extra_items: "mod other { pub type Money = i64; }\n#[cfg(test)] mod outer { use crate::other::Money; use std::ops::Add; mod named { use super::*; #[test] fn named_call() { let _ = Money::add(1, 1); } } }",
+        ..base
+    };
+    assert_eq!(classes(&nested_import)?, [ExposureClass::StaticUnknown]);
+    let local_module = Case {
+        label: "module_binding_local_module",
+        extra_items: "#[cfg(test)] mod named { #[allow(non_snake_case)] mod Money { pub fn add(_: i64, _: i64) -> i64 { 2 } } #[test] fn named_call() { let _ = Money::add(1, 1); } }",
+        ..base
+    };
+    assert_eq!(classes(&local_module)?, [ExposureClass::StaticUnknown]);
+
+    let foreign = Case {
+        label: "module_binding_foreign_alias",
+        extra_items: "mod other { pub type Coin = i64; }\n#[cfg(test)] mod named { use super::*; use crate::other::Coin as Money; #[test] fn named_call() { let _ = Money::add(1, 1); } }",
+        ..base
+    };
+    assert_eq!(classes(&foreign)?, [ExposureClass::StaticUnknown]);
+
+    let local = Case {
+        label: "module_binding_local_alias",
+        extra_items: "#[cfg(test)] mod named { use super::*; type Money = i64; #[test] fn named_call() { let _ = Money::add(1, 1); } }",
+        ..base
+    };
+    assert_eq!(classes(&local)?, [ExposureClass::StaticUnknown]);
+    Ok(())
+}
+
+#[test]
+fn an_unresolved_macro_invocation_in_the_test_scope_withholds_the_credit() -> Result<(), String> {
+    // A sibling-defined macro invoked in the test's enclosing module expands
+    // to a foreign `Money` import; the invocation never names `Money`. The
+    // expansion cannot be read statically, so the enclosing scope is not
+    // clear and the type-path call stays withheld.
+    let base = Case {
+        label: "macro_binding",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        ..ADD
+    };
+    let foreign = Case {
+        label: "macro_binding_foreign",
+        extra_items: "mod other { pub type Money = i64; }\nmod defs { macro_rules! foreign_money { () => { use super::other::Money; } } pub(crate) use foreign_money; }\n#[cfg(test)] mod named { use super::*; use super::defs::foreign_money; foreign_money!(); #[test] fn named_call() { let _ = Money::add(1, 1); } }",
+        ..base
+    };
+    assert_eq!(classes(&foreign)?, [ExposureClass::StaticUnknown]);
+    Ok(())
 }
 
 /// Relating the test says the operator runs, not that an assertion would
