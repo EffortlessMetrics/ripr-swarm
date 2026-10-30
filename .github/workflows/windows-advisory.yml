@@ -1585,7 +1585,9 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or $head -ne $expected) { throw "Unexpected product checkout: $head" }
           $tree = (git rev-parse 'HEAD^{tree}').Trim()
           if ($LASTEXITCODE -ne 0 -or $tree -ne '7d28b7368bfa9502e58d91d4083d17995d1e8b12') { throw "Unexpected product tree: $tree" }
-          Write-Output "Product head: $head; tree: $tree; runner: $env:RUNNER_OS; image: $env:ImageOS $env:ImageVersion"
+          Write-Output "Workflow revision: $env:GITHUB_SHA; product head: $head; tree: $tree; runner: $env:RUNNER_OS; image: $env:ImageOS $env:ImageVersion"
+          $rustVersion = rustc --version
+          if ($LASTEXITCODE -ne 0 -or !$rustVersion.StartsWith('rustc 1.95.0 ')) { throw "Unexpected Rust version: $rustVersion" }
           rustc --version --verbose
           if ($LASTEXITCODE -ne 0) { throw 'Cannot identify Rust toolchain' }
           cargo --version
@@ -1596,7 +1598,10 @@ jobs:
           $listed = cargo test --locked -p ripr --test task_first_facade -- --list
           if ($LASTEXITCODE -ne 0) { throw 'Could not list test subjects' }
           if (($listed | Where-Object { $_ -eq "${name}: test" }).Count -ne 1) { throw "Expected exactly one listed subject: $name" }
-          cargo test --locked -p ripr --test task_first_facade $name -- --exact --nocapture
-          if ($LASTEXITCODE -ne 0) { throw "Native regression failed: $LASTEXITCODE" }
           if (!(Test-Path 'target/debug/ripr.exe')) { throw 'Expected CLI executable was not built' }
           Get-FileHash -Algorithm SHA256 'target/debug/ripr.exe'
+          cargo test --locked -p ripr --test task_first_facade $name -- --exact --nocapture 2>&1 | Tee-Object -Variable runOutput
+          if ($LASTEXITCODE -ne 0) { throw "Native regression failed: $LASTEXITCODE" }
+          if (@($runOutput | Where-Object { $_ -match '^running 1 test$' }).Count -ne 1) { throw 'Test did not report one executing subject' }
+          if (@($runOutput | Where-Object { $_ -eq "test $name ... ok" }).Count -ne 1) { throw 'The selected test did not report success' }
+          if (@($runOutput | Where-Object { $_ -match '^test result: ok\. 1 passed; 0 failed; 0 ignored;' }).Count -ne 1) { throw 'Expected one executed passing test with none ignored' }
