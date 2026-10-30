@@ -149,7 +149,7 @@ stream; it does not change findings or exit codes.
 Agents and scripts reading `ripr check --json` should pass `--quiet` so stderr
 stays free of `ripr progress:` lines. The JSON is the full versioned report and
 is large: read `summary` and `canonical_next_action` (when present) first, then fetch one
-finding's evidence with `ripr context --at <finding-id> --json`.
+finding's evidence with `ripr context --at <finding-id> --json --quiet`.
 
 When a finding is selected, copy its printed `ripr explain` command to inspect
 the evidence, or its `ripr context` command for an agent handoff. Those commands
