@@ -331,6 +331,27 @@ fn mock_patching_in_a_test_file_counts_as_a_dynamic_writer() {
     ));
 }
 
+/// #11102: an import names a writer without calling it.
+#[test]
+fn importing_a_writer_name_is_not_a_dynamic_write() {
+    for source in [
+        "from unittest.mock import patch\n\ndef test_x():\n    assert 1\n",
+        "from unittest.mock import (\n    call,\n    patch,\n)\n",
+        "import os; from unittest.mock import patch\n",
+    ] {
+        assert!(!super::writes_namespace_dynamically(source), "{source}");
+    }
+    for source in [
+        "from unittest.mock import patch as p\n",
+        "from unittest.mock import patch\n\npatch('pkg.X', 5)\n",
+        "from unittest.mock import patch\n\n@patch('pkg.X', 5)\ndef test_x(m):\n    pass\n",
+        "import os; setattr(os, 'x', 1)\n",
+        "from importlib import reload as r\n",
+    ] {
+        assert!(super::writes_namespace_dynamically(source), "{source}");
+    }
+}
+
 #[test]
 fn dynamic_namespace_writers_unresolve_owner_constants() -> Result<(), String> {
     for writer in [
