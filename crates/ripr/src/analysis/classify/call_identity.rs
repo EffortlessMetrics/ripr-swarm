@@ -102,7 +102,11 @@ pub(crate) struct CallIdentityMemos {
     /// One syntax owner for every inherent-receiver query of the run, so the
     /// workspace trusted-macro scan behind assertion admission is paid once
     /// per index rather than once per (seam, test) receiver check.
-    pub(super) receiver_pin_syntax: Mutex<super::OwnerPinSyntax>,
+    ///
+    /// Held directly, not behind a lock: its memos are already `SyncMemo`s, and
+    /// a guard held across a query would serialize every worker and could
+    /// re-enter on the rayon thread that steals a sibling seam mid-scan.
+    pub(super) receiver_pin_syntax: super::OwnerPinSyntax,
     /// #9218: the same per owner, built even when the owner has no
     /// same-named rival, for resolving a qualified call's spelled path.
     solo_identities: Mutex<SoloIdentities>,
@@ -127,6 +131,13 @@ pub(crate) struct CallIdentityMemos {
 }
 
 impl CallIdentityMemos {
+    /// How many full-workspace macro scans the run-shared receiver syntax
+    /// owner has paid.
+    #[cfg(test)]
+    pub(in crate::analysis) fn receiver_scan_passes(&self) -> u32 {
+        self.receiver_pin_syntax.workspace_scan_passes()
+    }
+
     /// The memoized masked sources, built by `build` on first use.
     pub(in crate::analysis) fn masked_sources(
         &self,
