@@ -33,6 +33,7 @@ mod equality_dispatch;
 mod implicit_dispatch;
 mod iterator_dispatch;
 mod operator_dispatch;
+mod std_receiver;
 pub(in crate::analysis::classify) use operator_dispatch::stringified_ranges;
 
 pub(in crate::analysis) use equality_dispatch::is_partial_eq_method;
@@ -6029,6 +6030,18 @@ fn owner_call_relation_reason(
                     return RelationReason::WeakTokenSubstring;
                 }
             }
+            // #11113: a trait default method is not an inherent method of a
+            // standard collection. When every spelling is a method call on a
+            // local the test types as one (`all_named.contains(x)` on a
+            // `Vec`), the name match is name-only.
+            if let FunctionContainer::Trait { trait_name } = &owner.item.container
+                && owner.item.has_self_param
+                && std_receiver::method_calls_only_on_std_receivers(
+                    test, owner_name, trait_name, index,
+                )
+            {
+                return RelationReason::WeakTokenSubstring;
+            }
             return RelationReason::DirectOwnerCall;
         }
         if !free_function_call_spells_free_call(test, owner_name) {
@@ -8846,6 +8859,36 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
         related[0].1
     }
 
+    /// [`counter_default_relation`] for a parsed `fn` body (the shape the
+    /// syntax-based receiver rules read), with extra indexed functions and
+    /// the source optionally ending in extra items.
+    fn counter_default_fn_relation(
+        test_body: &str,
+        extra: Vec<FunctionSummary>,
+        source_suffix: &str,
+    ) -> RelationReason {
+        let (mut source, start, end) = counter_default_source(false, test_body);
+        source.push_str(source_suffix);
+        let mut owner = trait_function("src/lib.rs", "advance", "Counter");
+        owner.start_line = 3;
+        let body = format!("fn advances() {{ {test_body} }}");
+        let mut test = test_with_call("src/lib.rs", "advances", &body, "advance");
+        test.start_line = start;
+        test.end_line = end;
+        let mut functions = vec![owner.clone()];
+        functions.extend(extra);
+        let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions,
+            tests: vec![test],
+            ..Default::default()
+        });
+        with_source(&mut index, "src/lib.rs", &source);
+        let probe = probe("src/lib.rs", "4 * self.step()");
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+        assert_eq!(related.len(), 1, "the same-named call is still related");
+        related[0].1
+    }
+
     /// #7123: a test module that redeclares the production trait shadows a
     /// trait-declaration default-method owner exactly like a trait-impl owner
     /// (#7053): every trait-path spelling names the test-local trait, so the
@@ -8885,6 +8928,112 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
                 "{body}"
             );
         }
+    }
+
+    /// #11113: a trait default method called as `names.advance(..)` on a local
+    /// the test types as a standard collection is a name-only match, in every
+    /// annotation and constructor spelling the rule reads.
+    #[test]
+    fn given_std_collection_receiver_when_calling_default_method_then_name_only_relation() {
+        for body in [
+            "let names: Vec<u32> = Vec::new(); let ok = names.advance();",
+            "let names: Vec<(&'static str, u32)> = collect_names(); let ok = names.advance();",
+            "let names = vec![1u32]; let ok = names.advance();",
+            "let mut seen = HashSet::new(); seen.advance();",
+            "let names: &Vec<u32> = &other(); let ok = names.advance();",
+            "let names: Vec<u32> = Vec::new(); for item in units() { assert!(names.advance(), \"{item:?}\"); }",
+            "let names: Vec<u32> = Vec::new(); assert_eq!(names.advance(), 8);",
+        ] {
+            assert_eq!(
+                counter_default_fn_relation(body, Vec::new(), ""),
+                RelationReason::WeakTokenSubstring,
+                "a std collection receiver must not be direct_owner_call: {body}"
+            );
+        }
+    }
+
+    /// #11113 discriminator: the demotion needs every spelling to be a
+    /// resolved std-receiver method call. An unannotated receiver, a mixed
+    /// body, a path or UFCS spelling, a closure binding, a rebound type and an
+    /// indexed impl of the trait for the std type all keep the credit.
+    #[test]
+    fn given_unresolved_or_mixed_receiver_when_calling_default_method_then_direct_owner_call() {
+        for body in [
+            "let r = Unit.advance();",
+            "let unit = make(); let r = unit.advance();",
+            "let names: Vec<u32> = Vec::new(); names.advance(); let r = Unit.advance();",
+            "let names: Vec<u32> = Vec::new(); run(Unit::advance); names.advance();",
+            "let names: Vec<u32> = Vec::new(); let r = Counter::advance(&names);",
+            "let names: Vec<u32> = Vec::new(); let f = |names: Unit| names.advance(); f(Unit);",
+            "let names: Vec<u32> = Vec::new(); for names in units() { names.advance(); }",
+            "let names: Vec<u32> = Vec::new(); for names in units() { assert!(names.advance()); }",
+            "let names: Vec<u32> = Vec::new(); let names = Unit; let ok = names.advance();",
+            "let names: Vec<u32> = Vec::new(); names.len(); let r = make().advance();",
+            "let names = Vec::<u32>::new().into_iter().collect::<Vec<_>>(); names.advance();",
+        ] {
+            assert_eq!(
+                counter_default_fn_relation(body, Vec::new(), ""),
+                RelationReason::DirectOwnerCall,
+                "{body}"
+            );
+        }
+    }
+
+    /// #11113: a rebound `Vec` (a test-local type of that name) or an indexed
+    /// `impl Counter for Vec<_>` means the receiver may be the trait's own.
+    #[test]
+    fn given_rebound_or_implementing_std_type_when_calling_default_method_then_direct_owner_call() {
+        let body = "let names: Vec<u32> = Vec::new(); let ok = names.advance();";
+        assert_eq!(
+            counter_default_fn_relation(body, Vec::new(), ""),
+            RelationReason::WeakTokenSubstring,
+            "control: the same body without a rebinding is name-only"
+        );
+        assert_eq!(
+            counter_default_fn_relation(body, Vec::new(), "use other::Vec;\n"),
+            RelationReason::DirectOwnerCall
+        );
+        let mut implementor = function("src/lib.rs", "step");
+        implementor.item.container = FunctionContainer::TraitImpl {
+            trait_path: "Counter".to_string(),
+            self_ty: "Vec<u32>".to_string(),
+        };
+        assert_eq!(
+            counter_default_fn_relation(body, vec![implementor], ""),
+            RelationReason::DirectOwnerCall
+        );
+        for self_ty in ["[u32]", "T", "&Vec<u32>", "&mut Vec<u32>"] {
+            let mut deref_implementor = function("src/lib.rs", "step");
+            deref_implementor.item.container = FunctionContainer::TraitImpl {
+                trait_path: "Counter".to_string(),
+                self_ty: self_ty.to_string(),
+            };
+            assert_eq!(
+                counter_default_fn_relation(body, vec![deref_implementor], ""),
+                RelationReason::DirectOwnerCall,
+                "an impl for {self_ty} can reach a Vec receiver"
+            );
+        }
+    }
+
+    /// #11113: a module file's own `use super::*;` is the ordinary test-module
+    /// prelude and does not rebind `Vec`; a named import, a declaration, a
+    /// foreign glob or a parent module that binds the name does.
+    #[test]
+    fn std_name_rebinding_reads_the_test_file_and_its_parent_module_file() {
+        let rebound = |test_source: &str, parent_source: &str| {
+            let mut index =
+                RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex::default());
+            with_source(&mut index, "src/tests/iter.rs", test_source);
+            with_source(&mut index, "src/tests/mod.rs", parent_source);
+            std_receiver::std_name_rebound_for_tests(&index, "src/tests/iter.rs", "Vec")
+        };
+        assert!(!rebound("use super::*;\nfn t() {}", "pub struct Other;"));
+        assert!(rebound("use super::*;\nfn t() {}", "use alloc::vec::Vec;"));
+        assert!(rebound("use super::*;\nfn t() {}", "pub struct Vec;"));
+        assert!(rebound("use foo::*;\nfn t() {}", "pub struct Other;"));
+        assert!(rebound("use foo::Vec;\nfn t() {}", "pub struct Other;"));
+        assert!(rebound("struct Vec;\nfn t() {}", "pub struct Other;"));
     }
 
     /// The relation of the nested out-of-line trait shape for a
