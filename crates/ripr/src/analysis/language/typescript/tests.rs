@@ -19692,6 +19692,7 @@ mod gap_reach_config_tests;
 mod guard_entry_tests;
 mod infection_tests;
 mod instance_class_tests;
+mod issue10925_shadow_scan_tests;
 mod issue7507_shadow_tests;
 mod literal_matcher_tests;
 mod lookup_table_tests;
