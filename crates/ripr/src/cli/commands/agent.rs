@@ -1784,7 +1784,7 @@ impl SharedWorkflowArtifacts {
                         ));
                     }
                     let mut destination =
-                        output::file_write::create_exclusive(&backup).map_err(|error| {
+                        output::file_write::create_exclusive(backup).map_err(|error| {
                             format!("create backup {} failed: {error}", backup.display())
                         })?;
                     destination.write_all(&bytes)
@@ -1792,7 +1792,7 @@ impl SharedWorkflowArtifacts {
                     .and_then(|_| destination.sync_all())
                     .map_err(|error| format!("preserve workflow artifact {} failed: {error}; inspect {} before retrying", path.display(), backup.display()))?;
                     drop(destination);
-                    if read_workflow_file(&backup)?.map(|(_, observed)| observed)
+                    if read_workflow_file(backup)?.map(|(_, observed)| observed)
                         != Some(identity.clone())
                         || read_workflow_file(path)?.map(|(_, observed)| observed)
                             != Some(identity.clone())
