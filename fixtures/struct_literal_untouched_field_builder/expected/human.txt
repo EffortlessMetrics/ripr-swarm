@@ -41,8 +41,8 @@ Next: drill into the top finding:
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
     - ./src/lib.rs:22 (weak); kind: field_construction; reason: Missing discriminator value: Request { url: self.url, timeout_ms: self.timeout_ms.unwrap_or(3_000) }
-      Choose a test-stub seam for probe:src_lib.rs:field_construction:dcc39302: src/lib.rs:23 holds more than one field_construction seam, so --at cannot pick one; pass one of: --seam-id 2de10479eb3ce440, --seam-id 2de81579eb431fd1
-        These syntax choices are unvalidated; their commands may refuse, including for already-gripped seams.
+      Choose a test-stub seam for probe:src_lib.rs:field_construction:dcc39302: src/lib.rs:23 holds more than one field_construction seam, so --at cannot pick one
+        Each command below produces a stub, but ripr could not tell which seam your change touches.
         They do not establish a repair binding or close a static limitation.
         ripr agent stub --root <cwd>/fixtures/struct_literal_untouched_field_builder/input --seam-id 2de10479eb3ce440
   Full evidence: rerun with --format human-full

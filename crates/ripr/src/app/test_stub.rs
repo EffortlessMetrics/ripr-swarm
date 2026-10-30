@@ -81,6 +81,39 @@ impl TestStubSelector {
     }
 }
 
+/// The one refusal decision for a resolved stub: a weak-oracle guidance
+/// first (an existing reaching test needs its assertion fixed, #10683), then
+/// the producer's own refusal. `None` means the stub route accepts the seam.
+/// Shared by the `agent stub` command and the choices `check` advertises, so
+/// a printed command cannot disagree with what the command does.
+pub(crate) fn stub_refusal<'a>(
+    weak_oracle_guidance: Option<&'a str>,
+    outcome: &'a Result<RustTestStub, TestStubRefusal>,
+) -> Option<(&'a str, &'a str)> {
+    match (weak_oracle_guidance, outcome) {
+        (Some(guidance), _) => Some(("existing_test_weak_oracle", guidance)),
+        (None, Err(refusal)) => Some((refusal.as_str(), refusal.reason())),
+        (None, Ok(_)) => None,
+    }
+}
+
+/// A repo inventory read at most once per `check_stub_routes` call.
+#[derive(Default)]
+pub(crate) struct StubInventory(Option<Option<Vec<ClassifiedSeam>>>);
+
+impl StubInventory {
+    /// The classified seams, or `None` when the inventory cannot be read.
+    fn seams(&mut self, root: &Path, config: &RiprConfig) -> Option<&[ClassifiedSeam]> {
+        self.0
+            .get_or_insert_with(|| {
+                analysis::inventory_classified_seams_at_with_config(root, config)
+                    .ok()
+                    .map(|(classified, _)| classified)
+            })
+            .as_deref()
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct TestStubResolution {
     pub(crate) seam_id: String,
@@ -422,6 +455,7 @@ pub(crate) fn stub_route_for_finding(
     config: &RiprConfig,
     finding: &Finding,
     seam_index: &mut Option<analysis::FileSeamIndex>,
+    inventory: &mut StubInventory,
 ) -> Option<StubRoute> {
     let (file, line, kind) = stub_route_location(finding, root)?;
     if let Some(name) = finding.probe.changed_const_name() {
@@ -437,7 +471,7 @@ pub(crate) fn stub_route_for_finding(
             Err(TestStubError::Ambiguous { message, seam_ids }) if !seam_ids.is_empty() => {
                 return Some(StubRoute {
                     finding_id: finding.id.clone(),
-                    decision: ambiguous_route_decision(root, config, message, seam_ids),
+                    decision: ambiguous_route_decision(root, config, inventory, message, seam_ids),
                 });
             }
             Err(_) => return None,
@@ -785,6 +819,7 @@ pub(crate) fn check_stub_routes(
     output: &CheckOutput,
     seam_index: &mut Option<analysis::FileSeamIndex>,
 ) -> Vec<StubRoute> {
+    let mut inventory = StubInventory::default();
     let (selected, hidden) = crate::output::human::stub_route_subjects(output, check_config);
     if selected.is_none() && hidden.is_empty() {
         return Vec::new();
@@ -802,9 +837,9 @@ pub(crate) fn check_stub_routes(
                 return None;
             }
             if selected {
-                stub_route_for_finding(root, &config, finding, seam_index)
+                stub_route_for_finding(root, &config, finding, seam_index, &mut inventory)
             } else {
-                hidden_stub_ambiguity(root, &config, finding, seam_index)
+                hidden_stub_ambiguity(root, &config, finding, seam_index, &mut inventory)
             }
         })
         .collect()
@@ -815,19 +850,22 @@ pub(crate) fn check_stub_routes(
 /// grip. Each is run through the same `--seam-id` resolution `ripr agent
 /// stub --seam-id` uses, and only the ones that command would accept are
 /// advertised; a printed command must not refuse for a reason known at print
-/// time. When none would be accepted the decision is a refusal line.
+/// time. When none would be accepted, or the check cannot be made, the
+/// decision is a refusal line.
 fn ambiguous_route_decision(
     root: &Path,
     config: &RiprConfig,
+    inventory: &mut StubInventory,
     message: String,
     seam_ids: Vec<String>,
 ) -> StubRouteDecision {
-    let accepted = seam_ids_accepted_by_stub(root, config, &seam_ids);
-    match accepted {
-        // The inventory could not be read: keep the unvalidated choices.
-        None => StubRouteDecision::Ambiguous {
-            reason: message,
-            seam_ids,
+    match seam_ids_accepted_by_stub(root, config, inventory, &seam_ids) {
+        // Fail closed: when the inventory cannot be read, no choice is
+        // validated, so none is advertised.
+        None => StubRouteDecision::Refused {
+            reason: format!(
+                "{message}; ripr could not check which of those seams `ripr agent stub --seam-id` would accept, so no stub command is offered"
+            ),
         },
         Some(accepted) if accepted.is_empty() => StubRouteDecision::Refused {
             reason: format!(
@@ -841,15 +879,25 @@ fn ambiguous_route_decision(
     }
 }
 
+/// Hidden rows display only choices a command would accept: a refusal
+/// (nothing acceptable, or the check could not be made) prints nothing.
+fn hidden_ambiguity_decision(decision: StubRouteDecision) -> Option<StubRouteDecision> {
+    match decision {
+        StubRouteDecision::Refused { .. } => None,
+        decision => Some(decision),
+    }
+}
+
 /// The ids among `seam_ids` that `resolve_test_stub` with `--seam-id` would
 /// turn into a stub (a reported gap, no weak-oracle refusal, a producible
 /// stub). `None` when the repo inventory cannot be read.
 fn seam_ids_accepted_by_stub(
     root: &Path,
     config: &RiprConfig,
+    inventory: &mut StubInventory,
     seam_ids: &[String],
 ) -> Option<Vec<String>> {
-    let (classified, _) = analysis::inventory_classified_seams_at_with_config(root, config).ok()?;
+    let classified = inventory.seams(root, config)?;
     Some(
         seam_ids
             .iter()
@@ -857,12 +905,15 @@ fn seam_ids_accepted_by_stub(
                 classified
                     .iter()
                     .find(|entry| entry.seam.id().as_str() == id.as_str())
-                    .and_then(|entry| {
-                        let source = read_owner_source(root, &entry.seam).ok()?;
-                        Some(resolution_for(root, config, entry, source))
-                    })
-                    .is_some_and(|resolution| {
-                        resolution.weak_oracle_guidance.is_none() && resolution.outcome.is_ok()
+                    .is_some_and(|entry| {
+                        // Same decision `agent stub --seam-id` makes, without
+                        // projecting the repair journey it does not need.
+                        let Ok(source) = read_owner_source(root, &entry.seam) else {
+                            return false;
+                        };
+                        let outcome = rust_test_stub_for_classified_seam(root, entry, &source);
+                        let guidance = super::task_first::weak_oracle_guidance(entry);
+                        stub_refusal(guidance.as_deref(), &outcome).is_none()
                     })
             })
             .cloned()
@@ -877,6 +928,7 @@ fn hidden_stub_ambiguity(
     config: &RiprConfig,
     finding: &Finding,
     seam_index: &mut Option<analysis::FileSeamIndex>,
+    inventory: &mut StubInventory,
 ) -> Option<StubRoute> {
     let (file, line, kind) = stub_route_location(finding, root)?;
     // A changed constant has no seam of its own; its selected route may
@@ -887,14 +939,13 @@ fn hidden_stub_ambiguity(
     scoped_file(root, &file)?;
     match resolve_at_location(root, config, &file, line, Some(kind), seam_index) {
         Err(TestStubError::Ambiguous { message, seam_ids }) if !seam_ids.is_empty() => {
-            match ambiguous_route_decision(root, config, message, seam_ids) {
-                // Hidden rows display only choices a command would accept.
-                StubRouteDecision::Refused { .. } => None,
-                decision => Some(StubRoute {
-                    finding_id: finding.id.clone(),
-                    decision,
-                }),
-            }
+            hidden_ambiguity_decision(ambiguous_route_decision(
+                root, config, inventory, message, seam_ids,
+            ))
+            .map(|decision| StubRoute {
+                finding_id: finding.id.clone(),
+                decision,
+            })
         }
         _ => None,
     }
@@ -1829,8 +1880,14 @@ mod tests {
         // routes without a classified-inventory lookup.
         assert_eq!(hidden.probe.family.as_str(), "return_value");
         let mut index = None;
-        let direct = stub_route_for_finding(&root, &config, hidden, &mut index)
-            .ok_or("the hidden subject must independently resolve")?;
+        let direct = stub_route_for_finding(
+            &root,
+            &config,
+            hidden,
+            &mut index,
+            &mut StubInventory::default(),
+        )
+        .ok_or("the hidden subject must independently resolve")?;
         assert!(matches!(direct.decision, StubRouteDecision::Stub { .. }));
         let original_count = INVENTORY_ENTRY_FACTS_CALLS.with(|count| count.replace(0));
         let mut selected_index = None;
@@ -1839,6 +1896,7 @@ mod tests {
             &config,
             selected.ok_or("missing selected subject")?,
             &mut selected_index,
+            &mut StubInventory::default(),
         )
         .ok_or("selected subject must keep its full route")?;
         let selected_inventory_calls = INVENTORY_ENTRY_FACTS_CALLS.with(|count| count.get());
@@ -1897,9 +1955,21 @@ mod tests {
             .filter(|id| oracle(id))
             .cloned()
             .collect::<Vec<_>>();
-        let accepted = seam_ids_accepted_by_stub(&root, &config, &ids);
-        let decision = ambiguous_route_decision(&root, &config, "tied".to_string(), ids.clone());
-        let unknown = seam_ids_accepted_by_stub(&root, &config, &["no-such-seam".to_string()]);
+        let accepted =
+            seam_ids_accepted_by_stub(&root, &config, &mut StubInventory::default(), &ids);
+        let decision = ambiguous_route_decision(
+            &root,
+            &config,
+            &mut StubInventory::default(),
+            "tied".to_string(),
+            ids.clone(),
+        );
+        let unknown = seam_ids_accepted_by_stub(
+            &root,
+            &config,
+            &mut StubInventory::default(),
+            &["no-such-seam".to_string()],
+        );
         let _ = std::fs::remove_dir_all(&root);
         assert!(
             ids.len() >= 2,
@@ -1913,6 +1983,18 @@ mod tests {
             expected.len() < ids.len(),
             "negative control: some seam is not"
         );
+        // Independent pin: the test pins `a > 10` (10 vs 11) but never
+        // exercises `b > 20`, so only the latter is a reported gap.
+        let expressions = |wanted: &[String]| {
+            let mut found = classified
+                .iter()
+                .filter(|entry| wanted.contains(&entry.seam.id().as_str().to_string()))
+                .map(|entry| entry.seam.expression().to_string())
+                .collect::<Vec<_>>();
+            found.sort();
+            found
+        };
+        assert_eq!(expressions(&expected), vec!["b > 20".to_string()]);
         assert_eq!(accepted, Some(expected.clone()));
         assert_eq!(
             decision,
@@ -1923,6 +2005,52 @@ mod tests {
         );
         assert_eq!(unknown, Some(Vec::new()));
         Ok(())
+    }
+
+    /// Nothing acceptable, or an unreadable inventory, advertises no
+    /// `--seam-id` command: the selected finding gets a refusal line and a
+    /// hidden row gets nothing.
+    #[test]
+    fn unvalidated_or_unacceptable_choices_offer_no_command() {
+        let config = RiprConfig::default();
+        let ids = vec!["0123456789abcdef".to_string()];
+        for (root, why) in [
+            // Inventory cannot be read.
+            ("/nonexistent-ripr-root", "could not check"),
+            // Readable inventory with no acceptable seam.
+            ("", "none of those seams is a reported gap"),
+        ] {
+            let scratch;
+            let root = if root.is_empty() {
+                scratch = scratch_stub_crate("ambiguous-none", "pub fn f() {}\n");
+                match &scratch {
+                    Ok(path) => path.as_path(),
+                    Err(error) => panic!("fixture: {error}"),
+                }
+            } else {
+                Path::new(root)
+            };
+            let decision = ambiguous_route_decision(
+                root,
+                &config,
+                &mut StubInventory::default(),
+                "tied".to_string(),
+                ids.clone(),
+            );
+            match &decision {
+                StubRouteDecision::Refused { reason } => {
+                    assert!(reason.contains(why), "{reason}");
+                    assert!(!reason.contains("0123456789abcdef"), "{reason}");
+                }
+                other => panic!("must refuse, got {other:?}"),
+            }
+            assert_eq!(hidden_ambiguity_decision(decision), None);
+        }
+        let kept = StubRouteDecision::Ambiguous {
+            reason: "tied".to_string(),
+            seam_ids: ids,
+        };
+        assert_eq!(hidden_ambiguity_decision(kept.clone()), Some(kept));
     }
 
     #[test]
