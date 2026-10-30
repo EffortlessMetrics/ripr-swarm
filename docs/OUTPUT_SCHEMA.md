@@ -392,7 +392,7 @@ from absence. The disclosure fields introduced in `0.1` (#7290) remain:
 - `warnings` — one string naming why the class carries omission prose. A
   `strongly_gripped` seam is exposed because its tests already discriminate
   it, so the warning says exactly that (`seam <id> is strongly_gripped:
-  existing tests already discriminate it, so a stub would add nothing`); the
+  existing tests already discriminate it, so this stub is an optional scaffold for the location you named, not evidence of a missing discriminator`); the
   default `Off` severity for the class is the agent-brief rendering policy,
   not user configuration, so the packet/brief "configured off" wording is not
   reused here (#8891). A class a user severity actually disables keeps the
@@ -14395,10 +14395,13 @@ Field contract:
   ledger; this binds the packet to its input, not the input to current source.
   A currently revalidated unsupported-language preflight no-action never
   consumed a ledger and does not need that digest.
-- When a Rust first-pr run lacks both the repo-exposure report and the gap
-  ledger, `selected.artifact` remains the first recovery step and
-  `selected.also_missing[]` names the gap ledger and its regeneration command.
-  The CLI and Markdown show both missing inputs in dependency order. This
+- When a Rust first-pr run lacks later inputs of the repo-exposure report,
+  gap ledger, PR repair cards chain, `selected.artifact` remains the first
+  recovery step and `selected.also_missing[]` names each later missing input
+  and its regeneration command, in dependency order. The PR repair cards entry
+  carries `needed_when`, a display-prose string (not an enum) explaining that
+  the cards are only consulted when the gap ledger names no repair start.
+  The CLI and Markdown show every missing input in dependency order. This
   discovery field does not imply either command ran or that an existing
   `agent repair` receipt was consumed; receipt recognition remains separate.
 - `blocked_artifact` may also represent setup preflight failures such as a
@@ -14689,8 +14692,16 @@ Field contract:
   its after phase would evaluate the current `HEAD` as the attempt's, by the
   attempt authority's rule: the prepared head, or for an ordinary attempt a
   commit that descends from it; for an attempt with an after verdict, whether
-  `HEAD` is still the head that verdict recorded; `null` when `HEAD` cannot be
-  read or related to the prepared head), `disposition` (`resumable`,
+  its bound inputs are still current: the recorded `HEAD`, packet, delta,
+  and captured contents/index identities of already-bound paths must match.
+  This field is not a HEAD-only comparison. Producer-owned temporary workflow
+  backups are excluded only when their exact paths and identities match the
+  current producer transaction; another attempt's manifest remains bound.
+  `null` means currentness cannot be established, including legacy path-only
+  deltas that lack path identities. Those legacy attempts remain readable as
+  unknown currentness in status, but receipt reissue refuses them; a fresh
+  before phase is required. `null` also applies when `HEAD` cannot be read or
+  related to the prepared head), `disposition` (`resumable`,
   `prepared_at_other_head`, `retry_budget_spent`, `head_unknown`,
   `not_published`, `finished`, `gap_open`, `unconfirmed`, or `ended`), `manifest`, `command` (the command
   that would move this attempt or its seam forward, or `null`),
@@ -16448,7 +16459,11 @@ Field contract:
   violations list even when the focused test edit breaks no cage rule; the
   scorable route is to resolve the workspace condition that made the
   baseline ambiguous and rerun the same `--phase before` command from a
-  clean state. Without `--json`, stdout is a short prose summary whose
+  clean state. `test_runner_cache_guidance`, when present, explains that a
+  TypeScript gap attempt can refuse or become stale when a test runner writes
+  ignored caches; it recommends recording native test results separately
+  after successful continuation and does not claim a test was recorded in the receipt.
+  Without `--json`, stdout is a short prose summary whose
   final line names the same next command — or, for such an ambiguous
   baseline, the ambiguity warning and the clean-state restart route, with
   the after-edit command only as an explicitly acknowledged fallback.

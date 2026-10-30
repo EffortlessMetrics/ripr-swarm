@@ -407,6 +407,28 @@ pub(crate) fn render_full_with_config_and_navigation(
     out
 }
 
+/// One header line, beside `head:`, when untracked routed files were left out
+/// of a committed-history run: the end-of-report note was missed in agent runs
+/// (#11159), so the count and the exact repair sit where `head:` is read.
+/// Display-only: it never touches the verdict, and it is absent on a
+/// working-tree read (which carries its own untracked disclosure).
+fn untracked_header_line(output: &CheckOutput) -> Option<String> {
+    let untracked = &output.untracked_working_tree_source_paths;
+    if !output.unanalyzed_working_tree || untracked.is_empty() {
+        return None;
+    }
+    let noun = if untracked.len() == 1 {
+        "file"
+    } else {
+        "files"
+    };
+    let listing = crate::output::analyzed_revisions::name_paths(untracked, escape_terminal_display);
+    Some(format!(
+        "untracked: {} {noun} not analyzed ({listing}); run `git add -N <paths>` then `ripr check --worktree`, or pass `--diff PATH`\n",
+        untracked.len()
+    ))
+}
+
 /// Name the analyzed base and head (RIPR-SPEC-0116 amendment): a live
 /// repository diff names its base ref and commit and whether it ended at
 /// `HEAD` or at the working tree; a candidate-tree subject names its two
@@ -420,6 +442,9 @@ fn render_analyzed_revisions(out: &mut String, output: &CheckOutput) {
             base_label(revisions),
             head_label(revisions)
         ));
+        if let Some(line) = untracked_header_line(output) {
+            out.push_str(&line);
+        }
         return;
     }
     if let Some(subject) = output
@@ -2711,6 +2736,102 @@ mod tests {
         finding
     }
 
+    #[test]
+    fn conflicting_python_verify_metadata_is_not_rendered_as_a_command() {
+        let mut finding = python_preview_finding(1, true);
+        finding
+            .evidence
+            .retain(|entry| !entry.starts_with("suggested_verify_command: "));
+        finding.evidence.push(
+            "suggested_test_node_id: tests/test_pricing.py::test_small_order_pays_shipping"
+                .to_string(),
+        );
+        finding.evidence.push(
+            "suggested_verify_command: python -m pytest tests/test_pricing.py::test_other"
+                .to_string(),
+        );
+        let text = super::sections::render_finding_digest_with_config(
+            &finding,
+            &RiprConfig::default(),
+            Path::new("/tmp/selected"),
+        );
+        assert!(text.contains("no verified command"), "{text}");
+        assert!(!text.contains("python -m pytest"), "{text}");
+    }
+
+    #[test]
+    fn coherent_class_and_unittest_suggestions_remain_manual() {
+        let mut finding = python_preview_finding(1, true);
+        finding
+            .evidence
+            .retain(|entry| !entry.starts_with("suggested_verify_command: "));
+        finding.evidence.push("suggested_test_line: 7".to_string());
+        finding.evidence.push(
+            "suggested_test_qualified_name: TestPricing.test_small_order_pays_shipping".to_string(),
+        );
+        finding.evidence.push("suggested_test_node_id: tests/test_pricing.py::TestPricing::test_small_order_pays_shipping".to_string());
+        finding.evidence.push("suggested_verify_command: python -m pytest tests/test_pricing.py::TestPricing::test_small_order_pays_shipping".to_string());
+        let render = |f: &Finding| {
+            super::sections::render_finding_digest_with_config(
+                f,
+                &RiprConfig::default(),
+                Path::new("/tmp/selected"),
+            )
+        };
+        let text = render(&finding);
+        assert!(
+            text.contains("Suggested command (unverified; inspect and run from the selected root)"),
+            "{text}"
+        );
+        let mut wrong_class = finding.clone();
+        for entry in &mut wrong_class.evidence {
+            if entry.starts_with("suggested_test_node_id: ")
+                || entry.starts_with("suggested_verify_command: ")
+            {
+                *entry = entry.replace("TestPricing", "TestOther");
+            }
+        }
+        let text = render(&wrong_class);
+        assert!(
+            text.contains("no verified command") && !text.contains("python -m pytest"),
+            "{text}"
+        );
+        let mut injected = finding.clone();
+        for entry in &mut injected.evidence {
+            *entry = entry.replace("TestPricing", "$(touch /tmp/injected)");
+        }
+        let text = render(&injected);
+        assert!(
+            text.contains("no verified command") && !text.contains("python -m pytest"),
+            "{text}"
+        );
+        finding.evidence.retain(|entry| {
+            !entry.starts_with("suggested_test_node_id: ")
+                && !entry.starts_with("suggested_verify_command: ")
+        });
+        finding.evidence.push("suggested_verify_command: python -m unittest tests.test_pricing.TestPricing.test_small_order_pays_shipping".to_string());
+        let text = render(&finding);
+        assert!(text.contains("Suggested command (unverified; inspect and run from the selected root): python -m unittest"), "{text}");
+        finding
+            .evidence
+            .retain(|entry| !entry.starts_with("suggested_verify_command: "));
+        finding.evidence.push("suggested_verify_command: python -m unittest wrong.module.test_small_order_pays_shipping".to_string());
+        let text = render(&finding);
+        assert!(
+            text.contains("no verified command") && !text.contains("python -m unittest"),
+            "{text}"
+        );
+        finding
+            .evidence
+            .retain(|entry| !entry.starts_with("suggested_verify_command: "));
+        finding.evidence.push("suggested_verify_command: python -m unittest wrong; touch /tmp/injected #.test_small_order_pays_shipping".to_string());
+        let text = render(&finding);
+        assert!(
+            text.contains("no verified command") && !text.contains("python -m unittest"),
+            "{text}"
+        );
+    }
+
     /// #5531: the same carded finding stamped as repo-scoped gets no repair
     /// card (no repo-mode Python repair_routing cell); unstamped keeps it.
     #[test]
@@ -4031,6 +4152,53 @@ mod tests {
                 working_tree: true,
             }),
         }
+    }
+
+    /// #5358: a committed-history run that left untracked files out names
+    /// their count and the exact repair in the header, beside `head:`. The
+    /// line is absent when nothing was left out, and on a working-tree read.
+    #[test]
+    fn header_names_untracked_files_left_out_of_a_committed_history_run() {
+        let mut output = empty_live_output(false);
+        if let Some(revisions) = output.analyzed_revisions.as_mut() {
+            revisions.working_tree = false;
+        }
+        output.unanalyzed_working_tree = true;
+        output.untracked_working_tree_source_paths =
+            vec!["tests/new.rs".to_string(), "src/new.rs".to_string()];
+        let rendered = render(&output);
+        assert!(
+            rendered.contains(
+                "head: HEAD 1a2b3c4\nuntracked: 2 files not analyzed (tests/new.rs, src/new.rs); run `git add -N <paths>` then `ripr check --worktree`, or pass `--diff PATH`\n"
+            ),
+            "{rendered}"
+        );
+
+        output.untracked_working_tree_source_paths = vec!["tests/new.rs".to_string()];
+        assert!(
+            render(&output).contains("untracked: 1 file not analyzed (tests/new.rs);"),
+            "singular count"
+        );
+
+        // The count is the full list; the listing is capped at three names.
+        output.untracked_working_tree_source_paths = (1..=5).map(|n| format!("t{n}.rs")).collect();
+        assert!(
+            render(&output)
+                .contains("untracked: 5 files not analyzed (t1.rs, t2.rs, t3.rs and 2 more);"),
+            "count must match the capped listing"
+        );
+
+        output.untracked_working_tree_source_paths = Vec::new();
+        assert!(!render(&output).contains("untracked:"), "nothing left out");
+
+        let mut worktree = empty_live_output(false);
+        worktree.untracked_working_tree_source_paths = vec!["tests/new.rs".to_string()];
+        assert!(
+            !render(&worktree)
+                .lines()
+                .any(|line| line.starts_with("untracked:")),
+            "a working-tree read carries its own disclosure"
+        );
     }
 
     /// RIPR-SPEC-0116: an empty working-tree read names the

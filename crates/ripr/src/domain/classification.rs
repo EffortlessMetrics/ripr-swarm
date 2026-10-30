@@ -92,15 +92,29 @@ pub(crate) const LIMITATION_NON_CLAIM_PREFIX: &str = "limitation_non_claim: ";
 /// Additive declaration context, kept separate from the canonical edge text.
 pub(crate) const LIMITATION_HELPER_BOUNDARY_PREFIX: &str = "limitation_helper_boundary: ";
 
+/// Static exposure classification for a changed behavior.
+///
+/// This is draft static evidence about whether current tests appear to
+/// contain a discriminator for the change; it never claims a test was
+/// executed or that test adequacy was demonstrated. See
+/// `docs/STATIC_EXPOSURE_MODEL.md` for the full model.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExposureClass {
+    /// Static evidence suggests a complete RIPR path to a strong oracle
+    /// that observes the changed sink.
     Exposed,
+    /// A path exists, but infection or discrimination appears weak.
     WeaklyExposed,
+    /// Related tests appear reachable, but no meaningful oracle was found.
     ReachableUnrevealed,
+    /// No static test path was found for the changed owner.
     NoStaticPath,
+    /// Reachability exists, but input or fixture evidence is opaque.
     InfectionUnknown,
+    /// The changed behavior crosses an opaque propagation boundary.
     PropagationUnknown,
+    /// Syntax-first analysis cannot make a credible judgment.
     StaticUnknown,
 }
 
@@ -117,14 +131,20 @@ impl ExposureClass {
         ExposureClass::StaticUnknown,
     ];
 
+    /// The stable snake_case wire token for this class (for example
+    /// `weakly_exposed`), as used in JSON output and configuration.
     pub fn as_str(&self) -> &'static str {
         profile::for_class(self).label
     }
 
+    /// The diagnostic severity associated with this class (`info`,
+    /// `warning`, or `note`).
     pub fn severity(&self) -> &'static str {
         profile::for_class(self).severity
     }
 
+    /// Whether a finding with this class must carry an explicit stop
+    /// reason explaining why static analysis could not judge further.
     pub fn requires_stop_reason(&self) -> bool {
         profile::for_class(self).requires_stop_reason
     }

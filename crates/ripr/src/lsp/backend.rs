@@ -136,10 +136,10 @@ use tower_lsp_server::ls_types::{
     Hover, HoverParams, InitializeParams, InitializeResult, InitializedParams, LSPAny,
     LogTraceParams, MessageType, PositionEncodingKind, Registration,
     RelatedFullDocumentDiagnosticReport, RelatedUnchangedDocumentDiagnosticReport,
-    ShowMessageParams, TraceValue, UnchangedDocumentDiagnosticReport, Unregistration, Uri,
-    WorkspaceDiagnosticParams, WorkspaceDiagnosticReport, WorkspaceDiagnosticReportResult,
-    WorkspaceDocumentDiagnosticReport, WorkspaceFullDocumentDiagnosticReport,
-    WorkspaceUnchangedDocumentDiagnosticReport,
+    ShowMessageParams, TextDocumentIdentifier, TraceValue, UnchangedDocumentDiagnosticReport,
+    Unregistration, Uri, WorkspaceDiagnosticParams, WorkspaceDiagnosticReport,
+    WorkspaceDiagnosticReportResult, WorkspaceDocumentDiagnosticReport,
+    WorkspaceFullDocumentDiagnosticReport, WorkspaceUnchangedDocumentDiagnosticReport,
 };
 use tower_lsp_server::{Client, LanguageServer};
 
@@ -149,6 +149,10 @@ pub(super) struct Backend {
     /// panic containment is exercised through the real handler.
     #[cfg(test)]
     panic_in_next_hover: AtomicBool,
+    /// Test-only fault injection: the next `textDocument/didSave` unwinds, so
+    /// notification-path containment runs through the real handler.
+    #[cfg(test)]
+    panic_in_next_did_save: AtomicBool,
     root: Mutex<PathBuf>,
     workspace_root: Mutex<WorkspaceRootAuthority>,
     workspace_root_epoch: AtomicU64,
@@ -353,6 +357,8 @@ impl Backend {
         Self {
             #[cfg(test)]
             panic_in_next_hover: AtomicBool::new(false),
+            #[cfg(test)]
+            panic_in_next_did_save: AtomicBool::new(false),
             root: Mutex::new(root.clone()),
             workspace_root: Mutex::new(WorkspaceRootAuthority::unavailable(
                 "workspace root authority is awaiting initialization",
@@ -3269,6 +3275,12 @@ impl Backend {
     }
 
     #[cfg(test)]
+    pub(super) fn panic_in_next_did_save_for_test(&self) {
+        self.panic_in_next_did_save
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    #[cfg(test)]
     pub(super) fn selected_position_encoding_for_test(&self) -> Option<PositionEncodingKind> {
         self.selected_position_encoding()
     }
@@ -3720,6 +3732,25 @@ impl Backend {
         } else {
             labels
         }
+    }
+
+    /// Whether `uri`'s buffer is quarantined only because it differs from the
+    /// analyzed saved content while its bytes equal the file on disk. A cheap
+    /// length check precedes the read, so ordinary typing (buffer ahead of
+    /// disk) costs one `stat` per change.
+    fn buffer_equals_unanalyzed_disk_content(&self, uri: &Uri) -> bool {
+        let Some((path, DocumentStalenessReason::BufferDivergesFromAnalyzedSavedContent)) =
+            self.document_quarantine(uri)
+        else {
+            return false;
+        };
+        let Some(text) = self.document_text(uri) else {
+            return false;
+        };
+        if std::fs::metadata(&path).map(|meta| meta.len()).ok() != u64::try_from(text.len()).ok() {
+            return false;
+        }
+        std::fs::read(&path).is_ok_and(|disk| disk == text.as_bytes())
     }
 
     /// The quarantine state of an open document, as `(path, reason)`.
@@ -6385,6 +6416,19 @@ impl LanguageServer for Backend {
         };
         self.handle_document_quarantine_transition(&uri, transition, decision_version)
             .await;
+        // An external rewrite (formatter, `git checkout`, a coding agent) that
+        // the client reloads into an open buffer arrives as a change with no
+        // `didSave`, so the evidence would stay paused behind advice to save
+        // a file that is not dirty. When the new buffer is exactly the file
+        // on disk it is saved content: record it as a save so the normal
+        // digest dedup and refresh path analyze it.
+        if self.buffer_equals_unanalyzed_disk_content(&uri) {
+            self.did_save(DidSaveTextDocumentParams {
+                text_document: TextDocumentIdentifier { uri },
+                text: None,
+            })
+            .await;
+        }
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
@@ -6425,6 +6469,13 @@ impl LanguageServer for Backend {
     }
 
     async fn did_save(&self, params: DidSaveTextDocumentParams) {
+        #[cfg(test)]
+        if self
+            .panic_in_next_did_save
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            std::panic::resume_unwind(Box::new("injected didSave handler panic"));
+        }
         self.trace_inbound(
             "notification",
             "textDocument/didSave",

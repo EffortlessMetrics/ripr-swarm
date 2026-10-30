@@ -6558,6 +6558,135 @@ fn e2e_real_ledger_symlink_keeps_baseline_debt(parent: bool) -> Result<(), Strin
     Ok(())
 }
 
+/// #11101: the aliased-path refusal must run on every host, including the
+/// Windows evidence lane where the `#[cfg(unix)]` symlink tests cannot. Every
+/// forged spelling below is refused by membership-set equality against the
+/// discovered (component-normalized) membership; this test does not isolate
+/// the path shape owner, which is pinned directly by
+/// `rust_workspace_path_gap_refuses_aliased_spellings` in `corpus.rs`. It
+/// injects aliased spellings into the membership of a real, otherwise-current
+/// coverage ledger instead of creating a link.
+#[test]
+fn e2e_aliased_path_in_forged_membership_keeps_baseline_debt() -> Result<(), String> {
+    let shallow = "pub fn early(n: i32) -> bool { n >= 10 }\n";
+    let fixed = "pub fn unrelated() {}\n";
+    let original_gate = e2e_gate_json(Some(&e2e_real_review_doc(shallow)?), None)?;
+    let captured = crate::output::baseline::baseline_create_report_from_gate_decision_json(
+        "gate.json",
+        "unix_ms:1",
+        &original_gate,
+    )?;
+    let before = crate::output::baseline::baseline_entry_count(&captured);
+    assert!(
+        before > 0,
+        "real production pipeline must produce baseline debt"
+    );
+    let baseline = crate::output::baseline::render_baseline_create_json(&captured)?;
+
+    let root = temp_dir("gate-e2e-ledger-forged-alias-11101")?;
+    e2e_write_project(&root, fixed)?;
+    let ledger = e2e_real_ledger_at(&root, &crate::config::RiprConfig::default())?;
+    let genuine: Value = serde_json::from_str(&ledger).map_err(|err| err.to_string())?;
+    // Fixture construction: a genuine membership names exactly the real file,
+    // so none of the aliased spellings below is already in it.
+    let members = genuine["analysis_coverage"]["corpus"]["analyzed_production_files"]
+        .as_array()
+        .cloned()
+        .ok_or_else(|| format!("no disclosed membership: {genuine}"))?;
+    assert_eq!(members, vec![json!("src/lib.rs")], "{genuine}");
+
+    let evaluate = |ledger: &str| -> Result<(Value, Value, usize), String> {
+        let gate = e2e_real_gate_from_ledger_at(&root, ledger)?;
+        let gate_value: Value = serde_json::from_str(&gate).map_err(|err| err.to_string())?;
+        let delta = crate::output::baseline_delta::build_baseline_delta_report(
+            crate::output::baseline_delta::BaselineDeltaInput {
+                root: root.to_string_lossy().to_string(),
+                baseline_path: "baseline.json".to_string(),
+                current_gate_decision_path: "gate.json".to_string(),
+                baseline_json: Ok(baseline.clone()),
+                current_gate_decision_json: Ok(gate.clone()),
+            },
+        );
+        let delta: Value = serde_json::from_str(
+            &crate::output::baseline_delta::render_baseline_delta_json(&delta)?,
+        )
+        .map_err(|err| err.to_string())?;
+        let update = crate::output::baseline_update::build_baseline_update_remove_resolved(
+            crate::output::baseline_update::BaselineUpdateInput {
+                baseline_path: "baseline.json".to_string(),
+                current_gate_decision_path: "gate.json".to_string(),
+                baseline_json: baseline.clone(),
+                current_gate_decision_json: gate,
+                remove_resolved: true,
+                migrate_legacy_identities: false,
+            },
+        )?;
+        Ok((
+            gate_value,
+            delta,
+            crate::output::baseline_update::baseline_update_after_entry_count(&update),
+        ))
+    };
+
+    // Discriminating positive: the unforged ledger earns complete coverage and
+    // resolves the fixed debt, so a retained debt below is attributable to the
+    // injected path and not to a broken fixture.
+    let (gate, delta, after) = evaluate(&ledger)?;
+    assert_eq!(
+        gate["analysis_scope"]["scope"], "rust_workspace_complete",
+        "{gate}"
+    );
+    assert_eq!(delta["delta"]["resolved"], before as u64, "{delta}");
+    assert_eq!(after, 0, "{delta}");
+
+    // Negative: each aliased membership must keep the debt unresolved, whatever
+    // the host's link support. Same bytes at a different path (the parent-alias
+    // shape), an alias beside the real file, non-normalized spellings, and the
+    // real path dropped (an empty membership, not an alias).
+    let aliased: [(&str, Vec<&str>); 6] = [
+        (
+            "parent alias replaces the real path",
+            vec!["real/src/lib.rs"],
+        ),
+        (
+            "alias added beside the real path",
+            vec!["src/lib.rs", "real/src/lib.rs"],
+        ),
+        ("dot-dot spelling", vec!["src/lib.rs", "src/../src/lib.rs"]),
+        ("dot-slash spelling", vec!["./src/lib.rs"]),
+        ("backslash spelling", vec!["src\\lib.rs"]),
+        ("real path dropped", vec![]),
+    ];
+    for (label, files) in aliased {
+        let mut forged = genuine.clone();
+        forged["analysis_coverage"]["corpus"]["analyzed_production_files"] = json!(files);
+        let forged = serde_json::to_string(&forged).map_err(|err| err.to_string())?;
+        let (gate, delta, after) = evaluate(&forged)?;
+        assert_ne!(
+            gate["analysis_scope"]["scope"], "rust_workspace_complete",
+            "{label}: {gate}"
+        );
+        assert_eq!(delta["delta"]["resolved"], 0, "{label}: {delta}");
+        assert_eq!(
+            delta["delta"]["stale_baseline_entry"], before as u64,
+            "{label}: {delta}"
+        );
+        assert_eq!(
+            delta["items"].as_array().map(|items| {
+                items
+                    .iter()
+                    .filter(|item| item["evaluation"] == "not_evaluated")
+                    .count()
+            }),
+            Some(before),
+            "{label}: {delta}",
+        );
+        assert_eq!(after, before, "{label}: debt must be retained");
+    }
+    ignore_remove_dir_all(root);
+    Ok(())
+}
+
 #[test]
 fn gate_and_baseline_fallback_identities_normalize_paths_identically() {
     for path in [

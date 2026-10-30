@@ -1949,6 +1949,31 @@ impl TargetRoots {
         self.roots(file, index)
             .is_none_or(|roots| roots.contains(root))
     }
+
+    /// #11123: whether `file` composes, through established module edges,
+    /// only under crate roots that the manifest declares as explicit targets
+    /// (`[[bin]]`, `[[example]]`, `[[test]]`, `[[bench]]` `path`) other than
+    /// `root`. Such a root is a crate of its own, so the file is not in
+    /// `root`'s crate even though no autodiscovered layout recognizes its
+    /// root. An undeclared orphan root, a root shared with `root`, an
+    /// `include!` fragment, unresolved placement or an unresolvable
+    /// `#[path]` anywhere (`disabled`) answer no.
+    fn only_under_other_declared_targets(
+        &self,
+        file: &Path,
+        root: &Path,
+        index: &RustIndex,
+    ) -> bool {
+        if self.disabled {
+            return false;
+        }
+        index.execution_context(file).is_some_and(|context| {
+            !context.roots.is_empty()
+                && context.roots.iter().all(|file_root| {
+                    file_root != root && index.member_crates.is_declared_target_entry(file_root)
+                })
+        })
+    }
 }
 
 /// The crate root file `file` composes under: a recognized Cargo target root
@@ -5857,6 +5882,7 @@ fn test_crate_may_bind(
             });
         !private_helper
             && roots.may_belong(path, test_root, index)
+            && !roots.only_under_other_declared_targets(path, test_root, index)
             && source_may_bind_root(&facts.source, root)
     })
 }

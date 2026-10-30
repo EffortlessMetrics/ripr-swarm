@@ -242,7 +242,11 @@ head it stops with the matching blocked state. Either way the next command is
 the seam-level
 `ripr review-comments --root . --base <base-ref> --head HEAD --out target/ripr/review/comments.json`.
 On a fresh checkout that makes three regeneration steps before the start:
-repo exposure, gap ledger, then review cards. Each run names the next one.
+repo exposure, gap ledger, then review cards. The first run lists the whole
+chain in dependency order (`Missing artifact`, then `Also missing` entries with
+their `Then run` commands); the review-cards entry is marked as needed only when
+the gap ledger names no repair start. first-pr reads artifact presence only and
+runs none of these commands itself.
 Only current cards that carry no repair start, or cards rendered from the gap
 ledger, end in no-action; the reason says which.
 

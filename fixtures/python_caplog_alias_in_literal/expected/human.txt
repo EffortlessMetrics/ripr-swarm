@@ -27,7 +27,7 @@ Start here:
   Suggested test file: tests/test_audit.py
   Suggested test: test_low_balance
   Test node: tests/test_audit.py::test_low_balance
-  Verify command: python -m pytest tests/test_audit.py::test_low_balance (high)
+  Verify command (Bash): (cd -P -- <cwd>/fixtures/python_caplog_alias_in_literal/input && python -m pytest tests/test_audit.py::test_low_balance) (high)
   Next step — Python preview: strengthen the existing related test with an output/log/call-effect assertion for missing discriminator `call includes "msgs: 5"`
   Evidence: reach yes · infection yes · propagation weak · observation weak · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;

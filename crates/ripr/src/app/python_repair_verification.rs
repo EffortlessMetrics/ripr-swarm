@@ -246,11 +246,11 @@ fn revalidate_for_verification(
                 attempt_id.as_str()
             ),
             RepairAttemptState::Failed => format!(
-                "python repair verification refuses attempt `{}`: the attempt failed its edit cage; an escaped edit is retained failure evidence, never a verification subject",
+                "python repair verification refuses attempt `{}`: the attempt edited files it was not allowed to change; that edit is retained failure evidence, never a verification subject",
                 attempt_id.as_str()
             ),
             RepairAttemptState::Incomparable => format!(
-                "python repair verification refuses attempt `{}`: the attempt is incomparable; the edit cage could not measure the delta",
+                "python repair verification refuses attempt `{}`: the attempt is incomparable; ripr could not measure what the attempt changed",
                 attempt_id.as_str()
             ),
             RepairAttemptState::Prepared => format!(
@@ -302,7 +302,7 @@ fn revalidate_for_verification(
     let (_, verdict) = crate::edit_cage::evaluate_repository_edit_cage_with_delta(&baseline)?;
     if verdict.status != crate::edit_cage::EditCageVerdictStatus::Compliant {
         return Err(format!(
-            "python repair verification refuses attempt `{}`: stale tree — the worktree no longer satisfies the edit cage ({:?}); the exact post-edit state is gone",
+            "python repair verification refuses attempt `{}`: stale tree — the worktree no longer matches the files the repair allows ({:?}); the exact post-edit state is gone",
             attempt_id.as_str(),
             verdict.status
         ));
@@ -1334,7 +1334,7 @@ fn run_rollback(
         (Err(error), _) => RollbackOutcome {
             state: "blocked",
             reason: Some(format!(
-                "the rollback proof could not re-evaluate the edit cage: {error}"
+                "the rollback proof could not re-check which files changed: {error}"
             )),
             post_rollback_head: None,
         },

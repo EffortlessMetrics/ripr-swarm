@@ -107,6 +107,13 @@ limitation instead of leaving that to the first failed refresh. The field is a
 bounded marker probe, not a Git invocation, and is absent when a plausible
 marker exists: absence does not mean Git accepted it.
 
+When a committed refresh analyzed nothing (`no_scope`, `no_changed_lines` or
+`no_behavioral_candidates` with zero items), `ripr_refresh` adds an
+`empty_scope_hint` (`why`, `pass_base`, `pass_source`, #11213): the default base
+may have resolved to the analyzed commit (detached HEAD, `origin/HEAD` at HEAD),
+and `base` or `source: "worktree"` widen the diff. The hint never changes the
+outcome kind and an empty result is not an all-clear.
+
 `ripr_refresh` is read-only with respect to source, but the shared analysis
 writes its warm cache under the root's `target/ripr/`. Cargo projects normally
 gitignore `target/`; in a repository that does not, those files show as
@@ -505,6 +512,15 @@ The card's `subject.canonical_gap_id` is the bound finding's own id, the same
 readable id `ripr_list_gaps` and `ripr_get_gap` return (#8638), so it can be passed back
 to those tools (they do not accept the seam-side hash); that hash rides additively as
 `subject.seam_content_gap_id`.
+
+For a card whose `readiness.repair_ready` is not true, the result also carries
+`finding_guidance` (#11213): the item's `missing` and `recommended_next_step`,
+read from the same evidence `ripr_get_gap` serves, plus the `ripr_get_gap`
+route. `ripr_prepare_repair` refusals carry the same `finding_guidance`. When
+the card names CLI routes (`ripr agent packet`, `ripr explain`, `ripr check`),
+`mcp_detail_routes` pairs each unchanged CLI string with `ripr_get_gap` and the
+`canonical_id`, which carries finding-level evidence over MCP (not the
+unbounded CLI packet). None of these fields changes readiness or any verdict.
 
 ## Typed failures
 
