@@ -73,12 +73,12 @@ fn metadata_budget_preserves_exact_output_and_deadline_boundaries() {
         Err(MetadataProbeFailure::OutputLimit)
     );
     assert_eq!(
-        metadata_probe_budget(0, Duration::from_secs(120)),
+        metadata_probe_budget(0, Duration::from_mins(2)),
         Err(MetadataProbeFailure::TimedOut)
     );
     // Both exhausted bounds remain a refusal, with deterministic precedence.
     assert_eq!(
-        metadata_probe_budget(8 * 1024 * 1024 + 1, Duration::from_secs(120)),
+        metadata_probe_budget(8 * 1024 * 1024 + 1, Duration::from_mins(2)),
         Err(MetadataProbeFailure::OutputLimit)
     );
 }
