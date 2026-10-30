@@ -477,12 +477,13 @@ after phase applies) and selects `next_command` in this order:
    that check); for a route with `enabled: false` it names the enable step
    (add the language to `[languages] enabled` in `ripr.toml`) instead. It
    also says to rerun pilot if the workspace changed since that run. For an
-   enabled TypeScript-family route, whether the warning says `ripr check`
-   "offers no `ripr agent repair` start" is derived from the same gap-start
-   admission the routed `ripr check` uses (#10001): when check would print a
-   gap-bound start, the warning names that start instead, and a refused or
-   undecidable admission keeps the "offers no start" wording. A
-   timed-out, missing or unreadable summary still routes to pilot. When the
+   enabled TypeScript-family route, the warning uses the same gap-start
+   admission as the routed `ripr check` (#10001): when check would print a
+   gap-bound start, the warning names that start instead. For a refused or
+   undecidable admission, it reports "status could not confirm a gap-bound
+   start" and directs the user to the routed check for the current finding
+   and any reason a start is unavailable, without claiming that no start exists.
+   A timed-out, missing or unreadable summary still routes to pilot. When the
    first missing artifact's directory does not exist and the seam is known,
    the next command starts a repair attempt, which writes the workflow
    artifacts itself, instead of redirecting into the missing directory.
