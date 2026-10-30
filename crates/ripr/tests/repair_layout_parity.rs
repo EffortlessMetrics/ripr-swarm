@@ -60,12 +60,22 @@ impl Repo {
         }
     }
 
-    fn ripr(&self, args: &[&str]) -> Result<String, String> {
+    /// Run `ripr` and require `expected_code`, so a crashing or refusing CLI
+    /// cannot pass the parity comparison on its error text alone.
+    fn ripr(&self, args: &[&str], expected_code: i32) -> Result<String, String> {
         let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
             .current_dir(&self.0)
             .args(args)
             .output()
             .map_err(|e| e.to_string())?;
+        if output.status.code() != Some(expected_code) {
+            return Err(format!(
+                "ripr {args:?} exited {:?}, expected {expected_code}:\n{}\n{}",
+                output.status.code(),
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
         Ok(format!(
             "{}\n{}",
             String::from_utf8_lossy(&output.stdout),
@@ -84,7 +94,7 @@ impl Drop for Repo {
 /// the missing discriminator and the changed behavior. Seam ids and line
 /// numbers legitimately differ between layouts and are left out.
 fn repair_facts(repo: &Repo) -> Result<Vec<String>, String> {
-    let repair = repo.ripr(&["repair", "--root", "."])?;
+    let repair = repo.ripr(&["repair", "--root", "."], 0)?;
     let facts: Vec<String> = repair
         .lines()
         .map(str::trim)
@@ -104,7 +114,7 @@ fn repair_facts(repo: &Repo) -> Result<Vec<String>, String> {
 
 /// The missing discriminator values `check` reports, layout-independent.
 fn check_verdict(repo: &Repo) -> Result<Vec<String>, String> {
-    let check = repo.ripr(&["check", "--base", "HEAD~1"])?;
+    let check = repo.ripr(&["check", "--base", "HEAD~1"], 0)?;
     let missing: Vec<String> = check
         .lines()
         .map(str::trim)

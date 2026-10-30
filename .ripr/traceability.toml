@@ -287,7 +287,12 @@ tests = [
   "crates/ripr/src/analysis/classify/activation.rs::tests::computed_only_call_with_local_counter_boundary_is_unknown_not_weak",
   "crates/ripr/src/analysis/classify/activation.rs::tests::method_call_builder_argument_is_not_credited_end_to_end",
   "crates/ripr/src/analysis/classify/activation.rs::tests::given_counted_local_boundary_then_boundary_is_unresolved_not_missing",
-  "crates/ripr/src/output/human/sections.rs::classification_hint_tests::infection_unknown_hint_claims_a_sink_only_when_propagation_is_yes"
+  "crates/ripr/src/output/human/sections.rs::classification_hint_tests::infection_unknown_hint_claims_a_sink_only_when_propagation_is_yes",
+  "crates/ripr/src/analysis/classify/flow.rs::tests::tail_if_on_the_signature_line_flows_like_the_rustfmt_layout",
+  "crates/ripr/src/analysis/classify/flow.rs::tests::tail_if_on_the_signature_line_finds_the_body_brace_past_signature_braces",
+  "crates/ripr/src/analysis/classify/flow.rs::tests::tail_if_on_the_signature_line_keeps_branch_text_with_non_ascii_and_comments",
+  "crates/ripr/src/analysis/classify/flow.rs::tests::tail_if_on_the_signature_line_fails_closed_for_a_unit_owner",
+  "crates/ripr/tests/repair_layout_parity.rs::one_line_and_rustfmt_layouts_have_identical_repair_readiness_and_facts"
 ]
 fixtures = [
   "crates/ripr/tests/cli_smoke/sample_output.rs",
