@@ -230,6 +230,11 @@ fn predicate_flow_sinks(
             owner,
         )];
     }
+    // A statement `if` whose arms do the same thing cannot decide any value
+    // the function produces, however the tail then uses it (#10880).
+    if statement_if_arms_repeat(owner_fn, probe.location.line) {
+        return Vec::new();
+    }
     // RIPR-SPEC-0265 rule 3: a comparison that is the whole closure body of
     // an admitted iterator-adaptor tail decides, per element, what the tail
     // (the owner's whole body) returns.
@@ -287,6 +292,62 @@ fn predicate_flow_sinks(
         )];
     }
     Vec::new()
+}
+
+/// Whether the `if` / `else if` / `else` chain that starts on `probe_line`
+/// (one line or rustfmt layout) has a later arm whose body is text-identical
+/// to the first arm's, so the choice between them is unobservable for some
+/// inputs. Mirrors the first-arm repeat rule of the tail-`if` form (#9843),
+/// for arms that are statements (`r = 1;`) rather than a tail value. Only a
+/// chain that starts at an `if` on the line is read; anything unbalanced or
+/// unrecognised answers no, which leaves the existing sink selection as it is.
+fn statement_if_arms_repeat(owner_fn: Option<&FunctionSummary>, probe_line: usize) -> bool {
+    let Some(function) = owner_fn else {
+        return false;
+    };
+    let masked = crate::analysis::extract::mask_comments_and_strings(&function.body);
+    let raw = function.body.as_ref();
+    if masked.len() != raw.len() {
+        return false;
+    }
+    let line_start: usize = masked
+        .split_inclusive('\n')
+        .take(probe_line.saturating_sub(function.start_line))
+        .map(str::len)
+        .sum();
+    let from_line = &masked[line_start..];
+    let line = from_line.lines().next().unwrap_or("");
+    if !line.trim_start().starts_with("if ") {
+        return false;
+    }
+    let mut cursor = line_start + from_line.find("if ").unwrap_or(0);
+    let mut arms: Vec<String> = Vec::new();
+    loop {
+        let Some(open) = masked[cursor..].find('{').map(|at| cursor + at) else {
+            return false;
+        };
+        let Some((body, end)) = braced_block_range(&masked[open..]) else {
+            return false;
+        };
+        let text: String = raw[open + body.start..open + body.end]
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        arms.push(text);
+        cursor = open + end;
+        let rest = masked[cursor..].trim_start();
+        let Some(after_else) = rest.strip_prefix("else") else {
+            break;
+        };
+        cursor = masked.len() - after_else.len();
+        let after_else = after_else.trim_start();
+        if !after_else.starts_with("if ") && !after_else.starts_with('{') {
+            return false;
+        }
+    }
+    arms.iter()
+        .skip(1)
+        .any(|text| !text.is_empty() && *text == arms[0] && !branch_is_diverging(text))
 }
 
 /// The declared name of one generic parameter item (`E: From<X>` -> `E`,
@@ -1727,6 +1788,69 @@ mod tests {
         assert_eq!(sinks.len(), 1);
         assert_eq!(sinks[0].kind, FlowSinkKind::ReturnValue);
         assert_eq!(sinks[0].text, "\"high\"");
+    }
+
+    /// #10880: arms that assign the same value cannot decide what the tail
+    /// returns, whether or not the tail applies an operator to the binding.
+    #[test]
+    fn statement_if_with_identical_arms_has_no_return_sink() {
+        let layouts = [
+            "pub fn f(x: i32) -> i32 {\n    let r;\n    if x >= 5 { r = 1; } else { r = 1; }\n    r + 0\n}",
+            "pub fn f(x: i32) -> i32 {\n    let r;\n    if x >= 5 {\n        r = 1;\n    } else {\n        r = 1;\n    }\n    r + 0\n}",
+            "pub fn f(x: i32) -> i32 {\n    let r;\n    if x >= 5 {\n        r = 1;\n    } else if x > 2 {\n        r = 3;\n    } else {\n        r = 1;\n    }\n    r * 2\n}",
+        ];
+        for body in layouts {
+            let mut owner = function(body);
+            owner.returns = vec![ReturnFact {
+                line: body.lines().count(),
+                text: body
+                    .lines()
+                    .last()
+                    .unwrap_or("")
+                    .trim_end_matches('}')
+                    .trim()
+                    .to_string(),
+            }];
+            let probe = probe(ProbeFamily::Predicate, "x >= 5", 3);
+            let probe = if body.contains("\n        r = 1;") {
+                Probe {
+                    location: SourceLocation::new("src/lib.rs", 3, 1),
+                    ..probe
+                }
+            } else {
+                probe
+            };
+            let sinks = local_flow_sinks(&probe, Some(&owner));
+            assert!(
+                sinks
+                    .iter()
+                    .all(|sink| sink.kind != FlowSinkKind::ReturnValue),
+                "{body}: {sinks:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn statement_if_with_distinct_arms_keeps_its_return_sink() {
+        let layouts = [
+            "pub fn f(x: i32) -> i32 {\n    let r;\n    if x >= 5 { r = 1; } else { r = 2; }\n    r + 0\n}",
+            "pub fn f(x: i32) -> i32 {\n    let r;\n    if x >= 5 {\n        r = 1;\n    } else {\n        r = 2;\n    }\n    r + 0\n}",
+        ];
+        for body in layouts {
+            let mut owner = function(body);
+            owner.returns = vec![ReturnFact {
+                line: body.lines().count() - 1,
+                text: "r + 0".to_string(),
+            }];
+            let probe = probe(ProbeFamily::Predicate, "x >= 5", 3);
+            let sinks = local_flow_sinks(&probe, Some(&owner));
+            assert!(
+                sinks
+                    .iter()
+                    .any(|sink| sink.kind == FlowSinkKind::ReturnValue),
+                "{body}: {sinks:?}"
+            );
+        }
     }
 
     #[test]
