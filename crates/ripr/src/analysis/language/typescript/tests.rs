@@ -8633,6 +8633,69 @@ fn ava_deep_equal_non_literal_arrays_stay_dynamic() {
     }
 }
 
+/// AVA `t.is` / `strictEqual` compare by reference: an array literal is never
+/// the value a call returns, so it stays a dynamic argument there, while
+/// `deepEqual` accepts it.
+#[test]
+fn ava_reference_equality_array_literal_stays_dynamic() {
+    for (method, dynamic) in [
+        ("is", true),
+        ("strictEqual", true),
+        ("deepEqual", false),
+        ("equal", true),
+    ] {
+        let source = format!("t.{method}(score(10, 3), [1, 2]);");
+        let allocator = Allocator::default();
+        let parse_result = Parser::new(&allocator, &source, SourceType::ts()).parse();
+        let assertions = collect_expect_assertions_in_statements(
+            &parse_result.program.body,
+            &SourceText::new(&source),
+            Some("t"),
+        );
+        assert_eq!(assertions.len(), 1, "{method}");
+        assert_eq!(assertions[0].has_dynamic_matcher_arg, dynamic, "{method}");
+    }
+}
+
+/// Jest: `toEqual` / `toStrictEqual` accept an all-literal array (including
+/// `[]`); `toBe` / `toMatchObject` and arrays holding a non-literal such as
+/// `[-x]` stay dynamic.
+#[test]
+fn jest_array_expected_values_are_literal_only_for_deep_equality() {
+    for (call, dynamic) in [
+        ("expect(f(1)).toEqual([1, 2])", false),
+        ("expect(f(1)).toStrictEqual([1, 'a', [2]])", false),
+        ("expect(f(1)).toEqual([])", false),
+        ("expect(f(1)).toBe([1])", true),
+        ("expect(f(1)).toMatchObject([1])", true),
+        ("expect(f(1)).toEqual([-x])", true),
+        ("expect(f(1)).toEqual([1, y])", true),
+    ] {
+        let source = format!("{call};");
+        let allocator = Allocator::default();
+        let parse_result = Parser::new(&allocator, &source, SourceType::ts()).parse();
+        let assertions = collect_expect_assertions_in_statements(
+            &parse_result.program.body,
+            &SourceText::new(&source),
+            None,
+        );
+        assert_eq!(assertions.len(), 1, "{call}");
+        assert_eq!(assertions[0].has_dynamic_matcher_arg, dynamic, "{call}");
+    }
+}
+
+/// A zero or empty array matches a field's initial state just like a scalar
+/// zero, so it never pins a field update.
+#[test]
+fn zero_like_expected_values_include_empty_and_zero_arrays() {
+    for zero in ["0", "''", "null", "[]", "[ ]", "[0, 0]", "[[], '']"] {
+        assert!(ts_expected_is_zero_like(zero), "{zero}");
+    }
+    for live in ["1", "[1]", "[0, 1]", "['a']", "[10]", "[[0], 2]"] {
+        assert!(!ts_expected_is_zero_like(live), "{live}");
+    }
+}
+
 /// Tape / node:test positive equality aliases use the same receiver-gated path
 /// as AVA: `t.equal(...)`, `t.strictEqual(...)`, and positive deep-equality
 /// forms are exact-value oracles when the receiver matches the test callback
@@ -8901,6 +8964,78 @@ fn named_limitation_dynamic_assertion_not_emitted_for_other_family_assertion() -
     .ok_or_else(|| "expected a finding".to_string())?;
 
     assert_evidence_lacks(
+        &finding,
+        "typescript_limitation: typescript_dynamic_assertion_unresolved",
+    );
+    Ok(())
+}
+
+/// Retained-case control for the family-scoped limit: a dynamic error-family
+/// assertion on an error-path seam still raises
+/// `typescript_dynamic_assertion_unresolved`.
+#[test]
+fn named_limitation_dynamic_assertion_emitted_for_error_family_assertion_on_error_seam()
+-> Result<(), String> {
+    let owner = test_owner("clamp", "src/clamp.ts");
+    // Manually construct a test with a dynamic matcher arg
+    let test = TypeScriptTest {
+        name: "clamps below minimum".to_string(),
+        local_name: "clamps below minimum".to_string(),
+        describe_names: Vec::new(),
+        file: PathBuf::from("tests/clamp.test.ts"),
+        line: 1,
+        reach_body_text: None,
+        body_text: "const expected = computeExpected(0);\nclamp(-5, 0, 10);\nexpect(clamp(-5, 0, 10)).toBe(expected);".to_string(),
+        assertions: vec![TypeScriptAssertion {
+            matcher: "toThrow".to_string(),
+            argument_count: 1,
+            line: 3,
+            oracle_kind: OracleKind::ExactErrorVariant,
+            oracle_strength: OracleStrength::Strong,
+            mock_payload: None,
+            error_payload: None,
+            observed_expression: Some("clamp(-5, 0, 10)".to_string()),
+            expected_value_or_variant: None,
+            has_dynamic_matcher_arg: true,
+            dynamic_expected_text: None,
+            oracle_confidence: OracleConfidence::Medium,
+            rendered_call: None,
+            loose_number_expected: false,
+            expected_object_const: None,
+            compares_reference_identity: false,
+        }],
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
+        assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
+        factory_call_line: None,
+        setup_hook_bodies: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/clamp".to_string(),
+            imported: Some("clamp".to_string()),
+            local: "clamp".to_string(),
+            namespace: false,
+        }].into(),
+    };
+    let finding = classify_change(
+        Path::new("src/clamp.ts"),
+        2,
+        "    throw new RangeError(\"below minimum\");",
+        &[owner],
+        &[test],
+        None,
+        &ReExportIndex::empty(),
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert_evidence_contains(
         &finding,
         "typescript_limitation: typescript_dynamic_assertion_unresolved",
     );

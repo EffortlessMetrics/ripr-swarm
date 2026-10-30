@@ -1481,7 +1481,13 @@ pub(crate) fn ava_assertion_from_expression(
         .first()
         .and_then(|arg| source_text_for_argument(arg, source));
     let expected_arg = call.arguments.get(1);
-    let expected_is_literal = expected_arg.is_some_and(|arg| is_literal_expected_argument(arg));
+    // An all-literal array is a literal expectation only for `deepEqual`:
+    // `is` / `strictEqual` / `equal` compare by reference or loosely, so a
+    // fresh array literal is never the value a call returns and stays a
+    // dynamic argument there.
+    let expected_is_literal = expected_arg.is_some_and(|arg| {
+        is_literal_argument(arg) || (method == "deepEqual" && is_literal_array_argument(arg))
+    });
     let expected_value_or_variant = if expected_is_literal {
         expected_arg.and_then(|arg| source_text_for_argument(arg, source))
     } else {
@@ -3182,12 +3188,6 @@ pub(crate) fn is_literal_argument(arg: &Argument<'_>) -> bool {
         // elements, etc. are all treated as dynamic / non-resolvable.
         _ => false,
     }
-}
-
-/// Literal expected value for deep-equality oracles: a scalar/object literal
-/// as in [`is_literal_argument`], or an all-literal array.
-pub(crate) fn is_literal_expected_argument(arg: &Argument<'_>) -> bool {
-    is_literal_argument(arg) || is_literal_array_argument(arg)
 }
 
 /// An array literal whose elements are all scalar literals or nested
