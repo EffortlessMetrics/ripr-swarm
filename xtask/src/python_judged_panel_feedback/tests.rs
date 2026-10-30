@@ -34,8 +34,9 @@ fn feedback_does_not_invent_missing_source_revisions() -> Result<(), String> {
         )
         .map_err(|error| error.to_string())?;
         ensure(
-            proposal["provenance"]["base"].is_null() && proposal["provenance"]["head"].is_null(),
-            "missing revisions must not be invented",
+            proposal["provenance"].get("base") == Some(&Value::Null)
+                && proposal["provenance"].get("head") == Some(&Value::Null),
+            "missing revisions must remain present as null",
         )?;
     }
     Ok(())
