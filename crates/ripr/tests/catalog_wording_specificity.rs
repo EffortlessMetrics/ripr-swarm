@@ -99,10 +99,19 @@ fn native_mutants_separate_structural_and_value_observers() -> Result<(), String
         "let _ = default_check_description();",
         "assert_eq!(default_check_description().len(), 28);",
     );
+    let unrelated = body.replace(
+        "let _ = default_check_description();",
+        "let _ = default_check_description();\n assert_eq!(\"verifies\", \"verifies\");",
+    );
+    let diagnostic = body.replace("Vec::<String>::new()", "Vec::<String>::new(), \"verifies\"");
+    assert_ne!(unrelated, body);
+    assert_ne!(diagnostic, body);
     assert_ne!(direct, body);
     assert_ne!(length, body);
     for (label, test, catches) in [
         ("structural", &body, false),
+        ("unrelated", &unrelated, false),
+        ("diagnostic", &diagnostic, false),
         ("direct", &direct, true),
         ("length", &length, true),
     ] {
@@ -217,6 +226,17 @@ fn run_bounded(
 #[test]
 fn changed_word_in_diagnostic_does_not_confirm_structural_observer() -> Result<(), String> {
     let test = TEST.replace("Vec::<String>::new()", "Vec::<String>::new(), \"verifies\"");
+    assert_ne!(test, TEST);
+    assert_eq!(check(&test)?, "weakly_exposed");
+    Ok(())
+}
+
+#[test]
+fn unrelated_changed_word_does_not_confirm_structural_observer() -> Result<(), String> {
+    let test = TEST.replace(
+        "let _ = default_check_description();",
+        "let _ = default_check_description();\n    assert_eq!(\"verifies\", \"verifies\");",
+    );
     assert_ne!(test, TEST);
     assert_eq!(check(&test)?, "weakly_exposed");
     Ok(())
