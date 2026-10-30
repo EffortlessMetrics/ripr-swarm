@@ -1129,6 +1129,11 @@ fn supported_numeric_bounds(
         return true;
     };
     if let Some(reference) = object.get("$ref").and_then(ExactValue::as_str) {
+        let cost = 1 + reference.len() / 1024;
+        if *remaining < cost {
+            return false;
+        }
+        *remaining -= cost;
         if !active_refs.insert(reference.to_string()) {
             return false;
         }
@@ -1141,6 +1146,11 @@ fn supported_numeric_bounds(
         }
     }
     for (key, value) in object {
+        let cost = 1 + key.len() / 1024;
+        if *remaining < cost {
+            return false;
+        }
+        *remaining -= cost;
         let supported = match key.as_str() {
             "minimum" | "maximum" | "const" | "enum" => supported_numeric_input(value, remaining),
             "properties" | "$defs" | "definitions" => value.as_object().is_none_or(|entries| {
@@ -1390,23 +1400,28 @@ fn validate_value_against_schema_impl(
 
     if let Some(one_of) = schema.get("oneOf").and_then(ExactValue::as_array) {
         let mut messages = Vec::new();
-        let matches = one_of
-            .iter()
-            .filter(|subschema| {
-                let mut nested = Vec::new();
-                validate_value_against_schema_inner(
-                    value,
-                    subschema,
-                    root_schema,
-                    location.clone(),
-                    &mut nested,
-                    budget,
-                );
-                let matched = nested.is_empty();
-                messages.extend(nested);
-                matched
-            })
-            .count();
+        let mut matches = 0;
+        for subschema in one_of {
+            if budget.exhausted {
+                return;
+            }
+            let mut nested = Vec::new();
+            validate_value_against_schema_inner(
+                value,
+                subschema,
+                root_schema,
+                location.clone(),
+                &mut nested,
+                budget,
+            );
+            if budget.exhausted {
+                return;
+            }
+            if nested.is_empty() {
+                matches += 1;
+            }
+            messages.extend(nested);
+        }
         if matches != 1 {
             violations.push(format!(
                 "{location}: matched {matches} of {} mutually exclusive schemas ({})",
@@ -1471,15 +1486,26 @@ fn validate_value_against_schema_impl(
         ));
     }
 
-    if let Some(allowed) = schema.get("enum").and_then(ExactValue::as_array)
-        && !allowed
-            .iter()
-            .any(|candidate| schema_values_equal(candidate, value, budget))
-    {
-        violations.push(format!(
-            "{location}: value {} is not in enum",
-            compact_exact_json(value)
-        ));
+    if let Some(allowed) = schema.get("enum").and_then(ExactValue::as_array) {
+        let mut matched = false;
+        for candidate in allowed {
+            if budget.exhausted {
+                return;
+            }
+            if schema_values_equal(candidate, value, budget) {
+                matched = true;
+                break;
+            }
+        }
+        if budget.exhausted {
+            return;
+        }
+        if !matched {
+            violations.push(format!(
+                "{location}: value {} is not in enum",
+                compact_exact_json(value)
+            ));
+        }
     }
 
     if let Some(schema_type) = schema.get("type") {
@@ -1493,7 +1519,7 @@ fn validate_value_against_schema_impl(
         validate_array(value, schema, root_schema, &location, violations, budget);
     }
     if let Some(text) = value.as_str() {
-        validate_string(text, schema, &location, violations);
+        validate_string(text, schema, &location, violations, budget);
     }
     if value.is_number() {
         validate_number(value, schema, &location, violations);
@@ -1517,9 +1543,17 @@ fn validate_object(
     // `properties` at all, and returning early on a missing `properties` made
     // every such branch unenforceable — the malformed value was accepted with
     // zero violations.
-    for field in exact_string_array(schema.get("required")) {
-        if !object.contains_key(&field) {
-            violations.push(format!("{location}: missing required field `{field}`"));
+    if let Some(required) = schema.get("required").and_then(ExactValue::as_array) {
+        for entry in required {
+            let Some(field) = entry.as_str() else {
+                continue;
+            };
+            if !charge_validation_work(budget, 1 + field.len() / 1024) {
+                return;
+            }
+            if !object.contains_key(field) {
+                violations.push(format!("{location}: missing required field `{field}`"));
+            }
         }
     }
 
@@ -1533,6 +1567,9 @@ fn validate_object(
         == Some(false)
     {
         for field in object.keys() {
+            if !charge_validation_work(budget, 1 + field.len() / 1024) {
+                return;
+            }
             if !properties.contains_key(field) {
                 violations.push(format!("{location}: unexpected field `{field}`"));
             }
@@ -1540,7 +1577,7 @@ fn validate_object(
     }
 
     for (field, field_schema) in properties {
-        if budget.exhausted {
+        if !charge_validation_work(budget, 1 + field.len() / 1024) {
             return;
         }
         if let Some(field_value) = object.get(field) {
@@ -1616,7 +1653,22 @@ fn validate_array(
     }
 }
 
-fn validate_string(text: &str, schema: &ExactValue, location: &str, violations: &mut Vec<String>) {
+fn validate_string(
+    text: &str,
+    schema: &ExactValue,
+    location: &str,
+    violations: &mut Vec<String>,
+    budget: &mut ValidationBudget,
+) {
+    let constraints = ["minLength", "maxLength", "pattern"]
+        .iter()
+        .filter(|key| schema.get(key).is_some())
+        .count();
+    if constraints != 0
+        && !charge_validation_work(budget, constraints.saturating_mul(1 + text.len() / 1024))
+    {
+        return;
+    }
     if let Some(min_length) = schema.get("minLength").and_then(ExactValue::as_u64)
         && text.chars().count() < min_length as usize
     {
@@ -1635,6 +1687,9 @@ fn validate_string(text: &str, schema: &ExactValue, location: &str, violations: 
     // digests, relative working directories. Compilation is fail-closed, so an
     // uninterpretable pattern is reported rather than assumed satisfied.
     if let Some(pattern) = schema.get("pattern").and_then(ExactValue::as_str) {
+        if !charge_validation_work(budget, 1 + pattern.len() / 1024) {
+            return;
+        }
         match SchemaPattern::compile(pattern) {
             Ok(compiled) => {
                 if !compiled.is_match(text) {
@@ -1751,15 +1806,6 @@ fn resolve_ref<'a>(root_schema: &'a ExactValue, reference: &str) -> Option<&'a E
     root_schema.pointer(pointer)
 }
 
-fn exact_string_array(value: Option<&ExactValue>) -> Vec<String> {
-    value
-        .and_then(ExactValue::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(ExactValue::as_str)
-        .map(ToString::to_string)
-        .collect()
-}
 fn compact_exact_json(value: &ExactValue) -> String {
     value.to_string()
 }
@@ -2151,6 +2197,81 @@ mod tests {
                 .iter()
                 .any(|v| v.contains("evaluation resource limit")),
             "expected work limit"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn repeated_string_scans_consume_work_budget() -> Result<(), String> {
+        let schema = parse_exact_text(&format!(
+            r#"{{"allOf":[{}{{"minLength":1}}]}}"#,
+            r#"{"minLength":1},"#.repeat(800)
+        ))?;
+        let value = parse_exact_text(&format!("\"{}\"", "x".repeat(65_536)))?;
+        let mut violations = Vec::new();
+        validate_exact_value_against_schema(
+            &value,
+            &schema,
+            &schema,
+            "value".into(),
+            &mut violations,
+        );
+        assert!(
+            violations.iter().any(|v| v.contains("resource limit")),
+            "string work should exhaust budget"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn repeated_required_fields_consume_work_budget() -> Result<(), String> {
+        let names = (0..100)
+            .map(|n| format!("\"k{n}\""))
+            .collect::<Vec<_>>()
+            .join(",");
+        let fields = (0..100)
+            .map(|n| format!("\"k{n}\":0"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let references = r##"{"$ref":"#/$defs/x"},"##.repeat(600);
+        let schema = parse_exact_text(&format!(
+            r##"{{"$defs":{{"x":{{"required":[{names}]}}}},"allOf":[{references}{{}}]}}"##
+        ))?;
+        let value = parse_exact_text(&format!("{{{fields}}}"))?;
+        let mut violations = Vec::new();
+        validate_exact_value_against_schema(
+            &value,
+            &schema,
+            &schema,
+            "value".into(),
+            &mut violations,
+        );
+        assert!(
+            violations.iter().any(|v| v.contains("resource limit")),
+            "required work should exhaust budget"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn repeated_long_reference_consumes_preflight_budget() -> Result<(), String> {
+        let long = "x".repeat(65_536);
+        let references = r##"{"$ref":"#/$defs/w"},"##.repeat(800);
+        let schema = parse_exact_text(&format!(
+            r##"{{"$defs":{{"{long}":{{}},"w":{{"$ref":"#/$defs/{long}"}}}},"allOf":[{references}{{}}]}}"##
+        ))?;
+        let value = parse_exact_text("1")?;
+        let mut violations = Vec::new();
+        validate_exact_value_against_schema(
+            &value,
+            &schema,
+            &schema,
+            "value".into(),
+            &mut violations,
+        );
+        assert!(
+            !violations.is_empty(),
+            "reference scanning should exhaust budget"
         );
         Ok(())
     }
