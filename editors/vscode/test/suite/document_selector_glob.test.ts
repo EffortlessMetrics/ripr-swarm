@@ -29,4 +29,38 @@ suite('Document selector workspace-root glob escaping', () => {
       fs.rmSync(parent, { recursive: true, force: true });
     }
   });
+
+  test('Windows drive-letter spellings select the same workspace, but not a sibling', async function () {
+    if (process.platform !== 'win32') {
+      this.skip();
+    }
+    const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ripr-glob-drive-'));
+    const root = path.join(parent, 'proj[1]{a,b}');
+    const sibling = path.join(parent, 'proj[1]{a,b}-sibling');
+    fs.mkdirSync(root, { recursive: true });
+    fs.mkdirSync(sibling, { recursive: true });
+    const file = path.join(root, 'lib.rs');
+    const other = path.join(sibling, 'lib.rs');
+    fs.writeFileSync(file, 'pub fn f() {}\n');
+    fs.writeFileSync(other, 'pub fn g() {}\n');
+    try {
+      assert.match(root, /^[a-z]:[\\/]/i, 'test requires a drive-letter temporary directory');
+      const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(file));
+      const siblingDoc = await vscode.workspace.openTextDocument(vscode.Uri.file(other));
+      const scores = ['upper', 'lower'].map((spelling) => {
+        const drive = spelling === 'upper' ? root[0].toUpperCase() : root[0].toLowerCase();
+        const selector = riprDocumentSelectorsForWorkspace(drive + root.slice(1))
+          .find((candidate) => candidate.language === 'rust');
+        assert.ok(selector, 'rust selector present');
+        return { spelling, own: vscode.languages.match(selector, doc) > 0,
+          sibling: vscode.languages.match(selector, siblingDoc) > 0 };
+      });
+      assert.deepStrictEqual(scores, [
+        { spelling: 'upper', own: true, sibling: false },
+        { spelling: 'lower', own: true, sibling: false }
+      ]);
+    } finally {
+      fs.rmSync(parent, { recursive: true, force: true });
+    }
+  });
 });
