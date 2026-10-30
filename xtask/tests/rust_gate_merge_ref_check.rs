@@ -331,7 +331,7 @@ fn reviewed_slice_carrier_readback_and_refusals() -> Result<(), String> {
     );
     match git(&consumer, &["cat-file", "-e", &format!("{head}:gone")]) {
         Err(_) => {}
-        Ok(_) => return Err("deleted path survived in the carrier".to_string()),
+        Ok(_) => return Err("deleted path remained in the carrier".to_string()),
     }
     let merge = git(
         &producer,
