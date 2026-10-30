@@ -50,7 +50,7 @@ jobs:
           PY
           git -C build apply --index "$EVIDENCE/candidate.patch"
           test "$(git -C build write-tree)" = 9c7554c2ae47cbb34a6d2d37701d3399916c4664
-          git -C build archive "$BASE" crates/ripr/src/analysis/seam_inventory.rs crates/ripr/src/analysis/generated_rust_corpus.rs crates/ripr/src/analysis/workspace crates/ripr/src/analysis/facts crates/ripr/src/app/test_stub.rs crates/ripr/src/app/task_first.rs crates/ripr/src/config.rs ripr.toml > "$EVIDENCE/source-context.tar"
+          git -C build archive "$BASE" crates/ripr/src/analysis/seam_inventory.rs crates/ripr/src/analysis/generated_rust_corpus.rs crates/ripr/src/analysis/workspace crates/ripr/src/analysis/facts crates/ripr/src/app/test_stub.rs crates/ripr/src/app/task_first.rs crates/ripr/src/config.rs > "$EVIDENCE/source-context.tar"
           sha256sum "$EVIDENCE/source-context.tar" "$EVIDENCE/candidate.patch" > "$EVIDENCE/source.sha256"
           printf 'controller=%s\nbase=%s\ncandidate_tree=9c7554c2ae47cbb34a6d2d37701d3399916c4664\nrun=%s\n' "$GITHUB_SHA" "$BASE" "$GITHUB_RUN_ID" > "$EVIDENCE/identity.txt"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
