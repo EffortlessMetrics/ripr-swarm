@@ -7,7 +7,29 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
-use super::{derive_feedback, verify_staged, write_staging};
+use super::{confirmed_over_credits, derive_feedback, verify_staged, write_staging};
+
+#[test]
+fn feedback_does_not_invent_missing_source_revisions() -> Result<(), String> {
+    let report = json!({
+        "as_of": {"panel_digest": "panel", "replay_binary": ["version", "digest"]},
+        "cases": [{
+            "case_id": "unversioned", "repo": "example", "base": null, "head": null,
+            "source_envelope": "panel.json", "anchor": {"owner": "f"}, "diff_path": "f.diff",
+            "expected_direction": "should_gap", "row_kind": "seed", "behavior_family": [],
+            "replay": {"identity_current": true, "outcome": "complete", "diff_sha256": "diff"},
+            "adjudication": {"state": "adjudicated", "verdict": "exposed", "false_exposed": "true",
+                "row_revision": {"current": "row"}}
+        }]
+    });
+    let proposals = confirmed_over_credits(&report)?;
+    ensure(proposals.len() == 1, "expected one proposal")?;
+    ensure(
+        proposals[0]["provenance"]["base"].is_null()
+            && proposals[0]["provenance"]["head"].is_null(),
+        "missing revisions must not be invented",
+    )
+}
 use crate::python_judged_panel_replay::replay_inventory_at;
 use crate::python_judged_panel_report::{AdjudicationRequest, adjudicate_case_at};
 
@@ -60,6 +82,8 @@ fn write_inventory(fixture: &TempFixture) -> Result<Vec<String>, String> {
     let seed = |id: &str, repo: &str, direction: &str, diff: &str, owner: &str, target: &str| {
         json!({
             "id": id, "repo": repo, "diff_path": diff, "shape": ["pytest_library"],
+            "base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
             "expected_direction": direction,
             "anchor": {"file": target, "line": 2, "owner": owner, "boundary": "predicate equality boundary"},
             "expected_classification": match direction {
@@ -304,6 +328,16 @@ fn feedback_stages_a_proposal_for_a_confirmed_over_credit() -> Result<(), String
     )?;
     ensure(
         proposal["provenance"]["panel_digest"].as_str().is_some()
+            && proposal["provenance"]["repo"] == "feedback-gap-repo"
+            && proposal["provenance"]["base"] == "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            && proposal["provenance"]["head"] == "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            && proposal["provenance"]["anchor"]["owner"] == "apply_discount"
+            && proposal["provenance"]["diff_sha256"]
+                .as_str()
+                .is_some_and(|s| s.len() == 64)
+            && proposal["provenance"]["row_revision"]
+                .as_str()
+                .is_some_and(|s| !s.is_empty())
             && proposal["provenance"]["adjudication_record"] == "feedback-gap-row.json"
             && proposal["provenance"]["replay_record"] == "feedback-gap-row.json"
             && proposal["provenance"]["diff_path"].as_str().is_some(),
@@ -315,7 +349,10 @@ fn feedback_stages_a_proposal_for_a_confirmed_over_credit() -> Result<(), String
             .is_some_and(|step| step.contains("REGULAR fixture"))
             && proposal["promotion_recipe"]["step_2"]
                 .as_str()
-                .is_some_and(|step| step.contains("must_not_promote")),
+                .is_some_and(|step| step.contains("must_not_promote"))
+            && proposal["promotion_recipe"]["controls"]
+                .as_str()
+                .is_some_and(|step| step.contains("positive and negative controls")),
         "the proposal must carry the promotion recipe",
     )?;
     ensure(

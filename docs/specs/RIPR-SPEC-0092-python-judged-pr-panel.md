@@ -78,10 +78,14 @@ never-writes note; each `<case-slug>.proposal.json` carries
 `schema_version`, `kind` `python_judged_panel_feedback_proposal`, `spec`,
 `case_id`, `authority_boundary`, `confirmed_over_credit` (verdict,
 false_exposed, roles, expected_direction, row_kind, behavior_family),
-`provenance` (panel_digest, source_envelope, diff_path,
+`provenance` (panel_digest, replay_binary, source_envelope, repo, base, head, anchor,
+diff_path, diff_sha256, row_revision,
 adjudication_record, replay_record, replay_candidate_classification), and
 `promotion_recipe` (four steps: fixture extraction, corpus case with
-must_not_promote, meta-gate run, golden re-bless). `--check` re-derives
+must_not_promote, meta-gate run, golden re-bless, and red-green and
+positive/negative controls). Absent source revisions remain null; they are
+not inferred from the analyzer build. The reduced fixture retains the origin,
+available revision and semantic assumptions. `--check` re-derives
 and compares every staged file after stripping `generated_at`, and also
 fails on an unexpected file set (a proposal whose confirmation
 disappeared must not survive as a stale leftover).
