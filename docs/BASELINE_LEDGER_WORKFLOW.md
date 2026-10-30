@@ -71,21 +71,35 @@ Do not create a baseline from a report nobody has reviewed.
 ## 2. Create A Candidate Baseline
 
 The gate decision is produced by the generated workflow, so on a CI-only
-adoption it is not on your machine yet. Download it from a finished run of the
-pull request that carried `RIPR_GATE_MODE=visible-only`:
+adoption it is not on your machine yet. A repository variable is not carried by
+a pull request: set `RIPR_GATE_MODE` first, then push to (or re-run) a pull
+request, and pick a run that started after the variable was set. Download that
+run's `ripr-reports` artifact into a temporary directory, not your working
+tree:
 
 ```bash
 gh variable set RIPR_GATE_MODE --body visible-only
-# after the workflow has run on a pull request:
-gh run list --workflow ripr.yml --limit 5
-gh run download RUN_ID --name ripr-reports --dir ripr-reports
-find ripr-reports -name gate-decision.json
+# push to or re-run the pull request, then:
+gh run list --workflow ripr.yml --branch PR_BRANCH --limit 5 \
+  --json databaseId,headBranch,conclusion,createdAt
+tmp="$(mktemp -d)"
+gh run download RUN_ID --name ripr-reports --dir "$tmp"
+find "$tmp" -name gate-decision.json
 ```
 
-Use the path `find` prints as `--from` below. The decision comes from that
-pull request's diff, so a baseline created from it is PR-scoped: it records the
-gaps that diff exposed, not every gap in the repository. Re-run the step on a
-representative pull request when you want a different slice.
+Use the path `find` prints as `--from` below. Notes:
+
+- Artifacts are retained for 14 days by default; download from a recent run.
+- The decision comes from that pull request's diff, so a baseline created from
+  it is PR-scoped: it records the gaps that diff exposed, not every gap in the
+  repository. The pull request you use should be representative and must not be
+  the one introducing those gaps, so the entries stay existing debt (see the
+  checklist below). Use a different pull request for a different slice.
+- If the diff has no policy-eligible gaps, the decision has nothing to
+  checkpoint and the baseline is empty or skipped; choose another pull request.
+- Use the same ripr version locally as the workflow pins (`ripr --version`
+  against the version in `.github/workflows/ripr.yml`). A mismatch can surface
+  as `stale_baseline_entry` later (#7421).
 
 Use `ripr baseline create` to turn reviewed gate decisions into a candidate
 ledger:
@@ -109,7 +123,8 @@ Review the candidate before checking it in:
 - every entry should remain visible in future summaries or artifacts;
 - malformed, suppressed, configured-off, or soon-to-fix entries are removed;
 - the PR explains the adoption date, configured scope, source artifact, and
-  owner.
+  owner; the baseline's recorded `source` field should name the pull request
+  and run the decision came from, matching that explanation.
 
 After review, copy the candidate into the configured baseline path:
 
