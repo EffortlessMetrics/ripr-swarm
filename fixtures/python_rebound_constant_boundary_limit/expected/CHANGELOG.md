@@ -339,3 +339,17 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_rebound_constant_boundary_limit (29)
+
+Reason:
+RIPR-SPEC-0028 / #10990: restore the selected-root Bash verify line merged from main (#11050) that the hand-reconciled #10990 golden had kept in the pre-merge Suggested-command form; hosted Linux goldens check (run 41133957273) flagged this single formatting-only line, classes and discriminators unchanged
+
+Operation:
+Manual edit: replaced only the Suggested-command line in `expected/human.txt` with the Verify command (Bash) line the merged producer emits (identical to origin/main for this fixture).
+
+Execution:
+Strings taken from the hosted drift report and origin/main; no native goldens-bless command executed on this Windows host, whose local producer emits the platform Suggested-command form and unrelated backslash-path drift (52 entries) — hosted Linux CI goldens check remains the merge authority.
+
+Updated:
+- `expected/human.txt`
