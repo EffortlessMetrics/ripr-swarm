@@ -145,6 +145,10 @@ use tower_lsp_server::{Client, LanguageServer};
 
 pub(super) struct Backend {
     client: Client,
+    /// Test-only fault injection: the next `textDocument/hover` unwinds, so
+    /// panic containment is exercised through the real handler.
+    #[cfg(test)]
+    panic_in_next_hover: AtomicBool,
     root: Mutex<PathBuf>,
     workspace_root: Mutex<WorkspaceRootAuthority>,
     workspace_root_epoch: AtomicU64,
@@ -347,6 +351,8 @@ impl<T> Drop for AbortTimerOnDrop<T> {
 impl Backend {
     pub(super) fn new(client: Client, root: PathBuf) -> Self {
         Self {
+            #[cfg(test)]
+            panic_in_next_hover: AtomicBool::new(false),
             root: Mutex::new(root.clone()),
             workspace_root: Mutex::new(WorkspaceRootAuthority::unavailable(
                 "workspace root authority is awaiting initialization",
@@ -3254,6 +3260,12 @@ impl Backend {
             .lock()
             .ok()
             .map(|features| features.selected_position_encoding.clone())
+    }
+
+    #[cfg(test)]
+    pub(super) fn panic_in_next_hover_for_test(&self) {
+        self.panic_in_next_hover
+            .store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
     #[cfg(test)]
@@ -6510,6 +6522,13 @@ impl LanguageServer for Backend {
     }
 
     async fn hover(&self, params: HoverParams) -> LspResult<Option<Hover>> {
+        #[cfg(test)]
+        if self
+            .panic_in_next_hover
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            std::panic::resume_unwind(Box::new("injected hover handler panic"));
+        }
         self.trace_inbound(
             "request",
             "textDocument/hover",
