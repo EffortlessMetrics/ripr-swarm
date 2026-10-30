@@ -6820,6 +6820,7 @@ tests = [
   "xtask/src/schema_producer_sweep.rs::tests::serde_rejected_unbound_documents_cannot_be_classified",
   "xtask/src/schema_producer_sweep.rs::tests::exclusions_count_only_matching_lookalikes_and_bound_subjects",
   "xtask/src/schema_producer_sweep.rs::tests::sweep_selects_exact_nested_producer_and_artifact_values",
+  "xtask/src/exact_schema_json.rs::tests::raw_subtree_scan_budget_fails_closed",
   "xtask/src/exact_schema_json.rs::tests::exact_parser_preserves_numbers_and_objects"
 ]
 fixtures = [

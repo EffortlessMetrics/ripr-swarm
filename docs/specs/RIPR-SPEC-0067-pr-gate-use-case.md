@@ -497,7 +497,7 @@ disclosed and fails closed; it is never treated as a complete causal comparison.
   Unbound files rejected by the initial serde_json parse, including numbers
   outside its finite range, cannot be classified as lookalikes; bound files
   rejected by that parse fail the sweep. The parser rejects inputs exceeding
-  16 MiB or serde_json's nesting and finite-number
+  16 MiB, more than 64 MiB of cumulative subtree scans, or serde_json's nesting and finite-number
   limits; file bytes are read before the size check. Preflight rejects unresolved
   or recursive references and caps total schema traversal at 128 levels and
   50,000 steps; evaluation also has those limits. The serde preflight rejects

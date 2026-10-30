@@ -199,24 +199,46 @@ pub(crate) fn parse(bytes: &[u8]) -> Result<Value, String> {
         .map_err(|e| e.to_string())?;
     decoder.end().map_err(|e| e.to_string())?;
     let source = std::str::from_utf8(bytes).map_err(|e| e.to_string())?;
-    let parsed: json_syntax::Value = source
-        .parse()
-        .map_err(|e: json_syntax::parse::Error| e.to_string())?;
-    Ok(convert(parsed))
+    let raw: &serde_json::value::RawValue =
+        serde_json::from_str(source).map_err(|e| e.to_string())?;
+    let mut scan_budget = 64 * 1024 * 1024;
+    convert(raw, &mut scan_budget)
 }
 
-fn convert(value: json_syntax::Value) -> Value {
-    match value {
-        json_syntax::Value::Null => Value::Null,
-        json_syntax::Value::Boolean(v) => Value::Bool(v),
-        json_syntax::Value::Number(v) => Value::Number(v.to_string()),
-        json_syntax::Value::String(v) => Value::String(v.to_string()),
-        json_syntax::Value::Array(v) => Value::Array(v.into_iter().map(convert).collect()),
-        json_syntax::Value::Object(v) => Value::Object(
-            v.into_iter()
-                .map(|entry| (entry.key.to_string(), convert(entry.value)))
-                .collect(),
-        ),
+// RawValue preserves the validated source spelling. Deserializing each level
+// scans its subtree again; cumulative scanned subtree bytes are capped.
+fn convert(raw: &serde_json::value::RawValue, scan_budget: &mut usize) -> Result<Value, String> {
+    let text = raw.get();
+    *scan_budget = scan_budget
+        .checked_sub(text.len())
+        .ok_or("JSON scan work limit exceeded")?;
+    match text.as_bytes().first() {
+        Some(b'n') => Ok(Value::Null),
+        Some(b't') => Ok(Value::Bool(true)),
+        Some(b'f') => Ok(Value::Bool(false)),
+        Some(b'"') => serde_json::from_str(text)
+            .map(Value::String)
+            .map_err(|e| e.to_string()),
+        Some(b'[') => {
+            let children: Vec<&serde_json::value::RawValue> =
+                serde_json::from_str(text).map_err(|e| e.to_string())?;
+            children
+                .into_iter()
+                .map(|value| convert(value, scan_budget))
+                .collect::<Result<Vec<_>, _>>()
+                .map(Value::Array)
+        }
+        Some(b'{') => {
+            let children: BTreeMap<String, &serde_json::value::RawValue> =
+                serde_json::from_str(text).map_err(|e| e.to_string())?;
+            children
+                .into_iter()
+                .map(|(key, value)| Ok((key, convert(value, scan_budget)?)))
+                .collect::<Result<BTreeMap<_, _>, String>>()
+                .map(Value::Object)
+        }
+        Some(b'-' | b'0'..=b'9') => Ok(Value::Number(text.to_owned())),
+        _ => Err("unexpected JSON value".into()),
     }
 }
 
@@ -230,6 +252,17 @@ mod tests {
             (Err(error), true) => Err(format!("expected valid input: {error}")),
             (Ok(_), false) => Err("expected invalid input to be rejected".into()),
         }
+    }
+
+    #[test]
+    fn raw_subtree_scan_budget_fails_closed() -> Result<(), String> {
+        let raw: &serde_json::value::RawValue =
+            serde_json::from_str("[[1]]").map_err(|e| e.to_string())?;
+        let mut insufficient = 7;
+        assert!(convert(raw, &mut insufficient).is_err());
+        let mut sufficient = 9;
+        assert!(convert(raw, &mut sufficient).is_ok());
+        Ok(())
     }
 
     #[test]
