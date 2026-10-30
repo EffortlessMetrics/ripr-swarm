@@ -3221,6 +3221,12 @@ fn diagnostic_for_finding_with_causal(
                 "explain_command".to_string(),
                 serde_json::Value::String(witness.explain_command.clone()),
             );
+            let mut value = value;
+            if let Some(confidence) = witness.confidence.value
+                && let Some(slot) = value.pointer_mut("/confidence/value")
+            {
+                *slot = serde_json::json!(crate::domain::contract_confidence(confidence));
+            }
             obj.insert("witness".to_string(), value);
             let summary = crate::domain::FixInstructionSummary::from_witness(&witness);
             if let Ok(summary_value) = serde_json::to_value(&summary) {
