@@ -317,6 +317,17 @@ fn feedback_stages_a_proposal_for_a_confirmed_over_credit() -> Result<(), String
             .map_err(|error| error.to_string())?,
     )
     .map_err(|error| error.to_string())?;
+    let replay: Value = serde_json::from_slice(
+        &fs::read(Path::new(&records).join("feedback-gap-row.json"))
+            .map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    ensure(
+        proposal["provenance"]["diff_sha256"] == replay["diff"]["sha256"]
+            && proposal["provenance"]["replay_binary"][0] == replay["binary"]["version"]
+            && proposal["provenance"]["replay_binary"][1] == replay["binary"]["sha256"],
+        "proposal must preserve the replay's exact diff and binary identities",
+    )?;
     ensure(
         proposal["confirmed_over_credit"]["verdict"] == "exposed"
             && proposal["confirmed_over_credit"]["false_exposed"] == "true"
