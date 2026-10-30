@@ -555,7 +555,7 @@ impl McpServer {
 
     /// The shared response bound for an already-built tool envelope, used
     /// by tools whose envelope comes from the protocol layer instead of
-    /// [`tool_result`](protocol::tool_result). The budget is the caller's
+    /// [`tool_result_with`](protocol::tool_result_with). The budget is the caller's
     /// id-aware envelope budget (#7768), so the final re-measurement after
     /// a wrapper added text (the status recovery sentence) still cannot
     /// pass an envelope the wire would have to replace.

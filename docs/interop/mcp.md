@@ -349,7 +349,7 @@ once; a past-end `omitted_offset` is an empty disclosed window. Only a listing w
 (for example an oversized filter echo) cannot fit even one page fails closed
 with `result_too_large` naming `ripr://snapshot/{snapshot_id}` as the
 identity route. Other tool responses carry the document once at full fidelity:
-`content[0].text` is the compact JSON serialization, and
+by default `content[0].text` is the compact JSON serialization, and
 `structuredContent` repeats it in every successful response. Each tool
 advertises an `outputSchema`, so a success never ships without its
 structured copy: when the complete double-carry envelope does not fit the

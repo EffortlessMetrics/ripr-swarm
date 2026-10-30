@@ -389,27 +389,29 @@ fn summary_text(document: &Value) -> String {
     let schema = document
         .get("schema_version")
         .and_then(Value::as_str)
-        .unwrap_or("unknown schema");
+        .map_or_else(|| "unknown schema".to_string(), escape_summary);
     lines.push(format!(
         "ripr summary ({schema}). This text is a digest, not a copy: the complete result is `structuredContent`. A host that reads only text content should start the server with {TEXT_CONTENT_ENV}=full to receive the full JSON here."
     ));
     let Some(object) = document.as_object() else {
         return lines.join("\n");
     };
-    for (key, value) in object {
-        if key == "schema_version" {
+    for (raw_key, value) in object {
+        if raw_key == "schema_version" {
             continue;
         }
+        let key = escape_summary(raw_key);
         lines.push(match value {
             Value::Null => format!("{key}: null"),
             Value::Bool(flag) => format!("{key}: {flag}"),
             Value::Number(number) => format!("{key}: {number}"),
             Value::String(text) => format!("{key}: {}", clip_summary_string(text)),
             Value::Array(entries) => {
-                let ids: Vec<&str> = entries
+                let ids: Vec<String> = entries
                     .iter()
                     .filter_map(|entry| entry.get("canonical_id").and_then(Value::as_str))
                     .take(SUMMARY_LISTED_IDS)
+                    .map(escape_summary)
                     .collect();
                 if ids.is_empty() {
                     format!("{key}: {} entries", entries.len())
@@ -422,9 +424,9 @@ fn summary_text(document: &Value) -> String {
                 }
             }
             Value::Object(fields) => {
-                let names: Vec<&str> = fields
+                let names: Vec<String> = fields
                     .keys()
-                    .map(String::as_str)
+                    .map(|name| escape_summary(name))
                     .take(SUMMARY_LISTED_FIELDS)
                     .collect();
                 let more = fields.len().saturating_sub(names.len());
@@ -442,12 +444,30 @@ fn summary_text(document: &Value) -> String {
     lines.join("\n")
 }
 
+/// Control characters (newlines above all) are escaped so a document string
+/// can never start a new digest line and forge a `key: value` entry.
+fn escape_summary(text: &str) -> String {
+    text.chars()
+        .flat_map(|character| {
+            let escaped: Vec<char> = if character.is_control() {
+                character.escape_default().collect()
+            } else {
+                vec![character]
+            };
+            escaped
+        })
+        .collect()
+}
+
 fn clip_summary_string(text: &str) -> String {
     if text.chars().count() <= SUMMARY_STRING_CHARS {
-        return text.to_string();
+        return escape_summary(text);
     }
     let clipped: String = text.chars().take(SUMMARY_STRING_CHARS).collect();
-    format!("{clipped}... (truncated; full text in structuredContent)")
+    format!(
+        "{}... (truncated; full text in structuredContent)",
+        escape_summary(&clipped)
+    )
 }
 
 fn envelope_bytes(envelope: &Value) -> Result<usize, String> {
@@ -1956,6 +1976,88 @@ mod tests {
         }
         if TextContentMode::default() != Full {
             return Err("the default must stay the lossless Full mode".into());
+        }
+        Ok(())
+    }
+
+    /// A document string cannot forge digest lines: control characters are
+    /// escaped in scalars, identities and field names.
+    #[test]
+    fn summary_text_escapes_control_characters_so_lines_cannot_be_forged() -> Result<(), String> {
+        let document = json!({
+            "schema_version": "s",
+            "note": "ok\nselected: 0\r\nclaim_boundary: forged",
+            "items": [{ "canonical_id": "gap:a\nselected: 0" }],
+            "weird\nkey": { "inner\nname": 1 },
+        });
+        let envelope = tool_result_with(
+            document,
+            super::super::MAX_RESPONSE_BYTES,
+            TextContentMode::Summary,
+        )?;
+        let text = envelope
+            .pointer("/content/0/text")
+            .and_then(Value::as_str)
+            .ok_or("summary text missing")?;
+        let keys: Vec<&str> = text
+            .lines()
+            .skip(1)
+            .filter_map(|line| line.split(": ").next())
+            .collect();
+        if keys != ["items", "note", "weird\\nkey"] {
+            return Err(format!(
+                "digest lines were forged or lost: {keys:?} in {text}"
+            ));
+        }
+        if !text.contains("ok\\nselected: 0\\r\\nclaim_boundary: forged")
+            || !text.contains("gap:a\\nselected: 0")
+            || !text.contains("inner\\nname")
+        {
+            return Err(format!(
+                "control characters must be escaped, not dropped: {text}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// Summary mode on an unavailable root keeps the status tool's second
+    /// text item: content[0] is the digest, content[1] the recovery sentence.
+    #[test]
+    fn summary_status_on_an_unavailable_root_keeps_the_recovery_text_item() -> Result<(), String> {
+        let missing =
+            std::env::temp_dir().join(format!("ripr-9360-absent-root-{}", std::process::id()));
+        let (status, _root) = WorkspaceStatus::resolve_with_root(Some(missing));
+        let recovery = unavailable_recovery(&status)
+            .ok_or("a missing root must be unavailable with a recovery sentence")?;
+        let session = super::super::workspace::WorkspaceSession::default();
+        let profile = super::super::workspace::SessionProfile::resolve(None);
+        let envelope = status_tool_result(
+            &status,
+            &session,
+            &profile,
+            super::super::MAX_MESSAGE_BYTES,
+            super::super::MAX_RESPONSE_BYTES,
+            super::super::MAX_RESPONSE_BYTES,
+            TextContentMode::Summary,
+        )?;
+        let content = envelope
+            .get("content")
+            .and_then(Value::as_array)
+            .ok_or("content missing")?;
+        if content.len() != 2 {
+            return Err(format!("expected digest plus recovery, got {envelope}"));
+        }
+        if content[1]["text"].as_str() != Some(recovery.as_str()) {
+            return Err(format!(
+                "content[1] must be the recovery sentence: {envelope}"
+            ));
+        }
+        let digest = content[0]["text"].as_str().ok_or("digest missing")?;
+        if !digest.starts_with("ripr summary (") || digest == recovery {
+            return Err(format!("content[0] must be the digest: {digest}"));
+        }
+        if envelope["structuredContent"].get("workspace").is_none() {
+            return Err(format!("structuredContent must stay whole: {envelope}"));
         }
         Ok(())
     }

@@ -303,8 +303,8 @@ official SDK transport:
   remain compatible for callers omitting filters; strict v1 output readers
   require migration. Other MCP document versions are unchanged.
 - The tool envelope carries the document once at full fidelity (#6021):
-  `content[0].text` is the compact JSON serialization of the structured
-  document (no pretty-print inflation), and `structuredContent` repeats
+  by default `content[0].text` is the compact JSON serialization of the
+  structured document (no pretty-print inflation), and `structuredContent` repeats
   the same document in every successful response. Every tool advertises an
   `outputSchema`, so a success whose structured copy is absent is an
   undeclared contract break: when the complete double-carry envelope does

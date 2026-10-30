@@ -346,6 +346,7 @@ bound, typed failure past that, and `ripr_list_gaps` byte-fills pages to
 `MAX_TOOL_DOCUMENT_BYTES` (half the response bound — worst-case JSON
 escaping doubles the text copy). When changing a wire shape, measure the
 final envelope, not the document.
+
 ## 2026-10-30: Do not flip a wire default on an assumption about the host (#9360)
 
 The MCP tool result carries the document in `content[0].text` and in

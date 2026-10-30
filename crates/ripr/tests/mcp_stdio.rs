@@ -2595,6 +2595,9 @@ impl SequentialStdio {
     fn spawn_with_env(root: &Path, env: &[(&str, &str)]) -> Result<Self, String> {
         let mut command = worktree_ripr();
         command.args(["mcp", "--stdio", "--root"]).arg(root);
+        // An ambient text-content mode must not leak into a session that
+        // does not ask for one (#9360).
+        command.env_remove("RIPR_MCP_TEXT_CONTENT");
         for (key, value) in env {
             command.env(key, value);
         }
@@ -6153,6 +6156,7 @@ fn summary_text_mode_is_opt_in_and_keeps_structured_content_whole_over_stdio() -
     let root = install_gap_filter_fixture()?;
     let _guard = FixtureGuard { root: root.clone() };
     let mut observed: Vec<(Value, String, usize)> = Vec::new();
+    let mut get_gap_wire: Vec<usize> = Vec::new();
     for env in [
         &[][..],
         &[("RIPR_MCP_TEXT_CONTENT", "summary")][..],
@@ -6176,6 +6180,22 @@ fn summary_text_mode_is_opt_in_and_keeps_structured_content_whole_over_stdio() -
         let wire = serde_json::to_string(&list)
             .map_err(|error| error.to_string())?
             .len();
+        let first = structured["items"][0]["canonical_id"]
+            .as_str()
+            .ok_or("list omitted its first canonical_id")?
+            .to_string();
+        let gap = session.call_tool(
+            "get",
+            "ripr_get_gap",
+            json!({ "canonical_id": first }),
+            timeout,
+        )?;
+        structured_tool_success(&gap, "get gap")?;
+        get_gap_wire.push(
+            serde_json::to_string(&gap)
+                .map_err(|error| error.to_string())?
+                .len(),
+        );
         observed.push((structured, text, wire));
     }
     let [
@@ -6223,6 +6243,16 @@ fn summary_text_mode_is_opt_in_and_keeps_structured_content_whole_over_stdio() -
     if summary_wire >= default_wire {
         return Err(format!(
             "summary mode must shrink the wire response: {summary_wire} vs {default_wire}"
+        ));
+    }
+    // The single-item evidence document is where the duplicate is large:
+    // the digest must cut the whole response by at least a third.
+    let [default_get, summary_get, typo_get] = get_gap_wire.as_slice() else {
+        return Err("expected three get_gap measurements".to_string());
+    };
+    if summary_get * 3 > default_get * 2 || typo_get != default_get {
+        return Err(format!(
+            "ripr_get_gap summary must be at most two thirds of default: default={default_get} summary={summary_get} typo={typo_get}"
         ));
     }
     eprintln!(
