@@ -898,17 +898,123 @@ fn no_review_report_means_no_headline_and_a_cut_command_is_not_shown() -> TestRe
     let unparsable = Fixture::new("headline-bad")?;
     unparsable.write("target/ripr/review/comments.json", "{not json")?;
     assert!(!unparsable.render(&[])?.contains(HEADLINE));
+    let not_object = Fixture::new("headline-array")?;
+    not_object.write("target/ripr/review/comments.json", "[]")?;
+    let rendered = not_object.render(&[])?;
+    assert!(!rendered.contains(HEADLINE));
+    assert!(
+        rendered.starts_with(
+            "## RIPR advisory summary\n\nRIPR is advisory static evidence. It does not edit source, generate tests, or run mutation testing.\n\n### Start here"
+        ),
+        "no stray blank line:\n{rendered}"
+    );
     let mut shell = card();
     shell["llm_guidance"]["repair_command"] = json!("ripr agent repair; rm -rf .");
-    shell["owner"] = json!("fn `x` @team");
     let hostile = Fixture::new("headline-hostile")?;
     hostile.json(
         "target/ripr/review/comments.json",
         &json!({"summary": {}, "comments": [shell]}),
     )?;
-    let summary = hostile.render(&[])?;
-    let head = block(&summary, HEADLINE);
+    let head = block(&hostile.render(&[])?, HEADLINE).to_string();
     assert!(!head.contains("Next step"), "{head}");
     assert!(head.contains("1 changed-behavior spot where"), "{head}");
+    // A command that is plain but not a repair start is withheld too.
+    let mut other = card();
+    other["llm_guidance"]["repair_command"] = json!("rm -rf target");
+    let plain = Fixture::new("headline-plain")?;
+    plain.json(
+        "target/ripr/review/comments.json",
+        &json!({"summary": {}, "comments": [other]}),
+    )?;
+    assert!(!block(&plain.render(&[])?, HEADLINE).contains("Next step"));
+    Ok(())
+}
+
+#[test]
+fn report_text_is_cleaned_and_bounded_in_the_first_line() -> TestResult {
+    let mut row = card();
+    row["seam"]["file"] = json!("src/a\nb\u{202e}c\u{200b}d.rs");
+    row["owner"] = json!(format!("fn x @team{}", "o".repeat(300)));
+    row["missing_discriminator"] = json!("line1\nline2\u{202e}tick");
+    let fixture = Fixture::new("headline-clean-text")?;
+    fixture.json(
+        "target/ripr/review/comments.json",
+        &json!({"summary": {}, "comments": [row]}),
+    )?;
+    let summary = fixture.render(&[])?;
+    let head = block(&summary, HEADLINE);
+    let owner: String = format!("fn x @team{}", "o".repeat(300))
+        .chars()
+        .take(160)
+        .collect();
+    assert!(
+        head.contains(&format!("- First: `src/a bcd.rs:88` in `{owner}`\n")),
+        "{head}"
+    );
+    assert!(
+        head.contains("- Missing check: `line1 line2tick`\n"),
+        "{head}"
+    );
+    assert!(
+        !head.contains('\u{202e}') && !head.contains('\u{200b}'),
+        "{head}"
+    );
+    Ok(())
+}
+
+#[test]
+fn an_unproven_clean_report_is_never_clean() -> TestResult {
+    // analysis_complete with no comments array.
+    let missing = Fixture::new("headline-no-array")?;
+    missing.json(
+        "target/ripr/review/comments.json",
+        &json!({"analysis_outcome": {"analysis_complete": true}}),
+    )?;
+    let head = block(&missing.render(&[])?, HEADLINE).to_string();
+    assert!(!head.contains("No changed-behavior spot"), "{head}");
+    assert!(head.contains("not a clean result"), "{head}");
+    // summary.comments states rows the array does not carry.
+    let stated = Fixture::new("headline-stated")?;
+    stated.json(
+        "target/ripr/review/comments.json",
+        &json!({"summary": {"comments": 2}, "analysis_outcome": {"analysis_complete": true}, "comments": []}),
+    )?;
+    let head = block(&stated.render(&[])?, HEADLINE).to_string();
+    assert!(head.contains("**2 changed-behavior spots"), "{head}");
+    assert!(
+        head.contains("The items are in the PR guidance section below."),
+        "{head}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_summary_only_report_names_its_first_spot_from_the_root_array() -> TestResult {
+    // The producer writes the count under summary and the cards at the root.
+    let fixture = Fixture::new("headline-summary-only")?;
+    fixture.json(
+        "target/ripr/review/comments.json",
+        &json!({
+            "summary": {"comments": 0, "summary_only": 1},
+            "comments": [],
+            "summary_only": [card()],
+        }),
+    )?;
+    let head = block(&fixture.render(&[])?, HEADLINE).to_string();
+    assert!(head.contains("**1 changed-behavior spot where"), "{head}");
+    assert!(
+        head.contains("- First: `src/pricing.rs:88` in `pricing::discounted_total`"),
+        "{head}"
+    );
+    assert!(!head.contains("PR guidance section below"), "{head}");
+    // A count with no cards still points at the guidance section.
+    let counted = Fixture::new("headline-count-only")?;
+    counted.json(
+        "target/ripr/review/comments.json",
+        &json!({"summary": {"comments": 0, "summary_only": 2}, "comments": []}),
+    )?;
+    let head = block(&counted.render(&[])?, HEADLINE).to_string();
+    assert!(head.contains("**2 changed-behavior spots"), "{head}");
+    assert!(head.contains("PR guidance section below"), "{head}");
     Ok(())
 }

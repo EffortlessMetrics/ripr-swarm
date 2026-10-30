@@ -19,10 +19,10 @@ pub(super) fn headline_lines(report: &Value) -> Vec<String> {
     if !report.is_object() {
         return Vec::new();
     }
-    let rows = report
-        .get("comments")
-        .and_then(Value::as_array)
-        .map_or(&[][..], Vec::as_slice);
+    // A report without a `comments` array cannot show a clean result.
+    let rows = report.get("comments").and_then(Value::as_array);
+    let listed_rows = rows.map_or(0, |rows| rows.len() as u64);
+    let stated_rows = report["summary"]["comments"].as_u64().unwrap_or(0);
     // The producer states summary-only items as a count and as an array;
     // trust the larger so a missing count is never a false clean.
     let counted = report["summary"]["summary_only"].as_u64().unwrap_or(0);
@@ -30,13 +30,14 @@ pub(super) fn headline_lines(report: &Value) -> Vec<String> {
         .get("summary_only")
         .and_then(Value::as_array)
         .map_or(0, |items| items.len() as u64);
-    let total = rows.len() as u64 + counted.max(listed);
+    let total = listed_rows.max(stated_rows) + counted.max(listed);
     let mut lines = vec!["### What RIPR found in this pull request".to_string()];
     if total == 0 {
-        if report["analysis_outcome"]["analysis_complete"].as_bool() == Some(true) {
+        let complete = report["analysis_outcome"]["analysis_complete"].as_bool() == Some(true);
+        if complete && rows.is_some() {
             lines.push("No changed-behavior spot with weak test evidence (static and advisory; not a statement that the tests are sufficient).".to_string());
         } else {
-            lines.push("The analysis did not complete for this revision, so this is not a clean result. The sections below say what is missing.".to_string());
+            lines.push("The analysis did not complete or its report is unreadable for this revision, so this is not a clean result. The sections below say what is missing.".to_string());
         }
         return lines;
     }
@@ -46,7 +47,16 @@ pub(super) fn headline_lines(report: &Value) -> Vec<String> {
         format!("{total} changed-behavior spots where the tests may not notice a wrong result.")
     };
     lines.push(format!("**{spots}**"));
-    if let Some(row) = rows.first() {
+    // The producer writes both a `summary.summary_only` count and a root
+    // `summary_only` array of cards shaped like `comments` rows; a report
+    // with only summary-only items still has a first spot to name.
+    let first = rows.and_then(|rows| rows.first()).or_else(|| {
+        report
+            .get("summary_only")
+            .and_then(Value::as_array)
+            .and_then(|items| items.first())
+    });
+    if let Some(row) = first {
         let place = format!(
             "{}:{}",
             text(&row["seam"]["file"]),
@@ -64,9 +74,10 @@ pub(super) fn headline_lines(report: &Value) -> Vec<String> {
         // Shown whole or not at all: a cut command would run something else.
         if let Some(command) = row["llm_guidance"]["repair_command"]
             .as_str()
+            .filter(|command| command.starts_with("ripr agent repair "))
             .filter(|command| is_plain_command(command))
         {
-            lines.push(format!("- Next step: `{command}`"));
+            lines.push(format!("- Next step: {}", code_span(command)));
         }
     } else {
         lines.push("- The items are in the PR guidance section below.".to_string());

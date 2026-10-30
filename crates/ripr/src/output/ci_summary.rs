@@ -229,11 +229,14 @@ impl Summary {
         let report = fs::read(self.root.join(COMMENTS_JSON))
             .ok()
             .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok());
-        let lines = report.as_ref().map(headline::headline_lines);
-        for line in lines.unwrap_or_default() {
-            self.line(&line);
+        let lines = report
+            .as_ref()
+            .map(headline::headline_lines)
+            .unwrap_or_default();
+        for line in &lines {
+            self.line(line);
         }
-        if report.is_some() {
+        if !lines.is_empty() {
             self.blank();
         }
     }
