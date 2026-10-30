@@ -17,6 +17,7 @@ Start here:
   Language: typescript
   Language status: preview
   Static exposure: weak (severity: warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; the assertion is not confirmed to observe the changed value. Preview score, not on the same scale as Rust confidence.
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: return subtotal + shipping(subtotal) + FLAT;
   Missing check (1 of 2): The change to `price` only adds or drops the additive term `fee`, which is

@@ -4466,6 +4466,13 @@ pub(crate) struct BodyLexicalScan {
     pub(crate) uses: Vec<usize>,
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Count of full lexical shadow scans (#10925): the absent-name early-out
+    /// must leave it untouched.
+    pub(crate) static SHADOW_SCAN_RUNS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// Lexical states for the shadow-check walk.
 #[derive(Clone, Copy)]
 enum BodyScanState {
@@ -4497,6 +4504,27 @@ enum BodyScanState {
 /// a same-function use outside that block stays unshadowed (over-credit
 /// direction, retained under the cross-block interval rules).
 pub(crate) fn local_identifier_declared_in_test_body(body_text: &str, identifier: &str) -> bool {
+    // #10925: every shadow shape below (line-start declarator, catch / arrow /
+    // function parameter, loop header) needs `identifier`'s exact bytes in the
+    // body: the lexer matches `starts_with(identifier)` or a declarator part
+    // equal to it, and the masked scans (the mask only keeps original
+    // characters or blanks them) search for the identifier text. A body that
+    // never spells the name is therefore never shadowing it, so skip the
+    // lexer walk and the OXC-backed literal mask. Candidate names that a body
+    // never mentions are the bulk of the per-identifier calls.
+    if !body_text.contains(identifier) {
+        return false;
+    }
+    local_identifier_declared_in_test_body_scanned(body_text, identifier)
+}
+
+/// The full lexical shadow decision, run only for bodies that spell the name.
+pub(crate) fn local_identifier_declared_in_test_body_scanned(
+    body_text: &str,
+    identifier: &str,
+) -> bool {
+    #[cfg(test)]
+    SHADOW_SCAN_RUNS.with(|runs| runs.set(runs.get() + 1));
     let scan = scan_body_lexical_facts(body_text, identifier);
     if scan.uses.iter().any(|use_offset| {
         scan.declarations.iter().any(|declaration| {

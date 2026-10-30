@@ -1860,7 +1860,11 @@ pub(crate) fn ts_predicate_boundary_row_activation(
                 alias_map,
                 workspace_root,
             );
-            let witnessed = if nullish_boundary {
+            let witnessed = if let Some(operand) = left.strip_prefix("typeof ") {
+                // #11196: a `typeof <param> == "<kind>"` guard is witnessed by
+                // an input of that kind, never by the kind's name as a string.
+                typeof_kind_input_reaches_read_argument(&arguments, operand, right, owner)
+            } else if nullish_boundary {
                 // #4104-E2 repair (review thread PRRT_kwDOSiSx0c6mUkkI):
                 // for a nullish-coalescing boundary only the NULLISH
                 // input — `null` / `undefined` at the LEFT operand's read
@@ -1905,6 +1909,7 @@ pub(crate) fn ts_predicate_boundary_row_activation(
                 continue;
             }
             if let Some(expected) = assertion.expected_value_or_variant.as_deref()
+                && !left.starts_with("typeof ")
                 && expected_side_is_live(
                     owner,
                     line_text,
@@ -4159,6 +4164,9 @@ pub(crate) fn ts_predicate_boundary_limitation(
         None
     };
     match boundary {
+        Some(boundary) if boundary.starts_with("typeof ") => format!(
+            "Related tests reach `{owner_name}` with a strong oracle, but no strong assertion observes a `{owner_name}(...)` call whose argument is written as a value of the kind the changed test checks (`{boundary}`); a call that passes a value of another kind, or the kind's name as a string, does not discriminate the changed comparison."
+        ),
         Some(boundary) => format!(
             "Related tests reach `{owner_name}` with a strong oracle, but no strong assertion observes a `{owner_name}(...)` call at the changed predicate boundary `{boundary}`; inputs on one side of the boundary do not discriminate the changed comparison."
         ),
@@ -4790,6 +4798,33 @@ fn comparison_read_position(operand: &str, owner: &TypeScriptOwner) -> ReadPosit
 
 fn last_identifier_segment(operand: &str) -> &str {
     operand.trim().rsplit('.').next().unwrap_or(operand).trim()
+}
+
+/// `true` when the argument at the parameter a `typeof <param> == "<kind>"`
+/// guard reads is written as a value of exactly that kind (#11196): a function
+/// for `"function"`, a number literal for `"number"`. An input of another kind
+/// can still flip a changed operator, but it cannot tell an edited kind apart,
+/// and the kind's name as a string literal is a string input, not the kind it
+/// names. The parameter must be named by the owner's own signature, and a
+/// type assertion on the argument does not change the value it carries.
+fn typeof_kind_input_reaches_read_argument(
+    arguments: &[String],
+    operand: &str,
+    kind: &str,
+    owner: &TypeScriptOwner,
+) -> bool {
+    let kind = kind.trim().trim_matches(['"', '\'']);
+    let Some(position) = owner
+        .params
+        .iter()
+        .position(|param| param == operand.trim())
+    else {
+        return false;
+    };
+    arguments
+        .get(position)
+        .and_then(|argument| super::typeof_kind::literal_argument_typeof_kind(argument))
+        .is_some_and(|argument_kind| argument_kind == kind)
 }
 
 /// `true` when the boundary literal reaches the argument position the changed
@@ -7590,6 +7625,17 @@ pub(crate) fn classify_resolved_owner(
     } else {
         0.4
     };
+    // #10700: the score above is a per-class constant, so name why it is
+    // capped. Evidence-derived and explanatory only: it never changes the
+    // score or any actionability decision.
+    let confidence_basis = crate::domain::ConfidenceCap::for_preview(
+        &class,
+        &crate::domain::ConfidenceBasisInputs {
+            has_related_test: has_oracle_eligible_relation,
+            strong_oracle_present: strongest_strength >= OracleStrength::Strong.rank(),
+            boundary_input_matched: boundary_witnessed,
+        },
+    );
 
     let mut evidence = vec![format!("owner: {}", owner.name)];
     if !probe_shape.specific {
@@ -7721,7 +7767,7 @@ pub(crate) fn classify_resolved_owner(
             },
         },
         confidence: confidence_value,
-        confidence_basis: Vec::new(),
+        confidence_basis,
         evidence,
         missing,
         flow_sinks: flow_sink.into_iter().collect(),

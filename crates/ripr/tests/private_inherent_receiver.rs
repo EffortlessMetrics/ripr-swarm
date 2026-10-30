@@ -132,6 +132,17 @@ diff --git a/src/lib.rs b/src/lib.rs
     ),
 ];
 
+const UNDECLARED_MANIFEST: &str = r###"[package]
+name = "private-target-attribution"
+version = "0.0.0"
+edition = "2024"
+
+[workspace]
+
+[dependencies]
+serde_json = "=1.0.150"
+"###;
+
 struct Fixture(PathBuf);
 
 impl Fixture {
@@ -232,15 +243,14 @@ fn unique_private_inherent_receiver_keeps_real_calls_and_refuses_serde_decoys() 
                 && finding.probe.family == ProbeFamily::ReturnValue
         })
         .ok_or("missing public-library production probe")?;
-    // #9969 widened the unresolved-macro-placement refusal (a glob import
-    // beside a qualified macro path anywhere in the package, here the
-    // decoy's `serde_json::json!`), so the cross-target library probe is
-    // `weakly_exposed` on main. Pinned exactly: accepting `exposed` here
-    // would mask an over-promotion past the refusal (fail-closed).
+    // The reader module is mounted by `#[path]` under the explicitly declared
+    // `xtask` target, so its `use super::*` glob belongs to that crate, not to
+    // the library's integration-test crate: the qualified cross-target call
+    // is credited (#11123). The undeclared twin below stays refused.
     assert_eq!(
         public.class,
-        ExposureClass::WeaklyExposed,
-        "unresolved-macro-placement refusal (#9969) must keep the cross-target probe weakly_exposed"
+        ExposureClass::Exposed,
+        "a glob under another declared target cannot bind the test crate's root"
     );
     let test = public
         .related_tests
@@ -250,6 +260,38 @@ fn unique_private_inherent_receiver_keeps_real_calls_and_refuses_serde_decoys() 
     assert_eq!(test.file, PathBuf::from("tests/public_library.rs"));
     assert_eq!(test.relation_reason, Some(RelationReason::DirectOwnerCall));
     assert_eq!(test.relation_confidence, Some(RelationConfidence::High));
+    Ok(())
+}
+
+#[test]
+fn undeclared_target_glob_keeps_the_cross_target_probe_weakly_exposed() -> Result<(), String> {
+    // Same files with the `xtask` target undeclared: no Cargo target is known
+    // to compile `xtask/main.rs`, so its mounted glob may belong to the test
+    // crate and may bind the library's name. Fail-closed (#9969), exactly.
+    let undeclared: Vec<(&str, &str)> = FILES
+        .iter()
+        .map(|&(name, text)| {
+            if name == "Cargo.toml" {
+                (name, UNDECLARED_MANIFEST)
+            } else {
+                (name, text)
+            }
+        })
+        .collect();
+    let fixture = Fixture::with_files(&undeclared)?;
+    let findings = fixture.findings()?;
+    let public = findings
+        .iter()
+        .find(|finding| {
+            finding.probe.location.file.ends_with("src/lib.rs")
+                && finding.probe.family == ProbeFamily::ReturnValue
+        })
+        .ok_or("missing public-library production probe")?;
+    assert_eq!(
+        public.class,
+        ExposureClass::WeaklyExposed,
+        "an unplaced file's glob may bind the library name (#9969)"
+    );
     Ok(())
 }
 

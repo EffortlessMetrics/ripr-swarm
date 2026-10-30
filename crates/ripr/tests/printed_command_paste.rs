@@ -711,6 +711,15 @@ fn collect(fixture: &Fixture, subcommands: &BTreeSet<String>) -> Result<Collecte
             // on the verbose packet dump (#8168).
             ("doctor", 1, args(&["doctor", "--root", root])),
             ("pilot", 1, args(&["pilot", "--root", root])),
+            // Right after `pilot`, first-pr reads the pilot's repo-exposure
+            // report (#3905), so only the gap-ledger command is left to print.
+            (
+                "first-pr-after-pilot",
+                1,
+                args(&[
+                    "first-pr", "--root", root, "--base", "HEAD~1", "--head", "HEAD",
+                ]),
+            ),
             (
                 "first-pr",
                 2,
@@ -847,7 +856,31 @@ fn collect(fixture: &Fixture, subcommands: &BTreeSet<String>) -> Result<Collecte
             .filter(|(label, _, _)| only.is_none_or(|labels: &[&str]| labels.contains(label)))
             .collect();
         for (label, _, args) in &flows {
+            // The cold `first-pr` flow prints both the repo-exposure and the
+            // gap-ledger recovery commands only without the pilot's report;
+            // `first-pr-after-pilot` covers the warm route.
+            if *label == "first-pr" {
+                let pilot_report = fixture.root.join("target/ripr/pilot/repo-exposure.json");
+                if pilot_report.exists() {
+                    std::fs::remove_file(&pilot_report)
+                        .map_err(|err| format!("remove pilot report: {err}"))?;
+                }
+            }
             let (stdout, stderr) = ripr_streams_in(cwd, args)?;
+            // The warm route: the pilot report is accepted (first-pr only
+            // accepts one carrying an `artifact` object), so the ledger is
+            // the single missing input and its command reads the pilot report.
+            if *label == "first-pr-after-pilot"
+                && !(stdout.contains("Missing artifact: Gap decision ledger")
+                    && stdout.contains("--repo-exposure")
+                    && stdout.contains("target/ripr/pilot/repo-exposure.json")
+                    && !stdout.contains("Repo exposure report at")
+                    && !stdout.contains("Also missing: Repo exposure"))
+            {
+                return Err(format!(
+                    "flow `{prefix}{label}` should name only the gap-ledger command as the missing repo-exposure/ledger input, reading the pilot report:\n{stdout}"
+                ));
+            }
             sink.ingest(&format!("{prefix}{label}"), &stdout, &stderr);
         }
         for (label, minimum, _) in &flows {
@@ -873,7 +906,14 @@ fn collect(fixture: &Fixture, subcommands: &BTreeSet<String>) -> Result<Collecte
 
 /// Flows also run with a relative `--root`, as typed from the directory above
 /// the repository.
-const RELATIVE_ROOT_FLOWS: &[&str] = &["check", "first-pr", "doctor", "pilot", "agent-card"];
+const RELATIVE_ROOT_FLOWS: &[&str] = &[
+    "check",
+    "doctor",
+    "pilot",
+    "first-pr-after-pilot",
+    "first-pr",
+    "agent-card",
+];
 
 fn ingest_artifacts(sink: &mut Sink, fixture: &Fixture) -> Result<(), String> {
     for path in artifact_files(&fixture.root) {

@@ -348,12 +348,31 @@ to `CliRunner(...)` imported from `click.testing` or `typer.testing`, or a
 literal `CliRunner()` fixture that nothing else rewrites. A different module's
 `CliRunner`, a non-first argument, an attribute of the command, a rebound or
 parameter-shadowed name, a fixture with arguments or extra statements, an
-undecorated function and a command reached only by a group's subcommand name
-make no edge. The relation is uncertain, carries no oracle and never reaches
-`exposed`: the command's output is not credited, and a helper reached through
-the command is reach-only too (the invoke may never run the body, e.g.
-`--help`). `import click as c`, `from click import command` and group
-subcommands are not recognised.
+undecorated function make no edge. The relation is uncertain, carries no
+oracle and never reaches `exposed`: the command's output is not credited, and a
+helper reached through the command is reach-only too (the invoke may never run
+the body, e.g. `--help`). `import click as c` and `from click import command`
+are not recognised.
+A group subcommand gets the same weak relation by name (#9226): a top-level
+synchronous function bound once and decorated by one `@<group>.command`
+registration (plus `click.option` / `click.argument` only) is reached by a test
+that passes the group, through the same provenance-checked import, as the first
+argument of `<runner>.invoke(` with a literal argument list (positional or
+`args=`) whose first element is the subcommand's name. The group must be a
+top-level function bound once in the same file, decorated only by `click.group`
+(without `cls=`), `click.option` and `click.argument`, with `import click` as
+the file's only binding of `click`. The name is a string literal given to the
+registration (positionally or as `name=`), or the function's own name lowered
+with `_` as `-`; a function name ending `_command`, `_cmd`, `_group` or `_grp`
+is refused, since click versions differ on stripping it. Every registration on
+the group must be readable and distinct, the text `<group>.command` /
+`<group>.group` must appear only as those decorators, and the file must not
+spell `add_command` or `.commands`. A name after an option, a command-line
+string, a name built at run time, an option on the registration other than
+`name`, `help`, `short_help`, `epilog`, `hidden`, `deprecated` or
+`no_args_is_help`, and a helper the subcommand calls make no edge. The
+subcommand's `decorator_indirection` limit is lifted only while such a test
+exists; with none, the owner keeps the limit.
 An owner left `no_static_path` while a test that imports its module (or a
 package above it) calls `.invoke(` on a recognised fresh `CliRunner` keeps its
 class but replaces the generic "No Python test references" line with one
@@ -452,7 +471,9 @@ comments, strings, and docstrings:
   bindings: a builtin shadowed by an import, a module or test-local binding
   (including tuple and annotated targets), or a receiver rebound by a chained,
   bracketed (spaced or nested too: `( r), x = ...`, `((r), x) = ...`,
-  `for ((r), x) in ...`; #9178), loop, `with`, walrus or augmented target
+  `for ((r), x) in ...`; #9178; non-adjacent single-line targets
+  `(x, (r)) = ...`, `[a, [r]] = ...`, outer/chained targets and inline
+  loop/with header targets too; #9531), loop, `with`, walrus or augmented target
   (`(r) += ...` and `(r): list = ...` included), or not the whole bound value,
   is not credited, as is an augmented assignment after a header or `;`
   (`if c: r += 1`), an `import r` or `nonlocal r`, and any `case` pattern line that
@@ -467,7 +488,9 @@ comments, strings, and docstrings:
   retains earlier lines for multiline literals while searching only the current
   line; an unterminated literal supplies no parsed test or protocol-entry credit.
   Known limits, none of
-  them closed by this: a multi-line tuple target whose earlier elements sit on
+  them closed by this: a non-adjacent assignment inside an inline compound
+  body (`if c: (x, (r)) = ...`) is outside the complete-target fallback;
+  a multi-line tuple target whose earlier elements sit on
   other lines (`(x,\n r) = ...`) is not seen, so the receiver stays credited
   (the credit-keeping direction); and a dict key at the start of a continuation
   line (`{\n (r): 1\n}`) reads as an annotated target and withholds credit
@@ -574,7 +597,20 @@ integer. An exact integer assertion is taken to describe the returned value,
 and the abstention covers only arithmetic defined in reachable workspace
 files. A third-party or dynamically built type with its own `+`, `-` or `*` is
 not visible to this scan, and a pinned number it produced may not behave as the
-algebra assumes. A function defined under a
+algebra assumes. An edit that changes only the value of integer literals on a line that calls an
+imported symbol (`islice(seq, 0, None, n)` to `islice(seq, 1, None, n)`,
+`chunks[-1]` to `chunks[-2]`) lifts `missing_import_graph` on token equality
+alone: the old and new lines must lex to the same tokens except integer
+values, so no callee, keyword, operator, operand, string or float moved (#9226).
+The abstention is lifted only when a strong exact oracle observes the owner;
+no test, a smoke assertion or an assertion on another value keeps it. The callee
+is not evaluated, so a strong exact oracle that reaches the owner is
+not credited as `exposed`: the finding is `weakly_exposed` with no nameable
+discriminator, no canonical gap or flow sink, no `suggested_*` repair card and no
+next step. Any other limit that applies (rebind, dunder dispatch,
+heuristic-only relation, `caplog` evidence) still wins. Without the old
+line the limit stays.
+A function defined under a
 decided module-level `if sys.version_info >= (3, 0):` condition (the only
 decided shapes are Python 2/3 version tuples, with `sys` the single plain
 import) is an ordinary function owner when its name has no other live
@@ -613,6 +649,67 @@ credit for every table. Reflection over modules outside that component keeps the
 line continuation cannot hide a table from the foreign-store scan.
 Preceding assertions must evaluate true under the same bounded old/new scope
 before a later assertion can supply the value-flip credit.
+
+A scalar or table constant's reader may also be reached through one forwarding
+hop in a sibling module (#9619). A test that imports `quote` with `from
+pkg.quote import quote [as name]`, where `quote`'s body is one `return` calling
+`lookup` bound by `from .table import lookup [as local]`, relates as
+`module_value_call` when the assertion holds through the old reader and fails
+through the new one. The conditions are:
+
+- the owner module is not `__init__.py` and sits in a regular package (its
+  `__init__.py` is a workspace source), does not mention the forwarder
+  module's name, and loads inertly: its top level holds only a docstring,
+  `pass`, `from __future__` imports, assignments of literals (dict, list and
+  tuple displays of constants included) to plain non-dunder names or
+  `__all__`, with an optional annotation that is a string or, under
+  `from __future__ import annotations`, a bare name, and undecorated `def`s
+  with literal defaults and annotations of the same kinds.
+  It imports nothing else, not even a standard-library module, because a
+  test-root module can take a standard-library name and calls such as
+  `pickle.loads` or `pydoc.locate` import by a string. Loading it therefore
+  never imports the forwarder module;
+- the forwarder module is a non-test sibling in the same directory (not
+  `__init__.py` or `conftest.py`) whose source spells `from .<stem> import`; at
+  most 16 such siblings are read per changed file, and more reads none;
+- loading the forwarder module runs nothing else: its top level holds only a
+  docstring, `pass`, `from __future__` and level-1 `from .<stem>` imports,
+  assignments of literals to plain names other than dunders (`__all__`
+  aside, so `__package__` cannot redirect the relative import), and
+  undecorated `def`s whose defaults are literals; an annotation is absent or
+  a string, or a bare name under `from __future__ import annotations`, so
+  loading never evaluates one;
+- the local name and the forwarder are each bound once in that module; the
+  forwarder is a top-level `def` with positional parameters and no defaults,
+  and it calls the local name with positional arguments only;
+- the test reaches the forwarder only through a `from` import of the
+  forwarder's own name whose module path ends with the forwarder's package
+  directory and module (`rates.quote`), never through a module receiver,
+  which a package `__init__` may rebind, or a path that drops the package,
+  which breaks the relative import; its module path does not start with a
+  standard-library name;
+- the forwarder module gets its own write view of every other workspace file:
+  a write of the forwarder or the local name, a code-slot or dunder write,
+  reflection or a non-byte-exact name anywhere, or another file, extension
+  module or compiled package sharing the forwarder module's name withholds
+  credit, as do reflection, a dynamic writer or a dunder assignment in the
+  forwarder module's own source, and a shared name of the owner module;
+- inside the forwarder only its parameters are bound (the owner's constant is
+  not), and the reader it calls is evaluated with no forwarder of its own, so
+  a second hop decides nothing.
+
+Along a module's dotted path from any import root, read from its whole path
+and from the path below a `src` layout root (any depth) or a top-level `lib`
+root, a package with an initializer of any kind or a source module named for
+a leading component that is not the module's own ancestor
+(`tests/shapes/__init__.py` or `tests/shapes.py` for `shapes.rates.quote`)
+shadows the module's package under pytest's prepend mode. An import root
+that is itself a package below the workspace root (it holds `__init__.py`,
+as `tests/` does when `tests/__init__.py` exists) is skipped by this rule:
+pytest inserts the first directory above a test that has no `__init__.py`,
+so it never puts a package directory on `sys.path`. It withholds the
+credit of every pass that refuses a shared module name. A shadow reached only
+through another suffix of the path is not checked.
 
 A change to the single `return` of an undecorated module function or method
 that no test calls directly (#9226) relates as `module_value_call` to a test

@@ -136,15 +136,23 @@ use tower_lsp_server::ls_types::{
     Hover, HoverParams, InitializeParams, InitializeResult, InitializedParams, LSPAny,
     LogTraceParams, MessageType, PositionEncodingKind, Registration,
     RelatedFullDocumentDiagnosticReport, RelatedUnchangedDocumentDiagnosticReport,
-    ShowMessageParams, TraceValue, UnchangedDocumentDiagnosticReport, Unregistration, Uri,
-    WorkspaceDiagnosticParams, WorkspaceDiagnosticReport, WorkspaceDiagnosticReportResult,
-    WorkspaceDocumentDiagnosticReport, WorkspaceFullDocumentDiagnosticReport,
-    WorkspaceUnchangedDocumentDiagnosticReport,
+    ShowMessageParams, TextDocumentIdentifier, TraceValue, UnchangedDocumentDiagnosticReport,
+    Unregistration, Uri, WorkspaceDiagnosticParams, WorkspaceDiagnosticReport,
+    WorkspaceDiagnosticReportResult, WorkspaceDocumentDiagnosticReport,
+    WorkspaceFullDocumentDiagnosticReport, WorkspaceUnchangedDocumentDiagnosticReport,
 };
 use tower_lsp_server::{Client, LanguageServer};
 
 pub(super) struct Backend {
     client: Client,
+    /// Test-only fault injection: the next `textDocument/hover` unwinds, so
+    /// panic containment is exercised through the real handler.
+    #[cfg(test)]
+    panic_in_next_hover: AtomicBool,
+    /// Test-only fault injection: the next `textDocument/didSave` unwinds, so
+    /// notification-path containment runs through the real handler.
+    #[cfg(test)]
+    panic_in_next_did_save: AtomicBool,
     root: Mutex<PathBuf>,
     workspace_root: Mutex<WorkspaceRootAuthority>,
     workspace_root_epoch: AtomicU64,
@@ -347,6 +355,10 @@ impl<T> Drop for AbortTimerOnDrop<T> {
 impl Backend {
     pub(super) fn new(client: Client, root: PathBuf) -> Self {
         Self {
+            #[cfg(test)]
+            panic_in_next_hover: AtomicBool::new(false),
+            #[cfg(test)]
+            panic_in_next_did_save: AtomicBool::new(false),
             root: Mutex::new(root.clone()),
             workspace_root: Mutex::new(WorkspaceRootAuthority::unavailable(
                 "workspace root authority is awaiting initialization",
@@ -3257,6 +3269,18 @@ impl Backend {
     }
 
     #[cfg(test)]
+    pub(super) fn panic_in_next_hover_for_test(&self) {
+        self.panic_in_next_hover
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    #[cfg(test)]
+    pub(super) fn panic_in_next_did_save_for_test(&self) {
+        self.panic_in_next_did_save
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    #[cfg(test)]
     pub(super) fn selected_position_encoding_for_test(&self) -> Option<PositionEncodingKind> {
         self.selected_position_encoding()
     }
@@ -3708,6 +3732,25 @@ impl Backend {
         } else {
             labels
         }
+    }
+
+    /// Whether `uri`'s buffer is quarantined only because it differs from the
+    /// analyzed saved content while its bytes equal the file on disk. A cheap
+    /// length check precedes the read, so ordinary typing (buffer ahead of
+    /// disk) costs one `stat` per change.
+    fn buffer_equals_unanalyzed_disk_content(&self, uri: &Uri) -> bool {
+        let Some((path, DocumentStalenessReason::BufferDivergesFromAnalyzedSavedContent)) =
+            self.document_quarantine(uri)
+        else {
+            return false;
+        };
+        let Some(text) = self.document_text(uri) else {
+            return false;
+        };
+        if std::fs::metadata(&path).map(|meta| meta.len()).ok() != u64::try_from(text.len()).ok() {
+            return false;
+        }
+        std::fs::read(&path).is_ok_and(|disk| disk == text.as_bytes())
     }
 
     /// The quarantine state of an open document, as `(path, reason)`.
@@ -6373,6 +6416,19 @@ impl LanguageServer for Backend {
         };
         self.handle_document_quarantine_transition(&uri, transition, decision_version)
             .await;
+        // An external rewrite (formatter, `git checkout`, a coding agent) that
+        // the client reloads into an open buffer arrives as a change with no
+        // `didSave`, so the evidence would stay paused behind advice to save
+        // a file that is not dirty. When the new buffer is exactly the file
+        // on disk it is saved content: record it as a save so the normal
+        // digest dedup and refresh path analyze it.
+        if self.buffer_equals_unanalyzed_disk_content(&uri) {
+            self.did_save(DidSaveTextDocumentParams {
+                text_document: TextDocumentIdentifier { uri },
+                text: None,
+            })
+            .await;
+        }
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
@@ -6413,6 +6469,13 @@ impl LanguageServer for Backend {
     }
 
     async fn did_save(&self, params: DidSaveTextDocumentParams) {
+        #[cfg(test)]
+        if self
+            .panic_in_next_did_save
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            std::panic::resume_unwind(Box::new("injected didSave handler panic"));
+        }
         self.trace_inbound(
             "notification",
             "textDocument/didSave",
@@ -6510,6 +6573,13 @@ impl LanguageServer for Backend {
     }
 
     async fn hover(&self, params: HoverParams) -> LspResult<Option<Hover>> {
+        #[cfg(test)]
+        if self
+            .panic_in_next_hover
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            std::panic::resume_unwind(Box::new("injected hover handler panic"));
+        }
         self.trace_inbound(
             "request",
             "textDocument/hover",
@@ -6593,9 +6663,10 @@ impl LanguageServer for Backend {
     /// Locks `latest_analysis` read-only exactly like `hover_for_position` and
     /// `code_action`, then delegates to the pure `code_lens_response` helper in
     /// `lsp/lens.rs`. Returns `Some([])` (not `None`) so the client removes any
-    /// stale lenses from a previous snapshot. Returns an empty Vec when no
-    /// snapshot is available — absence of analysis is not absence of tests, and
-    /// we must not fabricate a 0-count lens.
+    /// stale lenses from a previous snapshot, including for a quarantined
+    /// (unsaved or divergent) buffer whose lines no longer match the snapshot.
+    /// Returns an empty Vec when no snapshot is available — absence of analysis
+    /// is not absence of tests, and we must not fabricate a 0-count lens.
     async fn code_lens(&self, params: CodeLensParams) -> LspResult<Option<Vec<CodeLens>>> {
         self.trace_inbound(
             "request",
@@ -6609,10 +6680,20 @@ impl LanguageServer for Backend {
             .ok()
             .and_then(|value| value.clone());
         let uri = &params.text_document.uri;
-        let result = Ok(Some(code_lens_response(
-            uri,
-            snapshot.as_ref().map(|snapshot| snapshot.as_ref()),
-        )));
+        // A lens anchors at the finding's line in the analyzed saved file. A
+        // buffer that diverges from that content (an unsaved edit, or an
+        // external rewrite the client reloaded) has moved lines, so the
+        // lens would sit on the wrong line while diagnostics and hover are
+        // already paused. Withdraw it with them; the paused marker and hover
+        // name the recovery.
+        let result = if self.document_quarantine(uri).is_some() {
+            Ok(Some(Vec::new()))
+        } else {
+            Ok(Some(code_lens_response(
+                uri,
+                snapshot.as_ref().map(|snapshot| snapshot.as_ref()),
+            )))
+        };
         self.trace_response("textDocument/codeLens", &result).await;
         result
     }

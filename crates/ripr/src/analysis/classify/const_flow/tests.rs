@@ -451,6 +451,7 @@ fn decide(tests: &str, old: &str, new: &str) -> Result<Option<super::ConstFlow>,
         &readers,
         &related,
         &|name| facts.functions.iter().filter(|f| f.name == name).count(),
+        None,
     ))
 }
 
@@ -508,5 +509,163 @@ fn a_changed_value_is_discriminated_or_indistinguishable_by_the_pins() -> Result
         decide(unpinned, OLD, new)?,
         Some(super::ConstFlow::Indistinguishable(_))
     ));
+    Ok(())
+}
+
+const TRAIT_SOURCE: &str = "pub trait Limits {\n    const MAX: u32;\n\n    fn clamp(v: u32) -> u32 {\n        if v > Self::MAX { Self::MAX } else { v }\n    }\n}\n\npub struct Small;\npub struct Wide;\n";
+
+/// Run the associated-constant decision on a one-file crate: `imp` holds the
+/// impl blocks (the edited `const MAX` declaration on the line it names) and
+/// `tests` the `#[test]`s.
+fn decide_assoc(
+    imp: &str,
+    tests: &str,
+    old: &str,
+    new: &str,
+) -> Result<Option<super::ConstFlow>, String> {
+    let source = format!("{TRAIT_SOURCE}\n{imp}\n{tests}\n");
+    let facts = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), &source)?;
+    let line = source
+        .lines()
+        .position(|line| line.trim_start().starts_with("const MAX: u32 = "))
+        .ok_or("no edited declaration")?
+        + 1;
+    let Some(binding) =
+        super::associated_const_binding(&source, line, "MAX", facts.functions.iter())
+    else {
+        return Ok(None);
+    };
+    let related: Vec<_> = facts.tests.iter().collect();
+    let change = super::ConstChange {
+        old_declaration: old.to_string(),
+        new_declaration: new.to_string(),
+    };
+    Ok(super::evaluate_const_flow(
+        &change,
+        &binding.readers,
+        &related,
+        &|name| facts.functions.iter().filter(|f| f.name == name).count(),
+        Some(&binding.self_type),
+    ))
+}
+
+const SMALL: &str = "impl Limits for Small {\n    const MAX: u32 = 10;\n}";
+const SMALL_PINS: &str = "#[test]\nfn pins() {\n    assert_eq!(Small::clamp(50), 10);\n    assert_eq!(Small::clamp(5), 5);\n}";
+
+#[test]
+fn an_associated_constant_rewrite_is_credited_through_the_default_method() -> Result<(), String> {
+    let rewritten = SMALL.replace("= 10;", "= 5 + 5;");
+    let flow = decide_assoc(
+        &rewritten,
+        SMALL_PINS,
+        "    const MAX: u32 = 10;",
+        "    const MAX: u32 = 5 + 5;",
+    )?;
+    let Some(super::ConstFlow::Discriminated(detail)) = flow else {
+        return Err(format!("both neighbours are pinned: {flow:?}"));
+    };
+    assert!(detail.rewrite);
+    assert_eq!(detail.neighbour_breaks.len(), 2, "{detail:?}");
+    Ok(())
+}
+
+#[test]
+fn a_changed_associated_constant_is_discriminated_or_indistinguishable() -> Result<(), String> {
+    let edited = SMALL.replace("= 10;", "= 20;");
+    let old = "    const MAX: u32 = 10;";
+    let new = "    const MAX: u32 = 20;";
+    let flow = decide_assoc(&edited, SMALL_PINS, old, new)?;
+    assert!(
+        matches!(flow, Some(super::ConstFlow::Discriminated(_))),
+        "clamp(50) is 10 before and 20 after: {flow:?}"
+    );
+    // Both inputs sit below either limit, so no assertion can tell them apart.
+    let blind = "#[test]\nfn below() {\n    assert_eq!(Small::clamp(5), 5);\n}";
+    let flow = decide_assoc(&edited, blind, old, new)?;
+    assert!(
+        matches!(flow, Some(super::ConstFlow::Indistinguishable(_))),
+        "{flow:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_call_through_another_type_or_path_is_not_read() -> Result<(), String> {
+    let edited = SMALL.replace("= 10;", "= 20;");
+    let imp = format!("{edited}\nimpl Limits for Wide {{\n    const MAX: u32 = 100;\n}}");
+    let old = "    const MAX: u32 = 10;";
+    let new = "    const MAX: u32 = 20;";
+    for call in [
+        "Wide::clamp(50)",
+        "<Small as Limits>::clamp(50)",
+        "other::Small::clamp(50)",
+        "clamp(50)",
+    ] {
+        let tests = format!("#[test]\nfn reads() {{\n    assert_eq!({call}, 10);\n}}");
+        assert_eq!(
+            decide_assoc(&imp, &tests, old, new)?,
+            None,
+            "`{call}` is not a call through the edited impl's type"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn an_associated_constant_that_breaks_a_binding_rule_is_not_evaluated() -> Result<(), String> {
+    let old = "    const MAX: u32 = 10;";
+    let new = "    const MAX: u32 = 20;";
+    // The impl overrides the default method: two functions named `clamp`.
+    let overridden = "impl Limits for Small {\n    const MAX: u32 = 20;\n\n    fn clamp(v: u32) -> u32 {\n        v.min(3)\n    }\n}";
+    assert_eq!(decide_assoc(overridden, SMALL_PINS, old, new)?, None);
+    // A generic impl is not bound.
+    let generic = "impl<T> Limits for Small {\n    const MAX: u32 = 20;\n}";
+    assert_eq!(decide_assoc(generic, SMALL_PINS, old, new)?, None);
+    // A `cfg`-gated impl is not bound.
+    let gated = "#[cfg(unix)]\nimpl Limits for Small {\n    const MAX: u32 = 20;\n}";
+    assert_eq!(decide_assoc(gated, SMALL_PINS, old, new)?, None);
+    // The expected value is the constant itself.
+    let edited = SMALL.replace("= 10;", "= 20;");
+    let own = "#[test]\nfn own() {\n    assert_eq!(Small::clamp(50), Small::MAX);\n}";
+    assert_eq!(decide_assoc(&edited, own, old, new)?, None);
+    Ok(())
+}
+
+#[test]
+fn a_trait_with_a_default_constant_or_a_helper_condition_is_not_evaluated() -> Result<(), String> {
+    let edited = SMALL.replace("= 10;", "= 20;");
+    let old = "    const MAX: u32 = 10;";
+    let new = "    const MAX: u32 = 20;";
+    let with_default = |trait_source: &str| -> Result<Option<super::ConstFlow>, String> {
+        let source = format!("{trait_source}\n{edited}\n{SMALL_PINS}\n");
+        let facts = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), &source)?;
+        let line = source
+            .lines()
+            .position(|l| l.starts_with("    const MAX: u32 = 20;"))
+            .ok_or("no declaration")?
+            + 1;
+        Ok(
+            super::associated_const_binding(&source, line, "MAX", facts.functions.iter()).and_then(
+                |binding| {
+                    let related: Vec<_> = facts.tests.iter().collect();
+                    let change = super::ConstChange {
+                        old_declaration: old.to_string(),
+                        new_declaration: new.to_string(),
+                    };
+                    super::evaluate_const_flow(
+                        &change,
+                        &binding.readers,
+                        &related,
+                        &|name| facts.functions.iter().filter(|f| f.name == name).count(),
+                        Some(&binding.self_type),
+                    )
+                },
+            ),
+        )
+    };
+    let defaulted = TRAIT_SOURCE.replace("const MAX: u32;", "const MAX: u32 = 4;");
+    assert_eq!(with_default(&defaulted)?, None);
+    let helper = TRAIT_SOURCE.replace("if v > Self::MAX", "if is_big(v)");
+    assert_eq!(with_default(&helper)?, None);
     Ok(())
 }

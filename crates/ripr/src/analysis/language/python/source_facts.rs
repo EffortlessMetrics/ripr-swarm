@@ -754,6 +754,12 @@ fn extract_source_facts_with(file: &Path, source: &str, workspace: bool) -> Pyth
         owner.class_facts.module_objects = module_objects.clone();
     }
     mark_rebound_decorators(source, &mut snapshot.owners);
+    super::cli_subcommand::mark_cli_subcommands(
+        source,
+        &module.body,
+        &imports,
+        &mut snapshot.owners,
+    );
     snapshot
         .owners
         .push(module_owner(file, source, module_range, &imports));
