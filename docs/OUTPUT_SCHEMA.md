@@ -138,7 +138,10 @@ The MCP tool envelopes carry the schema-versioned document as
 double-carry envelope cannot fit the id-aware response bound refuses typed
 with `result_too_large` instead of shipping a success without
 `structuredContent` (#7768; details in
-[MCP workspace status server](interop/mcp.md)).
+[MCP workspace status server](interop/mcp.md)). `content[0].text` is the
+compact JSON copy by default; `RIPR_MCP_TEXT_CONTENT=summary` opts a server
+process into a digest instead while `structuredContent` stays the one
+complete result (#9360).
 
 The published JSON Schemas have these current versions. Each row is checked
 against the schema's pinned `const` and every named producer source by

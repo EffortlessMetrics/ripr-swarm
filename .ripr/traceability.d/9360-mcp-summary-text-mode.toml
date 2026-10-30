@@ -1,0 +1,16 @@
+[[extend]]
+id = "RIPR-SPEC-0211"
+tests = [
+  "crates/ripr/src/mcp/protocol.rs::tests::summary_text_mode_keeps_structured_content_whole_and_shrinks_only_the_text",
+  "crates/ripr/src/mcp/protocol.rs::tests::text_content_mode_only_opts_in_on_the_summary_spelling",
+  "crates/ripr/tests/mcp_stdio.rs::summary_text_mode_is_opt_in_and_keeps_structured_content_whole_over_stdio",
+]
+code = [
+  "crates/ripr/src/mcp/protocol.rs::tool_result_with",
+  "crates/ripr/src/mcp/protocol.rs::summary_text",
+  "crates/ripr/src/mcp/server.rs::McpServer::new",
+]
+outputs = [
+  "docs/interop/mcp.md",
+  "docs/OUTPUT_SCHEMA.md",
+]

@@ -26,6 +26,8 @@ Linked issues:
 - #6022 (post-initialize `ping` with handshake `params._meta` returns an
   empty result; pre-init ping+_meta and discovery-lifecycle ping
   rejection stay with #5267 / ADR 0022)
+- #9360 (the text companion of `structuredContent` is selectable: lossless
+  JSON copy by default, opt-in digest via `RIPR_MCP_TEXT_CONTENT=summary`)
 - #6021 (the tool envelope must not fail a budget-approved listing on the
   wire: one calibrated envelope, paging on `ripr_list_gaps`)
 - #3087 (parent standard MCP server epic)
@@ -318,6 +320,23 @@ official SDK transport:
   reservation applies to the paging fit decision, so a page that passes it
   still carries `structuredContent` on the wire whatever id the client
   sent.
+- The text companion is selectable per server process (#9360).
+  `structuredContent` is the single complete result and is identical in
+  every mode. `RIPR_MCP_TEXT_CONTENT` unset, `full` or any unrecognized value
+  keeps `content[0].text` the compact JSON copy above, so a host that reads
+  only text content loses nothing. `summary` (ASCII case-insensitive, trimmed)
+  makes `content[0].text` a digest that states it is not a copy and names
+  `structuredContent` and `RIPR_MCP_TEXT_CONTENT=full`, then lists one line per
+  top-level field: scalars verbatim (strings over 200 characters clipped with
+  a marker pointing back to `structuredContent`), arrays as entry counts plus
+  at most five leading `canonical_id` values, objects as field names. The
+  digest is a projection of the document and adds no fact. The size guard,
+  paging and `result_too_large` measure the complete double-carry envelope in
+  both modes, so refusal boundaries do not depend on the mode; typed failures
+  (`isError: true`) and the status tool's recovery sentence are unchanged. The
+  default is not flipped because a host that hands only text content to its
+  model would silently lose the result; revisiting it is a compatibility
+  change for text-only hosts.
 - `ripr_list_gaps` accepts `offset` (default 0) and `limit` (minimum 1)
   over the narrowed (filtered) items in snapshot order. When the narrowed set
   would exceed the wire-calibrated tool-document ceiling (half the

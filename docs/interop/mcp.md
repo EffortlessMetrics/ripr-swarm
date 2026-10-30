@@ -357,6 +357,48 @@ id-aware response budget, the call fails closed with the typed
 `result_too_large` refusal and that tool's recovery route (#7768) instead
 of silently dropping `structuredContent`.
 
+### Text content mode (compatibility decision, #9360)
+
+`structuredContent` is the single complete result and is identical in every
+mode. The MCP specification asks a tool that returns structured content to
+also return its serialization as a text block so hosts without structured
+support keep working, and that is why the default doubles the payload.
+Hosts differ in which copy they hand to the model, and a host that feeds only
+text content to its model would silently lose the result if the text were a
+digest — a worse failure than duplicated tokens — so the lossless copy stays
+the default and the token saver is an explicit opt-in per server process:
+
+| `RIPR_MCP_TEXT_CONTENT` | `content[0].text` on a successful result |
+|---|---|
+| unset, `full`, or any unrecognized value | the compact JSON copy of the document (default) |
+| `summary` (ASCII case-insensitive) | a digest, not a copy |
+
+Set it in the host's server `env` (for example `"env": {"RIPR_MCP_TEXT_CONTENT":
+"summary"}` beside `command` and `args`) only for a host known to read
+`structuredContent`. The digest starts with a header naming the schema
+version, saying it is not a copy and pointing at `structuredContent` and at
+`RIPR_MCP_TEXT_CONTENT=full` for text-only hosts. It then has one line per
+top-level field: scalars verbatim (strings longer than 200 characters are
+clipped with a marker that points back to `structuredContent`), arrays as
+entry counts with the first five `canonical_id` values so a text-only agent can
+still call `ripr_get_gap`, and objects as their field names. It adds and
+rewords no fact. Measured over stdio on a real repository (wire bytes of
+the whole JSON-RPC line, default then `summary`): `ripr_get_gap` 19187 to 9864
+(about half), `ripr_workspace_status` 5475 to 3362, `ripr_list_gaps` (6 items)
+7237 to 5607, `ripr_refresh` 2365 to 1916. The saving is largest for
+single-item evidence documents and grows with document size; a list page keeps
+its leading identities in the digest. An
+unrecognized value keeps the lossless default so a typo never shrinks what a
+text-only host receives.
+
+The mode changes only the text companion. Size admission is measured on the
+complete double-carry envelope in both modes, so paging, `result_too_large`
+and every other refusal fire at the same boundary whichever mode is set. The
+typed-failure result (`isError: true`) and the extra recovery sentence the
+status tool adds for an unavailable root are unchanged. The default is
+revisited once a host's handling of `structuredContent` is observed rather
+than assumed; changing it is a compatibility change for text-only hosts.
+
 Single-item gap overflow uses one captured-input recovery across the raw
 document, tool envelope and resource envelope. Its CLI command retains the
 captured repository root, effective base and explicit `--committed` or
