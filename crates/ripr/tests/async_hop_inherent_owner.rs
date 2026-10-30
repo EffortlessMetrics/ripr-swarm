@@ -44,7 +44,7 @@ fn source(top: &str, tests: &str) -> String {
 
 const FUTURE_ONLY: &str = "        let pending = load(10);\n        assert_eq!(std::mem::size_of_val(&pending) > 0, true);";
 
-const SYNC_LEAF: &str = "fn fetch(qty: u32) -> bool {\n    Meter { limit: 10 }.over(qty)\n}\n";
+const SYNC_LEAF: &str = "fn load_item(qty: u32) -> bool {\n    Meter { limit: 10 }.over(qty)\n}\n";
 
 fn relation(top: &str, tests: &str) -> Result<Option<String>, String> {
     let finding = predicate_finding_of(&source(top, tests))?;
@@ -86,13 +86,13 @@ fn relation_of<'a>(finding: &'a Value, test: &str) -> Option<&'a str> {
 
 #[test]
 fn synchronous_helper_chain_keeps_helper_credit() -> Result<(), String> {
-    let direct = relation(SYNC_LEAF, "        assert_eq!(fetch(10), true);")?;
+    let direct = relation(SYNC_LEAF, "        assert_eq!(load_item(10), true);")?;
     assert_eq!(direct.as_deref(), Some("helper_owner_call"));
     // An `async fn` caller above the synchronous hop does not take the
     // credit away from a test that calls the synchronous hop itself.
     let below_async = relation(
-        &format!("{SYNC_LEAF}async fn load(qty: u32) -> bool {{\n    fetch(qty)\n}}\n"),
-        "        assert_eq!(fetch(10), true);",
+        &format!("{SYNC_LEAF}async fn load(qty: u32) -> bool {{\n    load_item(qty)\n}}\n"),
+        "        assert_eq!(load_item(10), true);",
     )?;
     assert_eq!(below_async.as_deref(), Some("helper_owner_call"));
     Ok(())
@@ -105,10 +105,11 @@ fn async_hops_above_inherent_owner_earn_no_helper_credit() -> Result<(), String>
     // construct or drop a future; none reaches the owner.
     let async_entry = "async fn load(qty: u32) -> bool {\n    Meter { limit: 10 }.over(qty)\n}\n";
     let async_over_sync =
-        format!("{SYNC_LEAF}async fn load(qty: u32) -> bool {{\n    fetch(qty)\n}}\n");
+        format!("{SYNC_LEAF}async fn load(qty: u32) -> bool {{\n    load_item(qty)\n}}\n");
     let sync_over_async = format!(
-        "{SYNC_LEAF}async fn load(qty: u32) -> bool {{\n    fetch(qty)\n}}\nfn read(qty: u32) -> bool {{\n    let _ = load(qty);\n    true\n}}\n"
+        "{SYNC_LEAF}async fn load(qty: u32) -> bool {{\n    load_item(qty)\n}}\nfn read(qty: u32) -> bool {{\n    let _ = load(qty);\n    true\n}}\n"
     );
+    let mut failing = Vec::new();
     for (case, top, tests) in [
         ("async entry", async_entry.to_string(), FUTURE_ONLY),
         ("async over sync", async_over_sync, FUTURE_ONLY),
@@ -119,7 +120,13 @@ fn async_hops_above_inherent_owner_earn_no_helper_credit() -> Result<(), String>
         ),
     ] {
         let relation = relation(&top, tests)?;
-        assert_ne!(relation.as_deref(), Some("helper_owner_call"), "{case}");
+        if relation.as_deref() == Some("helper_owner_call") {
+            failing.push(case);
+        }
     }
+    assert!(
+        failing.is_empty(),
+        "cases that earned helper_owner_call credit: {failing:?}"
+    );
     Ok(())
 }
