@@ -418,20 +418,37 @@ fn last_segment_name(self_ty: &str) -> &str {
 /// whose self type is std-headed or cannot be ruled out, or a macro that
 /// spells such an impl. A file that does not parse is treated as a match.
 fn source_may_implement_for_std(index: &RustIndex, trait_name: &str, head: &str) -> bool {
+    // This runs per resolved receiver of every related test, so keep it off
+    // the whole-workspace AST: only a file that spells the trait name can hold
+    // an impl or macro for it, and the declared-type set (every file) is built
+    // lazily, once, and only when such an impl needs it.
     let mut trees = Vec::new();
-    for (path, _) in index.files().iter() {
-        match index.source_syntax.get(index, path).and_then(|s| s.tree()) {
-            Some(tree) => trees.push(tree.syntax().clone()),
-            None => return true,
+    let mut mentioning = Vec::new();
+    for (path, file) in index.files().iter() {
+        let Some(tree) = index.source_syntax.get(index, path).and_then(|s| s.tree()) else {
+            return true;
+        };
+        let root = tree.syntax().clone();
+        if file.source.contains(trait_name) {
+            mentioning.push(root.clone());
         }
+        trees.push(root);
     }
-    let declared: std::collections::BTreeSet<String> = trees
-        .iter()
-        .flat_map(|root| root.descendants())
-        .filter_map(|node| ast::Adt::cast(node).and_then(|item| item.name()))
-        .map(|name| name.text().to_string())
-        .collect();
-    trees
+    let declared: std::cell::OnceCell<std::collections::BTreeSet<String>> =
+        std::cell::OnceCell::new();
+    let is_declared = |base: &str| {
+        declared
+            .get_or_init(|| {
+                trees
+                    .iter()
+                    .flat_map(|root| root.descendants())
+                    .filter_map(|node| ast::Adt::cast(node).and_then(|item| item.name()))
+                    .map(|name| name.text().to_string())
+                    .collect()
+            })
+            .contains(base)
+    };
+    mentioning
         .iter()
         .flat_map(|root| root.descendants())
         .any(|node| {
@@ -457,7 +474,7 @@ fn source_may_implement_for_std(index: &RustIndex, trait_name: &str, head: &str)
                 return base == head
                     || generic
                     || impl_self_reaches_std(text)
-                    || !declared.contains(base);
+                    || !is_declared(base);
             }
             // Tokens a macro expands into an impl are not parsed as an item.
             let macro_text = (ast::MacroRules::can_cast(node.kind())
