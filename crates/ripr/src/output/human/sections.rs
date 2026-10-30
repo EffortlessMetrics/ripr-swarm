@@ -751,7 +751,12 @@ pub(super) fn render_finding_with_shared_sections(
             out.push_str(&format!("  pytest node: {node_id}\n"));
         }
         if finding.language == Some(LanguageId::Python) {
-            if let Some(raw) = manual_python_raw(finding) {
+            if let Some(action) = rooted_pytest_action(finding, root) {
+                out.push_str(&format!(
+                    "  verify (Bash): {action} ({})\n",
+                    placement.verify_confidence
+                ));
+            } else if let Some(raw) = manual_python_raw(finding) {
                 out.push_str(&format!("  suggested command (unverified; inspect and run from the selected root): {raw}\n"));
             } else {
                 out.push_str("  verify: no verified command; select and run a project test from the selected root\n");

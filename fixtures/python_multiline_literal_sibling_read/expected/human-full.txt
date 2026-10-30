@@ -52,7 +52,7 @@ Repair placement
   suggested file: tests/test_labels.py
   suggested test: test_name_is_x
   pytest node: tests/test_labels.py::test_name_is_x
-  suggested command (unverified; inspect and run from the selected root): python -m pytest tests/test_labels.py::test_name_is_x
+  verify (Bash): (cd -P -- <cwd>/fixtures/python_multiline_literal_sibling_read/input && python -m pytest tests/test_labels.py::test_name_is_x) (high)
 Drill in:
   ripr explain --root <cwd>/fixtures/python_multiline_literal_sibling_read/input --diff <cwd>/fixtures/python_multiline_literal_sibling_read/diff.patch --mode fast probe:labels.py:python_preview:c4a51c9b
   ripr context --root <cwd>/fixtures/python_multiline_literal_sibling_read/input --diff <cwd>/fixtures/python_multiline_literal_sibling_read/diff.patch --mode fast --at probe:labels.py:python_preview:c4a51c9b
