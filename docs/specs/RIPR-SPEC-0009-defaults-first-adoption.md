@@ -729,6 +729,14 @@ with a real value from the developer's test before using it. Any other
 assertion text keeps its `assertion:` label and gets no note. The structured
 pilot packets keep their existing fields and values unchanged (#9244).
 
+The boundary placeholder describes the equality value the missing discriminator
+asks for (#11023): when the changed predicate is a simple strict comparison
+(`x > 5`, `count < limit`), the placeholder reads `boundary input where x == 5`,
+because an input where `x > 5` holds excludes the boundary beside it. A
+non-strict or compound predicate (`>=`, `<=`, `==`, `!=`, `a > b && c`) is
+spelled as written. This changes the placeholder text only, in every surface
+that prints it.
+
 ### Outcome is public CLI
 
 ```text
