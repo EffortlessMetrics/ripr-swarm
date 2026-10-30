@@ -924,6 +924,20 @@ identity agree and the analysis-outcome validator accepts the artifact.
 }
 ```
 
+`summary.changed_files_by_language` lists every language the diff touched
+(#10719): one entry per adapter that returned a result (its own count, which
+may be an honest zero and applies that adapter's generated/excluded-path
+filtering), plus one entry for each routed language whose adapter produced no
+count (not enabled, not compiled in, or errored). For the added entries the
+count is the raw path-routed changed-file count, so a consumer reading
+`summary` alone cannot see "no files changed" for a skipped TypeScript or
+Python diff. The two denominators differ: an adapter's count is the files it
+admitted, a routed-only count is every changed file routed to that language, and
+`analysis_outcome.outcome.counts.changed_file_count` is the outcome's own file
+count. `summary.changed_rust_files` stays Rust-adapter-only (#2103):
+preview-language files never inflate it, so it is `0` for a Python-only diff
+by design; read `changed_files_by_language` for other languages.
+
 `canonical_next_action` (additive, no `schema_version` bump, #7258) is the
 same DTO RepairCard and agent-status JSON already embed. Check JSON carries
 it only when the CLI render path has a declared diff provenance.
@@ -1978,8 +1992,11 @@ The evidence-first fields are additive in schema `0.2`:
       name that is not in the recognised matcher set (real oxc-parsed AST
       evidence).
     - `typescript_dynamic_assertion_unresolved` — fired (RIPR-SPEC-0085 §PR5)
-      when an oracle-eligible related test assertion has a non-literal dynamic
-      matcher argument (a variable, function call, or computed expression). The
+      when an oracle-eligible related test assertion in the changed seam's
+      oracle family (RIPR-SPEC-0104) has a non-literal dynamic matcher argument
+      (a variable, function call, or computed expression); a dynamic assertion
+      of another family (for example an error expectation on a value or
+      predicate seam) does not fire it. The
       real producer is `oracle.rs::extract_matcher_expected_value`, which sets
       `has_dynamic_matcher_arg = true` when the argument is not a resolvable
       literal. The limitation explains that the expected discriminator value
@@ -2204,7 +2221,9 @@ JSON fields:
     being observed by the assertion.
   - `typescript_oracle_expected: <value>` — additive; the matcher argument as
     source text, emitted ONLY when the argument is a concrete resolvable literal
-    (string, number, boolean, null, or a safe all-literal object). NOT emitted
+    (string, number, boolean, null, a safe all-literal object, or, for the
+    deep-equality matchers AVA `deepEqual` and Jest `toEqual` / `toStrictEqual`,
+    an all-literal array). NOT emitted
     for dynamic/non-literal arguments; those trigger
     `typescript_dynamic_assertion_unresolved` instead.
   - `typescript_oracle_confidence: <level>` — additive; confidence derived from
@@ -2992,7 +3011,7 @@ TypeScript/JavaScript preview findings carry a per-class constant `confidence`
 that is not on the same scale as Rust's. `confidence_basis` is a non-empty list
 of `{code, summary}` objects naming why the score is capped (codes:
 `preview_stages_not_modeled`, `syntax_first_no_type_resolution`,
-`no_related_test`, `oracle_below_strong`, `boundary_input_not_matched`,
+`infection_not_established`, `propagation_not_established`, `no_related_test`, `oracle_below_strong`, `boundary_input_not_matched`,
 `observation_not_confirmed`, `discriminator_not_established`), and
 `confidence_why_capped` is the one-line English form. Both are omitted for Rust
 findings and when empty. The same fields appear on `ripr context` packets and
@@ -3816,6 +3835,12 @@ is `"check_findings"` and `analysis.format` / `analysis.command` name
 replaced by the fixed placeholder. The analysis format is part of
 `analysis.input_identity`, so this artifact is never comparable to a
 repo-exposure artifact.
+
+Check-findings input identity v5 binds the analysis-time configuration, resolved
+enabled languages and unchanged-test setting, including CLI overrides. Earlier
+check-findings identities are rejected. Runs consuming a Perl facts packet
+cannot currently emit this artifact because the producer does not retain a
+commitment to the packet it consumed; other report formats remain available.
 
 `ripr agent verify` and `ripr agent receipt` accept it as a snapshot. It is
 validated by the same identity, commitment and Git-provenance authority as
@@ -18815,7 +18840,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.119",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.121",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. This is the existing
@@ -19583,7 +19608,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.119",
+      "schema_version": "1.121",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

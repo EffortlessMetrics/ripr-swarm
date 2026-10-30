@@ -105,15 +105,35 @@ all are required:
   `use std::fmt;` does not defeat the pin, because a test never calls `fmt` by
   that bare name.
 
-- Stimulus. The change must be to string-literal text only (the probe's before
-  and after differ only inside string literals). A literal fragment is written
-  whatever the test passes in, so an exact pin sees it. A changed argument
-  (`self.0 * 2`) can leave the output equal for the one value the test chose, so
-  it keeps its prior verdict.
+- Stimulus (#9836). The original lexical literal-edit boundary stays the
+  withholding ceiling for placeholder, argument and cancelling-fragment edits;
+  the syntax-backed reader can also admit a fixed-fragment edit the lexical
+  scanner mis-parsed (a quote-bearing character-literal argument), which keeps
+  its credit because an exact whole-output pin observes a real fixed-fragment
+  change. Ordinary string tokens must validate and decode. The template
+  retains identical ordered placeholder groups after Unicode/ASCII decoding;
+  doubled braces form fixed output; a brace may be the fill character before an
+  alignment marker. Groups and fixed fragments compare by their written source.
+  Exactly one fixed fragment differs and all other source tokens, including
+  arguments and placeholder groups, stay unchanged; re-spelling fixed text prints
+  the same output and keeps the pin (corpus row `idiom-display-string-pin`),
+  while re-spelling a placeholder is a group edit and withholds.
+  Cancelling edits across multiple fragments, argument-string edits
+  that precision can hide, malformed literals/groups and raw strings withhold
+  credit. Nested argument replacements in a width or precision (`{:{}}`,
+  `{:.{}}`) are valid format syntax this reader does not interpret: they
+  withhold credit as a named conservative gap, not as malformed input.
+  This is withhold-only and does not interpret the full format-specifier
+  grammar. Public API controls and the real-producer honesty fixture discriminate
+  the original placeholder false-credit case.
 
-A `format!` or `{}` side, a computed expected string, a weaker assertion such as
-`ends_with`, and `Debug` owners are not read here and keep their prior verdict.
-This credits only; it widens no actionability.
+A `format!` or `{}` side, a computed expected string and a weaker assertion
+such as `ends_with` gain no display-string pin support here. Unsafe edits in a
+Display write tail also cannot recover discriminator credit through generic
+token overlap, and no owner-pin route (helper-chain entry, field projection or
+fallible receipt) confirms such an edit without an admitted output pin. Existing assertion provenance stays intact: the missing evidence
+is observation of the changed output, not execution or macro binding. Debug
+owners retain their prior handling. No actionability widens.
 
 ### A helper whose one caller is a `fmt` (#8999)
 

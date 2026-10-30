@@ -443,9 +443,12 @@ This order is the existing behavior and is normative:
   binding the root, is spelled `pytest.mark.parametrize` or
   `mark.parametrize`. An import root counts only when the module binds it
   exactly once (that import) and the enclosing class body does not bind
-  it; a canonical spelling whose root is not pinned that way (another
-  library's `mark`, a rebound or class-local root) leaves every argname
-  unsettled. A bare decorator name (`@cases`), the mark's callee
+  it, and the module has no dynamic writer (`setattr`, `globals()`,
+  `patch`). A writer name that only appears in an `import` statement
+  (`from unittest.mock import patch`) is not a write; an aliased import, a
+  call or a decorator using it still is (#11102); a canonical spelling whose root is not pinned that way
+  (another library's `mark`, a rebound or class-local root) leaves every
+  argname unsettled. A bare decorator name (`@cases`), the mark's callee
   (`parametrize = pytest.mark.parametrize`), argnames and `indirect` may
   each be one module-scope `NAME = <value>` binding that nothing in the
   module rebinds, bound before the test and not shadowed by the enclosing
@@ -802,6 +805,21 @@ mutant calibrates the rule; ripr reports only the static shape.
     claim precise generator execution. Raw assertions and mock expectations
     keep their existing rules. Synchronous function-result helpers retain
     the ordinary substituted-assertion reading.
+    For helpers whose definition reads a parameter field, credit additionally
+    requires a direct field compared with a literal expected operand, retained
+    helper/class/module/receiver bindings, and an eager straight-line test body.
+    Defining-module attribute writes join caller rebinding facts, including the
+    original imported constructor name when the caller uses an import alias.
+    Copies or aliases used as expected values, replaced helpers or methods,
+    overwritten fields, deferred calls, definition-time calls and multiline
+    call-shaped literal text do not establish field-helper credit. Supported
+    field helpers use only changed-effect observation; a method-name token
+    cannot restore credit. The observed receiver's own call must precede its
+    helper call, including when several receivers or same-line statements exist.
+    A refused helper's origin survives the reported-oracle fallback; an unrelated
+    raw assertion retains its own origin. This bounded rule does not change the
+    existing generic parameter/result-helper interpretation or claim general
+    Python alias analysis or arbitrary helper execution.
 18. **A self-computed expected value does not credit.** Following
     RIPR-SPEC-0035, an assertion does not credit when every compared
     operand that names the owner is computed with a top-level

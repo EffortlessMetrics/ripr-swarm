@@ -89,39 +89,46 @@ pub(crate) fn render_markdown() -> String {
     text
 }
 
+/// One plain sentence per language for the default screen (#10696). The cell
+/// rows, state names and spec references stay in `--json` and `--markdown`,
+/// which are the machine and registry forms of the same table.
+fn plain_summary(language: LanguageId) -> &'static str {
+    match language {
+        LanguageId::Rust => {
+            "finds changed code your tests may not catch, from a diff or the whole repo, and can point at one focused test to add for each gap."
+        }
+        LanguageId::Python => {
+            "finds test gaps in changed code for pytest and unittest and points at where to add a test. It does not write tests."
+        }
+        LanguageId::TypeScript | LanguageId::JavaScript => {
+            "finds test gaps in changed code from the diff. Results are advisory, and it does not write tests."
+        }
+        LanguageId::Perl => {
+            "not supported yet: it needs a special ripr build and a Perl facts exporter, and default builds only report that Perl files changed."
+        }
+    }
+}
+
 pub(crate) fn render_human(language: Option<LanguageId>) -> String {
-    let mut out = String::from("ripr language capabilities (static registry)\n");
+    let mut out = String::from("ripr language support\n\n");
     for candidate in LanguageId::ALL {
         if language.is_some_and(|wanted| wanted != candidate) {
             continue;
         }
+        let build_note = if candidate.is_available() {
+            ""
+        } else {
+            "; not in this build"
+        };
         out.push_str(&format!(
-            "\n{} [{}; adapter {}]\n",
+            "{} ({}{build_note}): {}\n",
             candidate.display_name(),
             language_status(candidate),
-            if candidate.is_available() {
-                "compiled"
-            } else {
-                "not compiled"
-            }
+            plain_summary(candidate)
         ));
-        for cell in CAPABILITY_CELLS.iter().filter(|c| c.language == candidate) {
-            out.push_str(&format!(
-                "  {}/{}/{}: {} (ceiling {})\n",
-                cell.framework,
-                cell.mode.as_str(),
-                cell.family.as_str(),
-                cell.state.as_str(),
-                cell.tier_ceiling.as_str()
-            ));
-            if let Some(limit) = cell.limit {
-                out.push_str(&format!("      limit: {limit}\n"));
-            }
-            out.push_str(&format!("      proof: {}\n", cell.proof_refs.join(", ")));
-        }
     }
     out.push_str(
-        "\nStatic evidence only: no runtime mutation outcome and no sufficiency claim.\nA combination with no row is not_proven. Use --json for the machine form.\n",
+        "\nripr reads code; it does not run your tests, and a finding is not a measured result.\nFor every language, mode and limit, use --json (or --markdown for the support table).\n",
     );
     out
 }
@@ -178,18 +185,53 @@ mod tests {
     }
 
     #[test]
-    fn human_output_names_limits_and_the_absent_row_rule() {
-        let text = render_human(Some(LanguageId::TypeScript));
-        assert!(text.contains("supported_with_required_fallback"), "{text}");
-        assert!(text.contains("typescript_diff_first"), "{text}");
-        assert!(text.contains("proof: "), "{text}");
-        assert!(
-            CAPABILITY_CELLS
-                .iter()
-                .filter(|cell| cell.language == LanguageId::TypeScript)
-                .all(|cell| cell.proof_refs.iter().all(|spec| text.contains(spec))),
-            "{text}"
+    fn human_output_has_exactly_one_summary_line_per_language() {
+        let all = render_human(None);
+        for language in LanguageId::ALL {
+            let lines = all
+                .lines()
+                .filter(|line| line.starts_with(&format!("{} (", language.display_name())))
+                .count();
+            assert_eq!(lines, 1, "{language:?}: {all}");
+        }
+        let one = render_human(Some(LanguageId::Python));
+        assert_eq!(
+            one.lines()
+                .filter(|line| line.contains(" (preview"))
+                .count(),
+            1,
+            "{one}"
         );
-        assert!(text.contains("not_proven"), "{text}");
+    }
+
+    #[test]
+    fn human_output_is_one_plain_sentence_per_language_without_registry_tokens() {
+        let text = render_human(Some(LanguageId::TypeScript));
+        // Build-feature aware: an uncompiled adapter still gets its sentence,
+        // marked "not in this build".
+        let marker = if LanguageId::TypeScript.is_available() {
+            "TypeScript (preview): finds test gaps"
+        } else {
+            "TypeScript (preview; not in this build): finds test gaps"
+        };
+        assert!(text.contains(marker), "{text}");
+        assert!(!text.contains("Python"), "{text}");
+        let all = render_human(None);
+        for language in LanguageId::ALL {
+            assert!(all.contains(language.display_name()), "{language:?}: {all}");
+        }
+        for token in [
+            "RIPR-SPEC",
+            "not_proven",
+            "static_facts",
+            "repair_routing",
+            "supported_with_required_fallback",
+            "usable_alpha",
+            "typescript_diff_first",
+            "ceiling",
+        ] {
+            assert!(!all.contains(token), "{token}: {all}");
+        }
+        assert!(all.contains("--json"), "{all}");
     }
 }

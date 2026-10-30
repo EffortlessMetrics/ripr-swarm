@@ -132,6 +132,42 @@ fn store_serves_by_content_and_never_a_damaged_entry() -> Result<(), String> {
     cleanup.map_err(|err| err.to_string())
 }
 
+#[test]
+fn a_stored_envelope_keeps_the_loose_name_answer() -> Result<(), String> {
+    // The foreign index reads `loose_names` from served lexes instead of
+    // lexing the file again (#10914), so the answer must survive the disk
+    // round trip both ways: a non-ASCII name is loose, a non-ASCII string is
+    // not.
+    let root = unique_tempdir("loose-names")?;
+    let store = PythonFileFactStore::at(&root);
+    let checks = (|| -> Result<(), String> {
+        for (file, source, loose) in [
+            ("src/cafe.py", "caf\u{e9} = 1\n", true),
+            ("src/menu.py", "label = 'caf\u{e9}'\n", false),
+        ] {
+            let relative = Path::new(file);
+            let facts =
+                super::super::source_facts::extract_workspace_source_facts(relative, source);
+            let extracted = facts.foreign_lexes.as_ref().map(|lexes| lexes.loose_names);
+            assert_eq!(extracted, Some(loose), "{file}: extracted answer");
+            let key = PythonFileFactKey::new(relative, source, &root);
+            assert_eq!(store.store(&key, &facts), Ok(true), "{file}");
+            match store.load(&key) {
+                CacheLoad::Hit(served) => {
+                    let served_loose = served.foreign_lexes.as_ref().map(|lexes| lexes.loose_names);
+                    assert_eq!(served_loose, Some(loose), "{file}: served answer");
+                    assert_eq!(served, served_view(facts), "{file}");
+                }
+                _ => return Err(format!("{file}: a stored envelope is served")),
+            }
+        }
+        Ok(())
+    })();
+    let cleanup = std::fs::remove_dir_all(&root);
+    checks?;
+    cleanup.map_err(|err| err.to_string())
+}
+
 fn run_adapter(root: &Path) -> Result<LanguageDiffResult, String> {
     let options = AnalysisOptions {
         root: root.to_path_buf(),
