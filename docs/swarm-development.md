@@ -305,6 +305,11 @@ push alone is not readback. If any identity, path, mode, deletion or byte differ
 stop and investigate rather than applying a partial slice. If the branch moves,
 fetch and review the new exact commit; do not silently substitute its tip.
 
+A disposable Git regression for these readback semantics runs with
+`python3 -m unittest discover -s tests/git -p "test_*.py"`. It exercises a
+local carrier, including mismatch refusals; it does not verify a hosted transfer
+or establish review of a real slice.
+
 The assembler reconciles overlapping slices and both histories on the actual
 integration basis, records path dispositions in the existing resolution manifest,
 and runs combined-tree proof. It must not assume a slice commit's single parent
