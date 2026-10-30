@@ -1103,11 +1103,12 @@ const AGENT_VERIFY_COMMAND_TITLE: &str = "Verify after test: copy verify command
 const AGENT_RECEIPT_COMMAND_TITLE: &str = "Review result: copy receipt command";
 const AGENT_CARD_COMMAND_TITLE: &str = "Agent handoff: copy repair card";
 const COPY_STATIC_LIMIT_NOTE_TITLE: &str = "Inspect gap: copy static-limit note";
-const COPY_FIRST_REPAIR_PACKET_TITLE: &str = "Copy first repair packet";
+const COPY_FIRST_REPAIR_PACKET_TITLE: &str = "Copy repair instructions for an AI agent";
 const COPY_PYTHON_AGENT_PACKET_TITLE: &str = "Agent handoff: copy Python packet";
-const COPY_PYTHON_REPAIR_CARD_TITLE: &str = "Copy Python repair card";
+const COPY_PYTHON_REPAIR_CARD_TITLE: &str = "Copy Python repair instructions for an AI agent";
 const COPY_PYTHON_PYTEST_SKELETON_TITLE: &str = "Write Python test: copy pytest skeleton";
-const COPY_TYPESCRIPT_REPAIR_PACKET_TITLE: &str = "Copy TypeScript repair packet (advisory)";
+const COPY_TYPESCRIPT_REPAIR_PACKET_TITLE: &str =
+    "Copy TypeScript repair instructions for an AI agent (advisory)";
 const REFRESH_ANALYSIS_TITLE: &str = "Refresh Analysis - Saved Workspace Check";
 
 fn copy_agent_loop_command_action(
@@ -1663,7 +1664,7 @@ fn python_pytest_skeleton_target(snapshot: &AnalysisSnapshot, data: &Value) -> O
     }))
 }
 
-/// Build the LSP action target for "Copy TypeScript repair packet (advisory)"
+/// Build the LSP action target for "Copy TypeScript repair instructions for an AI agent (advisory)"
 /// (RIPR-SPEC-0088 §PR8). Returns `None` unless:
 /// - `data.preview_actionability.repair_packet_ready == true`
 /// - `data.language == "typescript"` (or javascript)
