@@ -47,9 +47,10 @@ suite('Document selector workspace-root glob escaping', () => {
       assert.match(root, /^[a-z]:[\\/]/i, 'test requires a drive-letter temporary directory');
       const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(file));
       const siblingDoc = await vscode.workspace.openTextDocument(vscode.Uri.file(other));
-      const scores = ['upper', 'lower'].map((spelling) => {
+      const scores = ['upper', 'lower', 'uri'].map((spelling) => {
         const drive = spelling === 'upper' ? root[0].toUpperCase() : root[0].toLowerCase();
-        const selector = riprDocumentSelectorsForWorkspace(drive + root.slice(1))
+        const selectorRoot = spelling === 'uri' ? vscode.Uri.file(root).fsPath : drive + root.slice(1);
+        const selector = riprDocumentSelectorsForWorkspace(selectorRoot)
           .find((candidate) => candidate.language === 'rust');
         assert.ok(selector, 'rust selector present');
         return { spelling, own: vscode.languages.match(selector, doc) > 0,
@@ -57,7 +58,8 @@ suite('Document selector workspace-root glob escaping', () => {
       });
       const expected = [
         { spelling: 'upper', own: true, sibling: false },
-        { spelling: 'lower', own: true, sibling: false }
+        { spelling: 'lower', own: true, sibling: false },
+        { spelling: 'uri', own: true, sibling: false }
       ];
       const selected = process.env.RIPR_GLOB_PROBE_ROW;
       if (selected) {
@@ -65,8 +67,8 @@ suite('Document selector workspace-root glob escaping', () => {
           fs.writeFileSync(process.env.RIPR_GLOB_PROBE_RESULT, JSON.stringify({ version: vscode.version, scores }));
         }
         const [spelling, field] = selected.split(':');
-        assert.ok((spelling === 'upper' || spelling === 'lower') && (field === 'own' || field === 'sibling'));
-        const index = spelling === 'upper' ? 0 : 1;
+        assert.ok((spelling === 'upper' || spelling === 'lower' || spelling === 'uri') && (field === 'own' || field === 'sibling'));
+        const index = spelling === 'upper' ? 0 : spelling === 'lower' ? 1 : 2;
         assert.strictEqual(scores[index][field as 'own' | 'sibling'], expected[index][field as 'own' | 'sibling']);
       } else {
         assert.deepStrictEqual(scores, expected);

@@ -11,7 +11,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        row: ['upper:own', 'upper:sibling', 'lower:own', 'lower:sibling']
+        row: ['uri:own', 'uri:sibling']
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
@@ -44,7 +44,7 @@ jobs:
         run: |
           if (-not (Test-Path (Join-Path $env:RUNNER_TEMP 'selector-result.json'))) { throw 'selector result absent' }
           $result = Get-Content (Join-Path $env:RUNNER_TEMP 'selector-result.json') -Raw | ConvertFrom-Json
-          if ($result.version -ne '1.91.0' -or $result.scores.Count -ne 2) { throw 'unexpected VS Code version or result shape' }
+          if ($result.version -ne '1.91.0' -or $result.scores.Count -ne 3) { throw 'unexpected VS Code version or result shape' }
       - name: Verify selected assertion row
         shell: pwsh
         env:
