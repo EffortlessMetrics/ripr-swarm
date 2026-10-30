@@ -454,3 +454,64 @@ fn whole_repository_refusals_name_the_seam_each_reason_is_about() -> Result<(), 
     );
     Ok(())
 }
+
+const ERR_OLD: &str = "#[derive(Debug, PartialEq)]\npub enum E {\n    Neg,\n    Bad,\n}\n\npub fn fail(x: i32) -> Result<i32, E> {\n    return Err(E::Neg);\n}\n";
+const ERR_NEW: &str = "#[derive(Debug, PartialEq)]\npub enum E {\n    Neg,\n    Bad,\n}\n\npub fn fail(x: i32) -> Result<i32, E> {\n    return Err(E::Bad);\n}\n";
+
+/// A changed `return Err(E::Bad)` whose test pins exactly `E::Bad`: the
+/// error-variant seam is strongly gripped and check reads the change as
+/// exposed, so repair must grade the return-value seam over the same
+/// expression as gripped too, not as "missing evidence" (#11111,
+/// error-variant-strong).
+#[test]
+fn exact_err_variant_pin_grips_the_return_value_seam_for_check_and_repair() -> Result<(), String> {
+    let repo = Repo::create(
+        ERR_OLD,
+        ERR_NEW,
+        "use ar::{fail, E};\n\n#[test]\nfn fails_bad() {\n    assert!(matches!(fail(1), Err(E::Bad)));\n}\n",
+    )?;
+    let check = repo.ripr(&["check", "--base", "HEAD~1"])?;
+    assert!(
+        check.contains("Static exposure: exposed")
+            && check.contains("no repair start offered: nothing to repair here"),
+        "precondition, check reads the change as exposed:\n{check}"
+    );
+    let (code, repair) = repo.ripr_status(&["repair", "--root", "."])?;
+    assert_eq!(
+        code,
+        Some(3),
+        "repair must not start on a change check reads as exposed:\n{repair}"
+    );
+    assert!(
+        repair.contains(
+            "seam src/lib.rs:8 `return Err(E::Bad)`: its existing tests already grip it (exposed)"
+        ) && !repair.contains("missing evidence")
+            && !repair.contains("repair_ready=true"),
+        "repair must agree that no gap remains on the return-value seam:\n{repair}"
+    );
+    Ok(())
+}
+
+/// Discriminating negative: a pin on the sibling variant does not grip the
+/// changed `Err(E::Bad)`, so the return-value seam keeps its missing-evidence
+/// refusal exactly as before and no start is added.
+#[test]
+fn sibling_err_variant_pin_leaves_the_return_value_seam_weak() -> Result<(), String> {
+    let repo = Repo::create(
+        ERR_OLD,
+        ERR_NEW,
+        "use ar::{fail, E};\n\n#[test]\nfn fails_neg() {\n    assert!(matches!(fail(1), Err(E::Neg)));\n}\n",
+    )?;
+    let (_, repair) = repo.ripr_status(&["repair", "--root", "."])?;
+    assert!(
+        repair.contains(
+            "seam src/lib.rs:8 `return Err(E::Bad)`: repair route not ready (missing evidence: a test assertion that checks the changed return value)"
+        ),
+        "a sibling-variant pin must not grip the changed return value:\n{repair}"
+    );
+    assert!(
+        !repair.contains("repair_ready=true"),
+        "no start is added:\n{repair}"
+    );
+    Ok(())
+}
