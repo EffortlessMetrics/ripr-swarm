@@ -30,7 +30,7 @@ use crate::analysis::rust_index::{FunctionSummary, RustIndex, TestSummary};
 use crate::domain::{Probe, RelationReason};
 use ra_ap_syntax::{
     AstNode, SyntaxNode,
-    ast::{self},
+    ast::{self, HasName},
 };
 use std::cell::OnceCell;
 use std::collections::BTreeSet;
@@ -101,6 +101,12 @@ pub(in crate::analysis) fn related_through_polled_hops<'a>(
         dependency_edges,
         candidate_index,
     );
+    let Some(owner) = owner_fn else {
+        return PolledHops {
+            related,
+            chain: base,
+        };
+    };
     let oracle = PollOracle {
         index,
         syntax: candidate_index.owner_pin_syntax(),
@@ -116,7 +122,7 @@ pub(in crate::analysis) fn related_through_polled_hops<'a>(
         {
             continue;
         }
-        let Some(entry) = polled_entry(full, cut, test, &oracle) else {
+        let Some(entry) = polled_entry(full, cut, owner, test, &oracle) else {
             continue;
         };
         top = top.max(Some(entry));
@@ -166,6 +172,7 @@ impl PollOracle<'_> {
 fn polled_entry(
     chain: &HelperChain,
     cut: usize,
+    owner: &FunctionSummary,
     test: &TestSummary,
     oracle: &PollOracle<'_>,
 ) -> Option<usize> {
@@ -179,12 +186,26 @@ fn polled_entry(
             Sites::Unpolled => return None,
             Sites::Polled => {}
         }
-        if !hops_below_poll_their_callees(chain, cut, at, oracle.index) {
+        if !owner_call_is_driven(chain, owner, oracle.index)
+            || !hops_below_poll_their_callees(chain, cut, at, oracle.index)
+        {
             return None;
         }
         entry = Some(at);
     }
     entry
+}
+
+/// An `async fn` owner is a future too: the lowest hop must drive its call
+/// into the owner, or the owner body never runs. A declaration that cannot be
+/// read fails closed like an `async` one. A synchronous owner needs nothing.
+fn owner_call_is_driven(chain: &HelperChain, owner: &FunctionSummary, index: &RustIndex) -> bool {
+    match function_declaration_is_async(owner, index) {
+        Some(false) => true,
+        Some(true) | None => chain.hops.first().is_some_and(|lowest| {
+            hop_call_sites(&lowest.caller, &owner.name, index) == Sites::Polled
+        }),
+    }
 }
 
 /// Every async hop from the first non-synchronous one up to the entry has its
@@ -286,6 +307,21 @@ fn hop_call_sites(caller: &FunctionSummary, callee: &str, index: &RustIndex) -> 
     else {
         return Sites::Unpolled;
     };
+    // A local binding, closure parameter or nested `fn` with the callee's name
+    // can be what the call resolves to; the hop-side scan matches by name, so
+    // any such binding refuses (fail closed).
+    let rebinds_callee = function.syntax().descendants().any(|node| {
+        ast::IdentPat::cast(node.clone())
+            .and_then(|pat| pat.name())
+            .is_some_and(|name| name.text() == callee)
+            || ast::Fn::cast(node.clone()).is_some_and(|item| {
+                item.syntax() != function.syntax()
+                    && item.name().is_some_and(|name| name.text() == callee)
+            })
+    });
+    if rebinds_callee {
+        return Sites::Unpolled;
+    }
     // A synchronous caller cannot `.await`, and ripr verifies no polling
     // helper from a production body.
     scan(function.syntax(), callee, &|_| false, &mut |_| Vec::new())

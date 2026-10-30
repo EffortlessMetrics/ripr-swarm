@@ -439,3 +439,74 @@ fn awaiting_a_synchronous_hop_below_an_async_entry_keeps_its_own_credit() -> Res
     );
     Ok(())
 }
+
+const ASYNC_INHERENT_OWNER: &str = "pub struct Meter {\n    limit: u32,\n}\nimpl Meter {\n    async fn over(&self, qty: u32) -> bool {\n        qty >= self.limit\n    }\n}\n";
+const ASYNC_FREE_OWNER: &str = "pub struct Meter {\n    limit: u32,\n}\nimpl Meter {}\nasync fn over(qty: u32) -> bool {\n    qty >= 10\n}\n// free owner above\n";
+
+fn async_owner_relations(
+    inherent_hop: &str,
+    free_hop: &str,
+    tests: &str,
+) -> Result<(Option<String>, Option<String>), String> {
+    let inherent = predicate_finding_of(
+        &source_in(
+            ASYNC_INHERENT_OWNER,
+            inherent_hop,
+            tests,
+            Harness::AsyncTest,
+        ),
+        DIFF,
+    )?;
+    let free = predicate_finding_of(
+        &source_in(ASYNC_FREE_OWNER, free_hop, tests, Harness::AsyncTest),
+        FREE_DIFF,
+    )?;
+    Ok((
+        relation_of(&inherent, "subject").map(str::to_string),
+        relation_of(&free, "subject").map(str::to_string),
+    ))
+}
+
+#[test]
+fn an_async_owner_future_must_be_driven_by_the_lowest_hop() -> Result<(), String> {
+    let test = "        assert_eq!(load(10).await, true);";
+    // The hop awaits the owner's future: credited.
+    let got = async_owner_relations(
+        "async fn load(qty: u32) -> bool {\n    Meter { limit: 10 }.over(qty).await\n}\n",
+        "async fn load(qty: u32) -> bool {\n    over(qty).await\n}\n",
+        test,
+    )?;
+    assert_both("owner future awaited", got, "helper_owner_call");
+    // The test polls `load`, but `load` builds the owner's future and drops it.
+    for (case, inherent, free) in [
+        (
+            "owner future discarded as a statement",
+            "async fn load(qty: u32) -> bool {\n    Meter { limit: 10 }.over(qty);\n    true\n}\n",
+            "async fn load(qty: u32) -> bool {\n    over(qty);\n    true\n}\n",
+        ),
+        (
+            "owner future bound to the wildcard",
+            "async fn load(qty: u32) -> bool {\n    let _ = Meter { limit: 10 }.over(qty);\n    true\n}\n",
+            "async fn load(qty: u32) -> bool {\n    let _ = over(qty);\n    true\n}\n",
+        ),
+    ] {
+        let got = async_owner_relations(inherent, free, test)?;
+        assert_both(case, got, "same_test_file");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_hop_local_binding_named_like_the_callee_is_not_the_hop() -> Result<(), String> {
+    let test = "        assert_eq!(load(10).await, true);";
+    // `inner` is a closure the entry binds and awaits; the real `inner` (which
+    // reaches the owner) is never polled.
+    let got = both_owner_kinds(
+        "async fn inner(qty: u32) -> bool {\n    Meter { limit: 10 }.over(qty)\n}\nasync fn load(qty: u32) -> bool {\n    let inner = |_qty: u32| async { true };\n    inner(qty).await\n}\n",
+        "async fn inner(qty: u32) -> bool {\n    over(qty)\n}\nasync fn load(qty: u32) -> bool {\n    let inner = |_qty: u32| async { true };\n    inner(qty).await\n}\n",
+        test,
+        Harness::AsyncTest,
+    )?;
+    assert_both("shadowing closure binding", got, "same_test_file");
+    Ok(())
+}
