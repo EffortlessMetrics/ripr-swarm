@@ -2810,15 +2810,43 @@ fn gap_record_diagnostic_message(record: &GapRecord) -> String {
 }
 
 /// `MissingBoundaryAssertion` -> `Missing boundary assertion`: split a
-/// CamelCase identifier into a sentence-case phrase. A value without an
-/// uppercase boundary comes back unchanged apart from its first letter.
+/// CamelCase identifier into a sentence-case phrase. An acronym run stays
+/// together (`HTTPError` -> `HTTP error`), `_` reads as a space, and digits
+/// stay attached to their word. Anything that is not a plain identifier (a
+/// path, `Type::Variant`, free text) comes back unchanged so it is never
+/// mangled.
 pub(super) fn camel_case_words(identifier: &str) -> String {
-    let mut words = String::with_capacity(identifier.len());
-    for (index, ch) in identifier.chars().enumerate() {
-        if index == 0 {
-            words.extend(ch.to_uppercase());
-        } else if ch.is_uppercase() {
+    if identifier.is_empty()
+        || !identifier
+            .chars()
+            .all(|ch| ch.is_alphanumeric() || ch == '_')
+    {
+        return identifier.to_string();
+    }
+    let chars = identifier.chars().collect::<Vec<_>>();
+    let mut words = String::with_capacity(identifier.len() + 4);
+    for (index, &ch) in chars.iter().enumerate() {
+        if ch == '_' {
+            if !words.ends_with(' ') && !words.is_empty() {
+                words.push(' ');
+            }
+            continue;
+        }
+        let prev = index.checked_sub(1).map(|at| chars[at]);
+        let next = chars.get(index + 1).copied();
+        let starts_word = ch.is_uppercase()
+            && prev.is_some_and(|prev| {
+                prev != '_'
+                    && (prev.is_lowercase()
+                        || prev.is_ascii_digit()
+                        || (prev.is_uppercase() && next.is_some_and(char::is_lowercase)))
+            });
+        if starts_word && !words.ends_with(' ') {
             words.push(' ');
+        }
+        if words.is_empty() {
+            words.extend(ch.to_uppercase());
+        } else if starts_word && !next.is_some_and(char::is_uppercase) {
             words.extend(ch.to_lowercase());
         } else {
             words.push(ch);
@@ -7007,5 +7035,30 @@ mod delivery_tests {
             "gap_ledger": root.join("target/ripr/reports/gap.json"),
         }));
         Ok(diagnostic)
+    }
+}
+
+#[cfg(test)]
+mod camel_case_words_tests {
+    use super::camel_case_words;
+
+    /// #10695: spoken gap/route names keep acronyms and digits intact and
+    /// never mangle values that are not plain identifiers.
+    #[test]
+    fn handles_acronyms_digits_and_non_identifiers() {
+        for (input, want) in [
+            ("MissingBoundaryAssertion", "Missing boundary assertion"),
+            ("AddBoundaryAssertion", "Add boundary assertion"),
+            ("HTTPError", "HTTP error"),
+            ("ParseJSONBody", "Parse JSON body"),
+            ("Add2Assertion", "Add2 assertion"),
+            ("missing_value_assertion", "Missing value assertion"),
+            ("Unknown", "Unknown"),
+            ("PricingError::Boundary", "PricingError::Boundary"),
+            ("tests/pricing.rs", "tests/pricing.rs"),
+            ("", ""),
+        ] {
+            assert_eq!(camel_case_words(input), want, "input {input:?}");
+        }
     }
 }

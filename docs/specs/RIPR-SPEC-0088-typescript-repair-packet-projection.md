@@ -202,7 +202,7 @@ When `preview_actionability.repair_packet_ready == true`, the hover adds a
 `## Repair packet` section:
 
 ```markdown
-## Repair packet (TypeScript preview, advisory)
+## Repair instructions (TypeScript preview, advisory)
 Verify: `<verify_command>`
 Receipt: `<receipt_command>`
 Edit surface: `<test_file>`
@@ -234,7 +234,7 @@ separate projection step. This is additive — the field already exists in
   verify, receipt, edit surface, must_not_change, canonical_gap_id, and authority.
 - At least one non-actionable golden (human.txt) with the named limitation section
   (`status: not actionable`, `limitation:`, `next capability needed:`).
-- LSP hover integration evidence: `## Repair packet (TypeScript preview, advisory)`
+- LSP hover integration evidence: `## Repair instructions (TypeScript preview, advisory)`
   section visible when `repair_packet_ready: true`.
 - LSP code-action evidence: "Copy TypeScript repair instructions for an AI agent (advisory)" action present
   when `repair_packet_ready: true`.
