@@ -326,3 +326,27 @@ fn the_tool_library_in_the_workspace_is_not_a_patch() -> Result<(), String> {
     assert_eq!(finding.static_limit_kind, None, "{:?}", finding.evidence);
     Ok(())
 }
+
+#[test]
+fn stored_class_writes_keep_only_inert_tool_names_once() {
+    // Every file's facts are persisted and decoded on each warm run, so the
+    // stored list holds only the names `inert_tool` can be, each once.
+    let patched = "from click.testing import CliRunner\nimport helpers\n\nCliRunner.invoke = helpers.fake\nsetattr(CliRunner, \"invoke\", helpers.fake)\nother = helpers.value + 1\n";
+    let facts = source_facts::extract_source_facts(Path::new("tests/conftest.py"), patched);
+    assert_eq!(
+        facts.fixture_side_effects.class_writes,
+        vec!["CliRunner".to_string()]
+    );
+
+    let quoted = "target = \"click.testing.CliRunner.invoke\"\n";
+    let facts = source_facts::extract_source_facts(Path::new("tests/conftest.py"), quoted);
+    assert_eq!(
+        facts.fixture_side_effects.class_writes,
+        vec!["CliRunner".to_string()]
+    );
+
+    let constructs_only =
+        "from click.testing import CliRunner\n\nrunner = CliRunner()\nvalue = runner.invoke\n";
+    let facts = source_facts::extract_source_facts(Path::new("tests/conftest.py"), constructs_only);
+    assert!(facts.fixture_side_effects.class_writes.is_empty());
+}

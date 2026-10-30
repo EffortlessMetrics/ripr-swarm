@@ -2,6 +2,7 @@ mod candidate_relation;
 mod causal_delta;
 mod classification;
 mod command_spec;
+mod confidence_basis;
 #[doc(hidden)]
 pub mod context_packet;
 mod diagnostic_witness;
@@ -52,6 +53,8 @@ pub use command_spec::{
     actionable_verify_source_is_supported,
     verify_command_is_unbounded_repo_exposure_snapshot_compare,
 };
+pub use confidence_basis::ConfidenceCap;
+pub(crate) use confidence_basis::{ConfidenceBasisEntry, basis_entries, why_capped_line};
 pub use diagnostic_witness::{
     DiagnosticConfidence, DiagnosticFixSite, DiagnosticSourceLocation, DiagnosticWitness,
     DiagnosticWitnessLimitation,

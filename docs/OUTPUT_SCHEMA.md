@@ -213,8 +213,12 @@ projection is `ripr agent card --seam-id ID [--json]` (RIPR-SPEC-0194,
 #4667): the compact card is the default agent handoff, the complete packet
 stays behind the card's explicit detail route, and the LSP seam handoff code
 action emits the same card while the seam hover shows a bounded summary of it
-(RIPR-SPEC-0198, #4668); no MCP projection emits the card yet. Measured
-field/budget ratification landed in #4669.
+(RIPR-SPEC-0198, #4668). MCP also projects it through
+`ripr_get_repair_card` and `ripr://repair-card/{canonical_id}` for an eligible
+item in its committed snapshot (RIPR-SPEC-0215, #4668); the read is subject to
+the MCP snapshot and refusal contracts; worktree snapshots do not expose repair
+cards. Measured field/budget ratification in
+#4669 is limited to the synthetic scope described below.
 
 Detail references and overflow disclosure (RIPR-SPEC-0193, #4666) keep the
 default card finite: nine load-bearing evidence families — the full fix
@@ -232,8 +236,9 @@ Stale, malformed, wrong-root, missing and unavailable evidence states stay
 visible on the references; the card never upgrades them and never lets
 budgeting change readiness, target selection or actionability. The
 item/byte budget (`repair-card-budget-v1`: 16 detail items, 64 KiB wire
-card, 4 KiB per compact inline field) is provisional but versioned; #4669
-ratifies the numbers. The budget-version constant lives in
+card, 4 KiB per compact inline field) is versioned; #4669 ratified the defaults
+for four synthetic profiles only, with real-attempt usability still pending.
+The budget-version constant lives in
 `crates/ripr/src/domain/repair_card.rs` and is pinned by unit tests and
 `cargo xtask check-output-contracts`.
 
@@ -918,6 +923,20 @@ identity agree and the analysis-outcome validator accepts the artifact.
   }
 }
 ```
+
+`summary.changed_files_by_language` lists every language the diff touched
+(#10719): one entry per adapter that returned a result (its own count, which
+may be an honest zero and applies that adapter's generated/excluded-path
+filtering), plus one entry for each routed language whose adapter produced no
+count (not enabled, not compiled in, or errored). For the added entries the
+count is the raw path-routed changed-file count, so a consumer reading
+`summary` alone cannot see "no files changed" for a skipped TypeScript or
+Python diff. The two denominators differ: an adapter's count is the files it
+admitted, a routed-only count is every changed file routed to that language, and
+`analysis_outcome.outcome.counts.changed_file_count` is the outcome's own file
+count. `summary.changed_rust_files` stays Rust-adapter-only (#2103):
+preview-language files never inflate it, so it is `0` for a Python-only diff
+by design; read `changed_files_by_language` for other languages.
 
 `canonical_next_action` (additive, no `schema_version` bump, #7258) is the
 same DTO RepairCard and agent-status JSON already embed. Check JSON carries
@@ -2085,6 +2104,12 @@ JSON fields:
 - `status` is `advisory` when the supplied check output parsed, even when no
   TypeScript-family limitation signals were found. It is `blocked` when the
   artifact is missing, unreadable, malformed, or lacks a `findings` array.
+- A findings-bounded input retains `advisory` status but adds a warning in both
+  JSON and Markdown: the leaderboard is incomplete, its counts cover only the
+  supplied findings, and omitted findings may change counts and rankings.
+  Re-run `ripr check` with `RIPR_CHECK_FINDINGS_BYTES=0` and regenerate the
+  report. Both the legacy `limited_findings_bound` run limitation and the
+  `analysis_outcome.document_complete` disclosure are recognized.
 - `limitations[].kind` is counted once per finding per kind. Duplicate evidence
   lines in the same finding do not inflate counts.
 - `sources[]` names where the limitation signal came from:
@@ -2972,6 +2997,22 @@ human formats render from the same full `CheckOutput` through their own
 existing bounds; per-finding caps (`related_tests`, `observed_values`) are
 unchanged and compose underneath (the budget counts already-capped payloads).
 
+### `confidence_basis` and `confidence_why_capped` (additive, preview findings, #10700)
+
+The fields are reserved by the shared `Finding.confidence_basis` shape and are
+not populated by any adapter until the TypeScript/JavaScript classifier lands
+(#10700 part 2); until then no output carries them. Once populated,
+TypeScript/JavaScript preview findings carry a per-class constant `confidence`
+that is not on the same scale as Rust's. `confidence_basis` is a non-empty list
+of `{code, summary}` objects naming why the score is capped (codes:
+`preview_stages_not_modeled`, `syntax_first_no_type_resolution`,
+`no_related_test`, `oracle_below_strong`, `boundary_input_not_matched`,
+`observation_not_confirmed`, `discriminator_not_established`), and
+`confidence_why_capped` is the one-line English form. Both are omitted for Rust
+findings and when empty. The same fields appear on `ripr context` packets and
+in `ripr check` / `ripr explain` text as a `Why capped:` line. They explain the
+number only and never change classification or actionability.
+
 ## Enums
 
 `classification` values:
@@ -3789,6 +3830,12 @@ is `"check_findings"` and `analysis.format` / `analysis.command` name
 replaced by the fixed placeholder. The analysis format is part of
 `analysis.input_identity`, so this artifact is never comparable to a
 repo-exposure artifact.
+
+Check-findings input identity v5 binds the analysis-time configuration, resolved
+enabled languages and unchanged-test setting, including CLI overrides. Earlier
+check-findings identities are rejected. Runs consuming a Perl facts packet
+cannot currently emit this artifact because the producer does not retain a
+commitment to the packet it consumed; other report formats remain available.
 
 `ripr agent verify` and `ripr agent receipt` accept it as a snapshot. It is
 validated by the same identity, commitment and Git-provenance authority as
@@ -17573,7 +17620,7 @@ ids: an option token (`--config`, `-p`), an absolute or home path (`/`, `C:`,
 `~`) or a `..` path is refused. Both expose
 verify and receipt copy actions when those commands are safe, expose `Agent handoff: copy Python
 packet` to copy the same GapRecord-backed agent packet as `ripr agent packet
---gap-ledger ... --gap-id ...`, expose `Copy Python repair card` to copy a
+--gap-ledger ... --gap-id ...`, expose `Copy Python repair instructions for an AI agent` to copy a
 current validated GapRecord repair-card brief for safe target-file routes through
 `ripr.copyTargetedTestBrief`, can open `repair_route.target_file` when
 `related_test` is a bare test name, and expose `Write Python test: copy pytest
@@ -18788,7 +18835,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.119",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.120",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. This is the existing
@@ -19556,7 +19603,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.119",
+      "schema_version": "1.120",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

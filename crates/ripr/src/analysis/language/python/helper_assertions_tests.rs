@@ -361,6 +361,98 @@ fn given_a_function_result_helper_when_substituted_then_normal_owner_credit_is_p
     Ok(())
 }
 
+#[test]
+fn helper_executable_replacement_in_its_defining_module_refuses_credit() -> Result<(), String> {
+    for replacement in [
+        "check_writes.__code__ = ignore.__code__",
+        "alias = check_writes\nalias.__code__ = ignore.__code__",
+        "check_writes.__globals__['check_writes'] = ignore",
+        "setattr(check_writes, '__code__', ignore.__code__)",
+    ] {
+        let helper = format!("{FIELD_HELPER}\ndef ignore(obj, want):\n    pass\n\n{replacement}\n");
+        let source = field_test_source(
+            "from tests.helpers import check_writes\n",
+            "stats.record_write()\n    check_writes(stats, 0)",
+        );
+        let test = resolved(&source, &helper);
+        let assertion = only_assertion(&test)?;
+        assert_eq!(
+            assertion.helper_origin,
+            PythonHelperOrigin::FieldHelperRefused,
+            "{replacement}"
+        );
+        assert_eq!(
+            classified_helper_field(FIELD_OWNER, &source, &helper)?.class,
+            crate::domain::ExposureClass::WeaklyExposed,
+            "{replacement}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn helper_value_annotations_preserve_the_existing_result_route() -> Result<(), String> {
+    let helper =
+        "def check_equal(actual: int, expected: int) -> None:\n    assert actual == expected\n";
+    let test = resolved(&test_source("check_equal(sq(3), 9)"), helper);
+    assert_eq!(
+        only_assertion(&test)?.helper_origin,
+        PythonHelperOrigin::ValueHelper
+    );
+    Ok(())
+}
+
+#[test]
+fn field_helpers_retain_method_and_constructor_identity_from_their_defining_module()
+-> Result<(), String> {
+    for (prefix, imports, callee) in [
+        (
+            "from src.stats import Stats\ndef ignore(self):\n    pass\nStats.record_write = ignore\n",
+            "from src.stats import Stats\n",
+            "Stats",
+        ),
+        (
+            "import src.stats as mod\nclass Other:\n    writes = 0\n    def record_write(self):\n        pass\nmod.Stats = Other\n",
+            "from src.stats import Stats\n",
+            "Stats",
+        ),
+        (
+            "import src.stats as mod\nclass Other:\n    writes = 0\n    def record_write(self):\n        pass\nmod.Stats = Other\n",
+            "from src.stats import Stats as Counter\n",
+            "Counter",
+        ),
+    ] {
+        let helper = format!("{prefix}\n{FIELD_HELPER}");
+        let source = format!(
+            "from tests.helpers import check_writes\n{imports}\ndef test_writes():\n    stats = {callee}()\n    stats.record_write()\n    check_writes(stats, 0)\n"
+        );
+        assert_eq!(
+            classified_helper_field(FIELD_OWNER, &source, &helper)?.class,
+            crate::domain::ExposureClass::WeaklyExposed,
+            "{helper}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn unrelated_module_introspection_keeps_value_helper_credit() -> Result<(), String> {
+    let helper = format!("{EQ_HELPER}\ndef inspect_code(fn):\n    return fn.__code__\n");
+    let test = resolved(&test_source("check_equal(sq(3), 9)"), &helper);
+    let facts = extract_source_facts(Path::new("pkg/sq.py"), "def sq(x):\n    return x * x\n");
+    let finding = super::classify::classify_change_with_old(
+        Path::new("pkg/sq.py"),
+        2,
+        "    return x * x",
+        Some("    return x + x"),
+        &facts.owners,
+        &[test],
+    )
+    .ok_or("expected changed result")?;
+    assert_eq!(finding.class, crate::domain::ExposureClass::Exposed);
+    Ok(())
+}
+
 // RIPR-SPEC-0238 rule 27: `wrapper(lambda: helper(...))` reads as the helper
 // call only when the wrapper is a test-module def that re-raises.
 
@@ -376,7 +468,7 @@ fn wrapped_source(wrapper: &str, call: &str) -> String {
 fn helper_reading(test: &PythonTest) -> Option<&PythonAssertion> {
     test.assertions
         .iter()
-        .find(|assertion| assertion.helper_derived)
+        .find(|assertion| assertion.helper_origin.is_helper())
 }
 
 #[test]

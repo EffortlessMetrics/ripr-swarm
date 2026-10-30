@@ -389,9 +389,129 @@ fn resolved_library(metadata: &serde_json::Value, root: &Path) -> Option<(PathBu
     ))
 }
 
+/// Operational outcomes of the bounded Cargo probe, not provider eligibility.
+/// In particular, exit 101 does not identify a missing package or toolchain.
+/// No raw stderr, environment value or filesystem path is retained here.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MetadataProbeFailure {
+    ToolchainPathPin,
+    CaptureCreate(std::io::ErrorKind),
+    Launch(std::io::ErrorKind),
+    CaptureInspect(std::io::ErrorKind),
+    OutputLimit,
+    TimedOut,
+    Wait(std::io::ErrorKind),
+    UnsuccessfulExit(Option<i32>),
+    CaptureRead(std::io::ErrorKind),
+}
+
+impl std::fmt::Display for MetadataProbeFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ToolchainPathPin => formatter.write_str(
+                "Offline Cargo metadata was not started: a repository-local toolchain path was refused",
+            ),
+            Self::CaptureCreate(kind) => {
+                write!(formatter, "Offline Cargo metadata capture could not be created ({kind:?})")
+            }
+            Self::Launch(kind) => {
+                write!(formatter, "Offline Cargo metadata could not be launched ({kind:?})")
+            }
+            Self::CaptureInspect(kind) => {
+                write!(
+                    formatter,
+                    "Offline Cargo metadata capture could not be inspected ({kind:?})"
+                )
+            }
+            Self::OutputLimit => {
+                formatter.write_str("Offline Cargo metadata exceeded its output limit")
+            }
+            Self::TimedOut => formatter.write_str("Offline Cargo metadata exceeded its time limit"),
+            Self::Wait(kind) => {
+                write!(formatter, "Offline Cargo metadata process could not be observed ({kind:?})")
+            }
+            Self::UnsuccessfulExit(Some(code)) => {
+                write!(formatter, "Offline Cargo metadata exited unsuccessfully (status {code})")
+            }
+            Self::UnsuccessfulExit(None) => {
+                formatter.write_str("Offline Cargo metadata terminated without an exit code")
+            }
+            Self::CaptureRead(kind) => {
+                write!(formatter, "Offline Cargo metadata capture could not be read ({kind:?})")
+            }
+        }
+    }
+}
+
+/// Compatibility boundary: existing identity consumers remain fail-closed.
+/// A diagnostic consumer must use the typed result of this same probe, not
+/// launch a second probe or infer an operational cause from absent identity.
 fn metadata_probe(root: &Path) -> Option<Vec<u8>> {
+    metadata_probe_result(root).ok()
+}
+
+fn metadata_command(root: &Path, output: std::fs::File) -> std::process::Command {
+    let mut command = std::process::Command::new("cargo");
+    command
+        .args([
+            "metadata",
+            "--offline",
+            "--locked",
+            "--format-version",
+            "1",
+            "--manifest-path",
+            "Cargo.toml",
+        ])
+        .current_dir(root)
+        .stdin(std::process::Stdio::null())
+        .stdout(output)
+        .stderr(std::process::Stdio::null());
+    crate::process_owner::forbid_rustup_auto_install(&mut command);
+    command
+}
+
+fn metadata_probe_budget(
+    output_bytes: u64,
+    elapsed: std::time::Duration,
+) -> Result<(), MetadataProbeFailure> {
+    if output_bytes > BUDGET {
+        return Err(MetadataProbeFailure::OutputLimit);
+    }
+    if elapsed >= std::time::Duration::from_mins(2) {
+        return Err(MetadataProbeFailure::TimedOut);
+    }
+    Ok(())
+}
+
+fn metadata_probe_poll(
+    observed: std::io::Result<Option<std::process::ExitStatus>>,
+) -> Result<bool, MetadataProbeFailure> {
+    match observed {
+        Ok(Some(status)) if status.success() => Ok(true),
+        Ok(Some(status)) => Err(MetadataProbeFailure::UnsuccessfulExit(status.code())),
+        Ok(None) => Ok(false),
+        Err(error) => Err(MetadataProbeFailure::Wait(error.kind())),
+    }
+}
+
+fn read_metadata_probe_output(path: &Path) -> Result<Vec<u8>, MetadataProbeFailure> {
+    let mut bytes = Vec::new();
+    // Preserve the same accepted byte budget without an unbounded final read.
+    // Complete bytes are not yet parsed metadata or a provider receipt.
+    std::fs::File::open(path)
+        .map_err(|error| MetadataProbeFailure::CaptureRead(error.kind()))?
+        .take(BUDGET + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| MetadataProbeFailure::CaptureRead(error.kind()))?;
+    if bytes.len() as u64 > BUDGET {
+        return Err(MetadataProbeFailure::OutputLimit);
+    }
+    Ok(bytes)
+}
+
+fn metadata_probe_result(root: &Path) -> Result<Vec<u8>, MetadataProbeFailure> {
     if crate::config::repository_toolchain_path_pin(root).is_some() {
-        return None;
+        return Err(MetadataProbeFailure::ToolchainPathPin);
     }
     let path = std::env::temp_dir().join(format!(
         "ripr-assertion-metadata-{}-{}.json",
@@ -402,48 +522,37 @@ fn metadata_probe(root: &Path) -> Option<Vec<u8>> {
         .write(true)
         .create_new(true)
         .open(&path)
-        .ok()?;
+        .map_err(|error| MetadataProbeFailure::CaptureCreate(error.kind()))?;
     let result = (|| {
-        let mut command = std::process::Command::new("cargo");
-        command
-            .args([
-                "metadata",
-                "--offline",
-                "--locked",
-                "--format-version",
-                "1",
-                "--manifest-path",
-                "Cargo.toml",
-            ])
-            .current_dir(root)
-            .stdin(std::process::Stdio::null())
-            .stdout(output)
-            .stderr(std::process::Stdio::null());
-        crate::process_owner::forbid_rustup_auto_install(&mut command);
-        let mut child = crate::process_owner::OwnedProcess::spawn(command).ok()?;
+        let command = metadata_command(root, output);
+        let mut child = crate::process_owner::OwnedProcess::spawn(command)
+            .map_err(|error| MetadataProbeFailure::Launch(error.kind()))?;
         let start = std::time::Instant::now();
         loop {
-            if std::fs::metadata(&path).ok()?.len() > BUDGET
-                || start.elapsed() >= std::time::Duration::from_mins(2)
-            {
+            let output_bytes = std::fs::metadata(&path)
+                .map_err(|error| MetadataProbeFailure::CaptureInspect(error.kind()))?
+                .len();
+            if let Err(failure) = metadata_probe_budget(output_bytes, start.elapsed()) {
                 let _ = child.terminate_tree();
-                return None;
+                return Err(failure);
             }
-            match child.try_wait() {
-                Ok(Some(status)) if status.success() => break,
-                Ok(Some(_)) | Err(_) => {
+            match metadata_probe_poll(child.try_wait()) {
+                Ok(true) => break,
+                Ok(false) => std::thread::sleep(std::time::Duration::from_millis(20)),
+                Err(failure) => {
                     let _ = child.terminate_tree();
-                    return None;
+                    return Err(failure);
                 }
-                Ok(None) => std::thread::sleep(std::time::Duration::from_millis(20)),
             }
         }
-        let bytes = std::fs::read(&path).ok()?;
-        (bytes.len() as u64 <= BUDGET).then_some(bytes)
+        read_metadata_probe_output(&path)
     })();
     let _ = std::fs::remove_file(path);
     result
 }
+
+#[cfg(test)]
+mod metadata_probe_tests;
 
 pub(crate) fn verified_anyhow_identity(package_root: &Path) -> Option<AnyhowIdentity> {
     let root = package_root.canonicalize().ok()?;

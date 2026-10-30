@@ -197,10 +197,6 @@ case = "old-deps-type-path-aliased-import"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
 [[entry]]
-case = "old-deps-type-path-glob-import"
-reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
-
-[[entry]]
 case = "old-head-unsafe-shared-edge-line"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
@@ -242,10 +238,6 @@ reason = "Tests discriminate the change but ripr abstains; accepted baseline car
 
 [[entry]]
 case = "roles-cfg-test-helper-input"
-reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
-
-[[entry]]
-case = "roles-limit-const-value"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
 [[entry]]
@@ -499,10 +491,6 @@ reason = "A test-only helper edit: the spec (RIPR-SPEC-0153/0169) requires silen
 [[entry]]
 case = "spec-b-0169-raw-path-cfg-test-helper"
 reason = "A test-only helper edit: the spec (RIPR-SPEC-0153/0169) requires silence because the edited file is test source with no production probe, though the mutant is caught by its tests; abstaining is the required outcome, not a regression (#10126)."
-
-[[entry]]
-case = "spec0048-label-rendered-observed"
-reason = "Measured row whose initializer-call and const shape abstains today; analyzer fix tracked in #9871."
 
 [[entry]]
 case = "spec0096-named-binding-used"

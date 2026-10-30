@@ -802,6 +802,21 @@ mutant calibrates the rule; ripr reports only the static shape.
     claim precise generator execution. Raw assertions and mock expectations
     keep their existing rules. Synchronous function-result helpers retain
     the ordinary substituted-assertion reading.
+    For helpers whose definition reads a parameter field, credit additionally
+    requires a direct field compared with a literal expected operand, retained
+    helper/class/module/receiver bindings, and an eager straight-line test body.
+    Defining-module attribute writes join caller rebinding facts, including the
+    original imported constructor name when the caller uses an import alias.
+    Copies or aliases used as expected values, replaced helpers or methods,
+    overwritten fields, deferred calls, definition-time calls and multiline
+    call-shaped literal text do not establish field-helper credit. Supported
+    field helpers use only changed-effect observation; a method-name token
+    cannot restore credit. The observed receiver's own call must precede its
+    helper call, including when several receivers or same-line statements exist.
+    A refused helper's origin survives the reported-oracle fallback; an unrelated
+    raw assertion retains its own origin. This bounded rule does not change the
+    existing generic parameter/result-helper interpretation or claim general
+    Python alias analysis or arbitrary helper execution.
 18. **A self-computed expected value does not credit.** Following
     RIPR-SPEC-0035, an assertion does not credit when every compared
     operand that names the owner is computed with a top-level
