@@ -86,4 +86,10 @@ jobs:
           ROW: ${{ matrix.row }}
         run: |
           $result = Get-Content (Join-Path $env:RUNNER_TEMP 'selector-result.json') -Raw | ConvertFrom-Json
-          if ($result.own -ne $true -or $result.other -ne $false) { throw 'controller selector mismatch' }
+          if ($result.own -ne $true) { throw 'own file not notified' }
+      - name: Verify sibling rejected
+        if: always()
+        shell: pwsh
+        run: |
+          $result = Get-Content (Join-Path $env:RUNNER_TEMP 'selector-result.json') -Raw | ConvertFrom-Json
+          if ($result.other -ne $false) { throw 'sibling was notified' }
