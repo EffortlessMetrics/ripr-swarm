@@ -305,10 +305,11 @@ push alone is not readback. If any identity, path, mode, deletion or byte differ
 stop and investigate rather than applying a partial slice. If the branch moves,
 fetch and review the new exact commit; do not silently substitute its tip.
 
-A disposable Git regression for these readback semantics runs with
-`python3 -m unittest discover -s tests/git -p "test_*.py"`. It exercises a
-local carrier, including mismatch refusals; it does not verify a hosted transfer
-or establish review of a real slice.
+A disposable Unix Git regression for these readback semantics runs with
+`cargo test -p xtask --test rust_gate_merge_ref_check reviewed_slice_carrier_readback_and_refusals`.
+It reuses the Rust Git-fixture harness and exercises a local carrier, including
+binary bytes, newline-bearing paths and mismatch refusals. It does not verify a
+hosted transfer, establish review of a real slice, or provide Windows proof.
 
 The assembler reconciles overlapping slices and both histories on the actual
 integration basis, records path dispositions in the existing resolution manifest,
