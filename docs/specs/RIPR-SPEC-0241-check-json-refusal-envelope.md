@@ -314,14 +314,18 @@ enters the document") are amended, not silently violated, for one identity:
   quantities and never substitute for one another). `resolved` carries the
   base/head/merge-base revision facts and the scoped intake file counts,
   each as `{available: true, value}` or `{available: false, reason}`.
-  `reason` is `not_published_before_deadline` when the producer had not
-  completed when the budget fired (an early timeout; a progress heartbeat
-  alone never establishes discovery), `not_computed_for_source` when the
-  producer never computes the fact for that input source (for example a
-  merge base on a committed-history diff, or any base fact for a supplied
-  diff), and `published_after_deadline` when the publish landed at or after
-  the deadline stamp — a producer finishing inside the cancel grace must
-  not read as available context. Scoped counts are intake quantities —
+  `reason` is `not_published_before_deadline` when the fact's own producing
+  stage had not completed when the budget fired (an early timeout; a
+  progress heartbeat alone never establishes discovery),
+  `not_computed_for_source` when that stage completed but never computes the
+  fact for that input source (for example a merge base on a committed-history
+  diff, or any base fact for a supplied diff), and `published_after_deadline`
+  when the publish landed at or after the deadline stamp — a producer
+  finishing inside the cancel grace must not read as available context. The
+  reason is owned per stage: the diff load completing never speaks for the
+  intake, so counts from an interrupted intake keep
+  `not_published_before_deadline` instead of the false
+  `not_computed_for_source`. Scoped counts are intake quantities —
   adapter-facing files after the scope filter — never raw Git path counts
   and never adapter result counts.
 - Only producers that completed before the deadline may populate a fact:
@@ -335,20 +339,33 @@ enters the document") are amended, not silently violated, for one identity:
   publishing is a no-op. No new Git discovery, analysis, or cleanup runs
   after the deadline to enrich the refusal, and no run pays for capture
   when no budget is registered.
-- `recovery` offers at most one bounded next action, `retry_with_larger_budget`:
-  a shell-safe literal command rebuilt from the invocation authority that
-  actually ran — root, an explicit base, an explicit `--worktree` /
-  `--committed` / `--diff` / candidate selection, the scope patterns, the
-  output selection (the explicit `--format VALUE` spelling when one was
-  given, otherwise `--json` when the run was JSON), an explicit
-  `--output-dir` destination, and a finite doubled budget (`--timeout 2*N`
-  for an expired `N`-second budget; "disable all time limits" is never the
-  continuation). `ripr check` has no `--config` or `--lang` switch — config
-  is discovered from the root and the language set comes from `ripr.toml` —
+- `recovery` offers at most one bounded next action. For a replayable input
+  it is `retry_with_larger_budget`: a shell-safe literal command rebuilt
+  from the invocation authority that actually ran — the raw root (never the
+  `display_path` echo, which escapes `%` and would name another directory),
+  an explicit base, an explicit `--worktree` / `--committed` / `--diff` /
+  candidate selection, the scope patterns, the effective analysis settings
+  that change the finding set (`--mode` when the mode is not the CLI
+  default, `--no-unchanged-tests` when unchanged tests were excluded, and
+  the explicit `--perl-facts` / `--suppression-policy` paths) so the retry
+  reproduces the requested analysis, the output selection (the explicit
+  `--format VALUE` spelling when one was given, otherwise `--json` when the
+  run was JSON), and a finite doubled budget (`--timeout 2*N` for an expired
+  `N`-second budget; "disable all time limits" is never the continuation).
+  An explicit `--output-dir` destination is never repeated: the refused
+  output set occupies that directory and custody rejects an existing
+  destination, so `note` names the occupied destination and the caller names
+  a new one. `ripr check` has no `--config` or `--lang` switch — config is
+  discovered from the root and the language set comes from `ripr.toml` —
   so preserving `--root` retains the discovery anchor and no unsupported
-  flag is fabricated. `rereads` names what a retry re-reads (`base-ref` and
-  `head-ref` for the committed `<base>...HEAD` range, `worktree-bytes` with
-  the base/head merge-base re-resolution for a working-tree diff,
+  flag is fabricated; `--git-timeout` is likewise not repeated, because it
+  changes no finding and the retry re-resolves under the ambient default or
+  inherited `RIPR_GIT_TIMEOUT`. For a stdin diff (`--diff -`) no literal
+  command is offered: the consumed bytes cannot be replayed, so the action
+  is `save_stdin_diff_to_named_file` with `command: null` and the note names
+  the honest continuation. `rereads` names what a retry re-reads (`base-ref`
+  and `head-ref` for the committed `<base>...HEAD` range, `worktree-bytes`
+  with the base/head merge-base re-resolution for a working-tree diff,
   `diff-file-bytes`, or none for immutable Git candidate objects) and `note`
   states that a live-ref or worktree retry is not pinned to the timed-out
   run's snapshot. Auto-selected sources and formats keep their
@@ -362,7 +379,11 @@ enters the document") are amended, not silently violated, for one identity:
   input metadata.
 - Strict readers: generation `0.2` documents keep the closed key set of the
   pre-amendment contract; generation `0.3` documents keep that key set plus
-  the optional `input_context` key. A reader that validates closed key sets
+  the optional `input_context` key. The published machine schemas split the
+  same way: `schemas/ripr/check.schema.json` keeps pinning generation `0.2`
+  and `schemas/ripr/check-timeout-refusal.schema.json` pins `0.3` with
+  `input_context` required, so every emitted refusal has a published schema
+  that admits it. A reader that validates closed key sets
   must key its validation on `schema_version` and reject or migrate an
   unknown generation rather than re-blessing unknown keys — the same rule
   the agent-card refusal envelope already applies to its generations.
@@ -387,7 +408,13 @@ enters the document") are amended, not silently violated, for one identity:
 - `crates/ripr/src/app/timeout_refusal.rs::human_text_covers_late_and_early_timeouts`
 - `crates/ripr/src/app/timeout_refusal.rs::stash_take_and_clear_are_scoped_to_one_projection`
 - `crates/ripr/src/app/timeout_refusal.rs::post_deadline_facts_read_unavailable_and_are_named_in_human_text`
-- `crates/ripr/src/app/timeout_refusal.rs::explicit_format_and_output_dir_choices_are_preserved`
+- `crates/ripr/src/app/timeout_refusal.rs::explicit_format_is_preserved_and_occupied_output_dir_is_disclosed`
+- `crates/ripr/src/app/timeout_refusal.rs::stdin_diff_gets_no_literal_retry_command`
+- `crates/ripr/src/app/timeout_refusal.rs::retry_repeats_analysis_settings_that_change_the_finding_set`
+- `crates/ripr/src/app/timeout_refusal.rs::percent_root_retry_names_the_raw_path`
+- `crates/ripr/src/app/timeout_refusal.rs::interrupted_intake_keeps_the_deadline_reason_in_json`
+- `crates/ripr/src/analysis/input_facts.rs::interrupted_intake_keeps_its_deadline_reason_distinct`
+- `crates/ripr/src/cli/commands/check_budget.rs::budget_timeout_loader_published_but_intake_interrupted_keeps_the_deadline_reason`
 - `crates/ripr/src/app/timeout_refusal.rs::auto_selected_format_and_output_stay_absent`
 - `crates/ripr/src/app/timeout_refusal.rs::committed_and_worktree_rereads_name_every_live_ref`
 - `crates/ripr/src/output/limited_check.rs::timeout_refusal_with_stashed_context_renders_input_context_at_generation_0_3`

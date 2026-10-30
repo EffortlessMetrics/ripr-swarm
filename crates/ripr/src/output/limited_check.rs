@@ -817,6 +817,8 @@ mod tests {
                     out_of_scope_file_count: Some(0),
                 },
                 post_deadline: crate::analysis::PublishedInputFacts::default(),
+                loader_published: true,
+                intake_published: true,
             }),
         ));
         let error = CoreError::analysis_timeout(

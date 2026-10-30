@@ -39,6 +39,13 @@ pub(crate) struct TimeoutRefusalProjection {
     base: Option<String>,
     diff_file: Option<PathBuf>,
     analysis_mode: &'static str,
+    /// The effective unchanged-tests setting; `false` must ride the retry as
+    /// `--no-unchanged-tests` or the retry analyzes a different finding set.
+    include_unchanged_tests: bool,
+    /// Explicit Perl facts packet path, when the invocation named one.
+    perl_facts_path: Option<PathBuf>,
+    /// Explicit suppression-policy path, when the invocation named one.
+    suppression_policy: Option<PathBuf>,
     scope_include: Vec<String>,
     scope_exclude: Vec<String>,
     requested: RequestedSourceContext,
@@ -47,7 +54,10 @@ pub(crate) struct TimeoutRefusalProjection {
     /// The explicit `--format VALUE` spelling from argv, preserved verbatim;
     /// `None` when the format was `--json` or the default human renderer.
     format_explicit: Option<String>,
-    /// Explicit `--output-dir` destination, when the fanout invocation named one.
+    /// Explicit `--output-dir` destination, when the fanout invocation named
+    /// one. The refused set occupies that directory (custody rejects an
+    /// existing destination before analysis), so the retry command never
+    /// repeats it — the note names the occupied destination instead.
     output_dir: Option<PathBuf>,
     published: Option<CapturedInputFacts>,
 }
@@ -70,6 +80,9 @@ pub(crate) fn build(
         base: input.base.clone(),
         diff_file: input.diff_file.clone(),
         analysis_mode: input.mode.as_str(),
+        include_unchanged_tests: input.include_unchanged_tests,
+        perl_facts_path: input.perl_facts_path.clone(),
+        suppression_policy: input.suppression_policy.clone(),
         scope_include: input.scope.include().to_vec(),
         scope_exclude: input.scope.exclude().to_vec(),
         requested,
@@ -81,12 +94,21 @@ pub(crate) fn build(
     }
 }
 
+/// Whether a stdin (`--diff -`) diff was requested. The consumed bytes cannot
+/// be replayed, so no literal retry command is offered for that input.
+fn is_stdin_diff(diff_file: Option<&std::path::Path>) -> bool {
+    diff_file == Some(std::path::Path::new("-"))
+}
+
 /// One resolved fact: available with its value, or unavailable with the
 /// reason. An early deadline reads `not_published_before_deadline`; a fact
-/// the producer never computes for this source reads `not_computed_for_source`;
-/// a fact published at or after the deadline stamp (a producer finishing in
-/// the cancel grace) reads `published_after_deadline` — never `available`.
-fn fact_string(value: Option<&str>, published_any: bool, post_deadline: bool) -> Value {
+/// the producing stage completed but never computes for this source reads
+/// `not_computed_for_source`; a fact published at or after the deadline stamp
+/// (a producer finishing in the cancel grace) reads
+/// `published_after_deadline` — never `available`. Only the fact's own
+/// producer stage may upgrade a missing fact to `not_computed_for_source`
+/// (#10796 review): an interrupted intake must keep the deadline reason.
+fn fact_string(value: Option<&str>, producer_published: bool, post_deadline: bool) -> Value {
     if post_deadline {
         return json!({
             "available": false,
@@ -95,7 +117,7 @@ fn fact_string(value: Option<&str>, published_any: bool, post_deadline: bool) ->
     }
     match value {
         Some(value) => json!({"available": true, "value": value}),
-        None if published_any => json!({
+        None if producer_published => json!({
             "available": false,
             "reason": "not_computed_for_source",
         }),
@@ -108,7 +130,7 @@ fn fact_string(value: Option<&str>, published_any: bool, post_deadline: bool) ->
 
 fn fact_count(
     value: Option<usize>,
-    published_any: bool,
+    producer_published: bool,
     post_deadline: bool,
     producer: &str,
 ) -> Value {
@@ -120,7 +142,7 @@ fn fact_count(
     }
     match value {
         Some(value) => json!({"available": true, "value": value, "producer": producer}),
-        None if published_any => json!({
+        None if producer_published => json!({
             "available": false,
             "reason": "not_computed_for_source",
         }),
@@ -166,18 +188,30 @@ fn rereads(self_: &TimeoutRefusalProjection) -> Vec<&'static str> {
     }
 }
 
-fn retry_note(self_: &TimeoutRefusalProjection) -> &'static str {
-    match self_.requested.source {
+fn retry_note(self_: &TimeoutRefusalProjection) -> String {
+    let mut note = match self_.requested.source {
         InputSource::Committed | InputSource::WorkingTree => {
-            "the retry re-reads live refs and/or worktree bytes; it is not pinned to the timed-out run's snapshot"
+            "the retry re-reads live refs and/or worktree bytes; it is not pinned to the timed-out run's snapshot".to_string()
+        }
+        InputSource::SuppliedDiff if is_stdin_diff(self_.diff_file.as_deref()) => {
+            "stdin diff bytes are consumed and not retained; save the diff to a named file and pass --diff <file> to retry".to_string()
         }
         InputSource::SuppliedDiff => {
-            "the retry re-reads the named diff file; edit the file in place to retry different input"
+            "the retry re-reads the named diff file; edit the file in place to retry different input".to_string()
         }
         InputSource::GitCandidate => {
-            "the retry re-resolves the named immutable git objects; the input identity is unchanged"
+            "the retry re-resolves the named immutable git objects; the input identity is unchanged".to_string()
         }
+    };
+    if let Some(output_dir) = &self_.output_dir {
+        // Custody requires a new directory, so the retry never repeats this
+        // destination (#10796 review): the refused set occupies it.
+        note.push_str(&format!(
+            "; the refused output set occupies {}, so name a new --output-dir to produce a complete set",
+            output_dir.to_string_lossy()
+        ));
     }
+    note
 }
 
 /// The bounded next budget: twice the expired budget, never "no limit".
@@ -187,18 +221,30 @@ fn next_budget_secs(expired: Duration) -> u64 {
 
 impl TimeoutRefusalProjection {
     /// The literal, shell-safe retry command rebuilt from the invocation
-    /// authority that actually ran. Explicit source/base/scope/format/output
-    /// choices are preserved; auto-selected sources keep their
+    /// authority that actually ran. Explicit source/base/scope/format choices
+    /// are preserved, and the effective analysis settings ride the retry so
+    /// it reproduces the requested analysis instead of silently falling back
+    /// to the default profile (#10796 review): `--mode` when the effective
+    /// mode is not the CLI default, `--no-unchanged-tests` when unchanged
+    /// tests were excluded, and the explicit `--perl-facts` /
+    /// `--suppression-policy` paths. Auto-selected sources keep their
     /// auto-selection instead of fabricating flags that would silently
     /// narrow or broaden the diff. (`ripr check` has no `--config` or
     /// `--lang` switch — config is discovered from the root and the language
     /// set comes from `ripr.toml` — so preserving `--root` retains the
-    /// discovery anchor and there is nothing else to carry.)
+    /// discovery anchor; `--git-timeout` is likewise not repeated, because it
+    /// changes no finding and the retry re-resolves under the ambient
+    /// default or inherited `RIPR_GIT_TIMEOUT`.) The root is the raw path —
+    /// `display_path` is the check-JSON spelling and escapes `%`, which
+    /// would name a different directory (#10796 review). An explicit
+    /// `--output-dir` is never repeated: the refused set occupies that
+    /// directory and custody rejects an existing destination, so the note
+    /// names it instead.
     pub(crate) fn recovery_command(&self) -> String {
         let mut argv: Vec<String> = vec!["ripr".to_string(), "check".to_string()];
         argv.push(format!(
             "--root {}",
-            crate::agent::loop_commands::shell_arg(&crate::output::path::display_path(&self.root),)
+            crate::agent::loop_commands::shell_arg(&self.root.to_string_lossy(),)
         ));
         match self.requested.source {
             InputSource::SuppliedDiff => {
@@ -258,6 +304,27 @@ impl TimeoutRefusalProjection {
                 crate::agent::loop_commands::shell_arg(exclude)
             ));
         }
+        // The analysis settings that change the finding set ride the retry;
+        // without them a `--mode deep`/`--no-unchanged-tests` run would be
+        // "retried" as a materially different analysis (#10796 review).
+        if self.analysis_mode != crate::app::Mode::Draft.as_str() {
+            argv.push(format!("--mode {}", self.analysis_mode));
+        }
+        if !self.include_unchanged_tests {
+            argv.push("--no-unchanged-tests".to_string());
+        }
+        if let Some(path) = &self.perl_facts_path {
+            argv.push(format!(
+                "--perl-facts {}",
+                crate::agent::loop_commands::shell_arg(&path.to_string_lossy())
+            ));
+        }
+        if let Some(path) = &self.suppression_policy {
+            argv.push(format!(
+                "--suppression-policy {}",
+                crate::agent::loop_commands::shell_arg(&path.to_string_lossy())
+            ));
+        }
         if let Some(value) = &self.format_explicit {
             argv.push(format!(
                 "--format {}",
@@ -265,12 +332,6 @@ impl TimeoutRefusalProjection {
             ));
         } else if self.json_output {
             argv.push("--json".to_string());
-        }
-        if let Some(output_dir) = &self.output_dir {
-            argv.push(format!(
-                "--output-dir {}",
-                crate::agent::loop_commands::shell_arg(&output_dir.to_string_lossy())
-            ));
         }
         argv.push(format!(
             "--timeout {}",
@@ -281,14 +342,16 @@ impl TimeoutRefusalProjection {
 
     /// The `input_context` object for the refusal envelope. Same-keys:
     /// `requested`, `resolved`, and `recovery` always appear; every resolved
-    /// fact carries its own availability instead of being omitted.
+    /// fact carries its own availability instead of being omitted. A fact's
+    /// unavailability reason is owned by its producing stage: only a stage
+    /// that completed before the deadline may say
+    /// `not_computed_for_source` (#10796 review).
     pub(crate) fn input_context_value(&self) -> Value {
-        let published_any = self.published.is_some();
-        let facts = self.published.as_ref().map(|captured| &captured.facts);
-        let mask = self
-            .published
-            .as_ref()
-            .map(|captured| &captured.post_deadline);
+        let captured = self.published.as_ref();
+        let facts = captured.map(|captured| &captured.facts);
+        let mask = captured.map(|captured| &captured.post_deadline);
+        let loader_published = captured.is_some_and(|captured| captured.loader_published);
+        let intake_published = captured.is_some_and(|captured| captured.intake_published);
         let requested = json!({
             "root": crate::output::path::display_path(&self.root),
             "source": self.requested.source.as_str(),
@@ -303,39 +366,52 @@ impl TimeoutRefusalProjection {
         let resolved = json!({
             "effective_base": fact_string(
                 facts.and_then(|facts| facts.effective_base.as_deref()),
-                published_any,
+                loader_published,
                 mask.is_some_and(|mask| mask.effective_base.is_some()),
             ),
             "base_commit": fact_string(
                 facts.and_then(|facts| facts.resolved_base_commit.as_deref()),
-                published_any,
+                loader_published,
                 mask.is_some_and(|mask| mask.resolved_base_commit.is_some()),
             ),
             "merge_base": fact_string(
                 facts.and_then(|facts| facts.merge_base_origin.as_deref()),
-                published_any,
+                loader_published,
                 mask.is_some_and(|mask| mask.merge_base_origin.is_some()),
             ),
             "scoped_changed_files": fact_count(
                 facts.and_then(|facts| facts.scoped_changed_file_count),
-                published_any,
+                intake_published,
                 mask.is_some_and(|mask| mask.scoped_changed_file_count.is_some()),
                 "scoped-diff-intake",
             ),
             "out_of_scope_files": fact_count(
                 facts.and_then(|facts| facts.out_of_scope_file_count),
-                published_any,
+                intake_published,
                 mask.is_some_and(|mask| mask.out_of_scope_file_count.is_some()),
                 "scoped-diff-intake",
             ),
         });
-        let recovery = json!({
-            "kind": "retry_with_larger_budget",
-            "command": self.recovery_command(),
-            "budget_seconds": next_budget_secs(self.expired_budget),
-            "rereads": rereads(self),
-            "note": retry_note(self),
-        });
+        let recovery = if is_stdin_diff(self.diff_file.as_deref()) {
+            // A stdin diff cannot be replayed: the consumed bytes are gone,
+            // so no literal command is offered (#10796 review). The bounded
+            // budget still names the honest continuation.
+            json!({
+                "kind": "save_stdin_diff_to_named_file",
+                "command": Value::Null,
+                "budget_seconds": next_budget_secs(self.expired_budget),
+                "rereads": ["none (stdin bytes are consumed and not retained)"],
+                "note": retry_note(self),
+            })
+        } else {
+            json!({
+                "kind": "retry_with_larger_budget",
+                "command": self.recovery_command(),
+                "budget_seconds": next_budget_secs(self.expired_budget),
+                "rereads": rereads(self),
+                "note": retry_note(self),
+            })
+        };
         json!({
             "requested": requested,
             "resolved": resolved,
@@ -423,7 +499,14 @@ impl TimeoutRefusalProjection {
                     .to_string(),
             ),
         }
-        lines.push(format!("ripr: bounded retry: {}", self.recovery_command()));
+        if is_stdin_diff(self.diff_file.as_deref()) {
+            lines.push(
+                "ripr: bounded retry: unavailable — stdin diff bytes are consumed and not retained"
+                    .to_string(),
+            );
+        } else {
+            lines.push(format!("ripr: bounded retry: {}", self.recovery_command()));
+        }
         lines.push(format!("ripr: note: {}", retry_note(self)));
         lines.join("\n")
     }
@@ -493,20 +576,43 @@ mod tests {
         }
     }
 
-    /// Facts that arrived before the deadline stamp: nothing masked.
+    /// Facts that arrived before the deadline stamp: nothing masked, and
+    /// both producing stages completed.
     fn captured(facts: PublishedInputFacts) -> CapturedInputFacts {
         CapturedInputFacts {
             facts,
             post_deadline: PublishedInputFacts::default(),
+            loader_published: true,
+            intake_published: true,
         }
     }
 
     /// Facts a producer published at or after the deadline stamp (a worker
-    /// finishing inside the cancel grace): every field masked post-deadline.
+    /// finishing inside the cancel grace): every field masked post-deadline,
+    /// and no stage reads as a before-deadline completion.
     fn captured_post_deadline(facts: PublishedInputFacts) -> CapturedInputFacts {
         CapturedInputFacts {
             post_deadline: facts.clone(),
             facts,
+            loader_published: false,
+            intake_published: false,
+        }
+    }
+
+    /// Only the load stage completed before the deadline; the intake was
+    /// interrupted (#10796 review).
+    fn captured_loader_only() -> CapturedInputFacts {
+        CapturedInputFacts {
+            facts: PublishedInputFacts {
+                source: Some(InputSource::Committed),
+                effective_base: Some("origin/main".to_string()),
+                resolved_base_commit: Some("abc123".to_string()),
+                merge_base_origin: None,
+                ..PublishedInputFacts::default()
+            },
+            post_deadline: PublishedInputFacts::default(),
+            loader_published: true,
+            intake_published: false,
         }
     }
 
@@ -824,10 +930,12 @@ mod tests {
     }
 
     #[test]
-    fn explicit_format_and_output_dir_choices_are_preserved() {
+    fn explicit_format_is_preserved_and_occupied_output_dir_is_disclosed() {
         // #10796 review (MINOR 2): the bounded retry must repeat the explicit
-        // output choices argv made — here a non-JSON --format and --output-dir
-        // with a space, both shell-quoted like every other preserved value.
+        // output choices argv made — here a non-JSON --format, shell-quoted
+        // like every other preserved value. The explicit --output-dir is
+        // NEVER repeated: the refused set occupies that directory and custody
+        // rejects an existing destination, so the note names it instead.
         let projection = build(
             &input("repo", None, Some("change.diff")),
             requested(InputSource::SuppliedDiff),
@@ -842,14 +950,209 @@ mod tests {
             command.contains("--format sarif"),
             "explicit non-JSON format must be preserved: {command}"
         );
-        let output_dir = crate::agent::loop_commands::shell_arg_for("out dir", cfg!(windows));
         assert!(
-            command.contains(&format!("--output-dir {output_dir}")),
-            "explicit output dir must be preserved and quoted: {command}"
+            !command.contains("--output-dir"),
+            "the retry must not reuse the occupied output destination: {command}"
         );
         assert!(
             !command.contains("--json"),
             "--json must not appear when the user chose --format sarif: {command}"
+        );
+        let note = retry_note(&projection);
+        assert!(
+            note.contains("occupies out dir"),
+            "the note must name the occupied destination: {note}"
+        );
+        assert!(
+            note.contains("name a new --output-dir"),
+            "the note must name the honest continuation: {note}"
+        );
+    }
+
+    #[test]
+    fn stdin_diff_gets_no_literal_retry_command() {
+        // #10796 review: a `--diff -` refusal must not emit a command that
+        // waits for new stdin or analyzes different bytes. The consumed
+        // bytes cannot be replayed, so the recovery names the honest
+        // continuation instead of a bounded literal retry.
+        let projection = build(
+            &input("repo", None, Some("-")),
+            requested(InputSource::SuppliedDiff),
+            Duration::from_secs(45),
+            false,
+            None,
+            None,
+            None,
+        );
+        let value = projection.input_context_value();
+        assert_eq!(
+            value["recovery"]["kind"],
+            json!("save_stdin_diff_to_named_file")
+        );
+        assert!(
+            value["recovery"]["command"].is_null(),
+            "no literal command for a stdin diff: {value}"
+        );
+        assert_eq!(
+            value["recovery"]["rereads"],
+            json!(["none (stdin bytes are consumed and not retained)"])
+        );
+        let text = projection.human_recovery_text();
+        assert!(
+            text.contains("bounded retry: unavailable — stdin diff bytes are consumed"),
+            "{text}"
+        );
+        assert!(text.contains("save the diff to a named file"), "{text}");
+        // A named diff file keeps the executable retry.
+        let named = build(
+            &input("repo", None, Some("change.diff")),
+            requested(InputSource::SuppliedDiff),
+            Duration::from_secs(45),
+            false,
+            None,
+            None,
+            None,
+        );
+        let value = named.input_context_value();
+        assert_eq!(value["recovery"]["kind"], json!("retry_with_larger_budget"));
+        assert!(
+            value["recovery"]["command"]
+                .as_str()
+                .is_some_and(|command| command.contains("--diff change.diff")),
+            "{value}"
+        );
+    }
+
+    #[test]
+    fn retry_repeats_analysis_settings_that_change_the_finding_set() {
+        // #10796 review: a timed-out `--mode deep --no-unchanged-tests`
+        // (plus explicit facts/suppression paths) must not be "retried" as a
+        // materially different analysis. The effective settings ride the
+        // retry; the default profile adds no flag.
+        let mut deep = input("repo", None, Some("change.diff"));
+        deep.mode = Mode::Deep;
+        deep.include_unchanged_tests = false;
+        deep.perl_facts_path = Some(PathBuf::from("facts packet"));
+        deep.suppression_policy = Some(PathBuf::from("policy file"));
+        let projection = build(
+            &deep,
+            requested(InputSource::SuppliedDiff),
+            Duration::from_secs(45),
+            false,
+            None,
+            None,
+            None,
+        );
+        let command = projection.recovery_command();
+        let windows = cfg!(windows);
+        assert!(
+            command.contains("--mode deep"),
+            "the effective mode must ride the retry: {command}"
+        );
+        assert!(
+            command.contains("--no-unchanged-tests"),
+            "excluded unchanged tests must ride the retry: {command}"
+        );
+        assert!(
+            command.contains(&format!(
+                "--perl-facts {}",
+                crate::agent::loop_commands::shell_arg_for("facts packet", windows)
+            )),
+            "the facts packet must ride the retry: {command}"
+        );
+        assert!(
+            command.contains(&format!(
+                "--suppression-policy {}",
+                crate::agent::loop_commands::shell_arg_for("policy file", windows)
+            )),
+            "the suppression policy must ride the retry: {command}"
+        );
+        // Default-profile controls: no fabricated flags on a plain run.
+        let draft = build(
+            &input("repo", None, None),
+            requested(InputSource::Committed),
+            Duration::from_secs(45),
+            false,
+            None,
+            None,
+            None,
+        );
+        let command = draft.recovery_command();
+        assert!(
+            !command.contains("--mode"),
+            "default mode adds no flag: {command}"
+        );
+        assert!(
+            !command.contains("--no-unchanged-tests"),
+            "default test recall adds no flag: {command}"
+        );
+        assert!(
+            !command.contains("--perl-facts") && !command.contains("--suppression-policy"),
+            "absent paths add no flags: {command}"
+        );
+    }
+
+    #[test]
+    fn percent_root_retry_names_the_raw_path() {
+        // #10796 review: `display_path` is the check-JSON spelling and
+        // escapes `%` (`repo%41` renders `repo%2541`); a retry command built
+        // from it would name a different directory. The command uses the raw
+        // path; the JSON echo keeps the display spelling.
+        let projection = build(
+            &input("repo%41", Some("origin/main"), None),
+            requested(InputSource::Committed),
+            Duration::from_mins(1),
+            true,
+            None,
+            None,
+            None,
+        );
+        let command = projection.recovery_command();
+        let raw = crate::agent::loop_commands::shell_arg("repo%41");
+        assert!(
+            command.contains(&format!("--root {raw}")),
+            "the retry must carry the raw root (shell-quoted as the host requires): {command}"
+        );
+        assert!(
+            !command.contains("repo%2541"),
+            "the display spelling must not enter the command: {command}"
+        );
+        let value = projection.input_context_value();
+        assert_eq!(
+            value["requested"]["root"],
+            json!("repo%2541"),
+            "the JSON echo keeps the check-JSON spelling: {value}"
+        );
+    }
+
+    #[test]
+    fn interrupted_intake_keeps_the_deadline_reason_in_json() {
+        // #10796 review: with only the load stage completed, an absent count
+        // must read `not_published_before_deadline` — never the false
+        // `not_computed_for_source` the loader's completion used to imply.
+        let projection = build(
+            &input("repo", Some("origin/main"), None),
+            requested(InputSource::Committed),
+            Duration::from_mins(1),
+            true,
+            None,
+            None,
+            Some(captured_loader_only()),
+        );
+        let value = projection.input_context_value();
+        assert_eq!(
+            value["resolved"]["effective_base"],
+            json!({"available": true, "value": "origin/main"})
+        );
+        assert_eq!(
+            value["resolved"]["scoped_changed_files"],
+            json!({"available": false, "reason": "not_published_before_deadline"}),
+            "an interrupted intake must keep the deadline reason: {value}"
+        );
+        assert_eq!(
+            value["resolved"]["out_of_scope_files"],
+            json!({"available": false, "reason": "not_published_before_deadline"}),
+            "{value}"
         );
     }
 

@@ -82,6 +82,26 @@ pub(crate) struct CapturedInputFacts {
     pub(crate) facts: PublishedInputFacts,
     /// Presence mask of which `facts` fields arrived at or after the deadline.
     pub(crate) post_deadline: PublishedInputFacts,
+    /// The diff-load stage (source label and revision facts) completed and
+    /// published before the deadline. Distinct from [`Self::intake_published`]
+    /// so an interrupted intake reads `not_published_before_deadline` instead
+    /// of the false `not_computed_for_source` (#10796 review).
+    pub(crate) loader_published: bool,
+    /// The scoped-intake stage (file counts) completed and published before
+    /// the deadline.
+    pub(crate) intake_published: bool,
+}
+
+/// Which producer stage a publication belongs to. The renderer uses this to
+/// name why a fact is unavailable: only a stage that actually completed may
+/// turn a missing fact into `not_computed_for_source`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum InputFactsStage {
+    /// The diff loader (or the candidate-identity producer): source label and
+    /// revision facts.
+    DiffLoad,
+    /// The scoped intake: adapter-facing file counts.
+    ScopedIntake,
 }
 
 /// Shared slot the check run registers and the refusal renderer reads. `None`
@@ -114,8 +134,10 @@ pub(crate) fn with_input_facts_capture<T>(
 /// Merge `facts` into the registered slot. Lock poisoning keeps the poisoned
 /// value in place (the run is already failing); publishing never panics. A
 /// publish at or after the registered deadline (a producer finishing inside
-/// the cancel grace) lands in the slot but is masked post-deadline.
-fn publish(facts: PublishedInputFacts) {
+/// the cancel grace) lands in the slot but is masked post-deadline, and the
+/// stage's published flag stays unset: only a before-deadline completion may
+/// turn a missing fact into `not_computed_for_source`.
+fn publish(facts: PublishedInputFacts, stage: InputFactsStage) {
     CAPTURE.with(|capture| {
         let Some((slot, deadline)) = capture.borrow().as_ref().cloned() else {
             return;
@@ -127,7 +149,8 @@ fn publish(facts: PublishedInputFacts) {
         let merged = published.take().unwrap_or_default();
         // First writer wins on the value; a later publish cannot overwrite a
         // before-deadline fact, and a before-deadline publish cannot un-mark
-        // a field an earlier grace-window publish masked.
+        // a field an earlier grace-window publish masked. The stage flags are
+        // monotone and record before-deadline completions only.
         let mask_source = if post_deadline { facts.source } else { None };
         let mask_effective_base = if post_deadline {
             facts.effective_base.clone()
@@ -154,6 +177,7 @@ fn publish(facts: PublishedInputFacts) {
         } else {
             None
         };
+        let published_before_deadline = !post_deadline;
         *published = Some(CapturedInputFacts {
             facts: PublishedInputFacts {
                 source: facts.source.or(merged.facts.source),
@@ -181,29 +205,41 @@ fn publish(facts: PublishedInputFacts) {
                 out_of_scope_file_count: mask_out_of_scope_file_count
                     .or(merged.post_deadline.out_of_scope_file_count),
             },
+            loader_published: merged.loader_published
+                || (published_before_deadline && matches!(stage, InputFactsStage::DiffLoad)),
+            intake_published: merged.intake_published
+                || (published_before_deadline && matches!(stage, InputFactsStage::ScopedIntake)),
         });
     });
 }
 
 /// Publish the requested input source alone — the immutable Git candidate
 /// path, whose exact-tree identity is assembled without a [`LoadedDiff`].
+/// The candidate-identity producer is the load stage: once it completes, an
+/// absent revision fact is genuinely not computed for this source.
 pub(crate) fn publish_input_source(source: InputSource) {
-    publish(PublishedInputFacts {
-        source: Some(source),
-        ..PublishedInputFacts::default()
-    });
+    publish(
+        PublishedInputFacts {
+            source: Some(source),
+            ..PublishedInputFacts::default()
+        },
+        InputFactsStage::DiffLoad,
+    );
 }
 
 /// Publish the source and revision facts a completed diff load holds. Called
 /// by the pipeline at each loader call site, only after the load returned.
 pub(crate) fn publish_loaded_diff(source: InputSource, loaded: &crate::analysis::diff::LoadedDiff) {
-    publish(PublishedInputFacts {
-        source: Some(source),
-        effective_base: loaded.effective_base.clone(),
-        resolved_base_commit: loaded.resolved_base_commit.clone(),
-        merge_base_origin: loaded.merge_base_origin.clone(),
-        ..PublishedInputFacts::default()
-    });
+    publish(
+        PublishedInputFacts {
+            source: Some(source),
+            effective_base: loaded.effective_base.clone(),
+            resolved_base_commit: loaded.resolved_base_commit.clone(),
+            merge_base_origin: loaded.merge_base_origin.clone(),
+            ..PublishedInputFacts::default()
+        },
+        InputFactsStage::DiffLoad,
+    );
 }
 
 /// Publish the scoped intake counts the parse and partition produced. These
@@ -213,11 +249,14 @@ pub(crate) fn publish_scoped_intake(
     scoped_changed_file_count: usize,
     out_of_scope_file_count: usize,
 ) {
-    publish(PublishedInputFacts {
-        scoped_changed_file_count: Some(scoped_changed_file_count),
-        out_of_scope_file_count: Some(out_of_scope_file_count),
-        ..PublishedInputFacts::default()
-    });
+    publish(
+        PublishedInputFacts {
+            scoped_changed_file_count: Some(scoped_changed_file_count),
+            out_of_scope_file_count: Some(out_of_scope_file_count),
+            ..PublishedInputFacts::default()
+        },
+        InputFactsStage::ScopedIntake,
+    );
 }
 
 /// Read the facts published so far without blocking. The refusal path calls
@@ -269,11 +308,51 @@ mod tests {
         assert_eq!(facts.merge_base_origin.as_deref(), Some("def456"));
         assert_eq!(facts.scoped_changed_file_count, Some(6));
         assert_eq!(facts.out_of_scope_file_count, Some(2));
+        assert!(captured.loader_published, "the load stage published");
+        assert!(captured.intake_published, "the intake stage published");
         assert_eq!(
             captured.post_deadline,
             PublishedInputFacts::default(),
             "no deadline was registered, so nothing may be masked post-deadline"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn interrupted_intake_keeps_its_deadline_reason_distinct() -> Result<(), String> {
+        // #10796 review: the loader completing must not speak for the intake.
+        // With only the load stage published, an absent count is a producer
+        // that had not completed when the budget fired — never
+        // `not_computed_for_source`, which would falsely claim the intake
+        // never computes counts for this source.
+        let slot: InputFactsSlot = Arc::new(Mutex::new(None));
+        with_input_facts_capture(slot.clone(), None, || {
+            publish_loaded_diff(
+                InputSource::WorkingTree,
+                &loaded(Some("main"), Some("abc123"), None),
+            );
+            // The intake never runs: the budget fires inside it.
+        });
+        let captured = published(&slot).ok_or("loader facts must be retained")?;
+        assert!(captured.loader_published);
+        assert!(
+            !captured.intake_published,
+            "the intake must not be marked published when it never ran"
+        );
+        assert_eq!(captured.facts.scoped_changed_file_count, None);
+        // And the inverse stage split: an intake-only completion must not
+        // speak for the loader either.
+        let counts_slot: InputFactsSlot = Arc::new(Mutex::new(None));
+        with_input_facts_capture(counts_slot.clone(), None, || {
+            publish_scoped_intake(4, 1);
+        });
+        let counts = published(&counts_slot).ok_or("intake facts must be retained")?;
+        assert!(
+            !counts.loader_published,
+            "the load stage must not be marked published when it never ran"
+        );
+        assert!(counts.intake_published);
+        assert_eq!(counts.facts.effective_base, None);
         Ok(())
     }
 
@@ -296,6 +375,10 @@ mod tests {
         );
         let grace = published(&grace_slot).ok_or("grace-window facts must be captured")?;
         assert_eq!(grace.facts.effective_base.as_deref(), Some("main"));
+        assert!(
+            !grace.loader_published,
+            "a post-deadline completion must not read as a before-deadline stage publication"
+        );
         assert_eq!(
             grace.post_deadline.effective_base.as_deref(),
             Some("main"),

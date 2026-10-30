@@ -150,6 +150,7 @@ records that distinction.
 | Published schema | Current version | Version owner and rationale |
 | --- | --- | --- |
 | `schemas/ripr/check.schema.json` | `0.2` | `crates/ripr/src/app.rs`; check envelope |
+| `schemas/ripr/check-timeout-refusal.schema.json` | `0.3` | `crates/ripr/src/app.rs`; analysis-timeout refusal envelope with input context (RIPR-SPEC-0241 amendment #10796) |
 | `schemas/ripr/doctor.schema.json` | `0.4` | `crates/ripr/src/output/doctor.rs`; doctor environment report (#5214) |
 | `schemas/ripr/executed-control.schema.json` | `1` | `crates/ripr/src/domain/executed_control.rs` and `crates/ripr/src/output/executed_control.rs`; executed-control obligation/result/packet vocabulary (#4641) |
 | `schemas/ripr/gate-decision.schema.json` | `0.1` | `crates/ripr/src/output/gate.rs`; gate decision envelope |
@@ -1065,20 +1066,35 @@ heartbeat never establishes discovery), `not_computed_for_source` (the fact
 does not exist for that input source, e.g. a merge base on a committed
 diff), or `published_after_deadline` (a producer finishing inside the
 cancel grace published after the budget owner's deadline stamp, so the fact
-is not available context); `recovery` carries at most one bounded
-`retry_with_larger_budget` action — a
-shell-safe literal command preserving the meaningful root/source/base/scope/
-output choices (an explicit `--format VALUE` spelling and `--output-dir`
-included; `ripr check` has no `--config`/`--lang` switch, so the discovered
-config and `ripr.toml` language set ride the preserved `--root`) with a
-finite doubled `--timeout`, plus `rereads` naming what a
-retry re-reads (the `base-ref` and `head-ref` of the committed
-`<base>...HEAD` range, worktree bytes with the base/head merge-base
-re-resolution, the diff file, or nothing for
-immutable Git candidate objects) and a note that such a retry is not pinned to
-the timed-out run's snapshot. Input metadata never implies an exposure, clean,
-or repair-ready verdict: exit stays `2`, findings stay empty, the summary
-stays zeroed, and `downstream_consumable` stays `false`.
+is not available context; a fact's unavailability reason is owned by its own
+producing stage, so an interrupted intake keeps
+`not_published_before_deadline` even when the diff load completed).
+`recovery` carries at most one bounded action. For a replayable input it is
+`retry_with_larger_budget`: a shell-safe literal command preserving the
+meaningful root/source/base/scope/output choices and the effective analysis
+settings that change the finding set (`--mode` when the mode is not the CLI
+default, `--no-unchanged-tests` when unchanged tests were excluded, and the
+explicit `--perl-facts`/`--suppression-policy` paths) so the retry
+reproduces the requested analysis; the command carries the raw root path
+(the check-JSON `root` echo is the `display_path` spelling and escapes `%`),
+an explicit `--format VALUE` spelling when one was given, and a finite
+doubled `--timeout`. An explicit `--output-dir` destination is never
+repeated: the refused output set occupies that directory and custody rejects
+an existing destination, so the note names the occupied destination and the
+caller names a new one. `ripr check` has no `--config`/`--lang` switch, so
+the discovered config and `ripr.toml` language set ride the preserved
+`--root`; `--git-timeout` is not repeated because it changes no finding and
+the retry re-resolves under the ambient default or inherited
+`RIPR_GIT_TIMEOUT`. For a stdin diff (`--diff -`) no literal command is
+offered: the consumed bytes cannot be replayed, so `recovery.kind` is
+`save_stdin_diff_to_named_file` with `command: null` and the note names the
+honest continuation. `rereads` names what a retry re-reads (the `base-ref`
+and `head-ref` of the committed `<base>...HEAD` range, worktree bytes with
+the base/head merge-base re-resolution, the diff file, or nothing for
+immutable Git candidate objects) and the note states that such a retry is
+not pinned to the timed-out run's snapshot. Input metadata never implies an
+exposure, clean, or repair-ready verdict: exit stays `2`, findings stay
+empty, the summary stays zeroed, and `downstream_consumable` stays `false`.
 
 The same envelope covers the other `--json` commands (#7331): `ripr diff
 --json`, `ripr rerun --json`, `ripr context` (which emits JSON only), `ripr

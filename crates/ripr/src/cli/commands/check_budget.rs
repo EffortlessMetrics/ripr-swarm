@@ -316,11 +316,17 @@ mod tests {
         // #10796 decisive control, late timeout: the loader and intake facts
         // were published before the worker stalled, so the refusal may retain
         // exactly those facts — and only those, unmasked, because they
-        // published before the stamped deadline.
+        // published before the stamped deadline. The budget is 500ms, not
+        // 50ms (#10796 review): the deadline is stamped before the worker
+        // spawns, so a slow thread start on a loaded host would record the
+        // pre-deadline publishes post-deadline and fail the unmasked
+        // assertion below for scheduling reasons, not behavior. The worker
+        // exits within milliseconds of cancellation, so the wider budget
+        // adds little test time.
         let slot: crate::analysis::InputFactsSlot =
             std::sync::Arc::new(std::sync::Mutex::new(None));
         let result: Result<u32, _> = run_with_budget(
-            Some(Duration::from_millis(50)),
+            Some(Duration::from_millis(500)),
             Some(&slot),
             || {},
             || {
@@ -366,6 +372,67 @@ mod tests {
             captured.post_deadline,
             crate::analysis::PublishedInputFacts::default(),
             "pre-deadline publishes must stay unmasked"
+        );
+        assert!(
+            captured.loader_published && captured.intake_published,
+            "both producing stages completed before the deadline"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn budget_timeout_loader_published_but_intake_interrupted_keeps_the_deadline_reason()
+    -> Result<(), String> {
+        // #10796 review: the loader completing must not speak for the intake.
+        // When only the load stage published, the renderer must keep
+        // `not_published_before_deadline` for the counts instead of the false
+        // `not_computed_for_source`.
+        let slot: crate::analysis::InputFactsSlot =
+            std::sync::Arc::new(std::sync::Mutex::new(None));
+        let result: Result<u32, _> = run_with_budget(
+            Some(Duration::from_millis(500)),
+            Some(&slot),
+            || {},
+            || {
+                crate::analysis::publish_loaded_input_facts(
+                    crate::analysis::InputSource::WorkingTree,
+                    &crate::analysis::LoadedDiff {
+                        text: String::new(),
+                        effective_base: Some("origin/main".to_string()),
+                        resolved_base_commit: Some("06e6aea".to_string()),
+                        merge_base_origin: None,
+                    },
+                );
+                // The intake never runs: the budget fires inside it.
+                loop {
+                    if crate::analysis::cancellation::checkpoint_typed().is_err() {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Ok(1)
+            },
+        );
+        let Err(error) = result else {
+            return Err("a stalled worker must hit the budget".to_string());
+        };
+        assert_eq!(
+            error.check_failure_kind(),
+            Some(CheckFailureKind::AnalysisTimeout)
+        );
+        let captured = crate::analysis::published_input_facts(&slot)
+            .ok_or("loader facts must be retained for the refusal")?;
+        assert!(
+            captured.loader_published,
+            "the load stage completed before the deadline"
+        );
+        assert!(
+            !captured.intake_published,
+            "the intake must not read as completed when the budget fired inside it"
+        );
+        assert_eq!(
+            captured.facts.scoped_changed_file_count, None,
+            "no intake count may exist without an intake completion"
         );
         Ok(())
     }
