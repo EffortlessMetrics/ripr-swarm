@@ -550,7 +550,7 @@ mod tests {
     }
 
     #[test]
-    fn projected_evidence_replaces_blocked_lines_for_packet_ready_finding() {
+    fn projected_evidence_replaces_blocked_lines_for_packet_ready_finding() -> Result<(), String> {
         let mut finding = sample_typescript_finding();
         finding
             .evidence
@@ -587,6 +587,58 @@ mod tests {
             "TypeScript preview actionability `advisory` / `incomplete_repair_packet`: blocked"
                 .to_string(),
         );
+
+        finding
+            .missing
+            .push("boundary discriminator is missing".to_string());
+        finding.recommended_next_step = Some(
+            "add assertion; no actionable repair packet is emitted until fields resolve"
+                .to_string(),
+        );
+        let render = |finding: &Finding| -> Result<serde_json::Value, String> {
+            let rendered = crate::output::json::render_context_packet(
+                finding,
+                5,
+                &crate::config::RiprConfig::default(),
+                std::path::Path::new("."),
+            );
+            serde_json::from_str(&rendered).map_err(|err| err.to_string())
+        };
+        let context = render(&finding)?;
+        assert_eq!(
+            context["missing"],
+            serde_json::json!(["boundary discriminator is missing"])
+        );
+        assert_eq!(
+            context["missing_discriminators"][0]["value"],
+            "amount == threshold"
+        );
+        assert_eq!(context["classification"], "weakly_exposed");
+        assert_eq!(context["ripr"]["infect"], "unknown");
+        assert!(
+            context["recommended_next_step"]
+                .as_str()
+                .is_some_and(|s| s.contains("repair packet is complete"))
+        );
+        let mut unsupported = finding.clone();
+        unsupported.language = Some(LanguageId::Rust);
+        assert_eq!(
+            render(&unsupported)?["missing"],
+            serde_json::json!(unsupported.missing)
+        );
+        let mut incomplete = finding.clone();
+        incomplete
+            .evidence
+            .retain(|s| !s.starts_with("typescript_verify_command: "));
+        assert!(!preview_actionability_for(&incomplete).is_some_and(|a| a.repair_packet_ready));
+        assert_eq!(
+            render(&incomplete)?["missing"],
+            serde_json::json!(incomplete.missing)
+        );
+        let mut stale = finding.clone();
+        stale.source_currentness = crate::domain::SourceCurrentness::BaseDeleted;
+        assert!(!preview_actionability_for(&stale).is_some_and(|a| a.repair_packet_ready));
+        assert_eq!(render(&stale)?["missing"], serde_json::json!(stale.missing));
 
         let projected = projected_preview_actionability_evidence(&finding);
         let missing = projected_preview_actionability_missing(&finding);
@@ -629,6 +681,7 @@ mod tests {
                 .any(|line| line.starts_with("TypeScript preview actionability `")),
             "{missing:?}"
         );
+        Ok(())
     }
 
     /// #4105 wrongfam end-to-end: the observed `login('alice')` input provably
@@ -706,6 +759,7 @@ mod tests {
     fn sample_typescript_finding() -> Finding {
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: "probe:src_lib.ts:2:typescript_preview".to_string(),
             canonical_gap: None,
             probe: Probe {

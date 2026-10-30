@@ -1556,6 +1556,7 @@ dependencies = [
  "ra_ap_syntax",
  "rayon",
  "rmcp",
+ "rustix",
  "rustpython-parser",
  "serde",
  "serde_json",

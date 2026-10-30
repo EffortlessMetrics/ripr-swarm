@@ -287,7 +287,7 @@ Updated:
 ## Pending — typescript_rejects_literal_equality (22)
 
 Reason:
-RIPR-SPEC-0122: plain TypeScript/JavaScript wording for unresolved expected values and moved assertion selection (#10682)
+RIPR-SPEC-0027 (#10704): an unmodeled TypeScript change shape (literal return, fallback/default literal, identity no-op, comment-only edit) reads infection_unknown with an infection_evidence_unknown stop reason and no repair packet instead of weakly_exposed/exposed decided by oracle strength alone; a changed line under an if arm no related test enters reads reachable_unrevealed with infection no
 
 Command:
 `cargo xtask goldens bless typescript_rejects_literal_equality --reason "..."`

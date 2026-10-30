@@ -4,7 +4,7 @@ use super::approx_band::{PythonBandReading, parse_expression, python_band_readin
 use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion};
 use super::caplog_text::{PythonLogEvidence, substitute_caplog_aliases};
 use super::effect_alignment::ChangedEffect;
-use super::fixtures::literal_owner_instance_fixture;
+use super::fixtures::{inert_tool_fixture, literal_owner_instance_fixture};
 use super::forwarding_decorator::is_forwarding_decorator;
 use super::literal_patch::{literal_patch_calls, without_calls};
 use super::related_tests::{
@@ -920,19 +920,32 @@ fn related_candidates_have_unresolved_pytest_fixture_limit(
 }
 
 fn test_has_unresolved_pytest_fixture_inputs(test: &PythonTest, owner: &PythonOwner) -> bool {
-    test.framework == PythonFramework::Pytest
-        && body_calls_owner(&test.body_text, owner)
-        && test
-            .fixtures
-            .iter()
-            // A direct parametrize argname is a value pytest supplies, not a
-            // fixture, unless an unsettled `indirect=` may route it (#10685);
-            // a parametrize mark does not resolve the test's other fixtures
-            // (#9619).
-            .filter(|fixture| !test.takes_parametrize_value(fixture))
-            .filter(|fixture| !is_known_auxiliary_pytest_fixture(fixture))
-            .filter(|fixture| !literal_owner_instance_fixture(test, owner, fixture))
-            .any(|fixture| body_uses_identifier(&test.body_text, fixture))
+    !unresolved_pytest_fixture_names(test, owner).is_empty()
+}
+
+/// The fixtures a pytest test that calls the owner takes and uses but ripr
+/// does not read, in signature order. These are what block the exposure
+/// answer, so the finding names them (#10979).
+pub(super) fn unresolved_pytest_fixture_names<'t>(
+    test: &'t PythonTest,
+    owner: &PythonOwner,
+) -> Vec<&'t str> {
+    if test.framework != PythonFramework::Pytest || !body_calls_owner(&test.body_text, owner) {
+        return Vec::new();
+    }
+    test.fixtures
+        .iter()
+        .map(String::as_str)
+        // A direct parametrize argname is a value pytest supplies, not a
+        // fixture, unless an unsettled `indirect=` may route it (#10685);
+        // a parametrize mark does not resolve the test's other fixtures
+        // (#9619).
+        .filter(|fixture| !test.takes_parametrize_value(fixture))
+        .filter(|fixture| !is_known_auxiliary_pytest_fixture(fixture))
+        .filter(|fixture| !literal_owner_instance_fixture(test, owner, fixture))
+        .filter(|fixture| !inert_tool_fixture(test, fixture))
+        .filter(|fixture| body_uses_identifier(&test.body_text, fixture))
+        .collect()
 }
 
 fn is_known_auxiliary_pytest_fixture(fixture: &str) -> bool {

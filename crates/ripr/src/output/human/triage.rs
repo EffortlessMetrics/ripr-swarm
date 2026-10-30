@@ -1405,6 +1405,7 @@ mod tests {
     fn test_finding(id: &str) -> Finding {
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: id.to_string(),
             canonical_gap: None,
             probe: Probe {
@@ -1987,6 +1988,7 @@ mod tests {
             base_ref: "master".to_string(),
             base_commit: Some("abc".to_string()),
             merge_base_commit: None,
+            loaded_diff_origin: None,
             head_commit: Some("abc".to_string()),
             working_tree: false,
         });

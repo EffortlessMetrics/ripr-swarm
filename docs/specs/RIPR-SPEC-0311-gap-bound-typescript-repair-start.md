@@ -146,8 +146,13 @@ existed with no way to begin the attempt.
     shell-quoted and spelled relative to ROOT, so the command works from any
     working directory and treats a name like `src/[ab].py` literally. The
     pilot-routing warnings in `agent status` name the same step. On a clean
-    tree, or when the packet, policy, HEAD or Git cannot answer, the start
-    prints bare and its own refusal stays the backstop.
+    tree the start prints bare. When the packet, policy, HEAD or Git cannot
+    establish the prerequisite, the start is withheld with a reason. A dirty
+    worktree start binds the diff origin captured by the loader, so committing
+    cannot move a symbolic base. A clean committed-history check can use its
+    requested base; a committed-only check with dirty files outside the
+    allowed edit surface withholds the start and asks for a fresh check after
+    those files are committed or restored.
 
 ## Required Evidence
 
@@ -211,6 +216,10 @@ existed with no way to begin the attempt.
 ## Test Mapping
 
 - `crates/ripr/tests/installed_python_typescript_journeys.rs`:
+  `dirty_python_repair_start_keeps_original_diff_after_commit`,
+  `dirty_typescript_start_uses_diverged_merge_base`,
+  `dirty_python_check_withholds_start_when_git_inspection_fails`,
+  `committed_python_dirty_file_requires_fresh_check`,
   `typescript_literal_threshold_packet_is_complete_and_controls_fail_closed`,
   `gap_bound_after_phase_closes_the_gap_on_positive_evidence`,
   `gap_bound_after_phase_refuses_a_gap_that_is_not_closed_and_stays_retryable`,
@@ -219,7 +228,7 @@ existed with no way to begin the attempt.
   `gap_bound_after_phase_stops_when_the_retry_budget_is_spent`,
   `gap_bound_after_phase_human_output_names_closure_and_replaces_a_stale_receipt`,
   `gap_bound_receipt_requires_the_verify_closure_and_rejects_forgery`,
-  `typescript_status_warning_keeps_the_no_start_claim_for_refused_variants`,
+  `typescript_status_warning_reports_unconfirmed_start_for_refused_variants`,
   `python_flat_layout_journey_runs_the_gap_bound_loop_from_the_printed_start`,
   `python_status_after_pilot_names_the_gap_bound_start`,
   `python_refused_variant_is_offered_no_gap_bound_start`.
@@ -247,8 +256,8 @@ existed with no way to begin the attempt.
 - `crates/ripr/src/app/gap_bound_repair.rs`: lookup, start spelling, manual
   verify route, and `default_check_gap_start`, the admission `ripr agent
   status` consults so its `pilot_routed_to_check_no_repair_target` warning
-  names the start check prints and keeps the "offers no start" claim only when
-  check offers none (#10001).
+  names the start check prints, or reports that it could not confirm a start
+  and directs the user to check the current route (#10001).
 - `crates/ripr/src/cli/commands/agent.rs`: `run_gap_bound_before_phase`.
 - `crates/ripr/src/app/repair_attempt/mod.rs`: `RepairAttemptGapBinding`,
   `begin_gap_bound_repair_attempt_with_identity`,

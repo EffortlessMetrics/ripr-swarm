@@ -7806,7 +7806,7 @@ const PUSH_BUDGET_DISCLOSURE_MAX_OMITTED_ITEMS: usize = 20;
 /// stored on the snapshot and read by push publication and both pull
 /// handlers, so no transport re-evaluates the budget with a different
 /// result.
-fn compute_delivery_selection(
+pub(super) fn compute_delivery_selection(
     snapshot: &AnalysisSnapshot,
 ) -> Arc<crate::lsp::diagnostic_budget::DiagnosticDeliverySelection> {
     let complete_evidence_identity =
@@ -8379,7 +8379,7 @@ fn outside_partition_recovery(partial_scope: Option<&crate::analysis::PartialDif
 /// compiled in (Perl on the default build), enablement is not enough —
 /// reuse the shared
 /// [`crate::domain::LanguageId::unavailable_adapter_recovery`] text.
-fn language_adapter_not_enabled_recovery(language: crate::domain::LanguageId) -> String {
+pub(super) fn language_adapter_not_enabled_recovery(language: crate::domain::LanguageId) -> String {
     if !language.is_available() {
         return language.unavailable_adapter_recovery();
     }
