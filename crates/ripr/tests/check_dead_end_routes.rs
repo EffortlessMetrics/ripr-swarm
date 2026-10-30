@@ -187,8 +187,11 @@ fn async_gap_with_no_route_says_to_write_the_test_by_hand() -> Result<(), String
         "precondition, the stub refuses and none is printed:\n{check}"
     );
     assert!(
-        check.contains(HAND_WRITTEN) && check.contains(NO_ROUTE),
-        "check must name the hand-written test and the missing route:\n{check}"
+        check.contains(HAND_WRITTEN)
+            && check.contains("no repair start offered: ripr cannot build a repair packet")
+            && !check.contains(NO_ROUTE),
+        "check must name the hand-written test beside the advisory's own recovery, \
+         without also claiming there is no repair route:\n{check}"
     );
     assert!(
         check.contains("run the future it returns to completion"),
@@ -207,8 +210,11 @@ fn side_effect_gap_with_no_route_says_to_write_the_test_by_hand() -> Result<(), 
         "precondition, the stub refuses:\n{check}"
     );
     assert!(
-        check.contains(HAND_WRITTEN) && check.contains(NO_ROUTE),
-        "check must name the hand-written test and the missing route:\n{check}"
+        check.contains(HAND_WRITTEN)
+            && check.contains("no repair start offered: ripr cannot build a repair packet")
+            && !check.contains(NO_ROUTE),
+        "check must name the hand-written test beside the advisory's own recovery, \
+         without also claiming there is no repair route:\n{check}"
     );
     assert_eq!(repo.printed_stub_count(&check)?, 0);
     Ok(())

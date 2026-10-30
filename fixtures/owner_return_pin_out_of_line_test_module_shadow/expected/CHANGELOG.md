@@ -285,3 +285,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — owner_return_pin_out_of_line_test_module_shadow (23)
+
+Reason:
+RIPR-SPEC-0122: check human output drops the no-repair-route clause beside a repair advisory that names its own route or recovery (#10710)
+
+Command:
+`cargo xtask goldens bless owner_return_pin_out_of_line_test_module_shadow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

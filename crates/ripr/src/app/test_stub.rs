@@ -385,6 +385,11 @@ pub(crate) enum StubRouteDecision {
         reason: String,
         seam_ids: Vec<String>,
     },
+    /// Several seams share the finding's line and ripr could not check which
+    /// of them produces a stub (too many to validate, the inventory could not
+    /// be classified, or a seam was missing from it). No command is printed;
+    /// the plain reason lists no unvalidated seam IDs.
+    Withheld { reason: String },
     /// Several seams share the finding's line, but exactly one of them
     /// produces a stub (#10710): print `ripr agent stub --seam-id ID`, the
     /// command that was just resolved to a stub.
@@ -403,6 +408,30 @@ enum SeamStubOutcome {
     Stub,
     Refused(String),
     WeakOracle(String),
+    /// The seam is not in the classified inventory, which `agent stub` words
+    /// as "not found"; nothing is claimed about whether it is a gap.
+    Missing,
+}
+
+/// The resolver's ambiguity message without its unvalidated `pass one of:
+/// --seam-id ...` tail: only validated seam IDs may be named on screen.
+fn plain_ambiguity_reason(reason: &str) -> String {
+    reason
+        .split("; pass one of")
+        .next()
+        .unwrap_or(reason)
+        .trim()
+        .to_string()
+}
+
+/// The reason for an ambiguity ripr could not narrow to a validated stub.
+fn withheld_ambiguity(reason: &str) -> StubRouteDecision {
+    StubRouteDecision::Withheld {
+        reason: format!(
+            "{}; ripr could not check which of them your change touches",
+            plain_ambiguity_reason(reason)
+        ),
+    }
 }
 
 /// What `ripr agent stub --seam-id <id>` does for one seam. This is the resolution `resolve_test_stub` runs for a seam
@@ -418,7 +447,7 @@ fn seam_stub_refusal(
         .iter()
         .find(|entry| entry.seam.id().as_str() == seam_id)
     else {
-        return SeamStubOutcome::Refused(TestStubRefusal::NotAGap.reason().to_string());
+        return SeamStubOutcome::Missing;
     };
     let source = match read_owner_source(root, &entry.seam) {
         Ok(source) => source,
@@ -454,13 +483,14 @@ fn fold_seam_outcomes(
             SeamStubOutcome::WeakOracle(guidance) => {
                 first_weak.get_or_insert(guidance);
             }
+            SeamStubOutcome::Missing => {}
         }
     }
     match stubbable.len() {
         0 => match (first_weak, first_refusal) {
             (Some(guidance), None) => StubRouteDecision::WeakOracle { guidance },
             (_, Some(why)) => StubRouteDecision::Refused { reason: why },
-            (None, None) => StubRouteDecision::Refused { reason },
+            (None, None) => withheld_ambiguity(&reason),
         },
         // Only a seam tied to the finding's changed expression is printed as
         // the one command. When the expression did not pick a seam, a lone
@@ -470,7 +500,7 @@ fn fold_seam_outcomes(
             seam_id: stubbable.swap_remove(0),
         },
         _ => StubRouteDecision::Ambiguous {
-            reason,
+            reason: plain_ambiguity_reason(&reason),
             seam_ids: stubbable,
         },
     }
@@ -496,7 +526,6 @@ fn narrowed_ambiguity(
     seam_ids: Vec<String>,
     seam_index: &mut Option<analysis::FileSeamIndex>,
 ) -> StubRouteDecision {
-    let withheld = |reason: String| StubRouteDecision::Refused { reason };
     let squash = |text: &str| text.split_whitespace().collect::<String>();
     let wanted = squash(expression);
     let mut candidates = seam_ids.clone();
@@ -514,11 +543,11 @@ fn narrowed_ambiguity(
         }
     }
     if candidates.len() > AMBIGUOUS_VALIDATION_LIMIT {
-        return withheld(reason);
+        return withheld_ambiguity(&reason);
     }
     let Ok((classified, _)) = analysis::inventory_classified_seams_at_with_config(root, config)
     else {
-        return withheld(reason);
+        return withheld_ambiguity(&reason);
     };
     let outcomes = candidates
         .into_iter()
@@ -993,7 +1022,7 @@ fn hidden_stub_ambiguity(
                 seam_ids,
                 seam_index,
             ) {
-                StubRouteDecision::Refused { .. } => None,
+                StubRouteDecision::Refused { .. } | StubRouteDecision::Withheld { .. } => None,
                 decision => Some(StubRoute {
                     finding_id: finding.id.clone(),
                     decision,
@@ -1985,12 +2014,68 @@ mod tests {
                 reason: "no".into()
             }
         );
+        // A seam missing from the inventory is not a "not a gap" claim, and a
+        // withheld ambiguity never lists the resolver's unvalidated seam IDs.
+        let raw = "src/lib.rs:12 holds more than one field_construction seam, so --at cannot pick one; pass one of: --seam-id a, --seam-id b";
+        let withheld = fold_seam_outcomes(
+            vec![("a".to_string(), SeamStubOutcome::Missing)],
+            raw.to_string(),
+            true,
+        );
+        match withheld {
+            StubRouteDecision::Withheld { reason } => assert!(
+                reason.contains("cannot pick one")
+                    && !reason.contains("pass one of")
+                    && !reason.contains("--seam-id"),
+                "{reason}"
+            ),
+            other => panic!("expected Withheld, got {other:?}"),
+        }
+        let choice = fold_seam_outcomes(vec![ok("a"), ok("b")], raw.to_string(), false);
+        match choice {
+            StubRouteDecision::Ambiguous { reason, .. } => {
+                assert!(!reason.contains("pass one of"), "{reason}")
+            }
+            other => panic!("expected Ambiguous, got {other:?}"),
+        }
         assert_eq!(
             fold_seam_outcomes(vec![weak("a"), ok("b")], why(), true),
             StubRouteDecision::SeamStub {
                 seam_id: "b".into()
             }
         );
+    }
+
+    /// Both withhold paths of `narrowed_ambiguity` (too many seams to
+    /// validate, and an inventory that cannot classify them) return a plain
+    /// reason with no unvalidated seam IDs and no command.
+    #[test]
+    fn narrowed_ambiguity_withholds_with_a_plain_reason() {
+        let raw = "src/lib.rs:12 holds more than one field_construction seam, so --at cannot pick one; pass one of: --seam-id s0, --seam-id s1";
+        let root = std::env::temp_dir().join("ripr-withhold-no-such-root-10710");
+        let config = RiprConfig::default();
+        for count in [AMBIGUOUS_VALIDATION_LIMIT + 1, 2] {
+            let ids = (0..count).map(|i| format!("s{i}")).collect::<Vec<_>>();
+            let mut index = None;
+            let decision = narrowed_ambiguity(
+                &root,
+                &config,
+                "src/lib.rs",
+                "y: 3",
+                raw.to_string(),
+                ids,
+                &mut index,
+            );
+            match decision {
+                StubRouteDecision::Withheld { reason } => assert!(
+                    reason.contains("cannot pick one")
+                        && !reason.contains("pass one of")
+                        && !reason.contains("--seam-id"),
+                    "{count}: {reason}"
+                ),
+                other => panic!("{count}: expected Withheld, got {other:?}"),
+            }
+        }
     }
 
     #[cfg(feature = "lang-rust")]

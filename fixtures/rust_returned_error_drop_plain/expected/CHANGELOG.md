@@ -243,3 +243,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_returned_error_drop_plain (19)
+
+Reason:
+RIPR-SPEC-0122: check human output drops the no-repair-route clause beside a repair advisory that names its own route or recovery (#10710)
+
+Command:
+`cargo xtask goldens bless rust_returned_error_drop_plain --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

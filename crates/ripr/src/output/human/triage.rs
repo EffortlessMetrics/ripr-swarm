@@ -449,23 +449,38 @@ pub(crate) fn render_human_triage(
                     Some(StubRouteDecision::WeakOracle { guidance }) => {
                         out.push_str(&format!("No test stub here: {guidance}\n"));
                     }
-                    Some(StubRouteDecision::Refused { reason }) => {
+                    Some(StubRouteDecision::Withheld { reason }) => {
                         out.push_str(&format!("No test stub here: {reason}\n"));
+                        if !repair_printed && !repair_already_noticed(navigation) {
+                            out.push_str(&hand_written_test_step(
+                                finding,
+                                reason,
+                                names_no_route(navigation),
+                            ));
+                        }
+                    }
+                    Some(StubRouteDecision::Refused { reason }) => {
+                        let not_a_gap = reason == TestStubRefusal::NotAGap.reason();
+                        if not_a_gap {
+                            // The headline above reports a gap; the stub's
+                            // target seam is not one in the seam view, so say
+                            // that and point at the existing test instead.
+                            out.push_str(
+                                "No test stub here: the seam a stub would target is not a reported gap in the seam view; strengthen the assertion of the test that already reaches the changed line, then rerun `ripr check`\n",
+                            );
+                        } else {
+                            out.push_str(&format!("No test stub here: {reason}\n"));
+                        }
                         // A finding the repair view already counts as gripped
                         // or exposed is not told to write a new test: that
                         // would contradict the line above it.
-                        let already_noticed = matches!(
-                            navigation.repair_route_refusal(),
-                            Some(
-                                RepairRouteRefusal::SeamGrippedFindingNot
-                                    | RepairRouteRefusal::FindingAlreadyExposed
-                            )
-                        );
-                        // A seam the inventory does not report as a gap has
-                        // nothing to write a test for; the line above says so.
-                        let not_a_gap = reason == TestStubRefusal::NotAGap.reason();
+                        let already_noticed = repair_already_noticed(navigation);
                         if !repair_printed && !already_noticed && !not_a_gap {
-                            out.push_str(&hand_written_test_step(finding, reason));
+                            out.push_str(&hand_written_test_step(
+                                finding,
+                                reason,
+                                names_no_route(navigation),
+                            ));
                         }
                     }
                     None => {}
@@ -601,10 +616,8 @@ pub(super) fn hidden_stub_route_findings<'a>(triage: &HumanTriage<'a>) -> Vec<&'
 /// start nor a test stub. It names the test to write by hand and says no ripr
 /// repair route exists for this kind of change yet, so the reader is never
 /// pointed at a command that would refuse.
-fn hand_written_test_step(finding: &Finding, stub_refusal: &str) -> String {
+fn hand_written_test_step(finding: &Finding, stub_refusal: &str, no_route: bool) -> String {
     let shape = match finding.probe.family {
-        // Calling an async function only creates its future, so the test
-        // must run that future to completion before asserting.
         // The changed field sits in a value the owner does not return
         // directly (an `Err` payload, a wrapper), so it cannot be read off
         // the return value as `result.field`.
@@ -615,6 +628,8 @@ fn hand_written_test_step(finding: &Finding, stub_refusal: &str) -> String {
         _ if stub_refusal == TestStubRefusal::NoReturnValue.reason() => {
             "call the function and assert what it changes (an argument it mutates, state it sets, or output it writes), or that it panics when the changed condition is hit, since it returns nothing to compare"
         }
+        // Calling an async function only creates its future, so the test
+        // must run that future to completion before asserting.
         _ if stub_refusal == TestStubRefusal::OwnerAsync.reason() => {
             "call the function, run the future it returns to completion under your async test runtime (await it), and assert the exact value it produces"
         }
@@ -634,8 +649,38 @@ fn hand_written_test_step(finding: &Finding, stub_refusal: &str) -> String {
             "call the function with an input that reaches the changed line and assert the exact value it returns"
         }
     };
-    format!(
-        "Write this test by hand: {shape}. ripr has no repair route for this kind of change yet, so there is no command to run; add the test, then rerun `ripr check`.\n"
+    if no_route {
+        format!(
+            "Write this test by hand: {shape}. ripr has no repair route for this kind of change yet, so there is no command to run; add the test, then rerun `ripr check`.\n"
+        )
+    } else {
+        // The repair advisory above names its own next step; do not claim
+        // that no route exists beside it.
+        format!("Write this test by hand: {shape}; then rerun `ripr check`.\n")
+    }
+}
+
+/// The repair view already counts the finding's seam as gripped or exposed.
+fn repair_already_noticed(navigation: &crate::app::FindingNavigation) -> bool {
+    matches!(
+        navigation.repair_route_refusal(),
+        Some(RepairRouteRefusal::SeamGrippedFindingNot | RepairRouteRefusal::FindingAlreadyExposed)
+    )
+}
+
+/// True when the repair advisory on screen (if any) says there is no repair
+/// start for this finding. Refusals that name a route or a recovery
+/// (`SeveralBindingSeams`, `Ineligible`, `SeamLimit`, `ClassificationFailed`)
+/// must not sit beside "ripr has no repair route".
+fn names_no_route(navigation: &crate::app::FindingNavigation) -> bool {
+    !matches!(
+        navigation.repair_route_refusal(),
+        Some(
+            RepairRouteRefusal::SeveralBindingSeams
+                | RepairRouteRefusal::Ineligible { .. }
+                | RepairRouteRefusal::SeamLimit
+                | RepairRouteRefusal::ClassificationFailed
+        )
     )
 }
 
@@ -1634,7 +1679,7 @@ mod tests {
         let mut finding = test_finding("hand-written");
         finding.probe.family = ProbeFamily::FieldConstruction;
         let not_returned =
-            hand_written_test_step(&finding, TestStubRefusal::FieldNotReturned.reason());
+            hand_written_test_step(&finding, TestStubRefusal::FieldNotReturned.reason(), true);
         assert!(
             not_returned.contains("match the wrapper") && not_returned.contains("`Err`"),
             "{not_returned}"
@@ -1642,16 +1687,136 @@ mod tests {
         assert!(!not_returned.contains("changed field on what it returns"));
 
         finding.probe.family = ProbeFamily::Predicate;
-        let unit = hand_written_test_step(&finding, TestStubRefusal::NoReturnValue.reason());
+        let unit = hand_written_test_step(&finding, TestStubRefusal::NoReturnValue.reason(), true);
         assert!(
             unit.contains("returns nothing to compare") && !unit.contains("exact result"),
             "{unit}"
         );
 
-        let plain = hand_written_test_step(&finding, TestStubRefusal::ObserverRequired.reason());
+        let plain =
+            hand_written_test_step(&finding, TestStubRefusal::ObserverRequired.reason(), true);
         assert!(plain.contains("exact result each time"), "{plain}");
-        let async_step = hand_written_test_step(&finding, TestStubRefusal::OwnerAsync.reason());
+        let async_step =
+            hand_written_test_step(&finding, TestStubRefusal::OwnerAsync.reason(), true);
         assert!(async_step.contains("await it"), "{async_step}");
+        let routed =
+            hand_written_test_step(&finding, TestStubRefusal::ObserverRequired.reason(), false);
+        assert!(
+            routed.starts_with("Write this test by hand:") && !routed.contains("no repair route"),
+            "{routed}"
+        );
+    }
+
+    /// #10710 review: render the selected finding with a stub decision and a
+    /// repair refusal, and return the screen.
+    fn render_with_refusal(
+        decision: crate::app::test_stub::StubRouteDecision,
+        refusal: Option<RepairRouteRefusal>,
+    ) -> String {
+        use crate::app::test_stub::StubRoute;
+        let mut top = super::super::tests::sample_finding();
+        top.class = ExposureClass::WeaklyExposed;
+        top.probe.family = ProbeFamily::Predicate;
+        assert!(offers_test_stub(&top), "eligible selected finding");
+        let output = test_output(vec![top.clone()]);
+        let triage = HumanTriage {
+            state: HumanTriageState::TopGap,
+            selected: Some(&top),
+            omitted: Vec::new(),
+        };
+        let mut navigation =
+            crate::app::FindingNavigation::legacy().with_stub_routes(vec![StubRoute {
+                finding_id: top.id.clone(),
+                decision,
+            }]);
+        if let Some(refusal) = refusal {
+            navigation = navigation
+                .with_repair_route_outcome(crate::app::CheckRepairRoute::Refused(refusal));
+        }
+        let drill_in = FindingDrillIn::Commands(navigation);
+        let mut text = String::new();
+        render_human_triage(
+            &mut text,
+            &triage,
+            &output,
+            &RiprConfig::default(),
+            Some(&drill_in),
+            CheckDiffProvenance::CommittedHistory,
+        );
+        text
+    }
+
+    /// The hand-written step claims "no repair route" only beside a repair
+    /// advisory that also says there is none; refusals that name a route or a
+    /// recovery keep the step without that claim.
+    #[test]
+    fn hand_written_step_never_denies_a_route_the_advisory_names() {
+        use crate::app::task_first::RefusalKind;
+        let refused = || crate::app::test_stub::StubRouteDecision::Refused {
+            reason: TestStubRefusal::OwnerGeneric.reason().to_string(),
+        };
+        let naming = vec![
+            RepairRouteRefusal::SeveralBindingSeams,
+            RepairRouteRefusal::Ineligible {
+                reason: "route not ready".to_string(),
+                kind: RefusalKind::RouteNotReady,
+                missing: Vec::new(),
+                boundary_input_observed: false,
+            },
+            RepairRouteRefusal::SeamLimit,
+            RepairRouteRefusal::ClassificationFailed,
+        ];
+        for refusal in naming {
+            let text = render_with_refusal(refused(), Some(refusal.clone()));
+            assert!(
+                text.contains("Write this test by hand:"),
+                "{refusal:?}\n{text}"
+            );
+            assert!(!text.contains("no repair route"), "{refusal:?}\n{text}");
+        }
+        let none = render_with_refusal(
+            refused(),
+            Some(RepairRouteRefusal::NoBindingSeam { seams_in_file: 0 }),
+        );
+        assert!(none.contains("ripr has no repair route"), "{none}");
+    }
+
+    /// Withheld ambiguity prints a plain reason with no seam IDs and no
+    /// command; a not-a-gap stub target no longer contradicts the headline.
+    #[test]
+    fn withheld_and_not_a_gap_stub_decisions_render_plainly() {
+        let withheld = render_with_refusal(
+            crate::app::test_stub::StubRouteDecision::Withheld {
+                reason: "src/lib.rs:12 holds more than one predicate seam, so --at cannot pick one; ripr could not check which of them your change touches".to_string(),
+            },
+            Some(RepairRouteRefusal::NoBindingSeam { seams_in_file: 0 }),
+        );
+        assert!(
+            withheld.contains("No test stub here: src/lib.rs:12 holds more than one"),
+            "{withheld}"
+        );
+        assert!(
+            !withheld.contains("pass one of") && !withheld.contains("--seam-id"),
+            "{withheld}"
+        );
+        let not_a_gap = render_with_refusal(
+            crate::app::test_stub::StubRouteDecision::Refused {
+                reason: TestStubRefusal::NotAGap.reason().to_string(),
+            },
+            Some(RepairRouteRefusal::NoBindingSeam { seams_in_file: 0 }),
+        );
+        assert!(
+            not_a_gap.contains("strengthen the assertion"),
+            "{not_a_gap}"
+        );
+        assert!(
+            !not_a_gap.contains("Write this test by hand"),
+            "{not_a_gap}"
+        );
+        assert!(
+            !not_a_gap.contains("No test stub here: the seam is not a reported gap"),
+            "{not_a_gap}"
+        );
     }
 
     #[test]

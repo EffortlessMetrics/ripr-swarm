@@ -443,3 +443,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — observation_unverified_call_deletion (25)
+
+Reason:
+RIPR-SPEC-0122: check human output drops the no-repair-route clause beside a repair advisory that names its own route or recovery (#10710)
+
+Command:
+`cargo xtask goldens bless observation_unverified_call_deletion --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

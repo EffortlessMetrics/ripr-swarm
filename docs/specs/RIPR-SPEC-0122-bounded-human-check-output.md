@@ -381,13 +381,20 @@ resolver produces a stub. When it refuses, the block is replaced by one line,
 finding also prints no repair start, one further line follows (#10710):
 `Write this test by hand: <what to call and assert>. ripr has no repair
 route for this kind of change yet, ...`, so a gap with neither route never ends
-without a named next step. A refusal that already names the existing test to
+without a named next step; beside a repair advisory that names its own route or
+recovery (several binding seams, a not-ready packet, the seam budget, a
+classification failure) the step omits the "no repair route" clause. A refusal that already names the existing test to
 strengthen (the weak-assertion pointer) gets no such line. When several seams
 share the line and exactly one is the finding's changed expression, the block
 prints the stub command for that seam (`--seam-id`) instead of listing the
 others, so every printed `ripr agent stub` command produces a stub. When the
-function has no seam of that kind, or the location is refused as ambiguous,
-nothing is printed. The resolver reads the files on disk, so a check
+function has no seam of that kind, nothing is printed. When the location is
+ambiguous and ripr cannot narrow it to a validated stub (more than eight seams
+to check, an inventory that cannot be classified, or a seam missing from it),
+the block prints `No test stub here:` with a plain reason that lists no seam ID
+and no command. A seam that is not a reported gap is worded as a stub target
+that is not a gap in the seam view, with a pointer to strengthen the existing
+test, and gets no hand-written step. The resolver reads the files on disk, so a check
 that analyzed other bytes (`--candidate-tree`, or a committed-history diff
 that read HEAD content behind uncommitted edits) prints no route, and neither
 does a finding whose expression is not on disk in the function holding its
