@@ -3,12 +3,17 @@ mode: fast
 root: fixtures/typescript_rejects_literal_equality/input
 config: <cwd>/fixtures/typescript_rejects_literal_equality/input/ripr.toml
 
-Summary: 2 probe(s), 1 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+Summary: 2 changed behavior(s) checked: 1 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
 
 Changed file(s) by language: typescript = 1
 
 Analysis outcome: findings below (analysis complete; complete_with_findings)
-  Counts: 1 changed file(s), 4 changed line(s), 2 candidate line(s), 2 probe(s), 2 finding(s)
+  Counts: 1 changed file(s), 4 changed line(s), 2 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
 
 INFO src/load.ts:3
   id: probe:src_load.ts:typescript_preview:fd09bc48
@@ -16,9 +21,10 @@ INFO src/load.ts:3
 Changed
   after:      throw "TOKEN_REQUIRED";
 
-Probe
+Change type
+  error handling changed
   family: error_path
-  delta:  control
+  delta:  control (changes which code path runs)
   owner:  typescript:src/load.ts::load
 
 Language
@@ -86,9 +92,10 @@ WARNING src/load.ts:5
 Changed
   after:    return "ready";
 
-Probe
+Change type
+  a returned value changed
   family: return_value
-  delta:  value
+  delta:  value (changes a computed value)
   owner:  typescript:src/load.ts::load
 
 Language
@@ -117,7 +124,7 @@ Evidence
   - observation weak: Strongest extracted oracle kind: `unknown` (rank 0)
   - discriminator weak: TypeScript preview adapter found no strong discriminator; missing proof: `return value == "ready"`
   - local flow reaches returned value: return "ready"; (line 5)
-  - related test tests/load.test.ts:4 missing token rejects with the required literal uses unknown unknown oracle
+  - related test tests/load.test.ts:4 missing token rejects with the required literal uses no oracle; unconfirmed: ripr could not confirm that this assertion observes the changed behavior
 
 Weakness
   - Related test reaches `load` but the strongest extracted oracle is `unknown`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion or a `toThrow` form with an exact payload (string, object, or class reference)

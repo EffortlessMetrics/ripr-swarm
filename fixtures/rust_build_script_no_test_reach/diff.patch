@@ -1,0 +1,11 @@
+diff --git a/build.rs b/build.rs
+index 0000000..1111111 100644
+--- a/build.rs
++++ b/build.rs
+@@ -1,5 +1,5 @@
+ fn lint_cap() -> &'static str {
+-    "--cap-lints=warn"
++    "--cap-lints=allow"
+ }
+ 
+ fn main() {

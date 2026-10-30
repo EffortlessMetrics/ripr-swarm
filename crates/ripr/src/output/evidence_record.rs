@@ -1367,7 +1367,11 @@ fn rust_macro_reach_limitation_reason(reason: &str) -> bool {
 
 fn static_limitation_category(stage: &str, state: &str, reason: &str) -> &'static str {
     let reason = reason.to_ascii_lowercase();
-    if reason.contains("constructor_field_owner_ambiguous") {
+    if reason.contains(StaticLimitKind::RustCallFactBudget.as_str()) {
+        // #8600: the producer named the typed call-fact budget limit; the
+        // substring classifier below must not rename it from its prose.
+        StaticLimitKind::RustCallFactBudget.as_str()
+    } else if reason.contains("constructor_field_owner_ambiguous") {
         "constructor_field_owner_ambiguous"
     } else if reason.contains("field assignment value is unresolved") {
         "field_assignment_value_unresolved"
@@ -1985,12 +1989,15 @@ mod tests {
                 propagate: stage(StageState::Yes, "return value flow"),
                 observe: stage(StageState::Yes, "assertion observes output"),
                 discriminate: stage(StageState::Weak, "broad assertion misses boundary"),
-                observed_values: vec![ValueFact {
-                    line: 12,
-                    text: "discounted_total(50, 100)".to_string(),
-                    value: "50".to_string(),
-                    context: ValueContext::FunctionArgument,
-                }],
+                observed_values: vec![
+                    ValueFact {
+                        line: 12,
+                        text: "discounted_total(50, 100)".to_string(),
+                        value: "50".to_string(),
+                        context: ValueContext::FunctionArgument,
+                    }
+                    .into(),
+                ],
                 missing_discriminators: vec![MissingDiscriminatorFact {
                     value: "discount_threshold (equality boundary)".to_string(),
                     reason: "observed values do not include the equality-boundary case".to_string(),

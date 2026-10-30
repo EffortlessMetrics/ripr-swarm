@@ -1,0 +1,13 @@
+diff --git a/src/parsePort.ts b/src/parsePort.ts
+index 0000000..1111111 100644
+--- a/src/parsePort.ts
++++ b/src/parsePort.ts
+@@ -1,7 +1,7 @@
+ export async function parsePort(text: string): Promise<number> {
+   const n = Number(text);
+   if (!Number.isInteger(n) || n < 1 || n > 65535) {
+-    throw new RangeError("bad port");
++    throw new RangeError("bad port number");
+   }
+   return n;
+ }

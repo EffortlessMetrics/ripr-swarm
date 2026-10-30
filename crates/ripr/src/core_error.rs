@@ -92,6 +92,19 @@ pub(crate) enum CheckFailureKind {
     /// A `ripr agent packet --seam-id` names no seam in the current
     /// inventory (#7331).
     SeamIdUnknown,
+    /// A `ripr agent packet|start --seam-id` names a seam the inventory has
+    /// but agent policy withholds (configured off, already gripped, or not
+    /// agent-visible). A typed refusal like [`Self::SeamIdUnknown`], with its
+    /// own cause so callers never read "not found" for a seam they can see
+    /// (#10712).
+    SeamPolicyOmitted,
+    /// A `ripr agent start --seam-id` names a seam the inventory has and
+    /// policy permits, but the shared repair-admission gate refuses: its
+    /// class (opaque or `*_unknown`) is a static limitation, not a repairable
+    /// gap, or `ripr repair` reports it not repair-eligible, so no workflow
+    /// can start. Not a policy decision; `agent packet` still renders its
+    /// inspection packet.
+    SeamNotActionable,
     /// A `--at`/`--finding`/`explain` selector matched no finding. This is
     /// usage-class, not an operational failure: the CLI keeps it prose-only
     /// (empty stdout, exit 2) instead of writing a refusal envelope, so the
@@ -101,6 +114,8 @@ pub(crate) enum CheckFailureKind {
     /// The `ripr check` wall-clock budget ran out before analysis finished
     /// (#5369). The run produced no findings: a refusal, never a clean pass.
     AnalysisTimeout,
+    /// The shared diff parser refused part of an agent brief working set.
+    DiffInputUnsupported,
 }
 
 impl CheckFailureKind {
@@ -114,8 +129,11 @@ impl CheckFailureKind {
             Self::CheckArtifactUnusable => "check_artifact_unusable",
             Self::GapLedgerUnusable => "gap_ledger_unusable",
             Self::SeamIdUnknown => "seam_id_unknown",
+            Self::SeamPolicyOmitted => "seam_policy_omitted",
+            Self::SeamNotActionable => "seam_not_actionable",
             Self::SelectorMiss => "selector_miss",
             Self::AnalysisTimeout => "analysis_timeout",
+            Self::DiffInputUnsupported => "diff_input_unsupported",
         }
     }
 
@@ -130,8 +148,11 @@ impl CheckFailureKind {
             Self::CheckArtifactUnusable => "analysis/check-artifact",
             Self::GapLedgerUnusable => "analysis/gap-ledger",
             Self::SeamIdUnknown => "analysis/seam-inventory",
+            Self::SeamPolicyOmitted => "analysis/seam-policy",
+            Self::SeamNotActionable => "analysis/seam-limitation",
             Self::SelectorMiss => "analysis/selector",
             Self::AnalysisTimeout => "analysis/timeout",
+            Self::DiffInputUnsupported => "analysis/diff-input",
         }
     }
 }
@@ -243,11 +264,37 @@ impl CoreError {
         }
     }
 
+    /// A `ripr agent packet|start --seam-id` for a seam agent policy withholds
+    /// (#10712). `detail` is the exact human diagnostic, kept verbatim.
+    pub(crate) fn seam_policy_omitted(detail: impl Into<String>) -> Self {
+        Self::CheckFailure {
+            kind: CheckFailureKind::SeamPolicyOmitted,
+            detail: detail.into(),
+        }
+    }
+
+    /// A `ripr agent start --seam-id` the repair-admission gate refuses (#10712).
+    /// `detail` is the exact human diagnostic, kept verbatim.
+    pub(crate) fn seam_not_actionable(detail: impl Into<String>) -> Self {
+        Self::CheckFailure {
+            kind: CheckFailureKind::SeamNotActionable,
+            detail: detail.into(),
+        }
+    }
+
     /// A `ripr check` run that exhausted its wall-clock budget (#5369).
     /// `detail` is the exact human diagnostic, kept verbatim.
     pub(crate) fn analysis_timeout(detail: impl Into<String>) -> Self {
         Self::CheckFailure {
             kind: CheckFailureKind::AnalysisTimeout,
+            detail: detail.into(),
+        }
+    }
+
+    /// A brief diff contains regions the shared parser could not examine.
+    pub(crate) fn diff_input_unsupported(detail: impl Into<String>) -> Self {
+        Self::CheckFailure {
+            kind: CheckFailureKind::DiffInputUnsupported,
             detail: detail.into(),
         }
     }

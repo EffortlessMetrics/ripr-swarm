@@ -1,0 +1,9 @@
+diff --git a/hostile/bare_end.py b/hostile/bare_end.py
+--- a/hostile/bare_end.py
++++ b/hostile/bare_end.py
+@@ -1,2 +1,2 @@
+ def bare_double(x):
+-    return x * 2
+\ No newline at end of file
++    return x * 3
+\ No newline at end of file

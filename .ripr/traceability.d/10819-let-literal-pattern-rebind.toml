@@ -1,0 +1,11 @@
+# Registers the pattern-rebound let-literal control (#10819) under RIPR-SPEC-0158.
+[[extend]]
+id = "RIPR-SPEC-0158"
+tests = [
+  "crates/ripr/tests/let_bound_literal_rebound.rs::a_single_literal_binding_at_the_boundary_is_credited",
+  "crates/ripr/tests/let_bound_literal_rebound.rs::a_pattern_that_rebinds_the_name_is_not_credited",
+  "crates/ripr/tests/let_bound_literal_rebound.rs::a_match_scrutinee_naming_the_binding_does_not_rebind_it",
+]
+code = [
+  "crates/ripr/src/analysis/value_resolution.rs",
+]

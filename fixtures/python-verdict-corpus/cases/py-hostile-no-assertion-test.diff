@@ -1,0 +1,7 @@
+diff --git a/hostile/smoke.py b/hostile/smoke.py
+--- a/hostile/smoke.py
++++ b/hostile/smoke.py
+@@ -1,2 +1,2 @@
+ def smoke_value():
+-    return 41
++    return 42

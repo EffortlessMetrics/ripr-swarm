@@ -108,6 +108,11 @@ eligibility map directly.
   eligibility change.
 - Reject: a `moved_or_renamed` or `unresolved_subject` finding becoming a
   gap record, diagnostic, annotation, or repair target.
+- Accept (#9004, display only): in human output a `base_deleted` or
+  `moved_or_renamed` finding whose configured severity is `warning` renders
+  at `note`; configured `off`, `info`, and `note` are kept, and a
+  `candidate_current` finding keeps its configured `warning`. Counts, JSON,
+  and classification are unchanged.
 
 ## Test Mapping
 
@@ -117,7 +122,8 @@ tests in `output/gap_decision_ledger.rs`, `output/first_pr.rs`,
 `output/json/finding_alignment.rs`, `lsp/diagnostics.rs`, `output/sarif.rs`
 (including `omitted_not_current` accounting), `output/github.rs`, and
 `app/pr_evidence.rs` pin each routed surface with `candidate_current`
-fixtures; re-blessed goldens carry the completed preview dispositions.
+fixtures; `output/human.rs` pins the base-side display-severity rule
+(`display_severity` in `output/human/sections.rs`); re-blessed goldens carry the completed preview dispositions.
 
 ## Non-Goals
 

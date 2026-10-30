@@ -1,0 +1,51 @@
+{
+  "case_id": "local-boundary-loan-blind",
+  "subject_id": "authored-local-boundary-loan",
+  "diff": "cases/local-boundary-loan-blind.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 13
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "helper_wrapped_weak_assert",
+  "hard_case": "The boundary operand is a local selected by a flag parameter and the test reaches the owner through a helper that forwards its parameters (#9509).",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "unit < bytes",
+        "mutated_line": "unit < bytes",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: tier_loan_blind(1_024, true) becomes \"byte\""
+      },
+      {
+        "replacement": "unit > bytes",
+        "mutated_line": "unit > bytes",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: tier_loan_blind(1_024, true) becomes \"byte\""
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The inputs sit on the flag-selected boundary through the helper, but expect_some_tier only asserts the result is non-empty, so no oracle observes which side of the boundary ran. Crediting it would be false credit from an input reaching the boundary with no discriminating assertion. 0 of 2 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0001, RIPR-SPEC-0158, RIPR-SPEC-0186.",
+  "labeling_observation": {
+    "ripr_commit": "59b29bd",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

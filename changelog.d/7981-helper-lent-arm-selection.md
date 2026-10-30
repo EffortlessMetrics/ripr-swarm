@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- Match-arm selection reads char-literal arm patterns (`'C' | 'S' =>`), which were masked as comments so no char arm established. A test-local check helper whose `assert_eq!` compares an owner call on its parameter now lends that call the literal arguments it is called with, so `check_color('S', "black")` credits the changed arm it selects. Helper calls still never name an arm as unselected (RIPR-SPEC-0229 decision 5) (#7981).

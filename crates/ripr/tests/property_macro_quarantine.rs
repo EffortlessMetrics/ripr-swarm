@@ -271,7 +271,7 @@ fn property_macro_quarantine_matches_runtime_collection_and_discrimination() -> 
             assert!(guidance.contains("macro"), "{name}: {guidance}");
             assert!(!guidance.contains("Add "), "{name}: unsupported is not a new-test request");
             let human = render_check(&report, &OutputFormat::Human)?;
-            assert!(human.contains("limited by static analysis"), "{name}: {human}");
+            assert!(human.contains("ripr cannot tell from reading the code whether tests would notice this"), "{name}: {human}");
         }
         for wrong in [false, true] {
             let runtime_source = root.join("runtime.rs");
@@ -464,13 +464,15 @@ fn property_mentions_respect_known_package_boundaries() -> Result<(), String> {
             "{name}: {finding}"
         );
         let human = render_check(&report, &OutputFormat::Human)?;
-        let plain_action = "review the unresolved static path and existing tests";
-        let named_action = "inspect the named static limitation";
+        let plain_action = "look at the reason below and the existing tests";
+        let named_action = "look at the reason below before adding a test";
         if ordinary {
             assert!(!human.contains(plain_action), "{name}: {human}");
             assert!(!human.contains(named_action), "{name}: {human}");
         } else {
-            assert!(human.contains("State: limited by static analysis"));
+            assert!(human.contains(
+                "State: ripr cannot tell from reading the code whether tests would notice this"
+            ));
             assert_eq!(human.contains(plain_action), !limited, "{name}: {human}");
             assert_eq!(human.contains(named_action), limited, "{name}: {human}");
         }

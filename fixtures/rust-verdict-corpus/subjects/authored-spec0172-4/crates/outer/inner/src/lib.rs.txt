@@ -1,0 +1,3 @@
+pub fn score(input: u32) -> u32 {
+    input + input + input
+}

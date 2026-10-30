@@ -3,27 +3,33 @@ mode: fast
 root: fixtures/typescript_rejects_reexport_shadow/input
 config: <cwd>/fixtures/typescript_rejects_reexport_shadow/input/ripr.toml
 
-Summary: 2 probe(s), 0 exposed, 2 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+Summary: 2 changed behavior(s) checked: 0 exposed, 2 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
 
 Changed file(s) by language: typescript = 1
 
 Analysis outcome: findings below (analysis complete; complete_with_findings)
-  Counts: 1 changed file(s), 4 changed line(s), 2 candidate line(s), 2 probe(s), 2 finding(s)
+  Counts: 1 changed file(s), 4 changed line(s), 2 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
 
 Shared evidence and guidance
   E1 [findings 1, 2]: reach yes: 1 related test(s) found for owner `load`
   E2 [findings 1, 2]: infection unknown: TypeScript preview adapter does not yet model infection
   E3 [findings 1, 2]: propagation unknown: TypeScript preview adapter does not yet model propagation
   E4 [findings 1, 2]: observation weak: Strongest extracted oracle kind: `unknown` (rank 0)
-  E5 [findings 1, 2]: related test tests/load.test.ts:7 missing token uses unknown unknown oracle
+  E5 [findings 1, 2]: related test tests/load.test.ts:7 missing token uses no oracle
 
 Finding 1: WARNING src/load.ts:3
   id: probe:src_load.ts:typescript_preview:fd09bc48
 Changed
   after:      throw "TOKEN_REQUIRED";
-Probe
+Change type
+  error handling changed
   family: error_path
-  delta:  control
+  delta:  control (changes which code path runs)
   owner:  typescript:src/load.ts::load
 Language
   language: typescript
@@ -80,9 +86,10 @@ Finding 2: WARNING src/load.ts:5
   id: probe:src_load.ts:typescript_preview:2209cfc8
 Changed
   after:    return "ready";
-Probe
+Change type
+  a returned value changed
   family: return_value
-  delta:  value
+  delta:  value (changes a computed value)
   owner:  typescript:src/load.ts::load
 Language
   language: typescript

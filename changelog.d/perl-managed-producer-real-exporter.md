@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- A configured Perl managed producer now works with the real `perl-ripr-facts` exporter: `ripr check` runs it from the analysis root with `--root .`, root-relative `--out`/`--diff` paths (the exporter rejects `./` and absolute paths), and hands it the diff it is analyzing so it can emit `changes[]`. A failing exporter's own stderr is now part of the reported producer failure instead of being discarded (#8352).

@@ -1,0 +1,23 @@
+//! A boundary computed from an rfind chain and a char width.
+
+pub fn boundary_hit(input: &str, delim: char) -> bool {
+    let end = input.rfind(delim).map_or(1, |idx| idx);
+    let start = delim.len_utf8();
+    end == start
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn absent_delimiter_lands_on_the_boundary_v_rfind() {
+        assert!(boundary_hit("ab", 'x'));
+    }
+
+    #[test]
+    fn present_delimiter_misses_the_boundary_v_rfind() {
+        assert!(!boundary_hit("xab", 'x'));
+        assert!(!boundary_hit("abx", 'x'));
+    }
+}

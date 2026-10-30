@@ -47,5 +47,8 @@
       "weakly_exposed"
     ],
     "excerpt_parity": "matched"
-  }
+  },
+  "axes": [
+    "test_library_idiom"
+  ]
 }

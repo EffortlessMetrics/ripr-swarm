@@ -1,0 +1,12 @@
+diff --git a/trapkit/core.py b/trapkit/core.py
+--- a/trapkit/core.py
++++ b/trapkit/core.py
+@@ -10,7 +10,7 @@
+ 
+ 
+ def skipped_test(a, b):
+-    return a * b
++    return b * a
+ 
+ 
+ def skipif_false(a, b):

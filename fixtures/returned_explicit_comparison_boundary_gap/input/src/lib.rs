@@ -1,0 +1,13 @@
+/// True when an order ships free.
+pub fn ships_free(items: u32) -> bool {
+    return items >= 10;
+}
+
+/// Shipping in cents for an order.
+pub fn shipping(items: u32) -> u32 {
+    if ships_free(items) {
+        0
+    } else {
+        800
+    }
+}

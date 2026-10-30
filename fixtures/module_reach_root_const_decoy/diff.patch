@@ -1,0 +1,10 @@
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,6 +1,6 @@
+ mod inner {
+     fn is_bulk(qty: u32) -> bool {
+-        qty >= 10
++        10 <= qty
+     }
+ 
+     pub fn order_discount(qty: u32) -> u32 {

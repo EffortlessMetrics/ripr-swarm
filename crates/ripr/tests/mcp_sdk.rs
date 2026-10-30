@@ -232,7 +232,7 @@ async fn sdk_session(
             for (request, code) in [
                 (
                     CallToolRequestParams::new("ripr_everything"),
-                    rmcp::model::ErrorCode::METHOD_NOT_FOUND,
+                    rmcp::model::ErrorCode::INVALID_PARAMS,
                 ),
                 (
                     CallToolRequestParams::new("ripr_workspace_status").with_arguments(

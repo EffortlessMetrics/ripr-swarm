@@ -2,10 +2,15 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/field_match_macro_option_shadow/input
 
-Summary: 3 probe(s), 0 exposed, 2 weakly_exposed, 1 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 3 of 3 finding(s) unsuppressed (2 base-side evidence, not candidate edit targets)
+Summary: 3 changed behavior(s) checked: 0 exposed, 2 weakly_exposed, 1 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 3 of 3 finding(s) unsuppressed (2 base-side evidence, not candidate edit targets)
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
 
 Analysis outcome: findings below (analysis complete; complete_with_findings)
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 3 probe(s), 3 finding(s)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 3 changed behavior(s) checked, 3 finding(s)
 
 WARNING ./src/lib.rs:5
   id: probe:src_lib.rs:match_arm:23efc786
@@ -13,10 +18,12 @@ WARNING ./src/lib.rs:5
 Changed
   before: None => 601,
   after:  None =>
+          (arm head only; open the arm at ./src/lib.rs:5 to read its new body)
 
-Probe
+Change type
+  a match arm changed
   family: match_arm
-  delta:  control
+  delta:  control (changes which code path runs)
   owner:  src/lib.rs::charge
 
 Static exposure
@@ -27,7 +34,7 @@ Evidence
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation yes: Changed behavior appears to influence match arm result: None =>
   - observation yes: A related test observes a value or effect near the changed behavior
-  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
+  - discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression
   - local flow reaches match arm result: None => (line 5)
   - related test src/lib.rs:10 selected uses strong whole object equality oracle: assert_eq!(charge(&Lease { elapsed: None, timeout: 600 }), 1001); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   - source assertion argument value 1001 at line 12
@@ -38,6 +45,7 @@ Weakness
 
 Static limitation
   rust_field_match_selector_unresolved — A plain owner-parameter field selects this match, but ripr cannot align its value at the owner invocation or establish whether an assertion observes that invocation's return. This names an analyzer limitation without changing classification or claiming coverage.
+  Next: Call the owner with a literal value for the selecting field and `assert_eq!` on its return value.
 
 Limitation detail
   last established edge: owner parameter field `lease.elapsed` is the changed tail match selector
@@ -51,7 +59,7 @@ Drill in:
   ripr explain --root <cwd>/fixtures/field_match_macro_option_shadow/input --diff <cwd>/fixtures/field_match_macro_option_shadow/diff.patch --mode fast probe:src_lib.rs:match_arm:23efc786
   ripr context --root <cwd>/fixtures/field_match_macro_option_shadow/input --diff <cwd>/fixtures/field_match_macro_option_shadow/diff.patch --mode fast --at probe:src_lib.rs:match_arm:23efc786
 
-WARNING ./src/lib.rs:5
+NOTE ./src/lib.rs:5
   id: probe:src_lib.rs:match_arm:26dbc5a7
 
 Changed
@@ -59,21 +67,22 @@ Changed
   expr:   None => 601,
   source:  base_deleted — base-side evidence, not a candidate edit target
 
-Probe
+Change type
+  a match arm changed
   family: match_arm
-  delta:  control
+  delta:  control (changes which code path runs)
   owner:  src/lib.rs::charge
-  canonical gap: gap:rust:src/lib.rs:charge:match_arm:match_arm:none=>601
+  gap id (for scripts): gap:rust:src/lib.rs:charge:match_arm:match_arm:none=>601
 
 Static exposure
-  weakly_exposed (warning, confidence 0.92)
+  weakly_exposed (note, confidence 0.92)
 
 Evidence
   - reach yes: Related tests appear to reach charge: selected
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation yes: Changed behavior appears to influence match arm result: 601
   - observation yes: A related test observes a value or effect near the changed behavior
-  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
+  - discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression
   - local flow reaches match arm result: 601 (line 5)
   - related test src/lib.rs:10 selected uses strong whole object equality oracle: assert_eq!(charge(&Lease { elapsed: None, timeout: 600 }), 1001); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   - source assertion argument value 1001 at line 12
@@ -88,7 +97,7 @@ Drill in:
   ripr explain --root <cwd>/fixtures/field_match_macro_option_shadow/input --diff <cwd>/fixtures/field_match_macro_option_shadow/diff.patch --mode fast probe:src_lib.rs:match_arm:26dbc5a7
   ripr context --root <cwd>/fixtures/field_match_macro_option_shadow/input --diff <cwd>/fixtures/field_match_macro_option_shadow/diff.patch --mode fast --at probe:src_lib.rs:match_arm:26dbc5a7
 
-WARNING ./src/lib.rs:5
+NOTE ./src/lib.rs:5
   id: probe:src_lib.rs:return_value:377f287f
 
 Changed
@@ -96,14 +105,15 @@ Changed
   expr:   None => 601,
   source:  base_deleted — base-side evidence, not a candidate edit target
 
-Probe
+Change type
+  a returned value changed
   family: return_value
-  delta:  value
+  delta:  value (changes a computed value)
   owner:  src/lib.rs::charge
-  canonical gap: gap:rust:src/lib.rs:charge:return_value:return_value:none=>601
+  gap id (for scripts): gap:rust:src/lib.rs:charge:return_value:return_value:none=>601
 
 Static exposure
-  reachable_unrevealed (warning, confidence 0.66)
+  reachable_unrevealed (note, confidence 0.66)
 
 Evidence
   - reach yes: Related tests appear to reach charge: selected
@@ -112,7 +122,7 @@ Evidence
   - observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
   - discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)
   - local flow reaches returned value: None => lease.timeout (line 5)
-  - related test src/lib.rs:10 selected uses none unknown oracle; misses: assertion not credited: ripr could not establish that it runs as the standard macro
+  - related test src/lib.rs:10 selected uses no oracle; misses: assertion not credited: ripr could not establish that this assertion counts here
   - source assertion argument value 1001 at line 12
   - source function argument value lease = 600 at line 12
 

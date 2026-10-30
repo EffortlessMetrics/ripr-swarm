@@ -1,0 +1,7 @@
+use super::*;
+
+#[test]
+fn span_ignores_order() {
+    assert_eq!(span(2, 9), 7);
+    assert_eq!(span(9, 2), 7);
+}

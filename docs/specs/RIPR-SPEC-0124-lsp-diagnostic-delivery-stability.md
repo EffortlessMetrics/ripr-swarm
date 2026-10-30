@@ -11,6 +11,7 @@ Linked issues:
 - #1565
 - #1573
 - #5202
+- #9366
 
 ## Problem
 
@@ -46,6 +47,15 @@ cleared files, published payload bytes, and suppressed payload bytes.
 
 `did_change` remains document-state only. Analysis and publication continue to
 advance on the saved-workspace open/save/close and explicit refresh paths.
+
+A `didSave` whose bytes match the last recorded save for that URI is
+deduplicated (#1908) only while a published snapshot covers that save. A
+refresh that ends without publishing and without a successor (failed,
+cancelled, deadline-exceeded or never started) invalidates the recorded
+digests no published snapshot has covered yet, so an identical re-save retries
+(#9366); digests a successful
+snapshot already covered still deduplicate, and a later successful refresh makes
+the next identical save deduplicate again.
 
 `shutdown` publishes one empty diagnostic set per previously published URI
 in push mode and nothing in pull mode, reusing the take-once tracked URIs

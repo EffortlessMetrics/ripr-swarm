@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 886dffc..e7b3ec6 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -18,7 +18,7 @@ pub fn other_row_class(label: &str) -> &'static str {
+ }
+ 
+ pub fn five_class(n: u32) -> &'static str {
+-    if n == 5 {
++    if n == 6 {
+         "five"
+     } else {
+         "other"

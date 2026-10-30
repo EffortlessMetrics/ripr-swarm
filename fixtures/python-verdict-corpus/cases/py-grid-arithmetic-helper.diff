@@ -1,0 +1,12 @@
+diff --git a/grid_arithmetic/core.py b/grid_arithmetic/core.py
+--- a/grid_arithmetic/core.py
++++ b/grid_arithmetic/core.py
+@@ -14,7 +14,7 @@
+ 
+ 
+ def tip(bill, rate):
+-    return bill * rate
++    return rate * bill
+ 
+ 
+ def seconds(minutes):

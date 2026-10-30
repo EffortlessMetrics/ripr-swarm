@@ -28,7 +28,8 @@ schema_version = "ripr-dx-scoreboards-v1"
 
 # Fixed corpus of real repositories. Pins are exact commits so a moving
 # upstream cannot move the measurement; only the analyzer under test changes.
-# Each pin is a commit whose own change touches production Rust, so the warm
+# Each pin is a commit whose own change touches production code in the entry's
+# language (Rust when `language` is absent), so the warm
 # `ripr check --base HEAD~1` measures a real small edit rather than an empty
 # diff. Entries can also be repositories we intend to integrate with; the
 # report shows each one as its own row set.
@@ -56,6 +57,158 @@ url = "https://github.com/EffortlessMetrics/ripr-swarm"
 sha = "7c64b9c8d0778cc7a6aeaab0deb0452d9e521663"
 note = "large workspace (~900 files); pinned, not the checkout under test"
 heavy = true
+
+# Larger workspaces, where the inner loop is judged. Warm checks on small
+# libraries meet the 2 s bar easily; these rows are the ones that can miss it.
+# One run each so far: a commit with no product Rust ran in well under a
+# second, cargo's Rust-editing pin in about 3 s, and a Rust-editing commit in
+# this repository in 49 to 87 s. The two rows below are a fast and a slow
+# Rust-editing case; the `*-no-rust` entries after them pin commits that touch
+# no `.rs` file (a CI workflow, a changelog), so the common docs-or-CI edit has
+# its own row, trend and gate (#10329).
+[[corpus]]
+id = "cargo"
+url = "https://github.com/rust-lang/cargo"
+sha = "f3865b2a4d1acc5276f6b3c67d0e057f4dab3928"
+base_sha = "0c38e943f4640efe8ade36f1034fdd8d87c26dcb"
+note = "large long-lived binary workspace (~1400 .rs files); shared corpus pin"
+heavy = true
+
+[[corpus]]
+id = "ripr-swarm-2026-10"
+url = "https://github.com/EffortlessMetrics/ripr-swarm"
+sha = "8fbe8bd1598e0b11752c6c989aa54198a0510a2f"
+note = "this repository at its 2026-10 size (~2100 .rs files), a fixed pin that will stop being current; the commit edits product Rust under crates/ripr, so the warm check pays for the macro-binding scan"
+heavy = true
+
+# No-Rust diffs. The pinned change touches no `.rs` file, so the warm check
+# should finish without analyzing the workspace. `cargo xtask dx-scoreboard`
+# reports each as its own repository row set; `corpus_pins_no_rust_commits`
+# keeps these two from drifting to a Rust-editing commit.
+[[corpus]]
+id = "serde-no-rust"
+url = "https://github.com/serde-rs/serde"
+sha = "576e2ef9d8b985cb9399fa3a35913ef86503bad4"
+note = "serde commit that changes only .github/workflows/ci.yml (no Rust)"
+
+[[corpus]]
+id = "cargo-no-rust"
+url = "https://github.com/rust-lang/cargo"
+sha = "523e530d77cce92813eebbf6ac009a04f2df2ac2"
+base_sha = "04d22dbe795476cf89d1dc2599cec98e4b227bc3"
+note = "cargo merge commit whose diff against its first parent changes only doc/book/src/CHANGELOG.md (no Rust); ~1400 .rs files stay untouched"
+heavy = true
+
+# Python diffs. The warm check on a Python edit runs the Python analyzer, which
+# has its own hot spots (#10017), so these rows are a separate population from
+# the Rust rows above. Each pin is a single-parent commit whose own change edits
+# production Python and its test, so `HEAD~1` is the base. All complete with
+# findings under `--mode draft`. Django (2,937 `.py` files) fits under the
+# 4,000-file cap since #10468.
+[[corpus]]
+id = "click-python"
+url = "https://github.com/pallets/click"
+sha = "f67c2bb6c2f055c1c7a57cd46c3697fc26a7742e"
+language = "python"
+note = "small Python library; commit edits src/click/utils.py and its test"
+
+[[corpus]]
+id = "poetry-python"
+url = "https://github.com/python-poetry/poetry"
+sha = "a416efd1be6b6787019e751e7c4f6fa1a0911050"
+language = "python"
+note = "larger Python application (~450 .py files); commit edits src/poetry/utils/authenticator.py and its test"
+heavy = true
+
+# A large Python workspace under the file cap (#10750). Before #10735 and
+# #10750 this two-file edit took about 290 s on 4 cores, because every changed
+# line re-scanned all ~23k tests; it now completes in about 15 s.
+[[corpus]]
+id = "pandas-python"
+url = "https://github.com/pandas-dev/pandas"
+sha = "ecdb4258a39cdfc8ba70ce1aa3edda1615b1defc"
+language = "python"
+note = "large Python library (~1500 .py files, ~23k tests); commit edits scripts/validate_min_versions_in_sync.py and its test"
+heavy = true
+
+# The largest real Python workspace pinned (#10785): Django's own tree, a
+# 27-file edit across django/ and tests/ (14.4 s, 390 MiB peak on 4 cores).
+[[corpus]]
+id = "django-python"
+url = "https://github.com/django/django"
+sha = "5c13b5a19864807cae7266339554c14e151e5961"
+language = "python"
+note = "large Python framework (2,937 .py files); commit adds HTTP QUERY method support across django/ and its tests"
+heavy = true
+
+# TypeScript diffs. `defu`, `ky`, `h3`, `execa`, `destr` and `zod` complete under `--mode draft` for their
+# pinned diffs. Partial-extraction gaps (#10436) are omitted only when their test
+# file is provably unrelated to the diff; uncertain reachability and other typed
+# limitations (read bounds, truncated discovery, skipped links) can still make an
+# analysis partial. Only the pinned diff of each repository is claimed to
+# complete; another zod commit can still show a typed limitation.
+[[corpus]]
+id = "defu-typescript"
+url = "https://github.com/unjs/defu"
+sha = "11ba02213d4b1c6b02dd686041f75edc479c98e9"
+language = "typescript"
+note = "small TypeScript library; commit edits src/defu.ts and its test"
+
+[[corpus]]
+id = "ky-typescript"
+url = "https://github.com/sindresorhus/ky"
+sha = "33462fcbf8f9001fc3d7a08576992098e571c5ff"
+language = "typescript"
+note = "mid-size TypeScript library (~100 files); commit edits source/utils/merge.ts, source/types/options.ts and test/hooks.ts"
+
+[[corpus]]
+id = "h3-typescript"
+url = "https://github.com/h3js/h3"
+sha = "3444ff78970e95c65e481ed2ff9a7d43c880ab1c"
+language = "typescript"
+note = "HTTP server framework with Vitest suites; commit edits src/tracing.ts and test/tracing.test.ts"
+
+[[corpus]]
+id = "execa-typescript"
+url = "https://github.com/sindresorhus/execa"
+sha = "ed80079bc4e21a259fdc521c5a4b27126b308c9a"
+language = "typescript"
+note = "process-execution library tested with ava; the commit edits JavaScript (lib/transform/generator.js and test/transform/encoding-multibyte.js) through the same TypeScript/JavaScript adapter"
+
+[[corpus]]
+id = "destr-typescript"
+url = "https://github.com/unjs/destr"
+sha = "f9c78d402556aba3e50f94d46176f36a0570acbd"
+language = "typescript"
+note = "JSON-ish parser with Vitest tests; the commit edits src/index.ts and test/index.test.ts to skip the fast path when the input may contain escape characters"
+
+[[corpus]]
+id = "zod-typescript"
+url = "https://github.com/colinhacks/zod"
+sha = "680d19f7d1e042e55934209caeb79bc843b94f44"
+language = "typescript"
+note = "schema-validation library tested with Vitest; the commit edits packages/zod/src/v4/core/schemas.ts and its union test, and the repository tracks a tooling directory alias that a link-aware walk must not report as skipped"
+
+[[corpus]]
+id = "valibot-typescript"
+url = "https://github.com/open-circle/valibot"
+sha = "e6b538386cfa4ccf8be6122f7f457ea7d4020325"
+language = "typescript"
+note = "schema library whose sources live in library/ rather than the root; the commit edits six object-schema sources and no test, so the row measures a TypeScript workspace with a large package table (#10943) and nested detection (#10941)"
+
+[[corpus]]
+id = "remeda-typescript"
+url = "https://github.com/remeda/remeda"
+sha = "d02c3bdb5e18cfa53e76f33f4ae525adce515379"
+language = "typescript"
+note = "pnpm monorepo whose package is packages/remeda; the commit edits packages/remeda/src/funnel.ts and its test, and only nested detection (#10941) selects the TypeScript adapter without a ripr.toml"
+
+[[corpus]]
+id = "hono-typescript"
+url = "https://github.com/honojs/hono"
+sha = "d54720da80134a180f5fe2dd98a7676cfc8f08b4"
+language = "typescript"
+note = "web framework with Vitest suites; the commit edits src/middleware/serve-static/index.ts and its test, and the repository declares tsconfig references and extends in nested packages, a vite config naming a lint rule with `alias`, and a self-import of its own package name, which each used to switch off reach scoping of the test-extraction disclosure (#10954)"
 
 # ---------------------------------------------------------------- speed ----
 
@@ -107,6 +260,32 @@ direction = "lower_is_better"
 target = 512
 regression_pct = 15
 regression_floor = 64
+runner_dependent = true
+source = "measured"
+per_repo = true
+
+[[metric]]
+id = "speed.editor_refresh_ms"
+board = "speed"
+title = "Editor refresh after an edited save, from `ripr lsp --stdio`"
+unit = "ms"
+direction = "lower_is_better"
+target = 10000
+regression_pct = 25
+regression_floor = 1000
+runner_dependent = true
+source = "measured"
+per_repo = true
+
+[[metric]]
+id = "speed.editor_refresh_unanswered_progress_ms"
+board = "speed"
+title = "Editor refresh when the client never answers progress creation"
+unit = "ms"
+direction = "lower_is_better"
+target = 10000
+regression_pct = 25
+regression_floor = 1000
 runner_dependent = true
 source = "measured"
 per_repo = true
@@ -308,7 +487,7 @@ unit = "ratio"
 direction = "higher_is_better"
 # Coverage, not correctness: the verdict rates above say whether ripr is
 # right on the covered cases. `verdict-corpus check` separately fails when
-# the covered count falls below the floor in spec-coverage.toml. Scoping in
+# a locked example loses its case (spec-examples.lock). Scoping in
 # a new spec lowers this displayed rate without lowering the count. The
 # committed `metrics/dx-scoreboard/baseline.json` snapshot does not yet
 # include this metric, so `--gate` reports it incomparable rather than as a
@@ -319,7 +498,7 @@ regression_pct = 0
 regression_floor = 0
 runner_dependent = false
 source = "verdict-corpus:fixtures/rust-verdict-corpus#spec_example_coverage.coverage"
-pending_reason = "coverage is derived from fixtures/rust-verdict-corpus cases, spec-coverage.toml, and docs/specs; restore the corpus from main; `cargo xtask verdict-corpus check` gates the covered count against the floor in spec-coverage.toml"
+pending_reason = "coverage is derived from fixtures/rust-verdict-corpus cases, spec-coverage.toml, and docs/specs; restore the corpus from main; `cargo xtask verdict-corpus check` gates the covered examples against spec-examples.lock"
 
 # Python verdict corpus (RIPR-SPEC-0245). Every Python case is authored to
 # cover a test-library oracle or reach rule (RIPR-SPEC-0028, RIPR-SPEC-0238),
@@ -599,6 +778,21 @@ source = "ingest:first-run"
 # The verdict list is the sample detail: a changed verdict is listed for
 # review, because correctness needs the labeled corpus, not this walk.
 review_on_change = true
+
+[[metric]]
+id = "first_run.decisive_verdicts"
+board = "first_run"
+title = "Simple boundary edits on unfamiliar crates where ripr gives a decisive verdict that agrees with what the tests catch (of the 3 first-run crates)"
+unit = "cases"
+direction = "higher_is_better"
+# #9276 acceptance: at least 2 of the 3 first-run crates. "Agrees" is the
+# walk's `verdict_reading`, so an `*_unknown` verdict never counts and neither
+# does false credit or a false gap. Any drop from the baseline regresses.
+target = 2
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+source = "ingest:first-run"
 
 [[metric]]
 id = "first_run.friction_events"
@@ -886,7 +1080,12 @@ source = "ingest:rust-corpus-smoke"
 # (top-5 precision moves at least 0.04 per pick, top-10 precision 0.02, the
 # top-10 shares 0.02), and the confirmed and refuted counts allow no change in
 # the worse direction, because an unscored pick turning refuted moves precision by less than one
-# pick's step. Any pick that moves the wrong way fails. An intended trade-off
+# pick's step. The refuted counts alone may also rise by the picks the run
+# admitted beyond the baseline's (pick_growth_allowance, #7167): a larger
+# judged set adds picks of every verdict, and an absolute count would turn red
+# on growth that raises precision. At a flat or smaller pick count the margin
+# is zero, so a flipped pick still fails, and the precision and share rows
+# still judge the mix of the added picks. An intended trade-off
 # refreshes the baseline in the same pull request. Each row's repository is
 # the corpus version, so a baseline from another answer key is reported
 # uncompared rather than compared.
@@ -975,6 +1174,7 @@ direction = "lower_is_better"
 target = 8
 regression_pct = 0
 regression_floor = 0
+pick_growth_allowance = true
 runner_dependent = false
 source = "ingest:pilot-ranking"
 
@@ -999,5 +1199,6 @@ direction = "lower_is_better"
 target = 16
 regression_pct = 0
 regression_floor = 0
+pick_growth_allowance = true
 runner_dependent = false
 source = "ingest:pilot-ranking"

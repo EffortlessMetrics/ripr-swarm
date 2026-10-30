@@ -495,7 +495,8 @@ fn recover_check_repo_exposure_spec(
 /// Map a display's `--root` value onto the portable argv role (#3999).
 ///
 /// A relative value is a historical display shape (`--root .`, or a
-/// root-relative subdirectory) and is kept verbatim for compatibility. An
+/// root-relative subdirectory) and is kept verbatim for compatibility unless
+/// it traverses upward (`..`), which fails closed. An
 /// absolute value is the concrete root a current producer binds; it gains
 /// typed authority only when it names the consumer's selected root, and then
 /// becomes [`PORTABLE_ROOT`] so the checkout path never enters argv. Any
@@ -505,7 +506,16 @@ fn recover_check_repo_exposure_spec(
 fn portable_root_arg(value: &str, selected_root: &Path) -> Option<String> {
     let value_path = Path::new(value);
     if !value_path.is_absolute() {
-        return Some(value.to_string());
+        // A parent-directory segment would walk out of the selected root, so
+        // a traversing relative value fails closed like a substituted
+        // absolute root.
+        // Recovery keeps backslashes literal, so a Windows-shaped `..\x` is one
+        // component on Unix; split on both separators.
+        let escapes = value_path
+            .components()
+            .any(|part| matches!(part, std::path::Component::ParentDir))
+            || value.split(['/', '\\']).any(|part| part == "..");
+        return (!escapes).then(|| value.to_string());
     }
     (clean_bound_path(value_path) == selected_root).then(|| PORTABLE_ROOT.to_string())
 }
@@ -1196,6 +1206,28 @@ mod tests {
             return Err(format!("receipt argv omitted --out: {:?}", receipt.args));
         }
         receipt.validate().map_err(|err| err.to_string())
+    }
+
+    #[test]
+    fn traversing_relative_root_display_keeps_no_typed_authority() -> Result<(), String> {
+        let selected = std::path::Path::new(".");
+        for root in [
+            "../victim",
+            "sub/../../victim",
+            "..",
+            "'..\\victim'",
+            "'a\\..\\b'",
+        ] {
+            let display =
+                format!("ripr agent verify --root {root} --before a.json --after b.json --json");
+            if agent_command_spec_from_display(&display, selected).is_some() {
+                return Err(format!("traversing root kept typed authority: {display}"));
+            }
+        }
+        let benign = "ripr agent verify --root . --before a.json --after b.json --json";
+        agent_command_spec_from_display(benign, selected)
+            .ok_or_else(|| "`--root .` display must still recover".to_string())?;
+        Ok(())
     }
 
     /// #3948/#3999 controls 11, 12 and 15: two equivalent checkouts render

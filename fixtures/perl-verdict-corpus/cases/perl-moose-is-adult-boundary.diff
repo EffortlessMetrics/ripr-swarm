@@ -1,0 +1,13 @@
+diff --git a/lib/Profile.pm b/lib/Profile.pm
+index 949eff0..110947f 100644
+--- a/lib/Profile.pm
++++ b/lib/Profile.pm
+@@ -16,7 +16,7 @@ sub _build_full_name {
+ 
+ sub is_adult {
+     my ($self) = @_;
+-    return $self->age >= 18 ? 1 : 0;
++    return 18 <= $self->age ? 1 : 0;
+ }
+ 
+ sub birthday {

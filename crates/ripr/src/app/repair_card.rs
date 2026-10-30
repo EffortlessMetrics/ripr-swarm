@@ -7,7 +7,9 @@
 //! fail-closed — a card never presents a runnable route that the shared
 //! instruction vocabulary and repair-route readiness gate would not expose.
 
-use crate::analysis::repair_route::{RepairRouteReadiness, RepairTargetSelection};
+use crate::analysis::repair_route::{
+    RepairRouteReadiness, RepairTargetSelection, humanize_evidence,
+};
 use crate::domain::{
     CanonicalNextActionV1, CommandRole, CommandSpec, FixInstructionState, FixInstructionSummary,
     NextActionAttemptView, NextActionCurrentness, NextActionDiffSource, NextActionInput,
@@ -74,6 +76,11 @@ pub(crate) struct RepairCardInput<'a> {
 }
 
 /// Project the shared repair authorities into a versioned repair card.
+///
+/// The subject/readiness gap consistency check compares
+/// `subject.seam_content_gap_id` (the seam-side content hash) with the
+/// readiness authority's gap id. `subject.canonical_gap_id` is the readable
+/// producer id and is not compared against readiness (#8638).
 pub(crate) fn build_repair_card(input: &RepairCardInput<'_>) -> Result<RepairCardV1, String> {
     let selected_target = project_target(&input.readiness.target_selection);
     if input.next_command.is_some()
@@ -98,7 +105,7 @@ pub(crate) fn build_repair_card(input: &RepairCardInput<'_>) -> Result<RepairCar
         return Err("subject seam and readiness seam do not identify one repair".to_string());
     }
     if let (Some(subject_gap), Some(readiness_gap)) = (
-        &input.subject.canonical_gap_id,
+        &input.subject.seam_content_gap_id,
         &input.readiness.canonical_gap_id,
     ) && subject_gap != readiness_gap
     {
@@ -240,7 +247,17 @@ fn canonical_next_action_for_card(
     } else if input.readiness.missing_evidence.is_empty() {
         Some("repair readiness for this seam".to_string())
     } else {
-        Some(input.readiness.missing_evidence.join("; "))
+        // #10644: the next action reads on a human surface; name the missing
+        // fact in plain words while the card's readiness data stays internal.
+        Some(
+            input
+                .readiness
+                .missing_evidence
+                .iter()
+                .map(|evidence| humanize_evidence(evidence))
+                .collect::<Vec<_>>()
+                .join("; "),
+        )
     };
     select_canonical_next_action(&NextActionInput {
         producer: NextActionProducer::RepairCard,
@@ -424,7 +441,10 @@ mod tests {
     fn subject() -> RepairCardSubject {
         RepairCardSubject {
             seam_id: "seam:demo".to_string(),
-            canonical_gap_id: Some("gap:demo".to_string()),
+            canonical_gap_id: Some(
+                "gap:rust:src/lib.rs:demo:return_value:return_value:x".to_string(),
+            ),
+            seam_content_gap_id: Some("gap:demo".to_string()),
             finding_id: Some("probe:demo".to_string()),
         }
     }
@@ -761,7 +781,7 @@ mod tests {
         let instruction = instruction(FixInstructionState::FixSiteReady);
         let readiness = ready_readiness();
         let mut input = base_input(&instruction, &readiness);
-        input.subject.canonical_gap_id = Some("gap:other".to_string());
+        input.subject.seam_content_gap_id = Some("gap:other".to_string());
 
         assert!(matches!(build_repair_card(&input), Err(_message)));
     }
@@ -981,6 +1001,7 @@ mod tests {
             repository_head: "abc123".to_string(),
             producer_version: "test".to_string(),
             seam_id: "seam:demo".to_string(),
+            gap_binding: None,
             created_unix_ms: 0,
             artifacts: Vec::new(),
             next_command: "cargo test".to_string(),
@@ -988,6 +1009,8 @@ mod tests {
             non_claims: Vec::new(),
             after: None,
             last_after_refusal: None,
+            after_refusal_count: 0,
+            after_refusal_history: Vec::new(),
             terminal_artifacts: Vec::new(),
             store: None,
         };
@@ -1194,6 +1217,7 @@ mod tests {
             repository_head: "abc123".to_string(),
             producer_version: "test".to_string(),
             seam_id: "seam:demo".to_string(),
+            gap_binding: None,
             created_unix_ms: 0,
             artifacts: Vec::new(),
             next_command: "cargo test".to_string(),
@@ -1201,6 +1225,8 @@ mod tests {
             non_claims: Vec::new(),
             after: None,
             last_after_refusal: None,
+            after_refusal_count: 0,
+            after_refusal_history: Vec::new(),
             terminal_artifacts: Vec::new(),
             store: None,
         };

@@ -1,0 +1,12 @@
+diff --git a/src/delete.ts b/src/delete.ts
+--- a/src/delete.ts
++++ b/src/delete.ts
+@@ -17,7 +17,7 @@
+   }
+ 
+   recordRead(): void {
+-    this.reads = this.reads + 1;
++    this.reads += 1;
+     this.lastEvent = "reads";
+   }
+ 

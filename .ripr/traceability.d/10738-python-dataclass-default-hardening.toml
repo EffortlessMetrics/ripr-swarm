@@ -1,0 +1,9 @@
+# Registers the dataclass-default hardening control (#9619) under RIPR-SPEC-0028.
+[[extend]]
+id = "RIPR-SPEC-0028"
+tests = [
+  "crates/ripr/src/analysis/language/python/module_value_tests.rs::a_dataclass_whose_creation_or_construction_may_raise_is_not_credited",
+]
+code = [
+  "crates/ripr/src/analysis/language/python/dataclass_default.rs",
+]

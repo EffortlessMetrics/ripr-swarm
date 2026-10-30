@@ -70,8 +70,9 @@ npm package, or native runtime compatibility floor.
 
 Use `.github/workflows/server-archive-qualification.yml` when archive shape
 must be checked before any publication decision. It requires an immutable
-40-character `candidate_sha`; an optional `candidate_tag` must use the
-`ripr-release-MAJOR.MINOR.PATCH` format and may be lightweight or annotated,
+40-character `candidate_sha`; an optional `candidate_ref` must be exactly
+`refs/tags/ripr-release-<version>-<candidate_sha>` (the grammar the Windows
+packaged lane also requires) and may be lightweight or annotated,
 but must resolve to the same commit. Every matrix job fetches that
 SHA, builds the existing five-target server matrix, verifies the archive
 checksum, extracts the flat package, and checks both the archive label and the
@@ -86,7 +87,7 @@ Dispatch with the already selected candidate identity:
 ```bash
 gh workflow run server-archive-qualification.yml \
   -f candidate_sha=<40-character-candidate-sha> \
-  -f candidate_tag=<optional-immutable-tag> \
+  -f candidate_ref=<optional-refs/tags/ripr-release-version-sha> \
   -f version=<version>
 ```
 
@@ -102,7 +103,7 @@ unavailable. Its only writes are scoped
 GitHub Actions artifacts containing the archives, manifest, checksums, and
 qualification receipt. An Actions artifact is rehearsal evidence, not a
 GitHub Release asset and not publication proof. The swarm
-`release-server-binaries.yml` entrypoint uses this same qualification receipt;
+`release-server-binaries.yml` entrypoint forwards its optional `candidate_ref` input and uses this same qualification receipt;
 the source repository's separate release workflow owns publication.
 
 
@@ -139,10 +140,17 @@ upload those bytes to the RC tag, and upload the identical bytes to the stable
 tag when it is cut.
 
 `cargo xtask release-server-manifest` also regenerates
-`editors/vscode/src/serverDescriptor.ts` with that digest. The release cut
-must run the manifest command and commit the refreshed descriptor **before**
-packaging the extension VSIX, so the packaged extension embeds the real
-digest. A generation without an embedded descriptor has no fallback row: a
+`editors/vscode/src/serverDescriptor.ts` with that digest, which is useful for
+local rehearsals. The descriptor's authoritative source at release is the
+publish workflow: `publish-extension.yml` runs
+`cargo xtask release-bind-server-descriptor --version <V> --manifest <file>
+--manifest-sha256 <receipted digest>` before compiling, so the packaged
+extension embeds the digest of the manifest actually published (the command
+refuses bytes that do not match the digest, a wrong generation, non-https
+asset URLs and malformed archive digests). The committed descriptor stays
+empty on `main`; the digest is not derivable before the server run because
+archive digests depend on the commit that would contain the descriptor.
+A generation without an embedded descriptor has no fallback row: a
 prerelease request's stable absence stays terminal.
 
 With the descriptor embedded, a clean RC extension requests its own version

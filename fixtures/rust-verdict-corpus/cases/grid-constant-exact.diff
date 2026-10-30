@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,7 +1,7 @@
+ //! Rates and limits, one function per test style.
+ 
+ pub fn sales_tax(subtotal: u64) -> u64 {
+-    subtotal * 8 / 100
++    subtotal * 9 / 100
+ }
+ 
+ pub fn late_fee(days: u64) -> u64 {

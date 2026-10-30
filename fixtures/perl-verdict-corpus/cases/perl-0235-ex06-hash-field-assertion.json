@@ -52,7 +52,7 @@
     "packet": "packets/perl-0235-ex06-hash-field-assertion.json",
     "sha256": "d73af773b9b57b3b69cc922b008b2a6a166a3625666d19807f4d1014a17a0957",
     "provenance": "edited_producer",
-    "edits": "Started from the producer packet of perl-test2-fee-isnt-zero, then in oracles where {\"target_owner_id\": \"$CHANGE_OWNER\"} set {\"kind\": \"hash_or_object_field_assertion\", \"observed_sink\": null}; the packet fingerprint was recomputed."
+    "edits": "Started from the producer packet of perl-test2-fee-isnt-zero, then in oracles where {\"target_owner_id\": \"$CHANGE_OWNER\"} set {\"kind\": \"hash_or_object_field_assertion\", \"observed_sink\": null}; the packet fingerprint was recomputed. The retained oracle facts predate the producer pin: its `isnt` oracle stays `strong_exact` here, where the pinned producer now emits `weak_smoke` (RIPR-SPEC-0235 rule 17 demotes it either way)."
   },
   "spec_examples": [
     "RIPR-SPEC-0235#6"

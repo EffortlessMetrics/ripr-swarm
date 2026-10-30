@@ -1,0 +1,12 @@
+diff --git a/shapes/comps.py b/shapes/comps.py
+--- a/shapes/comps.py
++++ b/shapes/comps.py
+@@ -6,7 +6,7 @@
+ 
+ 
+ def index_by_name(rows):
+-    return {row["name"]: row["id"] for row in rows}
++    return {row["id"]: row["name"] for row in rows}
+ 
+ 
+ def total_lengths(words):

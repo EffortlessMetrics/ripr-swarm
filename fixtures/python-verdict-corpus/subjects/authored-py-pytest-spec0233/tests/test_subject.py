@@ -15,6 +15,7 @@ from src.subject import (
     fmt,
     label_call,
     label_getattr,
+    label_key_lambda,
     label_lambda_text,
     parse_almost_equal,
     parse_and_chain,
@@ -201,3 +202,7 @@ def test_b_fmt_called():
 
 def test_shift():
     assert shift(SimpleNamespace(x=2)) == 3
+
+
+def test_label_key_lambda():
+    assert label_key_lambda([]) == [1]

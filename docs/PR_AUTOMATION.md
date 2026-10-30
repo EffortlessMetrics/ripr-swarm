@@ -44,7 +44,7 @@ reading raw logs.
 ## Draft to Ready handoff
 
 Publish a coherent candidate as Draft. The delivery owner completes this order
-before spending the Ready-triggered `Ripr Rust Small Result` qualification:
+before spending the `merge-ready`-requested `Ripr Rust Small Result` qualification:
 
 1. Bind the exact candidate head and integration basis. Complete independent
    substantive review through `review-pr`, disposition every known finding, and
@@ -82,10 +82,11 @@ before spending the Ready-triggered `Ripr Rust Small Result` qualification:
    [local and hosted proof route](agent-context/validation.md#local-and-hosted-proof):
    record the unavailable dimension and reason, completed available checks, and
    existing authorized narrow hosted qualification that will establish it.
-   `REVIEW_INCOMPLETE` may retain that evidence gap and Ready-triggered proof;
+   `REVIEW_INCOMPLETE` may retain that evidence gap and merge-ready-requested proof;
    unavailable proof is not a pass. It cannot excuse an executable but unrun
    applicable local check, unfinished review or repair, a known-red test, or
-   missing claim-essential native proof. Ready requests qualification;
+   missing claim-essential native proof. After Ready, the `merge-ready` label (applied last, or removed and re-added for a new head) requests
+   qualification for the exact head; Ready alone requests nothing;
    `REVIEW_READY` and required proof still govern merge under `finish-pr`.
 
 After Ready, inspect the actual job checkout commit, parents and tree against
@@ -93,12 +94,12 @@ the reviewed candidate and basis. A run's head SHA or a pre-Ready ref observatio
 does not guarantee the checkout. If a material mismatch appears, retain the
 actual run/subject, return to Draft and resume only after the changed prerequisite
 or subject is verified; do not relabel that run as proof for the local tree or
-repeat Ready toggles to refresh it.
+re-apply `merge-ready` merely to refresh it.
 
 A new head or material finding returns the candidate to Draft for one joined
-repair/proof/review wave before another Ready transition. Preserve unaffected
-evidence. Do not re-toggle an unchanged head with a queued or running required
-run: the toggle cancels it. Retain its run link and yield the remote wait.
+repair/proof/review wave before the next `merge-ready` request (remove and re-add the label on the exact new
+head). Preserve unaffected evidence. Do not re-apply the label on an unchanged
+head with a queued or running required run: it cancels it. Retain its run link and yield the remote wait.
 
 ### PR-native continuation record
 
@@ -344,6 +345,14 @@ prepared in the environment, `precommit` prints `goldens check: INCOMPLETE
 (environment gap, not a pass)` and continues; run `cargo xtask goldens prepare`
 to close the gap, and hosted CI still owns those fixtures. The step is not part
 of the hosted collect-all policy run, which has its own goldens job.
+
+The strict `check-fast` receipt consumer requires all six unconditional `Ran`
+receipts (`fmt --check`, static-language, command-catalog, generated,
+generated-clean and lint-policy), including for a valid empty diff. Policy and
+`.ripr/` changes additionally require covered-by, process-policy and
+network-policy receipts. A gate listed only under `Skipped` does not satisfy
+its execution obligation. This validates receipt completeness; it does not
+replace the gate execution or required hosted qualification.
 
 `cargo xtask check-fast` also runs `check-support-tiers` for committed spec
 Markdown, the support map, root README, Rust repair trust corpus, xtask source,
@@ -617,6 +626,35 @@ before any blessing. `goldens bless <fixture> --reason <reason>` requires the
 reason to cite an existing `RIPR-SPEC-NNNN` under `docs/specs/`, then records
 the explicit blessing reason, updates expected JSON and human outputs, and
 appends the fixture expected-output changelog.
+
+Human goldens (`human.txt`, `human-full.txt`) mask only the explanatory prose
+of the line `no repair start offered: <reason>`. Pinned: the line's presence and
+position, the fixed opening that identifies the refusal variant (no gap ID, no seam or no binding seam, several binding seams, Rust files only, seam
+budget, unreadable config, classification failure, static evidence incomplete,
+still missing, related test already reaches the boundary), and the
+`still missing:` / `It is also still missing:` evidence lists. Masked as
+`<reason>`: the wording around those pins, such as the trailing "follow the Next
+step" advice, the Rust-files-only explanation and the boundary-variant
+explanation. A reason that matches no known variant opening is compared
+verbatim, so a new or heavily reworded variant is drift to re-bless and add to
+`REPAIR_REFUSAL_RULES` in `xtask/src/reports/fixtures.rs`. `check.json` is never
+masked. The prose has focused tests of its own, and comparing it verbatim turned
+every rewording into one re-blessed line in hundreds of fixtures (#10702). A
+repair start that flips to a refusal, a refusal that appears or disappears, and
+a change of variant or missing-evidence list are still drift.
+
+Transitional (#10702): `xtask/src/reports/fixtures/transitional.rs` lists the
+exact `fixture/surface` human goldens (253) whose expected refusal opening is
+one of four retired openings (no gap ID, no binding seam, seam
+inventory, still missing) and may now open "nothing to repair here" (only when
+the expected golden itself says `Static exposure: exposed`), "found N seams …
+could not tie one … changed line" (43 no-seam surfaces) or "`ripr check` reads a
+gap or limit for this change" (93 no-seam surfaces whose seam the whole-seam view
+grips). Each listed surface approves exactly one new opening, taken from its
+unaliased output. An unlisted fixture, another surface, another pair, the other
+target on a listed surface and `check.json` are still compared strictly. This keeps the check-side
+change under the admission file cap; each follow-up re-bless batch deletes its
+entries and the file is removed once empty (tracking issue #10885).
 
 `golden-drift` writes the same advisory drift reports without failing merely
 because output drift exists. It still reports fixture execution errors as
@@ -918,6 +956,26 @@ appropriate.
 warns when a diff shape suggests missing evidence, such as analyzer code
 without specs/tests/fixtures, output code without output contract evidence, or
 policy changes without process docs.
+
+With a PR body supplied, `check-pr-shape` also validates the
+`.github/pull_request_template.md` Source-of-truth Links and Candidate
+Relationships lines offline, before the expensive Draft-to-Ready admission
+transit (#8601). It fails naming each missing or placeholder line, mirroring
+admission's `claim_identity_missing` detail. The check reads only the supplied
+input; it makes no `gh` or network call inside xtask. Feed it a body captured
+outside xtask, as raw Markdown or as `gh pr view --json body` JSON:
+
+```bash
+gh pr view <number> --json body > pr-body.json
+cargo xtask check-pr-shape --body-file pr-body.json
+# or: gh pr view <number> --json body --jq .body > pr-body.md
+cargo xtask check-pr-shape --body-file pr-body.md
+# or: RIPR_PR_BODY="$(gh pr view <number> --json body --jq .body)"
+cargo xtask check-pr-shape --body-env RIPR_PR_BODY
+```
+
+Without a body argument, the existing advisory diff-shape behavior is
+unchanged.
 
 ## Fix Kinds
 

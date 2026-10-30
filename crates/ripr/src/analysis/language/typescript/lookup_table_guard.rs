@@ -112,7 +112,7 @@ fn string_literal_content(value: &str) -> Option<&str> {
     })
 }
 
-fn is_scalar_literal(value: &str) -> bool {
+pub(crate) fn is_scalar_literal(value: &str) -> bool {
     // `numeric_literal_value` drops `_` separators first, so `_1` (an
     // identifier) would read as `1`; a number starts with a digit. It also
     // drops a BigInt's `n`, so `95` and `95n` (a different type) would read

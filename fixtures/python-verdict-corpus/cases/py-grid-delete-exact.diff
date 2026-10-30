@@ -1,0 +1,12 @@
+diff --git a/grid_delete/core.py b/grid_delete/core.py
+--- a/grid_delete/core.py
++++ b/grid_delete/core.py
+@@ -11,7 +11,7 @@
+         self.last_event = None
+ 
+     def record_hit(self):
+-        self.hits = self.hits + 1
++        self.hits += 1
+         self.last_event = "hits"
+ 
+     def record_miss(self):

@@ -39,25 +39,31 @@ use super::related_tests::{PythonRelatedCandidate, python_text_hides_code};
 use super::source_utils::{SourceText, line_for_range_end, line_for_range_start, text_for_range};
 use super::static_limits::has_identifier_boundary;
 use super::{PythonAssertion, PythonOwner, PythonParameter, PythonTest, expr_full_name};
-use crate::domain::{OracleStrength, OwnerKind, ValueContext, ValueFact};
+use crate::{
+    domain::{OracleStrength, OwnerKind, ValueContext},
+    value_origins::LocatedValueFact as ValueFact,
+};
 use rustpython_parser::ast::{self, Expr, Mod, Ranged, Stmt};
 use rustpython_parser::text_size::TextSize;
 use rustpython_parser::{Mode, parse};
 
 /// A function body that is one guarded return of literals:
 /// `if <parameter> <op> <operand>: return <then>` then `return <else>`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub(super) struct PythonGuardedReturn {
-    parameter: String,
-    operator: &'static str,
-    operand: String,
-    then_value: String,
-    else_value: String,
+    pub(super) parameter: String,
+    pub(super) operator: &'static str,
+    pub(super) operand: String,
+    pub(super) then_value: String,
+    pub(super) else_value: String,
 }
 
-/// What a function owner's body lets rule 20 read.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+/// Body facts used by bounded term activation and helper alignment.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct PythonTermFacts {
+    /// Conservative raw yield presence, including unresolved string/nested
+    /// text. Only helper-derived credit reads this refusal fact.
+    may_yield: bool,
     /// As a callee: its one guarded return, when the function is undecorated
     /// and synchronous (a decorator or `async def` changes what a call returns).
     guarded_return: Option<PythonGuardedReturn>,
@@ -75,9 +81,32 @@ pub(super) struct PythonTermFacts {
     /// result is then the very object it passed (RIPR-SPEC-0238 rule 17,
     /// #7586, #7634).
     returned_parameter: Option<String>,
+    /// The owner's own span calls its own name (`name(`, `self.name(`): the
+    /// function may recurse. Textual and over-approximate (#5491 `missing_input`
+    /// withholds on it).
+    calls_own_name: bool,
 }
 
 impl PythonTermFacts {
+    pub(super) fn calls_own_name(&self) -> bool {
+        self.calls_own_name
+    }
+
+    pub(super) fn with_calls_own_name(mut self, calls: bool) -> Self {
+        self.calls_own_name = calls;
+        self
+    }
+
+    /// Whether the body never rebinds this parameter (and has no scope the
+    /// walk cannot read), so a call-site value is the value the body sees.
+    pub(super) fn is_stable_parameter(&self, name: &str) -> bool {
+        self.stable_parameters.iter().any(|stable| stable == name)
+    }
+
+    pub(super) fn may_yield(&self) -> bool {
+        self.may_yield
+    }
+
     pub(super) fn returned_parameter(&self) -> Option<&str> {
         self.returned_parameter.as_deref()
     }
@@ -122,12 +151,14 @@ pub(super) fn term_facts(
         _ => None,
     };
     PythonTermFacts {
+        may_yield: super::mentions_python_name(owner_text, "yield"),
         guarded_return: (!wrapped)
             .then(|| guarded_return(source, body, parameters))
             .flatten(),
         stable_parameters,
         bound_names,
         returned_parameter,
+        calls_own_name: false,
     }
 }
 
@@ -447,14 +478,14 @@ pub(super) fn python_inactive_term_evidence(
             return None;
         }
         observed_values.push(ValueFact {
+            file: Some(row.file.clone()),
             line: row.line,
             text: row.text.clone(),
             value: format!("{argument} = {value}"),
             context: ValueContext::FunctionArgument,
         });
     }
-    observed_values.sort_by(|a, b| a.line.cmp(&b.line).then(a.value.cmp(&b.value)));
-    observed_values.dedup();
+    crate::analysis::classify::sort_value_facts(&mut observed_values);
     let values: Vec<&str> = observed_values
         .iter()
         .map(|fact| fact.value.as_str())
@@ -713,8 +744,8 @@ fn owner_call_names(owner: &PythonOwner, test: &PythonTest) -> Vec<String> {
 }
 
 fn return_change_has_no_effect_store(old_line: &str, new_line: &str, owner: &PythonOwner) -> bool {
-    ChangedEffect::of(old_line, Some(new_line), owner).is_none()
-        && ChangedEffect::of(new_line, Some(old_line), owner).is_none()
+    ChangedEffect::of(old_line, Some(new_line), owner, false).is_none()
+        && ChangedEffect::of(new_line, Some(old_line), owner, false).is_none()
         && return_line_is_value_expression(old_line)
         && return_line_is_value_expression(new_line)
 }

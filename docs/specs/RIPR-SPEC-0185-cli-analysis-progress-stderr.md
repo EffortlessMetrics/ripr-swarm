@@ -17,6 +17,7 @@ Linked issues:
 - #4810 — CLI stderr stages and bounded heartbeats (this slice)
 - #4957 — time-based heartbeat cadence so long walks never go silent
 - #5019 — pilot (primary first-run command) joins the same stderr stream
+- #10727 — `ripr pilot -v` prints a per-stage timing table on stderr
 - #2608 — parent shared progress contract (not closed here)
 - #4829 — live producer-owned progress events (PR A; this slice consumes that
   contract and does not replace it)
@@ -81,6 +82,41 @@ second stage vocabulary.
 9. Removing the producer sink makes the CLI discriminator lose its stage
    evidence. This slice does not add analyzer stages, LSP mapping, or a
    speed claim.
+10. `ripr pilot -v` prints a stage timing table on stderr after a complete
+    run (#10727). It is separate from the producer progress stream: the rows
+    are `load_change`, `inventory`, `change_classification` (the current
+    change's own classification past the seam limit), `diff_only_files`,
+    `seam_budget`, `language_scan` and `write_artifacts`, then `total`, each with elapsed
+    milliseconds, and an `items=` count where the stage has one (changed
+    files, seams). Beneath `inventory` the table lists the inventory's own
+    phases that ran, as `inventory.collect_workspace`, `inventory.cache_load`,
+    `inventory.parse_index`, `inventory.apply_oracle_policy`,
+    `inventory.seams`, `inventory.evidence`, `inventory.classify` and
+    `inventory.cache_store`. They are read from the existing latency-phase
+    reports on the analysis thread, not timed again, so a warm-cache run
+    shows its cache load and a cold run shows the compute phases; the
+    sidecar carries the same rows. A phase reported more than once adds into
+    one row. `inventory` and `diff_only_files` are omitted when Rust is
+    disabled, because neither runs. `total` runs from the start of the analysis through the last recorded stage and
+    also covers bookkeeping between stages, so rows need not sum to it. The
+    table is wall-clock and observational: it appears only on stderr under
+    the explicit `-v`, never in stdout or any pilot artifact other than the
+    item 11 sidecar, so those stay byte-identical with and without `-v`. It prints nothing on a timeout or
+    an error, and it is written through the terminal-safe stderr path so it
+    does not join a held-open TTY progress row. It adds no analyzer stage
+    and no speed claim.
+11. Under `-v` a complete run also writes `pilot-timings.json` beside
+    `pilot-summary.json`, after every other artifact (#10727):
+    `{"schema_version": 1, "kind": "pilot_timings", "stages": [{"stage",
+    "elapsed_ms", "items"?}], "total_ms"}`, with the stage names, order and
+    omissions of the table. It is the only place a wall-clock value is
+    written to disk, so it is not byte-stable and is not listed in the
+    summary. A run without `-v`, and a timeout run, remove a prior run's
+    sidecar instead of leaving it as their own. A failed sidecar write drops
+    any prior sidecar, warns on stderr and does not fail the run; if the
+    prior sidecar cannot be dropped the run fails rather than leave it as
+    current. The table and the sidecar report one `total`, fixed after the
+    last stage is recorded.
 
 ## Required Evidence
 
@@ -101,6 +137,9 @@ second stage vocabulary.
   stderr while `pilot-summary.json` stays byte-identical with `--quiet`;
   a pilot deadline closes the progress run as `cancelled`, never
   `completed` (#5019).
+- `ripr pilot -v` on a fixture prints the stage table on stderr, prints no
+  table without `-v`, and leaves stdout and `pilot-summary.json` bytes
+  unchanged (#10727).
 - Unit tests reject path-like, percent, and ETA progress lines; throttle
   heartbeats and show no 10s window of a minutes-long stage stays silent;
   isolate a broken writer; and show that omitting the producer
@@ -124,8 +163,12 @@ second stage vocabulary.
    stderr.
 3. `--format sarif` and `--format github` with and without `--quiet` produce
    identical stdout.
-4. `--diff` pointing at a missing file exits non-zero, projects
-   `ripr progress: failed [diff]`, and never `completed`.
+4. `--diff` pointing at a missing file exits non-zero, prints the real error,
+   projects no `failed` line (the path is input the user can fix, #9922), and
+   never `completed`. An unresolvable base, unusable root, or invalid config
+   or suppression policy behaves the same, as does a `ripr context` selector
+   miss (#9244); genuine internal failures still project
+   `ripr progress: failed`.
 5. A TTY run that finishes under 250ms emits no stage spray.
 6. A blocked analyzing stage keeps emitting heartbeats at most one per 8
    seconds of stage time; no 10s window of a minutes-long stage is silent.
@@ -173,6 +216,15 @@ second stage vocabulary.
 - `crates/ripr/src/cli/commands/pilot.rs::tests::pilot_progress_run_emits_stage_heartbeat_and_cancelled_on_timeout`
 - `crates/ripr/src/cli/commands/pilot.rs::tests::pilot_progress_stream_absent_when_quiet_or_sink_removed`
 - `crates/ripr/tests/cli_progress.rs::pilot_projects_repo_stages_on_stderr_and_keeps_packet_bytes_unchanged`
+- `crates/ripr/src/cli/commands/pilot_timings.rs::tests::the_table_lists_each_stage_in_order_with_its_item_count_and_a_total`
+- `crates/ripr/src/cli/commands/pilot_timings.rs::tests::a_recorded_span_measures_the_time_since_its_start`
+- `crates/ripr/src/cli/commands/pilot_timings.rs::tests::the_json_sidecar_mirrors_the_table_stages_and_omits_absent_counts`
+- `crates/ripr/src/cli/commands/pilot_timings.rs::tests::a_finished_run_reports_one_total_in_the_table_and_the_sidecar`
+- `crates/ripr/src/cli/commands/pilot_timings.rs::tests::inventory_phases_become_named_rows_and_ignore_everything_else`
+- `crates/ripr/src/analysis/resource_cost.rs::tests::recorded_phases_capture_this_threads_reports_and_nothing_else`
+- `crates/ripr/tests/cli_progress.rs::verbose_pilot_prints_a_stage_table_and_leaves_stdout_and_packet_bytes_unchanged`
+- `crates/ripr/tests/cli_progress.rs::verbose_pilot_fails_rather_than_leave_an_unwritable_sidecar_as_current`
+- `crates/ripr/tests/cli_progress.rs::verbose_pilot_names_the_cold_inventory_phases_and_then_the_cache_load`
 
 ## Implementation Mapping
 
@@ -182,6 +234,10 @@ second stage vocabulary.
 - `crates/ripr/src/cli/commands/check.rs` — `--quiet` and sink wiring
 - `crates/ripr/src/cli/commands/pilot.rs` — `--quiet` and sink wiring on the
   pilot repo inventory, including the cold-cache deadline extension (#5019)
+- `crates/ripr/src/analysis/resource_cost.rs` — thread-local latency-phase
+  recorder (#10727)
+- `crates/ripr/src/cli/commands/pilot_timings.rs` — `pilot -v` stage timing
+  table (#10727)
 - `crates/ripr/src/cli/help/core.rs` — user-facing contract
 
 ## Metrics

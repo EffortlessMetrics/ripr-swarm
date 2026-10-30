@@ -1,0 +1,45 @@
+{
+  "case_id": "shape-base-method-pinned-through-label",
+  "subject_id": "authored-ts-vitest-shapes",
+  "diff": "cases/shape-base-method-pinned-through-label.diff",
+  "anchor": {
+    "file": "src/shapes.ts",
+    "line": 3
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "vitest_base_method_via_template_label",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx vitest run",
+    "toolchain": "Node.js v22.22.0, vitest 4.1.11, x86_64-linux; edit applied by hand to the whole package",
+    "mutants": [
+      {
+        "replacement": "return 1;",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "test/shapes.test.ts > the base shape has no area",
+        "equivalence_review": "the edit itself: The base area flows into a label the test pins as a whole string."
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The base area flows into a label the test pins as a whole string. The edited package's test command fails, so a discriminator exists and the credit is deserved.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

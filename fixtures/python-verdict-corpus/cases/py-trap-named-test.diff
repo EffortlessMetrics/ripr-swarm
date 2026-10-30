@@ -1,0 +1,12 @@
+diff --git a/trapkit/core.py b/trapkit/core.py
+--- a/trapkit/core.py
++++ b/trapkit/core.py
+@@ -42,7 +42,7 @@
+ 
+ 
+ def named_test(a, b):
+-    return a * b
++    return b * a
+ 
+ 
+ def unused_helper(a, b):

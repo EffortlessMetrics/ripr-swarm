@@ -96,6 +96,44 @@ fn read_reader_with_limit(reader: impl Read, limit: u64) -> std::io::Result<Vec<
     Ok(bytes)
 }
 
+/// Portable phrasing for a failed user-named input read (#9851): a missing
+/// file reads `not found` in plain words — never a raw `(os error N)` or
+/// host-specific `strerror` text — mirroring the sibling `outcome` command's
+/// established vocabulary. Other failures keep the OS detail, because no
+/// portable phrasing exists for them.
+pub(crate) fn read_failure_detail(err: &std::io::Error) -> String {
+    if err.kind() == std::io::ErrorKind::NotFound {
+        "not found".to_string()
+    } else {
+        err.to_string()
+    }
+}
+
+/// Bounded read of a required user-named input with the shared
+/// missing-input diagnostic (#9851): the message names the attempted read
+/// and the path (display form, forward slashes), says `not found` in plain
+/// words for a missing file, and appends `recovery` — the command that
+/// produces the artifact, in the sibling commands' vocabulary — when one
+/// exists.
+pub(crate) fn read_required_input(
+    attempted: &str,
+    path: &Path,
+    recovery: Option<&str>,
+) -> Result<String, String> {
+    read_to_string(path).map_err(|err| {
+        let mut message = format!(
+            "{attempted} {} failed: {}",
+            crate::output::path::display_path(path),
+            read_failure_detail(&err)
+        );
+        if let Some(recovery) = recovery {
+            message.push_str(". ");
+            message.push_str(recovery);
+        }
+        message
+    })
+}
+
 fn oversize_error(limit: u64) -> std::io::Error {
     const MIB: u64 = 1024 * 1024;
     let readable = if limit >= MIB && limit.is_multiple_of(MIB) {
@@ -186,6 +224,62 @@ mod tests {
             .ok_or("missing file must fail")?;
         assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
         Ok(())
+    }
+
+    #[test]
+    fn read_required_input_names_path_and_recovery_without_os_errno() -> Result<(), String> {
+        let missing =
+            std::env::temp_dir().join("ripr-bounded-input-definitely-missing/required-input.json");
+        let err = read_required_input(
+            "read baseline create source",
+            &missing,
+            Some("Run `ripr gate evaluate` first, or pass the correct path"),
+        )
+        .err()
+        .ok_or("missing required input must fail")?;
+        let expected_path = crate::output::path::display_path(&missing);
+        assert!(
+            err.starts_with(&format!(
+                "read baseline create source {expected_path} failed:"
+            )),
+            "{err}"
+        );
+        assert!(err.contains("not found"), "{err}");
+        assert!(
+            err.contains("Run `ripr gate evaluate` first, or pass the correct path"),
+            "{err}"
+        );
+        // The raw OS errno must not leak for the missing-file class (#9851).
+        assert!(!err.contains("os error"), "{err}");
+        Ok(())
+    }
+
+    #[test]
+    fn read_required_input_omits_recovery_when_none_exists() -> Result<(), String> {
+        let missing =
+            std::env::temp_dir().join("ripr-bounded-input-definitely-missing/bare-input.json");
+        let err = read_required_input("read receipt", &missing, None)
+            .err()
+            .ok_or("missing required input must fail")?;
+        assert!(err.contains("failed: not found"), "{err}");
+        assert!(!err.contains("os error"), "{err}");
+        Ok(())
+    }
+
+    #[test]
+    fn read_required_input_reads_existing_file() -> Result<(), String> {
+        let path = temp_file("required-ok", b"{}")?;
+        let text = read_required_input("read baseline create source", &path, None)?;
+        assert_eq!(text, "{}");
+        Ok(())
+    }
+
+    #[test]
+    fn read_failure_detail_prefers_plain_not_found() {
+        let not_found = std::io::Error::from(std::io::ErrorKind::NotFound);
+        assert_eq!(read_failure_detail(&not_found), "not found");
+        let other = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied");
+        assert_eq!(read_failure_detail(&other), "denied");
     }
 
     #[cfg(unix)]

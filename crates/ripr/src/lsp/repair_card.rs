@@ -16,8 +16,9 @@ use crate::agent::command_specs::{AgentArtifactRoute, agent_inspection_command_s
 use crate::analysis::ClassifiedSeam;
 use crate::analysis::repair_route::repair_packet_eligibility;
 use crate::app::repair_card_handoff::{
-    SeamCardFacts, assemble_repair_card, card_packet_json, evidence_tree_currentness,
-    latest_attempt_for_seam, witness_from_findings, workspace_identity_for,
+    SeamCardFacts, assemble_repair_card, bound_finding_gap_id, card_packet_json,
+    evidence_tree_currentness, latest_attempt_for_seam, witness_from_findings,
+    workspace_identity_for,
 };
 use crate::domain::{FixInstructionState, RepairCardDetailState, RepairCardV1};
 
@@ -47,6 +48,12 @@ pub(super) fn seam_repair_card(
         Some((finding_id, witness)) => (Some(finding_id), Some(witness)),
         None => (None, None),
     };
+    let finding_gap_id = bound_finding_gap_id(
+        &snapshot.findings,
+        entry,
+        readiness.canonical_gap_id.as_deref(),
+        candidate_seams,
+    );
     let root = snapshot.root.as_path();
     let seam_id = entry.seam.id().as_str().to_string();
     // The card's semantic identity binds the live repository head (the digest
@@ -73,6 +80,7 @@ pub(super) fn seam_repair_card(
         entry,
         witness: witness.as_ref(),
         finding_id: finding_id.as_deref(),
+        finding_gap_id: finding_gap_id.as_deref(),
         attempt: attempt.as_ref(),
         packet_json: &packet_json,
         repository_head: &repository_head,
@@ -155,6 +163,7 @@ mod tests {
             subject: crate::domain::RepairCardSubject {
                 seam_id: "seam:demo".to_string(),
                 canonical_gap_id: Some("gap:demo".to_string()),
+                seam_content_gap_id: None,
                 finding_id: Some("probe:demo".to_string()),
             },
             instruction: crate::domain::FixInstructionSummary {

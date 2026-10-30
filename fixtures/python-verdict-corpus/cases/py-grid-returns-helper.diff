@@ -1,0 +1,12 @@
+diff --git a/grid_returns/core.py b/grid_returns/core.py
+--- a/grid_returns/core.py
++++ b/grid_returns/core.py
+@@ -14,7 +14,7 @@
+ 
+ 
+ def shout(text):
+-    return text.upper()
++    return str.upper(text)
+ 
+ 
+ def banner(title):

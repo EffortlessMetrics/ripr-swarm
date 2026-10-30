@@ -1,0 +1,9 @@
+//! A cfg(test) module named through a raw `r#path` attribute.
+
+pub fn shifted_raw(base: u32) -> u32 {
+    base + 7
+}
+
+#[cfg(test)]
+#[r#path = "support/raw.rs"]
+mod raw;

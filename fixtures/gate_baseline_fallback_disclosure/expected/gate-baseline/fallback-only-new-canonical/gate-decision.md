@@ -1,15 +1,15 @@
 # RIPR Gate Decision
 
-Decision: advisory
+Decision: blocked
 Mode: baseline-check
 Evaluated: 1
-Blocking: 0
+Blocking: 1
 Acknowledged: 0
-Advisory: 1
+Advisory: 0
 
-## Advisory
+## Blocking
 
-- src/pricing.rs:88 weakly_gripped — candidate identity is already present in the explicit baseline
+- src/pricing.rs:88 weakly_gripped — new policy-eligible gap blocks under baseline-check
   - Gap state: `actionable`
   - Gap: `gap:newboundary0000002`
   - Seam: `newseam0000000002`
@@ -23,10 +23,6 @@ Advisory: 1
   - Receipt after verify: `ripr agent receipt --root . --verify-json target/ripr/workflow/agent-verify.json --seam-id newseam0000000002 --json --out target/ripr/reports/agent-receipt.json`
   - Inspect: `ripr agent brief --root . --seam-id newseam0000000002 --json > target/ripr/workflow/agent-brief.json`
   - Boundary: `static_ripr_evidence_only`
-
-## Warnings
-
-- gate candidate ripr-review-newseam00002 matched baseline evidence by fallback path/line/static_class identity `src/pricing.rs:88:weakly_gripped`; disclosed as baseline_match_kind=legacy_path_line_class — a legacy compatibility match, not a canonical identity match
 
 ## Limits
 

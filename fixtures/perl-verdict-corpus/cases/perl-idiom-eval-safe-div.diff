@@ -1,0 +1,13 @@
+diff --git a/lib/Toolkit.pm b/lib/Toolkit.pm
+index 7f429bd..aa1a35b 100644
+--- a/lib/Toolkit.pm
++++ b/lib/Toolkit.pm
+@@ -33,7 +33,7 @@ sub parse_version {
+ sub safe_div {
+     my ($x, $y) = @_;
+     my $r = eval { $x / $y };
+-    return defined $r ? $r : 'NaN';
++    return defined($r) ? $r : 'NaN';
+ }
+ 
+ sub slugify {

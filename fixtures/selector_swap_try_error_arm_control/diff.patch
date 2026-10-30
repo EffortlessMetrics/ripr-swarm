@@ -1,0 +1,8 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -10,3 +10,3 @@
+     pub fn next(&mut self) -> Result<Task, QueueError> {
+-        let idx = self.queue.iter().enumerate().min_by_key(|(_, t)| t.prio).map(|(i, _)| i).ok_or(QueueError::Empty)?;
++        let idx = self.queue.iter().enumerate().min_by_key(|(_, t)| t.prio).map(|(i, _)| i).ok_or(QueueError::Closed)?;
+         Ok(self.queue.remove(idx))

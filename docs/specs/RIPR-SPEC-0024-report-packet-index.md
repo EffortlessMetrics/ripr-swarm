@@ -500,6 +500,10 @@ Follow-up tests and fixtures should cover:
 
 - actual shipped commands creating fresh reports and updating regular files;
 - planted output links for the index, outcome, calibration, and agent receipt;
+- committed `target` or `target/ripr/<child>` links refused by `review-comments`,
+  `gate evaluate`, `pr-comments` and `reports ci-packet` before any write, and
+  planted leaf links refused by the `pr-comments` and `ci-packet` artifact
+  writes (#4360, #7781);
 - bounded actual-command refusal of a FIFO without a reader on supported Unix;
 - production receipt staging refusing a planted temporary link while preserving
   its outside sentinel and leaving `atomic_write_status = "not_written"`.

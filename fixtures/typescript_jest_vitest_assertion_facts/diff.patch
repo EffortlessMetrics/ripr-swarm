@@ -16,7 +16,7 @@ index 0000000..1111111 100644
 +  return `summary:${status.trim()}`;
  }
  
- export function isReady(count: number): boolean {
+ export function isReady(count: number) {
 -  return count > 0;
 +  return count >= 1;
  }

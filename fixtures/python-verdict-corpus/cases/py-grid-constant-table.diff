@@ -1,0 +1,12 @@
+diff --git a/grid_constant/core.py b/grid_constant/core.py
+--- a/grid_constant/core.py
++++ b/grid_constant/core.py
+@@ -6,7 +6,7 @@
+ 
+ 
+ def late_fee(days):
+-    return days * 5
++    return days * 6
+ 
+ 
+ def commission(sale):

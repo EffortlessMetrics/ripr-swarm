@@ -1668,15 +1668,24 @@ fn check_duplicate_panic_allow_ids(
         let Some(id) = panic_allow_entry_id(entry) else {
             continue;
         };
-        if let Some(previous) = seen.get(id) {
+        // Ids are opaque tokens, so `PANIC-0001` and `panic-0001 ` name the
+        // same identifier for PR references and must collide (#9501).
+        let normalized = normalize_panic_allow_id(id);
+        if let Some(previous) = seen.get(&normalized) {
             return Err(format!(
                 "{path}: duplicate allowlist id `{id}` ({previous} and {})",
                 panic_allow_entry_label(entry)
             ));
         }
-        seen.insert(id.to_string(), panic_allow_entry_label(entry));
+        seen.insert(normalized, panic_allow_entry_label(entry));
     }
     Ok(())
+}
+
+fn normalize_panic_allow_id(id: &str) -> String {
+    id.split_whitespace()
+        .collect::<String>()
+        .to_ascii_lowercase()
 }
 
 fn panic_allow_entry_id(entry: &PanicAllowEntryVersioned) -> Option<&str> {

@@ -1,0 +1,12 @@
+diff --git a/trapkit/core.py b/trapkit/core.py
+--- a/trapkit/core.py
++++ b/trapkit/core.py
+@@ -82,7 +82,7 @@
+ 
+ 
+ def patched_owner(a, b):
+-    return a * b
++    return b * a
+ 
+ 
+ def wrapped_swallow(a, b):

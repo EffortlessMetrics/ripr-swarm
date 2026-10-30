@@ -1,0 +1,48 @@
+{
+  "case_id": "node-match-anchored-slug",
+  "subject_id": "authored-ts-nodetest-mocks",
+  "diff": "cases/node-match-anchored-slug.diff",
+  "anchor": {
+    "file": "src/slugify.ts",
+    "line": 2
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "nodetest_assert_match_anchored_regex",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "node --import tsx --test test/*.test.ts",
+    "toolchain": "Node.js v22.22.0, node:test, tsx 4.23, typescript 5.9, x86_64-linux; edit applied by hand to the whole package",
+    "mutants": [
+      {
+        "replacement": "return title.trim().toLowerCase().replace(/[^a-z0-9]+/g, \"_\");",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "joins words with dashes",
+        "equivalence_review": "the edit itself: assert.match with an anchored regex pins the whole slug."
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "assert.match with an anchored regex pins the whole slug. The edited package's test command fails, so a discriminator exists and the credit is deserved.",
+  "labeling_observation": {
+    "ripr_commit": "3b4ac1e",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0243#45"
+  ]
+}

@@ -138,7 +138,7 @@ fn collect(
     let mut actual = facts
         .tests
         .iter()
-        .map(|test| (test.qualified_name.as_str(), test.framework))
+        .map(|test| (test.qualified_name.as_str(), test.framework.as_str()))
         .collect::<Vec<_>>();
     actual.sort();
     let mut expected = expected.to_vec();

@@ -1,0 +1,54 @@
+{
+  "case_id": "idiom-should-panic-boundary-one",
+  "subject_id": "authored-idiom-kit",
+  "diff": "cases/idiom-should-panic-boundary-one.diff",
+  "anchor": {
+    "file": "src/guards.rs",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "should_panic_expected_message",
+  "hard_case": "The only rejecting test is `#[should_panic]` on zero, and the passing test uses five; the value one is never tried.",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "assert!(n >= 0, \"n must be positive\");",
+        "mutated_line": "assert!(n >= 0, \"n must be positive\");",
+        "outcome": "tests_failed",
+        "failing_test": "guards::tests::zero_is_rejected",
+        "equivalence_review": "not equivalent: `assert!(n >= 1, \"n must be positive\");` becomes `assert!(n >= 0, \"n must be positive\");`"
+      },
+      {
+        "replacement": "assert!(n > 1, \"n must be positive\");",
+        "mutated_line": "assert!(n > 1, \"n must be positive\");",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: `assert!(n >= 1, \"n must be positive\");` becomes `assert!(n > 1, \"n must be positive\");`, and the test's inputs do not tell the two apart"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "zero_is_rejected needs a panic for 0 and five_passes_through needs 5 to pass. `n >= 0` stops rejecting zero and fails the first; `n > 1` rejects 1 but both tests stay green. Shape: `#[should_panic(expected)]` plus one far passing value.",
+  "axes": [
+    "std_test_form"
+  ],
+  "labeling_observation": {
+    "ripr_commit": "969b0b8",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

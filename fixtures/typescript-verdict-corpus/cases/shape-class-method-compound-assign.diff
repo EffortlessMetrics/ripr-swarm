@@ -1,0 +1,13 @@
+diff --git a/src/account.ts b/src/account.ts
+index 0000000..1111111 100644
+--- a/src/account.ts
++++ b/src/account.ts
+@@ -6,7 +6,7 @@
+   }
+ 
+   deposit(amount: number): number {
+-    this.balance += amount;
++    this.balance -= amount;
+     return this.balance;
+   }
+ 

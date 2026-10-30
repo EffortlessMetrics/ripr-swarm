@@ -1,0 +1,12 @@
+diff --git a/routeclients/reports.py b/routeclients/reports.py
+--- a/routeclients/reports.py
++++ b/routeclients/reports.py
+@@ -5,7 +5,7 @@ app = MiniApp()
+ 
+ @app.get("/reports")
+ def reports():
+-    return {"rows": 4}
++    return {"rows": 5}
+ 
+ 
+ def build_app():

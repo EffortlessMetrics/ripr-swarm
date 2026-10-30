@@ -1,0 +1,4 @@
+#[test]
+fn weight_triples_the_count() {
+    assert_eq!(tally::weight(5), 15);
+}

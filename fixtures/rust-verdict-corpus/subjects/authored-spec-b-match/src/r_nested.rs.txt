@@ -1,0 +1,29 @@
+//! An arm value that is one nested call to the helper itself.
+
+pub fn label_nested(kind: &str) -> &'static str {
+    match kind {
+        "word" => label_nested("text"),
+        "text" => "beta",
+        _ => "alpha",
+    }
+}
+
+pub fn classify_nested(input: &str) -> &'static str {
+    let final_label = label_nested(input);
+    if final_label == "alpha" {
+        "word"
+    } else {
+        "blank"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_nested_arm_reaches_its_target_r_nested() {
+        assert_eq!(classify_nested("word"), "blank");
+        assert_eq!(classify_nested("zz"), "word");
+    }
+}

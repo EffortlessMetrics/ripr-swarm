@@ -1,12 +1,14 @@
 use std::fs;
 
+use crate::check_fast_selector::Selection;
+
 const BASE_REF: &str = "origin/main";
 const FAST_REPORT_PATH: &str = "target/ripr/reports/check-fast.md";
 const SELECTOR_REPORT: &str = "check-fast-selector.md";
 
 pub(super) fn run() -> Result<(), String> {
     super::super::ensure_reports_dir()?;
-    let mut discover = super::super::changed_files_vs_origin_main;
+    let mut discover = || crate::check_fast_selector::discover(std::path::Path::new("."));
     let mut write_receipt = |status: &str, reason: &str, count: usize, detail: &str| {
         super::super::write_report(
             SELECTOR_REPORT,
@@ -31,7 +33,7 @@ fn run_transaction<D, F, R, W>(
     write_receipt: &mut W,
 ) -> Result<(), String>
 where
-    D: FnMut() -> Result<Vec<String>, String>,
+    D: FnMut() -> Result<Selection, String>,
     F: FnOnce() -> Result<(), String>,
     R: FnOnce() -> Result<String, String>,
     W: FnMut(&str, &str, usize, &str) -> Result<(), String>,
@@ -45,34 +47,45 @@ where
     };
 
     if let Err(error) = run_fast() {
-        let primary = format!("check-fast gate failed after selector establishment: {error}");
-        return fail(write_receipt, "fast_gate_failed", before.len(), &primary);
+        let primary = format!(
+            "check-fast gate failed after selector establishment ({}): {error}",
+            before.identity_line()
+        );
+        return fail(
+            write_receipt,
+            "fast_gate_failed",
+            before.files.len(),
+            &primary,
+        );
     }
 
     let after = match discover() {
         Ok(files) => files,
         Err(error) => {
             let primary = format!(
-                "check-fast selector became unavailable after the gate run for {BASE_REF}: {error}"
+                "check-fast selector became unavailable after the gate run for {}: {error}",
+                before.identity_line()
             );
             return fail(
                 write_receipt,
                 "selector_unavailable_after_run",
-                before.len(),
+                before.files.len(),
                 &primary,
             );
         }
     };
     if before != after {
         let primary = format!(
-            "check-fast selector changed during the gate run: before={} file(s), after={} file(s)",
-            before.len(),
-            after.len()
+            "check-fast selector changed during the gate run: before {} ({} files); after {} ({} files); reconcile the selected basis and retry `cargo xtask check-fast`",
+            before.identity_line(),
+            before.files.len(),
+            after.identity_line(),
+            after.files.len()
         );
         return fail(
             write_receipt,
             "selector_changed_during_run",
-            before.len(),
+            before.files.len(),
             &primary,
         );
     }
@@ -80,21 +93,29 @@ where
     let report = match read_fast_report() {
         Ok(report) => report,
         Err(error) => {
-            let primary = format!("check-fast success report unavailable: {error}");
+            let primary = format!(
+                "check-fast success report unavailable ({}): {error}",
+                before.identity_line()
+            );
             return fail(
                 write_receipt,
                 "fast_report_unavailable",
-                before.len(),
+                before.files.len(),
                 &primary,
             );
         }
     };
-    if let Err(error) = validate_fast_report(&before, &report) {
-        let primary = format!("check-fast report does not match its selector: {error}");
+    if let Err(error) =
+        validate_fast_report(&before.files, &report).and_then(|()| before.validate_report(&report))
+    {
+        let primary = format!(
+            "check-fast report does not match its selector ({}): {error}",
+            before.identity_line()
+        );
         return fail(
             write_receipt,
             "fast_report_mismatch",
-            before.len(),
+            before.files.len(),
             &primary,
         );
     }
@@ -102,8 +123,11 @@ where
     write_receipt(
         "pass",
         "stable",
-        before.len(),
-        "selector and conditional gate receipt agree",
+        before.files.len(),
+        &format!(
+            "selector and conditional gate receipt agree; {}",
+            before.identity_line()
+        ),
     )
     .map_err(|error| format!("write {SELECTOR_REPORT}: {error}"))
 }
@@ -119,7 +143,15 @@ fn validate_fast_report(files: &[String], report: &str) -> Result<(), String> {
         .ok_or_else(|| "success report has no bounded Ran/Skipped sections".to_string())?;
 
     let categories = super::super::categorize_changed_files(files);
-    let mut required = Vec::new();
+    // Match the runner's unconditional floor even for a valid empty diff.
+    let mut required = vec![
+        "fmt --check",
+        "check-static-language",
+        "check-command-catalog",
+        "check-generated",
+        "check-generated-clean",
+        "check-lint-policy",
+    ];
     if categories.support_tiers {
         required.push("check-support-tiers");
     }
@@ -138,7 +170,11 @@ fn validate_fast_report(files: &[String], report: &str) -> Result<(), String> {
         required.push("check-workflows");
     }
     if categories.policy {
-        required.extend(["check-process-policy", "check-network-policy"]);
+        required.extend([
+            "check-covered-by",
+            "check-process-policy",
+            "check-network-policy",
+        ]);
     }
     if categories.fixture {
         required.push("check-fixture-contracts");
@@ -186,6 +222,21 @@ mod tests {
 
     use super::{run_transaction, selector_report};
 
+    fn selection(files: Vec<String>) -> crate::check_fast_selector::Selection {
+        crate::check_fast_selector::Selection {
+            base: "a".repeat(40),
+            head: "b".repeat(40),
+            merge_base: "a".repeat(40),
+            files,
+        }
+    }
+
+    fn fixture_report(report: &str) -> String {
+        format!(
+            "Selector identity: origin/main=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa HEAD=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb merge-base=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n{report}"
+        )
+    }
+
     #[test]
     fn child_diagnostics_do_not_change_the_ran_skipped_contract() -> Result<(), String> {
         let report = format!("{EMPTY_FAST_REPORT}{}", crate::check_fast_diagnostics(&[]));
@@ -226,7 +277,7 @@ mod tests {
                 fast_ran.set(true);
                 Ok(())
             },
-            || Ok(EMPTY_FAST_REPORT.to_string()),
+            || Ok(fixture_report(EMPTY_FAST_REPORT)),
             &mut write,
         );
         if result.is_ok() {
@@ -244,7 +295,7 @@ mod tests {
     #[test]
     fn legitimate_empty_selection_is_distinct_from_failure() -> Result<(), String> {
         let receipt = RefCell::new(String::new());
-        let mut discover = || Ok(Vec::new());
+        let mut discover = || Ok(selection(Vec::new()));
         let mut write = |status: &str, reason: &str, count: usize, detail: &str| {
             *receipt.borrow_mut() = selector_report(status, reason, count, detail);
             Ok(())
@@ -253,7 +304,7 @@ mod tests {
         run_transaction(
             &mut discover,
             || Ok(()),
-            || Ok(EMPTY_FAST_REPORT.to_string()),
+            || Ok(fixture_report(EMPTY_FAST_REPORT)),
             &mut write,
         )?;
         let receipt = receipt.borrow();
@@ -276,7 +327,7 @@ mod tests {
             .map(|path| (*path).to_string())
             .collect::<Vec<_>>();
         let receipt = RefCell::new(String::new());
-        let mut discover = || Ok(selected.clone());
+        let mut discover = || Ok(selection(selected.clone()));
         let mut write = |status: &str, reason: &str, count: usize, detail: &str| {
             *receipt.borrow_mut() = selector_report(status, reason, count, detail);
             Ok(())
@@ -284,7 +335,7 @@ mod tests {
         let result = run_transaction(
             &mut discover,
             || Ok(()),
-            || Ok(report.to_string()),
+            || Ok(fixture_report(report)),
             &mut write,
         );
         let written = receipt.borrow().clone();
@@ -346,6 +397,198 @@ mod tests {
                 }
             }
         }
+        Ok(())
+    }
+
+    #[test]
+    fn committed_policy_paths_require_literal_complete_receipts() -> Result<(), String> {
+        // These paths and obligations are an independent oracle for the actual
+        // check_fast_gates table, never derived from categorize_changed_files.
+        const FLOOR: [&str; 6] = [
+            "fmt --check",
+            "check-static-language",
+            "check-command-catalog",
+            "check-generated",
+            "check-generated-clean",
+            "check-lint-policy",
+        ];
+        const POLICY: [&str; 3] = [
+            "check-covered-by",
+            "check-process-policy",
+            "check-network-policy",
+        ];
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "ripr-receipt-obligations-{}-{stamp}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(std::env::temp_dir()).map_err(|error| error.to_string())?;
+        std::fs::create_dir(&root).map_err(|error| error.to_string())?;
+        let git = |args: &[&str]| -> Result<(), String> {
+            let args = args
+                .iter()
+                .map(|arg| (*arg).to_string())
+                .collect::<Vec<_>>();
+            let output = crate::run::capture_output_in_dir(
+                "git",
+                &args,
+                &root,
+                "receipt obligation fixture Git",
+            )?;
+            if output.status.success() {
+                Ok(())
+            } else {
+                Err(format!("fixture Git {args:?}: {}", output.stderr))
+            }
+        };
+        let result = (|| {
+            git(&["init", "--initial-branch=main"])?;
+            git(&["config", "user.name", "Receipt fixture"])?;
+            git(&["config", "user.email", "receipt@example.invalid"])?;
+            git(&[
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "--allow-empty",
+                "-m",
+                "base",
+            ])?;
+            let mut accepted_omissions = Vec::new();
+            for (path, policy) in [
+                ("policy/process-allowlist.toml", true),
+                (".ripr/traceability.toml", true),
+                ("policy-not/process-allowlist.toml", false),
+                (".ripr-not/traceability.toml", false),
+                ("docs/policy/process-allowlist.toml", false),
+            ] {
+                git(&["update-ref", "refs/remotes/origin/main", "HEAD"])?;
+                let file = root.join(path);
+                std::fs::create_dir_all(file.parent().ok_or("fixture parent missing")?)
+                    .map_err(|error| error.to_string())?;
+                std::fs::write(&file, "# receipt control\n").map_err(|error| error.to_string())?;
+                git(&["add", "--", path])?;
+                git(&[
+                    "-c",
+                    "commit.gpgsign=false",
+                    "commit",
+                    "-m",
+                    "selected path",
+                ])?;
+                let files = crate::changed_files_vs_base(&root)?;
+                assert_eq!(files, [path], "native committed selector inventory");
+                let mut gates = FLOOR.to_vec();
+                if policy {
+                    gates.extend(POLICY);
+                }
+                let report = |omitted: Option<&str>| {
+                    let ran = gates
+                        .iter()
+                        .filter(|gate| Some(**gate) != omitted)
+                        .map(|gate| format!("- {gate}"))
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    // Put an omitted receipt under Skipped too: it is not execution.
+                    format!(
+                        "# check-fast report\n\nStatus: pass\n\nRan:\n{ran}\n\nSkipped:\n- {}\n",
+                        omitted.unwrap_or("none")
+                    )
+                };
+                let paths = files.iter().map(String::as_str).collect::<Vec<_>>();
+                selected_receipt(&paths, &report(None)).0?;
+                for gate in &gates {
+                    let (result, receipt) = selected_receipt(&paths, &report(Some(gate)));
+                    let Some(error) = result.err() else {
+                        accepted_omissions.push(format!("{path}: {gate}"));
+                        continue;
+                    };
+                    assert!(error.contains(gate), "{error}");
+                    assert!(
+                        receipt.contains("Selector: fast_report_mismatch"),
+                        "{receipt}"
+                    );
+                }
+            }
+            assert!(
+                accepted_omissions.is_empty(),
+                "accepted missing receipts: {accepted_omissions:?}"
+            );
+            Ok(())
+        })();
+        let cleanup = std::fs::remove_dir_all(&root).map_err(|error| error.to_string());
+        result.and(cleanup)
+    }
+
+    #[test]
+    fn renamed_policy_paths_still_require_policy_receipts() -> Result<(), String> {
+        const POLICY: [&str; 3] = [
+            "check-covered-by",
+            "check-process-policy",
+            "check-network-policy",
+        ];
+        let (floor, _) = EMPTY_FAST_REPORT
+            .split_once("\n\nSkipped:\n")
+            .ok_or("control report lacks Skipped boundary")?;
+        for from in ["policy/moved.toml", ".ripr/moved.toml"] {
+            crate::check_fast_rename_tests::with_renamed_path(
+                from,
+                "docs/archive/moved.txt",
+                |phase, paths| {
+                    let paths = paths.iter().map(String::as_str).collect::<Vec<_>>();
+                    for omitted in [None, Some(POLICY[0]), Some(POLICY[1]), Some(POLICY[2])] {
+                        let ran = POLICY
+                            .iter()
+                            .filter(|gate| Some(**gate) != omitted)
+                            .map(|gate| format!("- {gate}"))
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        let report = format!(
+                            "{floor}\n{ran}\n\nSkipped:\n- {}\n",
+                            omitted.unwrap_or("none")
+                        );
+                        let (result, receipt) = selected_receipt(&paths, &report);
+                        if let Some(gate) = omitted {
+                            let error = result.err().ok_or_else(|| {
+                                format!("{phase}: renamed {from} accepted missing {gate}")
+                            })?;
+                            assert!(error.contains(gate), "{error}");
+                            assert!(receipt.contains("Selector: fast_report_mismatch"));
+                        } else {
+                            result?;
+                            assert!(receipt.contains("Status: pass"));
+                        }
+                    }
+                    Ok(())
+                },
+            )?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn empty_selector_requires_each_unconditional_receipt() -> Result<(), String> {
+        selected_receipt(&[], EMPTY_FAST_REPORT).0?;
+        let mut accepted = Vec::new();
+        for gate in [
+            "fmt --check",
+            "check-static-language",
+            "check-command-catalog",
+            "check-generated",
+            "check-generated-clean",
+            "check-lint-policy",
+        ] {
+            let report = EMPTY_FAST_REPORT.replace(&format!("- {gate}\n"), "");
+            match selected_receipt(&[], &report).0 {
+                Ok(()) => accepted.push(gate),
+                Err(error) => assert!(error.contains(gate), "{error}"),
+            }
+        }
+        assert!(
+            accepted.is_empty(),
+            "empty selector accepted missing receipts: {accepted:?}"
+        );
         Ok(())
     }
 
@@ -546,6 +789,22 @@ mod tests {
     }
 
     #[test]
+    fn workspace_rust_targets_require_complete_rust_receipts() -> Result<(), String> {
+        for path in [
+            "crates/ripr/tests/agent_stub_compiles.rs",
+            "crates/ripr/build.rs",
+            "crates/ripr/examples/check_diff.rs",
+            "xtask/tests/spec_format_determinism.rs",
+            "xtask/examples/mandatory_partitions.rs",
+            "tools/repo-policy/build.rs",
+            "tools/repo-policy/examples/inventory.rs",
+        ] {
+            require_rust_receipts(&[path])?;
+        }
+        Ok(())
+    }
+
+    #[test]
     fn selected_rust_path_requires_rust_gate_receipt() -> Result<(), String> {
         for path in [
             "xtask/src/check_fast_strict.rs",
@@ -556,7 +815,7 @@ mod tests {
         ] {
             let receipt = RefCell::new(String::new());
             let selected = vec![path.to_string()];
-            let mut discover = || Ok(selected.clone());
+            let mut discover = || Ok(selection(selected.clone()));
             let mut write = |status: &str, reason: &str, count: usize, detail: &str| {
                 *receipt.borrow_mut() = selector_report(status, reason, count, detail);
                 Ok(())
@@ -565,7 +824,7 @@ mod tests {
             let result = run_transaction(
                 &mut discover,
                 || Ok(()),
-                || Ok(EMPTY_FAST_REPORT.to_string()),
+                || Ok(fixture_report(EMPTY_FAST_REPORT)),
                 &mut write,
             );
             let error = match result {
@@ -589,12 +848,12 @@ mod tests {
         let mut discover = || {
             calls += 1;
             if calls == 1 {
-                Ok(vec!["crates/ripr/src/lib.rs".to_string()])
+                Ok(selection(vec!["crates/ripr/src/lib.rs".to_string()]))
             } else {
-                Ok(vec![
+                Ok(selection(vec![
                     "crates/ripr/src/lib.rs".to_string(),
                     "xtask/src/main.rs".to_string(),
-                ])
+                ]))
             }
         };
         let mut write = |status: &str, reason: &str, count: usize, detail: &str| {
@@ -605,7 +864,7 @@ mod tests {
         let result = run_transaction(
             &mut discover,
             || Ok(()),
-            || Ok(EMPTY_FAST_REPORT.to_string()),
+            || Ok(fixture_report(EMPTY_FAST_REPORT)),
             &mut write,
         );
         if result.is_ok() {
@@ -622,6 +881,151 @@ mod tests {
                 "drift receipt must keep the before-run denominator: {}",
                 receipt.borrow()
             ));
+        }
+        Ok(())
+    }
+    #[test]
+    fn selector_ref_drift_with_unchanged_paths_is_refused() -> Result<(), String> {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "ripr-selector-identity-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        let git = |args: &[&str]| -> Result<String, String> {
+            let args = args
+                .iter()
+                .map(|arg| (*arg).to_string())
+                .collect::<Vec<_>>();
+            let output = crate::run::capture_output_in_dir(
+                "git",
+                &args,
+                &root,
+                "selector identity fixture Git",
+            )?;
+            if output.status.success() {
+                Ok(output.stdout.trim().to_string())
+            } else {
+                Err(format!("fixture Git {args:?}: {}", output.stderr))
+            }
+        };
+        let result = (|| {
+            git(&["init", "--initial-branch=main"])?;
+            git(&["config", "user.name", "Selector fixture"])?;
+            git(&["config", "user.email", "selector@example.invalid"])?;
+            git(&[
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "--allow-empty",
+                "-m",
+                "base",
+            ])?;
+            let base = git(&["rev-parse", "HEAD"])?;
+            git(&["update-ref", "refs/remotes/origin/main", &base])?;
+            std::fs::create_dir_all(root.join("docs")).map_err(|error| error.to_string())?;
+            for version in ["first", "second"] {
+                std::fs::write(root.join("docs/guide.md"), version)
+                    .map_err(|error| error.to_string())?;
+                git(&["add", "."])?;
+                git(&["-c", "commit.gpgsign=false", "commit", "-m", version])?;
+            }
+            let original_paths = crate::changed_files_vs_base(&root)?;
+            assert_eq!(original_paths, ["docs/guide.md"]);
+            let mut accepted = Vec::new();
+            for moved_ref in ["HEAD", "origin/main"] {
+                let receipt = RefCell::new(String::new());
+                let mut discover = || crate::check_fast_selector::discover(&root);
+                let mut write = |status: &str, reason: &str, count: usize, detail: &str| {
+                    *receipt.borrow_mut() = selector_report(status, reason, count, detail);
+                    Ok(())
+                };
+                let attempt = run_transaction(
+                    &mut discover,
+                    || {
+                        if moved_ref == "HEAD" {
+                            std::fs::write(root.join("docs/guide.md"), "third")
+                                .map_err(|error| error.to_string())?;
+                            git(&["add", "."])?;
+                            git(&["-c", "commit.gpgsign=false", "commit", "-m", "third"])?;
+                        } else {
+                            git(&["update-ref", "refs/remotes/origin/main", "HEAD~1"])?;
+                        }
+                        Ok(())
+                    },
+                    || Ok(fixture_report(EMPTY_FAST_REPORT)),
+                    &mut write,
+                );
+                assert_eq!(crate::changed_files_vs_base(&root)?, original_paths);
+                if attempt.is_ok() {
+                    accepted.push(moved_ref);
+                } else {
+                    assert!(
+                        receipt
+                            .borrow()
+                            .contains("Selector: selector_changed_during_run"),
+                        "{}",
+                        receipt.borrow()
+                    );
+                }
+            }
+            assert!(
+                accepted.is_empty(),
+                "accepted changed selector refs with unchanged paths: {accepted:?}"
+            );
+            Ok(())
+        })();
+        let cleanup = std::fs::remove_dir_all(&root).map_err(|error| error.to_string());
+        result.and(cleanup)
+    }
+
+    #[test]
+    fn stable_selector_refuses_missing_duplicate_or_other_report_identity() -> Result<(), String> {
+        let selected = selection(vec!["docs/guide.md".to_string()]);
+        let good = fixture_report(EMPTY_FAST_REPORT);
+        let mut wrong_head = selected.clone();
+        wrong_head.head = "c".repeat(40);
+        let mut wrong_base = selected.clone();
+        wrong_base.base = "c".repeat(40);
+        let mut wrong_merge_base = selected.clone();
+        wrong_merge_base.merge_base = "c".repeat(40);
+        for (report, should_pass) in [
+            (good.clone(), true),
+            (EMPTY_FAST_REPORT.to_string(), false),
+            (format!("{}\n{good}", selected.identity_line()), false),
+            (format!("{}\n{good}", wrong_head.identity_line()), false),
+            (
+                format!("{}\n{EMPTY_FAST_REPORT}", wrong_head.identity_line()),
+                false,
+            ),
+            (
+                format!("{}\n{EMPTY_FAST_REPORT}", wrong_base.identity_line()),
+                false,
+            ),
+            (
+                format!("{}\n{EMPTY_FAST_REPORT}", wrong_merge_base.identity_line()),
+                false,
+            ),
+        ] {
+            // Before/after identities are identical. A gate receipt from an
+            // intervening different selection must still be rejected (ABA).
+            let mut discover = || Ok(selected.clone());
+            let receipt = RefCell::new(String::new());
+            let mut write = |status: &str, reason: &str, count: usize, detail: &str| {
+                *receipt.borrow_mut() = selector_report(status, reason, count, detail);
+                Ok(())
+            };
+            let result =
+                run_transaction(&mut discover, || Ok(()), || Ok(report.clone()), &mut write);
+            assert_eq!(result.is_ok(), should_pass, "{report}; {result:?}");
+            if should_pass {
+                assert!(receipt.borrow().contains(&selected.identity_line()));
+            } else {
+                assert!(receipt.borrow().contains("Selector: fast_report_mismatch"));
+            }
         }
         Ok(())
     }

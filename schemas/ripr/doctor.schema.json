@@ -44,12 +44,12 @@
     "binary": { "$ref": "#/$defs/binary_identity" },
     "canonical_next_action": { "$ref": "#/$defs/canonical_next_action" },
     "elapsed_ms": {
-      "description": "How long the whole doctor run took, in milliseconds, measured by the command adapter (additive, #8540). Omitted when the report was produced without a clock.",
+      "description": "How long the whole doctor run took, in milliseconds, measured by the command adapter (additive, #8540). Omitted when the report was produced without a clock. Volatile (#9807): emitted only with `ripr doctor --json --timings`; the default `--json` document omits it so repeated runs stay byte-stable.",
       "type": "integer",
       "minimum": 0
     },
     "segments": {
-      "description": "Named timings for doctor work the total covers that is neither a check nor a runtime probe: language detection and the environment probe's expensive computations (additive, #8540 follow-up). Omitted when no segment was measured.",
+      "description": "Named timings for doctor work the total covers that is neither a check nor a runtime probe: language detection and the environment probe's expensive computations (additive, #8540 follow-up). Omitted when no segment was measured. Volatile (#9807): emitted only with `ripr doctor --json --timings`; the default `--json` document omits them so repeated runs stay byte-stable.",
       "type": "array",
       "items": { "$ref": "#/$defs/segment" }
     },
@@ -215,7 +215,7 @@
         "status": { "$ref": "#/$defs/check_status" },
         "evidence": { "$ref": "#/$defs/nullable_string" },
         "elapsed_ms": {
-          "description": "How long this check's computation took, in milliseconds (additive, #8540). Omitted for skipped checks.",
+          "description": "How long this check's computation took, in milliseconds (additive, #8540). Omitted for skipped checks. Volatile (#9807): emitted only with `ripr doctor --json --timings`.",
           "type": "integer",
           "minimum": 0
         }
@@ -234,7 +234,7 @@
         "required": { "type": "boolean" },
         "hint": { "type": "string" },
         "elapsed_ms": {
-          "description": "How long this probe took, in milliseconds (additive, #8540).",
+          "description": "How long this probe took, in milliseconds (additive, #8540). Volatile (#9807): emitted only with `ripr doctor --json --timings`.",
           "type": "integer",
           "minimum": 0
         }
@@ -413,7 +413,7 @@
     },
     "perl_exporter_state": {
       "description": "Compatibility is a capability probe, not an end-to-end proof: only `ripr check` validates an actual packet.",
-      "enum": ["compatible", "incompatible", "not_found"]
+      "enum": ["compatible", "incompatible", "not_found", "refused"]
     },
     "perl_exporter": {
       "type": "object",

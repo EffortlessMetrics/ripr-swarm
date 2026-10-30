@@ -1,0 +1,51 @@
+{
+  "case_id": "py-grid-returns-none",
+  "subject_id": "authored-py-grid-returns",
+  "diff": "cases/py-grid-returns-none.diff",
+  "anchor": {
+    "file": "grid_returns/core.py",
+    "line": 21
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "pytest_smoke_call_no_assert",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return \"\"",
+        "mutated_line": "return \"\"",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: returns a constant instead of the computed value"
+      },
+      {
+        "replacement": "return \"xyzzy\"",
+        "mutated_line": "return \"xyzzy\"",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: returns a constant instead of the computed value"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "Grid cell: return value x no assertion. The test only calls banner.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

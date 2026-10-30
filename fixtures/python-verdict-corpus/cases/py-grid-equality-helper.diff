@@ -1,0 +1,12 @@
+diff --git a/grid_equality/core.py b/grid_equality/core.py
+--- a/grid_equality/core.py
++++ b/grid_equality/core.py
+@@ -14,7 +14,7 @@
+ 
+ 
+ def is_https(port):
+-    return port == 443
++    return 443 == port
+ 
+ 
+ def is_default_port(port):

@@ -237,6 +237,21 @@ live caller (`git_output`, `task_for`, `TASK_WRITE_TARGETED_TEST`).
   split (`producer_finding_binds_only_the_twin_seam_at_its_line`), the
   packet-queue omission failing closed on the canonical packet family, and
   the foreign-head attempt projecting `stale`.
+- `crates/ripr/src/cli/commands/agent_card.rs` unit test
+  `prose_prints_each_limitation_once` covers the human limitation
+  duplicate-elision rule: when the canonical next-action block prints a
+  `limitations:` line, the closing line carries only card limitations the
+  block did not already say (identical lists print once, partial overlap
+  prints the shared entries once and the remainder once, and a card without a
+  canonical block prints its own list).
+- `crates/ripr/src/cli/commands/agent_card.rs` unit test
+  `prose_words_enums_for_a_newcomer_and_omits_the_schema_line` covers the
+  human summary wording (#9244): the snapshot currentness, the instruction
+  state and the five done-when axes print in plain language, the
+  `repair_card.v1` schema line is omitted, and no owned line prints a raw
+  snake_case enum spelling. The JSON card keeps every wire value and
+  `schema_version`; the wording is static guidance and claims no runtime
+  outcome.
 - `crates/ripr/src/cli/agent.rs` unit tests cover option parsing and the
   updated unknown-subcommand listing.
 - `crates/ripr/tests/cli_smoke.rs` `agent_card_hands_off_one_seam_as_the_default_repair_card`

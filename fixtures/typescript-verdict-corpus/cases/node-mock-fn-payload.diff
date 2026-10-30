@@ -1,0 +1,11 @@
+diff --git a/src/notify.ts b/src/notify.ts
+index 0000000..1111111 100644
+--- a/src/notify.ts
++++ b/src/notify.ts
+@@ -3,5 +3,5 @@
+ }
+ 
+ export function welcome(mailer: Mailer, name: string): void {
+-  mailer.send(`${name}@example.test`, `Welcome, ${name}`);
++  mailer.send(`${name}@example.test`, `Hello, ${name}`);
+ }

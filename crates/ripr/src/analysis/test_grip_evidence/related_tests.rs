@@ -8,6 +8,7 @@ use crate::analysis::facts::FunctionImplContext;
 use std::sync::Arc;
 
 pub(super) mod context;
+mod visibility;
 
 pub(crate) use context::CompactGripContext;
 pub(super) use context::{CompactTest, call_text_contains_named_call};
@@ -30,6 +31,25 @@ pub(super) fn find_related_tests_with_context<'context, 'index>(
 
     let mut candidates: BTreeMap<usize, RelationReason> = BTreeMap::new();
     match_direct_owner_call(&mut candidates, context, prefix, &owner);
+    let inaccessible_direct: BTreeSet<usize> = context
+        .owner_function(seam.file(), seam.display_line())
+        .map(|function| {
+            candidates
+                .keys()
+                .copied()
+                .filter(|test_index| {
+                    context.tests.get(*test_index).is_some_and(|indexed| {
+                        context.private_visibility.proven_inaccessible(
+                            context,
+                            function,
+                            indexed.test,
+                        )
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    candidates.retain(|test_index, _| !inaccessible_direct.contains(test_index));
     match_helper_owner_call(&mut candidates, context, prefix, &owner);
     match_target_affinity_owner_call(
         &mut candidates,
@@ -46,6 +66,13 @@ pub(super) fn find_related_tests_with_context<'context, 'index>(
     match_import_path_affinity(&mut candidates, context, prefix, &owner);
     match_fixture_owner_affinity(&mut candidates, context, prefix, &owner);
 
+    // An inaccessible direct call cannot regain oracle credit through a
+    // proximity or import fallback. An independently matched helper can
+    // still reach a private owner from inside its own module.
+    candidates.retain(|test_index, reason| {
+        !inaccessible_direct.contains(test_index) || *reason == RelationReason::HelperOwnerCall
+    });
+
     // #6292: a test whose every call of the owner's name settles on a
     // same-named module-level rival relates through no signal of its own:
     // the same rule diff-mode related tests apply.
@@ -57,6 +84,29 @@ pub(super) fn find_related_tests_with_context<'context, 'index>(
                 })
         });
     }
+
+    // Newly registered property facts carry assertion interpretation, not
+    // authority to call any owner with the same spelling. Bind them before
+    // every evidence stage, including value-insensitive direct-call credit.
+    // A policy-modified fact must not become ordinary when its exact receipt
+    // no longer matches; registration provenance and authority are distinct.
+    // Ordinary relation rows retain their existing rules.
+    let owner_fn = context.owner_function(seam.file(), seam.display_line());
+    candidates.retain(|test_index, _| {
+        context.tests.get(*test_index).is_some_and(|indexed| {
+            !context.index.is_registered_proptest(indexed.test)
+                || (context.index.proptest_source(indexed.test).is_some()
+                    && owner_fn.is_some_and(|owner| {
+                        crate::analysis::classify::bound_free_owner_calls(
+                            context.index,
+                            owner,
+                            indexed.test,
+                            &indexed.test.body,
+                            context.pin_syntax(),
+                        )
+                    }))
+        })
+    });
 
     dedupe_related_candidates(candidates, context)
 }
@@ -323,7 +373,7 @@ pub(super) fn match_helper_owner_call(
     for test_index in indices {
         if owner.inherent_receiver
             && !owner.inherent_owner.is_some_and(|function| {
-                context.inherent_helper_reaches_owner(*test_index, &function.id.0)
+                context.inherent_helper_reaches_owner(*test_index, function)
             })
         {
             continue;
@@ -370,7 +420,7 @@ pub(super) fn match_target_affinity_owner_call(
         if !test_assertion_mentions_any_target_token(test, target_tokens)
             || (owner.inherent_receiver
                 && !owner.inherent_owner.is_some_and(|function| {
-                    context.inherent_helper_reaches_owner(*test_index, &function.id.0)
+                    context.inherent_helper_reaches_owner(*test_index, function)
                 }))
         {
             continue;
@@ -681,6 +731,7 @@ pub(super) fn sort_related_tests_for_seam<'a>(
     related: &mut [(&'a CompactTest<'a>, RelationReason)],
 ) -> Vec<BestOracle> {
     let owner = seam_owner_activation(seam, context);
+    let boolean_pin = BooleanBoundaryPin::establish(seam, owner_fn, context.index);
     let mut ranked: Vec<_> = related
         .iter()
         .map(|&entry| {
@@ -693,7 +744,8 @@ pub(super) fn sort_related_tests_for_seam<'a>(
                 // #8282: the run's shared instance, like every other walk
                 // stage; a per-key fresh instance re-paid the whole-index
                 // lazily computed facts once per (seam, related test) rank.
-                context.pin_syntax_mutex(),
+                context.pin_syntax(),
+                boolean_pin.as_ref(),
             );
             let key =
                 related_test_rank_key(seam, context, indexed, reason, owner.as_ref(), &oracle);

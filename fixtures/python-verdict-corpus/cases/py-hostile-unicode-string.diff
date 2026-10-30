@@ -1,0 +1,9 @@
+diff --git a/hostile/unicode_names.py b/hostile/unicode_names.py
+--- a/hostile/unicode_names.py
++++ b/hostile/unicode_names.py
+@@ -3,4 +3,4 @@
+ 
+ 
+ def grüße(name):
+-    return f"Grüß {name}"
++    return f"Gruss {name}"

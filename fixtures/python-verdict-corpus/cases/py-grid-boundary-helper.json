@@ -1,0 +1,52 @@
+{
+  "case_id": "py-grid-boundary-helper",
+  "subject_id": "authored-py-grid-boundary",
+  "diff": "cases/py-grid-boundary-helper.diff",
+  "anchor": {
+    "file": "grid_boundary/core.py",
+    "line": 17
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "pytest_helper_wrapped_assert",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return 50 < score",
+        "mutated_line": "return 50 < score",
+        "outcome": "tests_failed",
+        "failing_test": "test_pass_mark_is_fifty",
+        "equivalence_review": "not equivalent: 50 itself stops passing"
+      },
+      {
+        "replacement": "return 50 > score",
+        "mutated_line": "return 50 > score",
+        "outcome": "tests_failed",
+        "failing_test": "test_pass_mark_is_fifty",
+        "equivalence_review": "not equivalent: the comparison is inverted"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Grid cell: boundary x helper-wrapped assert. check_pass asserts at 50 and 49, both sides of the threshold.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -185,22 +185,27 @@ machine-readable `check` formats carry their own refusal documents:
 
 - `ripr diff --json`, `ripr rerun --json`, `ripr context` (JSON only), `ripr
   agent brief --json`, and `ripr agent packet --json` write the same envelope
-  as `check --json` for every post-argv-parse failure, keyed with the refusing
-  command's own `schema_version` (`"0.1"` for diff and agent brief,
-  `"ripr-targeted-rerun-v1"` for rerun, `"1.0"` for context, `"0.5"` for agent
+  as `check --json` for every post-argv-parse operational failure, keyed with
+  the refusing command's own `schema_version` (`"0.1"` for diff and agent brief,
+  `"ripr-targeted-rerun-v1"` for rerun, `"1.1"` for context, `"0.5"` for agent
   packet). `mode` appears only on commands that accept `--mode` (check, diff,
   context); `scope` is `"diff"` for diff-scoped commands and `"repo"` for
   agent brief and agent packet; agent brief echoes the caller-supplied
   `--base` when its working set selected one. Exit stays `2`, prose stays on
   stderr, and argv usage errors stay prose-only with empty stdout.
-- The closed identity vocabulary gains three members, all with no claim that
-  analysis ran:
+- The closed identity vocabulary includes seven members. All but
+  `analysis_timeout` make no claim that analysis ran; `analysis_timeout`
+  (#5369) means the wall-clock budget expired before the budgeted check
+  analysis returned:
 
 | Identity | Repair route | Meaning |
 |---|---|---|
 | `check_artifact_unusable` | `analysis/check-artifact` | A named `ripr context --from` check artifact is unreadable, malformed, foreign, or identity-mismatched. |
 | `gap_ledger_unusable` | `analysis/gap-ledger` | A named `ripr rerun --gap-ledger` file cannot be read or parsed. |
 | `seam_id_unknown` | `analysis/seam-inventory` | A named `ripr agent packet --seam-id` matches no current seam. |
+| `seam_not_actionable` | `analysis/seam-limitation` | A named `ripr agent start --seam-id` matches a seam policy permits but the shared repair-admission gate refuses to start: a static-limitation seam with no repairable gap, or one `ripr repair` reports as not repair-eligible (#10712). |
+| `seam_policy_omitted` | `analysis/seam-policy` | A named `ripr agent packet`, `ripr agent start`, or `ripr agent repair --phase before` `--seam-id` matches a seam that agent policy withholds (configured off, already gripped, or not agent-visible) (#10712). |
+| `diff_input_unsupported` | `analysis/diff-input` | An `agent brief --diff` or `--base` working set carries a shared-parser limitation, admission refusal, or truncated textual section; brief selection did not run. Empty valid patches retain their successful brief behavior. |
 | `analysis_timeout` | `analysis/timeout` | The `ripr check` wall-clock budget (`--timeout SECS`, `RIPR_CHECK_TIMEOUT`) ran out before analysis finished (#5369). No findings are produced and the result is never a clean pass. |
 
 - For `ripr check`, the machine-readable formats `sarif`, `github`,
@@ -220,10 +225,19 @@ all renderers.
 
 ## Test Mapping (Amendment #7331, #7332)
 
+- `crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_empty_and_ordinary_patches_keep_successful_selection`
+- `crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_parser_refusals_cannot_become_empty_or_fallback_successes`
+- `crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_base_uses_the_same_parser_refusal_before_inventory`
+- `crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_parser_errors_keep_diff_input_identity_and_budget_guards`
+- `crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_truncated_sections_cannot_become_empty_or_partial_successes`
+- `crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_path_like_hunk_payload_keeps_real_changed_line_selection`
 - `crates/ripr/tests/cli_smoke.rs::diff_json_unresolvable_base_emits_refusal_envelope`
 - `crates/ripr/tests/cli_smoke.rs::diff_json_outside_work_tree_emits_refusal_envelope`
 - `crates/ripr/tests/cli_smoke.rs::rerun_json_unreadable_gap_ledger_emits_refusal_envelope`
 - `crates/ripr/tests/cli_smoke.rs::context_json_missing_artifact_emits_refusal_envelope`
+- `crates/ripr/tests/cli_smoke.rs::context_json_fresh_analysis_preserves_base_failures`
+- `crates/ripr/tests/cli_smoke.rs::context_json_fresh_analysis_preserves_repository_root_failure`
+- `crates/ripr/tests/cli_smoke.rs::context_json_fresh_analysis_keeps_untyped_failure_fallback`
 - `crates/ripr/tests/cli_smoke.rs::agent_brief_json_unresolvable_base_emits_refusal_envelope`
 - `crates/ripr/tests/cli_smoke.rs::agent_packet_json_unknown_seam_id_emits_refusal_envelope`
 - `crates/ripr/tests/cli_smoke.rs::check_sarif_refusal_emits_a_schema_valid_run`
@@ -241,7 +255,9 @@ all renderers.
 
 ## Implementation Mapping (Amendment #7331, #7332)
 
-- `crates/ripr/src/core_error.rs::CheckFailureKind::{CheckArtifactUnusable, GapLedgerUnusable, SeamIdUnknown}`
+- `crates/ripr/src/core_error.rs::CheckFailureKind::{CheckArtifactUnusable, GapLedgerUnusable, SeamIdUnknown, SeamPolicyOmitted, SeamNotActionable, DiffInputUnsupported, AnalysisTimeout}`
+- `crates/ripr/src/cli/commands/check_budget.rs::run_with_budget`
+- `crates/ripr/src/cli/commands_agent_support.rs::agent_brief_checked_lines_from_diff`
 - `crates/ripr/src/core_error.rs::RefusalNotice`
 - `crates/ripr/src/core_error.rs::refusal_notice`
 - `crates/ripr/src/output/limited_check.rs::RefusalEnvelopeContext`
@@ -259,3 +275,17 @@ all renderers.
 - `crates/ripr/src/cli/commands/agent.rs::{refuse_agent_brief, refuse_agent_packet}`
 - `crates/ripr/src/app/check_artifact.rs::load_findings_for_reuse_core`
 - `crates/ripr/src/cli/rerun.rs::rerun_gap` (typed ledger errors)
+
+## Amendment (#10720): preserve fresh context analysis failures
+
+The fresh `context` pipeline retains the check producer's `CoreError` through
+both committed and working-tree analysis. A named base or repository-root
+failure reaches the existing refusal renderer with its original identity and
+repair route. Unmigrated loader failures retain `analysis_failed`; no message
+parsing or new failure family is introduced. The context envelope uses version
+`1.1`, as established by RIPR-SPEC-0284.
+
+Selector misses and ambiguity remain usage-class under RIPR-SPEC-0003: exit 2,
+empty stdout, and recovery guidance on stderr. Supplied-artifact refusals retain
+`check_artifact_unusable`. Public String-returning library compatibility wrappers
+keep their existing error text.

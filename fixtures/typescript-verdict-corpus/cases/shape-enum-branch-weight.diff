@@ -1,0 +1,11 @@
+diff --git a/src/level.ts b/src/level.ts
+index 0000000..1111111 100644
+--- a/src/level.ts
++++ b/src/level.ts
+@@ -4,5 +4,5 @@
+ }
+ 
+ export function weight(level: Level): number {
+-  return level === Level.High ? 10 : 1;
++  return level === Level.High ? 11 : 1;
+ }

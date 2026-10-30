@@ -1,0 +1,44 @@
+{
+  "case_id": "mocha-describe-skip-sole-pin",
+  "subject_id": "authored-ts-mocha-hooks",
+  "diff": "cases/mocha-describe-skip-sole-pin.diff",
+  "anchor": {
+    "file": "src/rank.ts",
+    "line": 6
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "mocha_chai_describe_skip_only_pin",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx mocha",
+    "toolchain": "Node.js v22.22.0, mocha 12.0.3, chai 6.3, tsx 4.23, typescript 5.9, x86_64-linux; edit applied by hand to the whole package",
+    "mutants": [
+      {
+        "replacement": "return score >= 60 ? \"bronze\" : \"none\";",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "the edit itself: The only test of the medal sits in describe.skip, which mocha does not run."
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The only test of the medal sits in describe.skip, which mocha does not run. The edited package's test command still passes, so no test notices the change and a gap is the honest verdict.",
+  "labeling_observation": {
+    "ripr_commit": "3b4ac1e",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

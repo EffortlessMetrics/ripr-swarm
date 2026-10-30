@@ -1,0 +1,22 @@
+{
+  "case_id": "py-shapes-decorator-loop-bound",
+  "subject_id": "authored-py-pytest-shapes",
+  "origin": "authored",
+  "anchor": "shapes/decorators.py:14",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "pytest_decorator_factory_loop_pinned",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "no_static_path"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

@@ -1,0 +1,12 @@
+diff --git a/trapkit/core.py b/trapkit/core.py
+--- a/trapkit/core.py
++++ b/trapkit/core.py
+@@ -30,7 +30,7 @@
+ 
+ 
+ def platform_guarded(a, b):
+-    return a * b
++    return b * a
+ 
+ 
+ def platform_matched(a, b):

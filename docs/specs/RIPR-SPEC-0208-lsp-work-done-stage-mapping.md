@@ -104,9 +104,14 @@ denominator honesty, and terminal state may not diverge.
 ## Required Evidence
 
 - Tracker unit: one bounded report per stage in producer order on the same
-  token; consecutive duplicates collapse; terminal, queued, unstarted, and
-  unknown generations are silent; capability-absent clients receive no
-  stage traffic.
+  token; consecutive duplicates collapse; terminal, queued, and unknown
+  generations are silent; capability-absent clients receive no stage
+  traffic. A stage produced while the detached announce still waits for the
+  client's `create` answer is queued (bounded) and flushed in producer order
+  after `Begin`, never dropped and never after `End`; a token that ends
+  before `Begin` discards the queue (#9362). The flush is bounded by the
+  stage drain budget so a client that stops reading after `Begin` cannot hold
+  the token lock that `End` needs.
 - Parity unit: success, disclosed-limited, cancelled, and failed traces
   project through both real projections with identical stage identity and
   order; mixed known/unknown denominators never render a percentage; the
@@ -152,6 +157,10 @@ denominator honesty, and terminal state may not diverge.
 - `crates/ripr/src/lsp/progress.rs::tests::report_stage_emits_one_bounded_report_per_stage_in_producer_order`
 - `crates/ripr/src/lsp/progress.rs::tests::report_stage_suppresses_consecutive_duplicate_stages`
 - `crates/ripr/src/lsp/progress.rs::tests::report_stage_is_silent_for_terminals_queued_unstarted_and_unknown`
+- `crates/ripr/src/lsp/progress.rs::tests::stage_reported_before_begin_is_queued_behind_it_not_dropped`
+- `crates/ripr/src/lsp/progress.rs::tests::stages_queued_before_begin_stop_at_the_cap_in_producer_order`
+- `crates/ripr/src/lsp/progress.rs::tests::stage_queued_before_begin_is_discarded_when_token_ends_first`
+- `crates/ripr/src/lsp/progress.rs::tests::stalled_held_stage_flush_cannot_pin_the_token_end`
 - `crates/ripr/src/lsp/progress.rs::tests::report_stage_is_silent_without_client_capability`
 - `crates/ripr/src/lsp/progress_stages.rs::tests::stage_mapping_covers_every_non_terminal_producer_stage`
 - `crates/ripr/src/lsp/progress_stages.rs::tests::cli_and_lsp_project_one_success_trace_with_identical_stage_identity`

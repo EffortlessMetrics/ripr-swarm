@@ -1,0 +1,12 @@
+diff --git a/grid_logical/core.py b/grid_logical/core.py
+--- a/grid_logical/core.py
++++ b/grid_logical/core.py
+@@ -6,7 +6,7 @@
+ 
+ 
+ def needs_review(flagged, large):
+-    return flagged or large
++    return large or flagged
+ 
+ 
+ def can_enter(has_ticket, banned):

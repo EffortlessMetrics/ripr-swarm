@@ -1,0 +1,48 @@
+{
+  "case_id": "unnum-0095-ex4-directory-star-barrel",
+  "subject_id": "authored-ts-vitest-unnum",
+  "diff": "cases/unnum-0095-ex4-directory-star-barrel.diff",
+  "anchor": {
+    "file": "src/ufo/utils.ts",
+    "line": 8
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "vitest_expect_tobe_directory_star_barrel",
+  "hard_case": "the barrel is two `export *` lines and the test imports the directory, not a file",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx vitest run",
+    "toolchain": "Node.js v22.22.0, vitest 4.1.11, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return input.slice(base.length + 1);",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "test/ufo.test.ts > strips a leading base",
+        "equivalence_review": "not equivalent: the edit changes the owner's observable behavior"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "`src/ufo/index.ts` is `export * from \"./url\"; export * from \"./utils\"` and the test imports `withoutBase` from `../src/ufo`. `\"/app/page\"` with base `\"/app\"` must give `\"/page\"`; slicing one more character gives `\"page\"` and fails. RIPR-SPEC-0095 example 4 (the unjs/ufo shape, re-authored): the star barrel is followed to `utils.ts`.",
+  "labeling_observation": {
+    "ripr_commit": "2939c0d",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0095#4"
+  ]
+}

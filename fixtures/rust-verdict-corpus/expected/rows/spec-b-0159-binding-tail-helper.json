@@ -1,0 +1,22 @@
+{
+  "case_id": "spec-b-0159-binding-tail-helper",
+  "subject_id": "authored-spec-b-value",
+  "origin": "authored",
+  "anchor": "src/h_binding_tail.rs:11",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "helper_call_operand_binding_tail",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 2,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

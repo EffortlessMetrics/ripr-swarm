@@ -19,8 +19,10 @@ mod review;
 pub(crate) use markdown::render_targeted_test_outcome_md;
 pub(crate) use path::display_path;
 use path::normalize_report_path;
+#[cfg(test)]
+pub(crate) use render_json::render_agent_verify_json_with_currentness;
 pub(crate) use render_json::{
-    render_agent_verify_json_with_currentness, render_targeted_test_outcome_json,
+    render_agent_verify_json_with_bound_gap, render_targeted_test_outcome_json,
 };
 use review::review_attention_class;
 
@@ -45,6 +47,17 @@ pub(crate) const AGENT_VERIFY_SCHEMA_VERSION: &str = "0.3";
 pub(crate) struct AgentVerifyArtifactBinding {
     pub(crate) before_content_sha256: String,
     pub(crate) after_content_sha256: String,
+}
+
+/// The one gap an `agent verify --gap-id` run bound its result to: open in
+/// `before_classification`, `exposed` in the after artifact (RIPR-SPEC-0310).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct AgentVerifyBoundGap {
+    pub(crate) gap_id: String,
+    pub(crate) before_classification: String,
+    pub(crate) after_classification: String,
+    pub(crate) file: String,
+    pub(crate) line: u64,
 }
 
 const SEAM_GRIP_CLASS_ORDER: &[&str] = &[
@@ -1444,29 +1457,81 @@ fn json_scalar_as_usize(value: &Value) -> Option<usize> {
 /// `write_repo_exposure_json` path, which is what `ripr pilot` emits) have no
 /// `artifact` key at all.
 pub(crate) fn snapshot_repository_head(snapshot: &str) -> Option<String> {
-    /// Just enough of the artifact envelope to read the head, so this does
-    /// not hold a second full `Value` for a document the report path has
-    /// already parsed.
-    #[derive(serde::Deserialize)]
-    struct HeadEnvelope {
-        artifact: Option<ArtifactIdentity>,
+    match snapshot_repository_head_detail(snapshot) {
+        SnapshotRepositoryHead::Unique(head) => Some(head),
+        SnapshotRepositoryHead::Absent | SnapshotRepositoryHead::Conflicting(_) => None,
     }
-    #[derive(serde::Deserialize)]
-    struct ArtifactIdentity {
-        repository: Option<RepositoryIdentity>,
-    }
-    #[derive(serde::Deserialize)]
-    struct RepositoryIdentity {
-        head: Option<String>,
-    }
+}
 
-    serde_json::from_str::<HeadEnvelope>(snapshot)
-        .ok()?
-        .artifact?
-        .repository?
-        .head
-        .map(|head| head.trim().to_string())
-        .filter(|head| crate::agent::artifact::is_full_sha(head))
+/// The head identity a snapshot document carries, keeping the multi-head
+/// case explicit instead of collapsing it into "no head".
+///
+/// `ripr calibrate cargo-mutants` combines a headed cargo-mutants
+/// directory (`outcomes.json` + `mutants.json`) into a top-level JSON array
+/// before joining. Each member may record its own
+/// `artifact.repository.head`, so a combined input can carry one distinct
+/// head (the members agree), none (the usual cargo-mutants case), or more
+/// than one (the members disagree). Callers that disclose provenance must
+/// not render disagreement as "does not carry a head SHA".
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum SnapshotRepositoryHead {
+    /// No member of the document records a usable head.
+    Absent,
+    /// Exactly one distinct head across the document and its array members.
+    Unique(String),
+    /// The document's members record more than one distinct head; the
+    /// listed heads are every distinct full SHA found, sorted.
+    Conflicting(Vec<String>),
+}
+
+/// The repository head(s) a snapshot reports, with array members read
+/// individually.
+///
+/// Behaves exactly like [`snapshot_repository_head`] for top-level objects.
+/// A top-level array — the combined cargo-mutants directory shape — contributes
+/// the head of each member object; placeholders and short SHAs are still read
+/// as absent via the same `is_full_sha` rule.
+pub(crate) fn snapshot_repository_head_detail(snapshot: &str) -> SnapshotRepositoryHead {
+    let Ok(value) = serde_json::from_str::<Value>(snapshot) else {
+        return SnapshotRepositoryHead::Absent;
+    };
+    let mut heads = BTreeSet::new();
+    collect_snapshot_heads(&value, &mut heads);
+    let mut heads = heads.into_iter();
+    match (heads.next(), heads.next()) {
+        (None, _) => SnapshotRepositoryHead::Absent,
+        (Some(head), None) => SnapshotRepositoryHead::Unique(head),
+        (Some(first), Some(second)) => {
+            let mut all = vec![first, second];
+            all.extend(heads);
+            SnapshotRepositoryHead::Conflicting(all)
+        }
+    }
+}
+
+/// Valid full-SHA heads recorded by the object itself or, recursively, by
+/// the members of an array.
+fn collect_snapshot_heads(value: &Value, heads: &mut BTreeSet<String>) {
+    match value {
+        Value::Object(object) => {
+            if let Some(head) = object
+                .get("artifact")
+                .and_then(|artifact| artifact.get("repository"))
+                .and_then(|repository| repository.get("head"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|head| crate::agent::artifact::is_full_sha(head))
+            {
+                heads.insert(head.to_string());
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_snapshot_heads(item, heads);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// The stderr disclosure `ripr outcome` prints beside the comparison (#1942).

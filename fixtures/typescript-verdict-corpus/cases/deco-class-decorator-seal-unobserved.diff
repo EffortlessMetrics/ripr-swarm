@@ -1,0 +1,12 @@
+diff --git a/src/sealed.ts b/src/sealed.ts
+index 0000000..1111111 100644
+--- a/src/sealed.ts
++++ b/src/sealed.ts
+@@ -1,6 +1,6 @@
+ export function sealed(constructor: Function): void {
+   Object.seal(constructor);
+-  Object.seal(constructor.prototype);
++  Object.freeze(constructor.prototype);
+ }
+ 
+ @sealed

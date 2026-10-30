@@ -286,7 +286,7 @@ pub(crate) fn render_agent_receipt_value_json(
         guidance_note.as_ref(),
     );
 
-    let value = serde_json::json!({
+    let mut value = serde_json::json!({
         "schema_version": AGENT_RECEIPT_SCHEMA_VERSION,
         "tool": "ripr",
         "status": status,
@@ -331,7 +331,24 @@ pub(crate) fn render_agent_receipt_value_json(
             }
         }
     });
+    // A gap-bound receipt (#9103) names the one gap its verify document closed.
+    // The member is copied only when the verify document's bound gap is this
+    // receipt's seam: a receipt for any other seam never claims a gap.
+    if let Some(bound_gap) = bound_gap_for_seam(verify, seam_id)
+        && let Some(object) = value.as_object_mut()
+    {
+        object.insert("bound_gap".to_string(), bound_gap);
+    }
     super::json::render_pretty_with_newline(&value, "agent receipt")
+}
+
+/// The verify document's `bound_gap` object when it closes `seam_id`: the
+/// named gap equals the seam and the document records `closed: true`.
+pub(crate) fn bound_gap_for_seam(verify: &Value, seam_id: &str) -> Option<Value> {
+    let bound = verify.get("bound_gap")?;
+    let names_seam = bound.get("gap_id").and_then(Value::as_str) == Some(seam_id);
+    let closed = bound.get("closed").and_then(Value::as_bool) == Some(true);
+    (names_seam && closed).then(|| bound.clone())
 }
 
 #[cfg(test)]
@@ -657,7 +674,7 @@ fn receipt_guidance_note(seam: &AgentReceiptSeam) -> Option<UnchangedGuidanceNot
         };
         return Some(UnchangedGuidanceNote {
             note: format!(
-                "Static evidence moved (see `evidence_delta`) but the grip class stayed `{after}`; {missing_clause}"
+                "Static evidence moved (see `seam.evidence_delta`) but the grip class stayed `{after}`; {missing_clause}"
             ),
             next_steps: None,
         });
@@ -670,7 +687,7 @@ fn receipt_guidance_note(seam: &AgentReceiptSeam) -> Option<UnchangedGuidanceNot
                 open_legs.join(", ")
             };
             let note = format!(
-                "The missing discriminators are satisfied and static evidence moved (see `evidence_delta`), but the grip class stayed `{after}`; the class is gated by {gate}."
+                "The missing discriminators are satisfied and static evidence moved (see `seam.evidence_delta`), but the grip class stayed `{after}`; the class is gated by {gate}."
             );
             Some(UnchangedGuidanceNote {
                 next_steps: Some(format!(
@@ -681,7 +698,7 @@ fn receipt_guidance_note(seam: &AgentReceiptSeam) -> Option<UnchangedGuidanceNot
         }
         Some(state) if !state.is_empty() => {
             let note = format!(
-                "Static evidence moved (see `evidence_delta`) but the grip class stayed `{after}`; the discriminate leg is still {state}."
+                "Static evidence moved (see `seam.evidence_delta`) but the grip class stayed `{after}`; the discriminate leg is still {state}."
             );
             Some(UnchangedGuidanceNote {
                 next_steps: Some(format!(
@@ -692,7 +709,7 @@ fn receipt_guidance_note(seam: &AgentReceiptSeam) -> Option<UnchangedGuidanceNot
         }
         _ => Some(UnchangedGuidanceNote {
             note: format!(
-                "Static evidence moved (see `evidence_delta`) but the grip class stayed `{after}`; the discriminate state was not recorded, so satisfaction is unknown; inspect the seam packet."
+                "Static evidence moved (see `seam.evidence_delta`) but the grip class stayed `{after}`; the discriminate state was not recorded, so satisfaction is unknown; inspect the seam packet."
             ),
             next_steps: None,
         }),
@@ -875,6 +892,51 @@ mod tests {
         assert_eq!(action["kind"], kind);
         assert_eq!(action["summary"], expected_summary);
         assert_eq!(action["recommended_action"], expected_action);
+        Ok(())
+    }
+
+    fn render_with_bound_gap(bound_gap: Option<Value>, seam_id: &str) -> Result<Value, String> {
+        let mut verify: Value = serde_json::from_str(agent_verify_json())
+            .map_err(|err| format!("verify JSON should parse: {err}"))?;
+        if let (Some(bound_gap), Some(object)) = (bound_gap, verify.as_object_mut()) {
+            object.insert("bound_gap".to_string(), bound_gap);
+        }
+        let rendered = render_agent_receipt_value_json(
+            &verify,
+            "target/ripr/workflow/agent-verify.json".to_string(),
+            seam_id,
+            None,
+            &[],
+            fixed_provenance(),
+            AgentReceiptAnalysisOutcome::Present(Box::new(test_complete_analysis_outcome()?)),
+        )?;
+        serde_json::from_str(&rendered).map_err(|err| format!("receipt JSON should parse: {err}"))
+    }
+
+    #[test]
+    fn receipt_carries_bound_gap_only_when_the_verify_closure_names_its_seam() -> Result<(), String>
+    {
+        let closed = serde_json::json!({
+            "gap_id": "seam-a", "before_classification": "weakly_exposed",
+            "after_classification": "exposed", "file": "src/a.ts", "line": 5, "closed": true
+        });
+        // Positive: the receipt repeats the closure it was issued over.
+        let receipt = render_with_bound_gap(Some(closed.clone()), "seam-a")?;
+        assert_eq!(receipt["bound_gap"], closed);
+        // Negatives: no closure, another seam's closure, or a closure that
+        // does not read `closed: true` never produce a `bound_gap` member.
+        let mut open = closed.clone();
+        open["closed"] = serde_json::json!(false);
+        for (label, bound, seam) in [
+            ("no bound gap", None, "seam-a"),
+            ("another seam", Some(closed.clone()), "seam-b"),
+            ("not closed", Some(open), "seam-a"),
+        ] {
+            let receipt = render_with_bound_gap(bound, seam)?;
+            if receipt.get("bound_gap").is_some() {
+                return Err(format!("{label}: receipt claimed a gap closure"));
+            }
+        }
         Ok(())
     }
 
@@ -1189,7 +1251,7 @@ mod tests {
     ],
     "file": "src/pricing.rs",
     "grip_class": null,
-    "guidance_note": "The missing discriminators are satisfied and static evidence moved (see `evidence_delta`), but the grip class stayed `weakly_gripped`; the class is gated by observe (weak).",
+    "guidance_note": "The missing discriminators are satisfied and static evidence moved (see `seam.evidence_delta`), but the grip class stayed `weakly_gripped`; the class is gated by observe (weak).",
     "line": 42,
     "seam_id": "seam-static",
     "seam_kind": "predicate_boundary"
@@ -1198,10 +1260,10 @@ mod tests {
   "summary": {
     "next_action": {
       "kind": "unchanged",
-      "recommended_action": "The missing discriminators are satisfied and static evidence moved (see `evidence_delta`), but the grip class stayed `weakly_gripped`; the class is gated by observe (weak). Investigate the gate, then rerun agent verify.",
+      "recommended_action": "The missing discriminators are satisfied and static evidence moved (see `seam.evidence_delta`), but the grip class stayed `weakly_gripped`; the class is gated by observe (weak). Investigate the gate, then rerun agent verify.",
       "summary": "Static grip did not improve."
     },
-    "next_recommendation": "The missing discriminators are satisfied and static evidence moved (see `evidence_delta`), but the grip class stayed `weakly_gripped`; the class is gated by observe (weak). Investigate the gate, then rerun agent verify.",
+    "next_recommendation": "The missing discriminators are satisfied and static evidence moved (see `seam.evidence_delta`), but the grip class stayed `weakly_gripped`; the class is gated by observe (weak). Investigate the gate, then rerun agent verify.",
     "receipt_state": "receipt_movement_unchanged",
     "remaining_gap": "Static grip class did not move."
   },
@@ -1314,7 +1376,7 @@ mod tests {
     ],
     "file": "src/pricing.rs",
     "grip_class": null,
-    "guidance_note": "Static evidence moved (see `evidence_delta`) but the grip class stayed `weakly_gripped`; the discriminate leg is still weak.",
+    "guidance_note": "Static evidence moved (see `seam.evidence_delta`) but the grip class stayed `weakly_gripped`; the discriminate leg is still weak.",
     "line": 42,
     "seam_id": "seam-static",
     "seam_kind": "predicate_boundary"
@@ -1323,10 +1385,10 @@ mod tests {
   "summary": {
     "next_action": {
       "kind": "unchanged",
-      "recommended_action": "Static evidence moved (see `evidence_delta`) but the grip class stayed `weakly_gripped`; the discriminate leg is still weak. Strengthen the oracle asserting the changed behavior, then rerun agent verify.",
+      "recommended_action": "Static evidence moved (see `seam.evidence_delta`) but the grip class stayed `weakly_gripped`; the discriminate leg is still weak. Strengthen the oracle asserting the changed behavior, then rerun agent verify.",
       "summary": "Static grip did not improve."
     },
-    "next_recommendation": "Static evidence moved (see `evidence_delta`) but the grip class stayed `weakly_gripped`; the discriminate leg is still weak. Strengthen the oracle asserting the changed behavior, then rerun agent verify.",
+    "next_recommendation": "Static evidence moved (see `seam.evidence_delta`) but the grip class stayed `weakly_gripped`; the discriminate leg is still weak. Strengthen the oracle asserting the changed behavior, then rerun agent verify.",
     "receipt_state": "receipt_movement_unchanged",
     "remaining_gap": "Static grip class did not move."
   },
@@ -1437,7 +1499,7 @@ mod tests {
     ],
     "file": "src/pricing.rs",
     "grip_class": null,
-    "guidance_note": "Static evidence moved (see `evidence_delta`) but the grip class stayed `weakly_gripped`; the discriminate state was not recorded, so satisfaction is unknown; inspect the seam packet.",
+    "guidance_note": "Static evidence moved (see `seam.evidence_delta`) but the grip class stayed `weakly_gripped`; the discriminate state was not recorded, so satisfaction is unknown; inspect the seam packet.",
     "line": 42,
     "seam_id": "seam-static",
     "seam_kind": "predicate_boundary"
@@ -1555,7 +1617,7 @@ mod tests {
     ],
     "file": "src/pricing.rs",
     "grip_class": null,
-    "guidance_note": "Static evidence moved (see `evidence_delta`) but the grip class stayed `weakly_gripped`; 1 discriminator is still missing (threshold equality); strengthen it, then rerun agent verify.",
+    "guidance_note": "Static evidence moved (see `seam.evidence_delta`) but the grip class stayed `weakly_gripped`; 1 discriminator is still missing (threshold equality); strengthen it, then rerun agent verify.",
     "line": 42,
     "seam_id": "seam-static",
     "seam_kind": "predicate_boundary"
@@ -1591,6 +1653,36 @@ mod tests {
                 .unwrap_or_default()
                 .contains("Add the missing discriminator")
         );
+        Ok(())
+    }
+
+    #[test]
+    fn agent_receipt_guidance_evidence_delta_reference_resolves_in_receipt() -> Result<(), String> {
+        // The guidance names the field holding the movement it cites; the
+        // receipt has no top-level `evidence_delta`, so the named path must
+        // exist and be non-empty on every arm that cites it.
+        let signal_sets = [
+            r#", "after_missing_discriminators": [], "after_discriminate_state": "yes", "after_open_legs": ["observe (weak)"]"#,
+            r#", "after_missing_discriminators": [], "after_discriminate_state": "weak", "after_open_legs": []"#,
+            r#", "after_missing_discriminators": [], "after_open_legs": []"#,
+            r#", "after_missing_discriminators": ["threshold equality"], "after_discriminate_state": "weak", "after_open_legs": []"#,
+        ];
+        for signals in signal_sets {
+            let verify = unchanged_class_verify_json(
+                signals,
+                "missing discriminator no longer reported: threshold equality",
+            );
+            let value = render_static_receipt(&verify)?;
+            assert!(value.get("evidence_delta").is_none());
+            let note = value["seam"]["guidance_note"]
+                .as_str()
+                .ok_or("guidance_note should be present")?;
+            assert!(note.contains("`seam.evidence_delta`"), "{note}");
+            let delta = value["seam"]["evidence_delta"]
+                .as_array()
+                .ok_or("seam.evidence_delta should be an array")?;
+            assert!(!delta.is_empty());
+        }
         Ok(())
     }
 

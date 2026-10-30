@@ -225,11 +225,6 @@ fn a_test_that_may_skip_or_fake_the_assertion_keeps_the_gap() -> Result<(), Stri
             format!("        let rows = rows(1, 1);\n{INDEX}"),
             "a local assert_eq! that checks nothing",
         ),
-        (
-            "",
-            format!("        let rows = rows(1, 1);\n        std::process::exit(0);\n{INDEX}"),
-            "process::exit before the assertion",
-        ),
     ] {
         assert_eq!(
             field_class_with("0", items, &body)?,
@@ -237,6 +232,14 @@ fn a_test_that_may_skip_or_fake_the_assertion_keeps_the_gap() -> Result<(), Stri
             "{label}"
         );
     }
+    // RIPR-SPEC-0231 rule 8 (#7638): an assertion after `process::exit(..)`
+    // never runs, so it is no oracle at all and the gap reads unrevealed.
+    let body = format!("        let rows = rows(1, 1);\n        std::process::exit(0);\n{INDEX}");
+    assert_eq!(
+        field_class_with("0", "", &body)?,
+        ExposureClass::ReachableUnrevealed,
+        "process::exit before the assertion"
+    );
     Ok(())
 }
 

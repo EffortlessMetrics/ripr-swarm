@@ -1,0 +1,10 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -18,5 +18,5 @@ pub fn fits_smoke(width: usize, limit: usize) -> bool {
+ }
+ 
+ pub fn fits_arrow(width: usize, limit: usize) -> bool {
+-    width <= limit
++    limit >= width
+ }

@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 7642ecc..e5b6817 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -15,7 +15,7 @@ pub fn tier_trap(bytes: u64, si: bool) -> &'static str {
+ 
+ pub fn tier_negated(bytes: u64, binary: bool) -> &'static str {
+     let unit = if !binary { KB } else { KIB };
+-    if bytes >= unit { "unit" } else { "byte" }
++    if unit <= bytes { "unit" } else { "byte" }
+ }
+ 
+ pub fn tier_shadowed(bytes: u64, si: bool) -> &'static str {

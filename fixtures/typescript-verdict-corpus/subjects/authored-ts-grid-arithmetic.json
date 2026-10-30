@@ -1,0 +1,29 @@
+{
+  "subject_id": "authored-ts-grid-arithmetic",
+  "origin": "authored",
+  "version_label": "authored@3608bb9a",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "package.json",
+      "sha256": "37411259e07880aca46f732a626433fbb80c0b26c58425ed50af0a90a61e2035"
+    },
+    {
+      "path": "ripr.toml",
+      "sha256": "27f3758ca9cce54d063a7f0daddc95f0940433563d4869a9e5a7c622ae961381"
+    },
+    {
+      "path": "src/arithmetic.ts",
+      "sha256": "67bbc907f592e652ca56c86f02fe9d6e7428efca8fba129dce051749c9a02926"
+    },
+    {
+      "path": "test/arithmetic.test.ts",
+      "sha256": "adfdbec70fdf9dc2583c7bb7803a285459093513c3cfa517f35ee6ff702be721"
+    },
+    {
+      "path": "tsconfig.json",
+      "sha256": "1b36a03124c1cac5d5da52c58d09fd7e5cf22d03d4a2cf0699ce2dbe88cb419c"
+    }
+  ]
+}

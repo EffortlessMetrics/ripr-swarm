@@ -1,0 +1,45 @@
+{
+  "case_id": "py-shapes-relative-import-table",
+  "subject_id": "authored-py-pytest-shapes",
+  "diff": "cases/py-shapes-relative-import-table.diff",
+  "anchor": {
+    "file": "shapes/rates/table.py",
+    "line": 1
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "constructor_field",
+  "test_shape": "pytest_relative_import_chain_pinned",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, Hypothesis 6.168.3, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "RATE_TABLE = {\"gold\": 11, \"silver\": 5}",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests/test_rates.py::test_quote_gold",
+        "equivalence_review": "not equivalent: gold prices at 11 per unit"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "quote('gold', 3) reaches the table through `from .table import lookup`, and the test pins 30.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

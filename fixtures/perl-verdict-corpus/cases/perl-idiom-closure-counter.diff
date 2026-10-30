@@ -1,0 +1,13 @@
+diff --git a/lib/Toolkit.pm b/lib/Toolkit.pm
+index 7f429bd..5ab8d61 100644
+--- a/lib/Toolkit.pm
++++ b/lib/Toolkit.pm
+@@ -5,7 +5,7 @@ use warnings;
+ 
+ sub make_counter {
+     my ($start) = @_;
+-    my $n = $start;
++    my ($n) = $start;
+     return sub { return $n++ };
+ }
+ 

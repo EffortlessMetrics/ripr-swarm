@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -13,7 +13,7 @@
+ /// Floor of the square root; negative input is its own error.
+ pub fn root_floor(x: i64) -> Result<i64, CalcError> {
+     if x < 0 {
+-        return Err(CalcError::Negative);
++        return Err::<i64, CalcError>(CalcError::Negative);
+     }
+     let mut r = 0i64;
+     while (r + 1) * (r + 1) <= x {

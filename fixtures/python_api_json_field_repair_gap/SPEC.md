@@ -7,8 +7,9 @@ Spec: RIPR-SPEC-0028
 A Python route handler uses a simple FastAPI/Flask-shaped route decorator and
 returns a JSON-shaped dict field from a changed branch.
 
-The related pytest test reaches the route through `client.post("/checkout")`
-but only asserts broad truthiness. The fixture workspace enables the Python
+The related pytest test builds a `TestClient` over the route's own `api` and
+reaches the route through `client.post("/checkout")`, but only asserts broad
+truthiness. The fixture workspace enables the Python
 preview adapter explicitly:
 
 ```toml

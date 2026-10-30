@@ -1,0 +1,12 @@
+diff --git a/grid_equality/core.py b/grid_equality/core.py
+--- a/grid_equality/core.py
++++ b/grid_equality/core.py
+@@ -6,7 +6,7 @@
+ 
+ 
+ def is_saturday(day):
+-    return day % 7 == 6
++    return 6 == day % 7
+ 
+ 
+ def same_pair(a, b):

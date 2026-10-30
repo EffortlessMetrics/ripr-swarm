@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- `ripr explain` and `ripr context` no longer report a truncated or unreadable seam inventory as a clean `no finding matched` miss for a seam-ID selector. The refusal now names the undecided state — the seam inventory is truncated (N of M seams), rerun with a wider seam budget — mirroring the repair resolver's wording, so a valid seam ID on a large repository is not reported as naming nothing (#8689).

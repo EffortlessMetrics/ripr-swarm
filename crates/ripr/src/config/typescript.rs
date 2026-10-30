@@ -51,6 +51,9 @@ pub(crate) fn is_typescript_excluded_dir_everywhere(name: &str) -> bool {
 /// purpose. Python repo discovery keeps walking `vendor` so the files can be
 /// recorded as an excluded role. This adapter has no such ledger, and indexing
 /// those trees would only feed untrusted files into owner and test extraction.
+/// Compiled only with the adapter or for tests: nothing outside the
+/// feature-gated discovery walk and this module's tests calls it.
+#[cfg(any(feature = "lang-typescript", test))]
 pub(crate) fn is_typescript_dir_pruned_from_discovery(name: &str) -> bool {
     is_typescript_excluded_dir_everywhere(name)
 }
@@ -81,7 +84,9 @@ pub(crate) fn is_declared_handwritten_typescript_path(declared: &[String], path:
 /// `dir`, which is repository-relative and normalized. The workspace walk
 /// consults this before pruning an excluded-name directory: a declared
 /// hand-written file keeps its ancestor directories reachable so the file
-/// can be read and indexed (#7386).
+/// can be read and indexed (#7386). Only the feature-gated discovery walk
+/// calls it.
+#[cfg(any(feature = "lang-typescript", test))]
 pub(crate) fn declared_typescript_handwritten_under(declared: &[String], dir: &Path) -> bool {
     let mut prefix = dir.to_string_lossy().replace('\\', "/");
     if !prefix.is_empty() && !prefix.ends_with('/') {
@@ -111,6 +116,193 @@ pub(crate) fn is_detectable_generated_typescript_path(path: &Path) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())
         .is_some_and(is_detectable_generated_typescript_name)
+}
+
+/// Root project-marker files that select the TypeScript preview adapter when
+/// no `ripr.toml` exists. `package.json` is deliberately not a marker: Rust
+/// and Python repositories routinely carry one for docs or tooling, and it
+/// does not say the repository's own tests run under a TS/JS runner.
+///
+/// The detection surface (this constant through
+/// `dir_contains_typescript_source` below) compiles only with the adapter or
+/// for tests: without `lang-typescript` the inert `typescript_absent` forms
+/// in `config.rs` keep no-config detection from ever selecting the adapter,
+/// so the real functions would be dead code in a rust-only build. The
+/// exclusion authorities above stay real in every lane (#10730).
+#[cfg(any(feature = "lang-typescript", test))]
+pub(crate) const TYPESCRIPT_PROJECT_MARKERS: &[&str] = &["tsconfig.json", "jsconfig.json"];
+#[cfg(any(feature = "lang-typescript", test))]
+pub(crate) const TYPESCRIPT_SOURCE_DIR_MARKERS: &[&str] = &["src", "tests"];
+
+/// No-config project detection, mirroring `detect_python_project`: a root
+/// marker file, or detectable TypeScript source below root `src`/`tests`.
+#[cfg(any(feature = "lang-typescript", test))]
+pub(crate) fn detect_typescript_project(root: &Path) -> bool {
+    detect_typescript_package_root(root, false) || detect_nested_typescript_package(root)
+}
+
+#[cfg(any(feature = "lang-typescript", test))]
+fn has_typescript_project_marker(dir: &Path) -> bool {
+    TYPESCRIPT_PROJECT_MARKERS
+        .iter()
+        .any(|marker| dir.join(marker).is_file())
+}
+
+/// The root-level markers: a project marker file, or detectable TypeScript
+/// below a root source directory.
+#[cfg(any(feature = "lang-typescript", test))]
+///
+/// `skip_hidden` keeps nested candidates from enabling the adapter through
+/// source that lives only under a hidden directory; the root keeps its
+/// historical walk.
+fn detect_typescript_package_root(dir: &Path, skip_hidden: bool) -> bool {
+    has_typescript_project_marker(dir)
+        || TYPESCRIPT_SOURCE_DIR_MARKERS
+            .iter()
+            .any(|marker| dir_contains_typescript_source(&dir.join(marker), skip_hidden))
+}
+
+/// Workspace containers whose children are packages (npm/pnpm/yarn
+/// workspaces, Nx and Turborepo layouts).
+#[cfg(any(feature = "lang-typescript", test))]
+pub(crate) const TYPESCRIPT_WORKSPACE_CONTAINERS: &[&str] =
+    &["packages", "apps", "libs", "libraries"];
+
+/// A TypeScript package one level below the root, or one level below a
+/// workspace container (`packages/*`, `apps/*`, `libs/*`, `libraries/*`):
+/// valibot keeps its sources in `library/`, remeda in `packages/remeda`.
+/// Each candidate directory is judged by the same presence-only markers as
+/// the root. Excluded, vendored and hidden directories never count, so a
+/// `node_modules` or `dist` tree cannot enable the adapter; `package.json`
+/// stays a non-marker (#10941).
+#[cfg(any(feature = "lang-typescript", test))]
+fn detect_nested_typescript_package(root: &Path) -> bool {
+    child_directories(root).into_iter().any(|child| {
+        let name = child
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
+        if has_typescript_project_marker(&child) {
+            return true;
+        }
+        // `src`/`tests` are the root source markers themselves; the root
+        // already walked them, so only their own marker counts. Every other
+        // child, workspace container included, gets the root test.
+        let is_source_dir = TYPESCRIPT_SOURCE_DIR_MARKERS.contains(&name);
+        if !is_source_dir && detect_typescript_package_root(&child, true) {
+            return true;
+        }
+        TYPESCRIPT_WORKSPACE_CONTAINERS.contains(&name)
+            && child_directories(&child)
+                .iter()
+                .any(|package| detect_typescript_package_root(package, true))
+    })
+}
+
+/// Immediate subdirectories of `dir` that a TypeScript walk would enter:
+/// not excluded, not hidden, not a symlink.
+#[cfg(any(feature = "lang-typescript", test))]
+fn child_directories(dir: &Path) -> Vec<std::path::PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+        .filter(|entry| {
+            entry.file_name().to_str().is_some_and(|name| {
+                !name.starts_with('.') && !is_typescript_excluded_dir_everywhere(name)
+            })
+        })
+        .map(|entry| entry.path())
+        .collect()
+}
+
+/// Canonical root marker file name for a candidate name. Markers resolve
+/// through the filesystem, so the comparison follows the host path rule.
+#[cfg(any(feature = "lang-typescript", test))]
+pub(crate) fn typescript_project_marker_name(name: &str) -> Option<&'static str> {
+    canonical_marker_name(TYPESCRIPT_PROJECT_MARKERS, name)
+}
+
+/// Canonical root source-directory marker for a path component.
+#[cfg(any(feature = "lang-typescript", test))]
+pub(crate) fn typescript_source_dir_marker_name(name: &str) -> Option<&'static str> {
+    canonical_marker_name(TYPESCRIPT_SOURCE_DIR_MARKERS, name)
+}
+
+#[cfg(any(feature = "lang-typescript", test))]
+fn canonical_marker_name(candidates: &[&'static str], name: &str) -> Option<&'static str> {
+    let case_insensitive = crate::output::path::host_paths_case_insensitive();
+    candidates.iter().copied().find(|candidate| {
+        if case_insensitive {
+            candidate.eq_ignore_ascii_case(name)
+        } else {
+            *candidate == name
+        }
+    })
+}
+
+/// Whether a file name is detectable TypeScript source: a `.ts`/`.tsx`/
+/// `.mts`/`.cts` extension that is not a generated-file name. Presence
+/// classification only; content is never read. JavaScript alone does not
+/// select the adapter.
+#[cfg(any(feature = "lang-typescript", test))]
+pub(crate) fn is_detectable_typescript_source_name(name: &str) -> bool {
+    Path::new(name)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            crate::analysis::ts_js_source_kind(extension)
+                == Some(crate::analysis::TsJsSourceKind::TypeScript)
+        })
+        && !is_detectable_generated_typescript_name(name)
+        && !is_typescript_declaration_name(name)
+}
+
+/// `.d.ts`, `.d.mts` and `.d.cts` declaration files. The adapter skips them
+/// when generating findings, so declarations alone never select it.
+#[cfg(any(feature = "lang-typescript", test))]
+fn is_typescript_declaration_name(name: &str) -> bool {
+    [".d.ts", ".d.mts", ".d.cts"]
+        .iter()
+        .any(|suffix| name.len() > suffix.len() && name.ends_with(suffix))
+}
+
+/// Whether a root source-directory marker contains detectable TypeScript
+/// source. Presence-only; the bound value is this boolean.
+#[cfg(any(feature = "lang-typescript", test))]
+pub(crate) fn source_dir_contains_detectable_typescript(root: &Path, marker: &str) -> bool {
+    dir_contains_typescript_source(&root.join(marker), false)
+}
+
+#[cfg(any(feature = "lang-typescript", test))]
+fn dir_contains_typescript_source(dir: &Path, skip_hidden: bool) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_dir() {
+            let hidden = skip_hidden && name.starts_with('.');
+            if !hidden
+                && !is_typescript_excluded_dir_everywhere(name)
+                && dir_contains_typescript_source(&path, skip_hidden)
+            {
+                return true;
+            }
+        } else if file_type.is_file() && is_detectable_typescript_source_name(name) {
+            return true;
+        }
+    }
+    false
 }
 
 #[cfg(test)]
@@ -189,5 +381,60 @@ mod tests {
             assert!(is_typescript_excluded_dir_everywhere(name));
         }
         assert!(!is_typescript_dir_pruned_from_discovery("src"));
+    }
+
+    fn detection_root(label: &str) -> Result<std::path::PathBuf, String> {
+        let root =
+            std::env::temp_dir().join(format!("ripr-ts-detect-{label}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        Ok(root)
+    }
+
+    fn write(root: &Path, relative: &str) -> Result<(), String> {
+        let path = root.join(relative);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|err| format!("mkdir: {err}"))?;
+        }
+        std::fs::write(&path, "export {};\n").map_err(|err| format!("write: {err}"))
+    }
+
+    #[test]
+    fn detection_requires_a_marker_or_typescript_source() -> Result<(), String> {
+        let root = detection_root("shape")?;
+        assert!(!detect_typescript_project(&root), "empty root");
+        write(&root, "package.json")?;
+        write(&root, "src/app.js")?;
+        assert!(
+            !detect_typescript_project(&root),
+            "package.json and plain JavaScript do not select the adapter"
+        );
+        write(&root, "tsconfig.json")?;
+        assert!(detect_typescript_project(&root), "tsconfig.json marker");
+        std::fs::remove_file(root.join("tsconfig.json")).map_err(|err| err.to_string())?;
+        for extension in ["tsx", "mts", "cts"] {
+            let file = format!("src/deep/app.{extension}");
+            write(&root, &file)?;
+            assert!(
+                detect_typescript_project(&root),
+                "nested {extension} source"
+            );
+            std::fs::remove_file(root.join(&file)).map_err(|err| err.to_string())?;
+            assert!(!detect_typescript_project(&root), "removed {extension}");
+        }
+        std::fs::remove_dir_all(&root).map_err(|err| err.to_string())
+    }
+
+    #[test]
+    fn excluded_and_generated_source_does_not_enable_detection() -> Result<(), String> {
+        let root = detection_root("excluded")?;
+        write(&root, "src/vendor/lib.ts")?;
+        write(&root, "src/node_modules/pkg/index.ts")?;
+        write(&root, "src/api.generated.ts")?;
+        write(&root, "src/types.d.ts")?;
+        assert!(!detect_typescript_project(&root));
+        write(&root, "tests/cart.test.ts")?;
+        assert!(detect_typescript_project(&root), "harness sanity");
+        std::fs::remove_dir_all(&root).map_err(|err| err.to_string())
     }
 }

@@ -1,0 +1,59 @@
+{
+  "case_id": "py-grid-logical-helper",
+  "subject_id": "authored-py-grid-logical",
+  "diff": "cases/py-grid-logical-helper.diff",
+  "anchor": {
+    "file": "grid_logical/core.py",
+    "line": 17
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boolean",
+  "test_shape": "pytest_helper_wrapped_assert",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return hidden is True",
+        "mutated_line": "return hidden is True",
+        "outcome": "tests_failed",
+        "failing_test": "test_visibility",
+        "equivalence_review": "not equivalent: changes the truth table on a covered or uncovered row"
+      },
+      {
+        "replacement": "return True",
+        "mutated_line": "return True",
+        "outcome": "tests_failed",
+        "failing_test": "test_visibility",
+        "equivalence_review": "not equivalent: changes the truth table on a covered or uncovered row"
+      },
+      {
+        "replacement": "return False",
+        "mutated_line": "return False",
+        "outcome": "tests_failed",
+        "failing_test": "test_visibility",
+        "equivalence_review": "not equivalent: changes the truth table on a covered or uncovered row"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Grid cell: logical x helper-wrapped assert over both inputs.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  }
+}
