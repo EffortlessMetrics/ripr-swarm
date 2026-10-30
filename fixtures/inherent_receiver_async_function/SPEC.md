@@ -20,12 +20,14 @@ both changed-owner diff probes and the named test remain. Genuine synchronous
 chains, methods and mixed synchronous/async routes retain their existing credit.
 A synchronous helper containing a dormant async block remains eligible.
 
-The sparse one-line `controls/sync-chain.rs` is natively mutation-sensitive
-but lacks a static candidate route: its captured tail calls include the
-function-header prefix seen by the bare-call recognizer. The named synchronous
-chain supplies full-callee-name candidate tokens; formatting the sparse chain
-with multiline tail calls also retains helper/high credit. This is the existing
-`bridge` limitation, independent of the async declaration gate and native truth.
+The sparse one-line `controls/sync-chain.rs` and the named
+`controls/named-sync-chain.rs` are natively mutation-sensitive and, on current
+main, both earn `helper_owner_call` / high through the synchronous
+constructed-receiver helper chain bridge (#8633 12e63da558). The earlier
+"no static candidate route" limitation for the sparse chain no longer holds;
+`fixtures/inherent_receiver_free_helper_identity/cases.json` records both as
+`helper_owner_call`. Native execution and static admission remain independent
+axes.
 
 ## Must Not
 
