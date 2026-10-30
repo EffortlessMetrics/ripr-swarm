@@ -493,9 +493,11 @@ disclosed and fails closed; it is never treated as a complete causal comparison.
   including inside boolean schema combinators. File and sweep validation parse
   original bytes with a lossless tree after serde_json preflight. The sweep's
   unbound-producer lookalike check also compares numeric and compound constants
-  exactly; an unsupported comparison is reported rather than silently skipped.
-  The parser
-  rejects inputs exceeding 16 MiB or serde_json's nesting and finite-number
+  exactly; an unsupported comparison that reaches this check is reported.
+  Unbound files rejected by the initial serde_json parse, including numbers
+  outside its finite range, cannot be classified as lookalikes; bound files
+  rejected by that parse fail the sweep. The parser rejects inputs exceeding
+  16 MiB or serde_json's nesting and finite-number
   limits; file bytes are read before the size check. Preflight rejects unresolved
   or recursive references and caps total schema traversal at 128 levels and
   50,000 steps; evaluation also has those limits. The serde preflight rejects

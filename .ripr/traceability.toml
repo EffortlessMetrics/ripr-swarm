@@ -6817,6 +6817,7 @@ tests = [
   "xtask/src/schema_producer_sweep.rs::tests::unbound_numeric_const_lookalikes_use_exact_values",
   "xtask/src/schema_producer_sweep.rs::tests::unbound_lookalike_comparison_fails_closed_on_unsupported_numbers",
   "xtask/src/schema_producer_sweep.rs::tests::nested_numeric_constants_have_mathematical_lookalike_equality",
+  "xtask/src/schema_producer_sweep.rs::tests::serde_rejected_unbound_documents_cannot_be_classified",
   "xtask/src/schema_producer_sweep.rs::tests::sweep_selects_exact_nested_producer_and_artifact_values",
   "xtask/src/exact_schema_json.rs::tests::exact_parser_preserves_numbers_and_objects"
 ]

@@ -932,7 +932,8 @@ fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
 
 /// Parse committed documents outside `schemas/`. A malformed file selected by
 /// a path or filename binding is a failed producer, not a missing subject.
-/// Other non-JSON files (including JSONC stimulus) are outside this sweep.
+/// Other files rejected by serde_json (including JSONC stimulus and numbers
+/// outside its finite range) cannot be classified as unbound lookalikes.
 struct CommittedDocuments {
     parsed: BTreeMap<String, (Value, String)>,
     malformed: BTreeMap<String, (String, String)>,
@@ -1130,6 +1131,22 @@ mod tests {
             report.violations
         );
         Ok(())
+    }
+
+    #[test]
+    fn serde_rejected_unbound_documents_cannot_be_classified() {
+        let bytes = br#"{"schemaVersion":1e400,"label":"x","message":"x","color":"blue"}"#;
+        let tree = CandidateTree {
+            commit: "fixture".into(),
+            files: BTreeMap::from([
+                ("bound.json".into(), bytes.to_vec()),
+                ("unbound.json".into(), bytes.to_vec()),
+            ]),
+        };
+        let documents = committed_documents(&tree, &[binding(Corpus::Paths(&["bound.json"]), &[])]);
+        assert!(documents.malformed.contains_key("bound.json"));
+        assert!(!documents.parsed.contains_key("unbound.json"));
+        assert!(!documents.malformed.contains_key("unbound.json"));
     }
 
     #[test]
