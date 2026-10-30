@@ -666,6 +666,19 @@ passes on the old code reaches it and fails on the edit. Both cases need the cha
   smoke, and unknown otherwise. A non-literal matcher argument (including
   a regex) adds `typescript_dynamic_assertion_unresolved` and does not
   change the class.
+  (Amended 2026-10-30, #10682: the limitation is added only for an assertion
+  in the changed seam's oracle family (RIPR-SPEC-0104
+  `ts_oracle_kind_matches_seam`); a dynamic error-family expectation on a
+  value or predicate seam, and the reverse, adds nothing, because it cannot
+  hide that seam's discriminator. An all-literal array (`[]`, `[1, 'a', [2]]`)
+  is a concrete expected value for deep-equality matchers only (AVA
+  `deepEqual`; Jest `toEqual` / `toStrictEqual`), so those assertions read
+  `typescript_oracle_confidence: high`; `toBe`, `toMatchObject`, AVA
+  `is` / `strictEqual` / `equal` and arrays holding an identifier, call,
+  spread, hole, object or `-x` stay dynamic. `typescript_table_case_unresolved`
+  keeps its own unconditional rule. A pinned `[]` / all-zero-like array does not
+  witness a field update, and an array expectation is a dead witness against
+  scalar changed arms and scalar branch values.)
 
 ### Reach
 
