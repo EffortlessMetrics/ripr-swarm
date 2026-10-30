@@ -2182,6 +2182,26 @@ mod tests {
     }
 
     #[test]
+    fn a_trait_only_constructor_does_not_type_the_receiver() {
+        let source =
+            "impl Make for DecodeError { fn make(n: u8) -> Self { DecodeError::Overflow } }\n";
+        let mut make = inherent_fn("make", 1, source);
+        make.item.container = crate::analysis::facts::FunctionContainer::TraitImpl {
+            trait_path: "Make".to_string(),
+            self_ty: "DecodeError".to_string(),
+        };
+        let body = "let e = DecodeError::make(3);\nformat!(\"{:?}\", e);";
+        let related = reasons_full(
+            &["fmt::Debug for DecodeError"],
+            0,
+            &[body],
+            &[source],
+            vec![make],
+        );
+        assert!(related.is_empty(), "{related:?}");
+    }
+
+    #[test]
     fn inherent_to_string_wins_over_display() {
         let body = format!("{CTOR}assert_eq!(e.to_string(), \"x\");");
         let owner = ["fmt::Display for DecodeError"];
