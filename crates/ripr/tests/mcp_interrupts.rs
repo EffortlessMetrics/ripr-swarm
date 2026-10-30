@@ -782,9 +782,38 @@ struct Harness {
     session: Option<Session>,
     sentinel: Option<OwnedChild>,
     trees: Vec<FixtureTree>,
+    /// Scenario-keyed live-child snapshots and retained server logs, so a
+    /// cleanup-contract failure can name where a stray child appeared.
+    trace: Vec<String>,
+    stderr_paths: Vec<PathBuf>,
 }
 
 impl Harness {
+    /// Snapshot the live direct-child set (pid + comm) into the scenario
+    /// trace. Observation only: it never signals or reaps anything, and a
+    /// reparented zombie is still a child, so it appears here too.
+    fn trace_children(trace: &mut Vec<String>, label: &str) {
+        let describe = own_children()
+            .map(|children| {
+                let named: Vec<String> = children
+                    .into_iter()
+                    .map(|pid| {
+                        let comm = std::fs::read_to_string(format!("/proc/{pid}/comm"))
+                            .map(|value| value.trim().to_owned())
+                            .unwrap_or_else(|_| "unknown".to_owned());
+                        format!("{pid}({comm})")
+                    })
+                    .collect();
+                if named.is_empty() {
+                    "none".to_owned()
+                } else {
+                    named.join(",")
+                }
+            })
+            .unwrap_or_else(|error| format!("enumerate failed: {error}"));
+        trace.push(format!("{label}: {describe}"));
+    }
+
     fn run(&mut self) -> Result<(), String> {
         let mut sentinel_command = Command::new("sleep");
         sentinel_command
@@ -793,13 +822,16 @@ impl Harness {
             .stdout(Stdio::null())
             .stderr(Stdio::null());
         self.sentinel = Some(OwnedChild::spawn(sentinel_command, "unrelated sentinel")?);
+        self.stderr_paths.push(self.root.join("stderr.log"));
         self.session = Some(Session::spawn(
             &self.root.join("repo"),
             &self.control,
             &self.root,
         )?);
+        Self::trace_children(&mut self.trace, "after-spawn");
         let session = self.session.as_mut().ok_or("session missing")?;
         let baseline = successful_snapshot(&session.refresh("baseline", json!({}))?)?;
+        Self::trace_children(&mut self.trace, "after-baseline");
         for (name, signal) in [("interrupt", Signal::INT), ("terminate", Signal::TERM)] {
             arm(&self.control, "block")?;
             session.begin_refresh(name, json!({}))?;
@@ -843,6 +875,7 @@ impl Harness {
                     &session.refresh(&format!("{name}-recovery-{index}"), arguments)?,
                 )?;
             }
+            Self::trace_children(&mut self.trace, &format!("after-{name}-recoveries"));
         }
         arm(&self.control, "early")?;
         session.begin_refresh("early-primary", json!({}))?;
@@ -883,17 +916,20 @@ impl Harness {
         std::fs::remove_file(self.root.join("repo/ripr.toml"))
             .map_err(|error| error.to_string())?;
         successful_snapshot(&session.refresh("config-recovered", json!({}))?)?;
+        Self::trace_children(&mut self.trace, "after-config-recovered");
         self.sentinel
             .as_ref()
             .ok_or("sentinel missing")?
             .pinned
             .require_live()?;
         session.close_eof()?;
+        Self::trace_children(&mut self.trace, "after-close-eof");
 
         // Repeated native escape is exercised only with no refresh children.
         // First-signal survival has an actual same-session ping acknowledgment.
         let repeated_logs = self.root.join("repeated");
         std::fs::create_dir(&repeated_logs).map_err(|error| error.to_string())?;
+        self.stderr_paths.push(repeated_logs.join("stderr.log"));
         self.session = Some(Session::spawn(
             &self.root.join("repo"),
             &self.control,
@@ -902,6 +938,7 @@ impl Harness {
         let session = self.session.as_mut().ok_or("repeat session missing")?;
         session.process.pinned.signal(Signal::INT)?;
         session.ping("first-signal-session-live")?;
+        Self::trace_children(&mut self.trace, "after-escape-ping");
         session.process.pinned.signal(Signal::TERM)?;
         let status = bounded_wait(&mut session.process.child, REAP_BUDGET)?
             .ok_or("repeated signal did not terminate the server")?;
@@ -911,6 +948,7 @@ impl Harness {
             ));
         }
         session.process.pinned.reaped = true;
+        Self::trace_children(&mut self.trace, "after-escape");
         self.sentinel
             .as_ref()
             .ok_or("sentinel missing")?
@@ -980,7 +1018,33 @@ impl Harness {
         if failures.is_empty() {
             Ok(())
         } else {
-            Err(failures.join("; "))
+            // Attach the scenario child trace and the retained server logs so
+            // a stray-child failure names where it appeared, not just that it
+            // existed. Tails are bounded; a missing log is reported as such.
+            let mut context = Vec::new();
+            for path in &self.stderr_paths {
+                match std::fs::read(path) {
+                    Ok(bytes) => {
+                        let start = bytes.len().saturating_sub(2048);
+                        context.push(format!(
+                            "{} tail: {}",
+                            path.display(),
+                            String::from_utf8_lossy(&bytes[start..]).trim()
+                        ));
+                    }
+                    Err(error) => context.push(format!("{} unreadable: {error}", path.display())),
+                }
+            }
+            Err(format!(
+                "{}; scenario child trace: {}; server logs: {}",
+                failures.join("; "),
+                self.trace.join(" | "),
+                if context.is_empty() {
+                    "none retained".to_owned()
+                } else {
+                    context.join(" | ")
+                }
+            ))
         }
     }
 }
@@ -1013,6 +1077,8 @@ fn cooperative_interrupt_lifecycle() -> Result<(), String> {
         session: None,
         sentinel: None,
         trees: Vec::new(),
+        trace: Vec::new(),
+        stderr_paths: Vec::new(),
     };
     let outcome = fixture(&root.join("repo"), &harness.control).and_then(|()| harness.run());
     let cleanup = harness.cleanup();
