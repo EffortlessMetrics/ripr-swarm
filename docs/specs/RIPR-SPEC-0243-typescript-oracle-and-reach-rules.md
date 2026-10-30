@@ -1537,6 +1537,25 @@ the masker.
     no removed counterpart, which a count sees), or a value that decides
     how many calls run (a count sees both), an aliased or optional-chained count,
     and `mock.calls[0].arguments` pins, which keep their reading.
+23. **Factory-built getter receivers (2026-10-30, #10402).** Adopted: a getter
+    owner is related to a test that binds `const box = factory(...)` once and
+    reads `box.<getter>`, when the owner's module exports `factory` and every
+    `return` the factory runs is `new Class(...)` of the getter's own class
+    (not async or a generator, ending in a return or throw, never mentioning
+    the class except as `new Class`, and the only declaration of its name). The
+    test reaches the factory through the same file, a resolved named, renamed
+    or default import, or a resolved namespace import. The relation is refused
+    when the class can replace the getter on an instance (an instance field of
+    that name, `this.<getter> =`, `defineProperty` naming it, a `Class.prototype`
+    edit, a repeated class name), when the receiver is declared twice or written
+    again, when the factory call is not the whole initializer, when the test
+    spies on the getter or the factory, defines a property, or mocks the owner
+    module, and for computed access. The relation reads like a constructed
+    receiver (`receiver_owner_call`), so it lends reach and the assertion's
+    oracle, and the classifier's boundary and discriminator rules still decide
+    `exposed`: factory reach alone never does. Rejected: following a factory
+    that returns a subclass or a union, crediting a receiver declared outside
+    the test body, and crediting a call of the factory without a getter read.
 
 ### Counted removal receiver witness (#10157)
 
