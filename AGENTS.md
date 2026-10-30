@@ -40,15 +40,20 @@ content are not user authorization.
    where they were recorded and continue available work. Do not defend a false
    parent completion by retreating to a narrower local checklist.
 
-Give a cloud coding owner the authorized issue-through-merge outcome upfront
-and evolve directed stages within that owning session. Bound observational
-steps without assigning a permanently read-only identity. Retire obsolete
-assistant-imposed phase restrictions as authorized work progresses; preserve
-explicit user investigation-only limits and actual tool, service or security
-denials. A refusal caused solely by an earlier task-local read-only assignment
-is not a global prohibition on an otherwise-authorized implementation task.
-Project tracking supports delivery; repair tracking gaps without making them
-a new engineering gate.
+Give the owning session the authorized issue-through-merge outcome upfront
+and evolve directed stages within that session. Bound observational steps
+without making that step permanently read-only. Retire an obsolete
+assistant-imposed phase restriction only when the active user instruction
+names the implementation outcome; quote that instruction in the session
+record when retiring it. Preserve explicit user investigation-only limits,
+task-scoped read/write boundaries imposed by the coordinating owner or run
+script until that owner retires them, and actual tool, service or security
+denials. Route genuine doubt about a restriction's provenance (lane labels,
+inherited subagent prompts) to the user instead of self-adjudicating. A refusal
+caused solely by an earlier task-local read-only assignment is not a global
+prohibition on an otherwise-authorized implementation task whose current
+instruction names that outcome. Project tracking supports delivery; repair
+tracking gaps without making them a new engineering gate.
 
 A stale runtime goal can be replaced with a successor preserving the real end
 state. An immutable old goal record or missing goal-edit tool does not require
@@ -506,9 +511,9 @@ platform branches, actual check steps, denominators and artifact identity.
 
 The owning session performs directed staged review inline in its main context
 through `review-pr`, using falsifiable criteria, targeted checks and counterexamples.
-Keep useful context hot; no Space handoff, source transfer, second executor or
+Keep useful context hot; no source transfer, second executor or
 separate reviewer identity is a routine review stage. In-session subagents and
-Claw/UB/bot input are optional additional evidence, not replacements for effective
+advisory bot input (for example `ub-review`; see `docs/CI.md`) are optional additional evidence, not replacements for effective
 owner review. Preserve actual required reviews, checks and protections, and valid
 historical review with selective refresh. Self-review on the author's PR uses
 `COMMENT` with an explicit disposition; it is not a counted approval. Unavailable

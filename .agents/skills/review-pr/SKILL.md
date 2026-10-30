@@ -105,11 +105,11 @@ Use this procedure when a coherent candidate exists and one of these is true:
 - automated comments or CI results need an accountable synthesis;
 - a prior review was anchored to another head or an incomplete diff.
 
-Perform directed staged review inline in the owning session's main context by default. Challenge the candidate from distinct correctness, test-oracle, failure and integration perspectives using falsifiable criteria, targeted checks and counterexamples. A separate subagent, external reviewer, ChatGPT Space, source transfer or second executor is not a required review stage. Optional in-session subagents may address a useful evidence or capability question; a different identity is not inherently required for effective review. The owning session remains accountable for the disposition and finish-through.
+Perform directed staged review inline in the owning session's main context by default. Challenge the candidate from distinct correctness, test-oracle, failure and integration perspectives using falsifiable criteria, targeted checks and counterexamples. A separate subagent, external reviewer, source transfer or second executor is not a required review stage. Optional in-session subagents may address a useful evidence or capability question; a different identity is not inherently required for effective review. The owning session remains accountable for the disposition and finish-through.
 
 Retain valid historical reviews with their original subject and scope. Refresh affected or newly requested dimensions only; a new review model or reviewer location does not require retroactive replay. Preserve actual GitHub-required reviews, checks, approvals and protections. Repair conflicting workflow instructions within scope rather than waiving required gates. This default does not prohibit legitimate source-author/publisher or capacity transfers needed for other reasons.
 
-Advisory providers such as `ub-review`, ClawSweeper and other bots supply extra evidence, not replacements for substantive owner review or mandatory identity separation. Unavailable output remains missing evidence for that provider, never a pass; it does not create an absent-service prerequisite.
+Advisory providers such as `ub-review` and other documented bots (see `docs/CI.md`) supply extra evidence, not replacements for substantive owner review or mandatory identity separation. Unavailable output remains missing evidence for that provider, never a pass; it does not create an absent-service prerequisite.
 
 # Procedure
 

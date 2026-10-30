@@ -61,8 +61,11 @@ from active machinery; it does not replace current checks or authorize a cutover
 At a phase change or bounded worker return, confirm the current user scope and
 surviving limits before selecting the next transition. Keep the authorized
 issue-through-merge outcome with the owning session as stages evolve. Retire
-obsolete assistant-imposed phase restrictions, preserving explicit user limits
-and actual resource denials. A routine phase boundary is not a parent approval
+an obsolete assistant-imposed phase restriction only when the active user
+instruction names the implementation outcome and that instruction is quoted
+in the session record; preserve explicit user limits, task-scoped boundaries
+imposed by the coordinating owner or run script until that owner retires
+them, and actual resource denials; route genuine doubt to the user. A routine phase boundary is not a parent approval
 lease; continue authorized repairs, factual comments and finish-through. Tracking
 updates support that work without becoming a new engineering gate.
 
@@ -121,7 +124,7 @@ Refresh only the dimensions changed by the latest edit. Unrelated movement on `m
 
 # Useful fan-out
 
-The owner normally inspects authority, tests, correctness, security, compatibility, product behavior and platform semantics through directed review in its main context. Optional in-session subagents may inspect a bounded question; an observational step does not assign a permanently read-only cloud-owner identity. One writer integrates accepted repairs. A delegated writer receives the candidate-owned worktree and is the only mutator until handback. Conflicting reports must be resolved against canonical source and actual behavior before publication.
+The owner normally inspects authority, tests, correctness, security, compatibility, product behavior and platform semantics through directed review in its main context. Optional in-session subagents may inspect a bounded question; an observational step does not make that step permanently read-only. One writer integrates accepted repairs. A delegated writer receives the candidate-owned worktree and is the only mutator until handback. Conflicting reports must be resolved against canonical source and actual behavior before publication.
 
 # Valid exits
 
