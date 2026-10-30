@@ -33,8 +33,8 @@ pub(crate) use owner_pin::{
     owner_pin_matches_assertions, owner_reference_count, qualified_matches_paths,
     returns_leave_the_function, skipping_table_column, source_binds_value_name,
     source_declares_value_name, source_imported_claims_macros, standard_derive_names,
-    supported_targeted_item_context, trusted_macro_binding_site_sets,
-    trusted_macro_binding_sites, use_rebinds_crate_name,
+    supported_targeted_item_context, trusted_macro_binding_site_sets, trusted_macro_binding_sites,
+    use_rebinds_crate_name,
 };
 pub(crate) use owner_pin::{decimal_u8, literal_check_syntax, literal_owner_syntax};
 pub(crate) use pattern_pin::{PatternPins, pattern_pins};
