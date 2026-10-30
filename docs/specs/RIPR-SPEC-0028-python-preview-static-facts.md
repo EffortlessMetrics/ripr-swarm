@@ -1421,9 +1421,17 @@ only in plain read statements (the changed line included), and a related test
 body may make only recognized calls (the owner, the `assert` statement, named
 `self.assert*` methods, known builtins and `pytest` helpers) with no
 non-ASCII identifier letters, f-strings in the owner, subscript or call-result
-callees, or non-call mentions of the owner. A helper or runner defined at
-module level of the test file is seen only through its call in the test body;
-the file source is not read.
+callees, f-strings, or non-call mentions of the owner. A function owner is
+recognized only under its imported name or a module alias the reader
+resolves, never through a receiver alias (`m = src.lib; m.pick(0, 3)`,
+`self.lib.pick(0, 3)`); an owner docstring holding `>>>` refuses. The test
+file source is not read, so these shapes are known limits: an owner call at
+module level (`R = pick(0, 3)`), in a class attribute, in `setUp`, or in a
+conftest/autouse fixture, a helper or runner table defined at module level
+and seen only through its call in the test body, a discriminating call under
+a non-strong oracle (`assert not pick(0, 3)`), and an owner doctest the
+reader does not see. The change is only `exposed` to `weakly_exposed`, the
+conservative direction.
 
 ## Metrics
 

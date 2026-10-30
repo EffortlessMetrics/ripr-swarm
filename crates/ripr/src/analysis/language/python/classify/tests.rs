@@ -3641,6 +3641,31 @@ fn truthiness_swap_refuses_a_changed_line_that_assigns_the_parameter() -> Result
     Ok(())
 }
 
+// An owner call inside an f-string, through a receiver alias, or shown by an
+// owner docstring doctest is not read by the call rows: keep exposed.
+#[test]
+fn truthiness_swap_fails_open_on_fstring_alias_and_doctest_reach() -> Result<(), String> {
+    for tests in [
+        "from src.lib import pick\n\ndef test_pick():\n    assert pick(None, 3) == 3\n    assert f\"{pick(0, 3)}\" == '3'\n",
+        "import src.lib\n\ndef test_pick():\n    m = src.lib\n    assert src.lib.pick(None, 3) == 3\n    assert m.pick(0, 3) == 3\n",
+    ] {
+        assert_eq!(swap_class(tests)?, ExposureClass::Exposed, "{tests}");
+    }
+    let source = concat!(
+        "def pick(x, d):\n    \"\"\">>> pick(0, 3)\n    3\n    \"\"\"\n    if not x:",
+        "\n        return d\n    return x\n"
+    );
+    let finding = classify_truthiness_swap(
+        source,
+        5,
+        SWAP_OLD,
+        SWAP_NEW,
+        "from src.lib import pick\n\ndef test_pick():\n    assert pick(None, 3) == 3\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
 // Calls that hide a separating input: a helper named `assert_*`, a callee
 // that is a subscript or a call result, and non-ASCII identifier letters.
 #[test]

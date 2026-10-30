@@ -294,7 +294,8 @@ fn parameter_only_read(
             // reusing its quote (Python 3.12) can defeat; refuse any
             // f-string. A non-ASCII letter can NFKC-normalize to the
             // parameter name (fullwidth `ｘ`), so refuse those too.
-            if has_fstring(raw) || has_unicode_name(raw) {
+            // An owner docstring doctest (`>>>`) can call the owner too.
+            if has_fstring(raw) || has_unicode_name(raw) || raw.contains(">>>") {
                 return false;
             }
             let line = strip_trailing_comment(raw).trim();
@@ -411,9 +412,10 @@ fn owner_reached_indirectly(
             let text = candidate.test.body_text.as_str();
             let names = owner_call_names(owner, candidate.test, method_call);
             has_unicode_name(text)
+                || has_fstring(text)
                 || calls_through_a_result(text)
                 || names.iter().any(|name| mentions_without_call(text, name))
-                || calls_unrecognized_callee(text, &names)
+                || calls_unrecognized_callee(text, &names, method_call)
         })
 }
 
@@ -459,13 +461,14 @@ const UNITTEST_ASSERTS: &[&str] = &[
 ];
 
 /// Whether the body makes a call other than the recognized ones: the owner
-/// itself (any receiver), known pure builtins, the bare `assert` statement
-/// and the named `self.assert*` unittest methods, a
-/// `pytest.raises`/`approx`/`warns`/`param`/`mark.*` helper, `pytest.raises`/`approx`/`warns`/`param`/`mark.*`, and the
-/// `def`/`class` headers. Any other callee, attribute calls included
-/// (`helpers.run(0)`, `self.check(0)`, `mock.patch(..)`), may pass an input
-/// to the owner that the call-row reader never sees.
-fn calls_unrecognized_callee(text: &str, owner_names: &[String]) -> bool {
+/// (a method owner under any receiver; a function owner only under a name or
+/// module alias the reader recognizes), known pure builtins, the bare `assert`
+/// statement, the named `self.assert*` unittest methods, `pytest.raises`/
+/// `approx`/`warns`/`param`/`mark.*`, and the `def`/`class` headers. Any other
+/// callee, attribute calls included (`helpers.run(0)`, `self.check(0)`,
+/// `m.pick(0, 3)` through an alias), may pass an input to the owner that the
+/// call-row reader never sees.
+fn calls_unrecognized_callee(text: &str, owner_names: &[String], method_call: bool) -> bool {
     const BUILTINS: &[&str] = &[
         "len",
         "str",
@@ -528,9 +531,13 @@ fn calls_unrecognized_callee(text: &str, owner_names: &[String]) -> bool {
             || chain
                 .strip_prefix("self.")
                 .is_some_and(|method| UNITTEST_ASSERTS.contains(&method))
-            || owner_names
-                .iter()
-                .any(|name| name.rsplit('.').next() == Some(last));
+            || owner_names.iter().any(|name| {
+                if method_call {
+                    name.rsplit('.').next() == Some(last)
+                } else {
+                    name == chain
+                }
+            });
         let keyword = matches!(
             chain,
             "not"
@@ -632,7 +639,8 @@ mod tests {
         assert!(mentions_without_call("alias = pick", "pick"));
         assert!(!calls_unrecognized_callee(
             "def test_pick():\n    assert len(pick(1)) == 1\n    pytest.raises(E)\n    self.assertEqual(pick(1), 1)\n",
-            &names
+            &names,
+            false
         ));
         for unknown in [
             "assert w(0) == 3",
@@ -641,7 +649,10 @@ mod tests {
             "mock.patch('a')",
             "assert str(pick(1)).strip()",
         ] {
-            assert!(calls_unrecognized_callee(unknown, &names), "{unknown}");
+            assert!(
+                calls_unrecognized_callee(unknown, &names, false),
+                "{unknown}"
+            );
         }
     }
 
@@ -687,11 +698,25 @@ mod tests {
         assert!(calls_through_a_result("make()(0)"));
         assert!(!calls_through_a_result("assert pick(1)[0] == 1"));
         let names = vec!["pick".to_string()];
-        assert!(calls_unrecognized_callee("assert_pick(0, 3)", &names));
-        assert!(calls_unrecognized_callee("self.assertHelper(0)", &names));
+        // A function owner accepts only a recognized name; a method owner
+        // accepts any receiver.
+        assert!(calls_unrecognized_callee("m.pick(0, 3)", &names, false));
+        assert!(!calls_unrecognized_callee("m.pick(0, 3)", &names, true));
+        assert!(has_fstring("f\"{pick(0, 3)}\""));
+        assert!(calls_unrecognized_callee(
+            "assert_pick(0, 3)",
+            &names,
+            false
+        ));
+        assert!(calls_unrecognized_callee(
+            "self.assertHelper(0)",
+            &names,
+            false
+        ));
         assert!(!calls_unrecognized_callee(
             "self.assertEqual(pick(1), 1)",
-            &names
+            &names,
+            false
         ));
         assert!(has_assignment("x <<= 1"));
         assert!(!has_assignment("a >= b and c <= d != e == f"));
