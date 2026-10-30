@@ -1566,6 +1566,9 @@ fn validate_value_against_schema_impl(
     if let Some(schema_type) = schema.get("type") {
         validate_type(value, schema_type, &location, violations, budget);
     }
+    if budget.exhausted {
+        return;
+    }
 
     if value.is_object() {
         validate_object(value, schema, root_schema, &location, violations, budget);
@@ -2522,6 +2525,35 @@ mod tests {
         assert!(
             violations.is_empty(),
             "no later diagnostics or pattern work after exhaustion"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn exhausted_type_check_stops_array_validation() -> Result<(), String> {
+        let schema = parse_exact_text(&format!(
+            r#"{{"type":[{}"array"],"minItems":1}}"#,
+            "null,".repeat(20)
+        ))?;
+        let value = parse_exact_text("[]")?;
+        let mut budget = ValidationBudget {
+            remaining: 5,
+            depth: 0,
+            exhausted: false,
+        };
+        let mut violations = Vec::new();
+        validate_value_against_schema_inner(
+            &value,
+            &schema,
+            &schema,
+            "value".into(),
+            &mut violations,
+            &mut budget,
+        );
+        assert!(budget.exhausted);
+        assert!(
+            violations.is_empty(),
+            "array validation must not run after type exhaustion"
         );
         Ok(())
     }
