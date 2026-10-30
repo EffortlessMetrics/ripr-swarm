@@ -7,6 +7,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+bigdecimal = "0.4"
 home = "=0.5.12"
 num-bigint = "0.4"
 repo-policy = { path = "../tools/repo-policy" }
@@ -14,7 +15,7 @@ ripr = { path = "../crates/ripr" }
 ra_ap_syntax = "0.0.349"
 rayon = "1"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["arbitrary_precision"] }
 sha2 = "0.10"
 toml = "1"
 flate2 = "1"

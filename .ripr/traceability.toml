@@ -6789,7 +6789,10 @@ tests = [
   "crates/ripr/src/output/gate/presentation.rs::tests::production_caller_target_markdown_preserves_explicit_location",
   "xtask/src/main.rs::tests::dogfood_blocking_gate_report_is_self_contained",
   "xtask/src/verification_contracts.rs::check_verification_contracts",
-  "xtask/src/verification_contracts.rs::tests::integer_type_follows_json_schema_numeric_semantics"
+  "xtask/src/verification_contracts.rs::tests::integer_type_follows_json_schema_numeric_semantics",
+  "xtask/src/verification_contracts.rs::tests::exact_integer_and_bounds_controls",
+  "xtask/src/verification_contracts.rs::tests::integer_schema_rejects_decimal_rounded_to_integer",
+  "xtask/src/verification_contracts.rs::tests::unsupported_numbers_cannot_be_inverted_by_schema_combinators"
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",

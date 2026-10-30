@@ -485,10 +485,15 @@ disclosed and fails closed; it is never treated as a complete causal comparison.
   cases are `static_limitation` because propagation to a side-effect/call-effect
   sink is unknown, so they correctly lack a policy-eligible receipt. PR C must
   not manufacture a blocking call-observation route from that limited evidence.
-- The shared verification-contract validator reads schema `integer` per JSON
-  Schema Draft 2020-12: a whole-valued number such as `1.0` matches, a fraction
-  or a float beyond 2^53 does not (#11009). The xtask unit test
-  `integer_type_follows_json_schema_numeric_semantics` pins both sides.
+- The shared verification-contract validator checks parsed JSON integers and
+  numeric bounds as exact decimals (#11009). Whole-valued forms such as `1.0`
+  match; a fraction cannot become an integer through float rounding. Decimal
+  representations longer than 256 bytes or with an unnormalized scale outside
+  -256..=256 anywhere in the validated input or a numeric bound fail closed,
+  including inside boolean schema combinators. Values constructed from
+  `f64` before validation have already lost their original precision. The xtask
+  tests `integer_type_follows_json_schema_numeric_semantics` and
+  `exact_integer_and_bounds_controls` pin the behavior and limits.
 
 ## Implementation Mapping
 

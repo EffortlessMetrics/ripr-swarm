@@ -1018,7 +1018,50 @@ fn validate_schema_document(path: &str, schema: &Value, violations: &mut Vec<Str
     }
 }
 
+// Unsupported numeric input must not be turned into a match by `not`, `if`,
+// or another combinator. Check the entire input and all numeric bounds before
+// entering the boolean schema evaluation.
+fn supported_numeric_input(value: &Value) -> bool {
+    match value {
+        Value::Number(_) => exact_schema_number(value).is_some(),
+        Value::Array(values) => values.iter().all(supported_numeric_input),
+        Value::Object(values) => values.values().all(supported_numeric_input),
+        _ => true,
+    }
+}
+
+fn supported_numeric_bounds(schema: &Value) -> bool {
+    match schema {
+        Value::Object(object) => object.iter().all(|(key, value)| {
+            if (key == "minimum" || key == "maximum") && value.is_number() {
+                exact_schema_number(value).is_some()
+            } else {
+                supported_numeric_bounds(value)
+            }
+        }),
+        Value::Array(values) => values.iter().all(supported_numeric_bounds),
+        _ => true,
+    }
+}
+
 pub(crate) fn validate_value_against_schema(
+    value: &Value,
+    schema: &Value,
+    root_schema: &Value,
+    location: String,
+    violations: &mut Vec<String>,
+) {
+    if !supported_numeric_input(value)
+        || !supported_numeric_bounds(root_schema)
+        || !supported_numeric_bounds(schema)
+    {
+        violations.push(format!("{location}: unsupported numeric precision"));
+        return;
+    }
+    validate_value_against_schema_inner(value, schema, root_schema, location, violations);
+}
+
+fn validate_value_against_schema_inner(
     value: &Value,
     schema: &Value,
     root_schema: &Value,
@@ -1033,7 +1076,7 @@ pub(crate) fn validate_value_against_schema(
     // too.
     if let Some(reference) = schema.get("$ref").and_then(Value::as_str) {
         match resolve_ref(root_schema, reference) {
-            Some(resolved) => validate_value_against_schema(
+            Some(resolved) => validate_value_against_schema_inner(
                 value,
                 resolved,
                 root_schema,
@@ -1048,7 +1091,7 @@ pub(crate) fn validate_value_against_schema(
 
     if let Some(all_of) = schema.get("allOf").and_then(Value::as_array) {
         for (index, subschema) in all_of.iter().enumerate() {
-            validate_value_against_schema(
+            validate_value_against_schema_inner(
                 value,
                 subschema,
                 root_schema,
@@ -1063,7 +1106,7 @@ pub(crate) fn validate_value_against_schema(
         let mut messages = Vec::new();
         for subschema in any_of {
             let mut nested = Vec::new();
-            validate_value_against_schema(
+            validate_value_against_schema_inner(
                 value,
                 subschema,
                 root_schema,
@@ -1090,7 +1133,7 @@ pub(crate) fn validate_value_against_schema(
             .iter()
             .filter(|subschema| {
                 let mut nested = Vec::new();
-                validate_value_against_schema(
+                validate_value_against_schema_inner(
                     value,
                     subschema,
                     root_schema,
@@ -1116,7 +1159,7 @@ pub(crate) fn validate_value_against_schema(
     // state paired with evidence the schema forbids.
     if let Some(condition) = schema.get("if") {
         let mut condition_violations = Vec::new();
-        validate_value_against_schema(
+        validate_value_against_schema_inner(
             value,
             condition,
             root_schema,
@@ -1129,13 +1172,25 @@ pub(crate) fn validate_value_against_schema(
             schema.get("else")
         };
         if let Some(branch) = branch {
-            validate_value_against_schema(value, branch, root_schema, location.clone(), violations);
+            validate_value_against_schema_inner(
+                value,
+                branch,
+                root_schema,
+                location.clone(),
+                violations,
+            );
         }
     }
 
     if let Some(negated) = schema.get("not") {
         let mut nested = Vec::new();
-        validate_value_against_schema(value, negated, root_schema, location.clone(), &mut nested);
+        validate_value_against_schema_inner(
+            value,
+            negated,
+            root_schema,
+            location.clone(),
+            &mut nested,
+        );
         if nested.is_empty() {
             violations.push(format!("{location}: matched a forbidden schema"));
         }
@@ -1232,7 +1287,7 @@ fn validate_object(
 
     for (field, field_schema) in properties {
         if let Some(field_value) = object.get(field) {
-            validate_value_against_schema(
+            validate_value_against_schema_inner(
                 field_value,
                 field_schema,
                 root_schema,
@@ -1284,7 +1339,7 @@ fn validate_array(
         return;
     };
     for (index, item) in items.iter().enumerate() {
-        validate_value_against_schema(
+        validate_value_against_schema_inner(
             item,
             items_schema,
             root_schema,
@@ -1326,18 +1381,38 @@ fn validate_string(text: &str, schema: &Value, location: &str, violations: &mut 
     }
 }
 
-fn validate_number(value: &Value, schema: &Value, location: &str, violations: &mut Vec<String>) {
-    if let Some(minimum) = schema.get("minimum").and_then(Value::as_f64)
-        && let Some(actual) = value.as_f64()
-        && actual < minimum
-    {
-        violations.push(format!("{location}: number below minimum {minimum}"));
+// Limit the exact decimal work performed on a single JSON number. Parsed JSON
+// outside these limits is rejected when integer or numeric bounds are checked.
+fn exact_schema_number(value: &Value) -> Option<bigdecimal::BigDecimal> {
+    let number = value.as_number()?;
+    let text = number.to_string();
+    if text.len() > 256 {
+        return None;
     }
-    if let Some(maximum) = schema.get("maximum").and_then(Value::as_f64)
-        && let Some(actual) = value.as_f64()
-        && actual > maximum
-    {
-        violations.push(format!("{location}: number above maximum {maximum}"));
+    let decimal: bigdecimal::BigDecimal = text.parse().ok()?;
+    let (_, scale) = decimal.as_bigint_and_exponent();
+    if !(-256..=256).contains(&scale) {
+        return None;
+    }
+    Some(decimal)
+}
+
+fn validate_number(value: &Value, schema: &Value, location: &str, violations: &mut Vec<String>) {
+    for (keyword, below) in [("minimum", true), ("maximum", false)] {
+        let Some(bound) = schema.get(keyword).filter(|v| v.is_number()) else {
+            continue;
+        };
+        match (exact_schema_number(value), exact_schema_number(bound)) {
+            (Some(actual), Some(limit)) => {
+                if (below && actual < limit) || (!below && actual > limit) {
+                    let direction = if below { "below" } else { "above" };
+                    violations.push(format!("{location}: number {direction} {keyword} {bound}"));
+                }
+            }
+            _ => violations.push(format!(
+                "{location}: unsupported numeric precision for {keyword}"
+            )),
+        }
     }
 }
 
@@ -1376,29 +1451,12 @@ fn value_matches_type(value: &Value, expected_type: &str) -> bool {
     }
 }
 
-/// Largest magnitude at which every integer is exactly an `f64` (2^53).
-const MAX_EXACT_FLOAT_INTEGER: f64 = 9_007_199_254_740_992.0;
-
-/// JSON Schema Draft 2020-12 `integer`: any number with a zero fractional
-/// part, so `1`, `1.0` and `1e0` all match and `1.5` does not.
-///
-/// Integers that `serde_json` stores as `i64` or `u64` match across their
-/// whole range. A number it stores as `f64` matches only when it is finite,
-/// whole, and within +/-2^53, where an `f64` holds the integer exactly; a
-/// larger float fails closed because rounding may have hidden a fraction.
-/// Residual limit: `serde_json` keeps no source text, so a decimal with more
-/// digits than an `f64` holds (`1.00000000000000001`) is already the float
-/// `1.0` when this runs and matches.
+/// Check the exact decimal represented by `Value`, within the documented
+/// limits. JSON input must be parsed with serde_json's arbitrary_precision
+/// feature; values constructed from f64 already carry that conversion's loss.
 fn json_number_is_integer(value: &Value) -> bool {
-    let Value::Number(number) = value else {
-        return false;
-    };
-    if number.is_i64() || number.is_u64() {
-        return true;
-    }
-    number.as_f64().is_some_and(|float| {
-        float.is_finite() && float.fract() == 0.0 && float.abs() <= MAX_EXACT_FLOAT_INTEGER
-    })
+    exact_schema_number(value)
+        .is_some_and(|number| number.normalized().as_bigint_and_exponent().1 <= 0)
 }
 
 fn value_type(value: &Value) -> &'static str {
@@ -1456,6 +1514,94 @@ mod tests {
     use super::*;
 
     #[test]
+    fn integer_schema_rejects_decimal_rounded_to_integer() {
+        let schema: Value = serde_json::from_str(r#"{"type":"integer"}"#).unwrap();
+        let value: Value = serde_json::from_str("1.00000000000000001").unwrap();
+        let mut violations = Vec::new();
+        validate_value_against_schema(
+            &value,
+            &schema,
+            &schema,
+            "value".to_string(),
+            &mut violations,
+        );
+        assert!(
+            !violations.is_empty(),
+            "fraction must not be accepted as an integer"
+        );
+    }
+
+    #[test]
+    fn exact_integer_and_bounds_controls() {
+        let integer: Value = serde_json::from_str(r#"{"type":"integer"}"#).unwrap();
+        let bounded: Value = serde_json::from_str(
+            r#"{"type":"integer","minimum":9007199254740993,"maximum":9007199254740995}"#,
+        )
+        .unwrap();
+        let validate = |text: &str, schema: &Value| {
+            let value: Value = serde_json::from_str(text).unwrap();
+            let mut violations = Vec::new();
+            validate_value_against_schema(&value, schema, schema, "value".into(), &mut violations);
+            violations
+        };
+        for text in [
+            "1.0",
+            "1e0",
+            "-0.0",
+            "100e-2",
+            "18446744073709551615",
+            "1e256",
+        ] {
+            assert!(validate(text, &integer).is_empty(), "{text}");
+        }
+        for text in [
+            "1.00000000000000001",
+            "0.0000000000000000001",
+            "1.5",
+            "1e-1",
+            "1e300",
+            "1e-257",
+        ] {
+            assert!(!validate(text, &integer).is_empty(), "{text}");
+        }
+        for text in ["9007199254740993", "9007199254740994.0", "9007199254740995"] {
+            assert!(validate(text, &bounded).is_empty(), "{text}");
+        }
+        for text in ["9007199254740992", "9007199254740996", "1e300"] {
+            assert!(!validate(text, &bounded).is_empty(), "{text}");
+        }
+    }
+
+    #[test]
+    fn unsupported_numbers_cannot_be_inverted_by_schema_combinators() {
+        for schema_text in [
+            r#"{"not":{"type":"integer"}}"#,
+            r#"{"if":{"minimum":0},"then":false,"else":{}}"#,
+            r#"{"not":{"properties":{"n":{"type":"integer"}}}}"#,
+            r#"{"not":{"minimum":1e300}}"#,
+        ] {
+            let schema: Value = serde_json::from_str(schema_text).unwrap();
+            let input = if schema_text.contains("properties") {
+                r#"{"n":1e300}"#
+            } else if schema_text.contains("minimum\":1e300") {
+                "1"
+            } else {
+                "1e300"
+            };
+            let value: Value = serde_json::from_str(input).unwrap();
+            let mut violations = Vec::new();
+            validate_value_against_schema(
+                &value,
+                &schema,
+                &schema,
+                "value".into(),
+                &mut violations,
+            );
+            assert!(!violations.is_empty(), "{schema_text}");
+        }
+    }
+
+    #[test]
     fn integer_type_follows_json_schema_numeric_semantics() -> Result<(), String> {
         let accepts = |text: &str| -> Result<bool, String> {
             let value: Value =
@@ -1476,6 +1622,8 @@ mod tests {
             "9223372036854775808",
             "18446744073709551615",
             "9007199254740992.0",
+            "9007199254740994.0",
+            "18446744073709551616",
         ] {
             assert!(accepts(accepted)?, "{accepted} is a JSON Schema integer");
         }
@@ -1484,9 +1632,8 @@ mod tests {
             "-0.5",
             "1e-1",
             "0.1",
-            "9007199254740994.0",
             "1e300",
-            "18446744073709551616",
+            "1.00000000000000001",
             "\"1\"",
             "true",
             "null",
