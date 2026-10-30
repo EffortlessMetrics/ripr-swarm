@@ -11009,3 +11009,51 @@ fn name_prefilter_keeps_a_fixture_only_mention() {
         Some(PythonRelationKind::FixtureOwnerCall)
     );
 }
+
+#[test]
+fn comprehension_boundary_values_retain_each_test_file() -> Result<(), String> {
+    let owner_file = Path::new("src/agg.py");
+    let owners = extract_owners(owner_file, FILTER_BOUNDARY_OWNER);
+    let source = "import asyncio\nfrom src.agg import fetch_total\n\ndef test_total():\n    assert asyncio.run(fetch_total([3, 1, 4])) == 7\n";
+    let classify = |paths: &[&str]| -> Result<Vec<(Option<std::path::PathBuf>, usize)>, String> {
+        let tests: Vec<_> = paths
+            .iter()
+            .flat_map(|file| extract_tests(Path::new(file), source))
+            .collect();
+        assert_eq!(tests.len(), 2);
+        let mut origins = crate::value_origins::ValueOrigins::default();
+        let finding = classify::classify_change_with_value_origins(
+            owner_file,
+            6,
+            "    return sum(p for p in prices if p > 1)",
+            None,
+            &owners,
+            &tests,
+            PythonNoBehaviorContext::default(),
+            Some(FILTER_BOUNDARY_OWNER),
+            &mut origins,
+            None,
+        )
+        .ok_or_else(|| "filter change should classify".to_string())?;
+        assert_eq!(finding.class, ExposureClass::Exposed);
+        let files = origins
+            .files(&finding)
+            .ok_or_else(|| "missing value origins".to_string())?;
+        let element_files: Vec<_> = finding
+            .activation
+            .observed_values
+            .iter()
+            .zip(files)
+            .filter(|(fact, _)| fact.value == "prices = [3, 1, 4]")
+            .map(|(fact, file)| (file.clone(), fact.line))
+            .collect();
+        Ok(element_files)
+    };
+    let expected = vec![
+        (Some("tests/a.py".into()), 5),
+        (Some("tests/b.py".into()), 5),
+    ];
+    assert_eq!(classify(&["tests/a.py", "tests/b.py"])?, expected);
+    assert_eq!(classify(&["tests/b.py", "tests/a.py"])?, expected);
+    Ok(())
+}
