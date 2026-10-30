@@ -4609,3 +4609,46 @@ fn route_command() -> String {
         crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root("."))
     )
 }
+
+#[test]
+fn pilot_not_scanned_block_omits_python_pilot_analyzed() {
+    use crate::domain::LanguageId;
+
+    let artifacts = pilot_artifacts();
+    let root = Path::new(".");
+    let py = python_first_use();
+    let files = discovered_files(&[(LanguageId::Python, "app/a.py")]);
+    let routes = PilotLanguageRoutes::from_discovered(root, false, &[LanguageId::Python], &files);
+    let analyzed = PilotSummaryContext {
+        language_routes: Some(&routes),
+        ..pilot_context_with_python(&artifacts, &py)
+    };
+    let terminal = render_pilot_terminal(&[], analyzed);
+    assert!(terminal.contains("Python preview:"), "{terminal}");
+    assert!(!terminal.contains("Not scanned by pilot"), "{terminal}");
+
+    // Python analysis unavailable: pilot did not analyze it, so it stays listed.
+    let unavailable = PilotPythonFirstUse::analysis_unavailable("boom".to_string());
+    let not_analyzed = PilotSummaryContext {
+        language_routes: Some(&routes),
+        ..pilot_context_with_python(&artifacts, &unavailable)
+    };
+    let terminal = render_pilot_terminal(&[], not_analyzed);
+    assert!(terminal.contains("Not scanned by pilot"), "{terminal}");
+    assert!(terminal.contains("python:"), "{terminal}");
+
+    // An unscanned language stays listed next to analyzed Python.
+    let mixed = discovered_files(&[
+        (LanguageId::Python, "app/a.py"),
+        (LanguageId::Perl, "lib/App.pm"),
+    ]);
+    let routes = PilotLanguageRoutes::from_discovered(root, false, &[LanguageId::Python], &mixed);
+    let context = PilotSummaryContext {
+        language_routes: Some(&routes),
+        ..pilot_context_with_python(&artifacts, &py)
+    };
+    let terminal = render_pilot_terminal(&[], context);
+    assert!(terminal.contains("Not scanned by pilot"), "{terminal}");
+    assert!(terminal.contains("perl:"), "{terminal}");
+    assert!(!terminal.contains("  python:"), "{terminal}");
+}

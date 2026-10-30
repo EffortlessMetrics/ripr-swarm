@@ -130,6 +130,7 @@ pub(super) struct PythonRepairPlacement {
     pub(super) suggested_test_name: String,
     pub(super) suggested_test_line: Option<usize>,
     pub(super) suggested_test_node_id: Option<String>,
+    pub(super) suggested_test_qualified_name: Option<String>,
     pub(super) verify_command: String,
     pub(super) verify_command_confidence: &'static str,
     pub(super) location_reason: &'static str,
@@ -481,77 +482,12 @@ pub(super) fn verify_command_for_test_on(test: &PythonTest, windows: bool) -> Op
             // ends with one, so `pytest "path"::test` would hand pytest the
             // quote bytes as part of the file name. A token with bytes cmd
             // or PowerShell expand inside double quotes gets no command.
-            let selector = if windows {
-                shell_quote_file_arg_for_host(&format!("{path}::{node}"), true)?
-            } else {
-                format!("{}::{node}", shell_quote_file_arg_for_host(&path, false)?)
-            };
-            Some(format!(
-                "{} {selector}",
-                crate::domain::PYTEST_VERIFY_PROGRAM
-            ))
+            crate::domain::python_pytest_verify_display(&path, &node, windows)
         }
         PythonFramework::Unittest => {
-            let module = unittest_module_for_path(&path)?;
-            let selector = if windows {
-                shell_quote_file_arg_for_host(&format!("{module}.{}", test.qualified_name), true)?
-            } else {
-                format!(
-                    "{}.{}",
-                    shell_quote_file_arg_for_host(&module, false)?,
-                    test.qualified_name
-                )
-            };
-            Some(format!("python -m unittest {selector}"))
+            crate::domain::python_unittest_verify_display(&path, &test.qualified_name, windows)
         }
     }
-}
-
-fn unittest_module_for_path(path: &str) -> Option<String> {
-    let module_path = path.strip_suffix(".py").unwrap_or(path);
-    // unittest splits every dot as a module separator. A literal path dot
-    // can therefore select a different file, even when shell quoting is
-    // correct. Keep that unresolved identity out of verification routes.
-    if module_path.contains('.') {
-        return None;
-    }
-    Some(module_path.replace(['/', '\\'], "."))
-}
-
-/// Quote one path or module token for the host's default shell grammar.
-///
-/// Suggested verify commands are text an agent may paste into a shell, so the
-/// quoting must match the host's grammar or the command fails for exactly the
-/// paths that need quoting (#8752). A relative path made of ASCII letters,
-/// digits, `.`, `_`, `/`, `-` stays readable (`:` too on Windows, where it is
-/// not a metachar and the pytest `::` separator must not force quotes); any
-/// other byte is quoted so spaces, unicode, and shell metacharacters reach
-/// the test runner intact. On POSIX hosts the quote is single-quote escaping
-/// (`'\''`), so `$()`, backticks, spaces, and quotes are not expanded. On
-/// Windows hosts the quote is double quotes — the common denominator of cmd
-/// and PowerShell for literal text — but both shells still expand some bytes
-/// inside double quotes (PowerShell: `$()`, `$var`, and backtick escapes;
-/// cmd: `%VAR%`). A token carrying any of those bytes gets no paste-ready
-/// command at all: the verify route stays silent rather than emitting a
-/// command whose paste executes the file name. An embedded `"` in a
-/// quotable token is doubled per the PowerShell grammar; cmd has no
-/// representation for an embedded quote, which stays a documented limit.
-/// Stored node ids and test-file paths stay the raw spelling; only the
-/// command text is quoted. This does not run the command.
-fn shell_quote_file_arg_for_host(file_str: &str, windows: bool) -> Option<String> {
-    let in_safe_class = |c: char| {
-        c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '/' | '-') || (windows && c == ':')
-    };
-    if !file_str.is_empty() && file_str.chars().all(in_safe_class) {
-        return Some(file_str.to_string());
-    }
-    if windows {
-        if file_str.contains(['$', '`', '%']) {
-            return None;
-        }
-        return Some(format!("\"{}\"", file_str.replace('"', "\"\"")));
-    }
-    Some(format!("'{}'", file_str.replace('\'', "'\\''")))
 }
 
 pub(super) fn python_repair_placement(
@@ -598,6 +534,11 @@ pub(super) fn python_repair_placement_on(
                 suggested_test_name: candidate.test.name.clone(),
                 suggested_test_line,
                 suggested_test_node_id: Some(node_id),
+                suggested_test_qualified_name: candidate
+                    .test
+                    .qualified_name
+                    .contains('.')
+                    .then(|| candidate.test.qualified_name.clone()),
                 verify_command,
                 verify_command_confidence: "high",
                 location_reason: "strengthen existing weak pytest relation",
@@ -609,6 +550,7 @@ pub(super) fn python_repair_placement_on(
             suggested_test_name: candidate.test.name.clone(),
             suggested_test_line,
             suggested_test_node_id: None,
+            suggested_test_qualified_name: Some(candidate.test.qualified_name.clone()),
             verify_command,
             verify_command_confidence: "high",
             location_reason: "strengthen existing weak unittest relation",

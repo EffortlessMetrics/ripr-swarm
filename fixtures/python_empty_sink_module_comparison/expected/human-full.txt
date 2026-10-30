@@ -52,7 +52,7 @@ Repair placement
   suggested file: tests/test_constants.py
   suggested test: test_constants
   pytest node: tests/test_constants.py::test_constants
-  verify: python -m pytest tests/test_constants.py::test_constants (high)
+  verify (Bash): (cd -P -- <cwd>/fixtures/python_empty_sink_module_comparison/input && python -m pytest tests/test_constants.py::test_constants) (high)
 Drill in:
   ripr explain --root <cwd>/fixtures/python_empty_sink_module_comparison/input --diff <cwd>/fixtures/python_empty_sink_module_comparison/diff.patch --mode fast probe:src_constants.py:python_preview:904eec8a
   ripr context --root <cwd>/fixtures/python_empty_sink_module_comparison/input --diff <cwd>/fixtures/python_empty_sink_module_comparison/diff.patch --mode fast --at probe:src_constants.py:python_preview:904eec8a

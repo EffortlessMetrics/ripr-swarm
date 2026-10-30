@@ -35,6 +35,7 @@ mod bounded_read;
 mod fact_serde;
 mod fact_store;
 pub(crate) use fact_store::PythonFileFactStore;
+mod teardown;
 mod workspace_reach;
 use crate::analysis::workspace::{
     changed_source_files_absent_from_worktree, limitations_for_absent_changed_files,
@@ -1077,6 +1078,9 @@ impl PythonAdapter {
         walk_limits: PythonDiffWalkLimits,
         handwritten: &[String],
     ) -> Result<LanguageDiffResult, String> {
+        // A previous run's facts are freed before this run builds its own
+        // (sequential callers; see `teardown` for concurrent ones).
+        teardown::await_previous();
         // Changed files are the subject of the diff, so the cap only ever
         // refuses context around them (#10461). The walk streams into a
         // bounded selection so discovery memory stays at the cap rather
@@ -1590,6 +1594,19 @@ impl PythonAdapter {
                     )
                 })
                 .unwrap_or_default();
+            // Lines inside a multi-line string are string content, not
+            // statements; an unreadable or unlexable file is treated as all
+            // string so the trailing-comment guard fails closed (#10706).
+            let string_line_ranges = workspace_read
+                .sources
+                .get(&changed.path)
+                .and_then(|source| no_behavior::multi_line_string_line_ranges(source));
+            // The paired old line gets the same test against the
+            // reconstructed old source, so a delimiter edit that turns old
+            // string content into code is not read as a spacing edit.
+            let old_string_line_ranges = old_source
+                .as_deref()
+                .and_then(no_behavior::multi_line_string_line_ranges);
             let import_ranges = import_ranges_by_file
                 .get(&changed.path)
                 .map(Vec::as_slice)
@@ -1663,6 +1680,14 @@ impl PythonAdapter {
                         });
                 let no_behavior = PythonNoBehaviorContext {
                     new_line_in_docstring: line_is_in_ranges(added.line, new_docstring_ranges),
+                    new_line_in_multiline_string: string_line_ranges
+                        .as_deref()
+                        .is_none_or(|ranges| line_is_in_ranges(added.line, ranges))
+                        || old_line.is_some_and(|removed| {
+                            old_string_line_ranges
+                                .as_deref()
+                                .is_none_or(|ranges| line_is_in_ranges(removed.line, ranges))
+                        }),
                     old_line_in_docstring: old_line.is_some_and(|removed| {
                         line_is_in_ranges(removed.line, &old_docstring_ranges)
                     }),
@@ -1739,6 +1764,25 @@ impl PythonAdapter {
             );
             findings.extend(deleted);
         }
+        // Freeing the run's facts takes ~0.3 s on one thread for a large
+        // workspace (#10914: pandas, ~23k tests). Nothing in the result
+        // borrows them, so they are freed off the result path (`teardown`).
+        drop(related_memo);
+        drop(foreign_index);
+        drop(import_roots);
+        let facts = (
+            all_tests,
+            all_owners,
+            workspace_read,
+            foreign_prior_by_file,
+            fixture_defs_by_file,
+            fixture_side_by_file,
+            helper_modules_by_file,
+            docstring_ranges_by_file,
+            import_ranges_by_file,
+            star_facts_by_file,
+        );
+        teardown::free_in_background(facts);
         Ok(LanguageDiffResult {
             value_origins,
             findings,
@@ -1860,6 +1904,8 @@ mod helper_owner_call_tests;
 mod imported_literal_tests;
 #[cfg(test)]
 mod test_body_writer_tests;
+#[cfg(test)]
+mod trailing_comment_tests;
 
 #[cfg(test)]
 mod call_chain_tests;

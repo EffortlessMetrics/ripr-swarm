@@ -71,6 +71,9 @@ mod init_followups;
 #[path = "cli_smoke/javascript_awaited_roots.rs"]
 mod javascript_awaited_roots;
 #[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/legend_first_run.rs"]
+mod legend_first_run;
+#[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/mixed_quote_rename.rs"]
 mod mixed_quote_rename;
 #[cfg(feature = "lang-rust")]
@@ -765,7 +768,15 @@ fn unique_external_workspace(label: &str) -> Result<PathBuf, String> {
         if canonical == workspace || canonical.starts_with(&workspace) {
             continue;
         }
-        let probe = canonical.join(format!(".ripr-write-probe-{}", std::process::id()));
+        // Tests run on parallel threads of one process: a pid-only name made a
+        // sibling's `remove_dir` race this `create_dir` into a false "no
+        // writable directory".
+        static PROBE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let probe = canonical.join(format!(
+            ".ripr-write-probe-{}-{}",
+            std::process::id(),
+            PROBE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
         if std::fs::create_dir(&probe).is_err() {
             continue;
         }
@@ -6375,10 +6386,58 @@ fn agent_card_hands_off_one_seam_as_the_default_repair_card()
         "{route}"
     );
 
-    // The default surface is the compact human summary of the same card.
+    // The default surface is the short plain brief (#10693): no producer,
+    // subject, non-claim, detail rows or hashes. `--verbose` keeps the full
+    // field list of the same card, asserted below.
+    let plain = run_ripr(&[
+        "agent",
+        "card",
+        "--root",
+        &root_arg,
+        "--seam-id",
+        "67fc764ba37d77bd",
+    ]);
+    assert_success(&plain);
+    let plain_stdout = String::from_utf8_lossy(&plain.stdout);
+    for needle in [
+        "Repair brief for gap 67fc764ba37d77bd",
+        "  Files you may change: ",
+        "  Do not change: ",
+        "  Done when: ",
+        "  This is a suggestion; ripr has not run or verified anything.",
+        "--seam-id 67fc764ba37d77bd --json",
+    ] {
+        assert!(
+            plain_stdout.contains(needle),
+            "missing {needle:?}:\n{plain_stdout}"
+        );
+    }
+    for absent in [
+        "Repair card ",
+        "producer:",
+        "subject:",
+        "non-claim",
+        "edit cage",
+        "allowed_edit_surface",
+        "witness",
+        "detail [",
+        "repair_ready=",
+        "sha256:",
+    ] {
+        assert!(
+            !plain_stdout.contains(absent),
+            "plain brief must not print {absent:?}:\n{plain_stdout}"
+        );
+    }
+    assert!(
+        plain_stdout.lines().count() <= 14,
+        "plain brief should stay short:\n{plain_stdout}"
+    );
+
     let human = run_ripr(&[
         "agent",
         "card",
+        "--verbose",
         "--root",
         &root_arg,
         "--seam-id",
@@ -6723,9 +6782,24 @@ fn agent_card_readiness_agrees_with_repair_target_admission()
                 .ok_or("missing cage blocker")?;
             assert!(blocker.contains("no selected edit target"), "{blocker}");
             assert!(String::from_utf8_lossy(&before.stderr).contains(blocker));
+            let plain = run_ripr(&[
+                "agent",
+                "card",
+                "--root",
+                &root_arg,
+                "--seam-id",
+                BOUNDARY_GAP_SEAM_ID,
+            ]);
+            assert_success(&plain);
+            let plain = String::from_utf8_lossy(&plain.stdout);
+            assert!(
+                plain.contains("Not ready to repair yet:") && plain.contains(blocker),
+                "{plain}"
+            );
             let human = run_ripr(&[
                 "agent",
                 "card",
+                "--verbose",
                 "--root",
                 &root_arg,
                 "--seam-id",
@@ -13918,9 +13992,11 @@ fn assert_doctor_passes_without_rust_toolchain(
     let human = run_doctor_with_path(root, path, false)?;
     let stdout = String::from_utf8_lossy(&human.stdout);
     if !human.status.success()
-        || !stdout.contains(&format!("- Cargo.toml check skipped: {scope_reason}"))
-        || !stdout.contains(&format!("- cargo check skipped: {scope_reason}"))
-        || !stdout.contains(&format!("- rustc check skipped: {scope_reason}"))
+        || stdout
+            .matches(&format!("- Rust checks skipped: {scope_reason}\n"))
+            .count()
+            != 1
+        || stdout.contains("check skipped:")
         || stdout.contains("! no Cargo.toml")
         || !stdout.contains("✓ doctor checks passed")
     {
@@ -19844,12 +19920,13 @@ fn pilot_names_python_check_route_when_repo_has_no_rust_seams() -> Result<(), St
         "python-only repo exposure must name the seam-inventory limit: {exposure}"
     );
     assert_eq!(exposure["metrics"]["seams_total"], 0);
+    // Pilot analyzed Python (the preview block above), so it must not also
+    // list Python as "Not scanned" (#11215).
     assert!(
-        stdout.contains(&format!(
-            "python: 2 files (preview; run the command below to check the diff)\n    route: {command}\n"
-        )),
+        stdout.contains("Python preview:\n  status: ready"),
         "{stdout}"
     );
+    assert!(!stdout.contains("Not scanned by pilot"), "{stdout}");
     // The Python repair card is the top recommendation, so the closing block
     // follows the card's route rather than sending the user to `ripr check`,
     // which only leads back to pilot (rc rehearsal py-pricing).
