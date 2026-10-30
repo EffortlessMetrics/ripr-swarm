@@ -13053,8 +13053,8 @@ fn memoized_file_renames_to_matches_the_direct_scan() {
         "use a::B as Widget2;",
     ];
     let names = [
-        "Widget", "r#Widget", "r", "u32", "Clone", "Fake", "bar", "C", "E", "r#E", "Widget2", "Wid",
-        "Missing", "",
+        "Widget", "r#Widget", "r", "u32", "Clone", "Fake", "bar", "C", "E", "r#E", "Widget2",
+        "Wid", "Missing", "",
     ];
     for source in sources {
         for name in names {
