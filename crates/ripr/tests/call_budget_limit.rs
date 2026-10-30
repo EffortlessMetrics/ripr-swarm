@@ -314,10 +314,9 @@ fn an_already_unknown_finding_names_the_budget_and_drops_call_derived_absence() 
     }
     assert!(finding.activation.missing_discriminators.is_empty());
     assert!(
-        finding
-            .recommended_next_step
-            .as_deref()
-            .is_none_or(|step| !step.contains("ripr.toml does not support fixture/builder value mappings")),
+        finding.recommended_next_step.as_deref().is_none_or(
+            |step| !step.contains("ripr.toml does not support fixture/builder value mappings")
+        ),
         "{:?}",
         finding.recommended_next_step
     );
