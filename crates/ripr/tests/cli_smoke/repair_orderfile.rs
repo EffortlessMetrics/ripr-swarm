@@ -172,18 +172,14 @@ fn dirty_production_requires_recovery_despite_user_orderfile() -> TestResult {
         assert_eq!(refused.status.code(), Some(2), "{mode}: {refused:?}");
         let stderr = String::from_utf8_lossy(&refused.stderr);
         assert!(
-            stderr
-                .contains("outside the allowed test surface already differ from HEAD: src/lib.rs"),
+            stderr.contains("Uncommitted: src/lib.rs"),
             "{mode}: {stderr}"
         );
         assert!(
-            stderr.contains("to recover: commit the listed file(s)"),
+            stderr.contains("Commit them (for example `git commit -- src/lib.rs`)"),
             "{mode}: {stderr}"
         );
-        assert!(
-            stderr.contains("No workflow was prepared and no repair attempt was started"),
-            "{mode}: {stderr}"
-        );
+        assert!(stderr.contains("Nothing was started."), "{mode}: {stderr}");
         assert!(
             !stderr.contains("failed to read orderfile"),
             "{mode}: {stderr}"

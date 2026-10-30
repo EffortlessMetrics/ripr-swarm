@@ -347,7 +347,7 @@ async fn oversized_gap_item_leaves_mcp_through_the_real_routes() -> Result<(), S
             "routed tool response missed typed refusal: {rendered}"
         ));
     }
-    if !rendered.contains("ripr check --committed --format json")
+    if !rendered.contains("--committed --json")
         || !rendered.contains("related tests are capped per finding")
     {
         return Err(format!(
@@ -379,7 +379,12 @@ async fn oversized_gap_item_leaves_mcp_through_the_real_routes() -> Result<(), S
     let data = error
         .data
         .ok_or_else(|| "the gap resource failure carries typed data".to_string())?;
-    if data["recovery"].as_str() != Some(workspace::RECOVERY_GAP_ITEM_TOO_LARGE) {
+    let recovery = data["recovery"]
+        .as_str()
+        .ok_or("gap resource lost recovery")?;
+    if !recovery.contains("--committed --json")
+        || !recovery.contains("related tests are capped per finding")
+    {
         return Err(format!("gap resource recovery drifted: {data}"));
     }
     Ok(())
@@ -489,7 +494,9 @@ async fn window_sized_gap_item_refuses_typed_instead_of_dropping_structured_cont
         .pointer("/structuredContent/failure/recovery")
         .and_then(Value::as_str)
         .ok_or_else(|| "window gap refusal omitted recovery".to_string())?;
-    if recovery != workspace::RECOVERY_GAP_ITEM_TOO_LARGE {
+    if !recovery.contains("--committed --json")
+        || !recovery.contains("related tests are capped per finding")
+    {
         return Err(format!("window gap refusal recovery drifted: {recovery}"));
     }
     Ok(())
@@ -1315,7 +1322,7 @@ fn resource_id_document_resolves_raw_decoded_and_ambiguous_spellings() -> Result
     }
 
     // Non-miss failures pass through untouched.
-    match resource_id_document("gap:rust:src/lib.rs:owner", |_id| {
+    match resource_id_document::<Value>("gap:rust:src/lib.rs:owner", |_id| {
         Err(workspace::AttemptFailure::new(
             workspace::CODE_ANALYSIS_FAILED,
             "instrument failure",
@@ -1686,5 +1693,174 @@ fn resource_budget_failure_reports_bytes_budget_and_recovery() -> Result<(), Str
         envelope["contents"][0]["mimeType"],
         serde_json::json!("application/json")
     );
+    Ok(())
+}
+
+/// #10518/#10539: the JSON-RPC code is coarse by contract and consumers branch
+/// on `error.data.code`. `docs/interop/mcp.md` tabulates every kind; this test
+/// keeps that table equal to the shared vocabulary (`failure_vocabulary`, the
+/// owner of the enumerated kinds) and to what `resource_failure` answers.
+#[test]
+fn mcp_doc_error_table_matches_vocabulary_and_resource_failure_mapping() -> Result<(), String> {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/interop/mcp.md");
+    let doc =
+        std::fs::read_to_string(&path).map_err(|err| format!("read {}: {err}", path.display()))?;
+    let mut rows: Vec<(String, String)> = Vec::new();
+    for line in doc.lines() {
+        let cells: Vec<&str> = line.split('|').map(str::trim).collect();
+        // `| code | jsonrpc | class | recovery |` splits into 6 cells.
+        if cells.len() != 6 || !cells[1].starts_with('`') || !cells[2].starts_with('`') {
+            continue;
+        }
+        let code = cells[1].trim_matches('`').to_string();
+        let jsonrpc = cells[2].trim_matches('`').to_string();
+        if !jsonrpc.starts_with("-32") {
+            continue;
+        }
+        rows.push((code, jsonrpc));
+    }
+    if rows.is_empty() {
+        return Err("docs/interop/mcp.md lost its error-code table".to_string());
+    }
+    let mut documented: Vec<&str> = rows.iter().map(|(code, _)| code.as_str()).collect();
+    documented.sort_unstable();
+    let before = documented.len();
+    documented.dedup();
+    if documented.len() != before {
+        return Err("docs error table lists a data.code twice".to_string());
+    }
+    // `id_ambiguous` is emitted only by the resource-id route, so it rides
+    // `resource_failure` without being in the tool failure-schema vocabulary.
+    let mut vocabulary = protocol::failure_vocabulary();
+    vocabulary.push(workspace::CODE_ID_AMBIGUOUS);
+    vocabulary.sort_unstable();
+    if documented != vocabulary {
+        return Err(format!(
+            "docs/interop/mcp.md error table {documented:?} drifted from the failure vocabulary {vocabulary:?}"
+        ));
+    }
+    for code in vocabulary {
+        let jsonrpc = rows
+            .iter()
+            .find(|(documented, _)| documented == code)
+            .map(|(_, jsonrpc)| jsonrpc.as_str())
+            .ok_or_else(|| format!("{code} missing from docs table"))?;
+        let failure = workspace::AttemptFailure::new(code, "d", "r");
+        let error = resource_failure("gap", &failure, None);
+        if error.code.0.to_string() != jsonrpc {
+            return Err(format!(
+                "docs say {code} answers {jsonrpc}, resource_failure answers {}",
+                error.code.0
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// #11132: a panic inside a language adapter during `ripr_refresh` is a typed
+/// `analysis_failed` tool failure. The server answers it, keeps serving the
+/// next request, and the refresh after the failure analyzes normally, so a
+/// contained failure never ends the MCP process or leaves a half-committed
+/// snapshot behind.
+async fn worktree_refresh(
+    server: &McpServer,
+) -> Result<rmcp::model::CallToolResponse, rmcp::model::ErrorData> {
+    let mut arguments = serde_json::Map::new();
+    arguments.insert("source".to_string(), Value::String("worktree".to_string()));
+    server
+        .refresh_tool(Some(arguments), super::super::MAX_RESPONSE_BYTES)
+        .await
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn refresh_contains_a_language_adapter_panic() -> Result<(), String> {
+    let root = std::env::temp_dir().join(format!(
+        "ripr-mcp-adapter-panic-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"mcp-panic\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn gate_state(flag: bool) -> bool { flag }\n",
+    )
+    .map_err(|error| error.to_string())?;
+    let run_git = |args: &[&str]| -> Result<(), String> {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(&root)
+            .output()
+            .map_err(|error| format!("git {args:?}: {error}"))?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(format!(
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ))
+        }
+    };
+    run_git(&["init"])?;
+    run_git(&["config", "user.email", "ripr@example.invalid"])?;
+    run_git(&["config", "user.name", "RIPR Test"])?;
+    run_git(&["add", "Cargo.toml", "src/lib.rs"])?;
+    run_git(&["commit", "-m", "base"])?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn gate_state(flag: bool) -> bool {\n    if flag { true } else { false }\n}\n",
+    )
+    .map_err(|error| error.to_string())?;
+
+    let server = McpServer::new(
+        WorkspaceStatus::resolve_with_root(Some(root.clone())).0,
+        Some(root.clone()),
+    )
+    .map_err(|error| error.to_string())?;
+    let text = |response: CallToolResponse| -> Result<String, String> {
+        let rmcp::model::CallToolResponse::Complete(result) = response else {
+            return Err("tool call did not complete".to_string());
+        };
+        serde_json::to_string(&result).map_err(|error| error.to_string())
+    };
+
+    {
+        let _armed = crate::analysis::injected_adapter_panic::arm(
+            &root,
+            crate::analysis::language::LanguageId::Rust,
+        );
+        let failed = text(
+            worktree_refresh(&server)
+                .await
+                .map_err(|error| format!("refresh must answer, not error: {error:?}"))?,
+        )?;
+        assert!(
+            failed.contains("analysis_failed"),
+            "typed analysis_failed failure expected, got {failed}"
+        );
+    }
+
+    // The server is still alive and the same request now succeeds.
+    server
+        .status_tool(super::super::MAX_RESPONSE_BYTES)
+        .await
+        .map_err(|error| format!("status after contained failure: {error:?}"))?;
+    let recovered = text(
+        worktree_refresh(&server)
+            .await
+            .map_err(|error| format!("recovered refresh: {error:?}"))?,
+    )?;
+    assert!(
+        !recovered.contains("analysis_failed"),
+        "the refresh after a contained panic must analyze normally, got {recovered}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
     Ok(())
 }

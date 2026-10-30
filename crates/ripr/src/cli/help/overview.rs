@@ -29,8 +29,9 @@ Uses tracked edits, or committed history when clean. On a clean base branch,
 edit a tracked source file first; new files need git add -N PATH.
 
 The loop is: ripr names one gap -> you add one focused test -> ripr records
-whether the gap closed. `ripr.toml` is optional; the zero-config run is the
-intended first interface.
+whether the gap closed. Commit your source change first, so `ripr repair` can
+tell your new test apart from it. `ripr.toml` is optional; the zero-config run
+is the intended first interface.
 
 What are you trying to do?
   Diagnose setup        ripr doctor
@@ -39,9 +40,10 @@ What are you trying to do?
   Guided repo adoption  ripr pilot --root .
   Understand a finding  ripr explain <finding-id>
                         ripr context --at <finding-id>
-  Repair one named gap  ripr repair [<item>]
+  Repair a Rust seam    ripr repair [<item>]
                         # edit one focused test
                         ripr continue
+  Repair a diff gap     follow the start from ripr check, when offered
   Compose PR evidence   ripr first-pr --root . --base BASE --head HEAD
   Work in an editor     ripr lsp --stdio (started by your editor)
   Adopt advisory CI     ripr init --ci github
@@ -52,16 +54,15 @@ More:
   ripr help --json       Versioned machine-readable command catalog.
 
 Exit codes: 0 completed, 2 could not complete (usage, configuration, or
-operational error), 3 blocking decision or typed refusal, 130 interrupted
-standalone check. Full contract: docs/EXIT_CODES.md.
+operational error), 3 ripr declined: a blocking result, or a request it will
+not run (the output says why), 130 interrupted standalone check. Full
+contract: docs/EXIT_CODES.md.
 Global flags: -v, --verbose   Extra pipeline diagnostics on stderr: analyzed
-languages, mode, and probe/finding counts (any position, except on
-`ripr help --json`).
+languages, mode, and counts (any position, except on `ripr help --json`).
 
-ripr is static and advisory. It reads changed code, builds mutation-shaped
-probes, and estimates whether tests reach, infect, propagate, and reveal the
-changed behavior. It does not run mutants and does not report runtime mutation
-outcomes; a real mutation runner confirms later.
+ripr reads your changed code, imagines small bugs in it, and checks whether
+your tests would likely catch them. It does not run mutants or your tests and
+reports no runtime outcomes; a real mutation runner confirms later.
 "#;
 
 /// The exhaustive command reference: `ripr help --all`.
@@ -79,14 +80,17 @@ Machine catalog: ripr help --json  (this route accepts no other arguments)
 
 Global flags (accepted in any position, before or after the command, except on ripr help --json):
   -v, --verbose   Extra pipeline diagnostics on stderr: analyzed languages,
-                  mode, and probe/finding counts. A -v/--verbose token is
-                  always this global flag, never another flag's value.
+                  mode, and probe/finding counts; ripr pilot also prints a
+                  per-stage timing table after a complete run. A -v/--verbose
+                  token is always this global flag, never another flag's
+                  value.
 
 Task map:
   Diagnose setup        ripr doctor
   Inspect one change    ripr check
   Guided repo adoption  ripr pilot --root .
-  Repair one named gap  ripr repair [<item>] | ripr continue | ripr status
+  Repair a Rust seam    ripr repair [<item>] | ripr continue | ripr status
+  Repair a diff gap     follow the start from ripr check, when offered
   Compose PR evidence   ripr first-pr --root . --base BASE --head HEAD
   Adopt advisory CI     ripr init --ci github
 

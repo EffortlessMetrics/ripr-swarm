@@ -23,6 +23,7 @@ use std::sync::OnceLock;
 
 mod observation_tail_return;
 mod preparation;
+mod transitional;
 
 /// Result of a single fixture run: violation lines + optional run output.
 type FixtureResult = Result<(Vec<String>, Option<FixtureRun>), String>;
@@ -941,7 +942,12 @@ struct GoldenRunSet {
 pub(crate) fn run_fixture(path: &Path) -> Result<FixtureRun, String> {
     let run = run_fixture_outputs(path)?;
     let expected = path.join("expected");
+    let fixture_name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
     let comparisons = fixture_golden_comparisons(
+        &fixture_name,
         &expected,
         &run.check_json,
         &run.human_txt,
@@ -1276,6 +1282,7 @@ pub(crate) fn run_fixture_check(
 }
 
 fn fixture_golden_comparisons(
+    fixture: &str,
     expected: &Path,
     check_json: &Path,
     human_txt: &Path,
@@ -1283,6 +1290,7 @@ fn fixture_golden_comparisons(
 ) -> Result<Vec<GoldenComparison>, String> {
     let mut comparisons = Vec::new();
     comparisons.push(compare_golden(
+        fixture,
         "check.json",
         &expected.join("check.json"),
         check_json,
@@ -1290,11 +1298,17 @@ fn fixture_golden_comparisons(
 
     let expected_human = expected.join("human.txt");
     if expected_human.exists() {
-        comparisons.push(compare_golden("human.txt", &expected_human, human_txt)?);
+        comparisons.push(compare_golden(
+            fixture,
+            "human.txt",
+            &expected_human,
+            human_txt,
+        )?);
     }
     let expected_human_full = expected.join("human-full.txt");
     if expected_human_full.exists() {
         comparisons.push(compare_golden(
+            fixture,
             "human-full.txt",
             &expected_human_full,
             human_full_txt,
@@ -1304,6 +1318,7 @@ fn fixture_golden_comparisons(
 }
 
 fn compare_golden(
+    fixture: &str,
     surface: &'static str,
     expected: &Path,
     actual: &Path,
@@ -1316,15 +1331,25 @@ fn compare_golden(
             normalize_check_json_golden_document(&actual_text),
         )
     } else {
-        (expected_text, actual_text)
+        (
+            mask_repair_refusal_reason(&expected_text),
+            mask_repair_refusal_reason(&actual_text),
+        )
     };
     let normalized_expected = normalize_golden_text(&expected_text);
     let normalized_actual = normalize_golden_text(&actual_text);
+    let aliased = surface != "check.json"
+        && transitional_refusal_aliases_apply(
+            fixture,
+            surface,
+            &normalized_expected,
+            &normalized_actual,
+        );
     Ok(GoldenComparison {
         surface,
         expected: expected.to_path_buf(),
         actual: actual.to_path_buf(),
-        matches: normalized_expected == normalized_actual,
+        matches: aliased || normalized_expected == normalized_actual,
         first_difference: first_line_difference(&normalized_expected, &normalized_actual),
     })
 }
@@ -1445,6 +1470,191 @@ fn split_compact_root_object_closer(value: &str) -> String {
     split
 }
 
+/// Marker that opens the human screen's repair-start refusal sentence.
+const REPAIR_REFUSAL_MARKER: &str = "no repair start offered: ";
+
+/// One `RepairRouteRefusal` variant's stable opening, and the evidence list
+/// (if any) that must stay compared.
+struct RefusalRule {
+    /// Fixed opening of the variant's sentence. It is the variant discriminator
+    /// and is always compared verbatim.
+    prefix: &'static str,
+    /// When set, a missing-evidence list follows this marker (empty means the
+    /// list starts right after `prefix`) and stays compared verbatim.
+    list_marker: Option<&'static str>,
+    /// Text that ends the list and starts the maskable trailing advice.
+    list_end: &'static str,
+}
+
+const fn rule(prefix: &'static str) -> RefusalRule {
+    RefusalRule {
+        prefix,
+        list_marker: None,
+        list_end: "",
+    }
+}
+
+/// Mirrors the arms of `RepairRouteRefusal::advisory`
+/// (crates/ripr/src/app/navigation.rs). A reason that matches no rule is
+/// compared verbatim, so a new or heavily reworded variant is visible golden
+/// drift that has to be re-blessed and added here, not silently masked.
+const REPAIR_REFUSAL_RULES: &[RefusalRule] = &[
+    rule("this finding has no gap ID"),
+    rule("ripr found no seam in this finding's file to bind it to"),
+    rule("several seams bind this finding"),
+    rule("nothing to repair here"),
+    rule("`ripr check` reads a gap or limit for this change"),
+    rule("the seam inventory behind `ripr repair`"),
+    rule("the seam budget left"),
+    rule("the root's config could not be read"),
+    rule("classifying the finding's seams failed"),
+    rule("ripr cannot build a repair packet for this finding yet because the static evidence"),
+    RefusalRule {
+        prefix: "ripr cannot build a repair packet for this finding yet because it is still missing: ",
+        list_marker: Some(""),
+        list_end: "; follow the Next step above",
+    },
+    RefusalRule {
+        prefix: "a related test already reaches the changed boundary input",
+        list_marker: Some(" It is also still missing: "),
+        list_end: ". Follow the Next step above",
+    },
+];
+
+/// Mask the explanatory prose of the repair-start refusal sentence in human
+/// goldens, keeping the variant and its evidence list compared.
+///
+/// The prose after `no repair start offered:` is plain language that focused
+/// tests assert directly. Comparing it verbatim made every wording improvement
+/// re-bless one line in each of hundreds of fixtures (#10702). Masking the
+/// whole tail also hid a refusal changing from one variant to another, so each
+/// known variant keeps its fixed opening (the discriminator) and, for the
+/// not-ready variants, the `still missing:` list; only the text around them is
+/// replaced by `<reason>`. A repair start that flips to a refusal, or the
+/// refusal line disappearing, is also still drift.
+fn mask_repair_refusal_reason(value: &str) -> String {
+    let mut masked = String::with_capacity(value.len());
+    for segment in value.split_inclusive('\n') {
+        let indent = segment.len() - segment.trim_start().len();
+        let (head, rest) = segment.split_at(indent);
+        let Some(reason) = rest.strip_prefix(REPAIR_REFUSAL_MARKER) else {
+            masked.push_str(segment);
+            continue;
+        };
+        let body_end = reason.trim_end_matches(['\r', '\n']).len();
+        let (body, ending) = reason.split_at(body_end);
+        masked.push_str(head);
+        masked.push_str(REPAIR_REFUSAL_MARKER);
+        masked.push_str(&mask_refusal_body(body));
+        masked.push_str(ending);
+    }
+    masked
+}
+
+const SEAMS_UNTIED_OPENING: &str = transitional::SEAMS_UNTIED;
+
+/// Whether `actual` differs from `expected` (both already refusal-masked) only
+/// by refusal openings approved for this exact `fixture/surface` in
+/// `transitional::MIGRATIONS`. A migration to the exposed opening also needs
+/// the expected golden to say `Static exposure: exposed` itself.
+fn transitional_refusal_aliases_apply(
+    fixture: &str,
+    surface: &str,
+    expected: &str,
+    actual: &str,
+) -> bool {
+    let key = format!("{fixture}/{surface}");
+    let approved: Vec<&transitional::Migration> = transitional::MIGRATIONS
+        .iter()
+        .filter(|migration| migration.surfaces.contains(&key.as_str()))
+        .collect();
+    if approved.is_empty() {
+        return false;
+    }
+    let expected_lines: Vec<&str> = expected.split('\n').collect();
+    let actual_lines: Vec<&str> = actual.split('\n').collect();
+    if expected_lines.len() != actual_lines.len() {
+        return false;
+    }
+    let exposed_in_expected = expected_lines
+        .iter()
+        .any(|line| line.trim_start().starts_with("Static exposure: exposed"));
+    expected_lines.iter().zip(&actual_lines).all(|(old, new)| {
+        if old == new {
+            return true;
+        }
+        // The opening may move, the line's indentation may not.
+        let indent = |line: &str| line[..line.len() - line.trim_start().len()].to_string();
+        if indent(old) != indent(new) {
+            return false;
+        }
+        let (Some(old_body), Some(new_body)) = (
+            old.trim_start().strip_prefix(REPAIR_REFUSAL_MARKER),
+            new.trim_start().strip_prefix(REPAIR_REFUSAL_MARKER),
+        ) else {
+            return false;
+        };
+        approved.iter().any(|migration| {
+            old_body.starts_with(migration.old)
+                && new_body.starts_with(migration.new)
+                && (migration.new != transitional::EXPOSED || exposed_in_expected)
+        })
+    })
+}
+
+/// Replace the seam count of the untied-seams opening so the count (which
+/// moves with unrelated seams) is not golden-pinned.
+fn normalize_seam_count(body: &str) -> Option<String> {
+    let rest = body.strip_prefix("ripr found ")?;
+    let digits = rest.chars().take_while(char::is_ascii_digit).count();
+    if digits == 0 {
+        return None;
+    }
+    let after = &rest[digits..];
+    let after = after
+        .strip_prefix(" seams")
+        .or_else(|| after.strip_prefix(" seam"))?;
+    after.strip_prefix(
+        " in this finding's file, but could not tie one to this finding's changed line",
+    )?;
+    Some(format!("{SEAMS_UNTIED_OPENING}<reason>"))
+}
+
+fn mask_refusal_body(body: &str) -> String {
+    if let Some(masked) = normalize_seam_count(body) {
+        return masked;
+    }
+    for rule in REPAIR_REFUSAL_RULES {
+        let Some(after) = body.strip_prefix(rule.prefix) else {
+            continue;
+        };
+        let mut out = String::from(rule.prefix);
+        let Some(marker) = rule.list_marker else {
+            out.push_str("<reason>");
+            return out;
+        };
+        let list_start = if marker.is_empty() {
+            Some(0)
+        } else {
+            after.find(marker)
+        };
+        match list_start {
+            Some(start) => {
+                if !marker.is_empty() {
+                    out.push_str("<reason>");
+                }
+                let tail = &after[start..];
+                let end = tail.find(rule.list_end).unwrap_or(tail.len());
+                out.push_str(&tail[..end]);
+                out.push_str("<reason>");
+            }
+            None => out.push_str("<reason>"),
+        }
+        return out;
+    }
+    body.to_string()
+}
+
 fn normalize_check_json_golden_document(value: &str) -> String {
     split_compact_root_object_closer(&strip_canonical_next_action_member(value))
 }
@@ -1469,48 +1679,74 @@ fn project_json_cwd_prefix(text: &str) -> String {
 }
 
 pub(crate) fn normalize_fixture_json_output(value: &str) -> String {
+    normalize_fixture_json_output_for_host(value, cfg!(windows))
+}
+
+/// [`normalize_fixture_json_output`] with the host explicit.
+///
+/// Only a Windows-produced document carries path separators as backslashes
+/// (#2337), so only a Windows host projects them to `/`. Elsewhere a JSON
+/// `\\` is a literal backslash of source text (an escaped quote `\"`, a
+/// `\u{7b}` escape, a `\n` in an asserted string literal) and must reach
+/// the golden unchanged: the former blanket `\\` to `/` rewrote
+/// `quoted\"marker\"` to `quoted/"marker/"` in checked-in goldens (#11119).
+/// On Windows only string values under a path-bearing key (see
+/// [`is_path_bearing_json_key`]) have their separators projected; every
+/// other string (an asserted `"a\\nb"`, a `\\u{7b}` escape, a `\\"` quote)
+/// is source text and stays byte-identical, so the fold no longer guesses
+/// from neighbouring characters.
+fn normalize_fixture_json_output_for_host(value: &str, windows: bool) -> String {
     let value = normalize_check_json_golden_document(value);
-    // #2337: match the human normalizer's approach — replace ALL backslashes
-    // with forward slashes, not just the escaped double-backslash form. On
-    // Windows, ripr check --json can emit single-backslash paths inside
-    // free-text string values (error messages, code excerpts). The previous
-    // normalizer only handled the `\\` (JSON-escaped) form, missing these.
-    // First replace `\\` (the JSON-escaped form), then replace any remaining
-    // single `\` — matching the human normalizer at line 737.
-    //
-    // BUT: JSON escape sequences like `\"`, `\n`, `\t`, `\r`, `\/` must be
-    // preserved — they are valid JSON string content, not path separators.
-    // The previous blanket `.replace('\\', "/")` corrupted these by turning
-    // `\"` into `/"`, breaking the expected golden output (#2522 regression).
-    //
-    // Strategy: replace `\\` → `/` first (the JSON-escaped backslash, which
-    // represents a literal backslash in the source text). Then replace any
-    // remaining single `\` that is NOT part of a JSON escape sequence.
-    let after_double = value.replace("\\\\", "/");
-    // #2556: operate on CHARS, not bytes — byte-wise push corrupts multi-byte
-    // UTF-8 sequences (e.g. é = 0xC3 0xA9 becomes two wrong chars).
-    let mut result = String::with_capacity(after_double.len());
-    let chars: Vec<char> = after_double.chars().collect();
+    if !windows {
+        return project_json_cwd_prefix(&value);
+    }
+    // #2556: operate on CHARS, not bytes, so multi-byte UTF-8 survives.
+    let chars: Vec<char> = value.chars().collect();
+    let mut result = String::with_capacity(value.len());
+    let mut current_key = String::new();
     let mut i = 0;
     while i < chars.len() {
-        if chars[i] == '\\' && i + 1 < chars.len() {
-            let next = chars[i + 1];
-            // Preserve JSON escape sequences: \" \\ \n \t \r \uXXXX
-            if matches!(next, '"' | '\\' | 'n' | 't' | 'r' | 'u') {
-                result.push('\\');
-                result.push(next);
-                i += 2;
-                continue;
-            }
-            // Not a JSON escape — treat as a path separator
-            result.push('/');
+        if chars[i] != '"' {
+            result.push(chars[i]);
             i += 1;
             continue;
         }
-        result.push(chars[i]);
+        // Scan one JSON string token, honoring escapes.
+        let start = i;
         i += 1;
+        while i < chars.len() && chars[i] != '"' {
+            i += if chars[i] == '\\' { 2 } else { 1 };
+        }
+        let end = i.min(chars.len().saturating_sub(1));
+        let token: String = chars[start..=end].iter().collect();
+        i = end + 1;
+        let mut after = i;
+        while chars.get(after).is_some_and(|c| c.is_whitespace()) {
+            after += 1;
+        }
+        if chars.get(after) == Some(&':') {
+            current_key = token.trim_matches('"').to_string();
+            result.push_str(&token);
+        } else if is_path_bearing_json_key(&current_key) {
+            result.push_str(&token.replace("\\\\", "/"));
+        } else {
+            result.push_str(&token);
+        }
     }
     project_json_cwd_prefix(&result)
+}
+
+/// Keys whose string values are filesystem paths in the check/gate JSON.
+///
+/// `evidence_path` names the reach/infect/propagate/observe trail, not a
+/// filesystem path: its strings quote asserted source text (`\"`, `\u{..}`),
+/// so matching its `path` substring would fold source backslashes on Windows
+/// and fork the goldens between hosts (#11119).
+fn is_path_bearing_json_key(key: &str) -> bool {
+    key != "evidence_path"
+        && ["path", "file", "root", "dir"]
+            .iter()
+            .any(|needle| key.contains(needle))
 }
 
 pub(crate) fn normalize_fixture_human_output(value: &str) -> String {
@@ -2705,6 +2941,69 @@ mod tests {
         Ok(dir)
     }
 
+    fn synthetic_fixture_channels(
+        label: &str,
+        diff: &[u8],
+        config: Option<&[u8]>,
+        source: &[u8],
+    ) -> Result<std::path::PathBuf, String> {
+        let dir = synthetic_fixture(label, source, true)?;
+        std::fs::write(dir.join("diff.patch"), diff).map_err(|e| e.to_string())?;
+        if let Some(bytes) = config {
+            std::fs::write(dir.join("input/ripr.toml"), bytes).map_err(|e| e.to_string())?;
+        }
+        Ok(dir)
+    }
+
+    fn eol_crlf(dir: &std::path::Path, rel: &str) -> BTreeMap<String, GitEolInfo> {
+        let mut eol = BTreeMap::new();
+        eol.insert(
+            normalize_path(&dir.join(rel)),
+            GitEolInfo {
+                index: "lf".into(),
+                worktree: "crlf".into(),
+                attrs: "text=auto eol=lf".into(),
+            },
+        );
+        eol
+    }
+
+    #[test]
+    fn crlf_guard_fires_per_channel_independently() -> Result<(), String> {
+        // A: diff.patch only.
+        let dir = synthetic_fixture_channels(
+            "8614-chan-diff",
+            b"diff --git a/x b/x\r\n+fn a() {}\r\n",
+            None,
+            b"fn a() {}\n",
+        )?;
+        let v = crlf_guard_violations_with(&dir, &eol_crlf(&dir, "diff.patch"), &BTreeSet::new());
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(v.len(), 1, "{v:?}");
+        assert!(v[0].contains("diff.patch"), "{v:?}");
+        // B: loaded config only (input/ripr.toml is the file --root loads first).
+        let dir = synthetic_fixture_channels(
+            "8614-chan-config",
+            b"diff\n",
+            Some(b"[languages]\r\nenabled = [\"rust\", \"python\"]\r\n"),
+            b"fn a() {}\n",
+        )?;
+        let v =
+            crlf_guard_violations_with(&dir, &eol_crlf(&dir, "input/ripr.toml"), &BTreeSet::new());
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(v.len(), 1, "{v:?}");
+        assert!(v[0].contains("ripr.toml"), "{v:?}");
+        // C: source input only (existing lib.rs case, kept as the C pin).
+        let dir =
+            synthetic_fixture_channels("8614-chan-source", b"diff\n", None, b"fn a() {}\r\n")?;
+        let v =
+            crlf_guard_violations_with(&dir, &eol_crlf(&dir, "input/src/lib.rs"), &BTreeSet::new());
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(v.len(), 1, "{v:?}");
+        assert!(v[0].contains("lib.rs"), "{v:?}");
+        Ok(())
+    }
+
     #[test]
     fn crlf_guard_fires_on_synthetic_crlf_input() -> Result<(), String> {
         // #8614 deterministic control: CRLF bytes + git saying i/lf w/crlf.
@@ -2929,7 +3228,7 @@ mod tests {
     #[test]
     fn normalize_json_handles_double_backslash() {
         let input = r#"{"path":"crates\\ripr\\src\\lib.rs"}"#;
-        let out = normalize_fixture_json_output(input);
+        let out = normalize_fixture_json_output_for_host(input, true);
         assert!(
             !out.contains('\\'),
             "double backslash must be normalized: {out}"
@@ -2937,23 +3236,74 @@ mod tests {
     }
 
     #[test]
-    fn normalize_json_handles_single_backslash() {
-        // #2337: single backslash in free-text fields (code excerpts, error
-        // messages) must also be normalized. But JSON escape sequences
-        // (\" \\ \n etc) must be preserved.
-        // Here `\b` and `\c` are NOT valid JSON escapes, so they should
-        // be treated as path separators and normalized.
-        // Note: in the raw string, `\b` is a single backslash + 'b'.
-        let input = r#"{"expression":"a\b\c"}"#;
-        let out = normalize_fixture_json_output(input);
-        // After normalization: the `\b` becomes `/b` (not a JSON escape
-        // since \b in JSON is backspace U+0008, but in this context it's
-        // a raw backslash in the Rust string). The key assertion is that
-        // the output does not contain a bare backslash that is NOT part of
-        // a JSON escape.
-        assert!(
-            !out.contains(r#"\b"#) && !out.contains(r#"\c"#),
-            "single backslash before non-escape char must be normalized: {out}"
+    fn normalize_json_keeps_source_text_backslashes_off_windows() -> Result<(), String> {
+        // #11119: a JSON `\\` is a literal backslash of asserted source text.
+        // Source `"read \"error\"", "\u{7b}", "a\nb"` renders as the JSON below.
+        let input =
+            r#"{"oracle":"assert_eq!(x, \"read \\\"error\\\"\", \"\\u{7b}\", \"a\\nb\");"}"#;
+        assert_eq!(normalize_fixture_json_output_for_host(input, false), input);
+        let parsed: serde_json::Value =
+            serde_json::from_str(input).map_err(|error| error.to_string())?;
+        assert_eq!(
+            parsed["oracle"],
+            "assert_eq!(x, \"read \\\"error\\\"\", \"\\u{7b}\", \"a\\nb\");"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn normalize_json_windows_keeps_quote_and_unicode_escapes_but_folds_paths() {
+        let source =
+            r#"{"oracle":"\"read \\\"error\\\"\" \\u{7b}","file":"crates\\ripr\\src\\lib.rs"}"#;
+        let out = normalize_fixture_json_output_for_host(source, true);
+        assert_eq!(
+            out,
+            r#"{"oracle":"\"read \\\"error\\\"\" \\u{7b}","file":"crates/ripr/src/lib.rs"}"#
+        );
+    }
+
+    #[test]
+    fn normalize_json_windows_folds_parenthesized_program_files_path() {
+        let source = r#"{"root":"vendor (x86)\\ripr\\src"}"#;
+        let out = normalize_fixture_json_output_for_host(source, true);
+        assert_eq!(out, r#"{"root":"vendor (x86)/ripr/src"}"#);
+    }
+
+    #[test]
+    fn normalize_json_windows_keeps_evidence_path_source_text() {
+        // `evidence_path` contains "path" but is a text trail quoting asserted
+        // source, so Windows must leave it identical to the other hosts while
+        // the sibling `sample_paths` array still folds (#11119).
+        let source =
+            r#"{"evidence_path":["a \"r \\\"e\\\"\"","u \\u{7b}"],"sample_paths":["s\\a.rs"]}"#;
+        let out = normalize_fixture_json_output_for_host(source, true);
+        assert_eq!(
+            out,
+            r#"{"evidence_path":["a \"r \\\"e\\\"\"","u \\u{7b}"],"sample_paths":["s/a.rs"]}"#
+        );
+    }
+
+    #[test]
+    fn normalize_json_windows_tokenizer_handles_trailing_backslash_and_nesting() {
+        // A string ending in an escaped backslash must close at its quote, and
+        // nested values resolve against their own keys.
+        let source = r#"{"root":"r\\s\\","n":{"note":"a\\b","dir":["x\\y"]},"k\"q":"v\\w"}"#;
+        let out = normalize_fixture_json_output_for_host(source, true);
+        assert_eq!(
+            out,
+            r#"{"root":"r/s/","n":{"note":"a\\b","dir":["x/y"]},"k\"q":"v\\w"}"#
+        );
+    }
+
+    #[test]
+    fn normalize_json_windows_keeps_newline_source_text_beside_path_fields() {
+        // `a\nb` has path-character neighbours but lives under a source-text
+        // key, so it must survive while the sibling path field folds (#11119).
+        let source = r#"{"oracle":"a\\nb","files":["src\\a.rs","src\\b.rs"],"text":"x\\y"}"#;
+        let out = normalize_fixture_json_output_for_host(source, true);
+        assert_eq!(
+            out,
+            r#"{"oracle":"a\\nb","files":["src/a.rs","src/b.rs"],"text":"x\\y"}"#
         );
     }
 
@@ -3074,6 +3424,270 @@ mod tests {
             normalize_check_json_golden_document(left),
             normalize_check_json_golden_document(right)
         );
+    }
+
+    #[test]
+    fn refusal_reason_wording_is_masked_but_the_decision_is_pinned() {
+        let wrap = |reason: &str| {
+            format!("Next:\n  ripr explain x\n  no repair start offered: {reason}\nMore:\n")
+        };
+        let canonical =
+            wrap("this finding has no gap ID, so old words; follow the Next step above");
+        let reworded = wrap("this finding has no gap ID, so new words");
+        assert_eq!(
+            mask_repair_refusal_reason(&canonical),
+            mask_repair_refusal_reason(&reworded),
+            "a reworded refusal must not read as golden drift"
+        );
+        // Negative: a variant change is drift even though both are refusals.
+        let no_seam = wrap("ripr found no seam in this finding's file to bind it to, so new words");
+        assert_ne!(
+            mask_repair_refusal_reason(&canonical),
+            mask_repair_refusal_reason(&no_seam)
+        );
+        // Negative: an unknown reason is compared verbatim.
+        assert_ne!(
+            mask_repair_refusal_reason(&wrap("something unmapped one")),
+            mask_repair_refusal_reason(&wrap("something unmapped two"))
+        );
+        // The `still missing:` list stays compared; the trailing advice does not.
+        let missing = |list: &str, advice: &str| {
+            wrap(&format!(
+                "ripr cannot build a repair packet for this finding yet because it is still missing: {list}; follow the Next step above{advice}"
+            ))
+        };
+        assert_eq!(
+            mask_repair_refusal_reason(&missing("a; b", ", then rerun")),
+            mask_repair_refusal_reason(&missing("a; b", ", reworded"))
+        );
+        assert_ne!(
+            mask_repair_refusal_reason(&missing("a; b", "")),
+            mask_repair_refusal_reason(&missing("a; c", ""))
+        );
+        // A not-ready refusal with an empty list is a different variant.
+        assert_ne!(
+            mask_repair_refusal_reason(&missing("a", "")),
+            mask_repair_refusal_reason(&wrap(
+                "ripr cannot build a repair packet for this finding yet because the static evidence is thin"
+            ))
+        );
+        // The boundary variant keeps its optional `also still missing` list.
+        let boundary = |also: &str, advice: &str| {
+            wrap(&format!(
+                "a related test already reaches the changed boundary input, but words, yet.{also} Follow the Next step above{advice}"
+            ))
+        };
+        assert_eq!(
+            mask_repair_refusal_reason(&boundary("", ", then x")),
+            mask_repair_refusal_reason(&boundary("", ", then y"))
+        );
+        assert_ne!(
+            mask_repair_refusal_reason(&boundary("", "")),
+            mask_repair_refusal_reason(&boundary(" It is also still missing: q.", ""))
+        );
+        assert_ne!(
+            mask_repair_refusal_reason(&boundary(" It is also still missing: q.", "")),
+            mask_repair_refusal_reason(&boundary(" It is also still missing: r.", ""))
+        );
+        // Negative: a repair start that flips to a refusal is still drift.
+        let offered = "Next:\n  ripr explain x\n  ripr repair abc --root r\nMore:\n";
+        assert_ne!(
+            mask_repair_refusal_reason(offered),
+            mask_repair_refusal_reason(&canonical)
+        );
+        // Negative: a refusal that disappears is still drift.
+        let absent = "Next:\n  ripr explain x\nMore:\n";
+        assert_ne!(
+            mask_repair_refusal_reason(absent),
+            mask_repair_refusal_reason(&canonical)
+        );
+        // Only the marker line is masked; prose elsewhere stays compared, and
+        // CRLF and a missing final newline are preserved.
+        assert_ne!(
+            mask_repair_refusal_reason("a\n  no repair start offered: x\n"),
+            mask_repair_refusal_reason("b\n  no repair start offered: x\n")
+        );
+        assert_eq!(
+            mask_repair_refusal_reason(
+                "  no repair start offered: several seams bind this finding, x\r\n"
+            ),
+            "  no repair start offered: several seams bind this finding<reason>\r\n"
+        );
+        assert_eq!(
+            mask_repair_refusal_reason(
+                "  no repair start offered: several seams bind this finding"
+            ),
+            "  no repair start offered: several seams bind this finding<reason>"
+        );
+    }
+
+    #[test]
+    fn compare_golden_masks_human_refusal_prose_but_not_variant_or_check_json() -> Result<(), String>
+    {
+        let dir = unique_temp_path("10702-compare-golden");
+        std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+        let write = |name: &str, text: &str| -> Result<std::path::PathBuf, String> {
+            let path = dir.join(name);
+            std::fs::write(&path, text).map_err(|err| err.to_string())?;
+            Ok(path)
+        };
+        let line = |reason: &str| format!("Next:\n  no repair start offered: {reason}\n");
+        let expected = write(
+            "expected.txt",
+            &line(
+                "ripr cannot build a repair packet for this finding yet because it is still missing: a; b; follow the Next step above, then rerun `ripr check`",
+            ),
+        )?;
+        let reworded = write(
+            "reworded.txt",
+            &line(
+                "ripr cannot build a repair packet for this finding yet because it is still missing: a; b; follow the Next step above, then try again",
+            ),
+        )?;
+        let other_list = write(
+            "other_list.txt",
+            &line(
+                "ripr cannot build a repair packet for this finding yet because it is still missing: a; c; follow the Next step above",
+            ),
+        )?;
+        let other_variant = write(
+            "other_variant.txt",
+            &line("this finding has no gap ID, so there is no seam"),
+        )?;
+        let matches = |actual: &Path, surface: &'static str| -> Result<bool, String> {
+            Ok(compare_golden("unlisted_fixture", surface, &expected, actual)?.matches)
+        };
+        assert!(matches(&reworded, "human.txt")?, "reworded prose is masked");
+        assert!(
+            !matches(&other_list, "human.txt")?,
+            "missing list is pinned"
+        );
+        assert!(!matches(&other_variant, "human.txt")?, "variant is pinned");
+        // check.json is never refusal-masked: the same text diverges there.
+        assert!(!matches(&reworded, "check.json")?, "check.json is unmasked");
+        assert!(matches(&expected, "check.json")?);
+
+        // Transitional migrations (#10702): only an approved fixture/surface
+        // with an approved old -> new opening passes.
+        let exposed_header = "Static exposure: exposed (severity: info)\n";
+        let write_exposed = |name: &str, reason: &str| -> Result<std::path::PathBuf, String> {
+            write(name, &format!("{exposed_header}{}", line(reason)))
+        };
+        let exposed_line =
+            "nothing to repair here; the related tests already notice this change (exposed)";
+        let untied_line = "ripr found 4 seams in this finding's file, but could not tie one to this finding's changed line, so y";
+        let one_seam_line = "ripr found 1 seam in this finding's file, but could not tie one to this finding's changed line, so z";
+        let old_no_seam = write_exposed(
+            "old_no_seam.txt",
+            "ripr found no seam in this finding's file to bind it to, so x",
+        )?;
+        let exposed = write_exposed("exposed.txt", exposed_line)?;
+        let untied = write_exposed("untied.txt", untied_line)?;
+        let one_seam = write_exposed("one_seam.txt", one_seam_line)?;
+        let compare = |fixture: &str,
+                       exp: &Path,
+                       act: &Path,
+                       surface: &'static str|
+         -> Result<bool, String> {
+            Ok(compare_golden(fixture, surface, exp, act)?.matches)
+        };
+        // Real approved identities, one per migration.
+        let no_seam_exposed = "asserting_same_file_test_positive_control";
+        let no_seam_untied = "assertion_shaped_control_production_caller";
+        let missing_exposed = "assertion_shaped_control_production_owner";
+        let inventory_exposed = "currentness_matrix_python_deleted_statement";
+        // Retired by the TypeScript/JavaScript re-bless (#10700, #10885): the
+        // no-gap-ID -> exposed entries were deleted, so it no longer aliases.
+        let retired_no_gap = "currentness_matrix_typescript_deleted_statement";
+        assert!(compare(
+            no_seam_exposed,
+            &old_no_seam,
+            &exposed,
+            "human.txt"
+        )?);
+        assert!(compare(no_seam_untied, &old_no_seam, &untied, "human.txt")?);
+        assert!(
+            compare(no_seam_untied, &old_no_seam, &one_seam, "human.txt")?,
+            "singular seam"
+        );
+        let inventory = write_exposed(
+            "inventory.txt",
+            "the seam inventory behind `ripr repair` and `ripr agent repair --phase before` could not be built",
+        )?;
+        assert!(
+            compare(inventory_exposed, &inventory, &exposed, "human.txt")?,
+            "inventory -> exposed"
+        );
+        let no_gap = write_exposed(
+            "no_gap.txt",
+            "this finding has no gap ID, so there is no seam",
+        )?;
+        assert!(
+            !compare(retired_no_gap, &no_gap, &exposed, "human.txt")?,
+            "retired no gap ID -> exposed migration is drift again"
+        );
+        let missing = write_exposed(
+            "missing.txt",
+            "ripr cannot build a repair packet for this finding yet because it is still missing: a; b; follow the Next step above",
+        )?;
+        assert!(
+            compare(missing_exposed, &missing, &exposed, "human.txt")?,
+            "still missing -> exposed"
+        );
+        // Negatives: an unapproved fixture, the wrong surface, check.json, an
+        // approved fixture with a pair it is not approved for, and pairs that
+        // are not aliases at all.
+        assert!(
+            !compare("unlisted_fixture", &old_no_seam, &exposed, "human.txt")?,
+            "unapproved fixture"
+        );
+        assert!(
+            !compare(no_seam_exposed, &old_no_seam, &exposed, "human-full.txt")?,
+            "unapproved surface"
+        );
+        assert!(
+            !compare(no_seam_exposed, &old_no_seam, &exposed, "check.json")?,
+            "check.json"
+        );
+        assert!(
+            !compare(no_seam_exposed, &old_no_seam, &untied, "human.txt")?,
+            "approved fixture, other pair"
+        );
+        assert!(
+            !compare(inventory_exposed, &inventory, &untied, "human.txt")?,
+            "inventory -> untied"
+        );
+        assert!(
+            !compare(no_seam_untied, &untied, &exposed, "human.txt")?,
+            "new -> new"
+        );
+        assert!(
+            !compare(no_seam_exposed, &exposed, &untied, "human.txt")?,
+            "exposed is not an alias source"
+        );
+        assert!(!compare(
+            no_seam_exposed,
+            &old_no_seam,
+            &other_variant,
+            "human.txt"
+        )?);
+        // The exposed target also needs the expected golden to say exposed.
+        let old_no_seam_not_exposed = write(
+            "old_no_seam_not_exposed.txt",
+            &line("ripr found no seam in this finding's file to bind it to, so x"),
+        )?;
+        let exposed_no_header = write("exposed_no_header.txt", &line(exposed_line))?;
+        assert!(
+            !compare(
+                no_seam_exposed,
+                &old_no_seam_not_exposed,
+                &exposed_no_header,
+                "human.txt"
+            )?,
+            "expected must say exposed"
+        );
+        std::fs::remove_dir_all(&dir).map_err(|err| err.to_string())?;
+        Ok(())
     }
 
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -3232,6 +3846,66 @@ mod tests {
     #[test]
     fn fixture_cache_pin_names_the_variable_ripr_resolves() {
         assert_eq!(FIXTURE_CACHE_DIR_ENV, "RIPR_CACHE_DIR");
+    }
+
+    /// #10702: each listed no-seam surface approves exactly one new opening.
+    #[test]
+    fn transitional_no_seam_surface_approves_only_its_own_new_opening() -> Result<(), String> {
+        let line = |body: &str| format!("Start here:\n  {REPAIR_REFUSAL_MARKER}{body}\nEnd");
+        let old = line(&format!("{} so there is no seam", transitional::NO_SEAM));
+        let untied = line(&format!("{}<reason>", transitional::SEAMS_UNTIED));
+        let gripped = line(&format!("{} but", transitional::SEAM_GRIPPED));
+        let untied_list = transitional::NO_SEAM_UNTIED_SURFACES;
+        let gripped_list = transitional::NO_SEAM_GRIPPED_SURFACES;
+        if untied_list.len() != 43 || gripped_list.len() != 93 {
+            return Err(format!(
+                "expected 43 untied and 93 gripped surfaces, got {} and {}",
+                untied_list.len(),
+                gripped_list.len()
+            ));
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        for key in untied_list.iter().chain(gripped_list) {
+            if !seen.insert(*key) {
+                return Err(format!("`{key}` is listed more than once or in both lists"));
+            }
+        }
+        let split = |key: &str| -> Result<(String, String), String> {
+            key.split_once('/')
+                .map(|(f, sfc)| (f.to_string(), sfc.to_string()))
+                .ok_or_else(|| format!("malformed surface key `{key}`"))
+        };
+        for (list, own, other) in [
+            (untied_list, &untied, &gripped),
+            (gripped_list, &gripped, &untied),
+        ] {
+            for key in list {
+                let (fixture, surface) = split(key)?;
+                if !transitional_refusal_aliases_apply(&fixture, &surface, &old, own) {
+                    return Err(format!("`{key}` must approve its own new opening"));
+                }
+                if transitional_refusal_aliases_apply(&fixture, &surface, &old, other) {
+                    return Err(format!("`{key}` must reject the other new opening"));
+                }
+            }
+        }
+        let reindented = gripped.replace("  no repair start", "    no repair start");
+        if reindented == gripped
+            || transitional_refusal_aliases_apply("match_arm_blind", "human.txt", &old, &reindented)
+        {
+            return Err("an indentation change must not pass the alias".to_string());
+        }
+        let tabbed = gripped.replace("  no repair start", "\t no repair start");
+        if tabbed == gripped
+            || tabbed.len() != gripped.len()
+            || transitional_refusal_aliases_apply("match_arm_blind", "human.txt", &old, &tabbed)
+        {
+            return Err("an equal-length whitespace substitution must not pass".to_string());
+        }
+        if transitional_refusal_aliases_apply("match_arm_blind", "check.json", &old, &gripped) {
+            return Err("an unlisted surface stays strict".to_string());
+        }
+        Ok(())
     }
 
     #[test]

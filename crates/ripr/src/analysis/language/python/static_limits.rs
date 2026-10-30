@@ -3,7 +3,9 @@ use super::admission::PythonAssertionAdmission;
 use super::approx_band::{PythonBandReading, parse_expression, python_band_reading};
 use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion};
 use super::caplog_text::{PythonLogEvidence, substitute_caplog_aliases};
+use super::cli_subcommand::CliSubcommand;
 use super::effect_alignment::ChangedEffect;
+use super::fixtures::{inert_tool_fixture, literal_owner_instance_fixture};
 use super::forwarding_decorator::is_forwarding_decorator;
 use super::literal_patch::{literal_patch_calls, without_calls};
 use super::related_tests::{
@@ -13,7 +15,7 @@ use super::related_tests::{
     test_may_reach_owner_class,
 };
 use super::sink_alignment::CreditedAssertion;
-use super::source_utils::SourceText;
+use super::source_utils::{SourceText, signature_colon_end};
 use super::{
     PythonImport, PythonOracleShape, PythonOwner, PythonTest, expr_full_name,
     split_python_assignment,
@@ -159,9 +161,22 @@ pub(super) fn static_limit_for_focused_change(
             ),
         });
     }
+    // A group subcommand's registration decorator builds a command that runs
+    // the body; it stops being an indirection once a test is shown to invoke
+    // the group with its name (`cli_subcommand.rs`, #9226).
+    let reached_subcommand_decorator = owner
+        .cli_subcommand
+        .as_ref()
+        .filter(|_| {
+            related_candidates
+                .iter()
+                .any(|candidate| candidate.relation == PythonRelationKind::CliRunnerInvoke)
+        })
+        .map(CliSubcommand::decorator);
     if let Some(decorator) = owner.decorators.iter().find(|decorator| {
         !is_transparent_owner_decorator_for_owner(decorator, owner)
             && !is_forwarding_decorator(decorator, owner, owner_source)
+            && reached_subcommand_decorator.as_ref() != Some(*decorator)
     }) {
         return Some(PythonStaticLimit {
             kind: StaticLimitKind::DecoratorIndirection,
@@ -329,20 +344,24 @@ pub(super) fn static_limit_for_focused_change(
     if contains_lambda_keyword(trimmed) {
         return Some(PythonStaticLimit {
             kind: StaticLimitKind::UnsupportedSyntax,
-            evidence: "static_limit unsupported_syntax: changed line uses lambda syntax"
-                .to_string(),
+            evidence: LAMBDA_LIMIT_EVIDENCE.to_string(),
             missing: "Static limit `unsupported_syntax`: the changed line uses a Python syntax shape this preview adapter does not model precisely yet.".to_string(),
         });
     }
     None
 }
 
+/// The evidence of the lambda-syntax limit. A module-value credit (#9619) that
+/// reads the edited lambda body lifts exactly this limit.
+pub(super) const LAMBDA_LIMIT_EVIDENCE: &str =
+    "static_limit unsupported_syntax: changed line uses lambda syntax";
+
 /// A `lambda` expression: the keyword at an identifier boundary and followed
 /// by a space, `:` or `(`. Text in a string is read as text only when the line
 /// is a plain one-line string literal return (`return "lambda x"`): no braces
 /// (an f-string expression or a dict could hold code), no triple quotes (the
 /// line may close a string opened above) and no other quote state to track.
-fn contains_lambda_keyword(text: &str) -> bool {
+pub(super) fn contains_lambda_keyword(text: &str) -> bool {
     let plain_line =
         !text.contains(['{', '\\']) && !text.contains("\"\"\"") && !text.contains("'''");
     text.match_indices("lambda").any(|(idx, _)| {
@@ -388,7 +407,7 @@ pub(super) fn implicit_dunder_dispatch_limit(
 }
 
 pub(super) fn contains_dynamic_dispatch(text: &str) -> bool {
-    text.contains("getattr(") || (text.contains('[') && text.contains("]("))
+    contains_call_at_name_boundary(text, "getattr") || (text.contains('[') && text.contains("]("))
 }
 
 pub(super) fn contains_dynamic_import(text: &str) -> bool {
@@ -460,21 +479,23 @@ pub(super) fn python_prefix_hides_code(prefix: &str) -> bool {
 
 pub(super) fn contains_metaprogramming(text: &str) -> bool {
     text.contains("__getattr__")
-        || contains_call_at_name_boundary(text, "type(")
-        || contains_call_at_name_boundary(text, "setattr(")
+        || contains_call_at_name_boundary(text, "type")
+        || contains_call_at_name_boundary(text, "setattr")
         || contains_metaclass_declaration(text)
 }
 
-/// `call` (`type(`) where the name starts at an identifier boundary:
-/// `type(x)` and `builtins.type(x)`, not `content_type(x)`. Text in a string
+/// A call of `name` (`type`) where the name starts at an identifier boundary
+/// and `(` follows after optional spaces: `type(x)`, `type (x)` and
+/// `builtins.type(x)`, not `content_type(x)`. Text in a string
 /// still counts: a boundary is the only thing read, so an f-string expression
 /// or a multi-line string can never hide a real call.
-fn contains_call_at_name_boundary(text: &str, call: &str) -> bool {
-    text.match_indices(call).any(|(idx, _)| {
+fn contains_call_at_name_boundary(text: &str, name: &str) -> bool {
+    text.match_indices(name).any(|(idx, _)| {
         !text[..idx]
             .chars()
             .next_back()
             .is_some_and(is_python_identifier_char)
+            && text[idx + name.len()..].trim_start().starts_with('(')
     })
 }
 
@@ -913,14 +934,32 @@ fn related_candidates_have_unresolved_pytest_fixture_limit(
 }
 
 fn test_has_unresolved_pytest_fixture_inputs(test: &PythonTest, owner: &PythonOwner) -> bool {
-    test.framework == PythonFramework::Pytest
-        && !test.parametrized
-        && body_calls_owner(&test.body_text, owner)
-        && test
-            .fixtures
-            .iter()
-            .filter(|fixture| !is_known_auxiliary_pytest_fixture(fixture))
-            .any(|fixture| body_uses_identifier(&test.body_text, fixture))
+    !unresolved_pytest_fixture_names(test, owner).is_empty()
+}
+
+/// The fixtures a pytest test that calls the owner takes and uses but ripr
+/// does not read, in signature order. These are what block the exposure
+/// answer, so the finding names them (#10979).
+pub(super) fn unresolved_pytest_fixture_names<'t>(
+    test: &'t PythonTest,
+    owner: &PythonOwner,
+) -> Vec<&'t str> {
+    if test.framework != PythonFramework::Pytest || !body_calls_owner(&test.body_text, owner) {
+        return Vec::new();
+    }
+    test.fixtures
+        .iter()
+        .map(String::as_str)
+        // A direct parametrize argname is a value pytest supplies, not a
+        // fixture, unless an unsettled `indirect=` may route it (#10685);
+        // a parametrize mark does not resolve the test's other fixtures
+        // (#9619).
+        .filter(|fixture| !test.takes_parametrize_value(fixture))
+        .filter(|fixture| !is_known_auxiliary_pytest_fixture(fixture))
+        .filter(|fixture| !literal_owner_instance_fixture(test, owner, fixture))
+        .filter(|fixture| !inert_tool_fixture(test, fixture))
+        .filter(|fixture| body_uses_identifier(&test.body_text, fixture))
+        .collect()
 }
 
 fn is_known_auxiliary_pytest_fixture(fixture: &str) -> bool {
@@ -946,15 +985,33 @@ fn is_known_auxiliary_pytest_fixture(fixture: &str) -> bool {
 }
 
 fn body_uses_identifier(body_text: &str, identifier: &str) -> bool {
+    // The test's own signature declares its parameters; it does not use them.
+    // A multi-line signature puts them on lines that do not start with `def`,
+    // and a one-line body follows the colon on the `def` line (#10685).
+    // The colon scan does not follow a triple-quoted string across lines, so
+    // a signature holding one falls back to the old line rule rather than
+    // risk starting the body past a real use.
+    let body_start = test_def_offset(body_text)
+        .and_then(|def| {
+            signature_colon_end(body_text, def).filter(|&end| {
+                let signature = &body_text[def..end];
+                !signature.contains("\"\"\"") && !signature.contains("\'\'\'")
+            })
+        })
+        .unwrap_or(0);
     let mut line_start = 0;
     for line in body_text.split_inclusive('\n') {
         let trimmed = line.trim_start();
-        if !trimmed.starts_with('@')
-            && !trimmed.starts_with("def ")
-            && !trimmed.starts_with("async def ")
+        // Inside the body, a decorator or `def` line belongs to a nested def.
+        let nested_header = line_start >= body_start
+            && (trimmed.starts_with('@')
+                || trimmed.starts_with("def ")
+                || trimmed.starts_with("async def "));
+        if !nested_header
             && line.match_indices(identifier).any(|(idx, _)| {
                 let body_idx = line_start + idx;
-                has_identifier_boundary(body_text, body_idx, identifier.len())
+                body_idx >= body_start
+                    && has_identifier_boundary(body_text, body_idx, identifier.len())
                     && !line_prefix_looks_like_comment_or_string(body_text, body_idx)
             })
         {
@@ -963,6 +1020,20 @@ fn body_uses_identifier(body_text: &str, identifier: &str) -> bool {
         line_start += line.len();
     }
     false
+}
+
+/// The offset of the test's own `def` keyword: the first line past its
+/// decorators that starts with `def` or `async def`.
+fn test_def_offset(body_text: &str) -> Option<usize> {
+    let mut line_start = 0;
+    for line in body_text.split_inclusive('\n') {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("def ") || trimmed.starts_with("async def ") {
+            return Some(line_start + line.len() - trimmed.len());
+        }
+        line_start += line.len();
+    }
+    None
 }
 
 pub(super) fn has_identifier_boundary(body_text: &str, idx: usize, len: usize) -> bool {
@@ -1334,13 +1405,55 @@ fn owner_called_inside_lambda(body_text: &str, owner: &PythonOwner) -> bool {
     })
 }
 
+/// #9226: the edit changes only the value of integer literals. Every other
+/// token is identical, so no callee, keyword, operator or operand moved and the
+/// imported symbol the line calls is the same before and after. The line is
+/// `classify` lifts the import abstention for it only when a strong exact
+/// oracle observes the owner (it then reads `weakly_exposed`); otherwise the
+/// limit stands.
+pub(super) fn integer_literal_swap(old: &str, new: &str) -> bool {
+    use rustpython_parser::{Mode, Tok, lexer::lex};
+    let indent = |text: &str| text.len() - text.trim_start().len();
+    // Re-indenting moves the statement under or out of a block, which changes
+    // which inputs reach it.
+    if old.get(..indent(old)) != new.get(..indent(new)) {
+        return false;
+    }
+    let (old, new) = (old.trim(), new.trim());
+    let tokens = |text: &str| -> Option<Vec<Tok>> {
+        lex(text, Mode::Module)
+            .map(|result| result.ok().map(|(token, _)| token))
+            .collect()
+    };
+    let (Some(old), Some(new)) = (tokens(old), tokens(new)) else {
+        return false;
+    };
+    old.len() == new.len()
+        && old != new
+        && old
+            .iter()
+            .zip(&new)
+            .all(|(a, b)| a == b || matches!((a, b), (Tok::Int { .. }, Tok::Int { .. })))
+}
+
 pub(super) fn line_uses_imported_symbol(text: &str, imports: &[PythonImport]) -> bool {
     imports.iter().any(|import| {
         !is_known_mock_constructor_import(import)
             && !line_uses_known_static_cli_symbol(text, import)
-            && (text.contains(&format!("{}(", import.alias))
-                || text.contains(&format!("{}.", import.alias)))
+            && (names_imported_alias(text, &import.alias, '(')
+                || names_imported_alias(text, &import.alias, '.'))
     })
+}
+
+/// Whether `text` uses `alias` as a whole name followed by `next`. A substring
+/// match read `pos.x` as a use of `os` (RIPR-SPEC-0238 rule 8 requires tokens).
+/// Only an identifier character or a dot before the alias rules it out, so
+/// `x.os.getcwd()` (an attribute of another object) is not the import either;
+/// a string or comment prefix is not consulted, since f-string fields are code.
+fn names_imported_alias(text: &str, alias: &str, next: char) -> bool {
+    let needle = format!("{alias}{next}");
+    text.match_indices(&needle)
+        .any(|(idx, _)| python_callee_start_has_boundary(text, idx))
 }
 
 pub(super) fn is_known_mock_constructor_import(import: &PythonImport) -> bool {
@@ -1570,6 +1683,7 @@ pub(super) mod tests {
             class_facts: Default::default(),
             foreign_writes: Default::default(),
             version_conditional: false,
+            cli_subcommand: None,
         }
     }
 
@@ -2007,6 +2121,41 @@ pub(super) mod tests {
             "    mocker.patch.object(a, \"b\")\n",
             "patch.object(",
             &none
+        ));
+    }
+
+    #[test]
+    fn a_signature_declares_its_parameters_and_the_body_uses_them() {
+        let cases = [
+            ("def test_x(fee):\n    pass\n", false),
+            ("def test_x(\n    fee,\n):\n    pass\n", false),
+            (
+                "@mark\ndef test_x(\n    fee: dict[str, int] = {'a': 1},\n) -> None:\n    pass\n",
+                false,
+            ),
+            ("async def test_x(\n    fee,\n):\n    pass\n", false),
+            (
+                "    def test_x(\n        self,\n        fee,\n    ):\n        pass\n",
+                false,
+            ),
+            ("def test_x(\n    fee,  # ):\n):\n    pass\n", false),
+            ("def test_x(\n    fee,\n):\n    assert fee\n", true),
+            ("def test_x(fee): assert fee\n", true),
+            ("def test_x(\n    fee,\n): return fee\n", true),
+            // A triple-quoted default the colon scan cannot follow keeps the
+            // old line rule, so the body use still counts.
+            (
+                "def test_x(fee, note=\"\"\"a\nb\"\"\"):\n    assert fee\n    text = \"\"\"\n    1) step: x\n    \"\"\"\n",
+                true,
+            ),
+        ];
+        for (body, uses) in cases {
+            assert_eq!(body_uses_identifier(body, "fee"), uses, "{body:?}");
+        }
+        // A nested def's header is still not a use.
+        assert!(!body_uses_identifier(
+            "def test_x(fee):\n    def helper(fee):\n        pass\n",
+            "fee"
         ));
     }
 }

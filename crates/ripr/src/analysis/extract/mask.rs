@@ -245,6 +245,33 @@ struct Scanned {
 /// the delimiter offsets of every terminated string literal and the LF offsets
 /// at which line comments return to code.
 fn scan(text: &str) -> Scanned {
+    // Only `/` (comments), `"` (strings) and `'` (character literals) change
+    // anything: a text with none of them is its own masked form. The
+    // lexical assertion readers mask many short quote-free fragments per
+    // assertion, so the per-byte state machine is skipped for them (#10363).
+    if is_quote_free(text) {
+        return Scanned {
+            masked: text.to_string(),
+            char_literals: Vec::new(),
+            string_quotes: 0,
+            string_spans: Vec::new(),
+            line_comment_ends: Vec::new(),
+        };
+    }
+    scan_bytewise(text)
+}
+
+/// Whether `text` holds none of the bytes masking can change: `/` opens a
+/// comment, `"` a string and `'` a character literal.
+fn is_quote_free(text: &str) -> bool {
+    !text
+        .as_bytes()
+        .iter()
+        .any(|byte| matches!(byte, b'/' | b'"' | b'\''))
+}
+
+/// The full masking state machine behind [`scan`].
+fn scan_bytewise(text: &str) -> Scanned {
     let mut char_literals = Vec::new();
     let mut string_quotes = 0usize;
     let mut string_spans = Vec::new();
@@ -411,6 +438,37 @@ fn scan(text: &str) -> Scanned {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The quote-free shortcut in `scan` reads exactly what the state
+    /// machine reads, on every line and fragment of real
+    /// source, including lines with comments, strings and character literals.
+    #[test]
+    fn the_quote_free_shortcut_reads_what_the_state_machine_reads() {
+        let sources = [
+            include_str!("mask.rs"),
+            include_str!("literals.rs"),
+            include_str!("oracles/bool_operands.rs"),
+            include_str!("oracles/arguments.rs"),
+        ];
+        let mut shortcut = 0usize;
+        for source in sources {
+            for line in source.lines() {
+                for fragment in [line, line.trim(), line.get(line.len() / 2..).unwrap_or("")] {
+                    let fast = scan(fragment);
+                    let slow = scan_bytewise(fragment);
+                    assert_eq!(fast.masked, slow.masked, "{fragment}");
+                    assert_eq!(fast.char_literals, slow.char_literals, "{fragment}");
+                    assert_eq!(fast.string_quotes, slow.string_quotes, "{fragment}");
+                    assert_eq!(fast.string_spans, slow.string_spans, "{fragment}");
+                    assert_eq!(fast.line_comment_ends, slow.line_comment_ends, "{fragment}");
+                    if !fragment.contains(['/', '"', '\'']) {
+                        shortcut += 1;
+                    }
+                }
+            }
+        }
+        assert!(shortcut > 100, "the corpus must exercise the shortcut");
+    }
 
     /// A large file is masked once while it stays among the recent files,
     /// every hit equals a fresh scan, and an edited file is scanned again.

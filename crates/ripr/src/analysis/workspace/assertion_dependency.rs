@@ -2,6 +2,14 @@
 //!
 //! Cargo's executable and ordinary registry-cache integrity are instrument
 //! assumptions. This does not certify arbitrary CLI configuration or a compiler.
+mod registry;
+#[cfg(test)]
+use registry::json_manifest_digests;
+pub(crate) use registry::{
+    LiteralJsonIdentity, eligible_json_root, eligible_proptest_root, verified_json_identity,
+    verified_proptest_identity,
+};
+
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::io::Read;
@@ -381,9 +389,129 @@ fn resolved_library(metadata: &serde_json::Value, root: &Path) -> Option<(PathBu
     ))
 }
 
+/// Operational outcomes of the bounded Cargo probe, not provider eligibility.
+/// In particular, exit 101 does not identify a missing package or toolchain.
+/// No raw stderr, environment value or filesystem path is retained here.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MetadataProbeFailure {
+    ToolchainPathPin,
+    CaptureCreate(std::io::ErrorKind),
+    Launch(std::io::ErrorKind),
+    CaptureInspect(std::io::ErrorKind),
+    OutputLimit,
+    TimedOut,
+    Wait(std::io::ErrorKind),
+    UnsuccessfulExit(Option<i32>),
+    CaptureRead(std::io::ErrorKind),
+}
+
+impl std::fmt::Display for MetadataProbeFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ToolchainPathPin => formatter.write_str(
+                "Offline Cargo metadata was not started: a repository-local toolchain path was refused",
+            ),
+            Self::CaptureCreate(kind) => {
+                write!(formatter, "Offline Cargo metadata capture could not be created ({kind:?})")
+            }
+            Self::Launch(kind) => {
+                write!(formatter, "Offline Cargo metadata could not be launched ({kind:?})")
+            }
+            Self::CaptureInspect(kind) => {
+                write!(
+                    formatter,
+                    "Offline Cargo metadata capture could not be inspected ({kind:?})"
+                )
+            }
+            Self::OutputLimit => {
+                formatter.write_str("Offline Cargo metadata exceeded its output limit")
+            }
+            Self::TimedOut => formatter.write_str("Offline Cargo metadata exceeded its time limit"),
+            Self::Wait(kind) => {
+                write!(formatter, "Offline Cargo metadata process could not be observed ({kind:?})")
+            }
+            Self::UnsuccessfulExit(Some(code)) => {
+                write!(formatter, "Offline Cargo metadata exited unsuccessfully (status {code})")
+            }
+            Self::UnsuccessfulExit(None) => {
+                formatter.write_str("Offline Cargo metadata terminated without an exit code")
+            }
+            Self::CaptureRead(kind) => {
+                write!(formatter, "Offline Cargo metadata capture could not be read ({kind:?})")
+            }
+        }
+    }
+}
+
+/// Compatibility boundary: existing identity consumers remain fail-closed.
+/// A diagnostic consumer must use the typed result of this same probe, not
+/// launch a second probe or infer an operational cause from absent identity.
 fn metadata_probe(root: &Path) -> Option<Vec<u8>> {
+    metadata_probe_result(root).ok()
+}
+
+fn metadata_command(root: &Path, output: std::fs::File) -> std::process::Command {
+    let mut command = std::process::Command::new("cargo");
+    command
+        .args([
+            "metadata",
+            "--offline",
+            "--locked",
+            "--format-version",
+            "1",
+            "--manifest-path",
+            "Cargo.toml",
+        ])
+        .current_dir(root)
+        .stdin(std::process::Stdio::null())
+        .stdout(output)
+        .stderr(std::process::Stdio::null());
+    crate::process_owner::forbid_rustup_auto_install(&mut command);
+    command
+}
+
+fn metadata_probe_budget(
+    output_bytes: u64,
+    elapsed: std::time::Duration,
+) -> Result<(), MetadataProbeFailure> {
+    if output_bytes > BUDGET {
+        return Err(MetadataProbeFailure::OutputLimit);
+    }
+    if elapsed >= std::time::Duration::from_mins(2) {
+        return Err(MetadataProbeFailure::TimedOut);
+    }
+    Ok(())
+}
+
+fn metadata_probe_poll(
+    observed: std::io::Result<Option<std::process::ExitStatus>>,
+) -> Result<bool, MetadataProbeFailure> {
+    match observed {
+        Ok(Some(status)) if status.success() => Ok(true),
+        Ok(Some(status)) => Err(MetadataProbeFailure::UnsuccessfulExit(status.code())),
+        Ok(None) => Ok(false),
+        Err(error) => Err(MetadataProbeFailure::Wait(error.kind())),
+    }
+}
+
+fn read_metadata_probe_output(path: &Path) -> Result<Vec<u8>, MetadataProbeFailure> {
+    let mut bytes = Vec::new();
+    // Preserve the same accepted byte budget without an unbounded final read.
+    // Complete bytes are not yet parsed metadata or a provider receipt.
+    std::fs::File::open(path)
+        .map_err(|error| MetadataProbeFailure::CaptureRead(error.kind()))?
+        .take(BUDGET + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| MetadataProbeFailure::CaptureRead(error.kind()))?;
+    if bytes.len() as u64 > BUDGET {
+        return Err(MetadataProbeFailure::OutputLimit);
+    }
+    Ok(bytes)
+}
+
+fn metadata_probe_result(root: &Path) -> Result<Vec<u8>, MetadataProbeFailure> {
     if crate::config::repository_toolchain_path_pin(root).is_some() {
-        return None;
+        return Err(MetadataProbeFailure::ToolchainPathPin);
     }
     let path = std::env::temp_dir().join(format!(
         "ripr-assertion-metadata-{}-{}.json",
@@ -394,48 +522,37 @@ fn metadata_probe(root: &Path) -> Option<Vec<u8>> {
         .write(true)
         .create_new(true)
         .open(&path)
-        .ok()?;
+        .map_err(|error| MetadataProbeFailure::CaptureCreate(error.kind()))?;
     let result = (|| {
-        let mut command = std::process::Command::new("cargo");
-        command
-            .args([
-                "metadata",
-                "--offline",
-                "--locked",
-                "--format-version",
-                "1",
-                "--manifest-path",
-                "Cargo.toml",
-            ])
-            .current_dir(root)
-            .stdin(std::process::Stdio::null())
-            .stdout(output)
-            .stderr(std::process::Stdio::null());
-        crate::process_owner::forbid_rustup_auto_install(&mut command);
-        let mut child = crate::process_owner::OwnedProcess::spawn(command).ok()?;
+        let command = metadata_command(root, output);
+        let mut child = crate::process_owner::OwnedProcess::spawn(command)
+            .map_err(|error| MetadataProbeFailure::Launch(error.kind()))?;
         let start = std::time::Instant::now();
         loop {
-            if std::fs::metadata(&path).ok()?.len() > BUDGET
-                || start.elapsed() >= std::time::Duration::from_mins(2)
-            {
+            let output_bytes = std::fs::metadata(&path)
+                .map_err(|error| MetadataProbeFailure::CaptureInspect(error.kind()))?
+                .len();
+            if let Err(failure) = metadata_probe_budget(output_bytes, start.elapsed()) {
                 let _ = child.terminate_tree();
-                return None;
+                return Err(failure);
             }
-            match child.try_wait() {
-                Ok(Some(status)) if status.success() => break,
-                Ok(Some(_)) | Err(_) => {
+            match metadata_probe_poll(child.try_wait()) {
+                Ok(true) => break,
+                Ok(false) => std::thread::sleep(std::time::Duration::from_millis(20)),
+                Err(failure) => {
                     let _ = child.terminate_tree();
-                    return None;
+                    return Err(failure);
                 }
-                Ok(None) => std::thread::sleep(std::time::Duration::from_millis(20)),
             }
         }
-        let bytes = std::fs::read(&path).ok()?;
-        (bytes.len() as u64 <= BUDGET).then_some(bytes)
+        read_metadata_probe_output(&path)
     })();
     let _ = std::fs::remove_file(path);
     result
 }
+
+#[cfg(test)]
+mod metadata_probe_tests;
 
 pub(crate) fn verified_anyhow_identity(package_root: &Path) -> Option<AnyhowIdentity> {
     let root = package_root.canonicalize().ok()?;
@@ -464,247 +581,6 @@ pub(crate) fn verified_anyhow_identity(package_root: &Path) -> Option<AnyhowIden
         semantic_digest: digest(format!("SPEC-0197-7a:{package_id}:{CHECKSUM}").as_bytes()),
         validation_digest: digest(&serde_json::to_vec(&(after, digest(&bytes))).ok()?),
         library_root,
-    })
-}
-
-const JSON_CHECKSUM: &str = "c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14";
-
-/// Audited serde_json 1.0.151 registry expansion under ordinary Cargo/cache
-/// integrity assumptions. The resolved dependency edge, not its spelling in a
-/// lockfile, binds each importing file's package to this implementation.
-#[derive(Clone, Debug)]
-pub(crate) struct LiteralJsonIdentity {
-    metadata: serde_json::Value,
-    package_id: String,
-    manifest_digests: BTreeMap<PathBuf, String>,
-    pub(crate) validation_digest: String,
-}
-
-impl LiteralJsonIdentity {
-    pub(crate) fn admits_file(&self, root: &Path, file: &Path) -> bool {
-        let file = root.join(file);
-        let Some(owner_manifest) = file
-            .parent()
-            .and_then(|parent| {
-                parent
-                    .ancestors()
-                    .take_while(|dir| dir.starts_with(root))
-                    .map(|dir| dir.join("Cargo.toml"))
-                    .find(|path| path.is_file())
-            })
-            .and_then(|path| path.canonicalize().ok())
-        else {
-            return false;
-        };
-        self.manifest_digests
-            .get(&owner_manifest)
-            .is_some_and(|expected| {
-                read_optional(&owner_manifest)
-                    .flatten()
-                    .is_some_and(|bytes| digest(&bytes) == *expected)
-            })
-            && self.admits_manifest(&owner_manifest)
-    }
-
-    fn admits_manifest(&self, manifest: &Path) -> bool {
-        let Some(packages) = self
-            .metadata
-            .get("packages")
-            .and_then(serde_json::Value::as_array)
-        else {
-            return false;
-        };
-        let owners: Vec<_> = packages
-            .iter()
-            .filter(|p| {
-                p.get("manifest_path")
-                    .and_then(serde_json::Value::as_str)
-                    .and_then(|p| Path::new(p).canonicalize().ok())
-                    .as_deref()
-                    == Some(manifest)
-            })
-            .collect();
-        let [owner] = owners.as_slice() else {
-            return false;
-        };
-        let Some(deps) = owner
-            .get("dependencies")
-            .and_then(serde_json::Value::as_array)
-        else {
-            return false;
-        };
-        let deps: Vec<_> = deps
-            .iter()
-            .filter(|d| d.get("name").and_then(serde_json::Value::as_str) == Some("serde_json"))
-            .collect();
-        // Normal and dev declarations may share one canonical package edge.
-        // Every declaration and every edge-kind must agree; build, renamed,
-        // conditional, optional and duplicate contexts remain unsupported.
-        if deps.is_empty()
-            || deps.len() > 2
-            || deps.iter().any(|dep| {
-                dep.get("source").and_then(serde_json::Value::as_str) != Some(SOURCE)
-                    || dep.get("optional").and_then(serde_json::Value::as_bool) != Some(false)
-                    || !dep.get("rename").is_some_and(serde_json::Value::is_null)
-                    || !dep.get("target").is_some_and(serde_json::Value::is_null)
-                    || !dep
-                        .get("kind")
-                        .is_some_and(|k| k.is_null() || k.as_str() == Some("dev"))
-            })
-        {
-            return false;
-        }
-        let contexts: std::collections::BTreeSet<_> = deps
-            .iter()
-            .map(|dep| dep.get("kind").and_then(serde_json::Value::as_str))
-            .collect();
-        if contexts.len() != deps.len() {
-            return false;
-        }
-        let Some(nodes) = self
-            .metadata
-            .pointer("/resolve/nodes")
-            .and_then(serde_json::Value::as_array)
-        else {
-            return false;
-        };
-        let Some(owner_id) = owner.get("id").and_then(serde_json::Value::as_str) else {
-            return false;
-        };
-        let Some(node) = nodes
-            .iter()
-            .find(|node| node.get("id").and_then(serde_json::Value::as_str) == Some(owner_id))
-        else {
-            return false;
-        };
-        let Some(edges) = node.get("deps").and_then(serde_json::Value::as_array) else {
-            return false;
-        };
-        let edges: Vec<_> = edges
-            .iter()
-            .filter(|d| d.get("name").and_then(serde_json::Value::as_str) == Some("serde_json"))
-            .collect();
-        let [edge] = edges.as_slice() else {
-            return false;
-        };
-        edge.get("pkg").and_then(serde_json::Value::as_str) == Some(self.package_id.as_str())
-            && edge
-                .get("dep_kinds")
-                .and_then(serde_json::Value::as_array)
-                .is_some_and(|kinds| {
-                    kinds.len() == contexts.len()
-                        && kinds.iter().all(|kind| {
-                            kind.get("kind")
-                                .is_some_and(|k| k.is_null() || k.as_str() == Some("dev"))
-                                && kind.get("target").is_some_and(serde_json::Value::is_null)
-                        })
-                        && kinds
-                            .iter()
-                            .map(|kind| kind.get("kind").and_then(serde_json::Value::as_str))
-                            .collect::<std::collections::BTreeSet<_>>()
-                            == contexts
-                })
-    }
-}
-
-/// Initial scope: the analysis root declares serde_json itself or through its
-/// workspace dependency table. Other layouts remain unestablished.
-pub(crate) fn eligible_json_root(root: &Path) -> bool {
-    read_optional(&root.join("Cargo.toml"))
-        .flatten()
-        .and_then(|b| parse(&b))
-        .is_some_and(|manifest| {
-            ["dependencies", "dev-dependencies", "workspace"]
-                .iter()
-                .any(|key| {
-                    let table = if *key == "workspace" {
-                        manifest.get(key).and_then(|w| w.get("dependencies"))
-                    } else {
-                        manifest.get(key)
-                    };
-                    table.and_then(|t| t.get("serde_json")).is_some()
-                })
-        })
-}
-
-fn json_manifest_digests(
-    metadata: &serde_json::Value,
-    root: &Path,
-) -> Option<BTreeMap<PathBuf, String>> {
-    let mut digests = BTreeMap::new();
-    for package in metadata.get("packages")?.as_array()? {
-        let path = PathBuf::from(package.get("manifest_path")?.as_str()?)
-            .canonicalize()
-            .ok()?;
-        if path.starts_with(root) {
-            let bytes = read_optional(&path)??;
-            digests.insert(path, digest(&bytes));
-        }
-    }
-    Some(digests)
-}
-
-pub(crate) fn verified_json_identity(root: &Path) -> Option<LiteralJsonIdentity> {
-    if !eligible_json_root(root) {
-        return None;
-    }
-    let root = root.canonicalize().ok()?;
-    let before = snapshot(&root)?;
-    let bytes = metadata_probe(&root)?;
-    let metadata: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
-    let workspace = Path::new(metadata.get("workspace_root")?.as_str()?)
-        .canonicalize()
-        .ok()?;
-    if !root.starts_with(&workspace) {
-        return None;
-    }
-    let lock = parse(&read_optional(&workspace.join("Cargo.lock"))??)?;
-    let packages = lock.get("package")?.as_array()?;
-    let found: Vec<_> = packages
-        .iter()
-        .filter(|p| p.get("name").and_then(toml::Value::as_str) == Some("serde_json"))
-        .collect();
-    let [package] = found.as_slice() else {
-        return None;
-    };
-    if package.get("version")?.as_str()? != "1.0.151"
-        || package.get("source")?.as_str()? != SOURCE
-        || package.get("checksum")?.as_str()? != JSON_CHECKSUM
-    {
-        return None;
-    }
-    let packages = metadata.get("packages")?.as_array()?;
-    let found: Vec<_> = packages
-        .iter()
-        .filter(|p| p.get("name").and_then(serde_json::Value::as_str) == Some("serde_json"))
-        .collect();
-    let [package] = found.as_slice() else {
-        return None;
-    };
-    if package.get("version")?.as_str()? != "1.0.151" || package.get("source")?.as_str()? != SOURCE
-    {
-        return None;
-    }
-    let package_id = package.get("id")?.as_str()?.to_string();
-    let manifest_digests = json_manifest_digests(&metadata, &root)?;
-    // Discovery metadata supplies the member path set. Bracket a confirming
-    // probe with those manifests: old metadata must not acquire a receipt for
-    // member bytes first observed after Cargo resolved a different dependency.
-    let confirmed_bytes = metadata_probe(&root)?;
-    if bytes != confirmed_bytes || manifest_digests != json_manifest_digests(&metadata, &root)? {
-        return None;
-    }
-    let after = snapshot(&root)?;
-    if before != after {
-        return None;
-    }
-    Some(LiteralJsonIdentity {
-        metadata,
-        package_id,
-        manifest_digests: manifest_digests.clone(),
-        validation_digest: digest(
-            &serde_json::to_vec(&(after, manifest_digests, digest(&bytes), JSON_CHECKSUM)).ok()?,
-        ),
     })
 }
 

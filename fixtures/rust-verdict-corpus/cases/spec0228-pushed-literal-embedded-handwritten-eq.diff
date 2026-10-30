@@ -1,0 +1,12 @@
+diff --git a/src/c_embed.rs b/src/c_embed.rs
+--- a/src/c_embed.rs
++++ b/src/c_embed.rs
+@@ -22,7 +22,7 @@
+ 
+ impl EmbOrder {
+     pub fn add_emb(&mut self, sku: &str, qty: u32) {
+-        self.lines.push(EmbLine { sku: EmbSku(sku.to_uppercase()), qty });
++        self.lines.push(EmbLine { sku: EmbSku(str::to_uppercase(sku)), qty });
+     }
+ }
+ 

@@ -8,13 +8,13 @@ Primary workflow:
 
 Advanced and compatibility workflows:
   start      Write a source-edit-free workflow manifest for one seam.
-  brief      Rank a working-set brief for the agent-active router.
+  brief      Rank the seams in a working set so an agent starts at the strongest one.
   packet     Expand one visible seam into the existing agent seam packet JSON.
   card       Hand off one visible seam as the compact default repair card.
   stub       Write a compiling Rust test stub for one gap, ready to fill and run.
   verify     Compare before/after repo-exposure JSON for agent verification.
   verify-execute
-             Execute one validated producer-owned direct verify route.
+             Run the one validated, bounded, read-only verify command that a packet names.
   receipt    Summarize one seam from agent verify JSON for review handoff.
   review-summary
              Join agent-loop artifacts into a compact review packet.
@@ -29,7 +29,7 @@ The same transaction with explicit phases:
   # edit one focused test outside RIPR
   ripr agent repair --attempt ID --phase after
 
-From a `ripr check` finding, `ripr agent stub --at FILE:LINE` (the location
+From a Rust `ripr check` finding, `ripr agent stub --at FILE:LINE` (the location
 the finding prints) gives a ready-to-run test for that gap in one step.
 
 `--seam-id` takes a seam ID from `ripr pilot --root .` or `ripr agent status`,
@@ -172,7 +172,7 @@ Options:
                    second --write for the same seam reports the stub already
                    written instead of suffixing a `_2` duplicate.
   --json           Emit one `rust_test_stub` JSON document (schema_version
-                   `0.3`) with the placement, test name, exact text, the
+                   `0.4`) with the placement, test name, exact text, the
                    `todo!()` fill-ins, derived inputs, run command, and
                    inventory `grip_class` plus check `classification`
                    when known. A strongly_gripped seam stays `state:
@@ -186,6 +186,12 @@ Options:
                    that surface — a `placement_divergence` naming both
                    files.
 
+Stub generation supports Rust `.rs` paths only. Other --at paths receive
+`unsupported_language` (exit `3`), including with --write. For a reported
+gap, use the `ripr check` finding's test file/node and verify command when
+available: edit the test by hand, run the native test command, then refresh
+with `ripr check`. No stub is written for an unsupported language.
+
 The stub calls the changed function with its real receiver and parameters,
 fills a boundary input when the changed comparison names one, and stops at a
 labelled `todo!()` for the value the behavior should produce. It compiles and
@@ -195,7 +201,7 @@ classification to pick the seam; after selection it looks up the inventory
 grip so the stub can disclose it. A strongly_gripped seam is still a
 scaffold (`state: ready`, exit 0): nothing is "configured off" — the seam is
 exposed because existing tests already discriminate it, so the disclosure
-says a stub would add nothing (only a class a user severity actually
+says the stub is an optional scaffold, not evidence of a missing discriminator (only a class a user severity actually
 disables is described as "configured off"). Side-effect and call-presence
 gaps, async, unsafe, and generic owners are refused with a named reason
 (exit `3`); under `--json` stdout
@@ -239,6 +245,10 @@ Movement vocabulary (#2648): the JSON output uses two related fields:
   - `gap_movement` (per-item): closed | persisted | new
 Precedence: `change: improved` means the grip class moved up; `gap_movement: closed`
 means the gap disappeared entirely. A gap can persist even when grip improves.
+
+The stdout document is the artifact `ripr agent receipt --verify-json` reads;
+save it in the verify loop, for example:
+  ripr agent verify --before before.repo-exposure.json --after after.repo-exposure.json --json > agent-verify.json
 "#;
 pub(super) const AGENT_VERIFY_EXECUTE_HELP: &str = r#"Execute one validated producer-owned verification route.
 
@@ -255,7 +265,11 @@ Options:
                        refused. A relative path resolves against the resolved
                        root, not the current directory.
   --authorize          Required explicit authorization for process execution.
-  --cancel-after-ms N  Optional bounded cancellation request.
+  --cancel-after-ms N  Optional operator deadline: kill the verify process N
+                       milliseconds after it starts, before the packet's own
+                       timeout. A hit is a bounded observation, not an error:
+                       the result records the `cancelled` disposition and the
+                       exit status stays 0.
   --json               Required machine-readable output.
 
 Only the exact direct, no-network, no-write `ripr agent verify` route is
@@ -407,7 +421,9 @@ Options:
   --attempt ID         Select one durable repair attempt; valid for `after`
                        and `verify` (verify accepts only `--attempt`).
   --phase before|after|verify
-                       Which phase of the repair loop to run.
+                       Which phase of the repair loop to run. Defaults to
+                       `before` (start a new attempt); `after` and `verify`
+                       require an existing repair attempt.
   --python-repair-trust-manifest PATH
                        Bind this attempt to an accepted Python repair-trust
                        selection manifest; `before` only.

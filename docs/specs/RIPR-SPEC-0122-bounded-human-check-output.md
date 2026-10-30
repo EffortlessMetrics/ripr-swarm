@@ -26,6 +26,11 @@ Linked issues:
 - [#8165](https://github.com/EffortlessMetrics/ripr-swarm/issues/8165) -
   the bounded default verdict uses plain language only; schema tokens stay
   in `human-full`, JSON, and `explain`.
+- [#10691](https://github.com/EffortlessMetrics/ripr-swarm/issues/10691) -
+  the default view and `human-full` drop internal nouns (probe, canonical gap,
+  observable sink): plain Summary words, `Gap ID (for scripts)`,
+  `Missing check`, plain static-limited wording; `human-full` keeps the stable
+  tokens glossed.
 - [#9346](https://github.com/EffortlessMetrics/ripr-swarm/issues/9346) -
   Start-here selection ranks changed-file role first, so an unknown probe
   seeded by a test-file edit cannot lead over a decisive production
@@ -33,6 +38,10 @@ Linked issues:
 - [#9373](https://github.com/EffortlessMetrics/ripr-swarm/issues/9373) -
   item 1 explains the bounded Evidence stages and conservative state words
   beside the selected finding.
+
+- [#10716](https://github.com/EffortlessMetrics/ripr-swarm/issues/10716) -
+  non-Rust stub paths receive a typed capability refusal and a manual-test
+  route before Rust analysis; also covers the language-refusal subset of #10708.
 
 Linked PRs:
 
@@ -45,7 +54,7 @@ Support-tier impact:
 
 - No tier change. This spec changes the default terminal presentation for
   `ripr check --format human`; it does not change analyzer classification,
-  pass/fail authority, JSON schema, SARIF, GitHub annotations, badge output, or
+  pass/fail authority, check JSON schema, SARIF, GitHub annotations, badge output, or
   repo-exposure evidence.
 - Support-tier definitions remain governed by
   [docs/status/SUPPORT_TIERS.md](../status/SUPPORT_TIERS.md).
@@ -89,10 +98,13 @@ Hidden:                                    (only when N > 0)
   Machine data: rerun with --format json
 ```
 
-The Summary denominator counts unsuppressed findings against the total
-(`N of M finding(s) unsuppressed`), disclosing the suppressed remainder; the
-word is never "shown", because the bounded digest renders exactly one finding
-and the `Hidden:` block below names the rest.
+The Summary names how many findings were found and how many the reader's
+suppression policy removed (`N found, M suppressed by your settings`),
+disclosing the suppressed remainder; the word is never "shown" and never
+"hidden", because the bounded digest renders exactly one finding and the
+`Hidden:` block below names the rest (#10691). `human-full` keeps the
+`N of M finding(s) unsuppressed` form with the stable class tokens, each
+glossed once on a `Terms:` line beneath the Summary.
 
 Human lines use plain words only (#8165): the default surface carries no
 snake_case schema token and no parenthesized stable id, so a reader never
@@ -100,12 +112,18 @@ needs the internal vocabulary: `State: a test gap to inspect or repair`,
 `Analysis outcome: findings below (analysis complete)`, the digest line
 `Static exposure: weak (severity: warning, confidence 0.92)`, the `Hidden:`
 bullets' plain class words, and a summary that names classes in plain words
-(`Summary: 4 probes (0 exposed, 2 weak, 1 unrevealed, 1 no path); 4 of 4
-findings unsuppressed`; with zero probes, `Summary: 0 probes analyzed; 0
-findings unsuppressed`). The three unknown classes share the one plain word
-`unknown` and sum into a single bucket named only when non-zero. Limitation
-lines on this surface likewise drop their parenthesized kind/stage and
-recovery tokens. The promise covers renderer-controlled labels on the
+(`Summary: 4 changed behaviors checked: 0 appear noticed by tests, 2 partly noticed, 1
+reached but not noticed, 1 no test path. 4 found, 0 suppressed by your
+settings`; with zero changed behaviors, `Summary: 0 changed behaviors checked`, never
+"nothing to check", because a skipped language makes the run incomplete). The three unknown classes share the one plain word `unclear` and sum
+into a single bucket named only when non-zero. Limitation lines on this
+surface likewise drop their parenthesized kind/stage and recovery tokens; a
+`language_adapter_unavailable` limitation renders as one `Not analyzed:` pointer
+to the preview-language note, which carries the `ripr.toml` recovery block
+(#10691). The static-limited `State:` line reads `ripr cannot tell from reading
+the code whether tests would notice this`, and the internal noun "observable
+sink" never appears (`something a test can check (a return value or side
+effect)`). The canonical gap id is labelled `Gap ID (for scripts)`. The promise covers renderer-controlled labels on the
 bounded surface; producer prose (for example a next-step sentence), file
 paths, and required CLI or probe identifiers are data, not renderer labels,
 and are unchanged. The schema ids and their meanings are unchanged and stay
@@ -178,22 +196,22 @@ decisive stages behind a remainder count (#4324):
       discriminator = assertion distinguishes intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
       missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
-    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;
-      unrevealed = tests reach it but nothing appears to notice; no path = no test path found
-      finding = a probe reported for review; unsuppressed = not hidden by your suppression policy;
-      unknown = analysis limited, not a verdict; base-side = evidence from the old code, not an edit target;
-      candidate line = changed line ripr considers for probes
+    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      no test path = no test path found; unclear = analysis limited, not a verdict;
+      found = listed for review; suppressed by your settings = hidden by your suppression policy;
+      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
 ```
 
 The ten-line legend immediately follows the compact line, once for the selected
 digest, including an exposed finding when selected. It explains static evidence,
 not execution or test adequacy. `weak` means partial evidence across the stages,
 and `no` means evidence was not found, never that a behavior is impossible.
-The `Summary terms` lines define the words the `Summary:` count line prints (probe,
-exposed, weak, unrevealed, no path) in the same static vocabulary (#9244 item 4);
-its last three lines also define `finding`, `unsuppressed`, the `unknown`
-bucket, `base-side` and the Counts line's `candidate line` (#9244 item 4
-leftovers). They claim no runtime mutation outcome.
+The `Summary terms` lines define the words the `Summary:` count line prints
+(changed behavior, appear noticed by tests, partly noticed, reached but not noticed,
+no test path) in the same static vocabulary (#9244 item 4); its last lines also define
+`found`, `suppressed by your settings`, the `unclear` bucket, `base-side`
+and the Counts line's `candidate line` (#9244 item 4 leftovers, #10691). They claim no runtime mutation outcome.
 The CLI prints the legend on the first standalone human run in a build tree that
 selects a digest (a `--output-dir` fanout member always carries it and does not
 count) and records that in `target/ripr/legend-seen`; later runs replace the ten lines with one
@@ -238,8 +256,9 @@ carded one, so `check` does not report "no repair card" while `ripr pilot` and
 
 The digest's discriminator line label reflects the discriminator state:
 
-- `Missing discriminator` — the finding is not `exposed`; the named
-  discriminator is absent from the related tests.
+- `Missing check` — the finding is not `exposed`; the named
+  discriminator is absent from the related tests (#10691: the digest says
+  "check"; the internal word stays in JSON and specs).
 - `Discriminator (observed, advisory)` — the finding is `exposed` and the
   field carries an observation rationale instead of a missing discriminator.
   Preview-language classifiers record that rationale in the same field, so an
@@ -253,7 +272,7 @@ builds as `Missing discriminator value: <value>`, with prose entries such as
 under the label produced
 `Missing discriminator: Missing discriminator value: AuthError::RevokedToken`,
 so the renderer strips that prefix and emits
-`Missing discriminator: AuthError::RevokedToken`. Prose entries carry no such
+`Missing check: AuthError::RevokedToken`. Prose entries carry no such
 prefix and are rendered unchanged. This governs the human digest only; no
 machine format reads the label.
 
@@ -363,9 +382,26 @@ finding. Two equally near seams of that kind whose source spans do not nest
 the stub is placed inline (integration-file placement needs classified
 evidence and stays with `--seam-id`). The block is printed only when the
 resolver produces a stub. When it refuses, the block is replaced by one line,
-`No test stub here: <reason>`, naming the producer's refusal. When the
-function has no seam of that kind, or the location is refused as ambiguous,
-nothing is printed. The resolver reads the files on disk, so a check
+`No test stub here: <reason>`, naming the producer's refusal. When that
+finding also prints no repair start, one further line follows (#10710):
+`Write this test by hand: <what to call and assert>. ripr has no repair
+route for this kind of change yet, ...`, so a gap with neither route never ends
+without a named next step; beside a repair advisory that names its own route or
+recovery (several binding seams, a not-ready packet, the seam budget, a
+classification failure, an unavailable gap route, an unreadable config, or no
+binding seam while the file holds seams, which points at `ripr pilot`) the
+step omits the "no repair route" clause. A refusal that already names the existing test to
+strengthen (the weak-assertion pointer) gets no such line. When several seams
+share the line and exactly one is the finding's changed expression, the block
+prints the stub command for that seam (`--seam-id`) instead of listing the
+others, so every printed `ripr agent stub` command produces a stub. When the
+function has no seam of that kind, nothing is printed. When the location is
+ambiguous and ripr cannot narrow it to a validated stub (more than eight seams
+to check, an inventory that cannot be classified, or a seam missing from it),
+the block prints `No test stub here:` with a plain reason that lists no seam ID
+and no command. A seam that is not a reported gap is worded as a stub target
+that is not a gap in the seam view, with a pointer to strengthen the existing
+test, and gets no hand-written step. The resolver reads the files on disk, so a check
 that analyzed other bytes (`--candidate-tree`, or a committed-history diff
 that read HEAD content behind uncommitted edits) prints no route, and neither
 does a finding whose expression is not on disk in the function holding its
@@ -382,13 +418,35 @@ An empty list renders as `nearest: none`. A suffix selector searches reported
 gaps rather than every seam shape; an empty list must not claim that a filtered
 family has no seam in the file.
 
+A stub owner parameter typed `impl Into<T>` (plain, non-generic `T`) is declared
+as `T`, and `impl AsRef<str>` / `impl AsRef<[u8]>` as `&str` / `&[u8]` (#8361).
+Any other `impl Trait` parameter, including `impl AsRef<Path>` whose `Path`
+could be shadowed, still refuses as `parameter_unsupported`.
+
 Direct JSON stub refusals distinguish an absent selector (`seam_not_found`)
 from a suffix naming several files or disjoint same-kind seams that tie
 (`selector_ambiguous`). Both remain decisions (exit 3), with the schema
-`0.2` refused envelope on stdout, human guidance on stderr, and no stub
+`0.4` refused envelope on stdout, human guidance on stderr, and no stub
 write. Unresolved identity/disclosure fields are explicitly null and warnings
 are empty. An exact path or a suggested seam ID can select one behavior;
 nested seams remain governed by the existing nesting rule (#7762).
+
+After root and configuration admission, but before selecting seams, a direct
+`--at` path that does not route to Rust is
+refused as `unsupported_language` (#10716), with or without `--kind` and
+including under `--write`. This capability refusal makes no claim about a
+check finding's presence or exposure and does not diagnose a non-Rust file
+as malformed Rust. It names the language when recognized and an ordered
+manual route: use the finding's test file/node and verify command when
+available, add or strengthen the test by hand, run the native test command,
+then refresh with `ripr check`. It does not ask the user to re-list Rust seams.
+The new refusal spelling requires stub schema `0.4`; the field set is unchanged,
+unresolved identity/disclosure fields stay null, and warnings stay empty.
+Supported Rust, absent Rust selectors, and malformed Rust keep their distinct
+existing outcomes. No Python or TypeScript stub generator is introduced.
+Configuration failures retain exit 2 before this capability decision, including
+an unavailable Python adapter selected by automatic project detection when no
+`ripr.toml` is discovered, or a malformed `ripr.toml`.
 
 For an integration-file stub, `run_command` names the effective cargo test
 target (#8794): an explicit `[[test]]` entry for the file supplies the name,
@@ -521,13 +579,25 @@ full gate's answer``. A refusal whose gate answer would only repeat it names
 its own recovery instead (#9244): a finding with no canonical gap says there
 is no seam to start a repair from and sends the reader to the Next step above
 (it makes no claim about missing discriminators, which other languages can
-name without a Rust canonical gap); an unreadable config names `ripr.toml` and
+name without a Rust canonical gap), except a TypeScript or JavaScript preview
+finding whose repair packet is blocked by an unresolved expected value or a
+moved assertion selection, which says ripr has no complete repair packet for the
+finding and names that cause in plain words (#10682, the section below); an unreadable config names `ripr.toml` and
 the `ripr check` rerun; a finding no seam binds to says ripr found no seam in
 its file to bind it to and sends the reader to the Next step above; several binding seams say `ripr repair` needs the ID of
 the chosen seam without promising a listing; a repair route that is not ready
 says ripr cannot build a repair packet for the finding yet, lists the
-producer-owned missing evidence (or says the static evidence is not complete
-enough to name a safe test target when the list is empty), and sends the reader
+producer-owned missing evidence in plain words (an `incomplete evidence stage: <stage>` code reads as the test evidence that stage still needs, #11025; or says the static evidence is not complete
+enough to name a safe test target when the list is empty; when the
+finding is a weakly exposed predicate whose infection stage detected a related
+test input at the changed boundary, whose own credited oracle is a weak one
+(the discriminator stage reports only a weak oracle, no related row credits a
+strong or medium oracle, and no stop reason applies), and which carries the
+matching boundary-observed Next step, the missing boundary-value item is
+replaced by a sentence saying a related test already reaches the changed
+boundary input but ripr grades its assertion as a weak check (true for a loose
+check and for an exact comparison written in a form ripr grades relational); a pairing, refused or unverified-observation
+limitation keeps the generic wording, #10622), and sends the reader
 to the Next step above and the `ripr check` rerun, carrying the refusal kind
 and missing list as typed fields rather than parsing the reason text (the
 shared `repair route not ready` label that `ripr repair`, `ripr continue` and
@@ -662,9 +732,10 @@ structured finding and JSON keep the machine value (#9929).
 
 For an `infection_unknown` finding whose related-test inputs ripr cannot map to
 the changed operand, the Next step text states a concrete action: open the
-related test, trace its input through the local or computed operand (including
-default and empty cases) to see which side of the changed condition it
-exercises, then name an input that would exercise the other side. It does not
+related test, check whether it reaches the changed code and inspect other
+existing tests. Trace their inputs through the local or computed operand
+(including default and empty cases) to see which side of the changed condition
+they exercise, then name an input that would exercise the other side. It does not
 restate that the classification is unknown as the instruction, and it keeps the
 existing statement that `ripr.toml` has no fixture/builder value mappings and
 the instruction to add or strengthen a test only when the inspection finds a
@@ -692,6 +763,31 @@ Body presence includes a string or character literal even without a trailing
 comma. Comment-only text, including the producer's `/* old body unread */`
 placeholder, does not establish a body. A complete literal `after:` body is
 not a head-only row and prints no note.
+
+### Plain wording for a TypeScript/JavaScript advisory-only finding (#10682)
+
+A TypeScript or JavaScript preview finding that stays advisory-only names its
+real blocker in plain words on the bounded check screen, without raising or
+lowering any gate:
+
+1. An unresolved expected value (the `typescript_dynamic_assertion_unresolved`
+   named limitation, RIPR-SPEC-0085 §PR5) leads the `Safe next action` with the
+   test `file:line` and the matcher, says ripr cannot tell whether that test
+   covers the change because the expected value is a variable or computed value
+   rather than a literal, and says what to do (use a literal expected value or
+   check by hand). The limitation id stays in evidence only.
+2. A moved assertion selection (RIPR-SPEC-0224) puts the cause into
+   `why_not_actionable`: the named related test (`and N more`, with the verb
+   agreeing in number) asserts a different kind of behavior than the change, so
+   ripr cannot safely choose which test to edit.
+3. In both cases the repair-route advisory reads `no repair start offered: ripr
+   has no complete repair packet for this <language> finding (<cause>); ...`
+   instead of the missing-seam sentence. A TypeScript or JavaScript finding with
+   any other cause keeps the existing advisory.
+
+The wording reads existing evidence only. Readiness, `actionability_category`,
+`repair_packet_ready`, the shared validator and every eligibility guard are
+unchanged, and the lines claim no runtime outcome.
 
 ## Non-Claims
 
@@ -727,6 +823,40 @@ not a head-only row and prints no note.
   commit-or-stash requirement, naming the test route only when a stub is
   rendered. The predicate is the edit cage's own committed-file law, deferring
   (no hold) when it cannot be established.
+- Tests for the return-value repair start (#10701): a weak
+  assertion on a changed return value or error variant, with a direct owner
+  call and an editable test target, prints one `ripr repair <id>` start; a
+  lone equality pin (`assert!(f(x) == lit)`, the terminal Err-return guard), a
+  strong exact assertion, a statically contradicted assertion, a function-value
+  or executor-helper reach, a changed struct literal, a related `#[ignore]` or
+  `#[should_panic]` test, a returned type that may have a non-plain `Drop`
+  (read through `Self`, `use .. as` and `use Type::{self as Name}` renames, and
+  the fields of every workspace struct, enum or union of that name; an
+  unresolved type alias, a return type naming a generic parameter of the
+  function or of a preceding `impl` or `trait` header, `Self` in a generic
+  `impl`, an `impl Trait` or `dyn Trait` return, or a workspace with a macro,
+  `extern crate` or outside-crate item also withholds), a test that
+  pins the owner call, or a local bound from it through `let` or a tuple
+  destructure, with `==`, `.eq(`, `!(.. != ..)` or a closed `>= .. && .. <=`
+  range, an exact error-variant assertion that names a different variant (whole
+  identifier match), a test that only discards the result, and a test with no
+  direct owner call stay refused
+  with one plain-language reason and the manual `ripr agent stub` route
+  (`crates/ripr/tests/return_value_repair_start.rs`). Not recognized as pins,
+  so they still start: a bool local (`let ok = v == 6; assert!(ok)`), an open
+  range (`v > 5 && v < 7`) and `(6..=6).contains(&v)`. The `Drop` read does
+  not follow a lowercase type name or an implementor behind a trait object;
+  the latter withholds only through the `dyn`/`impl` rule. A trait default
+  method with `where Self: Sized` also withholds (an over-withhold).
+  An assertion observes the owner only through a bare call (free owner), a
+  method call (method owner), or a path-qualified call whose qualifier
+  resolves to the owner (its crate, module path or self type; a same-named
+  function, type or primitive elsewhere, or an unreadable qualifier, does not),
+  and a later `let` rebinding of a bound name drops it.
+  Known limits (#10948): method receiver types, scoped `let` shadowing,
+  non-indexed rival types, and `Self::`, `<W as T>::`, turbofish and `use .. as`
+  type spellings are not resolved (the last over-withhold); a bare call of a
+  name the test file defines itself never counts.
 - Format parsing tests for `human-full` and `text-full`.
 - CLI unit tests for repo-scope warnings with `--base` and `--diff`, and no
   warning for diff-scoped JSON.
@@ -738,6 +868,8 @@ not a head-only row and prints no note.
 
 ## Test Mapping
 
+- `crates/ripr/src/output/human.rs::tests::plain_language_default_and_glossed_human_full` (#10691: the default view carries none of probe, canonical gap, observable sink, unsuppressed, Missing discriminator; `human-full` keeps the glossed tokens)
+- `crates/ripr/src/output/human.rs::tests::bounded_adapter_unavailable_limitation_is_one_plain_pointer` (#10691)
 - `crates/ripr/src/output/human.rs::tests::render_finding_marks_a_match_arm_head_only_after_row`
 - `crates/ripr/src/output/human.rs::tests::render_finding_adds_no_arm_note_when_the_after_row_is_complete`
 - `crates/ripr/src/output/human.rs::tests::render_finding_arm_note_ignores_arrows_in_literals_and_comments`
@@ -760,6 +892,10 @@ not a head-only row and prints no note.
 - `crates/ripr/tests/observation_wording_source_literals.rs::renamed_parameter_containing_the_token_prints_as_written`
 - `crates/ripr/tests/observation_wording_source_literals.rs::ordinary_parameter_keeps_the_prose_free_of_the_raw_marker`
 - `crates/ripr/src/output/human.rs::tests::no_static_path_weakness_list_drops_restated_evidence` (a `no_static_path` finding's Weakness list and digest pointer omit the three generic entries its Evidence block already states as `no`; distinct entries and other classes are unchanged)
+- `crates/ripr/tests/agent_stub_at_disclosure.rs::non_rust_paths_refuse_before_rust_analysis_and_never_write`
+- `crates/ripr/tests/agent_stub_at_disclosure.rs::python_marker_without_config_keeps_feature_admission`
+- `crates/ripr/tests/agent_stub_at_disclosure.rs::malformed_config_precedes_non_rust_stub_refusal`
+- `crates/ripr/tests/agent_stub_at_disclosure.rs::rust_paths_keep_ready_missing_and_malformed_results`
 - `crates/ripr/tests/agent_stub_compiles.rs::kind_not_found_refusal_preserves_the_requested_probe_family`
 - `crates/ripr/tests/agent_stub_compiles.rs::kind_nearest_hint_filters_before_the_cap_and_recovers_the_error_stub`
 - `crates/ripr/tests/agent_stub_compiles.rs::kind_not_found_without_a_matching_family_suggests_no_other_seams`

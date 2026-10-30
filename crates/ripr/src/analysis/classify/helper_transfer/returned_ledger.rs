@@ -428,6 +428,9 @@ mod tests {
                 arguments: vec!["&mut errors".to_string()],
                 receiver: None,
                 through_macro: false,
+                module_qualified: false,
+                transparent_macros_rebound: false,
+                diverging_handlers: Vec::new(),
             }],
             stop_above: None,
         };

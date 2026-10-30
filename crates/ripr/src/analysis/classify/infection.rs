@@ -684,10 +684,19 @@ pub(in crate::analysis) fn infection_evidence_with_boundary_input(
         related_tests,
         activation,
         unresolved_boundary,
-        None,
+        OwnerInputs::default(),
         true,
         false,
     )
+}
+
+/// The changed owner and the literal byte-length read of its boundary, which
+/// travel together: both come from the owner's own source.
+#[derive(Clone, Copy, Default)]
+pub(in crate::analysis) struct OwnerInputs<'a> {
+    pub(in crate::analysis) owner: Option<&'a FunctionSummary>,
+    pub(in crate::analysis) literal_length_boundary:
+        Option<&'a super::literal_length_boundary::LiteralLengthBoundary>,
 }
 
 /// [`infection_evidence_with_boundary_input`] given the changed owner, which
@@ -704,10 +713,14 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
     related_tests: &[&TestSummary],
     activation: &ActivationEvidence,
     unresolved_boundary: Option<&str>,
-    owner: Option<&FunctionSummary>,
+    owner_inputs: OwnerInputs<'_>,
     owner_has_other_callers: bool,
     assertion_macros_rebound: bool,
 ) -> StageEvidence {
+    let OwnerInputs {
+        owner,
+        literal_length_boundary,
+    } = owner_inputs;
     // A returned bare comparison with a resolved missing boundary
     // discriminator reads the predicate lens's gap, never a better reading:
     // only a `weak` result replaces the return-value reading, which is
@@ -721,13 +734,19 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
             related_tests,
             activation,
             unresolved_boundary,
-            owner,
+            owner_inputs,
             owner_has_other_callers,
             assertion_macros_rebound,
         );
         if matches!(evidence.state, StageState::Weak) {
             return evidence;
         }
+    }
+    if let Some(evidence) = literal_length_boundary
+        .zip(owner)
+        .and_then(|(boundary, owner)| boundary.infection(probe, owner))
+    {
+        return evidence;
     }
     match probe.family {
         ProbeFamily::Predicate => {
@@ -809,7 +828,7 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
                 StageEvidence::new(
                     StageState::Yes,
                     Confidence::Medium,
-                    "Detected related test input at the changed boundary",
+                    crate::domain::BOUNDARY_INPUT_OBSERVED_SUMMARY,
                 )
             } else if probe_literals.is_empty()
                 && changed_operands.is_none()
@@ -957,27 +976,47 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
                     Confidence::Low,
                     "Changed value is bound to a discard pattern; it cannot infect a sink",
                 )
-            } else if matches!(probe.family, ProbeFamily::ReturnValue)
-                && !owner_has_other_callers
-                && owner
-                    .zip(probe.before.as_deref())
-                    .is_some_and(|(owner, before)| {
-                        crate::analysis::test_grip_evidence::change_is_invisible_to_every_assertion(
-                            owner,
-                            before,
-                            &probe.expression,
-                            related_tests,
-                        )
-                    })
+            } else if let Some(reason) = owner
+                .zip(probe.before.as_deref())
+                .filter(|_| {
+                    matches!(probe.family, ProbeFamily::ReturnValue)
+                        && !owner_has_other_callers
+                        && !assertion_macros_rebound
+                })
+                .and_then(|(owner, before)| {
+                    crate::analysis::test_grip_evidence::change_is_invisible_to_every_assertion(
+                        owner,
+                        before,
+                        &probe.expression,
+                        related_tests,
+                    )
+                })
             {
-                // #8659: every related test calls the owner with literal
-                // inputs at which the changed expression and its baseline
-                // fold to the same value, so no test input tells them apart.
-                StageEvidence::new(
-                    StageState::Weak,
-                    Confidence::Medium,
-                    "Every related test calls the owner with literal inputs at which the changed expression and its baseline evaluate to the same value, so no test input reaches a difference",
-                )
+                // #8659: every related test fails to tell the changed
+                // expression from its baseline. `assertion_macros_rebound`
+                // withholds the reading (#10920 review): both reasons read
+                // assertion macros and comparison tokens by name, and a
+                // rebound `assert!` may compare nothing — or check an exact
+                // value its written tokens never show. The summary names why
+                // the tests cannot see the change; a relational assertion's
+                // inputs may evaluate differently, so the value-equality
+                // wording would misstate that gap (#10916).
+                match reason {
+                    crate::analysis::test_grip_evidence::InvisibilityReason::SameValueAtEveryAssertedInput => {
+                        StageEvidence::new(
+                            StageState::Weak,
+                            Confidence::Medium,
+                            "Every related test calls the owner with literal inputs at which the changed expression and its baseline evaluate to the same value, so no test input reaches a difference",
+                        )
+                    }
+                    crate::analysis::test_grip_evidence::InvisibilityReason::RelationalTruthUnchanged => {
+                        StageEvidence::new(
+                            StageState::Weak,
+                            Confidence::Medium,
+                            "Every related test's assertions hold with the same truth value on the baseline and the change, so no assertion tells the versions apart",
+                        )
+                    }
+                }
             } else {
                 StageEvidence::new(
                     StageState::Yes,

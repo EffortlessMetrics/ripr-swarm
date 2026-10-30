@@ -229,9 +229,10 @@ fn truncated_inventory_refusal(
     })
 }
 
-/// The default human output: the card's typed fields, in card order,
-/// presented verbatim. The renderer never re-derives values, never reorders
-/// evidence, and routes every omitted family to its typed reference. The one
+/// The default human output projects the card's typed fields without
+/// re-deriving them. Detail families sharing a state and destination appear
+/// together at the first such reference, with their family order preserved;
+/// every omitted family keeps its typed reference. The one
 /// enhancement over a raw field dump is the explicit non-actionable reason
 /// when the card carries no next action, because a silent absence there reads
 /// as a bug, not a gate decision.
@@ -278,10 +279,17 @@ pub(crate) fn agent_card_prose_lines(
         yes_no(card.instruction.has_fix_site),
         yes_no(card.instruction.has_suggested_assertion)
     ));
+    // #10644: this readiness line renders for a human reader, so translate
+    // the internal evidence codes; the card's wire data keeps them stable.
     let missing = if card.readiness.missing_evidence.is_empty() {
         "none".to_string()
     } else {
-        card.readiness.missing_evidence.join("; ")
+        card.readiness
+            .missing_evidence
+            .iter()
+            .map(|evidence| analysis::repair_route::humanize_evidence(evidence))
+            .collect::<Vec<_>>()
+            .join("; ")
     };
     lines.push(format!(
         "  readiness: repair_ready={} (missing evidence: {missing})",
@@ -360,15 +368,31 @@ pub(crate) fn agent_card_prose_lines(
     for stop in &card.stop_conditions {
         lines.push(format!("  stop: {stop}"));
     }
-    for reference in &card.detail_references {
+    // Group only references with identical destination, state and reason.
+    // Each family remains named, and a stale or missing reference cannot be
+    // merged into a current one merely because its route is the same.
+    let same_detail = |a: &crate::domain::RepairCardDetailRef,
+                       b: &crate::domain::RepairCardDetailRef| {
+        a.state == b.state && a.route == b.route && a.unavailable_reason == b.unavailable_reason
+    };
+    for (index, reference) in card.detail_references.iter().enumerate() {
+        if card.detail_references[..index]
+            .iter()
+            .any(|earlier| same_detail(earlier, reference))
+        {
+            continue;
+        }
+        let families = card.detail_references[index..]
+            .iter()
+            .filter(|other| same_detail(other, reference))
+            .map(|other| wire_name(&other.family))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let state = wire_name(&reference.state);
         match &reference.route {
-            Some(route) => lines.push(format!(
-                "  detail [{}]: {route}",
-                wire_name(&reference.family)
-            )),
+            Some(route) => lines.push(format!("  detail [{families}] ({state}): {route}")),
             None => lines.push(format!(
-                "  detail [{}]: unavailable ({})",
-                wire_name(&reference.family),
+                "  detail [{families}] ({state}): unavailable ({})",
                 reference
                     .unavailable_reason
                     .as_deref()
@@ -729,6 +753,151 @@ mod tests {
             Vec::new(),
             limitations,
         )
+    }
+
+    #[test]
+    fn prose_groups_equal_detail_routes_without_hiding_state() -> Result<(), String> {
+        use crate::domain::{
+            RepairCardDetailFamily as Family, RepairCardDetailRef, RepairCardDetailState as State,
+            RepairCardOmissionClass as Omission,
+        };
+        let reference =
+            |family, state, route: Option<&str>, reason: Option<&str>| RepairCardDetailRef {
+                family,
+                state,
+                route: route.map(str::to_string),
+                unavailable_reason: reason.map(str::to_string),
+                detail_digest: String::new(),
+                omitted_bytes: 0,
+                ordinal: 0,
+                omission_class: if route.is_some() {
+                    Omission::AuthorityOwnedDetail
+                } else {
+                    Omission::Unavailable
+                },
+            };
+        let mut card = prose_test_card();
+        card.detail_references = vec![
+            reference(
+                Family::CanonicalPacket,
+                State::Current,
+                Some("packet"),
+                None,
+            ),
+            reference(
+                Family::RelatedTestCandidates,
+                State::Current,
+                Some("packet"),
+                None,
+            ),
+            reference(Family::StaticMovement, State::Stale, Some("packet"), None),
+            reference(
+                Family::RepairAttemptStatus,
+                State::Malformed,
+                Some("attempt"),
+                None,
+            ),
+            reference(
+                Family::WitnessStageEvidence,
+                State::WrongRoot,
+                Some("witness"),
+                None,
+            ),
+            reference(
+                Family::FocusedProofReceipt,
+                State::Missing,
+                Some("receipt"),
+                None,
+            ),
+            reference(
+                Family::FixInstruction,
+                State::Unavailable,
+                None,
+                Some("unknown witness"),
+            ),
+            reference(
+                Family::LimitationDetail,
+                State::Unavailable,
+                None,
+                Some("other reason"),
+            ),
+            reference(
+                Family::MutationCalibration,
+                State::Unavailable,
+                None,
+                Some("unknown witness"),
+            ),
+        ];
+        let all = card.detail_references.clone();
+        // Empty and partial inventories must not invent families; a bounded
+        // producer's full nine-family inventory must preserve each mapping.
+        for count in [0, 1, 8, 9] {
+            card.detail_references = all[..count].to_vec();
+            let mut actual = std::collections::BTreeMap::new();
+            for line in agent_card_prose_lines(&card, "full", None) {
+                let Some(detail) = line.strip_prefix("  detail [") else {
+                    continue;
+                };
+                let (families, rest) = detail
+                    .split_once("] (")
+                    .ok_or_else(|| format!("bad detail: {detail}"))?;
+                let (state, destination) = rest
+                    .split_once("): ")
+                    .ok_or_else(|| format!("bad state: {rest}"))?;
+                for family in families.split(", ") {
+                    if actual
+                        .insert(
+                            family.to_string(),
+                            (state.to_string(), destination.to_string()),
+                        )
+                        .is_some()
+                    {
+                        return Err(format!("duplicate family {family}"));
+                    }
+                }
+            }
+            let expected: std::collections::BTreeMap<_, _> = card
+                .detail_references
+                .iter()
+                .map(|r| {
+                    let destination = r.route.clone().unwrap_or_else(|| {
+                        format!(
+                            "unavailable ({})",
+                            r.unavailable_reason
+                                .as_deref()
+                                .unwrap_or("no reason recorded")
+                        )
+                    });
+                    (wire_name(&r.family), (wire_name(&r.state), destination))
+                })
+                .collect();
+            if actual != expected {
+                return Err(format!(
+                    "detail mappings differ: {actual:?} != {expected:?}"
+                ));
+            }
+        }
+        let text = agent_card_prose_lines(&card, "full", None).join("\n");
+        if !text.contains("detail [canonical_packet, related_test_candidates] (current): packet")
+            || !text.contains("detail [static_movement] (stale): packet")
+        {
+            return Err(format!(
+                "equal routes grouped across different states or not grouped: {text}"
+            ));
+        }
+        // Malformed input with no reason must retain an explicit unknown,
+        // rather than inventing a cause or dropping the family.
+        card.detail_references = vec![reference(
+            Family::FixInstruction,
+            State::Unavailable,
+            None,
+            None,
+        )];
+        let text = agent_card_prose_lines(&card, "full", None).join("\n");
+        if !text.contains("(unavailable): unavailable (no reason recorded)") {
+            return Err(text);
+        }
+        Ok(())
     }
 
     /// #6304: the card prose renders the canonical decision's block, so the
