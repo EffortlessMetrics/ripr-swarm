@@ -70,15 +70,22 @@ pub(super) fn multi_line_string_line_ranges(
     source: &str,
 ) -> Option<Vec<std::ops::RangeInclusive<usize>>> {
     use rustpython_parser::{Mode, Tok, lexer::lex};
-    let line_of = |offset: usize| source[..offset].matches('\n').count() + 1;
+    // One running count of line breaks, so a file with many strings is read
+    // once.
+    let (mut line, mut scanned) = (1usize, 0usize);
+    let mut line_at = |offset: usize| {
+        line += source
+            .get(scanned..offset)
+            .map_or(0, |gap| gap.matches('\n').count());
+        scanned = scanned.max(offset);
+        line
+    };
     let mut spans = Vec::new();
     for result in lex(source, Mode::Module) {
         let (token, range) = result.ok()?;
         if matches!(token, Tok::String { .. }) {
-            let (start, end) = (
-                line_of(usize::from(range.start())),
-                line_of(usize::from(range.end())),
-            );
+            let start = line_at(usize::from(range.start()));
+            let end = line_at(usize::from(range.end()));
             if start < end {
                 spans.push(start..=end);
             }
