@@ -485,6 +485,10 @@ disclosed and fails closed; it is never treated as a complete causal comparison.
   cases are `static_limitation` because propagation to a side-effect/call-effect
   sink is unknown, so they correctly lack a policy-eligible receipt. PR C must
   not manufacture a blocking call-observation route from that limited evidence.
+- The shared verification-contract validator reads schema `integer` per JSON
+  Schema Draft 2020-12: a whole-valued number such as `1.0` matches, a fraction
+  or a float beyond 2^53 does not (#11009). The xtask unit test
+  `integer_type_follows_json_schema_numeric_semantics` pins both sides.
 
 ## Implementation Mapping
 

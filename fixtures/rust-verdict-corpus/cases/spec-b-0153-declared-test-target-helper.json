@@ -1,0 +1,53 @@
+{
+  "case_id": "spec-b-0153-declared-test-target-helper",
+  "subject_id": "authored-spec-b-layout",
+  "diff": "cases/spec-b-0153-declared-test-target-helper.diff",
+  "anchor": {
+    "file": "src/contract_test.rs",
+    "line": 4
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "declared_test_target_helper_edit",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "0",
+        "mutated_line": "0",
+        "outcome": "tests_failed",
+        "failing_test": "the_target_shift_is_nine_l_target",
+        "equivalence_review": "not equivalent: the_target_shift_is_nine_l_target fails on it"
+      },
+      {
+        "replacement": "2",
+        "mutated_line": "2",
+        "outcome": "tests_failed",
+        "failing_test": "the_target_shift_is_nine_l_target",
+        "equivalence_review": "not equivalent: the_target_shift_is_nine_l_target fails on it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The edited line is a helper in a file declared as a [[test]] target in the manifest, so it is evidence and seeds no production probe. The helper feeds an assert_eq! against 10, so either neighbor fails the test. Spec cells: RIPR-SPEC-0153#4.",
+  "labeling_observation": {
+    "ripr_commit": "5fc9de08",
+    "full_checkout_verdict": "silent",
+    "full_checkout_classifications": [],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0153#4"
+  ]
+}

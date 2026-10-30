@@ -57,6 +57,7 @@ use std::io::Read;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, sync_channel};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -1505,12 +1506,23 @@ impl Drop for CompatFixtureRoot {
     }
 }
 
+/// Per-process sequence for fixture roots. Parallel tests reuse one name
+/// (every `ripr_binary_probe` call asks for `binary-probe`), and pid plus a
+/// clock stamp alone can repeat: Windows reports time in 100 ns ticks. Two
+/// probes sharing a directory write one `stdout` file from two processes, which
+/// splices their JSON into invalid output (#10458).
+static NEXT_COMPAT_FIXTURE: AtomicU64 = AtomicU64::new(0);
+
 fn unique_compat_fixture_root(name: &str) -> Result<CompatFixtureRoot, String> {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
         .unwrap_or(0);
-    let path = std::env::temp_dir().join(format!("ripr-lsp-{name}-{}-{stamp}", std::process::id()));
+    let sequence = NEXT_COMPAT_FIXTURE.fetch_add(1, Ordering::Relaxed);
+    let path = std::env::temp_dir().join(format!(
+        "ripr-lsp-{name}-{}-{sequence}-{stamp}",
+        std::process::id()
+    ));
     fs::create_dir_all(&path).map_err(|err| format!("create compat fixture root failed: {err}"))?;
     Ok(CompatFixtureRoot { path })
 }

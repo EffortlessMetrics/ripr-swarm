@@ -1,0 +1,10 @@
+diff --git a/src/m_helper.rs b/src/m_helper.rs
+--- a/src/m_helper.rs
++++ b/src/m_helper.rs
+@@ -1,5 +1,5 @@
+ pub fn tier_helper(qty: u32) -> u32 {
+-    if 10 <= qty {
++    if qty >= 10 {
+         5
+     } else {
+         0

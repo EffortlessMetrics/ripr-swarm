@@ -28,6 +28,9 @@ pub(crate) const ARTIFACT_IDENTITY_SCHEMA_VERSION: &str = "1";
 /// before/after pair compares. A tracked lockfile, and every manifest, still
 /// moves the identity.
 pub(crate) const INPUT_IDENTITY_VERSION: &str = "v4";
+// Check findings v5 binds the actual selected languages and test scope.
+// Reject v4 findings artifacts, which omitted those run inputs.
+const CHECK_FINDINGS_INPUT_IDENTITY_VERSION: &str = "v5";
 pub(crate) const CONTENT_COMMITMENT_CANONICALIZATION: &str = "raw_json_placeholder_v1";
 pub(crate) const CONTENT_SHA256_PLACEHOLDER: &str =
     "sha256:0000000000000000000000000000000000000000000000000000000000000000";
@@ -95,6 +98,7 @@ impl RepoExposureArtifactContext {
             base_revision,
             crate::config::repo_exposure_config_identity_hash(config),
             REPO_EXPOSURE_ANALYSIS_FORMAT,
+            INPUT_IDENTITY_VERSION,
         )
     }
 
@@ -114,6 +118,7 @@ impl RepoExposureArtifactContext {
             base_revision,
             crate::config::repo_exposure_config_identity_hash(config),
             REPO_SEAMS_ANALYSIS_FORMAT,
+            INPUT_IDENTITY_VERSION,
         )
     }
 
@@ -125,17 +130,31 @@ impl RepoExposureArtifactContext {
         root: PathBuf,
         mode: String,
         base_revision: Option<String>,
-        config: &crate::config::RiprConfig,
+        inputs: &crate::analysis_outcome::CheckFindingsInputs,
     ) -> Result<Self, String> {
         // The diff check consumes language selection and TypeScript settings
         // the Rust-only inventory never reads, so its identity covers every
         // finding-affecting field.
+        if inputs.perl_facts_used {
+            return Err("check-findings-json cannot bind the consumed Perl facts packet yet; use another report until packet identity is available".to_string());
+        }
+        let mut languages = inputs
+            .languages
+            .iter()
+            .map(|language| language.as_str())
+            .collect::<Vec<_>>();
+        languages.sort_unstable();
+        let config_identity = format!(
+            "{};unchanged_tests={};languages={:?}",
+            inputs.config_identity, inputs.include_unchanged_tests, languages
+        );
         Self::for_analysis_format(
             root,
             mode,
             base_revision,
-            crate::config::check_artifact_config_identity_hash(config),
+            config_identity,
             CHECK_FINDINGS_ANALYSIS_FORMAT,
+            CHECK_FINDINGS_INPUT_IDENTITY_VERSION,
         )
     }
 
@@ -145,6 +164,7 @@ impl RepoExposureArtifactContext {
         base_revision: Option<String>,
         config_identity: String,
         analysis_format: &str,
+        identity_version: &str,
     ) -> Result<Self, String> {
         let canonical_root = canonical_root(&root)?;
         let (manifest_identity, lockfile_identity) =
@@ -154,7 +174,7 @@ impl RepoExposureArtifactContext {
             );
         let input_canonical = format!(
             "identity_version={};mode={};profile={};base={:?};format={};manifest={:?};lockfile={:?};config={};analyzer={}",
-            INPUT_IDENTITY_VERSION,
+            identity_version,
             mode,
             mode,
             base_revision,
@@ -166,7 +186,7 @@ impl RepoExposureArtifactContext {
         );
         let input_identity = format!(
             "input:{}:{}",
-            INPUT_IDENTITY_VERSION,
+            identity_version,
             crate::config::config_fingerprint(&input_canonical)
         );
         Ok(Self {
@@ -545,12 +565,14 @@ struct ArtifactIdentitySpec {
     kind: &'static str,
     format: &'static str,
     command: &'static str,
+    input_identity_version: &'static str,
 }
 
 const REPO_EXPOSURE_IDENTITY_SPEC: ArtifactIdentitySpec = ArtifactIdentitySpec {
     kind: "repo_exposure",
     format: REPO_EXPOSURE_ANALYSIS_FORMAT,
     command: REPO_EXPOSURE_PRODUCER_COMMAND,
+    input_identity_version: INPUT_IDENTITY_VERSION,
 };
 
 /// Validate one `agent verify` snapshot with the authority its declared
@@ -584,6 +606,7 @@ const CHECK_FINDINGS_IDENTITY_SPEC: ArtifactIdentitySpec = ArtifactIdentitySpec 
     kind: "check_findings",
     format: CHECK_FINDINGS_ANALYSIS_FORMAT,
     command: CHECK_FINDINGS_PRODUCER_COMMAND,
+    input_identity_version: CHECK_FINDINGS_INPUT_IDENTITY_VERSION,
 };
 
 /// One finding of a validated `check-findings-json` artifact, reduced to the
@@ -852,7 +875,7 @@ fn validate_artifact_identity(
     // accepted; a compatibility/migration boundary for earlier versions is
     // deferred until a real migration producer exists (#2921 deferred
     // negatives — no fabricated migration authority here).
-    let supported_prefix = format!("input:{INPUT_IDENTITY_VERSION}:");
+    let supported_prefix = format!("input:{}:", spec.input_identity_version);
     let Some(algorithm_and_digest) = identity
         .analysis
         .input_identity
@@ -1141,9 +1164,15 @@ pub(crate) fn validate_verify_movement(
         && before.currentness == ArtifactCurrentness::Current
         && after.currentness == ArtifactCurrentness::Current
     {
+        // #11026: the leading clause is matched by the CLI as a named refusal
+        // (`AGENT_VERIFY_NO_MOVEMENT_PREFIX`), so only the tail is plain
+        // language: the repository has not changed since the before phase.
+        let short = before
+            .repository_head
+            .get(..7)
+            .unwrap_or(&before.repository_head);
         return Err(format!(
-            "no repository movement between before and after artifacts: both are current at revision {}",
-            before.repository_head
+            "no repository movement between before and after artifacts: the repository is still at {short}, so nothing has changed since the before phase and there is nothing to compare yet"
         ));
     }
     Ok(())
@@ -2138,40 +2167,27 @@ mod tests {
     /// The production path (`running_executable` into the regeneration
     /// guidance) under the real Linux stimulus: a process whose executable was
     /// unlinked reports `current_exe()` as `/path (deleted)` (#9665 item 1).
-    /// The test re-runs itself as a copied, self-unlinking child so the parent
-    /// binary stays intact; the child writes the guidance it rendered.
+    /// A private hard link lets the child unlink its own path while preserving
+    /// Cargo's test binary, without ever opening the image for writing (#10168).
     #[cfg(target_os = "linux")]
     #[test]
     fn unlinked_running_executable_renders_bare_ripr_through_production_path() -> Result<(), String>
     {
         const CHILD_OUT: &str = "RIPR_TEST_UNLINKED_EXE_OUT";
-        if let Ok(out) = std::env::var(CHILD_OUT) {
+        if let Some(out) = std::env::var_os(CHILD_OUT) {
             let exe = std::env::current_exe().map_err(|e| e.to_string())?;
             std::fs::remove_file(&exe).map_err(|e| e.to_string())?;
+            let deleted = std::env::current_exe().map_err(|e| e.to_string())?;
+            if !deleted.to_string_lossy().ends_with(" (deleted)") || deleted.is_file() {
+                return Err(format!(
+                    "self-unlink did not produce a deleted executable: {deleted:?}"
+                ));
+            }
             let guidance = repo_exposure_regeneration_guidance(Path::new("."));
             return std::fs::write(out, guidance).map_err(|e| e.to_string());
         }
-        let dir = std::env::temp_dir().join(format!("ripr-unlinked-exe-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-        let copy = dir.join("ripr-lib-test-copy");
-        let out = dir.join("guidance.txt");
-        std::fs::copy(std::env::current_exe().map_err(|e| e.to_string())?, &copy)
-            .map_err(|e| e.to_string())?;
-        let status = std::process::Command::new(&copy)
-            .args([
-                "--exact",
-                "agent::artifact::tests::unlinked_running_executable_renders_bare_ripr_through_production_path",
-                "--test-threads=1",
-            ])
-            .env(CHILD_OUT, &out)
-            .status()
-            .map_err(|e| e.to_string())?;
-        let guidance = std::fs::read_to_string(&out).map_err(|e| format!("no child output: {e}"));
-        let _ = std::fs::remove_dir_all(&dir);
-        if !status.success() {
-            return Err(format!("child test run failed: {status}"));
-        }
-        let guidance = guidance?;
+        let mut fixture = UnlinkedExecutableFixture::new()?;
+        let guidance = fixture.guidance()?;
         if guidance.contains("(deleted)") {
             return Err(format!("recovery names a deleted executable: {guidance}"));
         }
@@ -2180,6 +2196,192 @@ mod tests {
                 "no bare-ripr fallback with version check: {guidance}"
             ));
         }
+        Ok(())
+    }
+
+    /// Owns a private link to the running image and reaps its child before
+    /// removing the directory. Never open an executable inode for writing:
+    /// another test's fork can inherit that writer until its own exec (#10168).
+    #[cfg(target_os = "linux")]
+    struct UnlinkedExecutableFixture {
+        root: PathBuf,
+        child: Option<std::process::Child>,
+    }
+
+    #[cfg(target_os = "linux")]
+    impl UnlinkedExecutableFixture {
+        fn new() -> Result<Self, String> {
+            static NEXT: AtomicU64 = AtomicU64::new(0);
+            let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+            let parent = exe.parent().ok_or("test executable has no parent")?;
+            let stamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|e| e.to_string())?
+                .as_nanos();
+            // Stay on the executable's filesystem so hard_link cannot cross
+            // mounts, even when the system temp directory is on another one.
+            let root = parent.join(format!(
+                "ripr-unlinked-exe-{}-{stamp}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::create_dir(&root).map_err(|e| {
+                format!(
+                    "create private executable directory {}: {e}",
+                    root.display()
+                )
+            })?;
+            let fixture = Self { root, child: None };
+            // A new pathname to the already executing inode needs no writable
+            // descriptor, chmod or copy. Unlinking it leaves Cargo's image intact.
+            std::fs::hard_link(&exe, fixture.executable())
+                .map_err(|e| format!("link running executable {}: {e}", exe.display()))?;
+            Ok(fixture)
+        }
+
+        fn executable(&self) -> PathBuf {
+            self.root.join("ripr-lib-test-link")
+        }
+
+        fn spawn(&mut self) -> Result<(), String> {
+            self.child = Some(std::process::Command::new(self.executable())
+                .args([
+                    "--exact",
+                    "agent::artifact::tests::unlinked_running_executable_renders_bare_ripr_through_production_path",
+                    "--test-threads=1",
+                ])
+                .env("RIPR_TEST_UNLINKED_EXE_OUT", self.root.join("guidance.txt"))
+                .spawn()
+                .map_err(|e| format!("spawn self-unlinking test: {e}"))?);
+            Ok(())
+        }
+
+        fn guidance(&mut self) -> Result<String, String> {
+            self.spawn()?;
+            let child = self.child.as_mut().ok_or("self-unlinking child missing")?;
+            let status = child
+                .wait()
+                .map_err(|e| format!("reap self-unlinking test: {e}"))?;
+            self.child = None;
+            if !status.success() {
+                return Err(format!("child test run failed: {status}"));
+            }
+            if self.executable().exists() {
+                return Err("child did not unlink its executable".to_string());
+            }
+            std::fs::read_to_string(self.root.join("guidance.txt"))
+                .map_err(|e| format!("no child output: {e}"))
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    impl Drop for UnlinkedExecutableFixture {
+        fn drop(&mut self) {
+            if let Some(child) = &mut self.child {
+                let _ = child.kill();
+                if let Err(e) = child.wait() {
+                    eprintln!(
+                        "reap self-unlinking child failed; retaining {}: {e}",
+                        self.root.display()
+                    );
+                    return;
+                }
+            }
+            if let Err(e) = std::fs::remove_dir_all(&self.root) {
+                eprintln!(
+                    "remove private executable directory {}: {e}",
+                    self.root.display()
+                );
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn unlinked_executable_fixtures_are_unique_and_never_writable_copies() -> Result<(), String> {
+        use std::os::unix::fs::MetadataExt;
+
+        let source = std::env::current_exe().map_err(|e| e.to_string())?;
+        let source_metadata = std::fs::metadata(&source).map_err(|e| e.to_string())?;
+        let first = UnlinkedExecutableFixture::new()?;
+        let second = UnlinkedExecutableFixture::new()?;
+        let first_root = first.root.clone();
+        let second_root = second.root.clone();
+        assert_ne!(first_root, second_root);
+        for fixture in [&first, &second] {
+            let metadata = std::fs::metadata(fixture.executable()).map_err(|e| e.to_string())?;
+            assert_eq!(
+                (metadata.dev(), metadata.ino()),
+                (source_metadata.dev(), source_metadata.ino())
+            );
+            // This is the executing image's *same inode*, not a copied
+            // binary. A write-open/ETXTBSY probe would itself acquire a writer
+            // on some Linux kernels, contradicting the fixture's safety rule.
+            // Both private links and Cargo's original path are present.
+            // This stays portable across Linux kernels and avoids the
+            // concurrent fixture's link-count changes from other tests.
+            assert!(
+                metadata.nlink() >= 3,
+                "running image must still have its original and two private links"
+            );
+        }
+        drop(first);
+        assert!(!first_root.exists());
+        assert!(second.executable().is_file());
+        drop(second);
+        assert!(!second_root.exists());
+        assert!(source.is_file());
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn unlinked_executable_fixture_cleans_up_on_early_error() -> Result<(), String> {
+        let mut root = None;
+        let result: Result<(), String> = (|| {
+            let fixture = UnlinkedExecutableFixture::new()?;
+            root = Some(fixture.root.clone());
+            Err("intentional early return".to_string())
+        })();
+        assert_eq!(result, Err("intentional early return".to_string()));
+        let root = root.ok_or("fixture setup did not run")?;
+        assert!(
+            !root.exists(),
+            "fixture leaked after early error: {}",
+            root.display()
+        );
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn unlinked_executable_fixture_reaps_child_and_removes_directory_on_drop() -> Result<(), String>
+    {
+        use nix::errno::Errno;
+        use nix::sys::signal::{Signal, kill};
+        use nix::sys::wait::{WaitPidFlag, WaitStatus, waitpid};
+        use nix::unistd::Pid;
+
+        let mut fixture = UnlinkedExecutableFixture::new()?;
+        fixture.spawn()?;
+        let child = fixture.child.as_ref().ok_or("child was not spawned")?;
+        let pid = Pid::from_raw(i32::try_from(child.id()).map_err(|e| e.to_string())?);
+        let root = fixture.root.clone();
+        drop(fixture);
+        let reaped = waitpid(pid, Some(WaitPidFlag::WNOHANG));
+        if reaped != Err(Errno::ECHILD) {
+            // A broken Drop must not leave this control's own child behind.
+            if reaped == Ok(WaitStatus::StillAlive) {
+                let _ = kill(pid, Signal::SIGKILL);
+                let _ = waitpid(pid, None);
+            }
+            return Err(format!("fixture did not reap its child: {reaped:?}"));
+        }
+        assert!(
+            !root.exists(),
+            "reaped child's directory remains: {}",
+            root.display()
+        );
         Ok(())
     }
 
@@ -3088,6 +3290,12 @@ mod tests {
         assert!(matches!(
             validate_verify_movement(&before, &after),
             Err(error) if error.contains("no repository movement")
+                && error.contains("the repository is still at aaaaaaa")
+                && error.contains("nothing has changed since the before phase and there is nothing to compare yet")
+                // The old internal wording and the full 40-character
+                // revision must not come back.
+                && !error.contains("both are current")
+                && !error.contains(&"a".repeat(40))
         ));
 
         // A disclosed non-current observation stays admissible at this layer.
@@ -4014,6 +4222,25 @@ mod tests {
             if dirty.currentness != ArtifactCurrentness::DirtyWorktree {
                 return Err("untracked Rust source must disclose DirtyWorktree".into());
             }
+            // The probe is not root-only: a nested source under a spaced path
+            // is analyzed input too, so it must also be dirty on its own.
+            std::fs::remove_file(root.join("extra.rs"))
+                .map_err(|error| format!("remove extra: {error}"))?;
+            if current_git_worktree_status(&root)? != "clean" {
+                return Err("removing the untracked source must restore clean".into());
+            }
+            let nested = root.join("crates/nested dir/src");
+            std::fs::create_dir_all(&nested).map_err(|error| format!("create nested: {error}"))?;
+            std::fs::write(nested.join("deep.rs"), "pub fn deep() {}\n")
+                .map_err(|error| format!("write nested: {error}"))?;
+            if current_git_worktree_status(&root)? != "dirty" {
+                return Err("untracked nested Rust source must report dirty".into());
+            }
+            let nested_dirty = validate_repo_exposure_artifact(&root, &raw_after_commit, "t")
+                .map_err(|error| format!("nested validation failed: {error}"))?;
+            if nested_dirty.currentness != ArtifactCurrentness::DirtyWorktree {
+                return Err("untracked nested Rust source must disclose DirtyWorktree".into());
+            }
             Ok(())
         })();
         let cleanup =
@@ -4225,7 +4452,12 @@ mod tests {
                     root.clone(),
                     "draft".to_string(),
                     None,
-                    config,
+                    &crate::analysis_outcome::CheckFindingsInputs {
+                        config_identity: crate::config::check_artifact_config_identity_hash(config),
+                        include_unchanged_tests: true,
+                        languages: vec![crate::domain::LanguageId::Rust],
+                        perl_facts_used: false,
+                    },
                 )
             };
             let exposure = |config: &crate::config::RiprConfig| {
@@ -4251,6 +4483,56 @@ mod tests {
         result?;
         cleanup?;
         Ok(())
+    }
+
+    #[test]
+    fn check_findings_binds_resolved_languages_and_refuses_unbound_packets() -> Result<(), String> {
+        use crate::analysis_outcome::CheckFindingsInputs;
+        use crate::domain::LanguageId;
+        let root = temporary_git_root()?;
+        let result = (|| {
+            commit_fixture_file(&root)?;
+            let config = crate::config::RiprConfig::default();
+            let inputs = CheckFindingsInputs {
+                config_identity: crate::config::check_artifact_config_identity_hash(&config),
+                include_unchanged_tests: true,
+                languages: vec![LanguageId::Rust],
+                perl_facts_used: false,
+            };
+            let identity = |inputs: &CheckFindingsInputs| {
+                RepoExposureArtifactContext::for_check_findings(
+                    root.clone(),
+                    "draft".to_string(),
+                    None,
+                    inputs,
+                )
+            };
+            let base = identity(&inputs)?.input_identity;
+            let mut changed = inputs.clone();
+            changed.languages.push(LanguageId::Perl);
+            assert_ne!(
+                base,
+                identity(&changed)?.input_identity,
+                "language selection is bound even when config fields stay fixed"
+            );
+            let reordered = CheckFindingsInputs {
+                languages: vec![LanguageId::Perl, LanguageId::Rust],
+                ..changed.clone()
+            };
+            assert_eq!(
+                identity(&changed)?.input_identity,
+                identity(&reordered)?.input_identity,
+                "language order is not semantic"
+            );
+            changed.perl_facts_used = true;
+            assert!(
+                identity(&changed).is_err(),
+                "an unbound consumed packet must not be certified"
+            );
+            Ok(())
+        })();
+        std::fs::remove_dir_all(&root).map_err(|error| format!("remove temp root: {error}"))?;
+        result
     }
 
     /// (#2823 test 4) Movement of every semantic input — mode, base, config,

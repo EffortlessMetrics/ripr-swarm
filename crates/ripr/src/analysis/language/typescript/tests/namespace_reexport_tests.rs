@@ -246,3 +246,23 @@ fn a_type_only_namespace_export_binds_no_value() -> Result<(), String> {
     );
     Ok(())
 }
+
+#[test]
+fn unavailable_star_sibling_prevents_namespace_import_rewrite() -> Result<(), String> {
+    for unavailable in [None, Some("export function broken(")] {
+        let mut files = vec![
+            ("src/units.ts", UNITS),
+            ("src/inner.ts", "export * as units from './units';\n"),
+            (
+                "src/barrel.ts",
+                "export * from './inner';\nexport * from './missing';\n",
+            ),
+        ];
+        if let Some(source) = unavailable {
+            files.push(("src/missing.ts", source));
+        }
+        let related = related_through_namespace(&files, &test_source(CALL))?;
+        assert!(related.is_empty(), "unavailable star sibling: {related:?}");
+    }
+    Ok(())
+}

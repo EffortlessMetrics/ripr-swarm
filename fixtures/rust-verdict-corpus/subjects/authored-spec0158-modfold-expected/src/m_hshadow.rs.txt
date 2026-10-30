@@ -1,0 +1,36 @@
+pub fn tier_hshadow(qty: u32) -> u32 {
+    if 10 <= qty {
+        5
+    } else {
+        0
+    }
+}
+
+#[cfg(test)]
+fn big() -> u32 {
+    10
+}
+
+#[cfg(test)]
+fn small() -> u32 {
+    9
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn big() -> u32 {
+        15
+    }
+
+    fn small() -> u32 {
+        14
+    }
+
+    #[test]
+    fn the_shadowing_helpers_are_fifteen_and_fourteen_m_hshadow() {
+        assert_eq!(tier_hshadow(big()), 5);
+        assert_eq!(tier_hshadow(small()), 5);
+    }
+}
