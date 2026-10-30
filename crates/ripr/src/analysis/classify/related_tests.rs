@@ -9016,6 +9016,39 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
         }
     }
 
+    /// #11236: an impl no indexed fn records (empty, qualified, aliased,
+    /// macro-generated, multi-letter blanket) still makes a std receiver the
+    /// trait's own, so the genuine call keeps `direct_owner_call`. The control
+    /// pins that an impl for a declared user type does not.
+    #[test]
+    fn given_unindexed_or_opaque_std_impl_when_calling_default_method_then_direct_owner_call() {
+        let body = "let names: Vec<u32> = Vec::new(); let ok = names.advance();";
+        for suffix in [
+            "impl Counter for Vec<u32> {}\n",
+            "impl Counter for std::vec::Vec<u32> {}\n",
+            "impl Counter for std::vec::Vec<u32> { fn step(&self) -> u32 { 1 } }\n",
+            "type Names = Vec<u32>;\nimpl Counter for Names {}\n",
+            "macro_rules! imp { ($t:ty) => { impl Counter for $t {} }; }\nimp!(Vec<u32>);\n",
+            "impl<Item> Counter for Item {}\n",
+        ] {
+            assert_eq!(
+                counter_default_fn_relation(body, Vec::new(), suffix),
+                RelationReason::DirectOwnerCall,
+                "{suffix}"
+            );
+        }
+        for suffix in [
+            "struct Other;\nimpl Counter for Other {}\n",
+            "impl Counter for Unit {}\n",
+        ] {
+            assert_eq!(
+                counter_default_fn_relation(body, Vec::new(), suffix),
+                RelationReason::WeakTokenSubstring,
+                "an impl for a declared user type must not keep the credit: {suffix}"
+            );
+        }
+    }
+
     /// #11113: a module file's own `use super::*;` is the ordinary test-module
     /// prelude and does not rebind `Vec`; a named import, a declaration, a
     /// foreign glob or a parent module that binds the name does.

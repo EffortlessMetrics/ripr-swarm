@@ -17,6 +17,9 @@
 //! Anything else (an unannotated binding, a field or call receiver, a path or
 //! UFCS spelling, a macro argument ripr cannot parse, a closure or loop
 //! binding) keeps the existing credit, so this only ever removes a relation.
+//! Every gap in the proof of "not the trait's receiver" must fail open: an
+//! unprovable shadow or impl keeps credit, because a missed shadow demotes a
+//! genuine relation and a wrong demotion hides a real call.
 
 use super::{
     RustIndex, TestSummary, assertion_arguments_resolve, base_type_name, is_ident_byte,
@@ -25,7 +28,7 @@ use super::{
 use crate::analysis::facts::FunctionContainer;
 use ra_ap_syntax::{
     AstNode, SyntaxNode,
-    ast::{self, HasName},
+    ast::{self, HasGenericParams, HasName},
 };
 use std::cell::Cell;
 use std::path::{Path, PathBuf};
@@ -318,7 +321,8 @@ fn initializer_head(initializer: &ast::Expr) -> Option<String> {
 /// Unlike `file_rebinds_type`, a `use super::*;` at the top of a module file
 /// is admitted when the parent module file shows no such binding, because
 /// every test module of a crate starts that way. Grandparent glob chains are
-/// not followed; the cost of that gap is a missed relation, never a new one.
+/// not followed, so a shadow reached only through one is missed and the
+/// relation is demoted wrongly (a gap that fails closed, not open; #11236).
 fn std_name_rebound(index: &RustIndex, test_file: &Path, head: &str) -> bool {
     let mut files = vec![test_file.to_path_buf()];
     files.extend(parent_module_files(test_file));
@@ -387,16 +391,82 @@ fn file_binds_std_name(index: &RustIndex, file: &Path, head: &str) -> bool {
     })
 }
 
-/// Whether an indexed `impl <owner trait> for <head>` could make the std type
-/// a receiver of the trait's default method.
+/// Whether an `impl <owner trait> for <self type>` could make the std type
+/// `head` a receiver of the trait's default method. Fails open: an impl whose
+/// self type is not provably a user-declared type keeps the credit. Indexed
+/// impl fns are read first; the source scan then covers what no fn indexes
+/// (an empty `impl Trait for Vec<u32> {}`), qualified spellings, aliases and
+/// macro-generated impls (#11236).
 fn trait_implemented_for(index: &RustIndex, trait_name: &str, head: &str) -> bool {
-    index.functions().iter().any(|function| {
+    let indexed = index.functions().iter().any(|function| {
         matches!(&function.item.container,
             FunctionContainer::TraitImpl { trait_path, self_ty }
                 if impl_trait_name_matches(trait_path, trait_name)
-                    && (base_type_name(strip_reference_prefix(self_ty)) == head
+                    && (last_segment_name(strip_reference_prefix(self_ty)) == head
                         || impl_self_reaches_std(self_ty)))
-    })
+    });
+    indexed || source_may_implement_for_std(index, trait_name, head)
+}
+
+/// `std::vec::Vec<u32>` -> `Vec`: the final path segment before any generics.
+fn last_segment_name(self_ty: &str) -> &str {
+    let path = self_ty.split('<').next().unwrap_or(self_ty);
+    path.rsplit("::").next().map(str::trim).unwrap_or(path)
+}
+
+/// Scan every indexed file for an impl of `trait_name` (including empty ones)
+/// whose self type is std-headed or cannot be ruled out, or a macro that
+/// spells such an impl. A file that does not parse is treated as a match.
+fn source_may_implement_for_std(index: &RustIndex, trait_name: &str, head: &str) -> bool {
+    let mut trees = Vec::new();
+    for (path, _) in index.files().iter() {
+        match index.source_syntax.get(index, path).and_then(|s| s.tree()) {
+            Some(tree) => trees.push(tree.syntax().clone()),
+            None => return true,
+        }
+    }
+    let declared: std::collections::BTreeSet<String> = trees
+        .iter()
+        .flat_map(|root| root.descendants())
+        .filter_map(|node| ast::Adt::cast(node).and_then(|item| item.name()))
+        .map(|name| name.text().to_string())
+        .collect();
+    trees
+        .iter()
+        .flat_map(|root| root.descendants())
+        .any(|node| {
+            if let Some(item) = ast::Impl::cast(node.clone()) {
+                let Some(trait_ty) = item.trait_() else {
+                    return false;
+                };
+                if !impl_trait_name_matches(&trait_ty.syntax().text().to_string(), trait_name) {
+                    return false;
+                }
+                let Some(self_ty) = item.self_ty() else {
+                    return true;
+                };
+                let text = self_ty.syntax().text().to_string();
+                let text = text.trim();
+                let base = last_segment_name(strip_reference_prefix(text));
+                let generic = item.generic_param_list().is_some_and(|list| {
+                    list.generic_params().any(|param| {
+                        matches!(&param, ast::GenericParam::TypeParam(ty)
+                        if ty.name().is_some_and(|name| name.text() == base))
+                    })
+                });
+                return base == head
+                    || generic
+                    || impl_self_reaches_std(text)
+                    || !declared.contains(base);
+            }
+            // Tokens a macro expands into an impl are not parsed as an item.
+            let macro_text = (ast::MacroRules::can_cast(node.kind())
+                || ast::MacroCall::can_cast(node.kind()))
+            .then(|| node.text().to_string());
+            macro_text.is_some_and(|text| {
+                text.contains("impl") && text.contains(trait_name) && text.contains("for")
+            })
+        })
 }
 
 /// `&Vec<u8>` / `&mut Vec<u8>` -> `Vec<u8>`: only leading `&` and `mut `, so a
