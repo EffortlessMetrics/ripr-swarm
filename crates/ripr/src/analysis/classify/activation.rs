@@ -11626,11 +11626,17 @@ assert_eq!(input.amount, 100);"#
         assert_eq!(index.call_identity_memos.rebound_scan_count(), 1);
         // Replacing the file clears the memo, so the same index recomputes
         // instead of serving the rebound answer for the clean sources.
-        // The counter reaching 2 is the invalidation signal; the new
-        // answer is asserted by the clean-index control in the reuse test
-        // above, which reads the same macro-free shape as unbound.
+        // The counter reaching 1 proves the clear reset the memo (a stale
+        // entry would skip the scan and stay at 0); the clean `false` value
+        // proves the post-replacement query recomputed on the new sources
+        // (a stale entry would still answer `true`). The repeat query then
+        // proves reuse-after-recompute holds at 1. The clean-index control
+        // in the reuse test above reads the same macro-free shape as
+        // unbound, fixing the expected value.
         insert(&mut index, "pub fn score() -> bool {\n    1 > 0\n}\n");
-        let _ = macro_names_rebound(&index, &["assert"]);
+        assert!(!macro_names_rebound(&index, &["assert"]));
+        assert_eq!(index.call_identity_memos.rebound_scan_count(), 1);
+        assert!(!macro_names_rebound(&index, &["assert"]));
         assert_eq!(index.call_identity_memos.rebound_scan_count(), 1);
     }
 }
