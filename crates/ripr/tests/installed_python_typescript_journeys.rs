@@ -3008,6 +3008,15 @@ fn pending_terminal_recovery_requires_published_receipt() -> Result<(), String> 
         false,
         "after without published receipt",
     )?;
+    let (_, missing_error) = text_of(&missing);
+    need(
+        &missing_error,
+        "already finished",
+        "missing receipt retry reached the finished attempt",
+    )?;
+    if receipt.exists() {
+        return Err("missing receipt was recreated without evidence".into());
+    }
     let missing_manifest = attempt.manifest_for_only_attempt()?;
     if missing_manifest
         .get("terminal_artifacts")
