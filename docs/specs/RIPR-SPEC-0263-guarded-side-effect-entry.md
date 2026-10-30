@@ -7,7 +7,8 @@ Owner: product-analysis
 Created: 2026-10-13
 
 Linked issues: [#7132](https://github.com/EffortlessMetrics/ripr-swarm/issues/7132),
-[#7964](https://github.com/EffortlessMetrics/ripr-swarm/issues/7964).
+[#7964](https://github.com/EffortlessMetrics/ripr-swarm/issues/7964),
+[#11147](https://github.com/EffortlessMetrics/ripr-swarm/issues/11147).
 
 Support-tier impact: None
 
@@ -50,8 +51,10 @@ counterpart for side effects.
 
 ## Behavior
 
-1. **Scope.** The rule applies to `side_effect` and `call_deletion` probes
-   whose changed line sits directly in the block of an `if` (or `else if`).
+1. **Scope.** The rule applies to `side_effect`, `call_deletion` and
+   `error_path` probes, and to any probe carrying an error-variant flow sink
+   (the `return_value` twin of a changed `return Err(X)`, #11147), whose
+   changed line sits directly in the block of an `if` (or `else if`).
    The `if` must open the innermost `{` around the line, so a line in a
    nested closure, loop or `else` block is out of scope. A changed line
    that holds a brace of its own (`} else { small(v); }`,
@@ -172,7 +175,8 @@ counterpart for side effects.
 - Evaluating compound conditions, computed constants, `static` bounds,
   imported or associated constants, computed inputs or helper-chain
   arguments.
-- Applying the rule to return-value, predicate or field-construction probes.
+- Applying the rule to predicate or field-construction probes, or to a
+  return-value probe without an error-variant flow sink.
 - Reading `else` branches, `match` guards, loops or early returns.
 - Changing the direct-collection observers themselves: they still say what
   an assertion observes; this rule says the tests never run the change.
@@ -200,6 +204,14 @@ counterpart for side effects.
    `static` pointer or closure, a `const` table), and when production code
    calls it (a `Drop` or `AddAssign` impl).
 
+7. #11147: a changed `return Err(PriceError::TooLarge)` inside
+   `if price > 1_000_000`, with tests calling `discount(100, 1)`,
+   `discount(-1, 1)` and `discount(100, 20)` and an exact
+   `Err(PriceError::Negative)` assertion on the `-1` call:
+   `weakly_exposed`, missing input `if price > 1_000_000`, not `exposed`.
+   Adding a call with `2_000_000` keeps `exposed`; a changed return in
+   `if price < 0` (entered by `-1`) names no guard.
+
 ## Test Mapping
 
 - `crates/ripr/tests/guarded_side_effect_unentered.rs` covers acceptance
@@ -211,6 +223,10 @@ counterpart for side effects.
   - `a_named_const_bound_that_the_input_misses_names_the_guard`
   - `an_unreadable_guard_names_nothing`
   - `recursion_a_same_line_else_or_a_helper_names_no_guard`
+- `crates/ripr/tests/guarded_error_return_unentered.rs` covers example 7:
+  `an_exact_variant_assertion_on_another_branch_does_not_read_exposed`,
+  `a_call_that_enters_the_guard_keeps_the_exposed_reading` and
+  `a_changed_error_return_in_a_guard_the_tests_enter_names_nothing`.
 - `analysis::classify::arm_selection::guard_entry::tests` covers the guard
   parser, the comparison semantics and the rebinding refusals.
 - The corpus case `rust-guarded-push-unentered-branch` is the labeled

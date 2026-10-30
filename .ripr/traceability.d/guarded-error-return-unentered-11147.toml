@@ -1,0 +1,4 @@
+[[extend]]
+id = "RIPR-SPEC-0263"
+tests = ["crates/ripr/tests/guarded_error_return_unentered.rs::an_exact_variant_assertion_on_another_branch_does_not_read_exposed"]
+code = ["crates/ripr/src/analysis/classify/activation.rs"]
