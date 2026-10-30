@@ -695,3 +695,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_related_test_matching (28)
+
+Reason:
+RIPR-SPEC-0026: additive confidence_basis and Why capped line for TypeScript/JavaScript preview findings (#10700)
+
+Command:
+`cargo xtask goldens bless typescript_related_test_matching --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
