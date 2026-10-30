@@ -588,8 +588,6 @@ tests = [
   "crates/ripr/src/analysis/test_grip_evidence.rs::tests::inherent_receiver_review_last_hop_and_wrapper_controls",
   "crates/ripr/src/analysis/test_grip_evidence.rs::tests::inherent_executable_owner_identity_boundary_matrix",
   "crates/ripr/src/analysis/test_grip_evidence.rs::tests::same_line_helper_callers_keep_distinct_module_function_identity",
-  "crates/ripr/src/analysis/syntax/name_scope.rs::tests::same_named_functions_on_one_line_have_no_unique_scope",
-  "crates/ripr/src/analysis/syntax/name_scope.rs::tests::function_type_parameters_refuse_module_name_borrowing",
   "crates/ripr/tests/private_inherent_receiver.rs::executable_owner_identity_boundaries_agree_in_diff",
   "crates/ripr/src/analysis/test_grip_evidence.rs::tests::inherent_helper_declarations_are_not_executable_self_edges",
   "crates/ripr/src/analysis/syntax/name_scope.rs::tests::same_named_functions_on_one_line_have_no_unique_scope",
