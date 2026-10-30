@@ -80,6 +80,12 @@ exercised boundary from a missing one.
   A same-file type alias, import rename or unresolved glob that can shadow
   an intrinsic type spelling refuses integer evaluation in both direct
   expressions and local initializers, including raw identifier spellings.
+  The root spellings (`std`, `core`, `alloc`) are refused by a
+  workspace-global pre-check: admission fails whenever any indexed file
+  aliases or renames a root, not only the owner's file, while every other
+  intrinsic spelling stays scoped to the owner's file. That broader
+  over-refusal is fail-closed and deliberate; narrowing it to the owner's
+  file rides the recorded optimization follow-up rather than this repair.
   Type parameters of the owner and its enclosing impl/trait also refuse
   intrinsic identity; unrelated functions' generic parameters do not bind
   that owner. A missing or ambiguous owner context remains unresolved.
