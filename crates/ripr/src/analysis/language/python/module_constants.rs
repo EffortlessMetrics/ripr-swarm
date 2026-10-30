@@ -659,11 +659,10 @@ pub(super) fn names_used_beyond_construction(
                         || index
                             .checked_sub(1)
                             .and_then(|before| tokens.get(before))
-                            .is_some_and(|before| matches!(before, Tok::Def | Tok::Class))) =>
+                            .is_some_and(|before| matches!(before, Tok::Def | Tok::Class)))
+                    && watched(name.as_str()) =>
             {
-                if watched(name.as_str()) {
-                    names.insert(name.to_string());
-                }
+                names.insert(name.to_string());
             }
             Tok::String { value, .. } => names.extend(
                 value
