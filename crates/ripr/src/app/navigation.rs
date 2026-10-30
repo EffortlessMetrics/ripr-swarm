@@ -109,7 +109,10 @@ pub(crate) enum RepairRouteRefusal {
     /// A TypeScript/JavaScript preview finding whose repair packet is not
     /// complete: the delegated loop starts from a complete packet's gap id,
     /// not from a Rust seam, so the absent seam is not the reason.
-    PreviewPacketNotComplete { language: String, reason: String },
+    PreviewPacketNotComplete {
+        language: String,
+        reason: String,
+    },
     /// The finding's file belongs to a language adapter whose findings the
     /// seam inventory behind `ripr repair` cannot bind (#9102). The
     /// inventory is built from the Rust index only, so no seam exists for

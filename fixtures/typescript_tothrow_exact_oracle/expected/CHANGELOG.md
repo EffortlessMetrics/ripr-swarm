@@ -601,3 +601,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_tothrow_exact_oracle (37)
+
+Reason:
+RIPR-SPEC-0122: plain TypeScript/JavaScript wording applies only to a consistent incomplete_repair_packet category (#10682)
+
+Command:
+`cargo xtask goldens bless typescript_tothrow_exact_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
