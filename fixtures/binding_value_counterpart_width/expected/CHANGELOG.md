@@ -24,3 +24,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — binding_value_counterpart_width (3)
+
+Reason:
+RIPR-SPEC-0158: compose with current main plain-language summary and related-test guidance (#11104); classifications, stages and unknown predicates unchanged, only summary/recommended_next_step wording from main
+
+Command:
+`cargo xtask goldens bless binding_value_counterpart_width --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

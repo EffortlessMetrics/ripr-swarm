@@ -2,10 +2,15 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/binding_value_semantics_fail_closed/input
 
-Summary: 6 probe(s), 3 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 3 infection_unknown, 0 propagation_unknown, 0 static_unknown; 6 of 6 finding(s) unsuppressed
+Summary: 6 changed behavior(s) checked: 3 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 3 infection_unknown, 0 propagation_unknown, 0 static_unknown; 6 of 6 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
 
 Analysis outcome: findings below (analysis complete; complete_with_findings)
-  Counts: 1 changed file(s), 6 changed line(s), 3 candidate line(s), 6 probe(s), 6 finding(s)
+  Counts: 1 changed file(s), 6 changed line(s), 3 candidate line(s), 6 changed behavior(s) checked, 6 finding(s)
 
 Shared evidence and guidance
   E1 [findings 1, 2]: reach yes: Related tests appear to reach signed: below_zero_is_not_the_boundary
@@ -29,11 +34,12 @@ Finding 1: WARNING ./src/lib.rs:3
 Changed
   before: k < 0
   after:  k <= 0
-Probe
+Change type
+  a condition or comparison changed
   family: predicate
-  delta:  control
+  delta:  control (changes which code path runs)
   owner:  src/lib.rs::signed
-  canonical gap: gap:rust:src/lib.rs:signed:predicate_boundary:predicate:k==0
+  gap id (for scripts): gap:rust:src/lib.rs:signed:predicate_boundary:predicate:k==0
 Static exposure
   infection_unknown (warning, confidence 0.66)
 Evidence
@@ -47,10 +53,10 @@ Weakness
   - Changed boundary input is unresolved: boundary operand `k` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown; a related test that passes literal inputs on each side of the boundary would let ripr decide
   - No detected boundary input for the changed predicate
 Stop reasons:
-  - infection_evidence_unknown — ripr could not tell whether a test input reaches a value that makes the change matter
+  - ripr could not tell whether a test input reaches a value that makes the change matter (infection_evidence_unknown)
     Next: Add a test input that reaches the changed value, such as a boundary value, then assert on the result.
 Next step
-  - Open the related test and trace its input through the local or computed operand (including default and empty cases) to see which side of the changed condition it exercises, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown
+  - Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown
 Drill in:
   ripr explain --root <cwd>/fixtures/binding_value_semantics_fail_closed/input --diff <cwd>/fixtures/binding_value_semantics_fail_closed/diff.patch --mode fast probe:src_lib.rs:predicate:a615756a
   ripr context --root <cwd>/fixtures/binding_value_semantics_fail_closed/input --diff <cwd>/fixtures/binding_value_semantics_fail_closed/diff.patch --mode fast --at probe:src_lib.rs:predicate:a615756a
@@ -60,11 +66,12 @@ Finding 2: INFO ./src/lib.rs:3
 Changed
   before: k < 0
   after:  k <= 0
-Probe
+Change type
+  a returned value changed
   family: return_value
-  delta:  value
+  delta:  value (changes a computed value)
   owner:  src/lib.rs::signed
-  canonical gap: gap:rust:src/lib.rs:signed:return_value:return_value:k<=0
+  gap id (for scripts): gap:rust:src/lib.rs:signed:return_value:return_value:k<=0
 Static exposure
   exposed (info, confidence 1.00)
 Evidence
@@ -83,11 +90,12 @@ Finding 3: WARNING ./src/lib.rs:8
 Changed
   before: k < 1
   after:  k <= 1
-Probe
+Change type
+  a condition or comparison changed
   family: predicate
-  delta:  control
+  delta:  control (changes which code path runs)
   owner:  src/lib.rs::eager
-  canonical gap: gap:rust:src/lib.rs:eager:predicate_boundary:predicate:k==1
+  gap id (for scripts): gap:rust:src/lib.rs:eager:predicate_boundary:predicate:k==1
 Static exposure
   infection_unknown (warning, confidence 0.66)
 Evidence
@@ -101,10 +109,10 @@ Weakness
   - Changed boundary input is unresolved: boundary operand `k` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown; a related test that passes literal inputs on each side of the boundary would let ripr decide
   - No detected boundary input for the changed predicate
 Stop reasons:
-  - infection_evidence_unknown — ripr could not tell whether a test input reaches a value that makes the change matter
+  - ripr could not tell whether a test input reaches a value that makes the change matter (infection_evidence_unknown)
     Next: Add a test input that reaches the changed value, such as a boundary value, then assert on the result.
 Next step
-  - Open the related test and trace its input through the local or computed operand (including default and empty cases) to see which side of the changed condition it exercises, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown
+  - Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown
 Drill in:
   ripr explain --root <cwd>/fixtures/binding_value_semantics_fail_closed/input --diff <cwd>/fixtures/binding_value_semantics_fail_closed/diff.patch --mode fast probe:src_lib.rs:predicate:ebb90f41
   ripr context --root <cwd>/fixtures/binding_value_semantics_fail_closed/input --diff <cwd>/fixtures/binding_value_semantics_fail_closed/diff.patch --mode fast --at probe:src_lib.rs:predicate:ebb90f41
@@ -114,11 +122,12 @@ Finding 4: INFO ./src/lib.rs:8
 Changed
   before: k < 1
   after:  k <= 1
-Probe
+Change type
+  a returned value changed
   family: return_value
-  delta:  value
+  delta:  value (changes a computed value)
   owner:  src/lib.rs::eager
-  canonical gap: gap:rust:src/lib.rs:eager:return_value:return_value:k<=1
+  gap id (for scripts): gap:rust:src/lib.rs:eager:return_value:return_value:k<=1
 Static exposure
   exposed (info, confidence 1.00)
 Evidence
@@ -137,11 +146,12 @@ Finding 5: WARNING ./src/lib.rs:16
 Changed
   before: (n + 100) / 2 < 150
   after:  (n + 100) / 2 <= 150
-Probe
+Change type
+  a condition or comparison changed
   family: predicate
-  delta:  control
+  delta:  control (changes which code path runs)
   owner:  src/lib.rs::narrow::score
-  canonical gap: gap:rust:src/lib.rs:narrow::score:predicate_boundary:predicate:n+100/2==150
+  gap id (for scripts): gap:rust:src/lib.rs:narrow::score:predicate_boundary:predicate:n+100/2==150
 Static exposure
   infection_unknown (warning, confidence 0.66)
 Evidence
@@ -155,10 +165,10 @@ Weakness
   - Changed boundary input is unresolved: boundary operand `(n + 100) / 2` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown; a related test that passes literal inputs on each side of the boundary would let ripr decide
   - No detected boundary input for the changed predicate
 Stop reasons:
-  - infection_evidence_unknown — ripr could not tell whether a test input reaches a value that makes the change matter
+  - ripr could not tell whether a test input reaches a value that makes the change matter (infection_evidence_unknown)
     Next: Add a test input that reaches the changed value, such as a boundary value, then assert on the result.
 Next step
-  - Open the related test and trace its input through the local or computed operand (including default and empty cases) to see which side of the changed condition it exercises, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown
+  - Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown
 Drill in:
   ripr explain --root <cwd>/fixtures/binding_value_semantics_fail_closed/input --diff <cwd>/fixtures/binding_value_semantics_fail_closed/diff.patch --mode fast probe:src_lib.rs:predicate:d72b69d8
   ripr context --root <cwd>/fixtures/binding_value_semantics_fail_closed/input --diff <cwd>/fixtures/binding_value_semantics_fail_closed/diff.patch --mode fast --at probe:src_lib.rs:predicate:d72b69d8
@@ -168,11 +178,12 @@ Finding 6: INFO ./src/lib.rs:16
 Changed
   before: (n + 100) / 2 < 150
   after:  (n + 100) / 2 <= 150
-Probe
+Change type
+  a returned value changed
   family: return_value
-  delta:  value
+  delta:  value (changes a computed value)
   owner:  src/lib.rs::narrow::score
-  canonical gap: gap:rust:src/lib.rs:narrow::score:return_value:return_value:n+100/2<=150
+  gap id (for scripts): gap:rust:src/lib.rs:narrow::score:return_value:return_value:n+100/2<=150
 Static exposure
   exposed (info, confidence 1.00)
 Evidence
