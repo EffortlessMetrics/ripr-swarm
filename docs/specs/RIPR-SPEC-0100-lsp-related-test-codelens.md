@@ -52,6 +52,11 @@ The codeLens contains a cached informational advisory and an explicit refresh ac
   no live re-analysis triggered by the codeLens request.
 - When no snapshot is available (`snapshot == None`) the handler returns an
   empty list — never a fabricated zero-count lens.
+- When the requested document is quarantined (its buffer diverges from the
+  analyzed saved content, or it has none), the handler returns an empty list:
+  lens lines come from the saved file, so a lens would sit on the wrong line.
+  The lens returns once the buffer matches the analyzed content again. The same
+  fail-closed rule hover and diagnostics apply.
 - When `N == 0`, the title reads `"ripr: no related tests found (CLASS)"`.
   The word "no related tests found" is the correct static phrase; the
   runtime-mutation-testing synonym is never used.
@@ -114,7 +119,7 @@ triggers analysis. No client extension or client-local command handler is requir
 ## Architecture
 
 ```
-lsp/backend.rs          <- thin handler (mutex + delegate)
+lsp/backend.rs          <- thin handler (mutex + quarantine guard + delegate)
 lsp/lens.rs             <- pure helpers: code_lens_response, finding_to_code_lens,
                            finding_matches_uri, related_test_lens_title
 lsp/capabilities.rs     <- CodeLensOptions advertisement
@@ -178,8 +183,10 @@ output is unchanged).
   snapshot only.
 - No per-finding navigation, edits, test execution, or repair. Clicking offers the
   existing global saved-workspace refresh.
-- No lens invalidation on file save; the existing snapshot-refresh model covers
-  this transparently.
+- No lens invalidation on file save beyond the quarantine rule above; the existing
+  snapshot-refresh model covers saved content transparently, and no
+  `workspace/codeLens/refresh` is sent on quarantine transitions (clients re-request
+  lenses on document change).
 - No aggregation lens: one lens per finding (matching the current diagnostics
   model). Aggregation into a single per-file count is a separate UI concern.
 - No Python-specific label differentiation beyond the preview prefix; the same
@@ -236,6 +243,7 @@ result:   [lens for a.rs only]
 - `crates/ripr/src/lsp/lens.rs::tests::code_lens_response_static_language_clean`
 - `crates/ripr/src/lsp/tests.rs::capabilities_advertise_code_lens_provider`
 - `crates/ripr/src/lsp/tests.rs::backend_code_lens_handler_delegates_to_lens_helper`
+- `crates/ripr/src/lsp/tests.rs::code_lens_is_withdrawn_for_an_unsaved_buffer_and_restored_when_buffer_matches_analyzed_content`
 
 - `crates/ripr/src/lsp/lens.rs::tests::code_lens_wire_advertises_an_honest_registered_refresh` — actual serialized nonempty lens has advertised refresh command and honest label.
 - `crates/ripr/src/lsp/tests.rs::framed_code_lens_refresh_follows_semantic_lens_view_changes` — executes the command returned by the real lens response; unchanged input coalesces, changed saved source refreshes the view.
