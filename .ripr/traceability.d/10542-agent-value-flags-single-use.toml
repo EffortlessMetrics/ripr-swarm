@@ -1,0 +1,15 @@
+[[extend]]
+id = "RIPR-SPEC-0011"
+tests = [
+  "crates/ripr/src/cli/agent.rs::tests::agent_value_flags_refuse_repeats",
+  "crates/ripr/src/cli/agent.rs::tests::agent_verify_rejects_empty_gap_id",
+  "crates/ripr/src/cli/agent.rs::tests::agent_root_stays_last_win",
+]
+code = [
+  "crates/ripr/src/cli/agent.rs::refuse_repeated_flag",
+  "crates/ripr/src/cli/agent.rs::parse_agent_brief_options",
+  "crates/ripr/src/cli/agent.rs::parse_agent_verify_options",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0011-llm-work-loop.md",
+]

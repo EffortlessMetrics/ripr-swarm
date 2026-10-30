@@ -1262,14 +1262,22 @@ fn computed_call_values_use_the_same_owner_identity() -> Result<(), String> {
             ),
         )?;
         let owner = family(&results, "return_value")?;
-        assert_eq!(owner.class, ExposureClass::InfectionUnknown, "{owner:?}");
         assert_gap_named(&results, false)?;
         if expected_owner {
+            // On current main the literal `base = 100` folds `base + 1` to the
+            // exact boundary row, so an admitted owner call is credited rather
+            // than left computed-unknown; a rival call must stay unresolved.
+            assert_ne!(owner.class, ExposureClass::InfectionUnknown, "{owner:?}");
             assert!(
-                owner.ripr.infect.summary.contains("computed argument"),
+                owner
+                    .activation
+                    .observed_values
+                    .iter()
+                    .any(|value| value.value == "x == 101"),
                 "{owner:?}"
             );
         } else {
+            assert_eq!(owner.class, ExposureClass::InfectionUnknown, "{owner:?}");
             assert_identity_unresolved(&results)?;
             assert!(
                 !owner.ripr.infect.summary.contains("computed argument"),
@@ -1382,6 +1390,30 @@ fn returned_matches_keep_their_existing_infection_reading() -> Result<(), String
 }
 
 #[test]
+fn nested_use_groups_keep_the_owner_leaf() -> Result<(), String> {
+    for lib_rs in [
+        "pub mod internal;\npub use {internal::{thr}};\n",
+        "pub mod internal;\npub use crate::{internal::{thr}};\n",
+        "pub mod internal;\npub use self::{internal::{thr}};\n",
+        "pub mod internal;\npub use {internal::{thr}, ::other_dep::other};\n",
+        "pub mod internal;\npub use {other_dep::{*}, internal::{thr}};\n",
+    ] {
+        let found = reexport_case(lib_rs)?;
+        assert_gap_named(&found, false).map_err(|error| format!("{lib_rs:?}: {error}"))?;
+        let owner = family(&found, "return_value")?;
+        assert!(
+            owner
+                .activation
+                .observed_values
+                .iter()
+                .any(|value| value.value == "x == 101"),
+            "{lib_rs:?}: {owner:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn local_callable_bindings_cannot_supply_imported_owner_inputs() -> Result<(), String> {
     for (body, credited) in [
         ("assert!(!thr(101));", true),
@@ -1433,5 +1465,63 @@ fn local_callable_bindings_cannot_supply_imported_owner_inputs() -> Result<(), S
         ),
     )?;
     assert_boundary_credited(&qualified)?;
+    Ok(())
+}
+
+#[test]
+fn nested_use_groups_preserve_dependency_and_rename_refusals() -> Result<(), String> {
+    for lib_rs in [
+        "pub mod internal;\npub use {internal::{*}, other_dep::{*}};\n",
+        "pub mod internal;\npub use {internal::{*}, other_dep::{thr}};\n",
+        "pub mod internal;\npub use {internal::{*}, other_dep::{thr as\nthr}};\n",
+        "pub mod internal;\npub use {internal::{thr as\nrenamed}, other_dep::{thr}};\n",
+        "pub mod internal;\npub use ::{internal::{thr}};\n",
+        "pub mod internal;\npub use internal::{thr as _};\n",
+    ] {
+        let found = reexport_case(lib_rs)?;
+        assert_gap_named(&found, false).map_err(|error| format!("{lib_rs:?}: {error}"))?;
+        let owner = family(&found, "return_value")?;
+        assert_eq!(
+            owner.class,
+            ExposureClass::InfectionUnknown,
+            "{lib_rs:?}: {owner:?}"
+        );
+        assert_ne!(owner.class, ExposureClass::Exposed);
+        assert!(
+            !owner
+                .activation
+                .observed_values
+                .iter()
+                .any(|value| value.value == "x == 101"),
+            "{lib_rs:?}: {owner:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn nested_use_groups_preserve_cfg_refusals() -> Result<(), String> {
+    for gate in ["#[cfg(any())]", "#[cfg_attr(all(), cfg(any()))]"] {
+        let lib_rs = format!(
+            "pub mod internal;\n{gate}\npub use crate::{{internal::{{thr}}}};\npub use other_dep::*;\n"
+        );
+        let found = reexport_case(&lib_rs)?;
+        assert_gap_named(&found, false).map_err(|error| format!("{lib_rs:?}: {error}"))?;
+        let owner = family(&found, "return_value")?;
+        assert_eq!(
+            owner.class,
+            ExposureClass::InfectionUnknown,
+            "{lib_rs:?}: {owner:?}"
+        );
+        assert_ne!(owner.class, ExposureClass::Exposed);
+        assert!(
+            !owner
+                .activation
+                .observed_values
+                .iter()
+                .any(|value| value.value == "x == 101"),
+            "{lib_rs:?}: {owner:?}"
+        );
+    }
     Ok(())
 }

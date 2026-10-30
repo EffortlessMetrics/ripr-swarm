@@ -243,6 +243,13 @@ pub(crate) fn load_findings_for_reuse_core(
         .map_err(crate::core_error::CoreError::check_artifact_unusable)?;
     verify_identity(&artifact, &current, path)
         .map_err(crate::core_error::CoreError::check_artifact_unusable)?;
+    if artifact.findings.iter().any(|finding| {
+        finding.alignment_reason.as_deref() == Some(crate::domain::LIVE_PYTHON_TRUTHINESS_ALIGNMENT)
+    }) {
+        return Err(crate::core_error::CoreError::check_artifact_unusable(
+            "Python truthiness evidence requires a fresh physical source audit; run `ripr explain` or `ripr context` without `--from`",
+        ));
+    }
     Ok(artifact.findings)
 }
 
@@ -605,6 +612,7 @@ mod raw_path_tests {
         let raw = PathBuf::from(OsStr::from_bytes(b"pricing_\xff.rs"));
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: "probe:pricing:1:error_path".to_string(),
             canonical_gap: None,
             probe: Probe {

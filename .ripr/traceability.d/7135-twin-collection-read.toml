@@ -1,0 +1,6 @@
+# Registers the twin-instance collection read control (#7135) under RIPR-SPEC-0228.
+[[extend]]
+id = "RIPR-SPEC-0228"
+tests = [
+  "crates/ripr/tests/collection_read_non_discriminating.rs::non_discriminating_collection_reads_never_credit_exposed",
+]

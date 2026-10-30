@@ -13,18 +13,22 @@
 //! top-level statement of the test body resolve; the helper comes from the
 //! test's own module or a `from M import name` of a workspace module.
 
+mod field_admission;
+
 use super::admission::{PythonAssertionAdmission, bound_names};
 use super::oracles::collect_assertions_from_statements;
 use super::owners_tests::collect_imports_from_statements;
+use super::related_tests::is_python_identifier_char;
 use super::source_facts::parse_module_result;
 use super::source_utils::{SourceText, line_for_range_start, text_for_range};
 use super::{PythonAssertion, PythonOracleShape, PythonTest};
 use rustpython_parser::ast::{self, Expr, Mod, Ranged, Stmt};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 /// A module-level def that is nothing but `assert <comparison of params>`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct PythonAssertionHelper {
     name: String,
     params: Vec<String>,
@@ -33,12 +37,18 @@ pub(super) struct PythonAssertionHelper {
     /// `(start, end, parameter index)` of each parameter use, as byte offsets
     /// into `expr_text`.
     slots: Vec<(usize, usize, usize)>,
+    field_observer: bool,
+    executable_retained: bool,
+    replaced_attributes: Arc<Vec<String>>,
 }
 
 /// The assertion helpers of one module and every name the module binds.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct PythonHelperModule {
     pub(super) helpers: Vec<PythonAssertionHelper>,
+    /// Module-level defs that call their one callable argument inside a
+    /// `try` whose every handler re-raises (RIPR-SPEC-0238 rule 27).
+    reraisers: BTreeSet<String>,
     bound: BTreeSet<String>,
 }
 
@@ -49,10 +59,17 @@ pub(super) fn collect_helper_module(
 ) -> PythonHelperModule {
     let mut module = PythonHelperModule::default();
     bound_names(statements, &mut module.bound);
-    let imported: BTreeSet<String> = collect_imports_from_statements(file, statements)
-        .into_iter()
-        .map(|import| import.alias)
-        .collect();
+    let imports = collect_imports_from_statements(file, statements);
+    // A star import may rebind any name, wrapper included.
+    let star_import = imports.iter().any(|import| import.imported == "*");
+    let imported: BTreeSet<String> = imports.into_iter().map(|import| import.alias).collect();
+    let bindings = super::module_constants::ModuleBindingFacts::of(source, statements);
+    let attributes = Arc::new(super::module_constants::assigned_attribute_names(
+        statements,
+    ));
+    let executable_retained = !["__code__", "__globals__", "__setattr__", "__getattribute__"]
+        .iter()
+        .any(|name| super::mentions_python_name(source, name));
     for (index, stmt) in statements.iter().enumerate() {
         let Stmt::FunctionDef(function) = stmt else {
             continue;
@@ -62,9 +79,14 @@ pub(super) fn collect_helper_module(
             continue;
         }
         // Unsupported shapes are skipped before the binding scan.
-        let Some(helper) = helper_of(source, function) else {
+        let helper = helper_of(source, function);
+        let reraiser = helper.is_none()
+            && !star_import
+            && is_reraising_wrapper(function)
+            && wrapper_only_defined_and_called(source, &name);
+        if helper.is_none() && !reraiser {
             continue;
-        };
+        }
         // The def must be the module's only binding of the name.
         let mut others = BTreeSet::new();
         bound_names(&statements[..index], &mut others);
@@ -72,7 +94,13 @@ pub(super) fn collect_helper_module(
         if others.contains(&name) {
             continue;
         }
-        module.helpers.push(helper);
+        if let Some(mut helper) = helper {
+            helper.executable_retained &= executable_retained && bindings.bound_once(&name);
+            helper.replaced_attributes = Arc::clone(&attributes);
+            module.helpers.push(helper);
+        } else {
+            module.reraisers.insert(name);
+        }
     }
     module
 }
@@ -122,12 +150,132 @@ fn helper_of(
     if !only_params(test, &params, base, &mut slots) {
         return None;
     }
+    let field_observer = field_admission::reads_field(test);
     Some(PythonAssertionHelper {
         name: function.name.to_string(),
         params,
         expr_text: text_for_range(source, test.range()),
         slots,
+        field_observer,
+        replaced_attributes: Arc::default(),
+        executable_retained: !field_observer
+            || (function.returns.is_none()
+                && function.type_params.is_empty()
+                && args.args.iter().all(|arg| arg.def.annotation.is_none())),
     })
+}
+
+/// A def of one plain parameter `fn` whose whole body is
+/// `try: return fn()` (or `fn()`) with every handler a bare `raise`,
+/// so a failure inside the callable still reaches the runner. Any `else`,
+/// `finally`, other statement, parameter shape or handler that can return
+/// instead of raising leaves the def unread (RIPR-SPEC-0238 rule 27).
+fn is_reraising_wrapper(function: &ast::StmtFunctionDef) -> bool {
+    let args = function.args.as_ref();
+    if !function.decorator_list.is_empty()
+        || !args.posonlyargs.is_empty()
+        || !args.kwonlyargs.is_empty()
+        || args.vararg.is_some()
+        || args.kwarg.is_some()
+        || args.args.len() != 1
+        || args.args[0].default.is_some()
+    {
+        return false;
+    }
+    let param = args.args[0].def.arg.as_str();
+    let mut body = function.body.as_slice();
+    if let [Stmt::Expr(first), rest @ ..] = body
+        && matches!(
+            first.value.as_ref(),
+            Expr::Constant(ast::ExprConstant {
+                value: ast::Constant::Str(_),
+                ..
+            })
+        )
+    {
+        body = rest;
+    }
+    let [Stmt::Try(try_stmt)] = body else {
+        return false;
+    };
+    if !try_stmt.orelse.is_empty() || !try_stmt.finalbody.is_empty() || try_stmt.handlers.is_empty()
+    {
+        return false;
+    }
+    let called = match try_stmt.body.as_slice() {
+        [Stmt::Return(ret)] => ret.value.as_deref(),
+        [Stmt::Expr(expr)] => Some(expr.value.as_ref()),
+        _ => None,
+    };
+    let Some(Expr::Call(call)) = called else {
+        return false;
+    };
+    let calls_param = matches!(call.func.as_ref(), Expr::Name(name) if name.id.as_str() == param)
+        && call.args.is_empty()
+        && call.keywords.is_empty();
+    calls_param
+        && try_stmt.handlers.iter().all(|handler| {
+            let ast::ExceptHandler::ExceptHandler(handler) = handler;
+            handler.type_.as_deref().is_none_or(plain_exception_type)
+                && handler_ends_in_bare_raise(&handler.body)
+        })
+}
+
+/// An exception class expression that cannot run code: a name, a dotted
+/// attribute path or a tuple of those. The type expression is evaluated when
+/// an exception reaches the handler, so `except pytest.skip('x'):` would skip.
+fn plain_exception_type(expr: &Expr) -> bool {
+    match expr {
+        Expr::Name(_) => true,
+        Expr::Attribute(attribute) => plain_exception_type(&attribute.value),
+        Expr::Tuple(tuple) => tuple.elts.iter().all(plain_exception_type),
+        _ => false,
+    }
+}
+
+/// Every occurrence of `name` in the module is its one `def` or a plain call
+/// `name(`. Any other mention (an assignment, `global`, an import at any
+/// depth, a walrus, a `case` capture, a decorator, an attribute, a string for
+/// `setattr`) could rebind it, and the binding scan does not see inside
+/// function bodies, expressions or nested imports. Dynamic namespace access
+/// (`globals()`, `vars()`, `exec`, `eval`, a star import) refuses the module.
+fn wrapper_only_defined_and_called(text: &str, name: &str) -> bool {
+    if [
+        "import *", "globals(", "vars(", "exec(", "eval(", "__dict__",
+    ]
+    .iter()
+    .any(|dynamic| text.contains(dynamic))
+    {
+        return false;
+    }
+    let mut defs = 0usize;
+    let mut from = 0usize;
+    while let Some(found) = text[from..].find(name) {
+        let start = from + found;
+        let end = start + name.len();
+        from = end;
+        let before = text[..start].chars().next_back();
+        let after = text[end..].chars().next();
+        if before.is_some_and(is_python_identifier_char)
+            || after.is_some_and(is_python_identifier_char)
+        {
+            continue;
+        }
+        let head = text[..start].trim_end_matches([' ', '\t']);
+        if head.ends_with("def") && head.len() < text[..start].len() && after == Some('(') {
+            defs += 1;
+        } else if before == Some('.') || after != Some('(') {
+            return false;
+        }
+    }
+    defs == 1
+}
+
+/// The handler is a bare `raise` and nothing else. A statement before it
+/// could end the test another way (`pytest.skip()`, `sys.exit(0)`), so no
+/// other statement is allowed.
+fn handler_ends_in_bare_raise(body: &[Stmt]) -> bool {
+    matches!(body, [Stmt::Raise(raise)] if raise.exc.is_none() && raise.cause.is_none())
 }
 
 /// The expression reads only parameters, literals and plain operators.
@@ -231,6 +379,7 @@ fn resolve_test(test: &mut PythonTest, modules: &BTreeMap<PathBuf, PythonHelperM
         let Expr::Call(call) = expr_stmt.value.as_ref() else {
             continue;
         };
+        let call = unwrapped_call(test, call, &local, modules).unwrap_or(call);
         let Expr::Name(callee) = call.func.as_ref() else {
             continue;
         };
@@ -255,7 +404,18 @@ fn resolve_test(test: &mut PythonTest, modules: &BTreeMap<PathBuf, PythonHelperM
         assertion.line = call_line;
         assertion.source_range = Some(call.range);
         assertion.observed_operands.clear();
-        assertion.helper_derived = true;
+        assertion.helper_origin = if !helper.field_observer || helper.executable_retained {
+            field_admission::origin(
+                test,
+                function,
+                &assertion.gate_text,
+                helper.field_observer,
+                &helper.replaced_attributes,
+                &source,
+            )
+        } else {
+            super::PythonHelperOrigin::FieldHelperRefused
+        };
         let recognized = assertion.oracle_shape != PythonOracleShape::UnknownCustomHelper;
         // An `assert_*` helper name already reads as an unknown custom helper
         // at this line; the resolved body replaces that reading.
@@ -276,6 +436,46 @@ fn resolve_test(test: &mut PythonTest, modules: &BTreeMap<PathBuf, PythonHelperM
         if recognized {
             test.assertion_admission = PythonAssertionAdmission::Recognized;
         }
+    }
+}
+
+/// `wrapper(lambda: inner(...))` where `wrapper` is a re-raising wrapper
+/// defined in the test's own module: the inner call runs and its failure
+/// reaches the runner, so it is read as the statement itself. Anything else
+/// (an imported or rebound name, a lambda with parameters, a second argument)
+/// returns `None` and the call keeps its reading.
+fn unwrapped_call<'a>(
+    test: &PythonTest,
+    call: &'a ast::ExprCall,
+    local: &BTreeSet<String>,
+    modules: &BTreeMap<PathBuf, PythonHelperModule>,
+) -> Option<&'a ast::ExprCall> {
+    let Expr::Name(callee) = call.func.as_ref() else {
+        return None;
+    };
+    let name = callee.id.as_str();
+    if local.contains(name)
+        || !call.keywords.is_empty()
+        || test.imports.iter().any(|import| import.alias == name)
+        || !modules.get(&test.file)?.reraisers.contains(name)
+    {
+        return None;
+    }
+    let [Expr::Lambda(lambda)] = call.args.as_slice() else {
+        return None;
+    };
+    let params = lambda.args.as_ref();
+    if !params.posonlyargs.is_empty()
+        || !params.args.is_empty()
+        || !params.kwonlyargs.is_empty()
+        || params.vararg.is_some()
+        || params.kwarg.is_some()
+    {
+        return None;
+    }
+    match lambda.body.as_ref() {
+        Expr::Call(inner) => Some(inner),
+        _ => None,
     }
 }
 

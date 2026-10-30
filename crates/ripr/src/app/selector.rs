@@ -289,6 +289,7 @@ mod tests {
     fn finding(id: &str, line: usize, gap: Option<&str>) -> Finding {
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: id.to_string(),
             canonical_gap: gap.map(|gap_id| FindingCanonicalGap {
                 id: gap_id.to_string(),

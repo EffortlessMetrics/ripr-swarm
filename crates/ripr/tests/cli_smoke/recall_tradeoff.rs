@@ -10,7 +10,7 @@ pub(super) fn check(with_flag: &Output, without_flag: &Output) -> Result<(), Str
             return Err(format!("{name} check failed: {output:?}"));
         }
         let stdout = String::from_utf8_lossy(&output.stdout);
-        if !stdout.contains("Summary: 4 probes (") {
+        if !stdout.contains("Summary: 4 changed behaviors checked: ") {
             return Err(format!(
                 "{name} must analyze the four sample probes; got:\n{stdout}"
             ));

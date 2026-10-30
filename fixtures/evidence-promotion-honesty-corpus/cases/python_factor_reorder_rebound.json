@@ -1,0 +1,13 @@
+{
+  "id": "python_factor_reorder_rebound",
+  "language": "python",
+  "tier": "pure",
+  "source_fixture": "fixtures/python_factor_reorder_rebound",
+  "vector": "rebound_parametrized_factor_does_not_prove_discrimination",
+  "assertions": [
+    { "type": "expected_finding_count", "count": 1 },
+    { "type": "expected_class", "class": "weakly_exposed" },
+    { "type": "must_not_promote" },
+    { "type": "must_not_report_clean" }
+  ]
+}

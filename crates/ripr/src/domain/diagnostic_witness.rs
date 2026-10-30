@@ -23,7 +23,7 @@ pub struct DiagnosticWitness {
     pub suggested_assertion: Option<String>,
     pub explain_command: String,
     pub confidence: DiagnosticConfidence,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub limitations: Vec<DiagnosticWitnessLimitation>,
 }
 
@@ -707,6 +707,7 @@ mod tests {
     fn sample_finding() -> Finding {
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: "probe:pricing:88:error_path".to_string(),
             canonical_gap: None,
             probe: Probe {
