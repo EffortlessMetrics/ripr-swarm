@@ -21,7 +21,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ inputs.focused_hash && format('{0}-{1}-focused-hash-11080', github.workflow, github.ref) || format('{0}-{1}', github.workflow, github.ref) }}
   cancel-in-progress: true
 
 jobs:
