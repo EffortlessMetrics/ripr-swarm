@@ -642,7 +642,7 @@ fn merge_compiler_options(
                 return Err(TsAliasMapBlocker::ExtendsUnsupported);
             }
             let base_text = read_config_capped(&base_path)
-                .map_err(|_| TsAliasMapBlocker::ExtendsUnsupported)?;
+                .map_err(|_read_err| TsAliasMapBlocker::ExtendsUnsupported)?;
             let base = merge_compiler_options(&base_path, &base_text, visited, depth + 1)?;
             // Later array entries override earlier ones; the extending
             // config itself is applied after the whole chain.
