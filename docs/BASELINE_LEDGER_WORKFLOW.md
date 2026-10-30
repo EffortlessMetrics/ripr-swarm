@@ -70,6 +70,23 @@ Do not create a baseline from a report nobody has reviewed.
 
 ## 2. Create A Candidate Baseline
 
+The gate decision is produced by the generated workflow, so on a CI-only
+adoption it is not on your machine yet. Download it from a finished run of the
+pull request that carried `RIPR_GATE_MODE=visible-only`:
+
+```bash
+gh variable set RIPR_GATE_MODE --body visible-only
+# after the workflow has run on a pull request:
+gh run list --workflow ripr.yml --limit 5
+gh run download RUN_ID --name ripr-reports --dir ripr-reports
+find ripr-reports -name gate-decision.json
+```
+
+Use the path `find` prints as `--from` below. The decision comes from that
+pull request's diff, so a baseline created from it is PR-scoped: it records the
+gaps that diff exposed, not every gap in the repository. Re-run the step on a
+representative pull request when you want a different slice.
+
 Use `ripr baseline create` to turn reviewed gate decisions into a candidate
 ledger:
 
