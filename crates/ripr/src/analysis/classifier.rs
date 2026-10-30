@@ -11,9 +11,10 @@ use self::owner::resolve_owner_function;
 use super::classify::{
     DependencyEdgeContext, HelperChain, NO_REACHABLE_TEST_DISCRIMINATE_SUMMARY,
     NO_REACHABLE_TEST_OBSERVE_SUMMARY, ProbeContext, RelatedTestCandidateIndex,
-    TransitiveReachIndex, ambiguous_helper_entry_called_by_tests, confidence_score,
-    evaluate_const_flow, find_related_tests_with_candidate_index, is_assertion_shaped_owner,
-    relation_establishes_reach, same_file_const_readers, shares_module_scope,
+    TransitiveReachIndex, ambiguous_helper_entry_called_by_tests, associated_const_binding,
+    confidence_score, evaluate_const_flow, find_related_tests_with_candidate_index,
+    is_assertion_shaped_owner, relation_establishes_reach, same_file_const_readers,
+    shares_module_scope,
 };
 use super::probes::parser_expression_for_probe;
 use super::rust_index::{RustIndex, TestSummary, find_file_facts};
@@ -129,10 +130,27 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins(
     if owner_fn.is_none() {
         let mut through_readers: Vec<_> = Vec::new();
         let probe_file = candidate_index.probe_index_file(probe, index);
-        let readers = probe_file
+        let mut readers = probe_file
             .as_deref()
             .map(|file| same_file_const_readers(probe, file, index))
             .unwrap_or_default();
+        // RIPR-SPEC-0048 associated-constant extension: a constant declared
+        // inside `impl Trait for Type` is read by the trait's default
+        // methods, not by a same-file reader of a unique name.
+        let mut assoc_type: Option<String> = None;
+        if readers.is_empty()
+            && let (Some(file), Some(name)) = (probe_file.as_deref(), probe.changed_const_name())
+            && let Some(facts) = find_file_facts(index, file)
+            && let Some(binding) = associated_const_binding(
+                &facts.source,
+                probe.location.line,
+                name,
+                facts.functions.iter(),
+            )
+        {
+            assoc_type = Some(binding.self_type);
+            readers = binding.readers;
+        }
         for reader in readers {
             let mut reached = false;
             for (test, reason) in find_related_tests_with_candidate_index(
@@ -181,12 +199,20 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins(
                         .iter()
                         .map(|reader| reader.start_line)
                         .collect();
-                    if !shares_module_scope(&facts.source, probe.location.line, &lines) {
+                    // The associated-constant binding checked its own module
+                    // chain; a free constant checks it here.
+                    if assoc_type.is_none()
+                        && !shares_module_scope(&facts.source, probe.location.line, &lines)
+                    {
                         return None;
                     }
-                    evaluate_const_flow(change, &const_readers, &reader_tests, &|name| {
-                        facts.functions.iter().filter(|f| f.name == name).count()
-                    })
+                    evaluate_const_flow(
+                        change,
+                        &const_readers,
+                        &reader_tests,
+                        &|name| facts.functions.iter().filter(|f| f.name == name).count(),
+                        assoc_type.as_deref(),
+                    )
                 });
         }
         if !through_readers.is_empty() {
