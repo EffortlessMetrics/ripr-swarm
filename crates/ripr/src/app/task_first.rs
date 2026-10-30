@@ -930,6 +930,18 @@ fn gap_bound_route(
     let repair_base = if uncommitted_files.is_empty() {
         base
     } else {
+        if output
+            .analyzed_revisions
+            .as_ref()
+            .is_some_and(|r| !r.working_tree)
+        {
+            return Err(
+                "the committed-only check excluded dirty tracked files; commit or restore them before rerunning",
+            );
+        }
+        if output.unanalyzed_working_tree {
+            return Err("the working tree contains source or test changes that were not analyzed");
+        }
         let origin = resolved_dirty_origin(&output.root, output.analyzed_revisions.as_ref())?;
         return Ok(Some(crate::app::GapRepairRoute {
             finding_id: finding.id.clone(),

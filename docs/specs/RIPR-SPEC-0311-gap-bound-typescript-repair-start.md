@@ -146,8 +146,13 @@ existed with no way to begin the attempt.
     shell-quoted and spelled relative to ROOT, so the command works from any
     working directory and treats a name like `src/[ab].py` literally. The
     pilot-routing warnings in `agent status` name the same step. On a clean
-    tree, or when the packet, policy, HEAD or Git cannot answer, the start
-    prints bare and its own refusal stays the backstop.
+    tree the start prints bare. When the packet, policy, HEAD or Git cannot
+    establish the prerequisite, the start is withheld with a reason. A dirty
+    worktree start binds the diff origin captured by the loader, so committing
+    cannot move a symbolic base. A clean committed-history check can use its
+    requested base; a committed-only check with dirty files outside the
+    allowed edit surface withholds the start and asks for a fresh check after
+    those files are committed or restored.
 
 ## Required Evidence
 
@@ -211,6 +216,10 @@ existed with no way to begin the attempt.
 ## Test Mapping
 
 - `crates/ripr/tests/installed_python_typescript_journeys.rs`:
+  `dirty_python_repair_start_keeps_original_diff_after_commit`,
+  `dirty_typescript_start_uses_diverged_merge_base`,
+  `dirty_python_check_withholds_start_when_git_inspection_fails`,
+  `committed_python_dirty_file_requires_fresh_check`,
   `typescript_literal_threshold_packet_is_complete_and_controls_fail_closed`,
   `gap_bound_after_phase_closes_the_gap_on_positive_evidence`,
   `gap_bound_after_phase_refuses_a_gap_that_is_not_closed_and_stays_retryable`,

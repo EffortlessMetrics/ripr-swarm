@@ -241,6 +241,86 @@ fn attempt_id_of(manifest: &serde_json::Value) -> Result<String, String> {
 
 #[cfg(feature = "lang-python")]
 #[test]
+fn committed_python_dirty_file_requires_fresh_check() -> Result<(), String> {
+    let (_guard, root, decoy) = materialize(
+        "blind_journey_installed_python",
+        "head",
+        "py-committed-base",
+        None,
+    )?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let base = fixture_git_output(&root, &["rev-parse", "HEAD~1"])?
+        .trim()
+        .to_string();
+    std::fs::write(root.join("notes.md"), "initial\n").map_err(|e| e.to_string())?;
+    fixture_git_ok(&root, &["add", "notes.md"])?;
+    fixture_git_ok(&root, &["commit", "-q", "-m", "notes"])?;
+    std::fs::write(root.join("notes.md"), "changed\n").map_err(|e| e.to_string())?;
+    let (ok, check) = ripr(
+        &decoy,
+        &["check", "--root", &root_arg, "--base", &base, "--committed"],
+    )?;
+    expect_exit(ok, true, "committed dirty check")?;
+    need(
+        &check,
+        "committed-only check excluded dirty tracked files",
+        "dirty files withheld",
+    )?;
+    if gap_start_tokens(&check).is_some() {
+        return Err(format!("dirty committed check offered a start: {check}"));
+    }
+    let production = root.join("pricing/core.py");
+    let source = std::fs::read_to_string(&production).map_err(|e| e.to_string())?;
+    std::fs::write(&production, format!("{source}\n# excluded dirty source\n"))
+        .map_err(|e| e.to_string())?;
+    let (dirty_ok, dirty) = ripr(
+        &decoy,
+        &["check", "--root", &root_arg, "--base", &base, "--committed"],
+    )?;
+    expect_exit(dirty_ok, true, "committed check with excluded source")?;
+    need(
+        &dirty,
+        "uncommitted source and test changes were not analyzed",
+        "excluded source disclosure",
+    )?;
+    if gap_start_tokens(&dirty).is_some() {
+        return Err(format!("excluded source offered a start: {dirty}"));
+    }
+    std::fs::write(&production, source).map_err(|e| e.to_string())?;
+    fixture_git_ok(&root, &["add", "notes.md"])?;
+    fixture_git_ok(&root, &["commit", "-q", "-m", "notes change"])?;
+    let (clean_ok, clean) = ripr(
+        &decoy,
+        &["check", "--root", &root_arg, "--base", &base, "--committed"],
+    )?;
+    expect_exit(clean_ok, true, "fresh committed check")?;
+    let (gap, printed_base) =
+        gap_start_tokens(&clean).ok_or_else(|| format!("fresh check missing start: {clean}"))?;
+    if printed_base != base {
+        return Err(format!("wrong base: {printed_base}"));
+    }
+    let (ok, result) = ripr(
+        &decoy,
+        &[
+            "agent",
+            "repair",
+            "--gap-id",
+            &gap,
+            "--base",
+            &printed_base,
+            "--root",
+            &root_arg,
+            "--phase",
+            "before",
+        ],
+    )?;
+    expect_exit(ok, true, "committed route after commit")?;
+    need(&result, "Repair prepared", "prepared attempt")?;
+    Ok(())
+}
+
+#[cfg(feature = "lang-python")]
+#[test]
 fn dirty_python_repair_start_keeps_original_diff_after_commit() -> Result<(), String> {
     let (_guard, root, decoy) = materialize(
         "blind_journey_installed_python",
