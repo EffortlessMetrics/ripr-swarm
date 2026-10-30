@@ -45,6 +45,17 @@ The status report should:
   snapshot or `agent receipt` is older than `agent verify`;
 - keep all language advisory and static.
 
+`--out` names the directory status reads, and only the default workflow
+directory is accepted: spellings that are lexically equivalent to
+`target/ripr/workflow` (for example `./target/ripr/workflow`, a trailing
+slash, or a `..` that pops only real directories) run exactly like the default
+spelling, while any genuinely different directory is refused with exit 2 and
+`agent status --out <dir> is not supported` on stderr instead of being
+silently ignored (#10542). Lexical equivalence is not trusted when a `..`
+follows a symlink: the filesystem resolves `..` after the symlink target, so
+such a spelling is refused even when lexical cleaning would make it match
+(#10624 review).
+
 General inventory continuation and missing-artifact commands bind the selected
 root from its native filesystem spelling. UTF-8 Unix directory names containing
 a literal backslash must select that directory when pasted from another working
@@ -159,6 +170,34 @@ It shares command authority with the top-level continuation even though the
 report's `root` field and analysis-outcome presentation key retain display
 formatting. Unix literal filename backslashes remain distinct from Windows
 separators (#6313).
+
+### Repair phase value recovery (#5059)
+
+`ripr agent repair --phase` accepts only `before`, `after`, and `verify`.
+An unknown value uses the shared CLI value-suggestion rules: `befor`, `aftr`,
+and `verfy` suggest their corresponding phase; empty and distant values,
+including the sibling command name `packet`, list the phases without a suggestion. Suggestions never accept
+or execute the rejected spelling. Invalid occurrences, including one followed
+by a valid repeated flag, exit 2 with empty stdout and the refusal on stderr
+before configuration loading or repair/store writes. A missing value retains
+its missing-value refusal. Canonical phase meanings and the existing `--help`
+short circuit remain unchanged.
+
+### Repeated value flags refuse (#10542)
+
+Every `ripr agent` value flag is single-use. A second occurrence of the same
+value flag is a usage error, refused with exit 2, empty stdout, and
+`<command> takes <flag> once` on stderr before any artifact or state write.
+For example, `ripr agent brief --seam-id s --max-seams 1 --max-seams 10`
+refuses with `agent brief takes --max-seams once` instead of silently keeping
+the last cap, and `ripr agent verify --before a --before b --after c --json`
+refuses with `agent verify takes --before once` instead of comparing `b`
+against itself. Two deliberate exceptions keep their family contracts:
+`--root` stays last-win everywhere, including the pattern-setting parsers, so
+scripted double-root invocations keep working; and `agent receipt --command`
+stays a repeatable accumulator. An empty `agent verify --gap-id` is refused at
+the parser with the same exit-2 usage-error shape, naming the empty flag
+instead of flowing the empty id into the artifact layer.
 
 ## JSON Shape
 
@@ -419,7 +458,15 @@ after phase applies) and selects `next_command` in this order:
    exposure report where each withheld seam names its unresolved stage
    (#5497). When that run's repo exposure report says a seam limit applied,
    the warning names raising the limit and rerunning pilot instead, since
-   seams past the cut may hold gaps. Likewise a complete pilot summary that ranked no seam,
+   seams past the cut may hold gaps. A complete pilot summary that ranked and
+   withheld no seam, recorded no repair start and carries
+   `declined_rust_files` (a parse limit declined Rust files, #9308) selects
+   nothing and warns `pilot_declined_rust_files_no_repair_target`, naming the
+   declined file(s) and the parse-limit repair (split below the Rust parse
+   budget or save as UTF-8, then rerun pilot with the selected root); a
+   recorded `seam_limit` adds the raise-the-limit remedy. With withheld
+   seams the withheld warning above keeps precedence and already names the
+   declined files (#9371). Likewise a complete pilot summary that ranked no seam,
    recorded no repair card (`python_first_use` absent, `null`, or status
    `no_python_findings` or `no_repair_cards`; `analysis_unavailable` is not
    this fact), routed the code to `ripr check` (`language_routes.state:
@@ -429,7 +476,12 @@ after phase applies) and selects `next_command` in this order:
    check command and the hand step (add or strengthen a test, then rerun
    that check); for a route with `enabled: false` it names the enable step
    (add the language to `[languages] enabled` in `ripr.toml`) instead. It
-   also says to rerun pilot if the workspace changed since that run. A
+   also says to rerun pilot if the workspace changed since that run. For an
+   enabled TypeScript-family route, whether the warning says `ripr check`
+   "offers no `ripr agent repair` start" is derived from the same gap-start
+   admission the routed `ripr check` uses (#10001): when check would print a
+   gap-bound start, the warning names that start instead, and a refused or
+   undecidable admission keeps the "offers no start" wording. A
    timed-out, missing or unreadable summary still routes to pilot. When the
    first missing artifact's directory does not exist and the seam is known,
    the next command starts a repair attempt, which writes the workflow
@@ -475,6 +527,15 @@ interprets it through the receipt owner (`output::agent_receipt`):
   that attempt; the reading is `unconfirmed`, because the earlier outcome cannot
   be reconstructed, and the warning names the new-attempt command for the seam
   in case its gap is still open.
+
+One `agent status` call takes at most one successful worktree observation per
+(root, whole edit-cage policy) and reuses it for every finished attempt it
+reevaluates, so equal-policy attempts do not each rescan the worktree (#9823).
+A capture that fails is not retained. The observation is call-scoped: the next
+status call captures again, and an edit made between two readings inside one call
+is retained outside that call's shared observation until the next call. Each
+attempt keeps its own baseline, delta and verdict authority; receipt issuance,
+the after phase and MCP reads capture afresh.
 
 Repair inventories and Git currentness probes ignore the user's
 `diff.orderFile`: a dangling orderfile must not abort the before phase or the
@@ -635,6 +696,7 @@ it does not execute the command or grant edit authority.
 
 ## Test Mapping
 
+- `crates/ripr/tests/cli_help_hierarchy.rs::agent_help_and_missing_seam_refusal_agree_that_finding_ids_resolve` (agent group help, the missing-`--seam-id` refusal and the workflow catalog agree that `--phase before` resolves `ripr check` finding IDs)
 - `crates/ripr/tests/cli_smoke/repair_orderfile.rs::repair_completes_despite_user_orderfile`
 - `crates/ripr/tests/cli_smoke/repair_orderfile.rs::dirty_production_requires_recovery_despite_user_orderfile`
 
@@ -699,6 +761,8 @@ it does not execute the command or grant edit authority.
 - `crates/ripr/src/cli/commands.rs::tests::agent_review_summary_rejects_missing_root_before_reading_artifacts`
 - `crates/ripr/tests/cli_smoke.rs::agent_receipt_writes_one_seam_handoff_json`
 - `crates/ripr/tests/cli_smoke.rs::agent_start_writes_source_edit_free_workflow_packet`
+- `crates/ripr/tests/cli_smoke.rs::agent_start_unknown_seam_id_exits_3_while_other_failures_exit_2`
+- `crates/ripr/tests/cli_smoke.rs::agent_start_config_hidden_known_seam_is_a_policy_refusal`
 - `crates/ripr/tests/cli_smoke.rs::agent_packet_rejects_configured_off_seam`
 - `crates/ripr/src/lsp/tests.rs::agent_loop_command_payloads_stay_workspace_relative_for_platform_roots`
 - `xtask/src/reports/operator.rs::tests::operator_cockpit_matches_editor_agent_loop_fixture`
@@ -767,8 +831,23 @@ Recovery labels the Bash/Git Bash form and the PowerShell form translated by
 the existing Markdown command helper. If that helper refuses translation, the
 diagnostic labels the command Bash/Git Bash only and names PowerShell recovery
 as unavailable. Root apostrophes and dollar signs remain literal path text.
-Printed recovery still requires the current installed RIPR executable; this
-partial repair does not bind PATH or qualify installed binary substitution.
+The printed recovery command runs the executable that issued the refusal
+(`std::env::current_exe()`, quoted by the shared shell-argument helper) and the
+refusal prints that executable's version line, so a stale `ripr` earlier on
+`PATH` cannot satisfy it (#9500). If the operating system cannot name the
+running executable the command falls back to bare `ripr` and the refusal says to
+confirm `ripr --version`. Only this refusal is rebound; other emitters still
+render PATH `ripr`, and installed-binary substitution on every route stays
+unqualified.
+
+An envelope whose `artifact.producer.version` is not exactly the consuming
+executable's version is refused at the same validation site (#9500) with a
+"produced by X, consumer is Y, regenerate" diagnostic and the same recovery
+command. This is fail-closed version equality, not producer authentication: a
+document can still declare the current version, and artifacts from another RIPR
+build, including a patch release, must be regenerated. `reports gap-ledger
+--repo-exposure` is a separate route governed by RIPR-SPEC-0046 (a missing
+envelope is disclosed as a warning there, #9570).
 
 - `agent_loop_status_available`
 - `agent_workflow_manifest_available`

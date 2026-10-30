@@ -464,6 +464,9 @@ Missing artifacts:
   when known.
 - Missing input is not treated as clean, waived, suppressed, improved, or
   runtime-confirmed.
+- Given a repo-exposure input with no `artifact` envelope, the ledger emits a
+  warning that producer identity and currentness were not validated and names
+  the regeneration command; the records are still projected.
 
 ## Test Mapping
 

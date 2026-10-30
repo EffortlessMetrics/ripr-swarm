@@ -1,0 +1,61 @@
+//! Rates and limits, one function per test style.
+
+pub fn sales_tax(subtotal: u64) -> u64 {
+    subtotal * 8 / 100
+}
+
+pub fn late_fee(days: u64) -> u64 {
+    days * 5
+}
+
+pub fn commission(sale: u64) -> u64 {
+    sale * 3 / 100
+}
+
+pub fn handling(weight: u64) -> u64 {
+    weight * 12
+}
+
+pub fn rounding_unit(value: u64) -> u64 {
+    value / 10 * 10
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tax_on_a_thousand() {
+        assert_eq!(sales_tax(1_000), 80);
+    }
+
+    #[test]
+    fn late_fee_table() {
+        let cases = [(0, 0), (1, 5), (4, 20)];
+        for (days, want) in cases {
+            assert_eq!(late_fee(days), want, "days = {days}");
+        }
+    }
+
+    #[test]
+    fn commission_stays_within_the_sale() {
+        for sale in (0..1_000).step_by(100) {
+            let value = commission(sale);
+            assert!(value <= sale, "sale {sale}");
+        }
+    }
+
+    fn check_handling(weight: u64, want: u64) {
+        assert_eq!(handling(weight), want, "weight {weight}");
+    }
+
+    #[test]
+    fn handling_for_two() {
+        check_handling(2, 24);
+    }
+
+    #[test]
+    fn rounding_smoke() {
+        let _ = rounding_unit(37);
+    }
+}

@@ -1,0 +1,12 @@
+diff --git a/src/loadOrDefault.ts b/src/loadOrDefault.ts
+index 0000000..1111111 100644
+--- a/src/loadOrDefault.ts
++++ b/src/loadOrDefault.ts
+@@ -1,6 +1,6 @@
+ export async function loadOrDefault(read: () => Promise<number>, fallback: number): Promise<number> {
+   try {
+-    return await read();
++    return (await read()) + 1;
+   } catch {
+     return fallback;
+   }

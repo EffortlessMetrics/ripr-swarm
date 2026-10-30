@@ -1,0 +1,22 @@
+{
+  "case_id": "py-idioms-plain-test-beside-doctest",
+  "subject_id": "authored-py-pytest-idioms",
+  "origin": "authored",
+  "anchor": "idioms/texts.py:20",
+  "behavior_family": "output_text",
+  "test_shape": "pytest_plain_test_in_module_with_doctests",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

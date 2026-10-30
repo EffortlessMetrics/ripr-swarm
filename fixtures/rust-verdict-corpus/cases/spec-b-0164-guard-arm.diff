@@ -1,0 +1,12 @@
+diff --git a/src/m_guard.rs b/src/m_guard.rs
+--- a/src/m_guard.rs
++++ b/src/m_guard.rs
+@@ -10,7 +10,7 @@
+ 
+ pub fn classify_guard(input: &str) -> &'static str {
+     let final_label = label_guard(input);
+-    if final_label == "alpha" {
++    if final_label == "beta" {
+         "word"
+     } else {
+         "blank"

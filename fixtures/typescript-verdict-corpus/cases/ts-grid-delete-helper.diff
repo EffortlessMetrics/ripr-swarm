@@ -1,0 +1,12 @@
+diff --git a/src/delete.ts b/src/delete.ts
+--- a/src/delete.ts
++++ b/src/delete.ts
+@@ -22,7 +22,7 @@
+   }
+ 
+   recordWrite(): void {
+-    this.writes = this.writes + 1;
++    this.writes += 1;
+     this.lastEvent = "writes";
+   }
+ 

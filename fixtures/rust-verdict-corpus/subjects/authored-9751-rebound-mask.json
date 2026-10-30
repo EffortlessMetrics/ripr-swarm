@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-9751-rebound-mask",
+  "origin": "authored",
+  "version_label": "authored 2026-10-22; guard for #9751 (mask-bit demotion must not fire when the owner rebinds the operand)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "130d5967fb5af600c1b15f502c76a76ce83fd119da9eb96144129e1005e0381b"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "3c0ba83f595fa67d1304f4739c553506f29908f90e14554dd3dee86c8e2b66bc"
+    }
+  ]
+}

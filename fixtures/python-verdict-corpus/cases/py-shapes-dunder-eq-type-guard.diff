@@ -1,0 +1,12 @@
+diff --git a/shapes/money.py b/shapes/money.py
+--- a/shapes/money.py
++++ b/shapes/money.py
+@@ -9,7 +9,7 @@
+         return Money(self.cents + other.cents)
+ 
+     def __eq__(self, other):
+-        return isinstance(other, Money) and self.cents == other.cents
++        return self.cents == other.cents
+ 
+     def __lt__(self, other):
+         return self.cents < other.cents

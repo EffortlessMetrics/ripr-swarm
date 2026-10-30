@@ -930,3 +930,688 @@ fn the_parser_stores_the_scopes_crediting_would_parse_and_the_cache_keeps_them()
     assert_eq!(decoded.item_scopes, facts.item_scopes);
     Ok(())
 }
+
+const CALLBACK_HELPER: &str = "    fn run_test(want: bool, f: impl FnOnce() -> bool) {\n        let got = f();\n        assert_eq!(got, want);\n    }\n";
+
+fn callback_source(helper: &str, body: &str) -> String {
+    format!(
+        "{GATE}#[cfg(test)]\nmod tests {{\n    use super::*;\n\n{helper}\n    #[test]\n    fn boundary() {{\n{body}    }}\n}}\n"
+    )
+}
+
+#[test]
+fn closure_callback_helper_credits_its_assertion_to_the_calling_test() -> Result<(), Box<dyn Error>>
+{
+    let index = index_for(&callback_source(
+        CALLBACK_HELPER,
+        "        run_test(true, || gate(11));\n",
+    ))?;
+
+    let test = test_named(&index, "boundary")?;
+
+    assert_eq!(assertion_texts(test), vec!["assert_eq!(got, want);"]);
+    assert!(calls(test).contains(&"gate"), "{:?}", calls(test));
+    assert!(
+        !calls(test).contains(&"f"),
+        "the callback parameter names no function: {:?}",
+        calls(test)
+    );
+    Ok(())
+}
+
+#[test]
+fn closure_callback_helper_credits_a_block_closure_and_a_later_position()
+-> Result<(), Box<dyn Error>> {
+    let index = index_for(&callback_source(
+        "    fn run_test(f: impl FnOnce() -> bool, want: bool) {\n        let got = f();\n        assert_eq!(got, want);\n    }\n",
+        "        run_test(|| {\n            gate(11)\n        }, true);\n",
+    ))?;
+
+    let test = test_named(&index, "boundary")?;
+
+    assert_eq!(assertion_texts(test), vec!["assert_eq!(got, want);"]);
+    Ok(())
+}
+
+#[test]
+fn closure_callback_helpers_that_may_not_observe_the_closure_grant_nothing()
+-> Result<(), Box<dyn Error>> {
+    for (shape, helper, body) in [
+        (
+            "callback invoked only under if false",
+            "    fn run_test(want: bool, f: impl FnOnce() -> bool) {\n        if false {\n            let _ = f();\n        }\n        assert_eq!(want, true);\n    }\n",
+            "        run_test(true, || gate(11));\n",
+        ),
+        (
+            "callback invoked only under if false on one line",
+            "    fn run_test(want: bool, f: impl FnOnce() -> bool) {\n        if false { let _ = f(); }\n        assert_eq!(want, true);\n    }\n",
+            "        run_test(true, || gate(11));\n",
+        ),
+        (
+            "callback invoked only in a loop",
+            "    fn run_test(want: bool, f: impl FnOnce() -> bool) {\n        for _ in 0..0 {\n            let _ = f();\n        }\n        assert_eq!(want, true);\n    }\n",
+            "        run_test(true, || gate(11));\n",
+        ),
+        (
+            "callback invoked after a possible early return",
+            "    fn run_test(want: bool, f: impl FnOnce() -> bool) {\n        if want {\n            return;\n        }\n        let _ = f();\n        assert_eq!(want, true);\n    }\n",
+            "        run_test(false, || gate(11));\n",
+        ),
+        (
+            "same-line assertion before the invocation",
+            "    fn run_test(want: bool, f: impl FnOnce() -> bool) {\n        assert_eq!(want, true); let _ = f();\n    }\n",
+            "        run_test(true, || gate(11));\n",
+        ),
+        (
+            "mutable callback parameter, even if never reassigned",
+            "    fn run_test(want: bool, mut f: impl FnMut() -> bool) {\n        let got = f();\n        assert_eq!(got, want);\n    }\n",
+            "        run_test(true, || gate(11));\n",
+        ),
+        (
+            "parenthesized assignment to the callback parameter",
+            "    fn run_test(want: bool, mut f: fn() -> bool) {\n        (f) = always_true;\n        let _ = f();\n        assert_eq!(want, true);\n    }\n    fn always_true() -> bool {\n        true\n    }\n",
+            "        run_test(true, || gate(11));\n",
+        ),
+        (
+            "destructuring assignment to the callback parameter",
+            "    fn run_test(want: bool, mut f: fn() -> bool) {\n        (f,) = (always_true as fn() -> bool,);\n        let _ = f();\n        assert_eq!(want, true);\n    }\n    fn always_true() -> bool {\n        true\n    }\n",
+            "        run_test(true, || gate(11));\n",
+        ),
+        (
+            "mem replace of the callback parameter",
+            "    fn run_test(want: bool, mut f: fn() -> bool) {\n        std::mem::replace(&mut (f), always_true);\n        let _ = f();\n        assert_eq!(want, true);\n    }\n    fn always_true() -> bool {\n        true\n    }\n",
+            "        run_test(true, || gate(11));\n",
+        ),
+        (
+            "callback parameter reassigned before the invocation",
+            "    fn run_test(want: bool, mut f: fn() -> bool) {\n        f = always_true;\n        let _ = f();\n        assert_eq!(want, true);\n    }\n    fn always_true() -> bool {\n        true\n    }\n",
+            "        run_test(true, || gate(11));\n",
+        ),
+        (
+            "opaque macro before the invocation may exit",
+            "    fn run_test(want: bool, f: impl FnOnce() -> bool) {\n        early_exit!();\n        let got = f();\n        assert_eq!(got, want);\n    }\n",
+            "        run_test(true, || gate(11));\n",
+        ),
+        (
+            "helper call under if false in the test",
+            CALLBACK_HELPER,
+            "        if false {\n            run_test(true, || gate(11));\n        }\n",
+        ),
+        (
+            "helper call after an opaque macro in the test",
+            CALLBACK_HELPER,
+            "        early_exit!();\n        run_test(true, || gate(11));\n",
+        ),
+        (
+            "async closure literal",
+            "    fn run_test<F, T>(want: bool, f: F) where F: FnOnce() -> T {\n        let _ = f();\n        assert_eq!(want, true);\n    }\n",
+            "        run_test(true, async || gate(11));\n",
+        ),
+        (
+            "repeated identical assertion spelling around the invocation on one line",
+            "    fn run_test(want: bool, f: impl FnOnce() -> bool) {\n        assert_eq!(want, true); let _ = f(); assert_eq!(want, true);\n    }\n",
+            "        run_test(true, || gate(11));\n",
+        ),
+        (
+            "callback invoked only inside an assertion macro argument",
+            "    fn run_test(want: bool, f: impl FnOnce() -> bool) {\n        assert_eq!(f(), want);\n    }\n",
+            "        run_test(true, || gate(11));\n",
+        ),
+        (
+            "exit in an earlier argument of the helper call",
+            CALLBACK_HELPER,
+            "        run_test({ return; true }, || gate(11));\n",
+        ),
+        (
+            "exit in a later argument, callback first",
+            "    fn run_first(f: impl FnOnce() -> bool, want: bool) {\n        let got = f();\n        assert_eq!(got, want);\n    }\n",
+            "        run_first(|| gate(11), { return; true });\n",
+        ),
+        (
+            "exit in an argument of a let-initializer helper call",
+            CALLBACK_HELPER,
+            "        let _ = run_test({ return; true }, || gate(11));\n",
+        ),
+        (
+            "exit in an argument of a tail helper call",
+            CALLBACK_HELPER,
+            "        run_test({ return; true }, || gate(11))\n",
+        ),
+        (
+            "return written in the callback literal itself",
+            CALLBACK_HELPER,
+            "        run_test(true, || { return gate(11); });\n",
+        ),
+        (
+            "question mark written in the callback literal itself",
+            CALLBACK_HELPER,
+            "        run_test(true, || { gate(11)?; true });\n",
+        ),
+        (
+            "exit hidden in a format argument of the helper call",
+            CALLBACK_HELPER,
+            "        run_test(format!(\"{}\", { return; 1 }).is_empty(), || gate(11));\n",
+        ),
+        (
+            "exit hidden in a preceding transparent macro statement",
+            CALLBACK_HELPER,
+            "        let _ = format!(\"{}\", { return; \"x\" });\n        run_test(true, || gate(11));\n",
+        ),
+        (
+            "question mark hidden in a preceding transparent macro",
+            CALLBACK_HELPER,
+            "        let _ = format!(\"{}\", missing()?);\n        run_test(true, || gate(11));\n",
+        ),
+        (
+            "exit hidden in a transparent macro before the helper's invocation",
+            "    fn run_test(want: bool, f: impl FnOnce() -> bool) {\n        let _ = format!(\"{}\", { return; 1 });\n        let got = f();\n        assert_eq!(got, want);\n    }\n",
+            "        run_test(true, || gate(11));\n",
+        ),
+        (
+            "closure whose only call is under an async block",
+            CALLBACK_HELPER,
+            "        run_test(true, || async { gate(11) });\n",
+        ),
+        (
+            "closure whose only call is under a nested closure",
+            CALLBACK_HELPER,
+            "        run_test(true, || || gate(11));\n",
+        ),
+        (
+            "boxed closure",
+            "    fn run_test(want: bool, f: Box<dyn Fn() -> bool>) {\n        let got = f();\n        assert_eq!(got, want);\n    }\n",
+            "        run_test(true, Box::new(|| gate(11)));\n",
+        ),
+        (
+            "reference to a closure",
+            "    fn run_test(want: bool, f: &dyn Fn() -> bool) {\n        let got = f();\n        assert_eq!(got, want);\n    }\n",
+            "        run_test(true, &|| gate(11));\n",
+        ),
+        (
+            "closure at a position the helper does not invoke, plain value at the invoked one",
+            "    fn run_test(f: impl FnOnce() -> bool, g: impl FnOnce() -> bool) {\n        let got = g();\n        let _ = f;\n        assert_eq!(got, true);\n    }\n",
+            "        let g = || true;\n        run_test(|| gate(11), g);\n",
+        ),
+        (
+            "assertion runs before the callback",
+            "    fn run_test(want: bool, f: impl FnOnce() -> bool) {\n        assert_eq!(want, want);\n        let _ = f();\n    }\n",
+            "        run_test(true, || gate(11));\n",
+        ),
+        (
+            "callback invoked only inside a helper closure",
+            "    fn run_test(want: bool, f: impl FnOnce() -> bool) {\n        let run = move || f();\n        let got = run();\n        assert_eq!(got, want);\n    }\n",
+            "        run_test(true, || gate(11));\n",
+        ),
+        (
+            "closure passed at a parameter the helper does not invoke",
+            "    fn run_test(want: bool, f: impl FnOnce() -> bool, g: impl FnOnce() -> bool) {\n        let got = g();\n        let _ = f;\n        assert_eq!(got, want);\n    }\n",
+            "        run_test(true, || gate(11), || true);\n",
+        ),
+        (
+            "callback parameter shadowed by a let",
+            "    fn run_test(want: bool, f: impl FnOnce() -> bool) {\n        let f = || true;\n        let got = f();\n        assert_eq!(got, want);\n    }\n",
+            "        run_test(true, || gate(11));\n",
+        ),
+        (
+            "callback parameter shadowed by a match binding",
+            "    fn run_test(want: bool, f: Option<fn() -> bool>) {\n        let got = match Some(|| true) {\n            Some(f) => f(),\n            None => false,\n        };\n        assert_eq!(got, want);\n        let _ = f;\n    }\n",
+            "        run_test(true, Some(|| gate(11)));\n",
+        ),
+        (
+            "argument is a plain value, not a closure literal",
+            CALLBACK_HELPER,
+            "        let g = || gate(11);\n        run_test(true, g);\n",
+        ),
+        (
+            "closure that makes no call",
+            CALLBACK_HELPER,
+            "        run_test(true, || true);\n",
+        ),
+        (
+            "helper call sits inside a test closure that may never run",
+            CALLBACK_HELPER,
+            "        let later = || run_test(true, || gate(11));\n        let _ = later;\n",
+        ),
+        (
+            "test shadows the helper name",
+            CALLBACK_HELPER,
+            "        let run_test = |_: bool, f: fn() -> bool| { let _ = f; };\n        run_test(true, || gate(11));\n",
+        ),
+        (
+            "async helper",
+            "    async fn run_test(want: bool, f: impl FnOnce() -> bool) {\n        let got = f();\n        assert_eq!(got, want);\n    }\n",
+            "        let _ = run_test(true, || gate(11));\n",
+        ),
+        (
+            "cfg-gated helper",
+            "    #[cfg(any())]\n    fn run_test(want: bool, f: impl FnOnce() -> bool) {\n        let got = f();\n        assert_eq!(got, want);\n    }\n",
+            "        run_test(true, || gate(11));\n",
+        ),
+        (
+            "callback method call, not a free call",
+            "    fn run_test(want: bool, f: impl FnOnce() -> bool) {\n        let got = Some(1).map(|_| f()).unwrap_or(false);\n        assert_eq!(got, want);\n    }\n",
+            "        run_test(true, || gate(11));\n",
+        ),
+    ] {
+        let index = index_for(&callback_source(helper, body))?;
+        let test = test_named(&index, "boundary")?;
+        assert!(
+            test.assertions.is_empty(),
+            "{shape}: {:?}",
+            assertion_texts(test)
+        );
+    }
+    Ok(())
+}
+
+// A helper that invokes the callback but asserts nothing grants no assertion
+// either, but that holds with or without the credit (nothing to copy), so it
+// is not a discriminating case for the new guards and is not tabled above.
+
+#[test]
+fn closure_callback_credit_covers_generic_bounds_and_refuses_two_invoked_callbacks()
+-> Result<(), Box<dyn Error>> {
+    let generic = index_for(&callback_source(
+        "    fn run_test<F: Fn() -> bool>(want: bool, f: F) {\n        let got = f();\n        assert_eq!(got, want);\n    }\n",
+        "        run_test(true, || gate(11));\n",
+    ))?;
+    assert_eq!(
+        assertion_texts(test_named(&generic, "boundary")?),
+        vec!["assert_eq!(got, want);"]
+    );
+
+    // A helper that invokes two callback parameters earns no credit, even
+    // when only one reaches a call-making closure literal.
+    for (shape, helper, body) in [
+        (
+            "both closures reached",
+            "    fn run_both(a: impl FnOnce() -> bool, b: impl FnOnce() -> bool) {\n        let x = a();\n        let y = b();\n        assert_eq!(x, y);\n    }\n",
+            "        run_both(|| gate(11), || gate(12));\n",
+        ),
+        (
+            "one closure reached, plain value at the other",
+            "    fn run_both(a: impl FnOnce() -> bool, b: impl FnOnce() -> bool) {\n        let x = a();\n        let y = b();\n        assert_eq!(x, y);\n    }\n",
+            "        let b = || true;\n        run_both(|| gate(11), b);\n",
+        ),
+        (
+            "assertion between the invocations observes only the first",
+            "    fn run_both(a: impl FnOnce() -> bool, b: impl FnOnce() -> bool) {\n        let x = a();\n        assert_eq!(x, true);\n        let y = b();\n        let _ = y;\n    }\n",
+            "        run_both(|| setup(), || gate(11));\n",
+        ),
+    ] {
+        let index = index_for(&callback_source(helper, body))?;
+        let test = test_named(&index, "boundary")?;
+        assert!(
+            test.assertions.is_empty(),
+            "{shape}: {:?}",
+            assertion_texts(test)
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn closure_callback_credit_orders_same_line_statements_by_source_position()
+-> Result<(), Box<dyn Error>> {
+    let after = index_for(&callback_source(
+        "    fn run_test(want: bool, f: impl FnOnce() -> bool) {\n        let got = f(); assert_eq!(got, want);\n    }\n",
+        "        run_test(true, || gate(11));\n",
+    ))?;
+    assert_eq!(
+        assertion_texts(test_named(&after, "boundary")?),
+        vec!["assert_eq!(got, want);"]
+    );
+
+    let whole_fn_on_one_line = index_for(&callback_source(
+        "    fn run_test(want: bool, f: impl FnOnce() -> bool) { let got = f(); assert_eq!(got, want); }\n",
+        "        run_test(true, || gate(11));\n",
+    ))?;
+    assert_eq!(
+        assertion_texts(test_named(&whole_fn_on_one_line, "boundary")?),
+        vec!["assert_eq!(got, want);"]
+    );
+
+    let commented = index_for(&callback_source(
+        "    fn run_test(want: bool, f: impl FnOnce() -> bool) { /* assert_eq!(got, want); */ let got = f(); assert_eq!(got, want); }\n",
+        "        run_test(true, || gate(11));\n",
+    ))?;
+    assert_eq!(
+        assertion_texts(test_named(&commented, "boundary")?),
+        vec!["assert_eq!(got, want);"],
+        "a comment that repeats the spelling must not hide the real assertion"
+    );
+
+    let before = index_for(&callback_source(
+        "    fn run_test(want: bool, f: impl FnOnce() -> bool) { assert_eq!(want, true); let _ = f(); }\n",
+        "        run_test(true, || gate(11));\n",
+    ))?;
+    assert!(test_named(&before, "boundary")?.assertions.is_empty());
+    Ok(())
+}
+
+#[test]
+fn closure_callback_credit_ignores_an_unrelated_nested_fn_exit_in_the_test()
+-> Result<(), Box<dyn Error>> {
+    let index = index_for(&callback_source(
+        CALLBACK_HELPER,
+        "        fn other() {\n            return;\n        }\n        run_test(true, || gate(11));\n",
+    ))?;
+
+    assert_eq!(
+        assertion_texts(test_named(&index, "boundary")?),
+        vec!["assert_eq!(got, want);"]
+    );
+    Ok(())
+}
+
+#[test]
+fn closure_callback_credit_keeps_benign_transparent_macro_arguments() -> Result<(), Box<dyn Error>>
+{
+    let index = index_for(&callback_source(
+        CALLBACK_HELPER,
+        "        let label = 1;\n        let _ = format!(\"{}\", label);\n        run_test(format!(\"{}\", label).len() > 0, || gate(11));\n",
+    ))?;
+
+    assert_eq!(
+        assertion_texts(test_named(&index, "boundary")?),
+        vec!["assert_eq!(got, want);"]
+    );
+    Ok(())
+}
+
+#[test]
+fn closure_callback_credit_keeps_a_return_after_an_executed_helper_call()
+-> Result<(), Box<dyn Error>> {
+    let index = index_for(&callback_source(
+        CALLBACK_HELPER,
+        "        run_test(true, || gate(11));\n        return;\n",
+    ))?;
+
+    assert_eq!(
+        assertion_texts(test_named(&index, "boundary")?),
+        vec!["assert_eq!(got, want);"]
+    );
+    Ok(())
+}
+
+#[test]
+fn closure_callback_credit_accepts_an_assertion_unrelated_to_the_closure_result()
+-> Result<(), Box<dyn Error>> {
+    // Documented accepted limit: the helper really runs the closure and then
+    // asserts, so the assertion is credited even though it does not read what
+    // the closure returned. The existing argument-helper path has the same
+    // reach; value-level grip is judged downstream, not here.
+    let index = index_for(&callback_source(
+        "    fn run_test(want: bool, f: impl FnOnce() -> bool) {\n        let _ = f();\n        assert_eq!(want, true);\n    }\n",
+        "        run_test(true, || gate(11));\n",
+    ))?;
+
+    assert_eq!(
+        assertion_texts(test_named(&index, "boundary")?),
+        vec!["assert_eq!(want, true);"]
+    );
+    Ok(())
+}
+
+#[test]
+fn closure_callback_credit_does_not_reach_helper_callbacks_in_another_module()
+-> Result<(), Box<dyn Error>> {
+    let index = index_for(&format!(
+        "{GATE}#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    mod support {{\n        pub fn run_test(want: bool, f: impl FnOnce() -> bool) {{\n            let got = f();\n            assert_eq!(got, want);\n        }}\n    }}\n\n    #[test]\n    fn boundary() {{\n        support::run_test(true, || gate(11));\n    }}\n}}\n"
+    ))?;
+
+    let test = test_named(&index, "boundary")?;
+
+    assert!(test.assertions.is_empty(), "{:?}", assertion_texts(test));
+    Ok(())
+}
+
+const UNUSED_CLOSURE_HELPER: &str = "    fn run_test(want: bool, f: impl FnOnce() -> bool) {\n        assert_eq!(want, true);\n    }\n";
+
+#[test]
+fn plain_helper_that_never_invokes_a_closure_parameter_lends_nothing() -> Result<(), Box<dyn Error>>
+{
+    // Negative (#9997): the assertion cannot observe what `gate` returned.
+    let index = index_for(&callback_source(
+        UNUSED_CLOSURE_HELPER,
+        "        run_test(true, || gate(11));\n",
+    ))?;
+
+    let test = test_named(&index, "boundary")?;
+
+    assert!(test.assertions.is_empty(), "{:?}", assertion_texts(test));
+    Ok(())
+}
+
+#[test]
+fn plain_helper_that_only_forwards_a_closure_parameter_lends_nothing() -> Result<(), Box<dyn Error>>
+{
+    // Negative (#9997): forwarding is indistinguishable from never calling it
+    // until the receiving call is resolved, so no credit.
+    let index = index_for(&callback_source(
+        "    fn with_default(f: impl FnOnce() -> bool) -> bool {\n        f()\n    }\n    fn run_test(want: bool, f: impl FnOnce() -> bool) {\n        let _ = with_default(f);\n        assert_eq!(want, true);\n    }\n",
+        "        run_test(true, || gate(11));\n",
+    ))?;
+
+    let test = test_named(&index, "boundary")?;
+
+    assert!(test.assertions.is_empty(), "{:?}", assertion_texts(test));
+    Ok(())
+}
+
+#[test]
+fn plain_helper_withheld_for_a_closure_at_any_position_or_reach() -> Result<(), Box<dyn Error>> {
+    for (shape, helper, body) in [
+        (
+            "closure at a later position",
+            "    fn run_test(f: impl FnOnce() -> bool, want: bool) {\n        assert_eq!(want, true);\n    }\n",
+            "        run_test(|| gate(11), true);\n",
+        ),
+        (
+            "helper call under a test branch",
+            UNUSED_CLOSURE_HELPER,
+            "        if gate(0) == false {\n            run_test(true, || gate(11));\n        }\n",
+        ),
+    ] {
+        let index = index_for(&callback_source(helper, body))?;
+        let test = test_named(&index, "boundary")?;
+        assert!(
+            test.assertions.is_empty(),
+            "{shape}: {:?}",
+            assertion_texts(test)
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn plain_helper_keeps_credit_when_no_call_making_closure_is_passed() -> Result<(), Box<dyn Error>> {
+    // Controls: the plain path is unchanged for ordinary arguments and for a
+    // closure literal that makes no call.
+    for body in [
+        "        run_test(gate(11), true);\n",
+        "        run_test(true, || true);\n",
+    ] {
+        let index = index_for(&callback_source(
+            "    fn run_test(a: impl Copy, want: bool) {\n        assert_eq!(want, true);\n    }\n",
+            body,
+        ))?;
+        let test = test_named(&index, "boundary")?;
+        assert_eq!(
+            assertion_texts(test),
+            vec!["assert_eq!(want, true);"],
+            "{body}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn invoked_closure_parameter_is_still_credited_after_the_plain_path_tightening()
+-> Result<(), Box<dyn Error>> {
+    // Positive control (#9981 unchanged): the closure is invoked eagerly.
+    let index = index_for(&callback_source(
+        CALLBACK_HELPER,
+        "        run_test(true, || gate(11));\n",
+    ))?;
+
+    let test = test_named(&index, "boundary")?;
+
+    assert_eq!(assertion_texts(test), vec!["assert_eq!(got, want);"]);
+    Ok(())
+}
+
+#[test]
+fn plain_helper_withheld_for_a_boxed_or_referenced_closure() -> Result<(), Box<dyn Error>> {
+    for body in [
+        "        run_test(true, Box::new(|| gate(11)));\n",
+        "        run_test(true, &|| gate(11));\n",
+    ] {
+        let index = index_for(&callback_source(UNUSED_CLOSURE_HELPER, body))?;
+        let test = test_named(&index, "boundary")?;
+        assert!(
+            test.assertions.is_empty(),
+            "{body}: {:?}",
+            assertion_texts(test)
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn unused_closure_helper_keeps_credit_for_a_call_less_closure() -> Result<(), Box<dyn Error>> {
+    // Same fixture as the negatives: only the call-making closure changes.
+    let index = index_for(&callback_source(
+        UNUSED_CLOSURE_HELPER,
+        "        run_test(true, || true);\n",
+    ))?;
+    let test = test_named(&index, "boundary")?;
+    assert_eq!(assertion_texts(test), vec!["assert_eq!(want, true);"]);
+    Ok(())
+}
+
+#[test]
+fn plain_helper_withholding_is_per_helper_not_per_call() -> Result<(), Box<dyn Error>> {
+    // One test calls the helper both ways; a single call-making closure
+    // withholds the helper's assertions from the whole test (fail-closed).
+    let index = index_for(&callback_source(
+        UNUSED_CLOSURE_HELPER,
+        "        run_test(true, || true);\n        run_test(true, || gate(11));\n",
+    ))?;
+    let test = test_named(&index, "boundary")?;
+    assert!(test.assertions.is_empty(), "{:?}", assertion_texts(test));
+    Ok(())
+}
+
+#[test]
+fn plain_helper_withheld_for_an_adapter_closure_run_inside_the_argument()
+-> Result<(), Box<dyn Error>> {
+    // Deliberate missed advisory (#9997): these closures run eagerly while the
+    // argument is evaluated, so the base credit was correct, but the
+    // withholding scan treats any call-making closure in an argument as one the
+    // helper may never run. Fail-closed over precise.
+    for body in [
+        "        run_test([1u32, 2].iter().map(|v| gate(*v)).count() > 0, || true);\n",
+        "        run_test([1u32, 2].iter().any(|v| gate(*v)), || true);\n",
+        "        run_test(Some(true).unwrap_or_else(|| gate(11)), || true);\n",
+    ] {
+        let index = index_for(&callback_source(UNUSED_CLOSURE_HELPER, body))?;
+        let test = test_named(&index, "boundary")?;
+        assert!(
+            test.assertions.is_empty(),
+            "{body}: {:?}",
+            assertion_texts(test)
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn plain_helper_withheld_for_a_closure_bound_to_a_name_first() -> Result<(), Box<dyn Error>> {
+    // Negative (#9997 residual closed): the named closure is the same value as
+    // the literal, so the helper that never invokes it lends nothing.
+    for body in [
+        "        let c = || gate(11);\n        run_test(true, c);\n",
+        "        let mut c = || gate(11);\n        run_test(true, c);\n",
+        "        let c = || gate(11);\n        run_test(true, &c);\n",
+        // Rebinding does not exempt it: fail-closed, a missed advisory.
+        "        let c = || gate(11);\n        let c = true;\n        run_test(true, c);\n",
+    ] {
+        let index = index_for(&callback_source(UNUSED_CLOSURE_HELPER, body))?;
+        let test = test_named(&index, "boundary")?;
+        assert!(
+            test.assertions.is_empty(),
+            "{body}: {:?}",
+            assertion_texts(test)
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn plain_helper_keeps_credit_for_a_name_that_is_not_a_call_making_closure()
+-> Result<(), Box<dyn Error>> {
+    // Same fixture as the negatives: only what the name is bound to changes.
+    for body in [
+        "        let c = gate(11);\n        run_test(true, c);\n",
+        "        let c = || true;\n        run_test(true, c);\n",
+        "        { let c = || gate(11); }\n        let c = true;\n        run_test(true, c);\n",
+        "        run_test(true, c);\n        let c = || gate(11);\n",
+        "        let c = || gate(11);\n        run_test(true, d);\n",
+        "        { let c = || gate(11); }\n        run_test(true, c);\n",
+    ] {
+        let index = index_for(&callback_source(UNUSED_CLOSURE_HELPER, body))?;
+        let test = test_named(&index, "boundary")?;
+        assert_eq!(
+            assertion_texts(test),
+            vec!["assert_eq!(want, true);"],
+            "{body}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn alias_of_a_named_closure_keeps_plain_helper_credit_as_a_disclosed_residual()
+-> Result<(), Box<dyn Error>> {
+    // Known residual (#9997): `let h = c` is not a closure literal, so the
+    // alias is not followed. Pinned so a later fix flips this test knowingly.
+    let index = index_for(&callback_source(
+        UNUSED_CLOSURE_HELPER,
+        "        let c = || gate(11);\n        let h = c;\n        run_test(true, h);\n",
+    ))?;
+    let test = test_named(&index, "boundary")?;
+    assert_eq!(assertion_texts(test), vec!["assert_eq!(want, true);"]);
+    Ok(())
+}
+
+#[test]
+fn closure_parameter_shadowing_a_closure_binding_is_withheld_as_a_missed_advisory()
+-> Result<(), Box<dyn Error>> {
+    // Over-withhold pin: the inner `f` is a closure parameter, but the scan
+    // does not model shadowing, so the outer call-making `let f` withholds.
+    let index = index_for(&callback_source(
+        UNUSED_CLOSURE_HELPER,
+        "        let f = || gate(11);\n        let g = |f: bool| run_test(true, f);\n",
+    ))?;
+    let test = test_named(&index, "boundary")?;
+    assert!(test.assertions.is_empty(), "{:?}", assertion_texts(test));
+    Ok(())
+}
+
+#[test]
+fn function_item_passed_by_name_keeps_plain_helper_credit_as_a_disclosed_residual()
+-> Result<(), Box<dyn Error>> {
+    // Known residual (#9997): a function item is not a closure literal or a
+    // local binding, and resolving it needs a file-level lookup this text-only
+    // scan does not have. Pinned so a later fix flips this test knowingly.
+    let index = index_for(&format!(
+        "{}fn make() -> bool {{ gate(11) }}\n",
+        callback_source(UNUSED_CLOSURE_HELPER, "        run_test(true, make);\n")
+    ))?;
+    let test = test_named(&index, "boundary")?;
+    assert_eq!(assertion_texts(test), vec!["assert_eq!(want, true);"]);
+    Ok(())
+}
+
+mod assertion_macros;

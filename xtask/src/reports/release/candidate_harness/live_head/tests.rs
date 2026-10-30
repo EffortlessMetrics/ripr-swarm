@@ -29,6 +29,12 @@ impl Fixture {
                 .map_err(|error| format!("create fixture parent: {error}"))?;
         }
         std::fs::create_dir(&root).map_err(|error| format!("create owned fixture: {error}"))?;
+        // Production admits only a canonical root; on Windows that is the
+        // verbatim `\\?\` spelling, which `starts_with` never equates with
+        // the plain temp path (#9660).
+        let root = root
+            .canonicalize()
+            .map_err(|error| format!("canonicalize owned fixture: {error}"))?;
         let mut fixture = Self {
             root,
             document: json!({}),

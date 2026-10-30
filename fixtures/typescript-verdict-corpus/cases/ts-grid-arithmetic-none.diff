@@ -1,0 +1,10 @@
+diff --git a/src/arithmetic.ts b/src/arithmetic.ts
+--- a/src/arithmetic.ts
++++ b/src/arithmetic.ts
+@@ -15,5 +15,5 @@
+ }
+ 
+ export function seconds(minutes: number): number {
+-  return minutes * 60;
++  return 60 * minutes;
+ }

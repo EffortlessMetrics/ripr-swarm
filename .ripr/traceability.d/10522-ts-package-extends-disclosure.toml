@@ -1,0 +1,6 @@
+# Registers the package-base extends extraction-disclosure regression (#10522).
+[[extend]]
+id = "RIPR-SPEC-0027"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/gap_reach_config_tests.rs::package_base_paths_keep_extraction_disclosure_without_changing_findings",
+]

@@ -194,8 +194,14 @@ fn evaluate_in(
     if tests.is_empty() {
         return Err(format!("fixture parsed to no tests: {test_source}"));
     }
-    let candidates =
-        related_test_candidates(&owner, &tests, Some(root), &ReExportIndex::empty(), None);
+    let candidates = related_test_candidates(
+        &owner,
+        &tests,
+        Some(root),
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
     let shape = classify_probe_shape_detail(change.text);
     let boundary = ts_predicate_boundary(&shape, change.text);
     let fact = ts_boundary_fact_for_change(&shape, change.line, change.text, &owner, Some(root));
@@ -805,7 +811,7 @@ fn open_test_body_or_file_is_unresolved_not_missed() -> Result<(), String> {
         (
             "asserting helper",
             format!(
-                "{IMPORT_DISCOUNT}\nfunction expectDiscountAt(n: number, e: number) {{\n  expect(applyDiscount(n)).toBe(e);\n}}\n"
+                "{IMPORT_DISCOUNT}\nfunction expectDiscountAt(n: number, e: number) {{\n  const got = applyDiscount(n);\n  expect(got).toBe(e);\n}}\n"
             ),
             format!("{observed}\n  expectDiscountAt(100, 90);"),
         ),

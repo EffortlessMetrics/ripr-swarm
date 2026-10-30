@@ -1,0 +1,11 @@
+diff --git a/src/parserIdent.ts b/src/parserIdent.ts
+--- a/src/parserIdent.ts
++++ b/src/parserIdent.ts
+@@ -1,6 +1,6 @@
+ export function parseUserIdent(input: string): string {
+   if (input === "") {
+-    throw new Error("empty user");
++    throw new Error("no user");
+   }
+   return input;
+ }

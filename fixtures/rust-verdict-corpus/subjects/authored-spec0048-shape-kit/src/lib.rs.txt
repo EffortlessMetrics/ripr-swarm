@@ -1,0 +1,52 @@
+//! RIPR-SPEC-0048 same-file direct-reader must-not-claim shapes, second set (#9871).
+//! Parameter and pattern shadows, associated and local duplicates, cfg-gated reader.
+
+pub mod tuning {
+    pub const FLOOR: u32 = 3;
+    pub const CEILING: u32 = 50;
+}
+
+#[allow(non_snake_case)]
+pub fn floored(x: u32, FLOOR: u32) -> u32 {
+    x.max(FLOOR)
+}
+
+#[allow(non_snake_case)]
+pub fn ceiling_or_zero(o: Option<u32>) -> u32 {
+    if let Some(CEILING) = o { CEILING } else { 0 }
+}
+
+pub struct Small;
+
+impl Small {
+    pub const MAX: u32 = 4;
+
+    pub fn capped(x: u32) -> u32 {
+        x.min(Self::MAX)
+    }
+}
+
+pub struct Large;
+
+impl Large {
+    pub const MAX: u32 = 9;
+}
+
+pub const RATE: u32 = 5;
+
+pub fn charge(x: u32) -> u32 {
+    const RATE: u32 = 2;
+    x * RATE
+}
+
+pub const WINDOW: u32 = 30;
+
+#[cfg(windows)]
+pub fn in_window(n: u32) -> bool {
+    n < WINDOW
+}
+
+#[cfg(not(windows))]
+pub fn in_window(n: u32) -> bool {
+    n < 30
+}

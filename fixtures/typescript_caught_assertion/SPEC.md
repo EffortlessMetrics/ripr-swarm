@@ -14,7 +14,7 @@ failure, so the test still passes.
 ## When
 
 From `input`, run `npm ci --ignore-scripts` and `npm test` with the retained
-Vitest 4.1.11 lockfile. Repeat with `TOKEN_WRONG` as the thrown reason. Both
+Vitest 5.0.5 lockfile. Repeat with `TOKEN_WRONG` as the thrown reason. Both
 runs execute one passing test. Removing the try/catch from the wrong-reason
 variant makes that same assertion fail. The production analyzer command is:
 

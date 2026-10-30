@@ -1,0 +1,10 @@
+diff --git a/src/tax.ts b/src/tax.ts
+index 0000000..1111111 100644
+--- a/src/tax.ts
++++ b/src/tax.ts
+@@ -1,4 +1,4 @@
+-export const TAX = { US: 0.07, DE: 0.19 } as const;
++export const TAX = { US: 0.07, DE: 0.2 } as const;
+ 
+ export function tax(country: keyof typeof TAX, amount: number): number {
+   return amount * TAX[country];

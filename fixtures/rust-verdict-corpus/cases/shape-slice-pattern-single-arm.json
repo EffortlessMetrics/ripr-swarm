@@ -1,0 +1,54 @@
+{
+  "case_id": "shape-slice-pattern-single-arm",
+  "subject_id": "authored-shape-kit",
+  "diff": "cases/shape-slice-pattern-single-arm.diff",
+  "anchor": {
+    "file": "src/flow.rs",
+    "line": 33
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "match_arm_pattern",
+  "test_shape": "slice_pattern_arm_unreached",
+  "hard_case": "A slice-pattern arm for exactly one element; the test supplies zero and three elements.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "[only] => Some((*only, 0)),",
+        "mutated_line": "[only] => Some((*only, 0)),",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: `[only] => Some((*only, *only)),` becomes `[only] => Some((*only, 0)),`, and the test's inputs do not tell the two apart"
+      },
+      {
+        "replacement": "[_] => None,",
+        "mutated_line": "[_] => None,",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: `[only] => Some((*only, *only)),` becomes `[_] => None,`, and the test's inputs do not tell the two apart"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "ends_of_longer_slices covers `[]` and `[first, .., last]`, so the one-element arm is unreached and both mutants pass. Shape: slice patterns.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "axes": [
+    "language_shape"
+  ]
+}

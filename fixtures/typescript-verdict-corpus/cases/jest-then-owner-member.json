@@ -1,0 +1,48 @@
+{
+  "case_id": "jest-then-owner-member",
+  "subject_id": "authored-ts-jest-oracles",
+  "diff": "cases/jest-then-owner-member.diff",
+  "anchor": {
+    "file": "src/orderSumMember.ts",
+    "line": 2
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "arithmetic_constant",
+  "test_shape": "jest_returned_namespace_member_then_with_rejection_handler",
+  "hard_case": "The changed owner is called through a namespace import (`sums.orderSumMember`); its rejection handler refuses static assertion collection, but a failing fulfilment assertion still rejects the returned promise.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "./node_modules/.bin/jest --ci --runInBand",
+    "toolchain": "node 24.19.0; jest 30.5.2, ts-jest 29.4.15, typescript 5.9.3; hand-applied edit, whole expanded package: 33 tests and 4 snapshots pass before and after restoration; the mutant fails only the named test at the runtime value assertion",
+    "mutants": [
+      {
+        "replacement": "return items.reduce((sum, item) => sum + item, 1);",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "orderSumMember",
+        "equivalence_review": "Not equivalent: the sum starts at 1, so orderSumMember([10, 20]) resolves to 31 instead of the pinned 30; Jest reports Expected: 30 / Received: 31 in orderSumMember."
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The stored package passes all 33 tests. Changing only this owner's reducer initial value from 0 to 1 makes its returned promise reject at `expect(sum).toBe(30)` with 31, and the whole Jest command exits 1; restoration passes again. The changed owner is called through a namespace import (`sums.orderSumMember`); its rejection handler refuses static assertion collection, but a failing fulfilment assertion still rejects the returned promise. RIPR-SPEC-0246 rule 4 and #9354 tie this refused callback to the changed owner, so the analyzer abstains as `static_unknown` (`limited`) rather than reporting an actionable gap. This row records runtime discrimination independently of that static abstention.",
+  "labeling_observation": {
+    "ripr_commit": "f0397266d11e87fa38c8f846305f0d86eb99f338",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0246#7"
+  ]
+}

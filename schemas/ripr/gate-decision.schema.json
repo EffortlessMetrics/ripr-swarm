@@ -43,6 +43,7 @@
     "config_errors": { "type": "array", "items": { "type": "string" } },
     "limits_note": { "type": "string", "minLength": 1 },
     "exception_policy": { "type": "object" },
+    "analysis_scope": { "type": "object" },
     "causal_comparison": { "$ref": "#/$defs/causal_comparison" },
     "subject": { "$ref": "#/$defs/subject" }
   },

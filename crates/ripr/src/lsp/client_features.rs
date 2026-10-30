@@ -12,7 +12,13 @@
 //!   `false` / empty unless the client explicitly advertised it.
 //! - Unknown or malformed optional experimental fields fail closed to
 //!   "unsupported" (the `ripr_editor` / `ripr_agent` blocks become `None`)
-//!   without breaking the standard client session.
+//!   without breaking the standard client session. A rejected `ripr_agent`
+//!   block is not silently equal to an absent one: the typed
+//!   `RIPR agent rejection` (kind plus capped detail) records why the
+//!   profile, protocol version, or schema was refused, so the server can
+//!   warn once per session and the status projection can distinguish
+//!   "client never advertised agent support" from "client advertised an
+//!   unusable advertisement".
 //! - The profile is immutable for the session. Profile equality is the
 //!   semantic capability identity: client name, PID, timing, initialization
 //!   options, and unrelated fields are not captured, so two initialize
@@ -120,8 +126,14 @@ pub(super) struct ClientFeatureProfile {
     /// `None` when absent or malformed (fail closed to unsupported).
     pub(super) ripr_editor: Option<RiprEditorClientCapabilities>,
     /// The RIPR agent protocol preferences from `capabilities.experimental`.
-    /// `None` when absent or malformed (fail closed to unsupported).
+    /// `None` when absent, malformed, or rejected (fail closed to
+    /// unsupported); a rejected block additionally lands in
+    /// `ripr_agent_rejection` with the typed reason.
     pub(super) ripr_agent: Option<RiprAgentClientPreferences>,
+    /// The typed rejection when the client advertised `riprAgent` but the
+    /// block failed a closed protocol vocabulary; `None` when the block was
+    /// accepted or never advertised (#9604 batch G finding 30).
+    pub(super) ripr_agent_rejection: Option<RiprAgentClientRejection>,
 }
 
 /// The client's `riprEditor` experimental capability block: the extension
@@ -151,6 +163,18 @@ pub(super) struct RiprAgentClientPreferences {
     pub(super) profiles: Vec<RiprAgentProfile>,
     /// Preferred delivery channels, in advertised preference order.
     pub(super) delivery: Vec<RiprAgentDeliveryPreference>,
+}
+
+/// Why an advertised `riprAgent` block was rejected (#9604 batch G finding
+/// 30): the block reached negotiation but failed a closed vocabulary, so the
+/// session surfaces a typed rejection — an absent block and a rejected block
+/// are different states, and the reserved `RiprAgentErrorKind` values are
+/// emitted instead of staying unreachable. `detail` is bounded at projection
+/// time, never client-controlled raw text.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct RiprAgentClientRejection {
+    pub(super) kind: super::agent_protocol::RiprAgentErrorKind,
+    pub(super) detail: String,
 }
 
 /// A delivery channel a headless agent client prefers, from a closed
@@ -211,6 +235,7 @@ impl ClientFeatureProfile {
             configuration_mode: ConfigurationMode::InitializationOnly,
             ripr_editor: None,
             ripr_agent: None,
+            ripr_agent_rejection: None,
         }
     }
 
@@ -255,6 +280,19 @@ impl ClientFeatureProfile {
             .experimental
             .as_ref()
             .and_then(|value| value.as_object());
+
+        // #9604 batch G finding 30: distinguish "the client never advertised
+        // riprAgent" from "advertised but rejected at a closed vocabulary" —
+        // both keep `ripr_agent: None` (fail closed), but only the rejection
+        // lands in `ripr_agent_rejection` with the typed reason.
+        let (ripr_agent, ripr_agent_rejection) =
+            match experimental.and_then(|value| value.get("riprAgent")) {
+                None => (None, None),
+                Some(block) => match parse_ripr_agent(block) {
+                    Ok(preferences) => (Some(preferences), None),
+                    Err(rejection) => (None, Some(rejection)),
+                },
+            };
 
         Self {
             selected_position_encoding: select_position_encoding(&advertised_position_encodings),
@@ -338,9 +376,8 @@ impl ClientFeatureProfile {
             ripr_editor: experimental
                 .and_then(|value| value.get("riprEditor"))
                 .and_then(parse_ripr_editor),
-            ripr_agent: experimental
-                .and_then(|value| value.get("riprAgent"))
-                .and_then(parse_ripr_agent),
+            ripr_agent,
+            ripr_agent_rejection,
         }
     }
 
@@ -368,6 +405,19 @@ impl ClientFeatureProfile {
                     "protocol_version": agent.protocol_version.as_str(),
                     "profiles": agent.profiles,
                     "delivery": agent.delivery,
+                })
+            })
+            .unwrap_or(serde_json::Value::Null);
+        // #9604 batch G finding 30: a rejected riprAgent block is a distinct
+        // state from an absent one; the typed kind and bounded detail keep
+        // the projection status-visible without dumping the raw block.
+        let ripr_agent_rejection = self
+            .ripr_agent_rejection
+            .as_ref()
+            .map(|rejection| {
+                serde_json::json!({
+                    "kind": rejection.kind,
+                    "detail": rejection.detail,
                 })
             })
             .unwrap_or(serde_json::Value::Null);
@@ -421,6 +471,7 @@ impl ClientFeatureProfile {
             "configuration_mode": self.configuration_mode.as_str(),
             "ripr_editor": ripr_editor,
             "ripr_agent": ripr_agent,
+            "ripr_agent_rejection": ripr_agent_rejection,
         })
     }
 }
@@ -492,40 +543,115 @@ fn parse_ripr_editor(value: &serde_json::Value) -> Option<RiprEditorClientCapabi
 /// Parse the `riprAgent` experimental block with the same fail-closed
 /// discipline as `parse_ripr_editor`: an unsupported protocol major, an
 /// unknown profile or delivery literal, a wrong JSON type, or an over-bound
-/// string yields `None`.
-fn parse_ripr_agent(value: &serde_json::Value) -> Option<RiprAgentClientPreferences> {
-    let object = value.as_object()?;
-    let protocol_version =
-        RiprAgentProtocolVersion::parse(object.get("protocol")?.as_str()?).ok()?;
+/// string rejects the block. The rejection is typed (#9604 batch G finding
+/// 30) so the session can distinguish "advertised but rejected" from "never
+/// advertised" and the reserved `RiprAgentErrorKind` values stay reachable:
+/// version failures are `unsupported_protocol_version`, unknown profile or
+/// delivery vocabulary is `unsupported_profile`, and structural mismatches
+/// (non-object block, wrong JSON types, over-bound strings, oversized lists)
+/// are `unsupported_schema_version` — the block did not match the advertised
+/// capability shape. Detail strings are bounded raw advertisements, never
+/// client-controlled prose.
+fn parse_ripr_agent(
+    value: &serde_json::Value,
+) -> Result<RiprAgentClientPreferences, RiprAgentClientRejection> {
+    use super::agent_protocol::RiprAgentErrorKind;
+    const MAX_REJECTION_DETAIL_BYTES: usize = 256;
+
+    let reject = |kind, detail: String| RiprAgentClientRejection {
+        kind,
+        detail: detail.chars().take(MAX_REJECTION_DETAIL_BYTES).collect(),
+    };
+
+    let object = value.as_object().ok_or_else(|| {
+        reject(
+            RiprAgentErrorKind::UnsupportedSchemaVersion,
+            "the riprAgent block is not a JSON object".to_string(),
+        )
+    })?;
+    let protocol_raw = object.get("protocol").ok_or_else(|| {
+        reject(
+            RiprAgentErrorKind::UnsupportedProtocolVersion,
+            "the riprAgent block omits `protocol`".to_string(),
+        )
+    })?;
+    let protocol_text = protocol_raw.as_str().ok_or_else(|| {
+        reject(
+            RiprAgentErrorKind::UnsupportedProtocolVersion,
+            "`protocol` is not a string".to_string(),
+        )
+    })?;
+    let protocol_version = RiprAgentProtocolVersion::parse(protocol_text).map_err(|_unusable| {
+        reject(
+            RiprAgentErrorKind::UnsupportedProtocolVersion,
+            format!("unsupported riprAgent protocol version {protocol_text:?}"),
+        )
+    })?;
     let mut profiles = Vec::new();
     if let Some(raw) = object.get("profiles") {
-        let items = raw.as_array()?;
+        let items = raw.as_array().ok_or_else(|| {
+            reject(
+                RiprAgentErrorKind::UnsupportedSchemaVersion,
+                "`profiles` is not an array".to_string(),
+            )
+        })?;
         if items.len() > MAX_EXPERIMENTAL_LIST_ITEMS {
-            return None;
+            return Err(reject(
+                RiprAgentErrorKind::UnsupportedSchemaVersion,
+                format!("`profiles` lists {} entries over the bound", items.len()),
+            ));
         }
         for item in items {
             // The per-string byte bound applies before the closed-vocabulary
             // parse, so an over-long string fails closed at the bound
             // (#1987 review).
-            let profile = bounded_experimental_string(item)?;
+            let profile = bounded_experimental_string(item).ok_or_else(|| {
+                reject(
+                    RiprAgentErrorKind::UnsupportedSchemaVersion,
+                    "a `profiles` entry is empty or over the byte bound".to_string(),
+                )
+            })?;
             profiles.push(
                 serde_json::from_value::<RiprAgentProfile>(serde_json::Value::String(profile))
-                    .ok()?,
+                    .map_err(|_unknown| {
+                        reject(
+                            RiprAgentErrorKind::UnsupportedProfile,
+                            "unknown riprAgent profile literal".to_string(),
+                        )
+                    })?,
             );
         }
     }
     let mut delivery = Vec::new();
     if let Some(raw) = object.get("delivery") {
-        let items = raw.as_array()?;
+        let items = raw.as_array().ok_or_else(|| {
+            reject(
+                RiprAgentErrorKind::UnsupportedSchemaVersion,
+                "`delivery` is not an array".to_string(),
+            )
+        })?;
         if items.len() > MAX_EXPERIMENTAL_LIST_ITEMS {
-            return None;
+            return Err(reject(
+                RiprAgentErrorKind::UnsupportedSchemaVersion,
+                format!("`delivery` lists {} entries over the bound", items.len()),
+            ));
         }
         for item in items {
-            let channel = bounded_experimental_string(item)?;
-            delivery.push(RiprAgentDeliveryPreference::parse(&channel)?);
+            let channel = bounded_experimental_string(item).ok_or_else(|| {
+                reject(
+                    RiprAgentErrorKind::UnsupportedSchemaVersion,
+                    "a `delivery` entry is empty or over the byte bound".to_string(),
+                )
+            })?;
+            delivery.push(RiprAgentDeliveryPreference::parse(&channel).ok_or_else(|| {
+                reject(
+                    RiprAgentErrorKind::UnsupportedProfile,
+                    "unknown riprAgent delivery channel literal".to_string(),
+                )
+            })?);
         }
     }
-    Some(RiprAgentClientPreferences {
+    Ok(RiprAgentClientPreferences {
         protocol_version,
         profiles,
         delivery,
@@ -776,6 +902,78 @@ mod tests {
         assert_eq!(profile.configuration_mode, ConfigurationMode::Pull);
         if profile.publish_tags || profile.diagnostic_refresh || profile.code_lens_refresh {
             return Err("unadvertised optional features must stay unsupported".to_string());
+        }
+        Ok(())
+    }
+
+    /// #9604 batch G finding 30: an advertised-but-rejected `riprAgent` block
+    /// is a distinct session state from "never advertised" — the typed
+    /// rejection rides the status projection, and only a rejection (never an
+    /// absence, never an acceptance) can carry one.
+    #[test]
+    fn rejected_ripr_agent_blocks_surface_a_typed_rejection() -> Result<(), String> {
+        let kind_at = |profile: &ClientFeatureProfile, pointer: &str| -> Result<String, String> {
+            profile
+                .status_projection()
+                .pointer(pointer)
+                .and_then(|value| value.as_str().map(str::to_string))
+                .ok_or_else(|| {
+                    format!("projection lost {pointer}: {}", profile.status_projection())
+                })
+        };
+
+        let version_mismatch = params_from_json(serde_json::json!({
+            "capabilities": {"experimental": {"riprAgent": {"protocol": "1.0"}}}
+        }))?;
+        let profile = ClientFeatureProfile::from_initialize_params(&version_mismatch);
+        if profile.ripr_agent.is_some() {
+            return Err("a rejected block must still fail closed to None".to_string());
+        }
+        if profile.ripr_agent_rejection.is_none() {
+            return Err("a version mismatch must surface a typed rejection".to_string());
+        }
+        assert_eq!(
+            kind_at(&profile, "/ripr_agent_rejection/kind")?,
+            "unsupported_protocol_version",
+            "version mismatch must name its reserved kind on the wire"
+        );
+        if kind_at(&profile, "/ripr_agent_rejection/detail")?.is_empty() {
+            return Err("the rejection must carry a bounded detail".to_string());
+        }
+        if profile.status_projection().pointer("/ripr_agent") != Some(&serde_json::Value::Null) {
+            return Err("the accepted-block projection shape must not change".to_string());
+        }
+
+        let unknown_profile = params_from_json(serde_json::json!({
+            "capabilities": {"experimental": {"riprAgent": {"protocol": "0.1", "profiles": ["loud"]}}}
+        }))?;
+        let profile = ClientFeatureProfile::from_initialize_params(&unknown_profile);
+        assert_eq!(
+            kind_at(&profile, "/ripr_agent_rejection/kind")?,
+            "unsupported_profile",
+            "unknown profile vocabulary must name its reserved kind"
+        );
+
+        // Never advertised: no rejection, silent as before.
+        let standard = params_from_json(serde_json::json!({
+            "capabilities": {"textDocument": {"diagnostic": {}}}
+        }))?;
+        let profile = ClientFeatureProfile::from_initialize_params(&standard);
+        if profile.ripr_agent_rejection.is_some() {
+            return Err("an absent block must not manufacture a rejection".to_string());
+        }
+        if profile.status_projection().pointer("/ripr_agent_rejection")
+            != Some(&serde_json::Value::Null)
+        {
+            return Err("an absent block must project a null rejection".to_string());
+        }
+
+        // Accepted: preferences parse and no rejection exists.
+        let accepted = ClientFeatureProfile::from_initialize_params(&headless_agent_client()?);
+        if accepted.ripr_agent.is_none() || accepted.ripr_agent_rejection.is_some() {
+            return Err(
+                "an accepted block must surface preferences without a rejection".to_string(),
+            );
         }
         Ok(())
     }

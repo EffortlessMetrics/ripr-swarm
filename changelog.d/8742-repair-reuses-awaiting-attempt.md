@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- A repeated `ripr repair` for a seam whose attempt is already awaiting its test edit at the current HEAD now resumes that attempt, names its `ripr continue` command and prints the same handoff card, instead of preparing a duplicate attempt that made a bare `ripr continue` ask for `--attempt`. Another seam, a moved HEAD, a finished attempt or the advanced `ripr agent repair --phase before` route still prepare a new attempt (#8742).

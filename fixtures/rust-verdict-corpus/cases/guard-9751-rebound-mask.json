@@ -1,0 +1,55 @@
+{
+  "case_id": "guard-9751-rebound-mask",
+  "subject_id": "authored-9751-rebound-mask",
+  "diff": "cases/guard-9751-rebound-mask.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 3
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "as_cast_truncation_assert",
+  "hard_case": "The owner forces bit 7 on before the mask, so the pinned input 0x1234 does set that bit and tells `& 0xff` from `& 0x7f`.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "(n & 0x7f) as u8",
+        "mutated_line": "(n & 0x7f) as u8",
+        "outcome": "tests_failed",
+        "failing_test": "tests::forces_the_high_bit_of_the_low_byte",
+        "equivalence_review": "not equivalent: with bit 7 forced on, `& 0x7f` returns 0x34 where the test expects 0xb4"
+      },
+      {
+        "replacement": "(n >> 8) as u8",
+        "mutated_line": "(n >> 8) as u8",
+        "outcome": "tests_failed",
+        "failing_test": "tests::forces_the_high_bit_of_the_low_byte",
+        "equivalence_review": "not equivalent: `(n & 0xff) as u8` becomes `(n >> 8) as u8`, which returns 0x12"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "forces_the_high_bit_of_the_low_byte pins forced_low_byte(0x1234) to 0xb4. Both mutants fail it, so the pin discriminates the mask. A demotion that reads only the literal input would call bit 7 unexercised and report a false weak gap.",
+  "axes": [
+    "language_shape"
+  ],
+  "labeling_observation": {
+    "ripr_commit": "f1bdf34713dc34b3c03045911415c4c1b74e6234",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

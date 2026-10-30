@@ -1,0 +1,61 @@
+{
+  "case_id": "idiom-table-driven-missing-boundary",
+  "subject_id": "authored-idiom-kit",
+  "diff": "cases/idiom-table-driven-missing-boundary.diff",
+  "anchor": {
+    "file": "src/tables.rs",
+    "line": 6
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "table_driven_loop_far_rows",
+  "hard_case": "The table rows sit at 1, 70 and 5000, far from the thresholds at 50 and 1000.",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "if units > 1000 { \"pallet\" } else if units >= 50 { \"crate\" } else { \"each\" }",
+        "mutated_line": "if units > 1000 { \"pallet\" } else if units >= 50 { \"crate\" } else { \"each\" }",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: `if 1000 <= units { \"pallet\" } else if 50 <= units { \"crate\" } else { \"each\" }` becomes `if units > 1000 { \"pallet\" } else if units >= 50 { \"crate\" } else { \"each\" }`, and the test's inputs do not tell the two apart"
+      },
+      {
+        "replacement": "if units >= 1000 { \"pallet\" } else if units >= 51 { \"crate\" } else { \"each\" }",
+        "mutated_line": "if units >= 1000 { \"pallet\" } else if units >= 51 { \"crate\" } else { \"each\" }",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: `if 1000 <= units { \"pallet\" } else if 50 <= units { \"crate\" } else { \"each\" }` becomes `if units >= 1000 { \"pallet\" } else if units >= 51 { \"crate\" } else { \"each\" }`, and the test's inputs do not tell the two apart"
+      },
+      {
+        "replacement": "if units >= 1000 { \"pallet\" } else if units >= 80 { \"crate\" } else { \"each\" }",
+        "mutated_line": "if units >= 1000 { \"pallet\" } else if units >= 80 { \"crate\" } else { \"each\" }",
+        "outcome": "tests_failed",
+        "failing_test": "tables::tests::loose_table",
+        "equivalence_review": "not equivalent: `if 1000 <= units { \"pallet\" } else if 50 <= units { \"crate\" } else { \"each\" }` becomes `if units >= 1000 { \"pallet\" } else if units >= 80 { \"crate\" } else { \"each\" }`"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "Moving the pallet bound to `> 1000` or the crate bound to 51 changes nothing for the table; moving the crate bound to 80 sends 70 to each and fails. Shape: table rows that skip the boundary.",
+  "axes": [
+    "std_test_form"
+  ],
+  "labeling_observation": {
+    "ripr_commit": "969b0b8",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "propagation_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -1,0 +1,11 @@
+diff --git a/src/commented.ts b/src/commented.ts
+index 0000000..1111111 100644
+--- a/src/commented.ts
++++ b/src/commented.ts
+@@ -1,5 +1,5 @@
+ export function perimeter(w: number, h: number): number {
+-  return 2 * (w + h);
++  return 2 * w + h;
+ }
+ 
+ export function triple(n: number): number {

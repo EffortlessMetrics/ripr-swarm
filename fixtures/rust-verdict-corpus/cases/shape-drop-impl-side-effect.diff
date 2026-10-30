@@ -1,0 +1,12 @@
+diff --git a/src/ops.rs b/src/ops.rs
+--- a/src/ops.rs
++++ b/src/ops.rs
+@@ -91,7 +91,7 @@
+ 
+ impl Drop for Guard {
+     fn drop(&mut self) {
+-        self.0.set(self.0.get() + 1);
++        self.0.set(1 + self.0.get());
+     }
+ }
+ 

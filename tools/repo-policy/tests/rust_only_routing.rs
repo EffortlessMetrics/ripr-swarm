@@ -7,6 +7,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 const WORKFLOW: &str = include_str!("../../../.github/workflows/ci.yml");
@@ -84,7 +85,7 @@ impl Fixture {
     fn command_with_deadline(&self, executable: &str, deadline: &str) -> TestResult<Command> {
         // GNU timeout owns the whole subprocess group, including Bash's Git
         // children. Killing only the direct shell can leave a fixture in use.
-        let mut command = Command::new("timeout");
+        let mut command = Command::new(gnu_timeout()?);
         command
             .args(["--kill-after=1s", deadline, executable])
             .current_dir(&self.root)
@@ -223,8 +224,14 @@ impl Drop for Fixture {
 fn verify_guarded_rust_only_steps(source: &str) -> TestResult {
     let steps = source.split("\n      - ").collect::<Vec<_>>();
     for (header, command) in [
-        ("uses: dtolnay/rust-toolchain@1.95.0", None),
-        ("uses: Swatinem/rust-cache@v2", None),
+        (
+            "uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95.0",
+            None,
+        ),
+        (
+            "uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2",
+            None,
+        ),
         (
             "name: Prepare locked owner-return fixture dependencies",
             Some(
@@ -272,8 +279,8 @@ fn rust_step_contract_refuses_missing_guards_and_misplaced_commands() -> TestRes
     let source = job("rust-only-features")?;
     verify_guarded_rust_only_steps(source)?;
     for header in [
-        "uses: dtolnay/rust-toolchain@1.95.0",
-        "uses: Swatinem/rust-cache@v2",
+        "uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95.0",
+        "uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2",
         "name: Prepare locked owner-return fixture dependencies",
         "name: Test --no-default-features --features lang-rust",
     ] {
@@ -790,6 +797,43 @@ fn witness_is_live(stat: Result<&str, &std::io::Error>, pid: u32, start: u64) ->
     }
 }
 
+/// Launch-to-decision budget: the witness sleeps 8s from launch, so a dead
+/// witness read later than this could have expired naturally instead of being
+/// terminated.
+const DECISION_DEADLINE: std::time::Duration = std::time::Duration::from_secs(6);
+
+/// `live_at_decision` is the decisive liveness read; `age` is measured after it,
+/// from launch, so it bounds the read's age. A dead witness is only evidence of
+/// termination when read before natural expiry was possible.
+fn termination_verdict(live_at_decision: bool, age: std::time::Duration) -> TestResult<bool> {
+    if live_at_decision {
+        return Ok(true);
+    }
+    if age > DECISION_DEADLINE {
+        return Err(format!(
+            "inconclusive: dead witness observed {age:?} after launch, past the {DECISION_DEADLINE:?} \
+             decision deadline, so natural expiry cannot be ruled out"
+        )
+        .into());
+    }
+    Ok(false)
+}
+
+#[test]
+fn delayed_observation_cannot_turn_self_expiry_into_termination() -> TestResult {
+    let secs = std::time::Duration::from_secs;
+    assert!(termination_verdict(true, secs(9))?);
+    assert!(termination_verdict(true, secs(1))?);
+    assert!(!termination_verdict(false, secs(2))?);
+    assert!(!termination_verdict(false, DECISION_DEADLINE)?);
+    for delayed in [secs(7), secs(8), secs(30)] {
+        if let Ok(verdict) = termination_verdict(false, delayed) {
+            return Err(format!("dead witness at {delayed:?} accepted as {verdict}").into());
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn witness_observer_distinguishes_identity_state_and_incomplete_evidence() -> TestResult {
     let stat = |pid, state, start| {
@@ -825,6 +869,70 @@ fn witness_observer_distinguishes_identity_state_and_incomplete_evidence() -> Te
     Ok(())
 }
 
+/// GNU `timeout` is this file's declared prerequisite: only it signals the whole
+/// process group on `--kill-after`. Ubuntu 26 images default `timeout` to uutils
+/// and keep GNU reachable as `gnutimeout`, so select by what the binary reports,
+/// never by name, and fail explicitly when no GNU implementation is present.
+fn gnu_timeout() -> TestResult<&'static str> {
+    static GNU: OnceLock<Option<&'static str>> = OnceLock::new();
+    GNU.get_or_init(|| {
+        ["timeout", "gnutimeout"]
+            .into_iter()
+            .find(|program| command_first_line(program, &["--version"]).contains("GNU coreutils"))
+    })
+    .ok_or_else(|| {
+        format!(
+            "GNU timeout prerequisite not available on PATH (tried timeout, gnutimeout): {}",
+            runner_diagnostics()
+        )
+        .into()
+    })
+}
+
+fn command_first_line(program: &str, args: &[&str]) -> String {
+    Command::new(program)
+        .args(args)
+        .output()
+        .ok()
+        .and_then(|out| String::from_utf8(out.stdout).ok())
+        .and_then(|text| text.lines().next().map(str::to_owned))
+        .unwrap_or_else(|| "unavailable".to_owned())
+}
+
+/// Runner facts that explain a termination failure (hosted images change
+/// their coreutils and Bash builds).
+fn runner_diagnostics() -> String {
+    let os = fs::read_to_string("/etc/os-release")
+        .ok()
+        .and_then(|text| {
+            text.lines()
+                .find_map(|line| line.strip_prefix("PRETTY_NAME=").map(str::to_owned))
+        })
+        .unwrap_or_else(|| "unavailable".to_owned());
+    // Resolve `timeout` the way the fixture does (PATH order), without another
+    // process, and report where any symlink chain ends.
+    let resolved = std::env::var_os("PATH")
+        .and_then(|path| {
+            std::env::split_paths(&path)
+                .map(|dir| dir.join("timeout"))
+                .find(|candidate| candidate.is_file())
+        })
+        .map(|candidate| {
+            let target = fs::canonicalize(&candidate).map_or_else(
+                |_| "unresolvable".to_owned(),
+                |path| path.display().to_string(),
+            );
+            format!("{} -> {target}", candidate.display())
+        })
+        .unwrap_or_else(|| "not found on PATH".to_owned());
+    format!(
+        "os={os}, timeout={resolved} [{}], gnutimeout=[{}], bash={}",
+        command_first_line("timeout", &["--version"]),
+        command_first_line("gnutimeout", &["--version"]),
+        command_first_line("bash", &["--version"])
+    )
+}
+
 #[test]
 fn timeout_terminates_shell_descendants() -> TestResult {
     let mut fixture = Fixture::new()?;
@@ -857,10 +965,13 @@ fn timeout_terminates_shell_descendants() -> TestResult {
                 witness_is_live(stat.as_deref(), pid, start)
             };
             let observed = std::time::Instant::now();
-            while live()? && observed.elapsed() < std::time::Duration::from_secs(1) {
+            // Wider than the SIGKILL teardown a loaded hosted runner can take, but
+            // bounded from launch (`started`), not from this observation, so the
+            // decision stays inside the witness's own 8s sleep.
+            while live()? && started.elapsed() < std::time::Duration::from_secs(5) {
                 std::thread::sleep(std::time::Duration::from_millis(10));
             }
-            let failed_termination = live()?;
+            let failed_termination = termination_verdict(live()?, started.elapsed())?;
             // No numeric-PID signal: even checking start time before kill races
             // PID reuse. Let this finite witness expire, preserving the failure.
             while live()? && observed.elapsed() < std::time::Duration::from_secs(10) {
@@ -886,10 +997,11 @@ fn timeout_terminates_shell_descendants() -> TestResult {
         let output = output?;
         assert!(
             !failed_termination,
-            "timeout left a live owned descendant (stubborn={stubborn})"
+            "timeout left a live owned descendant (stubborn={stubborn}); {}",
+            runner_diagnostics()
         );
         assert!(
-            elapsed < std::time::Duration::from_secs(4),
+            elapsed < std::time::Duration::from_secs(3),
             "timeout observation waited for natural witness expiry: {elapsed:?}"
         );
         if stubborn {

@@ -199,7 +199,15 @@
       "required": ["analysis_complete", "outcome"],
       "properties": {
         "analysis_complete": { "type": "boolean" },
+        "document_complete": { "const": false },
+        "findings_rendered": { "type": "integer", "minimum": 0 },
+        "findings_total": { "type": "integer", "minimum": 0 },
         "outcome": { "$ref": "#/$defs/analysis_outcome" }
+      },
+      "dependentRequired": {
+        "document_complete": ["findings_rendered", "findings_total"],
+        "findings_rendered": ["document_complete"],
+        "findings_total": ["document_complete"]
       }
     },
     "analysis_outcome": {
@@ -344,6 +352,7 @@
         "id": { "type": "string", "minLength": 1 },
         "suppressed": { "type": "boolean" },
         "suppressed_by": { "type": "string", "minLength": 1 },
+        "analysis_scope": { "const": "repo" },
         "canonical_gap_id": { "type": "string", "minLength": 1 },
         "canonical_gap_group_size": { "type": "integer", "minimum": 1 },
         "canonical_gap": { "type": "object" },

@@ -1,0 +1,89 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/python_protocol_entry_bracketed_rebind_no_exposed_credit/input",
+  "config_path": "<cwd>/fixtures/python_protocol_entry_bracketed_rebind_no_exposed_credit/input/ripr.toml",
+  "summary": {"changed_rust_files":0,"probes":1,"findings":1,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":1,"changed_files_by_language":[{"language":"python","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:22d926b58d6300e8","base_revision":null,"input_identity":"sha256:b87750762e99a28a58722b13961f18f29cc42f18337fb1675174dcdc3a924e98","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_nr.py:python_preview:852b3ff0",
+      "classification": "static_unknown",
+      "severity": "note",
+      "confidence": 0.20,
+      "probe": {
+        "id": "probe:src_nr.py:python_preview:852b3ff0",
+        "family": "predicate",
+        "delta": "control",
+        "file": "src/nr.py",
+        "line": 6,
+        "expression": "        if not self.stop:",
+        "owner": "python:src/nr.py::numeric_range.__reversed__"
+       },
+      "ripr": {
+        "reach": {"state":"weak","confidence":"low","summary":"1 heuristic Python test link(s) found for owner `__reversed__`; relation is uncertain"},
+        "infect": {"state":"unknown","confidence":"low","summary":"Static limit `dynamic_dispatch` prevents a safe Python infection claim."},
+        "propagate": {"state":"unknown","confidence":"low","summary":"Static limit `dynamic_dispatch` prevents a safe Python propagation claim."},
+        "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted Python oracle kind: `unknown` (rank 1)"},
+        "discriminate": {"state":"unknown","confidence":"low","summary":"Static limit `dynamic_dispatch` prevents a safe Python discriminator claim."}
+       },
+      "evidence_path": ["reach weak: 1 heuristic Python test link(s) found for owner `__reversed__`; relation is uncertain", "infection unknown: Static limit `dynamic_dispatch` prevents a safe Python infection claim.", "propagation unknown: Static limit `dynamic_dispatch` prevents a safe Python propagation claim.", "observation weak: Strongest extracted Python oracle kind: `unknown` (rank 1)", "discriminator unknown: Static limit `dynamic_dispatch` prevents a safe Python discriminator claim.", "related test tests/test_nr.py:4 test_reversed_after_rebinding_the_receiver uses no oracle"],
+      "flow_sinks": [
+      ],
+      "evidence": ["owner: numeric_range.__reversed__", "owner_kind: method", "static_limit dynamic_dispatch: dunder method `numeric_range.__reversed__` is invoked implicitly by Python syntax on a constructed instance", "test_framework: pytest (test_reversed_after_rebinding_the_receiver)", "test_verify_command: python -m pytest tests/test_nr.py::test_reversed_after_rebinding_the_receiver (test_reversed_after_rebinding_the_receiver)", "related_test_relation: dunder_protocol (test_reversed_after_rebinding_the_receiver)", "related_test_uncertain: dunder_protocol (test_reversed_after_rebinding_the_receiver)"],
+      "missing": ["Static limit `dynamic_dispatch`: `numeric_range.__reversed__` is a dunder method Python invokes through operator or `with` syntax; related tests build `numeric_range` instances, but the preview adapter does not bind the syntax to the instance or evaluate the assertion against the dunder's result, so it does not grade this edit as a gap."],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "test_reversed_after_rebinding_the_receiver",
+          "file": "tests/test_nr.py",
+          "line": 4,
+          "oracle_strength": "unknown",
+          "oracle_kind": "unknown",
+          "oracle": ""
+        }
+      ],
+      "stop_reasons": ["dynamic_dispatch_unresolved"],
+      "oracle_kind": "unknown",
+      "oracle_strength": "unknown",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
+      "language": "python",
+      "language_status": "preview",
+      "owner_kind": "method",
+      "static_limit_kind": "dynamic_dispatch",
+      "changed_sink": "stop",
+      "oracle_alignment": "unknown",
+      "alignment_reason": "no_strong_oracle",
+      "source_currentness": "candidate_current"
+    }
+  ],
+  "preview_languages": [
+    {
+      "language": "python",
+      "file_count": 1,
+      "sample_paths": ["src/nr.py"],
+      "enabled": true,
+      "analyzed": true,
+      "category": "preview_language_advisory",
+      "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+    }
+  ],
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/nr.py","digest":"sha256:339600afb56e419d27d7a1eb73adbf51d1961471c9fee8a225566e65c3d69b53"}]}
+}

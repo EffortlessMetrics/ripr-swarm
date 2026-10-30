@@ -153,11 +153,16 @@ pub(crate) fn deduplicate_assessed_lifecycles(
             }
             continue;
         }
-        // The representative is the smallest lifecycle id so the projection
-        // is stable regardless of input order.
+        // Keep the smallest lifecycle id, breaking ties by diagnostics:
+        // different invalid recorded digests can share a retained identity
+        // while producing distinct rejection reasons.
         let representative = group
             .iter()
-            .min_by(|left, right| left.lifecycle_id.cmp(&right.lifecycle_id))
+            .min_by(|left, right| {
+                left.lifecycle_id
+                    .cmp(&right.lifecycle_id)
+                    .then_with(|| left.reasons.cmp(&right.reasons))
+            })
             .map(|row| (*row).clone());
         if let Some(representative) = representative {
             counted.push((representative, group.len()));
@@ -923,6 +928,77 @@ mod tests {
                     ));
                 }
             }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn rejected_duplicate_digest_ties_preserve_json_and_markdown() -> Result<(), String> {
+        let mut first = sample_lifecycle(
+            "lifecycle-rejected-dup",
+            "observation-rejected-dup",
+            false,
+            IssueLifecycleDispositionV1::Completed,
+        )?;
+        let mut second = first.clone();
+        let retained_digest = issue_lifecycle_row_digest(&first)?;
+        first.row_digest = hex64('a');
+        second.row_digest = hex64('b');
+        let expected_reason = format!(
+            "row_digest mismatch: recorded `{}`, recomputed `{retained_digest}`",
+            first.row_digest
+        );
+        let corpus_identity = issue_lifecycle_corpus_identity(&[first.clone(), second.clone()])?;
+        if corpus_identity != issue_lifecycle_corpus_identity(&[second.clone(), first.clone()])? {
+            return Err("reordered rejected rows must keep the corpus identity".to_string());
+        }
+        let first = assessed(first);
+        let second = assessed(second);
+        if first.counted
+            || second.counted
+            || first.disposition.is_some()
+            || second.disposition.is_some()
+            || first.identity != second.identity
+            || first.reasons != vec![expected_reason.clone()]
+            || first.reasons == second.reasons
+        {
+            return Err(
+                "setup must produce same-identity rejected rows with distinct diagnostics"
+                    .to_string(),
+            );
+        }
+        let build = |rows: &[IssueLifecycleRowAssessmentV1]| {
+            build_issue_lifecycle_scorecard(
+                rows,
+                corpus_identity.clone(),
+                "fixtures/rejected-duplicates.json",
+            )
+        };
+        let forward = build(&[first.clone(), second.clone()]);
+        let backward = build(&[second, first]);
+        if issue_lifecycle_scorecard_json(&forward)? != issue_lifecycle_scorecard_json(&backward)? {
+            return Err("reordered rejected duplicates must preserve JSON bytes".to_string());
+        }
+        if issue_lifecycle_scorecard_markdown(&forward)
+            != issue_lifecycle_scorecard_markdown(&backward)
+        {
+            return Err("reordered rejected duplicates must preserve Markdown bytes".to_string());
+        }
+        let rejected = forward
+            .rejected_rows
+            .first()
+            .ok_or_else(|| "the rejected representative must stay visible".to_string())?;
+        if forward.real_lifecycles != 0
+            || forward.synthetic_lifecycles != 0
+            || forward.implementation_successes != 0
+            || forward.implementation_success_rate.state != IssueLifecycleRateStateV1::NotMeasured
+            || forward.rejected_rows.len() != 1
+            || rejected.reasons != vec![expected_reason]
+        {
+            return Err(
+                "rejected duplicates must retain one stable diagnostic outside all denominators"
+                    .to_string(),
+            );
         }
         Ok(())
     }

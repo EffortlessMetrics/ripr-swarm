@@ -1,0 +1,12 @@
+diff --git a/shapes/comps.py b/shapes/comps.py
+--- a/shapes/comps.py
++++ b/shapes/comps.py
+@@ -10,7 +10,7 @@
+ 
+ 
+ def total_lengths(words):
+-    return sum(len(w) for w in words)
++    return sum(1 for w in words)
+ 
+ 
+ def distinct_pairs(a, b):

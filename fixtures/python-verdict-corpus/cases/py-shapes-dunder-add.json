@@ -1,0 +1,45 @@
+{
+  "case_id": "py-shapes-dunder-add",
+  "subject_id": "authored-py-pytest-shapes",
+  "diff": "cases/py-shapes-dunder-add.diff",
+  "anchor": {
+    "file": "shapes/money.py",
+    "line": 9
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "arithmetic_operator",
+  "test_shape": "pytest_dunder_add_operator_pinned",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, Hypothesis 6.168.3, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return Money(self.cents - other.cents)",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests/test_money.py::test_add_sums_cents",
+        "equivalence_review": "not equivalent: the sum becomes a difference"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Money(5) + Money(7) is compared to Money(12) through __eq__.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

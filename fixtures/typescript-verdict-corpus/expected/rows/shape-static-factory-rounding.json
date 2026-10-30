@@ -1,0 +1,22 @@
+{
+  "case_id": "shape-static-factory-rounding",
+  "subject_id": "authored-ts-vitest-shapes",
+  "origin": "authored",
+  "anchor": "src/temperature.ts:5",
+  "behavior_family": "return_value",
+  "test_shape": "vitest_static_factory_tobe_exact_inputs",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": true,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

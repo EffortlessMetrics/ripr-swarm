@@ -13,7 +13,6 @@
 //! unsettled. An item inside a nested `fn` (or a module nested in the body)
 //! is block-bound the same way.
 
-#[cfg(test)]
 use super::nesting::parse_clean_source_file;
 use super::ra::LineIndex;
 use ra_ap_syntax::{
@@ -91,6 +90,62 @@ pub(crate) enum UseBinding {
     Opaque,
 }
 
+/// Whether a bare call at `offset` can be intercepted by a local binding.
+/// This bounded query reads only a direct function-body let initializer.
+/// Items/imports are hoisted; lets bind only after their statement. Other
+/// call scopes or opaque statement/item expansions return `None`.
+pub(crate) fn fn_call_has_local_binding(source: &str, offset: usize, name: &str) -> Option<bool> {
+    let parse = parse_clean_source_file(source)?;
+    let tree = parse.tree();
+    let function = tree.syntax().descendants().find_map(ast::Fn::cast)?;
+    let body = function.body()?.stmt_list()?;
+    let call = function.syntax().descendants().find_map(|node| {
+        let call = ast::CallExpr::cast(node)?;
+        (usize::from(call.syntax().text_range().start()) == offset).then_some(call)
+    })?;
+    let binding = ast::LetStmt::cast(call.syntax().parent()?)?;
+    if binding.syntax().parent().as_ref() != Some(body.syntax()) {
+        return None;
+    }
+    let same_name = |text: &str| text.trim_start_matches("r#") == name.trim_start_matches("r#");
+    let binds_name = |node: &SyntaxNode| {
+        node.descendants()
+            .filter_map(ast::IdentPat::cast)
+            .filter_map(|pattern| pattern.name())
+            .any(|bound| same_name(bound.text()))
+    };
+    if binds_name(function.param_list()?.syntax()) {
+        return Some(true);
+    }
+    let mut scope = NameScope::default();
+    for node in body.syntax().children() {
+        if let Some(item) = ast::Item::cast(node.clone()) {
+            // An item macro after the call may still emit a hoisted item.
+            if matches!(item, ast::Item::MacroCall(_)) {
+                return None;
+            }
+            record_item(&item, &mut scope);
+        } else if let Some(statement) = ast::LetStmt::cast(node.clone()) {
+            if statement.syntax().text_range().end() <= call.syntax().text_range().start()
+                && binds_name(statement.pat()?.syntax())
+            {
+                return Some(true);
+            }
+        } else if node
+            .descendants()
+            .any(|inner| ast::MacroCall::can_cast(inner.kind()))
+        {
+            // A statement macro may create names invisible to the syntax tree.
+            return None;
+        }
+    }
+    Some(
+        !scope.globs.is_empty()
+            || scope.imports.iter().any(|import| same_name(&import.bound))
+            || scope.defines.iter().any(|defined| same_name(defined)),
+    )
+}
+
 /// Declared type-parameter names share the type/module path namespace. This
 /// records names only; it does not resolve their bounds or inferred arguments.
 pub(crate) fn function_type_param_names(function: &ast::Fn) -> BTreeSet<String> {
@@ -110,7 +165,6 @@ pub(crate) fn function_type_param_names(function: &ast::Fn) -> BTreeSet<String> 
 /// The name scopes of the function named `fn_name` whose `fn` keyword sits
 /// on `fn_line`. `None` when the source does not parse cleanly or holds no
 /// such function, so a caller fails closed.
-#[cfg(test)]
 pub(crate) fn name_scopes_for_fn(
     source: &str,
     fn_line: usize,
@@ -197,16 +251,21 @@ pub(super) fn name_scopes_in_tree(
             }
             scopes.push(scope);
         } else if let Some(file) = ast::SourceFile::cast(ancestor.clone()) {
-            let mut scope = NameScope::default();
-            for item in file.items() {
-                record_item(&item, &mut scope);
-            }
-            scopes.push(scope);
+            scopes.push(name_scope_for_file(&file));
         }
         // An `impl` or `trait` binds nothing a path call could name; an
         // associated fn's scope continues at its enclosing module.
     }
     Some(NameScopes { scopes })
+}
+
+/// Direct file bindings, using the same collector as function scopes.
+pub(crate) fn name_scope_for_file(file: &ast::SourceFile) -> NameScope {
+    let mut scope = NameScope::default();
+    for item in file.items() {
+        record_item(&item, &mut scope);
+    }
+    scope
 }
 
 /// Record an item that binds its name only in a nested block or nested fn
@@ -278,6 +337,17 @@ fn record_item(item: &ast::Item, scope: &mut NameScope) {
         }
         _ => {}
     }
+}
+
+/// Reuse the scope producer for a consumer's already-selected item scope.
+/// Definitions retain their existing coarse namespace; consumers needing a
+/// type binding must inspect the declaration kind separately.
+pub(crate) fn name_scope_for_items(items: &[ast::Item]) -> NameScope {
+    let mut scope = NameScope::default();
+    for item in items {
+        record_item(item, &mut scope);
+    }
+    scope
 }
 
 /// The path's segments through the syntax tree, outermost first. `None`

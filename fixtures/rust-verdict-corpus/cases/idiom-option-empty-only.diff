@@ -1,0 +1,10 @@
+diff --git a/src/unwinding.rs b/src/unwinding.rs
+--- a/src/unwinding.rs
++++ b/src/unwinding.rs
+@@ -1,5 +1,5 @@
+ pub fn longest(words: &[&str]) -> Option<usize> {
+-    words.iter().map(|w| w.len()).max()
++    words.iter().map(|word| word.len()).max()
+ }
+ 
+ pub fn pop_front(values: &mut Vec<u32>) -> u32 {

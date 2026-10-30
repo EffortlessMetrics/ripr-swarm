@@ -1,0 +1,11 @@
+diff --git a/src/hostile.rs b/src/hostile.rs
+--- a/src/hostile.rs
++++ b/src/hostile.rs
+@@ -1,6 +1,6 @@
+ // assert_eq!(clamp_low(5), 5);
+ pub fn clamp_low(x: u32) -> u32 {
+-    if x < 5 { 5 } else { x }
++    if x <= 5 { 5 } else { x }
+ }
+ 
+ pub fn quoted_only(x: u32) -> u32 {

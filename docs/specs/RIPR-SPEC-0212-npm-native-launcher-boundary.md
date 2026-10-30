@@ -68,6 +68,17 @@ The package `@effortlessmetrics/ripr`:
 - retains the first observed termination signal until the native child exits,
   then exits with signal semantics rather than converting interruption into
   success;
+- sets `publishConfig.tag` to an explicit literal non-`latest` dist-tag for a
+  prerelease (version containing `-`) and omits it (or uses `latest`) for a
+  stable version, and `bump-version` maintains that tag in both directions;
+- rejects any in-tree workflow `npm publish` that lacks exactly one literal
+  non-`latest` `--tag` (including `\`-continued, chained, interpolated or
+  repeated forms) and any `npm dist-tag add/set` of a non-literal or `latest` tag;
+- scans only workflow script text (`run:` values and block bodies), not YAML
+  metadata such as `name:`, `description:` or `if:`;
+- scopes the workflow scan to `npm publish` and `npm dist-tag(s)` commands only:
+  `pnpm`/`yarn publish`, `NPM_CONFIG_TAG` and composite or reusable actions are
+  out of scope, and `npm publish --dry-run` is exempt;
 - runs tests through a guarded runner that fails unless the required named
   package, negative, and signal controls actually execute and pass.
 
@@ -151,6 +162,22 @@ The package `@effortlessmetrics/ripr`:
    or exact-version reinstall. Other resolver errors and a resolvable library
    that fails an internal import or parsing do not receive false library-resolution
    advice.
+9. A prerelease launcher version with no `publishConfig.tag`, tag `latest`, or an
+   empty tag fails `check-release-targets`; the same version with tag `next`
+   passes, and a stable version with tag `next` fails.
+10. A workflow `npm publish` split across `\` continuation lines, without a
+    `--tag`, with `--tag latest`, with `--tag "$VAR"`, or with more than one
+    `--tag` option fails; `npm publish --tag next` passes. An unreadable workflow
+    file or directory fails the check rather than being skipped.
+11. `cargo xtask bump-version` to a prerelease adds `"tag": "next"` and to a
+    stable version removes it, and the resulting manifest validates.
+12. `check-release-targets` fails when `editors/vscode/package.json`, its
+    `package-lock.json` or the launcher version differs from the workspace
+    version (`xtask/src/version.rs::check_release_version_sync`, #10731).
+13. `cargo xtask vscode-verify-vsix` fails when `ripr-<version>.vsix` carries a
+    different `extension/package.json` or `extension.vsixmanifest` Identity
+    version, including when an Identity-like comment or CDATA precedes a stale
+    real Identity (`xtask/src/main.rs::verify_packaged_vsix_version`).
 
 ## Test Mapping
 
@@ -175,6 +202,8 @@ The package `@effortlessmetrics/ripr`:
 - `packaging/npm/launcher/test/launcher.test.cjs::public bin library recovery never guesses a version from invalid or unavailable metadata`
 - `packaging/npm/launcher/test/launcher.test.cjs::npm package contents are explicit and exclude tests and build residue`
 - `xtask/src/policy/distribution/tests.rs`
+- `xtask/src/version.rs::release_version_sync_flags_stale_extension_and_accepts_aligned`
+- `xtask/src/tests.rs::vscode_verify_vsix_reuses_sealed_archive_license_check`
 
 ## Implementation Mapping
 
@@ -188,6 +217,9 @@ The package `@effortlessmetrics/ripr`:
   admission for the Node proof.
 - `xtask/src/policy/distribution/npm_launcher.rs` owns repository-level package,
   source, notice, and guarded-runner conformance.
+- `xtask/src/version.rs` owns release-version drift detection across the
+  workspace, extension and launcher; `xtask/src/main.rs` owns the VSIX
+  name-to-content version check.
 - `.github/workflows/npm-launcher.yml` runs the no-publish package proof.
 - `policy/distribution.toml` remains the target and identity authority.
 
@@ -196,3 +228,17 @@ The package `@effortlessmetrics/ripr`:
 - `npm_launcher_required_control_pass_rate`
 - `npm_launcher_package_inventory_drift_count`
 - `npm_launcher_signal_delivery_regression_count`
+- `xtask/src/policy/distribution/tests.rs::npm_prerelease_publish_tag_positive_controls_pass`
+- `xtask/src/policy/distribution/tests.rs::npm_prerelease_without_explicit_tag_or_with_latest_is_rejected`
+- `xtask/src/policy/distribution/tests.rs::npm_manifest_prerelease_to_latest_fails_through_launcher_validator`
+- `xtask/src/policy/distribution/tests.rs::workflow_npm_publish_and_dist_tag_require_explicit_non_latest_tag`
+- `xtask/src/policy/distribution/tests.rs::workflow_multiline_and_chained_npm_publish_is_not_skipped`
+- `xtask/src/policy/distribution/tests.rs::workflow_interpolated_or_repeated_tag_options_are_rejected`
+- `xtask/src/policy/distribution/tests.rs::workflow_directory_scan_reports_multiline_publish_and_read_failures`
+- `xtask/src/policy/distribution/tests.rs::workflow_global_flags_dry_run_comments_and_glued_separators`
+- `xtask/src/policy/distribution/tests.rs::prerelease_detection_ignores_build_metadata_and_latest_is_case_insensitive`
+- `xtask/src/policy/distribution/tests.rs::workflow_scan_only_reads_script_text_not_yaml_metadata`
+- `xtask/src/policy/distribution/tests.rs::workflow_block_scalar_ends_at_key_column_for_list_items`
+- `xtask/src/policy/distribution/tests.rs::workflow_comment_trailing_backslash_does_not_hide_next_line`
+- `xtask/src/version.rs::npm_launcher_version_tests::stable_to_prerelease_adds_next_tag_and_back_removes_it`
+- `xtask/src/version.rs::npm_launcher_version_tests::compact_manifest_prerelease_bump_round_trips`

@@ -1,0 +1,45 @@
+{
+  "case_id": "py-shapes-decorator-loop-bound",
+  "subject_id": "authored-py-pytest-shapes",
+  "diff": "cases/py-shapes-decorator-loop-bound.diff",
+  "anchor": {
+    "file": "shapes/decorators.py",
+    "line": 14
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "pytest_decorator_factory_loop_pinned",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.1.1, Hypothesis 6.168.3, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "for _ in range(times - 1):",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests/test_decorators.py::test_flaky_succeeds_within_three_attempts",
+        "equivalence_review": "not equivalent: retry(3) tries twice"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The retry wrapper's loop bound decides whether the third call happens; the test needs all three.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -1,0 +1,12 @@
+diff --git a/grid_boundary/core.py b/grid_boundary/core.py
+--- a/grid_boundary/core.py
++++ b/grid_boundary/core.py
+@@ -14,7 +14,7 @@
+ 
+ 
+ def passes(score):
+-    return score >= 50
++    return 50 <= score
+ 
+ 
+ def overweight(grams):

@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -84,7 +84,7 @@
+     if sum > 100 {
+         return Err(ParseError::InvalidData);
+     }
+-    Ok(sum)
++    Ok(sum.min(100))
+ }
+ 
+ #[cfg(test)]

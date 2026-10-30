@@ -1,0 +1,4 @@
+#[test]
+fn heavy_triples_the_count() {
+    assert_eq!(ledger::heavy(5), 15);
+}

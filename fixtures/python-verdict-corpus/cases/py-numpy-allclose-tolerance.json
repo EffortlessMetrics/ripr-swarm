@@ -1,0 +1,45 @@
+{
+  "case_id": "py-numpy-allclose-tolerance",
+  "subject_id": "authored-py-pytest-numpy",
+  "diff": "cases/py-numpy-allclose-tolerance.diff",
+  "anchor": {
+    "file": "src/extra.py",
+    "line": 10
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "arithmetic_constant",
+  "test_shape": "numpy_assert_allclose_tolerance",
+  "hard_case": "False-credit trap: the test looks like it checks the owner but cannot notice a change to it.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.11.15, pytest 9.2.0, numpy 2.4.6, assertpy 1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return x * 2.0 + 1e-12",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the result differs from 4.0 by about 2e-12; assert_allclose's default rtol=1e-7 absorbs it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "Trap: `np.testing.assert_allclose` compares within a tolerance, so it is not the equality rule 28 credits, and a 1e-12 change passes it.",
+  "labeling_observation": {
+    "ripr_commit": "35cf5f96",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": []
+}

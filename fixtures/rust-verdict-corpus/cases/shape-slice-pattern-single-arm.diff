@@ -1,0 +1,12 @@
+diff --git a/src/flow.rs b/src/flow.rs
+--- a/src/flow.rs
++++ b/src/flow.rs
+@@ -30,7 +30,7 @@
+ pub fn ends(xs: &[u32]) -> Option<(u32, u32)> {
+     match xs {
+         [] => None,
+-        [x] => Some((*x, *x)),
++        [only] => Some((*only, *only)),
+         [first, .., last] => Some((*first, *last)),
+     }
+ }

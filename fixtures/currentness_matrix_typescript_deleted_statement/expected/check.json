@@ -184,6 +184,7 @@
     },
     {
       "id": "probe:src_cart.ts:typescript_preview:7b9c7c82",
+      "canonical_gap_id": "gap:typescript:typescript_preview:7b9c7c82",
       "classification": "exposed",
       "severity": "info",
       "confidence": 0.60,

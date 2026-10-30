@@ -5,7 +5,9 @@ Spec: RIPR-SPEC-0028
 ## Given
 
 A Python production function changes a predicate boundary, and a pytest test
-calls the changed owner with a broad boolean assertion.
+calls the changed owner with a broad boolean assertion on a non-literal
+argument. (With literal arguments and a provably `bool`-returning owner, the
+assertion is an exact pin; see the py-grid-*-exact verdict-corpus cases, #9542.)
 
 The fixture workspace enables the Python preview adapter explicitly:
 

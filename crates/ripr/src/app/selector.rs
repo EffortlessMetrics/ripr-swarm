@@ -184,7 +184,7 @@ pub(in crate::app) fn select_finding_with_seam_reverse<'a>(
             }
         };
     if let Some(info) = &limit_info
-        && info.analyzed < info.total
+        && info.is_truncated()
     {
         return FindingSelection::Undecided(SelectorLimitation::InventoryTruncated {
             analyzed: info.analyzed,
@@ -288,6 +288,7 @@ mod tests {
 
     fn finding(id: &str, line: usize, gap: Option<&str>) -> Finding {
         Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
             id: id.to_string(),
             canonical_gap: gap.map(|gap_id| FindingCanonicalGap {
                 id: gap_id.to_string(),

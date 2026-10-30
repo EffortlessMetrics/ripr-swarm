@@ -1,0 +1,8 @@
+use spec0094_4::{Notifier, place};
+
+#[test]
+fn placing_reports_success() {
+    let notifier = Notifier::default();
+    let result = place(42, &notifier);
+    assert!(result);
+}

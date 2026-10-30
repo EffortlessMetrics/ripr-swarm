@@ -1,0 +1,54 @@
+{
+  "case_id": "shape-trait-default-compare-boundary",
+  "subject_id": "authored-shape-kit",
+  "diff": "cases/shape-trait-default-compare-boundary.diff",
+  "anchor": {
+    "file": "src/traits.rs",
+    "line": 47
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "trait_default_method_boundary_unpinned",
+  "hard_case": "The default method is tested with a value far above and far below the limit, never at MAX or MAX + 1.",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "if v < Self::MAX {",
+        "mutated_line": "if v < Self::MAX {",
+        "outcome": "tests_failed",
+        "failing_test": "traits::tests::small_clamps_and_passes",
+        "equivalence_review": "not equivalent: `if Self::MAX < v {` becomes `if v < Self::MAX {`"
+      },
+      {
+        "replacement": "if v > Self::MAX + 1 {",
+        "mutated_line": "if v > Self::MAX + 1 {",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: `if Self::MAX < v {` becomes `if v > Self::MAX + 1 {`, and the test's inputs do not tell the two apart"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "small_clamps_and_passes uses 50 and 5. `<` flips both results, but `v > MAX + 1` agrees on both inputs. Shape: trait default method with an associated const.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "infection_unknown"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "axes": [
+    "language_shape"
+  ]
+}

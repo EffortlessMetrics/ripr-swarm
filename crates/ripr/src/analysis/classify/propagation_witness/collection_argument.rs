@@ -10,28 +10,6 @@ use ra_ap_syntax::{
     AstNode, SyntaxKind, SyntaxNode,
     ast::{self, HasArgList, HasAttrs, HasGenericParams, HasName},
 };
-use std::sync::{Mutex, PoisonError};
-
-/// Access to the run-scoped [`OwnerPinSyntax`] for one projection check.
-/// The classifier reads a shared instance directly; the seam walk (#8282)
-/// locks its one shared instance per syntax query so the parse-heavy
-/// segments between the queries stay parallel.
-trait SyntaxAuthority {
-    fn with_syntax<R>(&self, read: impl FnOnce(&OwnerPinSyntax) -> R) -> R;
-}
-
-impl SyntaxAuthority for OwnerPinSyntax {
-    fn with_syntax<R>(&self, read: impl FnOnce(&OwnerPinSyntax) -> R) -> R {
-        read(self)
-    }
-}
-
-impl SyntaxAuthority for Mutex<OwnerPinSyntax> {
-    fn with_syntax<R>(&self, read: impl FnOnce(&OwnerPinSyntax) -> R) -> R {
-        let guard = self.lock().unwrap_or_else(PoisonError::into_inner);
-        read(&guard)
-    }
-}
 
 /// A narrow extension of the bare collection observer: a sole, unconditional
 /// parameter push, called with an exact mutable field projection, followed by
@@ -48,35 +26,19 @@ pub(in crate::analysis) fn assertion_observes_collection_argument(
     observed_projection(receiver, owner, index, test, assertion, syntax).is_some()
 }
 
-/// #8282: the same projection for the seam walk, reading the run's one
-/// shared instance through its mutex. The lock is held per syntax query;
-/// the parse-heavy segments between queries run in parallel.
-pub(in crate::analysis) fn mutexed_assertion_observes_collection_argument(
+fn observed_projection(
     receiver: &str,
     owner: &FunctionSummary,
     index: &RustIndex,
     test: &TestSummary,
     assertion: &OracleFact,
-    syntax: &Mutex<OwnerPinSyntax>,
-) -> bool {
-    observed_projection(receiver, owner, index, test, assertion, syntax).is_some()
-}
-
-fn observed_projection<S: SyntaxAuthority>(
-    receiver: &str,
-    owner: &FunctionSummary,
-    index: &RustIndex,
-    test: &TestSummary,
-    assertion: &OracleFact,
-    syntax: &S,
+    syntax: &OwnerPinSyntax,
 ) -> Option<()> {
     if !assertion.text.trim_start().starts_with("assert_eq!") {
         return None;
     }
-    let syntax_admits = syntax.with_syntax(|syntax| {
-        syntax.admits(test, assertion, index)
-            && syntax.targeted_macro_binding_is_unambiguous(test, assertion.line, "vec", index)
-    });
+    let syntax_admits = syntax.admits(test, assertion, index)
+        && syntax.targeted_macro_binding_is_unambiguous(test, assertion.line, "vec", index);
     if !syntax_admits {
         return None;
     }
@@ -204,17 +166,15 @@ fn observed_projection<S: SyntaxAuthority>(
     let receiver_type_text = receiver_type.ty()?.syntax().text().to_string();
     if definition.ty().is_some()
         || !super::is_bare_ident(&constructor)
-        || !syntax.with_syntax(|syntax| {
-            crate::analysis::classify::owner_pin::projected_collection_has_value_equality(
-                &constructor,
-                field,
-                &receiver_type_text,
-                owner,
-                test,
-                index,
-                syntax,
-            )
-        })
+        || !crate::analysis::classify::owner_pin::projected_collection_has_value_equality(
+            &constructor,
+            field,
+            &receiver_type_text,
+            owner,
+            test,
+            index,
+            syntax,
+        )
     {
         return None;
     }
@@ -233,9 +193,8 @@ fn observed_projection<S: SyntaxAuthority>(
         return None;
     }
     let prefix = (!segments.is_empty()).then(|| format!("{}::", segments.join("::")));
-    let targeted_reaches = syntax.with_syntax(|syntax| {
-        targeted_free_call_reaches_owner(test, owner, prefix.as_deref(), index, syntax)
-    });
+    let targeted_reaches =
+        targeted_free_call_reaches_owner(test, owner, prefix.as_deref(), index, syntax);
     if !targeted_reaches
         || shared_owner_call_identity(index, owner).is_some_and(|identity| {
             identity.resolve_call(test, index, &segments) != CallTarget::Owner

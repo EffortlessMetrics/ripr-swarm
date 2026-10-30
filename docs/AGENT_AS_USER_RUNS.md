@@ -419,3 +419,58 @@ token that confirms observation can come from any related test while the
 oracle's strength comes from another, so the `exposed` before the edit was
 credited by a test that cannot observe the arm (#6297). Each agent again lost one
 re-check to reading HEAD before switching to `--worktree` (#5358).
+
+## Run 2026-10-25
+
+ripr `0.11.0 (a6909e94020cea9707acc17f63cbe50cfb20e7b8)`, release build,
+Linux, 4-core container. Same targets, gap commits, brief and shim as above;
+one fresh agent per target, run in parallel, one pass. The agents were
+subagents of the evaluating session, so they share a model family with it.
+`cargo mutants` was not installed, so only the hand-written answer key scored
+the result. Positive control: the unmutated tree passes `cargo test` on all
+three. Receipt: `metrics/public-proof/agent-as-user.json`.
+
+### Outcome
+
+| Target | ripr commands | Tool steps | Answer key before → after | ripr after (`--worktree`) |
+|---|---|---|---|---|
+| bytesize | 7 | 8 | 0/3 → 3/3 | 2 exposed, 0 weak, 1 `infection_unknown` |
+| humantime | 8 | 9 | 0/3 → 3/3 | 0 exposed, 4 weak, 1 `static_unknown` |
+| semver | 10 | 9 | 0/3 → 3/3 | 5 exposed, 1 weak |
+
+Tool steps are the subagent's own tool-call count (ripr, cargo and edits).
+No agent edited production code, and none found a defect in the feature.
+
+Against the 2026-10-04 passes, commands to fix fell from 17, 21 and 20 to 7,
+8 and 10, which meets the target of 10. That is one run each with a
+different agent, so it is a direction, not a measured gain. The weak findings
+left after a complete answer key did not fall: 0, 4 and 1 (it was 2, 2 and 1),
+and in two of the three targets they cannot be closed from the test side.
+
+### Where it stopped
+
+- **humantime.** The agent pinned both arms and both spellings through
+  `parse_duration` with exact `Duration` values, and all three mutants are
+  caught. ripr still reports `rust_transitive_reach_unresolved` (entry
+  `parse_duration` to owner `parse_unit`). `ripr repair` refused with
+  `missing discriminator fact: match_arm_taken`. The finding says the
+  limitation "does not establish a missing test", but nothing says tests
+  cannot clear it (#10192).
+- **semver.** The exact `assert_eq!(next, version("2.8.0"))` tests are
+  `strong exact value oracle` for the field probes and `uses no oracle ...
+  not credited` for the whole-struct return. During the run the note named a
+  `fuzz_target!` in `fuzz/parse_version.rs` as a possible definer of
+  `assert_eq` (#10191).
+- **bytesize.** After tests for both sides of the compound predicate the
+  `infection_unknown` stays. `agent stub --at src/lib.rs:258` is refused for
+  two seams in one line, and `check` does not print their ids while it also says
+  `no repair start offered` (#10192).
+- All three agents needed `--format human-full` to see the hidden findings.
+  The `ripr progress:` lines on stderr read as noise to two of them.
+
+### Not measured this pass
+
+Stale re-check cycles and the stub counters were not instrumented, so the
+receipt carries no value for them. The old passes' open findings (#5352,
+#5353, #5358, #5471, #6297 to #6300) were not re-triaged here; that remains
+step 2 of #10183.

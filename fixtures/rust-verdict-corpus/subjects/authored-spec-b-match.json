@@ -1,0 +1,65 @@
+{
+  "subject_id": "authored-spec-b-match",
+  "origin": "authored",
+  "version_label": "authored 2026-10-22 for the RIPR-SPEC-0164 and RIPR-SPEC-0165 acceptance examples",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "d95622cb2828533cf06ee3f33084dda9bcb332eb42730b58c8199c538e46fd0d"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "9d547d284fb4b0eb93a537d3e2f46c2581dc644e7d82d0fc5ea069c810df9e7e"
+    },
+    {
+      "path": "src/m_alt.rs",
+      "sha256": "f96d96dbbde13c0a70fa28429d3d53ba50a216d93dfd17f5bc04f5ca51fb0cd3"
+    },
+    {
+      "path": "src/m_bare.rs",
+      "sha256": "4aff6f9ebd0f4fbf9b7be65eae8c26b6897d752bd3a023ddfbab41064e4a9b62"
+    },
+    {
+      "path": "src/m_char.rs",
+      "sha256": "ea05e6ef01a37f9b47d500484799d6d0b88428e1518c358add5ca1819515298b"
+    },
+    {
+      "path": "src/m_computed.rs",
+      "sha256": "40b13f82459665e57e622d9a163e8e7cfd94975badf77ebf25090ac09805d21f"
+    },
+    {
+      "path": "src/m_escape.rs",
+      "sha256": "41a75b44e12f41587a207d25cd4150a08251ecc3ba2f5591225afdf070176fdd"
+    },
+    {
+      "path": "src/m_guard.rs",
+      "sha256": "79f5c3dd56287f4c86c48b72cf470dc9066b02cce98eb1e6b5761b6c6979c99c"
+    },
+    {
+      "path": "src/m_literal.rs",
+      "sha256": "4514845c2ad7c28908e7348da2ef31200711ecdf3ff8e6fc9ab9842d8a0e4c0f"
+    },
+    {
+      "path": "src/r_ambiguous.rs",
+      "sha256": "d2b7e99e66e5112266aa8d8d808064218a47fb77087f30cabf5c21767feb4257"
+    },
+    {
+      "path": "src/r_computed.rs",
+      "sha256": "55fabf6553d36b9aa8f077305b4e9557c19808f990b38746cf1acc2629668d40"
+    },
+    {
+      "path": "src/r_cycle.rs",
+      "sha256": "b28b3c91bfb202aee9a7d31cbc5054c21c6a1ff524c1b07b664eed1913ec2f7f"
+    },
+    {
+      "path": "src/r_deep.rs",
+      "sha256": "c56e9d90c38f203b6c80cbd6a0993ff64bf12f65ec3a155db69dda780028870f"
+    },
+    {
+      "path": "src/r_nested.rs",
+      "sha256": "ce3f4d67464455e9821b10d532ee8d92d0d816bcbe2d02804787d62b567108d4"
+    }
+  ]
+}

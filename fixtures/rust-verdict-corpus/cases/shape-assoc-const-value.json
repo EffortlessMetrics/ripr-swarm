@@ -1,0 +1,55 @@
+{
+  "case_id": "shape-assoc-const-value",
+  "subject_id": "authored-shape-kit",
+  "diff": "cases/shape-assoc-const-value.diff",
+  "anchor": {
+    "file": "src/traits.rs",
+    "line": 58
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "behavior_selector_const",
+  "test_shape": "associated_const_clamp_assert",
+  "hard_case": "The edited line is an associated const in a trait impl, read through `Self::MAX` in a default method.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "const MAX: u32 = 11;",
+        "mutated_line": "const MAX: u32 = 11;",
+        "outcome": "tests_failed",
+        "failing_test": "traits::tests::small_clamps_and_passes",
+        "equivalence_review": "not equivalent: `const MAX: u32 = 5 + 5;` becomes `const MAX: u32 = 11;`"
+      },
+      {
+        "replacement": "const MAX: u32 = 9;",
+        "mutated_line": "const MAX: u32 = 9;",
+        "outcome": "tests_failed",
+        "failing_test": "traits::tests::small_clamps_and_passes",
+        "equivalence_review": "not equivalent: `const MAX: u32 = 5 + 5;` becomes `const MAX: u32 = 9;`"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "small_clamps_and_passes pins clamp(50) to 10 and clamp(5) to 5; both neighbours of 10 change the first. Shape: associated constant.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "axes": [
+    "language_shape"
+  ]
+}

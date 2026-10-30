@@ -1,0 +1,10 @@
+diff --git a/idioms/rev.py b/idioms/rev.py
+--- a/idioms/rev.py
++++ b/idioms/rev.py
+@@ -1,5 +1,5 @@
+ def reverse(text):
+-    return text[::-1]
++    return text
+ 
+ 
+ def unreverse(text):

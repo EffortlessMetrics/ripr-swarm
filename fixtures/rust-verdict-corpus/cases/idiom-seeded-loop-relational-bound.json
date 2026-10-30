@@ -1,0 +1,54 @@
+{
+  "case_id": "idiom-seeded-loop-relational-bound",
+  "subject_id": "authored-idiom-kit",
+  "diff": "cases/idiom-seeded-loop-relational-bound.diff",
+  "anchor": {
+    "file": "src/seeded.rs",
+    "line": 14
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "seeded_property_loop_relational",
+  "hard_case": "A deterministic LCG feeds 200 values through an upper-bound property; nothing pins the cap's value.",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "x.min(400)",
+        "mutated_line": "x.min(400)",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: `x.min(500)` becomes `x.min(400)`, and the test's inputs do not tell the two apart"
+      },
+      {
+        "replacement": "x.min(600)",
+        "mutated_line": "x.min(600)",
+        "outcome": "tests_failed",
+        "failing_test": "seeded::tests::seeded_values_stay_in_budget",
+        "equivalence_review": "not equivalent: `x.min(500)` becomes `x.min(600)`"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "A cap of 400 still satisfies `v <= 500`, so it survives; a cap of 600 lets values above 500 through and fails. Shape: hand-rolled seeded property loop with a relational oracle.",
+  "axes": [
+    "std_test_form"
+  ],
+  "labeling_observation": {
+    "ripr_commit": "969b0b8",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

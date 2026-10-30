@@ -46,16 +46,15 @@
 
 use super::rust_index::{FileFactsView, RustIndex, TestSummary};
 use super::seams::{RepoSeam, RequiredDiscriminator};
-use crate::domain::{ValueContext, ValueFact};
+use crate::domain::ValueContext;
+use crate::value_origins::LocatedValueFact as ValueFact;
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 /// Per-test value facts that do not depend on a specific seam. Built
 /// once per indexed test and reused while classifying every seam.
 #[derive(Default)]
 pub(crate) struct ValueEnvFacts {
-    /// Test body with comments stripped so binding scans don't pick
-    /// up `// let threshold = 999;` shadows.
-    body_clean: String,
     /// `IDENT -> LITERAL` from `let IDENT = LITERAL;` lines in the
     /// test body (single-test scope).
     let_bindings: BTreeMap<String, String>,
@@ -69,8 +68,8 @@ pub(crate) struct ValueEnvFacts {
     table_bindings: BTreeMap<String, Vec<String>>,
     /// `NAME -> LITERAL` from `const NAME: T = LITERAL;` and
     /// `static NAME: T = LITERAL;` at the test's source-file top
-    /// level (same-file scope).
-    module_constants: BTreeMap<String, String>,
+    /// level (same-file scope). Shared with every other test in the file.
+    module_constants: Arc<BTreeMap<String, String>>,
     /// `IDENT.field -> LITERAL` from same-test struct literals such as
     /// `let case = DiscountCase { amount: 100 };`, plus source-order
     /// invalidations so later shadows do not erase earlier safe calls.
@@ -119,7 +118,7 @@ impl SourcePosition {
 /// with many inline tests once for each of those tests.
 #[derive(Default)]
 pub(crate) struct FileValueScan {
-    module_constants: BTreeMap<String, String>,
+    module_constants: Arc<BTreeMap<String, String>>,
     path_constructor_imports: PathConstructorImports,
 }
 
@@ -127,7 +126,7 @@ impl FileValueScan {
     pub(crate) fn build(test: &TestSummary, index: &RustIndex) -> Self {
         file_facts_for(test, index)
             .map(|facts| Self {
-                module_constants: extract_module_constants(&facts.source),
+                module_constants: Arc::new(extract_module_constants(&facts.source)),
                 path_constructor_imports: extract_path_constructor_imports(&facts.source),
             })
             .unwrap_or_default()
@@ -135,13 +134,20 @@ impl FileValueScan {
 }
 
 impl ValueEnvFacts {
+    /// Whether both facts hold the same file-level constants allocation, so a
+    /// file with many tests pays for its constants once, not once per test.
+    #[cfg(test)]
+    pub(crate) fn shares_module_constants_with(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.module_constants, &other.module_constants)
+    }
+
     pub(crate) fn build(test: &TestSummary, file_scan: &FileValueScan) -> Self {
         let body_clean = strip_comments_and_strings(&test.body);
         let let_bindings = extract_let_bindings(&body_clean);
         let (rstest_cases, case_param_names) = extract_rstest_cases(test);
         let test_param_names = extract_fn_param_names(&body_clean);
         let table_bindings = extract_table_bindings(&body_clean);
-        let module_constants = file_scan.module_constants.clone();
+        let module_constants = Arc::clone(&file_scan.module_constants);
         let path_constructor_imports = file_scan.path_constructor_imports;
         let (struct_field_bindings, struct_field_invalidations) =
             extract_struct_field_bindings(&body_clean, test.start_line, &test_param_names);
@@ -155,7 +161,6 @@ impl ValueEnvFacts {
             &local_binding_positions,
         );
         Self {
-            body_clean,
             let_bindings,
             rstest_cases,
             case_param_names,
@@ -399,18 +404,35 @@ impl<'a> ValueEnv<'a> {
     /// fixture override like `with_amount`) before the value counts.
     /// Without that guard, every `.with_seed(42)` would inflate
     /// observed values for unrelated seams.
-    pub(crate) fn builder_facts(&self) -> Vec<ValueFact> {
+    ///
+    /// `test_body` is the raw body the facts were built from. The comment-free
+    /// copy is rebuilt on each call rather than kept alive for every indexed
+    /// test; every expected sink yields at least one allowed token, so the
+    /// strip is not limited to seams that actually contain builder calls.
+    pub(crate) fn builder_facts(&self, test_body: &str) -> Vec<ValueFact> {
         let allowed = self.allowed_builder_method_names();
         if allowed.is_empty() {
             return Vec::new();
         }
+        // Every accepted method name contains an allowed token, and the strip
+        // only drops comment tails and string contents (it keeps the quotes,
+        // so it never joins separated text), so an identifier in the stripped
+        // body is contiguous in the raw body. A body that names no allowed
+        // token holds no matching call: skip the strip and the scan (#10932).
+        if !allowed
+            .iter()
+            .any(|token| test_body.contains(token.as_str()))
+        {
+            return Vec::new();
+        }
         let mut out = Vec::new();
-        for cap in scan_builder_calls(&self.facts.body_clean) {
+        for cap in scan_builder_calls(&strip_comments_and_strings(test_body)) {
             if !builder_method_matches_allowed(&cap.method, &allowed) {
                 continue;
             }
             for value in extract_inner_literals(&cap.arg) {
                 out.push(ValueFact {
+                    file: None,
                     line: cap.line,
                     text: format!(".{}({})", cap.method, cap.arg),
                     value,
@@ -640,6 +662,29 @@ pub(crate) fn test_let_bound_literal(body: &str, ident: &str) -> Option<String> 
     if is_mut || declarations.next().is_some() {
         return None;
     }
+    // A tuple or struct `let` pattern, a `for`, `if let`, closure or match
+    // binding of the same name is a second binding the simple-`let` scan above
+    // cannot see: `let n = 10; let (n, _) = (9, 1); owner(n)` calls with 9.
+    // The parser counts every pattern; the lexical scan covers macro bodies.
+    let source = if body.trim_start().starts_with("fn ") || body.trim_start().starts_with("#[") {
+        body.to_string()
+    } else {
+        format!("fn __test() {{\n{body}\n}}")
+    };
+    // `has_match_arm_binding` is not used: it reads a one-line `match n { .. }`
+    // scrutinee as an arm pattern, and the parser already counts real arms.
+    let lexical_rebind = cleaned.lines().any(|line| {
+        has_for_binding(line, ident)
+            || has_let_pattern_binding(line, "if let ", ident)
+            || has_let_pattern_binding(line, "while let ", ident)
+            || has_closure_param_binding(line, ident)
+    });
+    if crate::analysis::syntax::fn_name_binding_count(&source, ident) != Some(1)
+        || !non_simple_let_shadowing_lines(&cleaned, ident, 0).is_empty()
+        || lexical_rebind
+    {
+        return None;
+    }
     extract_let_bindings(body).remove(ident)
 }
 
@@ -809,7 +854,7 @@ fn is_integer_literal(value: &str) -> bool {
 
 /// Position of the first top-level `;` in `text`, or `None` if no
 /// such terminator exists. Top-level = depth 0 of `()`/`[]`/`{}`.
-fn top_level_semicolon(text: &str) -> Option<usize> {
+pub(super) fn top_level_semicolon(text: &str) -> Option<usize> {
     let mut depth: i32 = 0;
     for (i, b) in text.bytes().enumerate() {
         match b {

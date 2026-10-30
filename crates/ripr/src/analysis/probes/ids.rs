@@ -2,14 +2,53 @@ use crate::domain::{ProbeFamily, ProbeId, SymbolId};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
-/// Normalize an expression: trim leading/trailing whitespace and collapse
-/// internal whitespace runs to a single space.
+/// Historical cross-language whitespace normalization. Foreign producers and
+/// 0.10 ID reconstruction retain this boundary until their native literal
+/// semantics are handled by their language owner.
 pub(crate) fn normalize_expression(expr: &str) -> String {
+    normalize_outside_literals(expr.trim(), &[], &[])
+}
+
+/// Collapse formatting whitespace without collapsing Rust literal values or
+/// the lexical boundary that ends a line comment.
+/// Keep the shared lexical scanner's raw-string, escape and lifetime rules.
+/// Consume original source once: flattening a line comment's newline changes
+/// how a second lexical scan would interpret the following literal.
+pub(crate) fn normalize_rust_expression(expr: &str) -> String {
     let trimmed = expr.trim();
+    let spans = crate::analysis::extract::rust_identity_spans(trimmed);
+    normalize_outside_literals(trimmed, &spans.literal_ranges, &spans.line_comment_ends)
+}
+
+fn normalize_outside_literals(
+    trimmed: &str,
+    ranges: &[(usize, usize)],
+    line_comment_ends: &[usize],
+) -> String {
+    let mut ranges = ranges.iter().peekable();
+    let mut line_comment_ends = line_comment_ends.iter().peekable();
     let mut result = String::with_capacity(trimmed.len());
     let mut last_was_space = false;
-    for ch in trimmed.chars() {
-        if ch.is_whitespace() {
+    for (offset, ch) in trimmed.char_indices() {
+        if line_comment_ends.peek().is_some_and(|end| **end == offset) {
+            // A line comment's terminator separates comment text from active
+            // tokens. Canonicalize CRLF, trailing comment whitespace and the
+            // following indentation to one LF, retaining that distinction.
+            if result.ends_with(' ') {
+                result.pop();
+            }
+            result.push('\n');
+            last_was_space = true;
+            line_comment_ends.next();
+            continue;
+        }
+        while ranges.peek().is_some_and(|(_, close)| offset > *close) {
+            ranges.next();
+        }
+        let literal = ranges
+            .peek()
+            .is_some_and(|(open, close)| *open <= offset && offset <= *close);
+        if ch.is_whitespace() && !literal {
             if !last_was_space {
                 result.push(' ');
             }
@@ -22,14 +61,14 @@ pub(crate) fn normalize_expression(expr: &str) -> String {
     result
 }
 
-/// Compute the 8-char hex fingerprint for a content-addressed probe id.
-/// Payload is NUL-separated: `<sanitized_path>\0<family_str>\0<owner_str>\0<normalized_expression>\0`
-fn compute_fp8(
+/// SHA-256 over the identity payload
+/// `<sanitized_path>\0<family_str>\0<owner_str>\0<normalized_expression>\0`.
+fn payload_digest(
     sanitized_path: &str,
     family_str: &str,
     owner_str: &str,
     normalized_expression: &str,
-) -> String {
+) -> [u8; 32] {
     // Normalize path separators in the owner symbol so the fingerprint is
     // platform-independent. The owner `SymbolId` embeds a file path walked
     // from the filesystem, which uses `\` on Windows and `/` elsewhere;
@@ -45,11 +84,69 @@ fn compute_fp8(
     hasher.update(b"\0");
     hasher.update(normalized_expression.as_bytes());
     hasher.update(b"\0");
-    let hash = hasher.finalize();
+    hasher.finalize().into()
+}
+
+/// Compute the 8-char hex fingerprint for a content-addressed probe id.
+fn compute_fp8(
+    sanitized_path: &str,
+    family_str: &str,
+    owner_str: &str,
+    normalized_expression: &str,
+) -> String {
+    let hash = payload_digest(sanitized_path, family_str, owner_str, normalized_expression);
     format!(
         "{:02x}{:02x}{:02x}{:02x}",
         hash[0], hash[1], hash[2], hash[3]
     )
+}
+
+/// Full-width digest of the payload a probe id fingerprints, for ranking
+/// probes that share one eight-hex id but carry different payloads (#8838).
+/// It is the digest `fp8` is a prefix of, so ranking by it does not depend on
+/// the order the diff presents the probes in. The sanitized path and family
+/// are read back from `base_id` (`<prefix>:<path>:<family>:<fp8>`; the
+/// sanitized path holds no `:`), keeping the payload identical to the one
+/// `fingerprint_probe_id` hashed; the caller passes the owner and the
+/// expression normalized the way its producer normalized it. A malformed id
+/// falls back to ranking by the whole id, which still ties by encounter order.
+pub(crate) fn collision_rank_key(
+    base_id: &str,
+    owner_str: &str,
+    normalized_expression: &str,
+) -> [u8; 32] {
+    let mut parts = base_id.rsplitn(4, ':');
+    let (_fp8, family, path, prefix) = (parts.next(), parts.next(), parts.next(), parts.next());
+    match (path, family) {
+        (Some(path), Some(family)) if prefix.is_some() => {
+            payload_digest(path, family, owner_str, normalized_expression)
+        }
+        _ => payload_digest(base_id, "", owner_str, normalized_expression),
+    }
+}
+
+/// The collision ordinal (1-based) of each probe, given its base id and rank
+/// key. Probes sharing a base id are ranked by key, then by encounter index,
+/// so distinct payloads get the same ordinals whichever order they arrive in
+/// and exact duplicates keep encounter order (#8838).
+pub(crate) fn collision_ordinals(entries: &[(&str, [u8; 32])]) -> Vec<u32> {
+    use std::collections::HashMap;
+    let mut groups: HashMap<&str, Vec<usize>> = HashMap::new();
+    for (index, (base, _)) in entries.iter().enumerate() {
+        groups.entry(base).or_default().push(index);
+    }
+    let mut ordinals = vec![1; entries.len()];
+    for indices in groups.into_values().filter(|indices| indices.len() > 1) {
+        let mut ranked = indices
+            .into_iter()
+            .map(|index| (entries[index].1, index))
+            .collect::<Vec<_>>();
+        ranked.sort();
+        for (rank, (_, index)) in ranked.into_iter().enumerate() {
+            ordinals[index] = rank as u32 + 1;
+        }
+    }
+    ordinals
 }
 
 /// Build a content-addressed probe id.
@@ -83,7 +180,7 @@ pub(crate) fn diff_probe_id(
     let sp = sanitize_path(path);
     let family_str = family.as_str();
     let owner_str = owner.map(|o| o.0.as_str()).unwrap_or("");
-    let norm = normalize_expression(expression);
+    let norm = normalize_rust_expression(expression);
     fingerprint_probe_id("probe", &sp, family_str, owner_str, &norm, ordinal)
 }
 
@@ -116,7 +213,15 @@ pub(crate) fn legacy_whole_line_diff_probe_id(
     {
         return None;
     }
-    let id = diff_probe_id(relative, &probe.family, probe.owner.as_ref(), line, 1).0;
+    let id = fingerprint_probe_id(
+        "probe",
+        &sanitize_path(relative),
+        probe.family.as_str(),
+        probe.owner.as_ref().map_or("", |owner| owner.0.as_str()),
+        &normalized,
+        1,
+    )
+    .0;
     (id != probe.id.0).then_some(id)
 }
 
@@ -130,7 +235,7 @@ pub(crate) fn repo_probe_id(
     let sp = sanitize_path(path);
     let family_str = family.as_str();
     let owner_str = owner.map(|o| o.0.as_str()).unwrap_or("");
-    let norm = normalize_expression(expression);
+    let norm = normalize_rust_expression(expression);
     fingerprint_probe_id("repo-probe", &sp, family_str, owner_str, &norm, ordinal)
 }
 
@@ -147,6 +252,39 @@ mod tests {
     use crate::domain::ProbeFamily;
     use std::path::PathBuf;
 
+    #[test]
+    fn line_comment_terminators_preserve_lexical_boundaries() {
+        assert_eq!(
+            normalize_rust_expression("x == concat!(\"a\", // \"b\",\n        \"c\")"),
+            "x == concat!(\"a\", // \"b\",\n\"c\")"
+        );
+        assert_eq!(
+            normalize_rust_expression("x  ==\tconcat!(\"a\", //  \r\n        \"b\", \"c\")"),
+            "x == concat!(\"a\", //\n\"b\", \"c\")"
+        );
+        assert_eq!(
+            normalize_rust_expression("x == // \"a  b\"\n        \"value\""),
+            "x == // \"a b\"\n\"value\""
+        );
+    }
+
+    #[test]
+    fn line_comment_terminators_are_not_invented_inside_literals_or_block_comments() {
+        for (expression, expected) in [
+            ("x == \"// a  b\"", "x == \"// a  b\""),
+            ("x == r#\"//\na  b\"#", "x == r#\"//\na  b\"#"),
+            (
+                "x == /* // fake\n */ \"a  b\"",
+                "x == /* // fake */ \"a  b\"",
+            ),
+            (
+                "x == /* outer /* // fake\n */ */ \"a  b\"",
+                "x == /* outer /* // fake */ */ \"a  b\"",
+            ),
+        ] {
+            assert_eq!(normalize_rust_expression(expression), expected);
+        }
+    }
     #[test]
     fn sanitize_path_converts_separators_and_colons() {
         let path = PathBuf::from("src/lib.rs");

@@ -1,0 +1,55 @@
+{
+  "case_id": "shape-hostile-deep-nesting",
+  "subject_id": "authored-shape-kit",
+  "diff": "cases/shape-hostile-deep-nesting.diff",
+  "anchor": {
+    "file": "src/hostile.rs",
+    "line": 23
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "deeply_parenthesised_expression",
+  "hard_case": "Ten levels of parentheses on one line.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "((((((((((a + 1) * 2) - 1) + 3) * 2) - 2) + 4) * 2) - 3) + 5) * 3",
+        "mutated_line": "((((((((((a + 1) * 2) - 1) + 3) * 2) - 2) + 4) * 2) - 3) + 5) * 3",
+        "outcome": "tests_failed",
+        "failing_test": "hostile::tests::nested_owner",
+        "equivalence_review": "not equivalent: `2 * ((((((((((a + 1) * 2) - 1) + 3) * 2) - 2) + 4) * 2) - 3) + 5)` becomes `((((((((((a + 1) * 2) - 1) + 3) * 2) - 2) + 4) * 2) - 3) + 5) * 3`"
+      },
+      {
+        "replacement": "((((((((((a + 1) * 2) - 1) + 3) * 2) - 2) + 4) * 2) - 3) + 6) * 2",
+        "mutated_line": "((((((((((a + 1) * 2) - 1) + 3) * 2) - 2) + 4) * 2) - 3) + 6) * 2",
+        "outcome": "tests_failed",
+        "failing_test": "hostile::tests::nested_owner",
+        "equivalence_review": "not equivalent: `2 * ((((((((((a + 1) * 2) - 1) + 3) * 2) - 2) + 4) * 2) - 3) + 5)` becomes `((((((((((a + 1) * 2) - 1) + 3) * 2) - 2) + 4) * 2) - 3) + 6) * 2`"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "nested_owner pins nested(1) to 60; a final factor of 3 gives 90 and 6 for 5 gives 62. Hostile input: deep nesting.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "axes": [
+    "hostile_input"
+  ]
+}

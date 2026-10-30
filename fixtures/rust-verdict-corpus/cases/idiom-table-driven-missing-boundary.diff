@@ -1,0 +1,12 @@
+diff --git a/src/tables.rs b/src/tables.rs
+--- a/src/tables.rs
++++ b/src/tables.rs
+@@ -3,7 +3,7 @@
+ }
+ 
+ pub fn tier_loose(units: u32) -> &'static str {
+-    if units >= 1000 { "pallet" } else if units >= 50 { "crate" } else { "each" }
++    if 1000 <= units { "pallet" } else if 50 <= units { "crate" } else { "each" }
+ }
+ 
+ #[cfg(test)]

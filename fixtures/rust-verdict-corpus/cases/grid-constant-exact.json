@@ -1,0 +1,45 @@
+{
+  "case_id": "grid-constant-exact",
+  "subject_id": "authored-grid-constants",
+  "diff": "cases/grid-constant-exact.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 4
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "arithmetic_constant",
+  "test_shape": "exact_pin_assert",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "subtotal * 9 / 100",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests::tax_on_a_thousand",
+        "equivalence_review": "not equivalent: the tax on 1000 is 90 instead of 80"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Grid cell: constant x exact pin. The test pins 80 on a thousand, so a 9 percent rate fails.",
+  "labeling_observation": {
+    "ripr_commit": "3608bb9a",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

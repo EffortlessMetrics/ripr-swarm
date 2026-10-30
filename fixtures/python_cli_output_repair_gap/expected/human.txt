@@ -3,12 +3,12 @@ mode: fast
 root: fixtures/python_cli_output_repair_gap/input
 config: <cwd>/fixtures/python_cli_output_repair_gap/input/ripr.toml
 
-Summary: 1 probe (0 exposed, 1 weak, 0 unrevealed, 0 no path); 1 of 1 finding unsuppressed
+Summary: 1 changed behavior checked: 0 appear noticed by tests, 1 partly noticed, 0 reached but not noticed, 0 no test path. 1 found, 0 suppressed by your settings
 
 Changed file(s) by language: python = 1
 
 Analysis outcome: findings below (analysis complete)
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
 
 Start here:
   State: preview language, advisory only
@@ -18,16 +18,27 @@ Start here:
   Language status: preview
   Static exposure: weak (severity: warning, confidence 0.40)
   Why weak: a related test reaches this change but does not observe the exact changed value
-  Canonical gap: gap:python:src/commands.py:ship:call_or_output_effect:side_effect:click.echo_shipment_queued
+  Gap ID (for scripts): gap:python:src/commands.py:ship:call_or_output_effect:side_effect:click.echo_shipment_queued
   Changed behavior: click.echo("shipment queued")
-  Missing discriminator (1 of 2): Related Python test reaches `ship` but the strongest extracted oracle is `smoke_only`; add or strengthen a focused assertion for the changed output/log/call effect
-  Related test: tests/test_commands.py:4 test_ship_smoke
+  Missing check (1 of 2): Related Python test reaches `ship` but the strongest extracted oracle is
+    `smoke_only`; add or strengthen a focused assertion for the changed output/log/call effect
+  Related test: tests/test_commands.py:4 test_ship_smoke (assertion too weak to tell the old behavior from the new)
   Suggested test file: tests/test_commands.py
   Suggested test: test_ship_smoke
   Test node: tests/test_commands.py::test_ship_smoke
   Verify command: python -m pytest tests/test_commands.py::test_ship_smoke (high)
   Next step — Python preview: strengthen the existing related test with an output/log/call-effect assertion for missing discriminator `output contains "shipment queued"`
   Evidence: reach yes · infection yes · propagation weak · observation weak · discriminator weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      no test path = no test path found; unclear = analysis limited, not a verdict;
+      found = listed for review; suppressed by your settings = hidden by your suppression policy;
+      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: 1 related Python test(s) found for owner `ship`
     - infection yes: Changed Python call or output effect can alter observable side effects: `click.echo("shipment queued")`
     - 5 more detail line(s) in --format human-full
@@ -35,7 +46,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_cli_output_repair_gap/input --diff <cwd>/fixtures/python_cli_output_repair_gap/diff.patch --mode fast probe:src_commands.py:python_preview:e40b24a9
   ripr context --root <cwd>/fixtures/python_cli_output_repair_gap/input --diff <cwd>/fixtures/python_cli_output_repair_gap/diff.patch --mode fast --at probe:src_commands.py:python_preview:e40b24a9
-  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_commands.py:python_preview:e40b24a9 --root <cwd>/fixtures/python_cli_output_repair_gap/input` for the full gate's answer
+  no repair start offered: the seam inventory behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `src/commands.py` has no seam to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing discriminator to that test by hand and run the printed verify command
 
 More:
   Full evidence: rerun with --format human-full

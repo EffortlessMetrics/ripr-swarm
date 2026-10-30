@@ -399,6 +399,7 @@ mod tests {
             subject: RepairCardSubject {
                 seam_id: "seam:demo".to_string(),
                 canonical_gap_id: None,
+                seam_content_gap_id: None,
                 finding_id: None,
             },
             instruction: FixInstructionSummary {

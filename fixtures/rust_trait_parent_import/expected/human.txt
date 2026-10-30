@@ -2,20 +2,30 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/rust_trait_parent_import/input
 
-Summary: 1 probe (1 exposed, 0 weak, 0 unrevealed, 0 no path); 1 of 1 finding unsuppressed
+Summary: 1 changed behavior checked: 1 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 0 no test path. 1 found, 0 suppressed by your settings
 
 Analysis outcome: findings below (analysis complete)
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
 
 Start here:
   State: no gap selected for repair
   Safe next action: no non-exposed diff finding was selected. This is not runtime proof, coverage adequacy, or mutation confirmation
   File: ./src/lib.rs:7
   Static exposure: exposed (severity: info, confidence 1.00)
-  Canonical gap: gap:rust:src/lib.rs:impl Render for Sample::render:return_value:return_value:string_from_lit
+  Gap ID (for scripts): gap:rust:src/lib.rs:impl Render for Sample::render:return_value:return_value:string_from_lit
   Changed behavior: String::from("")
   Related test: src/helpers/render_tests.rs:4 render_is_empty
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator yes
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      no test path = no test path found; unclear = analysis limited, not a verdict;
+      found = listed for review; suppressed by your settings = hidden by your suppression policy;
+      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: Related tests appear to reach render: render_is_empty
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 6 more detail line(s) in --format human-full
@@ -23,7 +33,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_trait_parent_import/input --diff <cwd>/fixtures/rust_trait_parent_import/diff.patch --mode fast probe:src_lib.rs:return_value:b6bd8eab
   ripr context --root <cwd>/fixtures/rust_trait_parent_import/input --diff <cwd>/fixtures/rust_trait_parent_import/diff.patch --mode fast --at probe:src_lib.rs:return_value:b6bd8eab
-  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:return_value:b6bd8eab --root <cwd>/fixtures/rust_trait_parent_import/input` for the full gate's answer
+  no repair start offered: ripr found no seam in this finding's file to bind it to, so there is no seam to start a repair from; follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full

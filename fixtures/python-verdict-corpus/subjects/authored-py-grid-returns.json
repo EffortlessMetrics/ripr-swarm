@@ -1,0 +1,29 @@
+{
+  "subject_id": "authored-py-grid-returns",
+  "origin": "authored",
+  "version_label": "authored@3608bb9a",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "grid_returns/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "grid_returns/core.py",
+      "sha256": "45d3f9e19446fe7d7cb6e3af83f4b708709f290f3defabc0fcebb9983b0769c2"
+    },
+    {
+      "path": "pyproject.toml",
+      "sha256": "40afabe0638c1f81003a7e15b720f1513f944abc12d10b76c264afac063a70e4"
+    },
+    {
+      "path": "tests/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tests/test_core.py",
+      "sha256": "54d605991898ac0f6cfbfdac8cc63483117dc19d043edaccda95e994b4db283d"
+    }
+  ]
+}

@@ -62,7 +62,8 @@ generic syntax reason.
 - The finding keeps its normal predicate-shaped classification and
   gains evidence: `binding_predicate_relation` names the binding, both
   causal initializers, and the use line; when the initializer contains
-  an operation, `binding_predicate_value_unresolved` (a neutral
+  an operation and the actual infection authority has not established its
+  boundary input, `binding_predicate_value_unresolved` (a neutral
   disclosure prefix, deliberately outside the structured `limitation_*`
   contract, since the finding carries no `static_limit_kind`) names the
   earliest (leftmost) one — a std-operation token (`.find(`, `.rfind(`,
@@ -70,6 +71,10 @@ generic syntax reason.
   earliest call prefix, or the earliest binary operator (arithmetic,
   bitwise, comparison). A bare literal/identifier copy resolves to
   text with no value-unresolved line.
+  A later bounded input authority (RIPR-SPEC-0158) can resolve the operand;
+  infection `yes` then supersedes this syntax-only unresolved disclosure.
+  The causal relation remains, and this presentation rule changes no stage
+  or classification. Unknown operands keep their unresolved disclosure.
 - The generic `changed syntax is not mapped` limitation is absent for
   supported direct binding-use cases.
 - Fail-closed blockers (recorded as the relation's explicit scope
@@ -110,13 +115,17 @@ generic syntax reason.
 
 ## Acceptance Examples
 
-- Accept: changed `let end = input.rfind(delim).map_or(0, |idx| idx);`
-  with a later `if end == start` — one predicate probe at the use line,
-  initializer before/after, `binding_predicate_relation` and
-  earliest-operation evidence, no generic changed-syntax limitation.
-- Accept: two direct uses — two probes, scan order, distinct ids.
-- Reject: the relation through a shadowed, reassigned, closure-captured,
-  macro-guarded, sibling-function, or comment/string-only use.
+1. Accept: changed `let end = input.rfind(delim).map_or(0, |idx| idx);`
+   with a later `if end == start` — one predicate probe at the use line,
+   initializer before/after, `binding_predicate_relation` and
+   earliest-operation evidence, no generic changed-syntax limitation.
+2. Accept: two direct uses — two probes, scan order, distinct ids.
+3. Reject: the relation through a shadowed use.
+4. Reject: the relation through a reassigned use.
+5. Reject: the relation through a closure-captured use.
+6. Reject: the relation through a macro-guarded use.
+7. Reject: the relation through a sibling-function use.
+8. Reject: the relation through a comment/string-only use.
 
 ## Test Mapping
 
@@ -128,6 +137,11 @@ generic syntax reason.
 `diff_analysis_retargets_changed_binding_to_predicate_use`,
 `diff_analysis_keeps_value_propagation_limitation_for_macro_guarded_use`;
 fixtures `binding_predicate_{equality_boundary,positions,two_uses,scope_controls}`.
+
+`crates/ripr/tests/spec_b_binding_contracts.rs` separately checks the numbered
+corpus programs for exact relation presence/refusal, use positions and order,
+distinct probe ids, causal initializers and earliest-operation disclosure.
+These semantic assertions supplement the corpus's runtime-label citations.
 
 ## Non-Goals
 

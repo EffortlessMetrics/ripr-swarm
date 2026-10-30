@@ -2,10 +2,15 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/guarded_result_match_swallowed/input
 
-Summary: 2 probe(s), 0 exposed, 0 weakly_exposed, 2 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+Summary: 2 changed behavior(s) checked: 0 exposed, 0 weakly_exposed, 2 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
 
 Analysis outcome: findings below (analysis complete; complete_with_findings)
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
 
 Shared evidence and guidance
   E1 [findings 1, 2]: reach yes: Related tests appear to reach expect_ready: logs_failures_without_discriminating, wildcard_panic_without_variant_pin
@@ -14,8 +19,8 @@ Shared evidence and guidance
   E4 [findings 1, 2]: observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
   E5 [findings 1, 2]: discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)
   E6 [findings 1, 2]: local flow reaches error variant: Result::Err(ParseError::InvalidData) (line 9)
-  E7 [findings 1, 2]: related test tests/messages.rs:4 logs_failures_without_discriminating uses none unknown oracle; misses: assertion not credited: ripr could not establish that it runs as the standard macro
-  E8 [findings 1, 2]: related test tests/messages.rs:14 wildcard_panic_without_variant_pin uses none unknown oracle; misses: assertion not credited: ripr could not establish that it runs as the standard macro
+  E7 [findings 1, 2]: related test tests/messages.rs:4 logs_failures_without_discriminating uses no oracle; misses: assertion not credited: ripr could not establish that this assertion counts here
+  E8 [findings 1, 2]: related test tests/messages.rs:14 wildcard_panic_without_variant_pin uses no oracle; misses: assertion not credited: ripr could not establish that this assertion counts here
   E9 [findings 1, 2]: source function argument value kind = "busy" at line 5
   E10 [findings 1, 2]: source function argument value len = 12 at line 5
   E11 [findings 1, 2]: source assertion argument value 12 at line 9
@@ -29,11 +34,12 @@ Finding 1: WARNING ./src/lib.rs:9
 Changed
   before: return Err(ParseError::UnexpectedEof)
   after:  return Err(ParseError::InvalidData)
-Probe
+Change type
+  error handling changed
   family: error_path
-  delta:  value
+  delta:  value (changes a computed value)
   owner:  src/lib.rs::expect_ready
-  canonical gap: gap:rust:src/lib.rs:expect_ready:error_variant:error_path:err_parseerror_invaliddata
+  gap id (for scripts): gap:rust:src/lib.rs:expect_ready:error_variant:error_path:err_parseerror_invaliddata
 Static exposure
   reachable_unrevealed (warning, confidence 0.79)
 Evidence
@@ -53,11 +59,12 @@ Finding 2: WARNING ./src/lib.rs:9
 Changed
   before: return Err(ParseError::UnexpectedEof)
   after:  return Err(ParseError::InvalidData)
-Probe
+Change type
+  a returned value changed
   family: return_value
-  delta:  value
+  delta:  value (changes a computed value)
   owner:  src/lib.rs::expect_ready
-  canonical gap: gap:rust:src/lib.rs:expect_ready:return_value:return_value:err_parseerror_invaliddata
+  gap id (for scripts): gap:rust:src/lib.rs:expect_ready:return_value:return_value:err_parseerror_invaliddata
 Static exposure
   reachable_unrevealed (warning, confidence 0.79)
 Evidence
