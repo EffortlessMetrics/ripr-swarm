@@ -874,11 +874,11 @@ fn collect(fixture: &Fixture, subcommands: &BTreeSet<String>) -> Result<Collecte
                 && !(stdout.contains("Missing artifact: Gap decision ledger")
                     && stdout.contains("--repo-exposure")
                     && stdout.contains("target/ripr/pilot/repo-exposure.json")
-                    && !stdout.contains("Repo exposure report")
-                    && !stdout.contains("Also missing"))
+                    && !stdout.contains("Repo exposure report at")
+                    && !stdout.contains("Also missing: Repo exposure"))
             {
                 return Err(format!(
-                    "flow `{prefix}{label}` should leave only the gap-ledger command, reading the pilot report:\n{stdout}"
+                    "flow `{prefix}{label}` should name only the gap-ledger command as the missing repo-exposure/ledger input, reading the pilot report:\n{stdout}"
                 ));
             }
             sink.ingest(&format!("{prefix}{label}"), &stdout, &stderr);
