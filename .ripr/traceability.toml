@@ -1918,8 +1918,11 @@ tests = [
   "crates/ripr/tests/task_first_facade.rs::repair_without_actionable_item_creates_no_attempt",
   "crates/ripr/tests/task_first_facade.rs::repair_single_item_matches_advanced_card",
   "crates/ripr/tests/task_first_facade.rs::repair_two_items_requires_explicit_selection",
+  "crates/ripr/tests/task_first_facade.rs::repair_same_line_candidates_are_told_apart_in_plain_words",
+  "crates/ripr/tests/task_first_facade.rs::repair_choice_commands_pair_powershell_form_for_apostrophe_root",
   "crates/ripr/tests/task_first_facade.rs::continue_single_attempt_advances_it",
   "crates/ripr/tests/task_first_facade.rs::continue_two_attempts_requires_explicit_selection",
+  "crates/ripr/tests/task_first_facade.rs::continue_selection_retry_pairs_powershell_form_for_apostrophe_root",
   "crates/ripr/tests/task_first_facade.rs::continue_refuses_a_diverged_head_with_recovery",
   "crates/ripr/tests/task_first_facade.rs::facade_commands_stay_under_selected_root_from_foreign_cwd",
   "crates/ripr/tests/task_first_facade.rs::continue_on_a_terminal_attempt_is_already_complete",
@@ -19975,6 +19978,9 @@ tests = [
   "crates/ripr/src/agent/artifact.rs::tests::check_findings_gaps_refuse_a_missing_or_incomplete_analysis",
   "crates/ripr/src/agent/artifact.rs::tests::check_findings_gaps_refuse_duplicate_and_malformed_findings",
   "crates/ripr/src/agent/artifact.rs::tests::check_findings_refuse_a_partial_scope_or_any_run_limitation",
+  "crates/ripr/src/agent/artifact.rs::tests::check_findings_incomplete_refusal_names_the_limitation_not_regenerate",
+  "crates/ripr/src/agent/artifact.rs::tests::check_findings_outcome_completeness_is_one_predicate",
+  "crates/ripr/tests/installed_python_typescript_journeys.rs::typescript_incomplete_analysis_withholds_the_gap_bound_start",
   "crates/ripr/src/agent/artifact.rs::tests::check_findings_identity_tracks_diff_only_settings_but_repo_exposure_does_not",
   "crates/ripr/src/agent/artifact.rs::tests::gap_closure_requires_the_gap_open_before_and_exposed_after",
   "crates/ripr/src/agent/artifact.rs::tests::gap_closure_refuses_absence_other_gaps_and_unmoved_classes",
@@ -19985,6 +19991,7 @@ tests = [
 fixtures = []
 code = [
   "crates/ripr/src/agent/artifact.rs",
+  "crates/ripr/src/app/task_first.rs",
   "crates/ripr/src/output/check_findings.rs",
 ]
 outputs = [
