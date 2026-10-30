@@ -1093,54 +1093,68 @@ fn validate_schema_document(path: &str, schema: &Value, violations: &mut Vec<Str
 // Unsupported numeric input must not be turned into a match by `not`, `if`,
 // or another combinator. Check the entire input and all numeric bounds before
 // entering the boolean schema evaluation.
-fn supported_numeric_input(value: &ExactValue) -> bool {
+fn supported_numeric_input(value: &ExactValue, remaining: &mut usize) -> bool {
+    if *remaining == 0 {
+        return false;
+    }
+    *remaining -= 1;
     match value {
         ExactValue::Number(_) => exact_schema_number(value).is_some(),
-        ExactValue::Array(values) => values.iter().all(supported_numeric_input),
-        ExactValue::Object(values) => values.values().all(supported_numeric_input),
+        ExactValue::Array(values) => values
+            .iter()
+            .all(|value| supported_numeric_input(value, remaining)),
+        ExactValue::Object(values) => values
+            .values()
+            .all(|value| supported_numeric_input(value, remaining)),
         _ => true,
     }
 }
+
+const MAX_SCHEMA_DEPTH: usize = 128;
+const MAX_SCHEMA_STEPS: usize = 50_000;
+const MAX_INPUT_NODES: usize = 100_000;
 
 fn supported_numeric_bounds(
     schema: &ExactValue,
     root: &ExactValue,
     active_refs: &mut BTreeSet<String>,
-    checked_refs: &mut BTreeSet<String>,
+    depth: usize,
+    remaining: &mut usize,
 ) -> bool {
+    if depth >= MAX_SCHEMA_DEPTH || *remaining == 0 {
+        return false;
+    }
+    *remaining -= 1;
     let Some(object) = schema.as_object() else {
         return true;
     };
     if let Some(reference) = object.get("$ref").and_then(ExactValue::as_str) {
-        if !checked_refs.contains(reference) {
-            if active_refs.len() >= 128 || !active_refs.insert(reference.to_string()) {
-                return false;
-            }
-            let supported = resolve_ref(root, reference).is_some_and(|target| {
-                supported_numeric_bounds(target, root, active_refs, checked_refs)
-            });
-            active_refs.remove(reference);
-            if !supported {
-                return false;
-            }
-            checked_refs.insert(reference.to_string());
+        if !active_refs.insert(reference.to_string()) {
+            return false;
+        }
+        let supported = resolve_ref(root, reference).is_some_and(|target| {
+            supported_numeric_bounds(target, root, active_refs, depth + 1, remaining)
+        });
+        active_refs.remove(reference);
+        if !supported {
+            return false;
         }
     }
     for (key, value) in object {
         let supported = match key.as_str() {
-            "minimum" | "maximum" | "const" | "enum" => supported_numeric_input(value),
+            "minimum" | "maximum" | "const" | "enum" => supported_numeric_input(value, remaining),
             "properties" | "$defs" | "definitions" => value.as_object().is_none_or(|entries| {
-                entries
-                    .values()
-                    .all(|entry| supported_numeric_bounds(entry, root, active_refs, checked_refs))
+                entries.values().all(|entry| {
+                    supported_numeric_bounds(entry, root, active_refs, depth + 1, remaining)
+                })
             }),
             "allOf" | "anyOf" | "oneOf" => value.as_array().is_none_or(|entries| {
-                entries
-                    .iter()
-                    .all(|entry| supported_numeric_bounds(entry, root, active_refs, checked_refs))
+                entries.iter().all(|entry| {
+                    supported_numeric_bounds(entry, root, active_refs, depth + 1, remaining)
+                })
             }),
             "not" | "if" | "then" | "else" | "items" => {
-                supported_numeric_bounds(value, root, active_refs, checked_refs)
+                supported_numeric_bounds(value, root, active_refs, depth + 1, remaining)
             }
             _ => true,
         };
@@ -1149,6 +1163,12 @@ fn supported_numeric_bounds(
         }
     }
     true
+}
+
+struct ValidationBudget {
+    remaining: usize,
+    depth: usize,
+    exhausted: bool,
 }
 
 // Typed keys preserve the distinctions between JSON types while normalizing
@@ -1164,7 +1184,23 @@ enum SchemaValueKey {
     Object(Vec<(String, SchemaValueKey)>),
 }
 
-fn schema_value_key(value: &ExactValue) -> Option<SchemaValueKey> {
+fn charge_validation_work(budget: &mut ValidationBudget, amount: usize) -> bool {
+    if budget.remaining < amount {
+        budget.exhausted = true;
+        return false;
+    }
+    budget.remaining -= amount;
+    true
+}
+
+fn schema_value_key(value: &ExactValue, budget: &mut ValidationBudget) -> Option<SchemaValueKey> {
+    let byte_cost = match value {
+        ExactValue::String(text) | ExactValue::Number(text) => text.len() / 1024,
+        _ => 0,
+    };
+    if !charge_validation_work(budget, 1 + byte_cost) {
+        return None;
+    }
     Some(match value {
         ExactValue::Null => SchemaValueKey::Null,
         ExactValue::Bool(b) => SchemaValueKey::Boolean(*b),
@@ -1175,22 +1211,35 @@ fn schema_value_key(value: &ExactValue) -> Option<SchemaValueKey> {
             SchemaValueKey::Number(coefficient, scale)
         }
         ExactValue::String(s) => SchemaValueKey::String(s.clone()),
-        ExactValue::Array(values) => {
-            SchemaValueKey::Array(values.iter().map(schema_value_key).collect::<Option<_>>()?)
-        }
-        ExactValue::Object(values) => {
-            let mut keys: Vec<_> = values
+        ExactValue::Array(values) => SchemaValueKey::Array(
+            values
                 .iter()
-                .map(|(key, value)| Some((key.clone(), schema_value_key(value)?)))
-                .collect::<Option<_>>()?;
+                .map(|value| schema_value_key(value, budget))
+                .collect::<Option<_>>()?,
+        ),
+        ExactValue::Object(values) => {
+            let mut keys = Vec::with_capacity(values.len());
+            for (key, value) in values {
+                if !charge_validation_work(budget, 1 + key.len() / 1024) {
+                    return None;
+                }
+                keys.push((key.clone(), schema_value_key(value, budget)?));
+            }
             keys.sort_unstable_by(|a, b| a.0.cmp(&b.0));
             SchemaValueKey::Object(keys)
         }
     })
 }
 
-fn schema_values_equal(left: &ExactValue, right: &ExactValue) -> bool {
-    match (schema_value_key(left), schema_value_key(right)) {
+fn schema_values_equal(
+    left: &ExactValue,
+    right: &ExactValue,
+    budget: &mut ValidationBudget,
+) -> bool {
+    match (
+        schema_value_key(left, budget),
+        schema_value_key(right, budget),
+    ) {
         (Some(a), Some(b)) => a == b,
         _ => false,
     }
@@ -1204,20 +1253,45 @@ pub(crate) fn validate_exact_value_against_schema(
     violations: &mut Vec<String>,
 ) {
     let mut active_refs = BTreeSet::new();
-    let mut checked_refs = BTreeSet::new();
-    if !supported_numeric_input(value)
+    let mut preflight_remaining = MAX_SCHEMA_STEPS;
+    let mut input_remaining = MAX_INPUT_NODES;
+    if !supported_numeric_input(value, &mut input_remaining)
         || !supported_numeric_bounds(
             root_schema,
             root_schema,
             &mut active_refs,
-            &mut checked_refs,
+            0,
+            &mut preflight_remaining,
         )
-        || !supported_numeric_bounds(schema, root_schema, &mut active_refs, &mut checked_refs)
+        || !supported_numeric_bounds(
+            schema,
+            root_schema,
+            &mut active_refs,
+            0,
+            &mut preflight_remaining,
+        )
     {
         violations.push(format!("{location}: unsupported numeric precision or invalid, recursive, or excessively deep schema reference"));
         return;
     }
-    validate_value_against_schema_inner(value, schema, root_schema, location, violations);
+    let mut budget = ValidationBudget {
+        remaining: MAX_SCHEMA_STEPS,
+        depth: 0,
+        exhausted: false,
+    };
+    validate_value_against_schema_inner(
+        value,
+        schema,
+        root_schema,
+        location.clone(),
+        violations,
+        &mut budget,
+    );
+    if budget.exhausted {
+        violations.push(format!(
+            "{location}: schema evaluation resource limit exceeded"
+        ));
+    }
 }
 
 fn validate_value_against_schema_inner(
@@ -1226,6 +1300,25 @@ fn validate_value_against_schema_inner(
     root_schema: &ExactValue,
     location: String,
     violations: &mut Vec<String>,
+    budget: &mut ValidationBudget,
+) {
+    if budget.exhausted || budget.remaining == 0 || budget.depth >= MAX_SCHEMA_DEPTH {
+        budget.exhausted = true;
+        return;
+    }
+    budget.remaining -= 1;
+    budget.depth += 1;
+    validate_value_against_schema_impl(value, schema, root_schema, location, violations, budget);
+    budget.depth -= 1;
+}
+
+fn validate_value_against_schema_impl(
+    value: &ExactValue,
+    schema: &ExactValue,
+    root_schema: &ExactValue,
+    location: String,
+    violations: &mut Vec<String>,
+    budget: &mut ValidationBudget,
 ) {
     // `$ref` does not suppress its siblings. A schema may write
     // `{"$ref": "...", "minItems": 1}`, and returning here would silently drop
@@ -1241,6 +1334,7 @@ fn validate_value_against_schema_inner(
                 root_schema,
                 location.clone(),
                 violations,
+                budget,
             ),
             None => violations.push(format!(
                 "{location}: unresolved schema reference {reference}"
@@ -1250,12 +1344,16 @@ fn validate_value_against_schema_inner(
 
     if let Some(all_of) = schema.get("allOf").and_then(ExactValue::as_array) {
         for (index, subschema) in all_of.iter().enumerate() {
+            if budget.exhausted {
+                return;
+            }
             validate_value_against_schema_inner(
                 value,
                 subschema,
                 root_schema,
                 format!("{location}/allOf[{index}]"),
                 violations,
+                budget,
             );
         }
     }
@@ -1264,6 +1362,9 @@ fn validate_value_against_schema_inner(
         let mut matched = false;
         let mut messages = Vec::new();
         for subschema in any_of {
+            if budget.exhausted {
+                return;
+            }
             let mut nested = Vec::new();
             validate_value_against_schema_inner(
                 value,
@@ -1271,6 +1372,7 @@ fn validate_value_against_schema_inner(
                 root_schema,
                 location.clone(),
                 &mut nested,
+                budget,
             );
             if nested.is_empty() {
                 matched = true;
@@ -1298,6 +1400,7 @@ fn validate_value_against_schema_inner(
                     root_schema,
                     location.clone(),
                     &mut nested,
+                    budget,
                 );
                 let matched = nested.is_empty();
                 messages.extend(nested);
@@ -1324,6 +1427,7 @@ fn validate_value_against_schema_inner(
             root_schema,
             location.clone(),
             &mut condition_violations,
+            budget,
         );
         let branch = if condition_violations.is_empty() {
             schema.get("then")
@@ -1337,6 +1441,7 @@ fn validate_value_against_schema_inner(
                 root_schema,
                 location.clone(),
                 violations,
+                budget,
             );
         }
     }
@@ -1349,6 +1454,7 @@ fn validate_value_against_schema_inner(
             root_schema,
             location.clone(),
             &mut nested,
+            budget,
         );
         if nested.is_empty() {
             violations.push(format!("{location}: matched a forbidden schema"));
@@ -1356,7 +1462,7 @@ fn validate_value_against_schema_inner(
     }
 
     if let Some(expected) = schema.get("const")
-        && !schema_values_equal(value, expected)
+        && !schema_values_equal(value, expected, budget)
     {
         violations.push(format!(
             "{location}: expected const {}, got {}",
@@ -1368,7 +1474,7 @@ fn validate_value_against_schema_inner(
     if let Some(allowed) = schema.get("enum").and_then(ExactValue::as_array)
         && !allowed
             .iter()
-            .any(|candidate| schema_values_equal(candidate, value))
+            .any(|candidate| schema_values_equal(candidate, value, budget))
     {
         violations.push(format!(
             "{location}: value {} is not in enum",
@@ -1381,10 +1487,10 @@ fn validate_value_against_schema_inner(
     }
 
     if value.is_object() {
-        validate_object(value, schema, root_schema, &location, violations);
+        validate_object(value, schema, root_schema, &location, violations, budget);
     }
     if value.is_array() {
-        validate_array(value, schema, root_schema, &location, violations);
+        validate_array(value, schema, root_schema, &location, violations, budget);
     }
     if let Some(text) = value.as_str() {
         validate_string(text, schema, &location, violations);
@@ -1400,6 +1506,7 @@ fn validate_object(
     root_schema: &ExactValue,
     location: &str,
     violations: &mut Vec<String>,
+    budget: &mut ValidationBudget,
 ) {
     let Some(object) = value.as_object() else {
         return;
@@ -1433,6 +1540,9 @@ fn validate_object(
     }
 
     for (field, field_schema) in properties {
+        if budget.exhausted {
+            return;
+        }
         if let Some(field_value) = object.get(field) {
             validate_value_against_schema_inner(
                 field_value,
@@ -1440,6 +1550,7 @@ fn validate_object(
                 root_schema,
                 format!("{location}.{field}"),
                 violations,
+                budget,
             );
         }
     }
@@ -1451,6 +1562,7 @@ fn validate_array(
     root_schema: &ExactValue,
     location: &str,
     violations: &mut Vec<String>,
+    budget: &mut ValidationBudget,
 ) {
     let Some(items) = value.as_array() else {
         return;
@@ -1473,7 +1585,7 @@ fn validate_array(
     if schema.get("uniqueItems").and_then(ExactValue::as_bool) == Some(true) {
         let mut seen = BTreeSet::new();
         for item in items {
-            let Some(key) = schema_value_key(item) else {
+            let Some(key) = schema_value_key(item, budget) else {
                 violations.push(format!("{location}: unsupported numeric precision"));
                 return;
             };
@@ -1490,12 +1602,16 @@ fn validate_array(
         return;
     };
     for (index, item) in items.iter().enumerate() {
+        if budget.exhausted {
+            return;
+        }
         validate_value_against_schema_inner(
             item,
             items_schema,
             root_schema,
             format!("{location}[{index}]"),
             violations,
+            budget,
         );
     }
 }
@@ -1912,6 +2028,129 @@ mod tests {
         assert!(
             !violations.is_empty(),
             "long reference chain must fail closed"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn cached_short_references_cannot_bypass_depth_limit() -> Result<(), String> {
+        let links = (1..=129)
+            .map(|index| format!(r##""n{index:04}":{{"$ref":"#/$defs/n{:04}"}}"##, index - 1))
+            .collect::<Vec<_>>()
+            .join(",");
+        let schema = parse_exact_text(&format!(
+            r##"{{"$defs":{{"n0000":{{}},{links}}},"allOf":[{{"$ref":"#/$defs/n0129"}}]}}"##
+        ))?;
+        let value = parse_exact_text("1")?;
+        let mut violations = Vec::new();
+        validate_exact_value_against_schema(
+            &value,
+            &schema,
+            &schema,
+            "value".into(),
+            &mut violations,
+        );
+        assert!(
+            !violations.is_empty(),
+            "cached references must not hide excessive depth"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn mixed_inline_and_reference_depth_is_bounded() -> Result<(), String> {
+        let wrap = |mut node: String| {
+            for _ in 0..60 {
+                node = format!(r#"{{"allOf":[{node}]}}"#);
+            }
+            node
+        };
+        let n0 = wrap(r##"{"$ref":"#/$defs/n1"}"##.to_string());
+        let n1 = wrap(r##"{"$ref":"#/$defs/n2"}"##.to_string());
+        let n2 = wrap("{}".to_string());
+        let schema = parse_exact_text(&format!(
+            r##"{{"$ref":"#/$defs/n0","$defs":{{"n0":{n0},"n1":{n1},"n2":{n2}}}}}"##
+        ))?;
+        let value = parse_exact_text("1")?;
+        let mut violations = Vec::new();
+        validate_exact_value_against_schema(
+            &value,
+            &schema,
+            &schema,
+            "value".into(),
+            &mut violations,
+        );
+        assert!(
+            !violations.is_empty(),
+            "mixed traversal must fail closed at its depth limit"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn branching_reference_graph_is_bounded() -> Result<(), String> {
+        let links = (1..=16).map(|index| format!(r##""n{index}":{{"allOf":[{{"$ref":"#/$defs/n{}"}},{{"$ref":"#/$defs/n{}"}}]}}"##, index - 1, index - 1)).collect::<Vec<_>>().join(",");
+        let schema = parse_exact_text(&format!(
+            r##"{{"$ref":"#/$defs/n16","$defs":{{"n0":{{}},{links}}}}}"##
+        ))?;
+        let value = parse_exact_text("1")?;
+        let mut violations = Vec::new();
+        validate_exact_value_against_schema(
+            &value,
+            &schema,
+            &schema,
+            "value".into(),
+            &mut violations,
+        );
+        assert!(
+            !violations.is_empty(),
+            "branching traversal must fail closed at its work limit"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn evaluation_budget_exhaustion_cannot_be_inverted() -> Result<(), String> {
+        let schema = parse_exact_text(r#"{"not":{"items":{}}}"#)?;
+        let input = format!("[{}1]", "1,".repeat(MAX_SCHEMA_STEPS));
+        let value = parse_exact_text(&input)?;
+        let mut violations = Vec::new();
+        validate_exact_value_against_schema(
+            &value,
+            &schema,
+            &schema,
+            "value".into(),
+            &mut violations,
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("evaluation resource limit")),
+            "{violations:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn repeated_large_equality_checks_exhaust_work_budget() -> Result<(), String> {
+        let schema = parse_exact_text(&format!(
+            r#"{{"allOf":[{}{{"const":""}}]}}"#,
+            r#"{"const":""},"#.repeat(800)
+        ))?;
+        let value = parse_exact_text(&format!("\"{}\"", "x".repeat(65_536)))?;
+        let mut violations = Vec::new();
+        validate_exact_value_against_schema(
+            &value,
+            &schema,
+            &schema,
+            "value".into(),
+            &mut violations,
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("evaluation resource limit")),
+            "expected work limit"
         );
         Ok(())
     }
