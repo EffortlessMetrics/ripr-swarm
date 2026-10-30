@@ -52,11 +52,12 @@ Adopt option 3 from the alternatives above, narrowly.
   a member with `[lints] workspace = true` cannot override it in its manifest,
   and an in-code `#[allow(unsafe_code)]` fails with E0453 (reproduced on the
   pinned 1.95.0). The helper crate therefore opts out of workspace lint
-  inheritance and re-declares the other workspace lints in its own table,
+  inheritance and re-declares the other workspace lints in its own `[lints.rust]` and
+  `[lints.clippy]` tables (the hygiene lints span both),
   including the unsafe-hygiene lints (`undocumented_unsafe_blocks`,
   `multiple_unsafe_ops_per_block`, `unsafe_op_in_unsafe_fn`) that the root
   manifest keeps for a future unsafe island. Accepting the exception implies
-  keeping that duplicate table in step with the workspace.
+  keeping those duplicate tables in step with the workspace.
 - Shipped only in the win32 VSIX. The PowerShell wrapper remains as the
   fallback when the helper is missing or fails to start, so a packaging mistake
   degrades to today's behavior rather than to no probe.
